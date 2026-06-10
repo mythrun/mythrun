@@ -2119,7 +2119,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="session_messages" id="schema-table-session_messages">
   <summary>
     <span class="schema-table-name">session_messages</span>
-    <span class="schema-table-meta">7 columns · 2 indexes · 0 CHECKs · 1 FK</span>
+    <span class="schema-table-meta">9 columns · 3 indexes · 0 CHECKs · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -2173,12 +2173,27 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="turn_id">
+        <td><code>turn_id</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="turn_ordinal">
+        <td><code>turn_ordinal</code></td>
+        <td><code>smallint</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
     <li><code>idx_session_messages_session_seq</code> — (session_id, seq)</li>
     <li><code>idx_session_messages_session_seq_unique</code> — UNIQUE (session_id, seq)</li>
+    <li><code>idx_session_messages_turn_ordinal_unique</code> — UNIQUE (turn_id, turn_ordinal) WHERE turn_id IS NOT NULL</li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="session_participants" id="schema-table-session_participants">

@@ -3,23 +3,26 @@
 <!-- source: backend/src/session/session-lock.ts -->
 <!-- source: backend/src/session/turn-publisher.ts -->
 <!-- source: backend/src/session/turn-queue.ts -->
+<!-- source: backend/src/session/transcript-codec.ts -->
 <!-- source: backend/src/session/tiers/types.ts -->
 <!-- source: backend/src/session/tiers/stubs.ts -->
 <!-- source: backend/src/contract/session-channel.ts -->
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
-<!-- source-hash: sha256:c670354fdc02df8f6c849878487993c18ff1369ec97231d09d5dfcb1212187c3 -->
-<!-- last-ticket: MYT-67 -->
+<!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
+<!-- source-hash: sha256:5ed2a01fd1eef29a160d995d2c738487e6e2fa14dda81a7846fa57166af93a1d -->
+<!-- last-ticket: MYT-68 -->
 
 <h1>Session turn</h1>
 
 <p class="lead">
   The DM-turn execution engine: a transient <code>SessionController</code> that, per turn, acquires
-  a per-session distributed lock, loads turn state from Redis, runs the fixed ST → FT → Scribe macro
-  sequence as deterministic code, flushes state back, and releases the lock — surviving a mid-turn
-  container crash by re-running on another worker from clean state. The cognitive tiers are stubbed
-  here behind stable interfaces; MYT-68 / 69 / 73 each swap one stub for a real Anthropic-backed
-  implementation against the seams defined here.
+  a per-session distributed lock, reconstructs the Fast Thinker's history from the durable
+  <code>session_messages</code> transcript, runs the fixed ST → FT → Scribe macro sequence as
+  deterministic code, persists the rendered turn as one atomic Postgres append, and releases the
+  lock — surviving a mid-turn container crash by converging on the durable transcript or re-running
+  from clean state. The <a href="./fast-thinker.html">Fast Thinker</a> is now real (Sonnet); the
+  Slow Thinker and Scribe remain stubs behind the same seams MYT-69 / 73 will fill.
 </p>
 
 <!-- @diagram: runtime/session-turn -->
@@ -59,29 +62,81 @@
 
 <p>
   A <code>SessionController</code> exists for the life of one turn and is garbage-collected after —
-  never long-lived. Its three-method lifecycle (<code>loadFromRedis</code> →
-  <code>processDmTurn</code> → <code>flushToRedis</code>) is driven by the worker. It is a thin
-  orchestration shell (Zero Framework Cognition): it makes no judgment calls. It loads the turn's
-  in-memory state, sequences the tiers, and flushes the mutated state — every reasoning call lives
-  behind an injected tier seam.
+  never long-lived. Its four-method lifecycle (<code>loadFromRedis</code> →
+  <code>processDmTurn</code> → <code>persistTurn</code> → <code>flushToRedis</code>) is driven by
+  the worker. It is a thin orchestration shell (Zero Framework Cognition): it makes no judgment
+  calls. It hydrates the small turn state, reconstructs the FT history, sequences the tiers,
+  persists the rendered turn, and flushes the residual state — every reasoning call lives behind an
+  injected tier seam.
 </p>
 
 <p>
-  <code>loadFromRedis</code> performs one bulk read: the three LLM-tier keys
-  (<code>:ft_history</code>, <code>:summary</code>, <code>:usage</code>) via a single
-  <code>MGET</code>, plus the participant roster from the existing <code>:state</code> blob. Between
-  load and flush the controller mutates <strong>only its in-memory copy</strong> — it issues no
-  direct Redis writes of its own. <code>flushToRedis</code> is the single atomic write at the end.
+  <code>loadFromRedis</code> reads only the small turn state: the running summary and the usage
+  accumulator. The FT history is <strong>not</strong> in Redis —
+  <code>processDmTurn</code> reconstructs it from <code>session_messages</code> in Postgres each
+  turn (below). The participant roster, the FT prep context, and the world tone are not loaded here
+  either; the worker resolves them per turn and injects them. Between load and persist the
+  controller mutates <strong>only its in-memory copy</strong>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The recovery invariant: nothing durable is written before flush</strong> — because the
-  controller only ever mutates in-memory state until the final atomic flush, a crash mid-turn leaves
-  Redis at the exact pre-turn snapshot. There is nothing to undo. A redelivered job re-runs the
-  whole turn from clean state, and (with stub tiers) the re-run is byte-identical. This is what
-  makes BullMQ's at-least-once delivery safe and deterministic here. Streamed
-  <code>text_delta</code> frames are <em>not</em> durable state — they are transport, at-least-once,
-  deduplicated client-side by <code>turnId</code> (see below).
+  <strong>The recovery invariant: the durability point is one atomic Postgres append</strong> —
+  <code>persistTurn</code> encodes the rendered assistant message into DM-turn rows, allocates a seq
+  per row, and writes them in a single, idempotent
+  <code>INSERT … ON CONFLICT (turn_id, turn_ordinal) DO NOTHING</code>. That one statement is the
+  only durable write the controller makes. <code>flushToRedis</code> afterward carries only the
+  small <code>{summary, usage}</code> turn state. A crash <em>before</em>
+  <code>persistTurn</code> leaves both Postgres and Redis at the pre-turn snapshot — nothing to
+  undo; BullMQ redelivery re-runs the turn. A crash <em>after</em> the commit means the turn is
+  durable, and the re-run converges to completion rather than re-rendering (the §5 decision order
+  below). Streamed frames are <em>not</em> durable state — they are transport, deduplicated
+  client-side by <code>turnId</code>.
+</aside>
+
+<h2>The PG-direct transcript: one store, reconstructed each turn</h2>
+
+<p>
+  The FT's history and the player transcript used to be two representations of the same artifact (a
+  Redis <code>ft_history</code> hot cache and the durable <code>session_messages</code> table).
+  MYT-68 unifies them:
+  <strong><code>session_messages</code> is the only transcript store.</strong> Player messages
+  persist there on receipt; at turn end the conductor appends the DM turn's prose plus its roll
+  events (<code>dm_text</code> / <code>skill_check</code> / <code>dice_roll</code> rows) as part of
+  <code>persistTurn</code>. Each turn, <code>processDmTurn</code> reconstructs the FT's multi-part
+  history from those rows via one repo read (<code>listFtContextRows</code>) and the
+  <code>transcript-codec</code> — the one formatter that maps rows ↔ the Mythrun-owned multi-part
+  <code>ConversationMessage</code> shape, both directions, so the round-trip is byte-stable by
+  construction (which the prompt cache depends on).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why retire the Redis hot cache</strong> — the transcript has exactly one reader, the FT
+  itself on the next turn, so there is no fan-out for a cache to serve. The per-turn indexed scan is
+  noise against the multi-second LLM call, and the expensive repeated read in this architecture is
+  the input <em>tokens</em>, already handled by the <a href="./fast-thinker.html">prompt cache</a>.
+  A single store also eliminates dual-representation drift outright, and the reconstruction read
+  sits behind one repo function, so a read-through cache is an afternoon's add if PG metrics ever
+  demand it.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The single-piece read predicate</strong> —
+  <code>listFtContextRows(sessionId, maxConsumedSeq)</code> returns player rows up to the consumed
+  watermark <em>unioned with all DM rows</em>, ordered by seq. Player rows above the watermark
+  (mid-turn arrivals) are excluded — they're the next turn's batch — but DM rows are always included
+  regardless of seq, because a DM turn's rows can carry seqs above an early-arriving next-batch
+  player message when chat races the turn's end, and a pure seq cutoff would silently drop the DM's
+  own prior reply. This one read is the whole FT context; there is no separate batch append, so
+  there is exactly one formatter by construction.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Recovery is the load path — crash loud on incoherence</strong> — with one store there is
+  no cache to drift and no rarely-run rebuild branch: the rows→multi-part reconstruction runs on
+  every turn, so a fidelity bug surfaces on turn 2 of a smoke, not at 3am. If
+  <code>session_messages</code> is absent or incoherent for a session that should have history, the
+  codec throws <code>TranscriptCorruptError</code> with a seq locator and the turn fails loud
+  (<code>turn_error</code>) — it never silently truncates or degrades onto the running summary.
 </aside>
 
 <h2>The conductor: deterministic code, never an LLM</h2>
@@ -93,22 +148,27 @@
 
 <ol>
   <li>
+    <strong>Reconstruct the history</strong> from <code>session_messages</code> (above) into the
+    in-memory multi-part history.
+  </li>
+  <li>
     <strong>ST evaluate</strong> — <code>st.evaluate(ctx)</code> returns an
     <code>StEvaluation</code>. Any <code>summaryUpdate</code> is appended to the running summary
     in-memory (decoupled from <code>intervene</code>); the ST's token usage is accumulated.
   </li>
   <li>
-    <strong>FT render</strong> — each trigger message is appended to <code>ft_history</code> as a
-    <code>user</code> message. When the ST chose to intervene with a <code>direction</code>, that
-    direction is fused onto the <em>last</em> trigger's content as a bracketed
-    <code>[DM direction: …]</code> constraint. <code>ft.render(ctx, emit)</code> streams
-    <code>text_delta</code> frames through <code>emit</code> and returns an
-    <code>AssistantMessage</code>, which is appended to history. The controller then publishes
-    <code>turn_end</code>.
+    <strong>FT render</strong> — when the ST chose to intervene with a <code>direction</code>, it is
+    fused onto the <em>last</em> user message in the reconstructed history as a bracketed
+    <code>[DM direction: …]</code> constraint, in-memory only.
+    <code>ft.render(ctx, emit)</code> runs the <a href="./fast-thinker.html">Fast Thinker</a>'s tool
+    loop, streaming <code>text_delta</code> / <code>skill_check</code> /
+    <code>dice_roll</code> frames through the latched emitter, and returns a multi-part
+    <code>AssistantMessage</code>; its token usage is accumulated. (The Slow Thinker is stubbed in
+    MYT-68, so no direction is injected yet.)
   </li>
   <li>
-    <strong>Scribe</strong> — <code>scribe.extract(ctx)</code> fires async and non-blocking after
-    <code>turn_end</code>; its errors are caught, logged, and never fail the turn.
+    <strong>Scribe</strong> — <code>scribe.extract(ctx)</code> fires async and non-blocking; its
+    errors are caught, logged, and never fail the turn.
   </li>
 </ol>
 
@@ -118,6 +178,17 @@
   message. The FT renders prose under the constraint but is never told the ST intervened or why.
   This is enforced ignorance at the turn level: the FT's view is the public conversation plus a
   constraint, nothing about plot or intent.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Directions are per-turn ephemera, never transcript</strong> — the fused
+  <code>[DM direction: …]</code> exists only in the in-memory messages assembled for that one turn's
+  render; it is never written to <code>session_messages</code> (player rows persist at receipt,
+  pre-fusion; DM rows are output only). So past directions never accumulate in the FT's
+  reconstructed context and a direction can never leak into the player-visible transcript or
+  reconnect replay — its narrative effect survives only through the prose it shaped. Under
+  PG-direct, the FT's memory is <em>exactly</em> the public transcript plus the current turn's
+  direction.
 </aside>
 
 <aside class="wiki-rationale">
@@ -131,14 +202,20 @@
   establishes the async-after-<code>turn_end</code> seam.
 </aside>
 
-<h2>The tier-stub boundary, and structural enforced ignorance</h2>
+<h2>The tier seam, and structural enforced ignorance</h2>
 
 <p>
-  The tier seam is defined once in <code>tiers/types.ts</code> and is the contract MYT-68 / 69 / 73
-  build against. The FT and ST both read an <code>FtTurnContext</code> — and that type is
-  <strong>public by construction</strong>: every field on it (campaign id, trigger messages,
-  conversation history, running summary, participant ids, usage counters, a reserved
-  <code>workingSet</code>) is FT-safe. Secrets simply have nowhere to live on this type.
+  The tier seam is defined once in <code>tiers/types.ts</code>. The FT (and, later, the ST) read an
+  <code>FtTurnContext</code> — and that type is <strong>public by construction</strong>: every field
+  on it (campaign id, the reconstructed conversation history, the participant roster, the
+  enforced-ignorance-safe <code>ftContext</code> prep doc, usage counters, a reserved
+  <code>workingSet</code>) is FT-safe. Secrets simply have nowhere to live on this type. MYT-68
+  <em>strengthened</em> the seam: it added the FT-safe <code>ftContext</code> field and
+  <strong>removed</strong> the old <code>runningSummary</code> field — that was
+  Slow-Thinker-authored, the FT never reads it, and an ST-authored field on the FT's context type is
+  exactly what the boundary forbids. The ST gets the summary through its own widened view (<code
+    >TurnContext = FtTurnContext &amp; StSecrets</code
+  >) in MYT-69.
 </p>
 
 <aside class="wiki-rationale">
@@ -153,15 +230,13 @@
 </aside>
 
 <p>
-  The controller takes its three tiers by constructor injection, so a later issue swaps
-  <code>new StubSlowThinker()</code> for <code>new RealSlowThinker(deps)</code> with no conductor
-  change. The drop-in holds cleanly for the ST and Scribe; the
-  <code>FastThinker.render</code> signature is flagged <em>provisional</em> — MYT-68's in-stream
-  tool loop will add a tool-resolve callback and widen <code>emit</code>. The MYT-66 stubs make the
-  whole pipeline run deterministically end-to-end without spending tokens: the ST never intervenes,
-  the FT emits one canned <code>text_delta</code> (<code>"(the DM considers the scene…)"</code>)
-  then returns one canned line, the Scribe is a no-op. That is what lets the crash-recovery test
-  assert a <em>complete</em> turn with no model calls.
+  The controller takes its three tiers by constructor injection. As of MYT-68 the
+  <strong><a href="./fast-thinker.html">Fast Thinker</a> is real</strong> — the worker constructs a
+  fresh <code>SonnetFastThinker</code> per turn with that turn's scoped skill-check projection,
+  resolved world tone, and the worker-latched emitter — while the Slow Thinker and Scribe remain
+  stubs (a no-op ST that never intervenes, a no-op Scribe) until MYT-69. The seam is unchanged: a
+  later issue swaps <code>new StubSlowThinker()</code> for <code>new RealSlowThinker(deps)</code>
+  with no conductor change.
 </p>
 
 <h2>The distributed lock</h2>
@@ -208,49 +283,92 @@
   it on release, so the trigger worker won't enqueue a colliding turn), not an ownership mutex.
 </aside>
 
-<h2>The lock-fenced worker and crash recovery</h2>
+<h2>The lock-fenced worker: the §5 decision order</h2>
 
 <p>
   <code>processTurnJob</code> is the BullMQ processor — the cluster-coordination shell around the
-  controller. It runs in five movements:
+  controller. It acquires the lock, sets the <code>dm_responding</code> drain guard, starts a
+  heartbeat, and then runs a <strong>three-way decision</strong> that holds whether the job is a
+  fresh run or a BullMQ re-run:
 </p>
 
 <ol>
   <li>
-    <code>tryAcquire</code> the session lock. On <code>null</code> (a turn is already running for
-    this session), return <code>{ ran: false }</code>; the loser is re-driven by the
-    <a href="./dm-trigger.html">DM trigger</a> debounce, not by blind BullMQ <code>attempts</code>.
-    On acquire, set the <code>dm_responding</code> flag (token = the lock token) so the trigger
-    worker won't enqueue a colliding turn while this one runs (MYT-67 §4.7).
+    <strong>Converge a durable turn.</strong> If <code>session_messages</code> already holds rows
+    for this <code>turnId</code> (<code>turnRowsExist</code>), the turn <em>happened</em>: advance
+    the <code>last-responded-seq</code> watermark, publish <code>turn_end</code>, and return.
+    <strong>Never</strong> <code>turn_error</code> — clients would discard prose the transcript
+    keeps, and the stuck watermark would re-answer the same batch.
   </li>
   <li>
-    Start a heartbeat (<code>setInterval</code>, every 15 s) that extends the lock. If an extend
-    ever returns <code>false</code> — the lock expired and a successor re-acquired it — set a
-    <code>lockLost</code> flag.
+    <strong>Terminate a streamed-but-uncommitted turn.</strong> If frames were broadcast for this
+    <code>turnId</code> but nothing committed (<code>wasTurnEmitted</code> set, no PG rows), a retry
+    would re-stream divergent prose and re-roll dice under the same id. Publish
+    <code>turn_error</code> via the cross-container <code>SET NX</code> claim and throw
+    <code>UnrecoverableError</code> so BullMQ skips the remaining attempts. No render.
   </li>
   <li>
-    Publish <code>dm_thinking</code>, construct the <code>SessionController</code>, and run
-    <code>load → process → flush</code>. The <code>lockLost</code> flag is re-checked before
-    <code>processDmTurn</code> and again before <code>flushToRedis</code>, so a lost lock stops the
-    turn <em>before</em> the flush, never after. Only on a real (flushed) success does the worker
-    advance the <code>last-responded-seq</code> watermark to the job's <code>maxConsumedSeq</code> —
-    a lock-lost abort never flushes, so it must never advance the watermark.
-  </li>
-  <li>
-    On a lock-lost abort, return without flushing or publishing <code>turn_error</code> — the
-    winning container owns the continuation. On a <em>real</em> error, rethrow so BullMQ applies its
-    retry policy.
-  </li>
-  <li>
-    In a <code>finally</code>, clear the heartbeat, release the lock, then clear
-    <code>dm_responding</code> so the trigger worker can enqueue the next turn. Release is a
-    compare-and-delete, so it is safe even after lock loss — it can only ever drop the worker's own
-    token, never a successor's. The <code>finally</code> also drains a pending explicit summon: if
-    an <code>@dm</code> landed while this turn was in flight,
-    <code>takeExplicitPending</code> enqueues one explicit follow-up immediately (in its own
-    try/catch, so a drain hiccup never masks the turn outcome).
+    <strong>Render fresh.</strong> Publish <code>dm_thinking</code>, resolve the per-turn context,
+    construct the <code>SessionController</code>, and run
+    <code>load → process → persist → flush</code>. The lock is re-checked before
+    <code>processDmTurn</code> and again, critically, <em>before the Postgres commit</em>, so a lost
+    lock stops the turn before persisting, never after. On success, advance the watermark and
+    publish <code>turn_end</code>.
   </li>
 </ol>
+
+<aside class="wiki-rationale">
+  <strong>Converge or terminate — never re-stream under one turnId</strong> — the end-of-turn write
+  order is: check lock liveness, then the atomic PG append (the turn is durable once it commits),
+  then the Redis flush + watermark + <code>turn_end</code>. Every failure <em>after</em> the commit
+  (Redis flush, watermark, BullMQ ack, a crash) re-runs the job, and the re-run must converge to
+  completion, not <code>turn_error</code> — the rows prove the turn happened, so finishing the flush
+  and publishing <code>turn_end</code> is the only correct outcome. A failure <em>before</em> the
+  commit but <em>after</em> any frame shipped is terminal, because Sonnet is non-deterministic and
+  the dice re-roll — a divergent re-stream is worse than a rare dead turn.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The emitted-anything latch is a Redis <code>SET NX</code> keyed by turnId, set before the first
+    publish</strong
+  >
+  — it must be cross-container (a stalled-reclaim lands on any worker, so an in-memory latch only
+  covers same-process retries) and set <em>before</em> the first frame goes out (set-after leaves a
+  crash window that re-streams divergent prose under the same id). The latched emitter wraps the
+  real one: the first emit of any kind marks the latch, then awaits, then publishes. So even a crash
+  between mark and publish trips <code>wasTurnEmitted</code> on the re-run.
+</aside>
+
+<p>
+  The fresh run resolves its per-turn context from the Redis <code>:state</code> blob: the FT prep
+  context (<code>ftContext</code>) with a Postgres re-load fallback if the blob was evicted, the
+  world tone, and — off one read of <code>session_participants</code> joined to
+  <code>characters</code> — the FT prompt roster plus the userId→character-name attribution map.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The roster comes from <code>session_participants</code>, not the
+    <code>:state</code> blob</strong
+  >
+  — the blob's participant list is a read-modify-write maintained on WS join, where two simultaneous
+  joins can lose a name to last-write-wins. The skill-check resolver reads
+  <code>session_participants</code> (the source of truth), so the worker resolves the roster and the
+  attribution from the same place, in deterministic joined order. Attribution is the
+  <em>character</em> name, not a display name, because the FT prompt tells the model to echo the
+  attributed name into <code>roll_skill_check.character_name</code>, which resolves against
+  <code>session_participants</code> — a display-name attribution fail-softed the first check live in
+  the smoke.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>On lock loss, abort quietly; on a real error, rethrow</strong> — a lost lock means a
+  successor owns the continuation, so the worker returns without flushing (the recovery invariant
+  leaves both stores at the pre-turn snapshot) and without publishing <code>turn_error</code>. A
+  real error rethrows so BullMQ applies its retry policy; the terminal <code>turn_error</code> on
+  attempts-exhaustion is published by the worker's <code>failed</code>-event handler, not here.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The heartbeat — not the TTL — is the primary double-run guard</strong> — three coordinated
@@ -266,17 +384,42 @@
   Honest worst-case takeover after a crash is ~30–45 s (TTL expiry + redelivery), not instant.
 </aside>
 
+<h2>Release, drain, and the post-turn re-mature</h2>
+
+<p>
+  A <code>finally</code> block always clears the heartbeat, releases the lock (a compare-and-delete,
+  so it only ever drops the worker's own token — safe even after lock loss), and clears
+  <code>dm_responding</code> so the <a href="./dm-trigger.html">DM trigger</a> worker can enqueue
+  the next turn. It then runs two drains, each in its own try/catch so a hiccup never masks the turn
+  outcome: an <strong>explicit drain</strong> (if an <code>@dm</code> landed mid-turn,
+  <code>takeExplicitPending</code> enqueues one explicit follow-up immediately) and a
+  <strong>post-turn re-mature</strong>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The post-turn re-mature closes a quiet-table dead-end</strong> — a player message that
+  arrives <em>while a turn is in flight</em> is swallowed by the trigger system (the evaluate job
+  exits on <code>dm_responding</code>, and a dedup'd re-add during an in-flight evaluation is
+  dropped). Without a re-arm it would sit unanswered until the next message — or forever, at a quiet
+  table. So at turn end, if player rows still sit above the responded watermark
+  (<code>listAfterSeq</code>), the worker re-arms the trigger's quiet window so the DM comes back
+  for them. This was found live in the MYT-68 E2E smoke; it pairs with the
+  <a href="./dm-trigger.html">DM trigger</a> debounce fixes from the same session.
+</aside>
+
 <h2>Cross-process frame publishing and the turnId fence</h2>
 
 <p>
   The worker has no in-memory socket registry, so it streams a turn by <code>PUBLISH</code>ing the
-  DM-turn frames — <code>dm_thinking</code>, <code>text_delta</code>, <code>turn_end</code>,
+  DM-turn frames — <code>dm_thinking</code>, <code>text_delta</code>, the MYT-68 mechanical frames
+  <code>skill_check</code> / <code>dice_roll</code>, <code>turn_end</code>, and
   <code>turn_error</code> — to the per-campaign channel. The <code>SessionHub</code> in every API
   container <code>PSUBSCRIBE</code>s the pattern and fans each frame out to its locally-registered
-  sockets. The FT streams through a <code>TurnEmit</code> closure the publisher binds to one
-  (campaign, turn); the tier seam itself stays frame-agnostic (a plain
-  <code>(text) =&gt; Promise&lt;void&gt;</code>), so MYT-68 can widen the emit without dragging the
-  wire contract into every tier.
+  sockets. The FT streams through a <strong><code>TurnEmitter</code></strong> the worker builds — a
+  small object (<code>emitText</code> / <code>emitSkillCheck</code> / <code>emitDiceRoll</code>)
+  bound to one (campaign, turn) and wrapped by the emitted-anything latch. The tier seam stays
+  frame-agnostic — it imports no wire-frame type; the publisher builds the wire frame around each
+  emitted piece — so the contract module stays out of every tier implementation.
 </p>
 
 <aside class="wiki-rationale">
@@ -303,41 +446,30 @@
   payload, so it is constant across a BullMQ redelivery (a redelivered job carries the same data).
   The client rule: a <code>dm_thinking</code> with a <code>turnId</code> already seen replaces the
   prior partial render for that turn. So a retried turn (or a stalled worker's late frames) dedups
-  rather than double-rendering. With stub tiers the re-stream is byte-identical; the field is what
-  makes MYT-68's non-deterministic FT safe to retry.
+  rather than double-rendering. The field is what makes the non-deterministic FT safe to retry —
+  paired with the §5 decision order, which keeps a re-run from re-streaming under the same id at
+  all.
 </aside>
 
-<h2>Turn state, the atomic flush, and the shared checkpoint envelope</h2>
+<h2>Turn state and the residual Redis flush</h2>
 
 <p>
-  The turn's LLM-tier state lives in three Redis keys added to the
-  <a href="./session-transport.html">session-state</a> module — <code>:ft_history</code>,
-  <code>:summary</code>, <code>:usage</code>. <code>loadTurnState</code> bulk-reads them with a
-  single <code>MGET</code>, JSON-parsing each with an empty default (an unset or corrupt key yields
-  <code>[]</code> / <code>''</code> / <code>{input:0,output:0}</code>).
-  <code>flushTurnState</code> writes all three plus a TTL refresh in one <code>MULTI</code>.
+  After the PG-direct change, the only LLM-tier state in Redis is the running summary and the usage
+  accumulator (<code>:summary</code>, <code>:usage</code> in the
+  <a href="./session-transport.html">session-state</a> module). The FT history key
+  (<code>:ft_history</code>) and its periodic checkpoint are <strong>retired</strong> — the
+  transcript is durable in Postgres. <code>loadTurnState</code> reads the summary + usage with a
+  single read; <code>flushTurnState</code> writes them plus a TTL refresh in one <code>MULTI</code>
+  after the transcript has already committed.
 </p>
 
 <aside class="wiki-rationale">
-  <strong
-    >Flush is one atomic <code>MULTI</code>, not a pipeline of independent <code>SET</code>s</strong
-  >
-  — a mid-flush failure across three separate writes could leave torn state (new history, stale
-  usage) that a retry would then double-append. The single transaction makes the flush
-  all-or-nothing. Usage is accumulated only in the in-memory copy and persisted solely by the flush,
-  so a retry is usage-safe by contract.
-</aside>
-
-<aside class="wiki-rationale">
-  <strong>MYT-66 writes a widened checkpoint envelope but builds no read-back</strong> — in-session
-  crash recovery rides BullMQ redelivery + the never-flush invariant, which needs no checkpoint
-  read. So MYT-66 does not yet deliver "recover turn state from Postgres after a full Redis loss" —
-  that loader is a later issue. The envelope shares the
-  <code>sessions.st_running_summary</code> column with the
-  <a href="./session-transport.html#read-the-checkpoint">suspend writer</a>: MYT-66 bumps the
-  envelope <code>kind</code> to a superset the suspend reader still parses, the two writers are
-  last-writer-wins, and the versioning discipline is fixed here once for the future ledger field
-  (MYT-70).
+  <strong>The flush is the cheap tail, not the durability point</strong> — durability is the atomic
+  Postgres append in <code>persistTurn</code>; the Redis flush carries only the small summary/usage
+  state. A flush failure after the commit re-runs the job, which converges (the rows exist) and
+  finishes the flush — so the flush is never the all-or-nothing gate it was under the old
+  Redis-history model. Usage is accumulated in the in-memory copy and persisted by this flush, so a
+  converging re-run is usage-safe.
 </aside>
 
 <h2>The producer and the dev fire-turn trigger</h2>
@@ -362,8 +494,8 @@
   >
   / <code>solo</code> / <code>auto</code>) and the optional <code>trigger.classification</code> is
   the Haiku verdict for the <code>auto</code> path. Both are metadata only — they never cross the
-  tier boundary into a Fast Thinker call, and the stub conductor ignores them. MYT-68 / 69 read
-  <code>trigger.classification</code> for the skip-ST routing.
+  tier boundary into a Fast Thinker call. The classification is the skip-ST routing hint the Slow
+  Thinker work (MYT-69) consumes; the FT never sees it.
 </p>
 
 <p>
@@ -402,13 +534,20 @@
   <li>
     <code>POST /api/dev/campaigns/:campaignId/fire-turn</code> with
     <code>{ "triggerText": "…" }</code>. Expect <code>202 { turnId }</code>, then on the socket:
-    <code>dm_thinking</code> → one <code>text_delta</code> (the canned stub line) →
-    <code>turn_end</code>, all carrying that <code>turnId</code>.
+    <code>dm_thinking</code> → a stream of <code>text_delta</code> chunks (real Sonnet prose) —
+    interleaved with <code>skill_check</code> / <code>dice_roll</code> frames if the FT calls a tool
+    — → <code>turn_end</code>, all carrying that <code>turnId</code>.
   </li>
   <li>
-    Confirm Redis turn state flushed: the <code>session:{campaignId}:ft_history</code> key now holds
-    the trigger + the canned assistant line; <code>session:lock:{campaignId}</code> is gone
-    (released).
+    Confirm the turn is durable in Postgres:
+    <code
+      >SELECT message_type, turn_ordinal FROM session_messages WHERE turn_id = '&lt;turnId&gt;'
+      ORDER BY turn_ordinal</code
+    >
+    shows the DM turn's <code>dm_text</code> (and any <code>skill_check</code> /
+    <code>dice_roll</code>) rows. <code>session:{campaignId}:lock</code> is gone (released);
+    <code>:summary</code> / <code>:usage</code> reflect the turn. There is no
+    <code>ft_history</code> key — the transcript is in Postgres.
   </li>
 </ol>
 
@@ -436,6 +575,14 @@
     ships per terminal turn regardless of path or container. See the
     <a href="./dm-trigger.html">DM trigger</a> page.
   </li>
+  <li>
+    If a job re-ran but <code>session_messages</code> already holds rows for its
+    <code>turnId</code>, the worker <em>converged</em> — it published <code>turn_end</code> and
+    advanced the watermark without re-rendering (look for the
+    <code>"turn already durable in PG; converging to turn_end"</code> warn). That is the correct
+    outcome for a crash after the commit; a turn that streamed frames but never committed instead
+    terminates with <code>turn_error</code>.
+  </li>
 </ol>
 
 <h2>Integration points</h2>
@@ -444,15 +591,18 @@
   The turn worker is the fourth Worker registered in the <a href="./worker.html">worker process</a>,
   on its own <code>session-turn</code> queue. It publishes through the per-campaign channel that
   <a href="./session-transport.html">session transport</a>'s <code>SessionHub</code> subscribes to —
-  both deriving the channel from <code>contract/session-channel.ts</code> — and adds the
-  <code>dm_thinking</code> / <code>text_delta</code> / <code>turn_end</code> /
-  <code>turn_error</code>
-  frames to that page's wire contract. Turn state extends the session-state Redis module the
-  transport owns, and the checkpoint envelope is shared with its suspend writer. The
-  <a href="./dev-tool.html">dev tool</a> drives the fire-turn trigger from the System page; the
-  <code>session-turn</code> queue handle is threaded through the
-  <a href="./index.html">backend</a>'s <code>AppDeps</code>. The stubbed tiers are the seams the
-  real Fast Thinker (MYT-68), Slow Thinker (MYT-69), and Scribe (MYT-73) implement. Upstream, the
+  both deriving the channel from <code>contract/session-channel.ts</code>. The
+  <a href="./fast-thinker.html">Fast Thinker</a> tier it runs is documented on its own page; the
+  Slow Thinker (MYT-69) and Scribe (MYT-73) seams are still stubs. The durable transcript it
+  reconstructs and appends lives in <code>session_messages</code> through the
+  <a href="../data/repository.html">repository layer</a>, and the mechanical frames it streams
+  (<code>skill_check</code> / <code>dice_roll</code>) join the <code>dm_thinking</code> /
+  <code>text_delta</code> / <code>turn_end</code> / <code>turn_error</code> frames on the
+  <a href="./session-transport.html">transport</a>'s wire contract — which also handles their
+  reconnect replay from the persisted rows. The residual summary/usage turn state extends the
+  session-state Redis module the transport owns. The <a href="./dev-tool.html">dev tool</a> drives
+  the fire-turn trigger from the System page; the <code>session-turn</code> queue handle is threaded
+  through the <a href="./index.html">backend</a>'s <code>AppDeps</code>. Upstream, the
   <a href="./dm-trigger.html">DM trigger</a> system decides <em>when</em> a turn fires and is what
   enqueues these jobs (other than the dev poke); this worker sets the
   <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
@@ -480,7 +630,16 @@
     <tr>
       <td><code>text_delta</code></td>
       <td><code>{ type, turnId, text }</code></td>
-      <td>One FT prose chunk — the only streamed content frame. No seq.</td>
+      <td>One FT prose chunk — the streamed content frame. No seq.</td>
+    </tr>
+    <tr>
+      <td><code>skill_check</code> / <code>dice_roll</code></td>
+      <td><code>{ type, turnId, … }</code></td>
+      <td>
+        MYT-68 mechanical frames the <a href="./fast-thinker.html">FT tool loop</a> emits in part
+        order. Live: no seq; reconnect replay carries the row seq. Owned by the
+        <a href="./session-transport.html">transport</a> contract.
+      </td>
     </tr>
     <tr>
       <td><code>turn_end</code></td>
@@ -511,18 +670,25 @@
       </td>
     </tr>
     <tr>
-      <td><code>session:{campaignId}:ft_history</code></td>
-      <td>
-        The conversation the FT sees. JSON array; <code>MGET</code> load / <code>MULTI</code> flush.
-      </td>
-    </tr>
-    <tr>
       <td><code>session:{campaignId}:summary</code></td>
       <td>Running summary, maintained by the ST. JSON string.</td>
     </tr>
     <tr>
       <td><code>session:{campaignId}:usage</code></td>
       <td>Accumulated token usage <code>{ input, output }</code>.</td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:state</code></td>
+      <td>
+        Hot session blob: participants, <code>ftContext</code>, <code>worldTone</code>. Read per
+        turn for context; <code>ftContext</code> re-loads from Postgres on a miss.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:seq</code></td>
+      <td>
+        Server-ordered seq counter (<code>INCR</code>); one per persisted message, player and DM.
+      </td>
     </tr>
     <tr>
       <td><code>session:campaign:{campaignId}</code> (channel)</td>
@@ -590,16 +756,26 @@
       <td><code>src/session/session-controller.ts</code></td>
       <td>
         <code>SessionController</code> — the transient conductor (<code>loadFromRedis</code> /
-        <code>processDmTurn</code> / <code>flushToRedis</code>).
+        <code>processDmTurn</code> / <code>persistTurn</code> / <code>flushToRedis</code>);
+        <code>fuseDirectionIntoLastUserMessage</code>; the <code>TranscriptStore</code> seam.
       </td>
     </tr>
     <tr>
       <td><code>src/session/turn-worker.ts</code></td>
       <td>
-        <code>processTurnJob</code> (now also sets/clears <code>dm_responding</code>, advances the
-        <code>last-responded-seq</code> watermark at flush, and drains the explicit-pending flag on
-        release), <code>buildSessionTurnWorker</code>, <code>publishTerminalTurnError</code> (H8 +
-        the §4.8 SET-NX latch claim), <code>LockLostError</code>; the tuning constants.
+        <code>processTurnJob</code> (the §5 converge / terminal / fresh decision; the latched
+        emitter; per-turn context resolution; the explicit-pending + post-turn re-mature drains),
+        <code>buildSessionTurnWorker</code>, <code>makeLatchedEmitter</code>,
+        <code>reloadFtContext</code>, <code>publishTerminalTurnError</code>,
+        <code>LockLostError</code>; the tuning constants.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/transcript-codec.ts</code></td>
+      <td>
+        <code>assistantToRows</code> / <code>rowsToConversation</code> — the one formatter between
+        <code>session_messages</code> rows and the multi-part <code>ConversationMessage</code>;
+        <code>TranscriptCorruptError</code>.
       </td>
     </tr>
     <tr>
@@ -628,15 +804,20 @@
     <tr>
       <td><code>src/session/tiers/types.ts</code></td>
       <td>
-        <code>FtTurnContext</code> (public-by-construction), <code>SlowThinker</code> /
-        <code>FastThinker</code> / <code>Scribe</code> interfaces, <code>TurnEmit</code>,
+        <code>FtTurnContext</code> (public-by-construction; <code>ftContext</code> added,
+        <code>runningSummary</code> removed), the multi-part <code>ConversationMessage</code> /
+        <code>ContentPart</code>, <code>SlowThinker</code> / <code>FastThinker</code> /
+        <code>Scribe</code> interfaces, the widened <code>TurnEmitter</code> +
+        <code>SkillCheckFramePayload</code> / <code>DiceRollFramePayload</code>,
         <code>StEvaluation</code> / <code>AssistantMessage</code> / <code>ScribeResult</code>.
       </td>
     </tr>
     <tr>
       <td><code>src/session/tiers/stubs.ts</code></td>
       <td>
-        <code>StubSlowThinker</code> / <code>StubFastThinker</code> / <code>StubScribe</code>.
+        <code>StubSlowThinker</code> / <code>StubFastThinker</code> / <code>StubScribe</code>. The
+        ST and Scribe stubs run in production; <code>StubFastThinker</code> is now test-only — the
+        real <a href="./fast-thinker.html">SonnetFastThinker</a> drives turns in MYT-68.
       </td>
     </tr>
     <tr>
@@ -662,8 +843,10 @@
   <code>backend/src/session/session-controller.ts</code>,
   <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/session/session-lock.ts</code>,
   <code>backend/src/session/turn-publisher.ts</code>,
-  <code>backend/src/session/turn-queue.ts</code>, <code>backend/src/session/tiers/</code>,
+  <code>backend/src/session/turn-queue.ts</code>,
+  <code>backend/src/session/transcript-codec.ts</code>, <code>backend/src/session/tiers/</code>,
   <code>backend/src/contract/session-channel.ts</code>,
-  <code>backend/src/routes/dev-fire-turn.ts</code>. Design spec:
-  <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code>.
+  <code>backend/src/routes/dev-fire-turn.ts</code>. Design specs:
+  <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code>,
+  <code>docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md</code>.
 </p>

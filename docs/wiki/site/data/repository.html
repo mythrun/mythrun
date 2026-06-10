@@ -763,10 +763,18 @@
   <a href="../auth-billing/billing-webhook.html">webhook handlers</a>,
   <a href="../auth-billing/billing-routes.html">billing routes</a>, and
   <a href="../runtime/world-gen.html">world-gen worker</a> consume them.
-  <code>sessionMessages</code> and <code>sessionParticipants</code> are the most recent additions —
-  they landed with their consumer, the
+  <code>sessionMessages</code> and <code>sessionParticipants</code> landed with their first
+  consumer, the
   <a href="../runtime/session-transport.html">multiplayer session transport</a> (append-only
-  transcript + per-session participant rows). The namespaces still unfilled by any consumer are
+  transcript + per-session participant rows), and grew with the
+  <a href="../runtime/session-turn.html">turn engine</a>: <code>sessionMessages</code> is now the
+  <strong>only</strong> transcript store, so it gained the PG-direct DM-turn surface (<code
+    >listFtContextRows</code
+  >
+  / <code>turnRowsExist</code> / <code>appendDmTurn</code>) and <code>characters</code> gained the
+  session-roster resolution the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s skill
+  checks read (<code>findSessionParticipantCharacterByName</code> /
+  <code>listSessionParticipantCharacters</code>). The namespaces still unfilled by any consumer are
   tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 

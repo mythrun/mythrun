@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fast Thinker · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="fast-thinker">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html" class="active">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Fast Thinker</div>
+        <article>
+<h1>Fast Thinker</h1>
+
+<p class="lead">
+  The player-facing prose tier — a Sonnet model driving an interleaved agentic tool loop: it streams
+  narration, calls deterministic tools (<code>roll_dice</code>, <code>roll_skill_check</code>) when
+  the scene needs mechanical truth, and writes prose <em>informed by</em> each tool's result rather
+  than deciding the outcome itself. It runs under enforced ignorance by construction — its context
+  type carries only public facts, so plot and NPC secrets have nowhere to live. The
+  <a href="./session-turn.html">session-turn conductor</a> calls it once per DM turn; everything the
+  player reads is its output.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="964pt" height="589pt"
+ viewBox="14.00 14.00 949.00 574.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 570.4)">
+<title>fast_thinker</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-556 930.86,-556 930.86,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_ft</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="215,-156.28 215,-461.12 511,-461.12 511,-156.28 215,-156.28"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-447.22" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SonnetFastThinker.render(ctx, emit)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_tools</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="8,-8 8,-99.28 602,-99.28 602,-8 8,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="305" y="-85.38" font-family="Courier,monospace" font-size="11.00">ft&#45;tools.ts &#160;— &#160;pure resolvers (data only, never emit)</text>
+</g>
+<!-- ctx -->
+<g id="node1" class="node">
+<title>ctx</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="520.76,-552 205.24,-552 205.24,-495.12 520.76,-495.12 520.76,-552"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-533.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FtTurnContext (public&#45;by&#45;construction)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-520.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ftContext · ftHistory · participants</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-507.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(no plot/secret field has anywhere to live)</text>
+</g>
+<!-- build -->
+<g id="node2" class="node">
+<title>build</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="510.86,-439.92 215.14,-439.92 215.14,-383.04 510.86,-383.04 510.86,-439.92"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-421.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildModelMessages</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-408.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">system (ft&#45;system.txt) + full transcript</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-394.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sliding cache breakpoints (§3.9)</text>
+</g>
+<!-- ctx&#45;&gt;build -->
+<g id="edge1" class="edge">
+<title>ctx&#45;&gt;build</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-494.5C363,-480.65 363,-463.78 363,-448.95"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-449.31 363,-442.31 360.55,-449.31 365.45,-449.31"/>
+</g>
+<!-- loop -->
+<g id="node3" class="node">
+<title>loop</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="507.56,-332.04 218.44,-332.04 218.44,-275.16 507.56,-275.16 507.56,-332.04"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-313.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">streamTextWithTools (Sonnet)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-300.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stopWhen stepCountIs(FT_MAX_TOOL_STEPS)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-287.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prepareStep → final&#45;step prose close</text>
+</g>
+<!-- build&#45;&gt;loop -->
+<g id="edge2" class="edge">
+<title>build&#45;&gt;loop</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-382.38C363,-369.72 363,-354.6 363,-341.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-341.28 363,-334.28 360.55,-341.28 365.45,-341.28"/>
+</g>
+<!-- consume -->
+<g id="node4" class="node">
+<title>consume</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="484.46,-213.16 241.54,-213.16 241.54,-156.28 484.46,-156.28 484.46,-213.16"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-194.62" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">consume fullStream IN PART ORDER</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-181.42" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(the SINGLE emission point)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-168.22" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">error/abort parts → throw</text>
+</g>
+<!-- loop&#45;&gt;consume -->
+<g id="edge3" class="edge">
+<title>loop&#45;&gt;consume</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-274.6C363,-258.96 363,-239.28 363,-222.42"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-222.71 363,-215.71 360.55,-222.71 365.45,-222.71"/>
+<text xml:space="preserve" text-anchor="middle" x="411.01" y="-241.16" font-family="Courier,monospace" font-size="10.00">fullStream parts</text>
+</g>
+<!-- dice -->
+<g id="node5" class="node">
+<title>dice</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="270.36,-71.48 7.64,-71.48 7.64,-14.6 270.36,-14.6 270.36,-71.48"/>
+<text xml:space="preserve" text-anchor="middle" x="139" y="-52.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">roll_dice</text>
+<text xml:space="preserve" text-anchor="middle" x="139" y="-39.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rollDice(count, sides)</text>
+<text xml:space="preserve" text-anchor="middle" x="139" y="-26.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(crypto.randomInt — Principle #4)</text>
+</g>
+<!-- consume&#45;&gt;dice -->
+<g id="edge5" class="edge">
+<title>consume&#45;&gt;dice</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M240.84,-160.92C221.52,-153.62 202.75,-143.99 186.99,-131.28 170.66,-118.1 159.02,-97.81 151.3,-80.1"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="153.66,-79.4 148.72,-73.86 149.13,-81.27 153.66,-79.4"/>
+<text xml:space="preserve" text-anchor="middle" x="214" y="-116.28" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
+</g>
+<!-- skill -->
+<g id="node6" class="node">
+<title>skill</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="602.16,-78.08 299.84,-78.08 299.84,-8 602.16,-8 602.16,-78.08"/>
+<text xml:space="preserve" text-anchor="middle" x="451" y="-59.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">roll_skill_check → skill&#45;check.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="451" y="-46.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolve roller (session_participants)</text>
+<text xml:space="preserve" text-anchor="middle" x="451" y="-33.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ modifier (per&#45;skill level, expertise)</text>
+<text xml:space="preserve" text-anchor="middle" x="451" y="-19.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ Haiku DC table → d20 → tier</text>
+</g>
+<!-- consume&#45;&gt;skill -->
+<g id="edge4" class="edge">
+<title>consume&#45;&gt;skill</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M355.95,-155.72C353.64,-140.58 353.34,-122.01 360.99,-107.28 365.46,-98.67 371.7,-90.99 378.83,-84.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="380.04,-86.41 383.65,-79.93 376.79,-82.75 380.04,-86.41"/>
+<text xml:space="preserve" text-anchor="middle" x="388" y="-116.28" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
+</g>
+<!-- emit -->
+<g id="node7" class="node">
+<title>emit</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="926.86,-71.48 631.14,-71.48 631.14,-14.6 926.86,-14.6 926.86,-71.48"/>
+<text xml:space="preserve" text-anchor="middle" x="779" y="-52.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">TurnEmitter</text>
+<text xml:space="preserve" text-anchor="middle" x="779" y="-39.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">emitText / emitSkillCheck / emitDiceRoll</text>
+<text xml:space="preserve" text-anchor="middle" x="779" y="-26.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(worker&#45;latched → PUBLISH frames)</text>
+</g>
+<!-- consume&#45;&gt;emit -->
+<g id="edge8" class="edge">
+<title>consume&#45;&gt;emit</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M470.4,-155.63C496.89,-148.19 525.1,-139.83 551,-131.28 602.06,-114.43 658.5,-92.86 702.45,-75.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="703.23,-77.71 708.82,-72.84 701.41,-73.16 703.23,-77.71"/>
+<text xml:space="preserve" text-anchor="middle" x="683.29" y="-122.28" font-family="Courier,monospace" font-size="10.00">text_delta /</text>
+<text xml:space="preserve" text-anchor="middle" x="683.29" y="-110.28" font-family="Courier,monospace" font-size="10.00">skill_check / dice_roll</text>
+</g>
+<!-- dice&#45;&gt;consume -->
+<g id="edge7" class="edge">
+<title>dice&#45;&gt;consume</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M186.22,-72.08C204.36,-82.96 225.21,-95.59 244,-107.28 266.66,-121.38 291.53,-137.28 312.65,-150.92"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="311.22,-152.91 318.42,-154.66 313.88,-148.8 311.22,-152.91"/>
+<text xml:space="preserve" text-anchor="middle" x="298.18" y="-116.28" font-family="Courier,monospace" font-size="10.00">result</text>
+</g>
+<!-- skill&#45;&gt;consume -->
+<g id="edge6" class="edge">
+<title>skill&#45;&gt;consume</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M441.91,-78.45C436.53,-95.24 428.65,-115.22 418,-131.28 413.77,-137.66 408.63,-143.84 403.22,-149.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="401.7,-147.64 398.53,-154.34 405.19,-151.07 401.7,-147.64"/>
+<text xml:space="preserve" text-anchor="middle" x="487.24" y="-122.28" font-family="Courier,monospace" font-size="10.00">constraint</text>
+<text xml:space="preserve" text-anchor="middle" x="487.24" y="-110.28" font-family="Courier,monospace" font-size="10.00">(fed back to model)</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  A DM turn's Fast Thinker pass is a <strong>multi-step generation</strong>, not a single prompt.
+  The <a href="./session-turn.html">SessionController</a> calls
+  <code>SonnetFastThinker.render(ctx, emit)</code>; the FT builds its prompt, runs the Vercel AI
+  SDK's tool loop on Sonnet, and consumes the resulting stream. The model alternates between writing
+  prose and calling tools: it narrates, decides a check is needed, calls
+  <code>roll_skill_check</code>, receives the resolved outcome as a constraint, and continues
+  narrating around that outcome — all inside one <code>render</code> call. The loop ends when the
+  model stops calling tools or the per-turn cap fires.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The SDK's tool loop, not a hand-rolled one</strong> — <code>streamText</code> +
+  <code>tool()</code> + <code>stopWhen</code> + <code>prepareStep</code> + the typed
+  <code>fullStream</code> (text-delta / tool-call / tool-result / error / abort parts) + per-message
+  cache breakpoints cover every requirement, including the cap's graceful prose close. The SDK's
+  deterministic tool loop is plumbing — like BullMQ — not delegated reasoning, so using it does not
+  cross the Zero-Framework-Cognition line: the <em>prose</em> is the model's job, the dice and skill
+  math are deterministic code, and re-implementing the loop would be strictly more bug surface for
+  no capability gain.
+</aside>
+
+<h2 id="the-wrapper-streamtextwithtools">The wrapper: streamTextWithTools</h2>
+
+<p>
+  The FT never reaches into the <code>'ai'</code> package directly (a lint rule forbids it). It
+  calls <code>streamTextWithTools</code>, the net-new streaming-with-tools primitive added to the
+  <a href="./llm.html">LLM client</a>'s <code>ai.ts</code> alongside <code>generateObject</code> /
+  <code>streamObject</code> / <code>generateText</code>. The wrapper exposes the
+  <code>fullStream</code> plus two distinct usage promises — the final step's usage (the
+  context-fill signal) and the cumulative <code>totalUsage</code> across all steps (the spend
+  number) — and threads the per-turn timeout through the SDK's native <code>timeout</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Errors and timeouts arrive as in-band stream parts, not throws</strong> — verified against
+  the installed SDK: when the provider errors mid-stream or the per-turn timeout fires,
+  <code>streamText</code> enqueues an <code>error</code> / <code>abort</code> part and closes the
+  stream <em>gracefully</em> — the <code>for await</code> does not throw on its own. So the consume
+  loop must throw on both, or a truncated turn ends "normally" and gets persisted as canon. There is
+  also no mid-turn retry: the SDK's internal retry only fires on raw retryable API errors, which the
+  <a href="./llm.html">middleware</a> has already mapped away. A divergent re-stream under one turn
+  is worse than a rare dead turn, so a failure after any frame has shipped is terminal — see the
+  <a href="./session-turn.html">turn lifecycle</a>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Final-step usage and total usage are different numbers</strong> — the SDK's per-call
+  <code>usage</code> is the final step only; cumulative spend is <code>totalUsage</code>. A
+  five-step turn billed off the final step would under-count four Sonnet passes, so the wrapper
+  names both explicitly. The usage promises are also pre-handled: on a zero-step failure they
+  reject, and the wrapper attaches no-op catches so an FT that throws out of its consume loop never
+  leaves an unhandled rejection to kill the worker.
+</aside>
+
+<h2 id="the-consume-loop-the-single-emission-point">The consume loop: the single emission point</h2>
+
+<p>
+  <code>render</code> iterates <code>fullStream</code> and emits player-visible frames
+  <strong>in stream-part order</strong>: a <code>text-delta</code> becomes a
+  <code>text_delta</code> frame, a <code>tool-result</code> becomes a <code>skill_check</code> or
+  <code>dice_roll</code> frame built from the result and its call args. Tools <em>never</em> emit —
+  all emission happens here, in one place. As it consumes, the loop also assembles the returned
+  multi-part <code>AssistantMessage</code> directly from the stream parts (text deltas coalesce into
+  text parts split at tool boundaries; tool-call and tool-result parts append at their positions),
+  so the persisted turn is Mythrun-owned and never coupled to the SDK's own message shape.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why emit from the consume loop and not from inside a tool</strong> — the SDK executes
+  tools at its internal pipeline pace, <em>ahead</em> of the consumer, so an emit from inside a
+  tool's <code>execute</code> could hit the wire before the prose deltas that preceded the tool call
+  in the model's output. <code>fullStream</code> interleaves tool-call / tool-result parts at their
+  true positions, so part-order emission <em>is</em> model-output order. It also serializes the
+  player-visible frames of parallel same-step tool calls (a full-party "everyone roll Perception")
+  deterministically, even though the SDK may run those resolvers concurrently. Frames carry no
+  sequence number, so arrival order is the only ordering — which makes this invariant load-bearing.
+</aside>
+
+<h2 id="the-cap-and-the-prose-close">The cap and the prose close</h2>
+
+<p>
+  <code>FT_MAX_TOOL_STEPS</code> (5) bounds the loop via <code>stopWhen: stepCountIs(...)</code>: up
+  to four tool-calling steps plus one prose-close step. A full-party group check fits in a single
+  step through parallel tool calls, so the cap is rarely the binding limit.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The forced close is an injected instruction, not <code>toolChoice: 'none'</code></strong>
+  — verified against the Anthropic provider: <code>toolChoice: 'none'</code> strips the
+  <code>tools</code> param entirely, and an Anthropic request whose history holds tool blocks but
+  defines no tools is rejected with a 400 — exactly on the turns that hit the cap. So
+  <code>prepareStep</code> on the final step keeps tools defined and appends a close instruction
+  ("wrap up in prose, do not call tools"). If the model defies it and emits a tool call on the final
+  step, that dangling call has no result; it is dropped from the persisted turn (and logged), so the
+  rebuilt history stays clean and never 400s the next turn.
+</aside>
+
+<h2 id="the-tool-registry-pure-resolvers">The tool registry: pure resolvers</h2>
+
+<p>
+  <code>ft-tools.ts</code> (<code>buildFtTools</code>) is the extension point — the place future
+  tools (<code>cast_spell</code>, <code>initiate_combat</code>, <code>world_fact_lookup</code>)
+  register as their resolvers land. MYT-68 wires two. Tools are <strong>pure resolvers</strong>:
+  their <code>execute</code> returns data only, never emits a frame, and the SDK feeds each result
+  back to the model as the next step's input.
+</p>
+
+<ul>
+  <li>
+    <strong><code>roll_dice</code></strong> — <code>{ count, sides }</code> over the standard die
+    set; returns <code>{ results, total }</code>. The bounds are enforced in code (Zod plus a
+    defensive clamp in the engine) — an unbounded count would stall the worker, which holds the
+    session lock. For non-skill rolls (damage, wild magic). No modifier param: a "2d6+3" total would
+    be LLM arithmetic, acceptable here and never treated as mechanical truth (authoritative damage
+    math is the combat engine's job, later).
+  </li>
+  <li>
+    <strong><code>roll_skill_check</code></strong> —
+    <code>{ character_name, skill, context, advantage?, disadvantage? }</code>; the full
+    pre-generated-DC-table flow below. <code>character_name</code> resolves against the
+    <strong>session roster</strong>, a closed known set, never a free-text DB key.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The resolver's injected dependency is a scoped projection, not the whole repo</strong> —
+  the tool loop adds a third inbound channel to the FT (tool results), which has no type-level
+  enforced-ignorance bound. The discipline is held by scope: the skill-check resolver receives only
+  a narrow mechanical-reads projection (<code>findSessionParticipantCharacterByName</code>), not the
+  full repository, so no future tool can casually return a repo-fetched secret-tier string.
+  <code>world_fact_lookup</code> stays Slow-Thinker-gated for exactly this reason.
+</aside>
+
+<h2 id="the-dice-engine-principle-4">The dice engine (Principle #4)</h2>
+
+<p>
+  <code>dice/engine.ts</code> is pure functions over <code>crypto.randomInt</code> — the LLM never
+  generates a random number. <code>rollD20WithType</code> returns the kept roll for
+  advantage/disadvantage (roll twice, keep higher/lower), <code>rollDice</code> sums a pool with a
+  defensive bound, <code>calculateModifier</code> is <code>floor((score − 10) / 2)</code>, and
+  <code>resolveRollType</code> applies the 5e rule that advantage and disadvantage cancel to a
+  normal roll. An injectable RNG makes every path deterministically unit-testable.
+</p>
+
+<h2 id="the-skill-check-resolver-principle-5">The skill-check resolver (Principle #5)</h2>
+
+<p>
+  <code>skill-check.ts</code> is the pre-generated-DC-table flow — and it is <strong>total</strong>:
+  every failure arm returns a structured error constraint rather than throwing, because an uncaught
+  throw would surface as a tool-error part the loop continues past, letting the model narrate an
+  outcome with no roll. The steps:
+</p>
+
+<ol>
+  <li>
+    <strong>Resolve the roller</strong> from the session roster (<code>session_participants</code>
+    joined to <code>characters</code>). The name is normalized (trim + case-fold) and matched
+    <em>exactly</em> against the closed participant set — structural validation, no fuzzy matching.
+    No match or an ambiguous name → an error constraint, never a throw.
+  </li>
+  <li>
+    <strong>Compute the modifier</strong> — the ability modifier from the character's score plus the
+    per-skill proficiency bonus, read from <code>character_skills.proficiency_level</code>:
+    <code>none → +0</code>, <code>proficient → +PB</code>, <code>expertise → +2×PB</code>, using the
+    authoritative <code>characters.proficiency_bonus</code> column. Both sides of the skill join are
+    normalized (the stored skill name is itself unconstrained LLM output), and an absent row
+    defaults to <code>none</code>.
+  </li>
+  <li>
+    <strong>Pre-generate the DC table</strong> — one Haiku call returns
+    <code>{ dc, outcomes: { fail, success, great_success } }</code>, the outcomes authored as
+    narrative constraints, not dialogue. The FT turn's abort signal is threaded into this nested
+    call so a turn timeout cancels the in-flight DC generation with no orphaned spend.
+  </li>
+  <li>
+    <strong>Roll and match</strong> — <code>rollD20WithType</code> + the modifier →
+    <code>total</code>; the tier is <code>total ≥ dc+5 → great_success</code>,
+    <code>≥ dc → success</code>, else <code>fail</code>. The matched outcome string is the
+    constraint. No nat-1 / nat-20 crit on ability checks — that is RAW only for attack rolls.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>Roll, then match — never prose pre-written for an outcome</strong> — this is CLAUDE.md
+  non-negotiable #5. Haiku generates the DC and three outcome descriptions <em>before</em> the roll;
+  code rolls deterministically; the matched tier is injected as a constraint the FT narrates around.
+  The model writes <em>how</em> a check fails or succeeds, informed by the outcome — it never
+  decides the outcome. The frame and the persisted row both carry <code>character_name</code>,
+  because in multiplayer every client must see whose check fired.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fail-soft, so the turn never dies on a bad check</strong> — if the Haiku DC call fails or
+  aborts, the resolver falls back to a fixed moderate DC with tier-neutral outcome templates, and
+  the deterministic roll + tier match still run against it, so "roll then match" still holds. An
+  unknown character, an ambiguous name, or an unmapped skill each returns an error constraint and
+  the ft-system prompt instructs the model not to invent a result. <code>roll_dice</code> out of
+  range returns a tool-error the model narrates around. Every arm is logged.
+</aside>
+
+<h2 id="enforced-ignorance-and-the-prompt">Enforced ignorance and the prompt</h2>
+
+<p>
+  The FT's grounding is two things: the curated, enforced-ignorance-safe prep document
+  (<code>session_preps.ft_context</code>, loaded into <code>FtTurnContext.ftContext</code> — see the
+  <a href="./session-turn.html">conductor</a>), and the full verbatim session transcript
+  reconstructed each turn from <code>session_messages</code>. It is never a summary. The
+  <code>ft-system.txt</code> prompt is a multiplayer rewrite of the prototype's single-player one:
+  it encodes the participant roster + character-name attribution, the tool protocol ("call the tool,
+  then narrate the returned constraint; never decide an outcome; never roll yourself"), enforced
+  ignorance (never reveal what a character can't know), and how to handle an error constraint
+  without inventing a result.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The running summary is the Slow Thinker's tool, not the FT's memory</strong> — the FT
+  never reads the running summary. It holds the literal full transcript every turn, so there is no
+  compressed history to hallucinate around. The summary is the Slow Thinker's input and the Scribe's
+  session-end input; it plays no role in FT grounding or recovery. Removing it from the FT's context
+  type is what makes "secrets have nowhere to live" structural rather than a convention.
+</aside>
+
+<h2 id="prompt-caching-the-cost-lever">Prompt caching: the cost lever</h2>
+
+<p>
+  Holding the full transcript every turn is only affordable with prompt caching, so the FT attaches
+  an ephemeral <code>cache_control</code> breakpoint to the system message (which carries the
+  immutable <code>ft_context</code> head — the ideal anchor) and to the last settled history message
+  (the end of the prior turn). Each of the up-to-five steps then re-uses the cached prefix rather
+  than re-paying full input price on the accumulating tool-result tail.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Cache breakpoints ride per-message provider options, never the call level</strong> —
+  verified against the provider: the Anthropic provider reads <code>cache_control</code> only from a
+  message's or part's <code>providerOptions</code>, never from the call-level
+  <code>providerOptions.anthropic</code>. A top-level setting is silently inert — no error, just
+  full input price on every step of every turn. That is why the system prompt is passed as a
+  system-role <em>message</em> (not the SDK's <code>system:</code> param) and why the
+  <a href="./llm.html">middleware</a> logs <code>cacheReadTokens</code>: a mis-placed breakpoint is
+  otherwise invisible. The smoke asserts cache reads are non-zero on turn ≥ 2.
+</aside>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The Fast Thinker is the first real cognitive tier behind the
+  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; the Slow Thinker and Scribe
+  remain stubs until later issues. It runs through the <a href="./llm.html">LLM client</a>'s
+  <code>streamTextWithTools</code> wrapper (Sonnet) and its skill-check resolver makes a nested
+  Haiku call through the same abstraction. Its roller resolution and per-skill proficiency reads
+  come from the <a href="../data/repository.html">repository layer</a>'s
+  <code>characters.findSessionParticipantCharacterByName</code>. The frames it emits
+  (<code>skill_check</code>, <code>dice_roll</code>, plus the streamed <code>text_delta</code>) flow
+  through the worker-latched emitter to the
+  <a href="./session-transport.html">session transport</a>'s wire contract, and the multi-part
+  assistant message it returns is persisted to the PG-direct transcript by the conductor.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="config-constants-ft-config-ts">Config constants (ft-config.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Default</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>FT_MODEL</code></td>
+      <td><code>SONNET</code></td>
+      <td>The player-facing prose model; swappable for an Opus eval.</td>
+    </tr>
+    <tr>
+      <td><code>SKILL_CHECK_MODEL</code></td>
+      <td><code>HAIKU</code></td>
+      <td>The DC-table tier.</td>
+    </tr>
+    <tr>
+      <td><code>FT_MAX_TOOL_STEPS</code></td>
+      <td>5</td>
+      <td>The per-turn cap: up to N−1 tool-calling steps + 1 instructed prose close.</td>
+    </tr>
+    <tr>
+      <td><code>FT_TURN_TIMEOUT_MS</code></td>
+      <td>180000</td>
+      <td>Per-turn budget (whole loop), surfaced as the SDK's native abort.</td>
+    </tr>
+    <tr>
+      <td><code>SKILL_CHECK_TIMEOUT_MS</code></td>
+      <td>30000</td>
+      <td>Per-call DC-table timeout, threaded with the turn's abort signal.</td>
+    </tr>
+    <tr>
+      <td><code>FALLBACK_DC</code> / <code>FALLBACK_OUTCOMES</code></td>
+      <td>11 / tier-neutral</td>
+      <td>The §5 fail-soft DC table when Haiku fails or aborts.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="files">Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/tiers/fast-thinker.ts</code></td>
+      <td>
+        <code>SonnetFastThinker</code> (the tier), <code>buildModelMessages</code> (the
+        deterministic prompt assembly with cache breakpoints).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/tiers/ft-tools.ts</code></td>
+      <td>
+        <code>buildFtTools</code> — the extensible tool registry (<code>roll_dice</code> +
+        <code>roll_skill_check</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/skill-check.ts</code></td>
+      <td>
+        <code>resolveSkillCheck</code>, <code>MechanicalReads</code>, the
+        <code>SKILL_ABILITIES</code>
+        map — the total, fail-soft DC-table flow.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/dice/engine.ts</code></td>
+      <td>
+        <code>rollD20WithType</code>, <code>rollDice</code>, <code>calculateModifier</code>,
+        <code>resolveRollType</code>, <code>proficiencyBonusByLevel</code> — deterministic over
+        <code>crypto.randomInt</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/ft-config.ts</code></td>
+      <td>
+        The tuning constants + <code>FT_CLOSE_INSTRUCTION</code> + the fail-soft fallback table.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/prompts/session/ft-system.txt</code></td>
+      <td>
+        The multiplayer FT system prompt (roster, attribution, tool protocol, enforced ignorance).
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/prompts/session/skill-check.txt</code> +
+        <code>src/llm/schemas/skill-check.ts</code>
+      </td>
+      <td>
+        The Haiku DC-table prompt + <code>SkillCheckResultSchema</code> (<code
+          >{ dc, outcomes }</code
+        >).
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/tiers/fast-thinker.ts</code>,
+  <code>backend/src/session/tiers/ft-tools.ts</code>,
+  <code>backend/src/session/skill-check.ts</code>, <code>backend/src/session/dice/engine.ts</code>,
+  <code>backend/src/session/ft-config.ts</code>,
+  <code>backend/src/session/transcript-codec.ts</code>,
+  <code>backend/src/llm/prompts/session/ft-system.txt</code>,
+  <code>backend/src/llm/prompts/session/skill-check.txt</code>,
+  <code>backend/src/llm/schemas/skill-check.ts</code>. Design spec:
+  <code>docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-wrapper-streamtextwithtools">The wrapper: streamTextWithTools</a></li><li style="padding-left:0"><a href="#the-consume-loop-the-single-emission-point">The consume loop: the single emission point</a></li><li style="padding-left:0"><a href="#the-cap-and-the-prose-close">The cap and the prose close</a></li><li style="padding-left:0"><a href="#the-tool-registry-pure-resolvers">The tool registry: pure resolvers</a></li><li style="padding-left:0"><a href="#the-dice-engine-principle-4">The dice engine (Principle #4)</a></li><li style="padding-left:0"><a href="#the-skill-check-resolver-principle-5">The skill-check resolver (Principle #5)</a></li><li style="padding-left:0"><a href="#enforced-ignorance-and-the-prompt">Enforced ignorance and the prompt</a></li><li style="padding-left:0"><a href="#prompt-caching-the-cost-lever">Prompt caching: the cost lever</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#config-constants-ft-config-ts">Config constants (ft-config.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

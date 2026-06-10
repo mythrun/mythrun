@@ -1,0 +1,49 @@
+digraph fast_thinker {
+  // The FastThinker — the real player-facing prose tier (Sonnet). The
+  // SessionController calls render(ctx, emit); the FT drives an interleaved
+  // tool loop via streamTextWithTools (the ai.ts wrapper over the Vercel AI
+  // SDK). It consumes fullStream in part order — text deltas stream out as
+  // text frames; a tool-call resolves through a pure resolver (roll_dice /
+  // roll_skill_check), whose RESULT is fed back to the model as a constraint
+  // and emitted as a skill_check / dice_roll frame from the consume loop (the
+  // single emission point). roll_skill_check runs the Principle #5 flow: a
+  // Haiku DC table → deterministic d20 (crypto.randomInt) → matched outcome
+  // tier as the narrative constraint. The cap stops the loop after N steps.
+  rankdir=TB;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  ctx [label="FtTurnContext (public-by-construction)\nftContext · ftHistory · participants\n(no plot/secret field has anywhere to live)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_ft {
+    label="SonnetFastThinker.render(ctx, emit)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    build [label="buildModelMessages\nsystem (ft-system.txt) + full transcript\nsliding cache breakpoints (§3.9)"];
+    loop  [label="streamTextWithTools (Sonnet)\nstopWhen stepCountIs(FT_MAX_TOOL_STEPS)\nprepareStep → final-step prose close"];
+    consume [label="consume fullStream IN PART ORDER\n(the SINGLE emission point)\nerror/abort parts → throw", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_tools {
+    label="ft-tools.ts  —  pure resolvers (data only, never emit)";
+    style="dotted";
+    dice  [label="roll_dice\nrollDice(count, sides)\n(crypto.randomInt — Principle #4)"];
+    skill [label="roll_skill_check → skill-check.ts\nresolve roller (session_participants)\n→ modifier (per-skill level, expertise)\n→ Haiku DC table → d20 → tier"];
+  }
+
+  emit [label="TurnEmitter\nemitText / emitSkillCheck / emitDiceRoll\n(worker-latched → PUBLISH frames)", color="ember", fontcolor="ember"];
+
+  ctx -> build;
+  build -> loop;
+  loop -> consume [label="fullStream parts"];
+
+  consume -> skill [label="tool-call", style=dashed];
+  consume -> dice  [label="tool-call", style=dashed];
+  skill -> consume [label="constraint\n(fed back to model)"];
+  dice  -> consume [label="result"];
+
+  consume -> emit [label="text_delta /\nskill_check / dice_roll"];
+}

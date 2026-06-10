@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session transport</div>
         <article>
@@ -471,10 +471,25 @@
     must not occupy the one-active slot unpaid) → <code>402</code>.
   </li>
   <li>
-    Initialize the Redis <code>:state</code> blob. A fresh session leaves the
-    <code>:seq</code> counter unset, so the first <code>nextSeq</code> returns 1.
+    Initialize the Redis <code>:state</code> blob, parking the FastThinker's prep context
+    (<code>ftContext</code>, from <code>session_preps.ft_context</code>) and the world tone
+    alongside the participant list — so the <a href="./session-turn.html">turn worker</a> reads them
+    per turn without a Postgres round-trip. A fresh session leaves the <code>:seq</code> counter
+    unset, so the first <code>nextSeq</code> returns 1.
   </li>
 </ol>
+
+<aside class="wiki-rationale">
+  <strong>The FT context is loaded once at session start, fail-soft on a missing prep</strong> — the
+  prep doc is immutable per session, so it is read once into the hot <code>:state</code> blob rather
+  than per turn. A session whose prep stage never ran (or whose row was deleted in the narrow window
+  between the precondition check and this read) still starts — the FastThinker degrades to
+  transcript-only grounding, logged loudly at warn, never a 409. The world tone is read with a
+  tier-neutral minimal accessor (<code>getToneAndEra</code>), not the plot-bearing world record, so
+  the enforced-ignorance boundary holds even on this turn-worker-facing path. If the blob is later
+  evicted mid-session, the turn worker re-loads <code>ftContext</code> from Postgres rather than
+  silently losing the canon.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Row-before-debit, with a delete-on-failure rollback</strong> — the debit and the row
@@ -552,8 +567,24 @@
   no integrated character surfaces as a typed <code>NoCharacterForParticipantError</code> that
   closes the socket cleanly rather than a raw FK violation). It then records presence and registers
   the socket <em>before</em> broadcasting the join, so the new socket is in the registry when the
-  fan-out comes back around.
+  fan-out comes back around. On join it also appends the character name to the
+  <code>:state</code> participant roster (the list the <a href="./fast-thinker.html">FT</a> system
+  prompt uses) — covering mid-session joins by construction, and never removed on leave (a departed
+  character is still in the scene).
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The <code>:state</code> roster is the FT prompt's, not the skill-check resolver's source of
+    truth</strong
+  >
+  — the roster update is a read-modify-write on the hot blob, so two simultaneous joins can lose a
+  name to last-write-wins until the next join. That is acceptable here because the skill-check
+  resolver resolves rollers against <code>session_participants</code> (the authoritative row store),
+  not this list — correctness never depends on the blob roster, and the
+  <a href="./session-turn.html">turn worker</a> reads the roster for the FT prompt from
+  <code>session_participants</code> in deterministic order anyway.
+</aside>
 
 <p>
   The first server frame is deterministic. A fresh connect (no
@@ -675,13 +706,26 @@
 <p>
   A client that drops reconnects with <code>?lastSeq=N</code> — the highest seq it has rendered.
   <code>buildReconnectFrame</code> returns a <code>session_reconnect</code> carrying every persisted
-  <code>player_message</code> with <code>seq &gt; N</code> (only player messages were ever
-  persisted, so the replay is a pure ordered message stream), the current participant list, and the
-  session mode. Author display and character names are resolved through two in-memory maps built
-  <em>once</em> from campaign-wide reads — no per-message DB lookup. An author who has since left
-  the campaign falls back to a stable "Former player" byline; their prose history still replays
-  intact.
+  row with <code>seq &gt; N</code>, the current participant list, and the session mode. As of MYT-68
+  that includes the DM-turn rows: a <code>player_message</code> row replays as a
+  <code>player_message</code> frame; a <code>dm_text</code> row replays as a consolidated
+  <code>dm_message</code> frame; <code>skill_check</code> / <code>dice_roll</code> rows are
+  reconstructed from their stored JSON content into their respective frames. So a reconnecting
+  client sees the prior DM turns, not just the player chat. Author display and character names are
+  resolved through two in-memory maps built <em>once</em> from campaign-wide reads — no per-message
+  DB lookup. An author who has since left the campaign falls back to a stable "Former player"
+  byline; their prose history still replays intact.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>A corrupt DM row drops one frame, never breaks the reconnect</strong> — the DM-row replay
+  reconstruction reads the stored JSON through narrow accessors, not a schema that fails loud. This
+  is a transport-replay path, so a malformed or unknown-type row yields <code>null</code> and is
+  dropped (logged), and the rest of the replay still ships. That differs deliberately from the
+  <a href="./session-turn.html">turn worker</a>'s history reconstruction, which <em>does</em> fail
+  loud on an incoherent transcript — there, an incoherent row is a persistence-layer invariant
+  violation that must crash the turn; here, it is one missing frame in a best-effort replay.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>lastSeq</code> is structurally validated at the boundary</strong>
@@ -763,11 +807,14 @@
   button" summon, no payload fields) — and deliberately adds <em>no</em> server frame: the trigger
   decision rides a dev-only structured log, never the player transport, because the hub fans every
   published frame to all sockets with no audience filter and a <code>dm_trigger</code> frame would
-  leak the classifier's reasoning to players (see <a href="./dm-trigger.html">DM trigger</a>). The
-  rest of the full protocol — <code>skill_check</code>, <code>dice_roll</code>,
-  <code>combat_*</code>, <code>session_end</code>, <code>st_evaluation</code>,
-  <code>scribe_result</code>, and the rest — is still deliberately absent until its surface is
-  built.
+  leak the classifier's reasoning to players (see <a href="./dm-trigger.html">DM trigger</a>).
+  MYT-68 adds the DM-turn mechanical frames the <a href="./fast-thinker.html">FT tool loop</a> emits
+  — <code>skill_check</code> and <code>dice_roll</code> (server → client), live-streamed during a
+  turn with no seq and replayed from the persisted rows on reconnect (then carrying the row seq),
+  plus <code>dm_message</code>, a replay-only frame for the consolidated DM prose row (live prose
+  streams as <code>text_delta</code>). The rest — <code>combat_*</code>, <code>session_end</code>,
+  <code>st_evaluation</code>, <code>scribe_result</code>, and the rest — is still deliberately
+  absent until its surface is built.
 </p>
 
 <aside class="wiki-rationale">
@@ -775,10 +822,24 @@
   the <code>classifyClientFrame</code> tripwire rejects any client frame type not in
   <code>CLIENT_FRAME_TYPES</code> at the transport boundary. The server-frame allowlist plays the
   same role on the outbound side: a frame type is added only when something produces it. MYT-66
-  added the four DM-turn frames precisely because the turn worker now produces them; the
-  still-unbuilt combat / skill-check frames stay out so the contract never advertises a frame with
-  nothing behind it. Same structural-gate discipline the pipeline subscriber uses (ZFC structural
-  exception — not LLM cognition).
+  added the four DM-turn streaming frames and MYT-68 the mechanical frames precisely because the
+  turn worker now produces them. <code>roll_complete</code> is deliberately <em>not</em> added to
+  the client allowlist — no server handler consumes it yet; it lands with the frontend
+  roll-animation issue. Adding it early would make the transport accept a frame nothing handles.
+  Same structural-gate discipline the pipeline subscriber uses (ZFC structural exception — not LLM
+  cognition).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Roll-reveal gating is client-side, not a server-held buffer</strong> — the worker emits
+  the <code>skill_check</code> / <code>dice_roll</code> frame then the dependent narration deltas,
+  in order; the frontend (a later milestone) plays the dice animation and reveals the buffered
+  narration locally. This is a deliberate amendment to the earlier server-synchronized-reveal model:
+  a cross-process session lock cannot be held pending a human animation ack without stalling the
+  worker and the queue. The tradeoff is that reveal timing becomes per-client — the roll
+  <em>result</em> is identical for everyone (resolved once, deterministically); only the animation
+  beat desyncs — and <code>turn_end</code> now fires at model speed, before a client finishes
+  animating.
 </aside>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -966,7 +1027,10 @@
     </tr>
     <tr>
       <td><code>session:{campaignId}:state</code></td>
-      <td><code>{ participants, mode, status }</code> JSON. ~2h TTL.</td>
+      <td>
+        <code>{ participants, mode, status, ftContext?, worldTone? }</code> JSON. ~2h TTL. The FT
+        prep context + world tone are parked here at session start for the turn worker (MYT-68).
+      </td>
     </tr>
     <tr>
       <td><code>session:campaign:{campaignId}</code> (channel)</td>
@@ -1021,10 +1085,12 @@
     <tr>
       <td><code>src/contract/session-events.ts</code></td>
       <td>
-        <code>CLIENT_FRAME_TYPES</code> (now also <code>dm_invoke</code>) /
-        <code>SERVER_FRAME_TYPES</code> (carries the MYT-66 DM-turn frames; no
-        <code>dm_trigger</code> frame) allowlists, <code>ClientFrame</code> /
-        <code>ServerFrame</code> unions, <code>classifyClientFrame</code> tripwire.
+        <code>CLIENT_FRAME_TYPES</code> (also <code>dm_invoke</code>;
+        <code>roll_complete</code> deliberately NOT here) / <code>SERVER_FRAME_TYPES</code> (the
+        MYT-66 streaming frames + the MYT-68 <code>skill_check</code> / <code>dice_roll</code> /
+        <code>dm_message</code> frames; no <code>dm_trigger</code> frame) allowlists,
+        <code>ClientFrame</code> / <code>ServerFrame</code> unions,
+        <code>classifyClientFrame</code> tripwire.
       </td>
     </tr>
     <tr>
@@ -1052,8 +1118,12 @@
       </td>
       <td>
         Composable repo binders — <code>append</code> / <code>listAfterSeq</code> /
-        <code>maxSeq</code>, and <code>join</code> (server-side character resolution) /
-        <code>leave</code> / <code>list</code>; <code>NoCharacterForParticipantError</code>.
+        <code>maxSeq</code>, plus the MYT-68 PG-direct transcript surface (<code
+          >listFtContextRows</code
+        >
+        / <code>turnRowsExist</code> / <code>appendDmTurn</code>), and
+        <code>join</code> (server-side character resolution) / <code>leave</code> /
+        <code>list</code>; <code>NoCharacterForParticipantError</code>.
       </td>
     </tr>
     <tr>

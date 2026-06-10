@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/dm-trigger.html" class="active">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html" class="active">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › DM trigger</div>
         <article>
@@ -344,19 +344,31 @@
   <code>dm-trigger-queue.ts</code>). Every <code>add</code> with the stable per-campaign dedup id
   <code>dm-trigger:{campaignId}</code> removes the still-delayed job and re-adds a fresh one,
   resetting the countdown. So a burst of player messages collapses onto a single evaluation that
-  fires only after <code>QUIET_WINDOW_MS</code> of quiet. The dedup <code>ttl</code> keeps the key
-  alive across the whole window so concurrent producers (from any container) keep landing on the
-  same id.
+  fires only after <code>QUIET_WINDOW_MS</code> of quiet.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The dedup TTL must exceed the longest delay the job can carry</strong> — the longest delay
-  a debounce job carries is the dead-air re-arm (≈ <code>DEAD_AIR_MS</code>, below), so
-  <code>DEDUP_TTL_MS = DEAD_AIR_MS + 4s</code>. If the dedup key expired before a long-delayed job
-  matured, a late activity pulse would spawn a <em>second</em> independent debounce job and silently
-  break coalescing. The reset is driven purely by <code>replace: true</code> — verified against
-  BullMQ's Lua; the recurring-scheduler surface (<code>upsertJobScheduler</code>) is deliberately
-  avoided as a known-buggy path.
+  <strong>No dedup TTL — the key must die with the job</strong> — an earlier design gave the dedup
+  key an explicit TTL (intended to span the whole window). That was a latent bug, surfaced live by
+  the MYT-68 real-LLM smoke: with an explicit TTL, BullMQ's finalization does <em>not</em> clear the
+  key (it only deletes keys with no TTL), and replace-mode cannot displace a job that has already
+  left the delayed state — so every reschedule for roughly a minute after an evaluation fired was
+  silently swallowed and the DM went untriggerable after each turn. Without a TTL the key dies with
+  the job at finalization, so post-evaluation messages schedule fresh. The reset is driven purely by
+  <code>replace: true</code> — verified against BullMQ's Lua; the recurring-scheduler surface
+  (<code>upsertJobScheduler</code>) is deliberately avoided as a known-buggy path.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A self-re-arm from inside the evaluate job must clear its own dedup key first</strong> —
+  the evaluate job's own re-arms (the not-quiet boundary re-arm, the sit-back-toward-dead-air
+  re-arm) add through the same dedup id <em>while their own job still holds the key</em>. A running
+  job cannot be replaced, so a plain dedup'd add from inside the evaluate is swallowed by its own
+  key — both re-arm paths had been dead in effect since they shipped. The worker-side reschedule
+  binding now calls <code>removeDeduplicationKey</code> before re-adding; the server-side producer
+  keeps the narrow <code>add</code>-only surface (removing the key there would defeat the debounce).
+  The residual swallow window — an add while the evaluate runs, or while a turn is in flight — is
+  closed by the <a href="./session-turn.html">turn worker</a>'s post-turn re-mature.
 </aside>
 
 <aside class="wiki-rationale">
@@ -569,10 +581,12 @@
   The <a href="./session-turn.html">session-turn worker</a> sets <code>dm_responding</code> while a
   turn runs and records <code>last-responded-seq</code> = the max consumed seq at flush, then clears
   the flag on release. The <code>dm-trigger</code> worker checks <code>dm_responding</code> before
-  enqueuing; in-flight, it does not enqueue. New activity during the turn reschedules the debounce;
-  after the turn (flag cleared) and a fresh quiet window, the debounce matures, the worker builds
-  the batch from the <em>new</em> watermark, and enqueues one follow-up. If players were quiet
-  during the turn, no follow-up fires — correct, nothing new to say.
+  enqueuing; in-flight, it does not enqueue. But a message that arrived <em>during</em> the turn is
+  swallowed (the evaluate job exits on <code>dm_responding</code>, and a dedup'd re-add during an
+  in-flight evaluation is dropped) — so on release the turn worker runs a
+  <strong>post-turn re-mature</strong>: if player rows still sit above the responded watermark, it
+  re-arms the quiet window so the DM comes back for them. If players were quiet during the turn, no
+  follow-up fires — correct, nothing new to say.
 </p>
 
 <aside class="wiki-rationale">
@@ -581,11 +595,14 @@
     drain</strong
   >
   — the runtime spec's "if lock held, queue the trigger; on release, drain the queue" is realized
-  without a literal queue. The lock serializes any residual race (two enqueues slipping past the
-  flag check); the loser returns <code>{ ran: false }</code> and is re-driven by the debounce, not
-  by blind BullMQ <code>attempts</code>. The one exception is an explicit summon during an in-flight
-  turn: the session-turn worker checks the explicit-pending flag on release and enqueues the
-  follow-up <em>immediately</em>, so the summon is honored the instant the current turn ends.
+  without a literal queue. The active re-arm (rather than waiting passively for the next player
+  message) is what keeps a quiet table from stranding the DM after a turn — without it, a message
+  sent mid-turn would sit unanswered until someone spoke again. The lock serializes any residual
+  race (two enqueues slipping past the flag check); the loser returns
+  <code>{ ran: false }</code> and is re-driven by the debounce, not by blind BullMQ
+  <code>attempts</code>. The one exception is an explicit summon during an in-flight turn: the
+  session-turn worker checks the explicit-pending flag on release and enqueues the follow-up
+  <em>immediately</em>, so the summon is honored the instant the current turn ends.
 </aside>
 
 <h2 id="the-terminal-turn-error-subscriber">The terminal turn_error subscriber</h2>
@@ -724,11 +741,6 @@
       <td>Required quiet before the DM fires (auto / solo). Explicit bypasses it.</td>
     </tr>
     <tr>
-      <td><code>DEDUP_TTL_MS</code></td>
-      <td><code>DEAD_AIR_MS + 4000</code></td>
-      <td>Dedup-key lifetime; must exceed the longest delay (the dead-air re-arm) + pickup.</td>
-    </tr>
-    <tr>
       <td><code>MAX_QUIET_EXTENSION_MS</code></td>
       <td>30000</td>
       <td>Continuous-typing cap — the debounce can't push past this from first-unresponded.</td>
@@ -836,7 +848,9 @@
       <td><code>src/session/dm-trigger-queue.ts</code></td>
       <td>
         <code>rescheduleDebounce</code>, <code>clampQuietDelay</code>, <code>dedupId</code>,
-        <code>DmTriggerPayload</code> / <code>DmTriggerQueueLike</code>.
+        <code>DmTriggerPayload</code> / <code>DmTriggerQueueLike</code> /
+        <code>DmTriggerQueueWithDedup</code> (the worker-side surface that can clear its own dedup
+        key).
       </td>
     </tr>
     <tr>

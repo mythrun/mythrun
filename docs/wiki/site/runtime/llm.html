@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
         <article>
@@ -453,8 +453,47 @@
   <code>'stream'</code>) so retrospective queries can split spend across one-shot and streaming
   calls without inferring from finishReason. The unified <code>LogBindings</code> shape is declared
   in <code>middleware.ts</code> so a typo on a new callsite is a TS compile error rather than a
-  silently-malformed log entry.
+  silently-malformed log entry. The <code>llm.call</code> completion line also records
+  <code>cacheReadTokens</code> — the count of input tokens served from the Anthropic prompt cache.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>cacheReadTokens makes a cache regression visible</strong> — the
+  <a href="./fast-thinker.html">Fast Thinker</a> holds the full session transcript every turn, which
+  is only affordable while prompt-cache reads stay high on turn ≥ 2. A mis-placed cache breakpoint
+  is otherwise silent — no error, just full input price on every step of every turn — so the
+  middleware surfaces the per-call cache-read count for retrospective queries and the smoke asserts
+  it is non-zero after the first turn.
+</aside>
+
+<h2 id="stream-text-with-tools">The Fast Thinker tool loop: <code>streamTextWithTools</code></h2>
+
+<p>
+  <code>ai.ts</code> exposes <code>generateText</code> / <code>generateObject</code> /
+  <code>streamObject</code> but had no streaming-with-tools surface. MYT-68 adds
+  <code>streamTextWithTools</code> — the net-new primitive the
+  <a href="./fast-thinker.html">Fast Thinker</a> drives its interleaved tool loop with. It wraps the
+  SDK's <code>streamText</code> + <code>tool()</code> + <code>stopWhen</code> +
+  <code>prepareStep</code> on a wrapped (middleware-carrying) model, exposes the typed
+  <code>fullStream</code>, and returns two distinct usage promises: the final step's usage (the
+  context-fill signal) and the cumulative <code>totalUsage</code> across all steps (spend
+  attribution). The same lint rule that forbids reaching into <code>'ai'</code> directly is why the
+  wrapper also re-exports the SDK types callers need (<code>tool</code>, <code>ToolSet</code>,
+  <code>ModelMessage</code>, <code>stepCountIs</code>, …).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>No repair chain; errors and timeouts are in-band, not throws</strong> — the wrapper
+  deliberately wires no output-repair (that is <code>generateObject</code>'s concern; this is prose,
+  and a malformed tool input surfaces as a tool-error part the model recovers from). The per-turn
+  timeout is the SDK's native <code>timeout</code>, which — like a provider error mid-stream —
+  surfaces as an <em>in-band</em> <code>abort</code> / <code>error</code>
+  <code>fullStream</code> part and closes the stream gracefully; the <code>for await</code> does not
+  throw on its own. The <a href="./fast-thinker.html">consumer</a> owns converting both to thrown
+  Mythrun errors, so a truncated turn never ends "normally." The usage promises are pre-handled
+  (no-op catches) so an FT that throws out of its consume loop never leaves an unhandled rejection
+  to kill the worker.
+</aside>
 
 <h2 id="concurrency-and-rate-limits">Concurrency and rate-limit ceilings</h2>
 
@@ -1163,7 +1202,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#tier-named-model-constants">Tier-named model constants</a></li><li style="padding-left:0"><a href="#logging-error-normalization-as-middleware">Logging + error normalization, as middleware</a></li><li style="padding-left:0"><a href="#streaming-via-wrapstream">Streaming via wrapStream</a></li><li style="padding-left:0"><a href="#concurrency-and-rate-limits">Concurrency and rate-limit ceilings</a></li><li style="padding-left:0"><a href="#the-error-taxonomy">The error taxonomy</a></li><li style="padding-left:0"><a href="#the-prompt-loader">The prompt loader</a></li><li style="padding-left:0"><a href="#the-first-call-site-classifyprofanity">The first call site: classifyProfanity</a></li><li style="padding-left:0"><a href="#the-session-prep-generation-stage">The session-prep generation stage</a></li><li style="padding-left:0"><a href="#configuration-anthropic-api-key">Configuration: ANTHROPIC_API_KEY</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-new-call-site">Add a new structured-output call site</a></li><li style="padding-left:12px"><a href="#thread-session-context">Thread session / user context into the log line</a></li><li style="padding-left:12px"><a href="#rotate-the-anthropic-key">Rotate the Anthropic API key</a></li><li style="padding-left:12px"><a href="#diagnose-an-llm-error-spike">Diagnose an llm.error log spike</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:12px"><a href="#pinned-model-ids">Pinned model IDs</a></li><li style="padding-left:12px"><a href="#log-shape">Log shape</a></li><li style="padding-left:12px"><a href="#http-status-mapping">HTTP status mapping</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#tier-named-model-constants">Tier-named model constants</a></li><li style="padding-left:0"><a href="#logging-error-normalization-as-middleware">Logging + error normalization, as middleware</a></li><li style="padding-left:0"><a href="#streaming-via-wrapstream">Streaming via wrapStream</a></li><li style="padding-left:0"><a href="#stream-text-with-tools">The Fast Thinker tool loop: streamTextWithTools</a></li><li style="padding-left:0"><a href="#concurrency-and-rate-limits">Concurrency and rate-limit ceilings</a></li><li style="padding-left:0"><a href="#the-error-taxonomy">The error taxonomy</a></li><li style="padding-left:0"><a href="#the-prompt-loader">The prompt loader</a></li><li style="padding-left:0"><a href="#the-first-call-site-classifyprofanity">The first call site: classifyProfanity</a></li><li style="padding-left:0"><a href="#the-session-prep-generation-stage">The session-prep generation stage</a></li><li style="padding-left:0"><a href="#configuration-anthropic-api-key">Configuration: ANTHROPIC_API_KEY</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-new-call-site">Add a new structured-output call site</a></li><li style="padding-left:12px"><a href="#thread-session-context">Thread session / user context into the log line</a></li><li style="padding-left:12px"><a href="#rotate-the-anthropic-key">Rotate the Anthropic API key</a></li><li style="padding-left:12px"><a href="#diagnose-an-llm-error-spike">Diagnose an llm.error log spike</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:12px"><a href="#pinned-model-ids">Pinned model IDs</a></li><li style="padding-left:12px"><a href="#log-shape">Log shape</a></li><li style="padding-left:12px"><a href="#http-status-mapping">HTTP status mapping</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

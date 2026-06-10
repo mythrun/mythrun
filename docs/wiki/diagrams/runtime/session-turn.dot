@@ -1,14 +1,16 @@
 digraph session_turn {
-  // The DM-turn pipeline. A trigger enqueues a session-turn job on redisBatch;
-  // the session-turn worker (in the dedicated worker.ts process) acquires the
-  // per-session distributed lock, runs a transient SessionController through
-  // the deterministic ST → FT → Scribe conductor (tiers stubbed in MYT-66),
-  // flushes turn state in one atomic MULTI, and releases the lock. The worker
-  // holds no socket: it PUBLISHes dm_thinking / text_delta / turn_end frames to
-  // the per-campaign channel, which the API containers' SessionHub fans out to
-  // the live WebSockets. A crashed worker stops the heartbeat → the lock
-  // expires → BullMQ redelivers the still-unflushed job to another worker,
-  // which re-runs from clean Redis state (the never-flush-on-crash invariant).
+  // The DM-turn pipeline (PG-direct, MYT-68). A trigger enqueues a session-turn
+  // job on redisBatch; the session-turn worker (in the dedicated worker.ts
+  // process) acquires the per-session distributed lock, runs the §5 decision
+  // order (converge a durable turn / terminate a streamed-but-uncommitted turn
+  // / render fresh), and on a fresh run drives a transient SessionController
+  // through the deterministic ST → FT → Scribe conductor. The FT is now REAL
+  // (Sonnet); ST + Scribe stay stubs. The conductor RECONSTRUCTS the FT history
+  // from session_messages (PG) each turn — the Redis ft_history hot cache is
+  // retired. The rendered DM turn persists as ONE atomic, idempotent PG append
+  // (the single durability point); only the small {summary, usage} flushes to
+  // Redis. The worker holds no socket: it PUBLISHes frames to the per-campaign
+  // channel, which the API containers' SessionHub fans out to live WebSockets.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -28,10 +30,19 @@ digraph session_turn {
     color="ember";
     fontcolor="ember";
 
-    proc [label="processTurnJob\ntryAcquire lock → heartbeat\nload → process → flush\nrelease in finally", color="ember", fontcolor="ember"];
-    ctrl [label="SessionController (transient)\nloadFromRedis → processDmTurn\n→ flushToRedis · GC'd per turn"];
-    tiers [label="conductor (deterministic)\nST.evaluate → FT.render(emit)\n→ turn_end → async Scribe\n(tiers STUBBED — MYT-68/69/73)"];
-    pub  [label="TurnPublisher\nPUBLISH dm_thinking /\n  text_delta / turn_end / turn_error\nsessionChannel(prefix, cId)"];
+    proc [label="processTurnJob\ntryAcquire lock → heartbeat\n§5 decision: converge / terminal / fresh\nrelease in finally", color="ember", fontcolor="ember"];
+    ctrl [label="SessionController (transient)\nload → reconstruct history → render\n→ persistTurn → flushToRedis · GC'd per turn"];
+    tiers [label="conductor (deterministic)\nST.evaluate → FT.render(emit) → async Scribe\n(FT REAL — Sonnet; ST + Scribe STUBBED)", color="ember", fontcolor="ember"];
+    pub  [label="TurnPublisher (latched emitter)\nPUBLISH dm_thinking / text_delta /\n  skill_check / dice_roll / turn_end / turn_error"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    msgs [label="session_messages\nplayer rows + DM-turn rows\n(THE transcript store · §3.7)\nlistFtContextRows / appendDmTurn", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_realtime {
@@ -41,7 +52,7 @@ digraph session_turn {
     fontcolor="ember";
 
     lock  [label="session:lock:{cId}\nSET NX PX (token)\nLua compare-extend / -release"];
-    turnstate [label="session:{cId}:ft_history\n  :summary · :usage\nMGET load · MULTI flush"];
+    turnstate [label="session:{cId}:summary · :usage · :seq\n:state (participants · ftContext · worldTone)\n(NO ft_history — retired)"];
     channel [label="session:campaign:{cId}\n(PUBLISH frame JSON)", color="ember", fontcolor="ember"];
   }
 
@@ -53,20 +64,17 @@ digraph session_turn {
 
   client [label="player / SPA\ndedup on turnId", color="ember", fontcolor="ember"];
 
-  // Enqueue → dequeue
   trigger -> q_turn  [label="add job"];
   q_turn  -> proc    [label="BLPOP-style\n+ stalled redelivery"];
 
-  // Lock fence
   proc -> lock [label="tryAcquire / extend\n/ release (compare-and-delete)"];
 
-  // Run the turn
-  proc -> ctrl  [label="new + drive"];
+  proc -> ctrl  [label="new + drive (fresh run)"];
   ctrl -> tiers [label="conductor"];
-  ctrl -> turnstate [label="load (MGET)\nflush (MULTI)"];
+  ctrl -> msgs  [label="reconstruct history\n+ persist DM turn (atomic)", color="ember"];
+  ctrl -> turnstate [label="load / flush\n{summary, usage}"];
 
-  // Streaming frames (cross-process)
-  tiers   -> pub     [label="emit text_delta"];
+  tiers   -> pub     [label="emit text / skill_check / dice_roll"];
   proc    -> pub     [label="dm_thinking / turn_end", style=dashed];
   pub     -> channel [label="PUBLISH"];
   channel -> hub     [label="pmessage\n(every container)", color="ember"];
