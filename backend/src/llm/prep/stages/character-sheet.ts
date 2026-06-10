@@ -37,8 +37,12 @@ import { SONNET } from '../../models.js'
 import {
   CharacterSheetOutputSchema,
   type CharacterSheetOutput,
+  type EquipmentEntry,
+  type FeatureEntry,
+  type SpellEntry,
 } from '../../schemas/character-sheet.js'
 import type { CharacterConceptOutput } from '../../schemas/character-concept.js'
+import { spellSlotsFor, maxSlotLevel } from '../../../session/srd/spell-slots.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(
@@ -70,30 +74,81 @@ export interface CharacterSheetStageResult {
   readonly outputTokens: number
 }
 
+// MYT-70 §3.2: how many full generate→validate attempts before a coherence
+// violation terminal-fails the stage LOUD. `generateObject`'s own `maxRetries`
+// is the SDK's JSON-repair (Haiku/Sonnet fixing malformed structure), which
+// CANNOT fix a spell that's structurally valid but mechanically incoherent
+// (e.g. a level-9 spell on a level-1 caster). A coherence violation is a
+// regenerate, not a repair — so we re-run the whole generation up to this many
+// times, accumulating spend across every attempt.
+const COHERENCE_MAX_ATTEMPTS = 3
+
+/**
+ * MYT-70 §3.2 — thrown by `validateCoherence` when the generated sheet is
+ * structurally valid (Zod-clean) but mechanically incoherent against the SRD
+ * slot tables. Caught inside the stage's generate loop to trigger a FULL
+ * regenerate (NOT the SDK's JSON-repair, which can't fix mechanical mismatch);
+ * after the attempt budget is exhausted it propagates and terminal-fails the
+ * stage LOUD.
+ */
+export class CharacterSheetCoherenceError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CharacterSheetCoherenceError'
+  }
+}
+
 export async function runCharacterSheetStage(
   repo: Repo,
   args: CharacterSheetArgs,
 ): Promise<CharacterSheetStageResult> {
   const prompt = renderPrompt(args)
 
-  const result = await generateObject({
-    model: SONNET,
-    schema: CharacterSheetOutputSchema,
-    schemaName: 'CharacterSheetOutputSchema',
-    callSite: 'character-sheet',
-    prompt,
-    temperature: 0.5,
-    maxRetries: 3,
-  })
+  let inputTokens = 0
+  let outputTokens = 0
+  let sheet: CharacterSheetOutput | undefined
+  let lastCoherenceError: CharacterSheetCoherenceError | undefined
 
-  const characterId = await persistCharacter(repo, args, result.output)
+  // Generate→validate loop. Each attempt is a fresh generation; a coherence
+  // violation discards the output and regenerates (the SDK's JSON-repair only
+  // fixes malformed structure, never mechanical incoherence). Spend from EVERY
+  // attempt — including the discarded incoherent ones — accrues to the cost.
+  for (let attempt = 0; attempt < COHERENCE_MAX_ATTEMPTS; attempt += 1) {
+    const result = await generateObject({
+      model: SONNET,
+      schema: CharacterSheetOutputSchema,
+      schemaName: 'CharacterSheetOutputSchema',
+      callSite: 'character-sheet',
+      prompt,
+      temperature: 0.5,
+      maxRetries: 3,
+    })
+    // LanguageModelUsage exposes token fields as `number | undefined`; default
+    // to 0 to keep the strict-number contract (matches character-concept.ts).
+    /* c8 ignore start — Anthropic provider always populates these. */
+    inputTokens += result.usage.inputTokens ?? 0
+    outputTokens += result.usage.outputTokens ?? 0
+    /* c8 ignore stop */
 
-  // LanguageModelUsage exposes token fields as `number | undefined`; default
-  // to 0 to keep the strict-number contract (matches character-concept.ts).
-  /* c8 ignore start — Anthropic provider always populates these. */
-  const inputTokens = result.usage.inputTokens ?? 0
-  const outputTokens = result.usage.outputTokens ?? 0
-  /* c8 ignore stop */
+    try {
+      validateCoherence(result.output, args.narrative.level)
+      sheet = result.output
+      break
+    } catch (err) {
+      if (!(err instanceof CharacterSheetCoherenceError)) throw err
+      lastCoherenceError = err
+    }
+  }
+
+  // Budget exhausted with no coherent sheet — terminal-fail LOUD. The
+  // accumulated coherence error names the mismatch for the pipeline error blob.
+  if (sheet === undefined) {
+    /* c8 ignore next -- defensive: the loop always sets lastCoherenceError before sheet stays undefined. */
+    throw lastCoherenceError ?? new CharacterSheetCoherenceError('character-sheet: incoherent')
+  }
+
+  const characterId = await persistCharacter(repo, args, sheet)
+
   return {
     characterId,
     costUsd:
@@ -101,6 +156,90 @@ export async function runCharacterSheetStage(
       (outputTokens / 1_000_000) * SONNET_OUTPUT_PER_MTOK,
     inputTokens,
     outputTokens,
+  }
+}
+
+// ── Dedupe-merge (ZFC: mechanical aggregation on normalized names) ──────────
+//
+// The §3.1 unique indexes are on `lower(btrim(name))`, so an LLM that emits two
+// "Healing Potion"/"healing potion" rows would terminal-fail the insert. We
+// normalize + collapse name-collisions BEFORE the write: SUM quantities for
+// equipment (two stacks of the same item merge), KEEP-FIRST for features and
+// spells (no quantity to sum — the first emission wins, later dupes drop).
+
+/** The repo's normalization: `lower(btrim(name))` — trim THEN case-fold. */
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+/** Equipment dedupe: collisions SUM quantities, first occurrence holds position
+ *  + its consumable flag. */
+export function dedupeMergeEquipment(
+  equipment: readonly EquipmentEntry[],
+): readonly EquipmentEntry[] {
+  const byKey = new Map<string, EquipmentEntry>()
+  for (const e of equipment) {
+    const key = normalizeName(e.name)
+    const existing = byKey.get(key)
+    if (existing === undefined) {
+      byKey.set(key, e)
+    } else {
+      byKey.set(key, { ...existing, quantity: existing.quantity + e.quantity })
+    }
+  }
+  return [...byKey.values()]
+}
+
+/** Features dedupe: KEEP-FIRST on name collision (no quantity to merge). */
+export function dedupeMergeFeatures(features: readonly FeatureEntry[]): readonly FeatureEntry[] {
+  return keepFirstByName(features)
+}
+
+/** Spells dedupe: KEEP-FIRST on name collision. */
+export function dedupeMergeSpells(spells: readonly SpellEntry[]): readonly SpellEntry[] {
+  return keepFirstByName(spells)
+}
+
+function keepFirstByName<T extends { readonly name: string }>(items: readonly T[]): readonly T[] {
+  const byKey = new Map<string, T>()
+  for (const item of items) {
+    const key = normalizeName(item.name)
+    if (!byKey.has(key)) byKey.set(key, item)
+  }
+  return [...byKey.values()]
+}
+
+// ── Coherence validation (ZFC exception: structural validation) ─────────────
+//
+// Two structural invariants over (progression, level, spell levels) — no CON
+// mod, no class-name string-matching, pure math against the §9.1 slot tables:
+//   1. every leveled spell's level ≤ maxSlotLevel(progression, level);
+//   2. leveled spells present ⟹ progression ≠ 'none'.
+// Cantrip-only lists (every spell level 0) with progression 'none' are LEGAL.
+
+/**
+ * MYT-70 §3.2 — throws `CharacterSheetCoherenceError` when the sheet's spell
+ * list is mechanically impossible for its (progression, level). Pure; exported
+ * for unit tests. Cantrips (level 0) never need a slot, so a cantrip-only list
+ * with 'none' progression passes.
+ */
+export function validateCoherence(sheet: CharacterSheetOutput, level: number): void {
+  const leveledSpells = sheet.spells.filter((s) => s.level > 0)
+  if (leveledSpells.length === 0) return
+
+  if (sheet.spellcasting_progression === 'none') {
+    throw new CharacterSheetCoherenceError(
+      `character-sheet: ${String(leveledSpells.length)} leveled spell(s) present but spellcasting_progression is 'none'`,
+    )
+  }
+
+  const cap = maxSlotLevel(sheet.spellcasting_progression, level)
+  for (const spell of leveledSpells) {
+    if (spell.level > cap) {
+      throw new CharacterSheetCoherenceError(
+        `character-sheet: spell '${spell.name}' is level ${String(spell.level)} but the highest castable slot level for ${sheet.spellcasting_progression}/L${String(level)} is ${String(cap)}`,
+      )
+    }
   }
 }
 
@@ -138,13 +277,25 @@ async function persistCharacter(
   args: CharacterSheetArgs,
   sheet: CharacterSheetOutput,
 ): Promise<string> {
+  const level = args.narrative.level
+  // Dedupe-merge BEFORE the write (the §3.1 unique indexes are on the
+  // normalized name). Skills are not name-indexed in the same way and carry no
+  // merge semantics, so they pass through unchanged (the proficiency_level
+  // enum is the only mapping). §3.2 ledger init: gold ← starting_gold; hit-dice
+  // pool ← level; hit_die / progression ← emitted; slot rows derived from
+  // (progression, level), written full (max = remaining).
+  const equipment = dedupeMergeEquipment(sheet.equipment)
+  const features = dedupeMergeFeatures(sheet.features)
+  const spells = dedupeMergeSpells(sheet.spells)
+  const slotRows = spellSlotsFor(sheet.spellcasting_progression, level)
+
   return expectCommitted(
     await repo.transaction(async (tx) =>
       tx.characters.replaceSubTables({
         campaignId: args.campaignId,
         userId: args.userId,
         name: args.narrative.name,
-        level: args.narrative.level,
+        level,
         class: args.narrative.class,
         // narrative.race → characters.species (column rename, see file header).
         species: args.narrative.race,
@@ -159,22 +310,35 @@ async function persistCharacter(
         maxHitPoints: sheet.max_hit_points,
         armorClass: sheet.armor_class,
         proficiencyBonus: sheet.proficiency_bonus,
+        // §3.2 ledger-init fields.
+        startingGold: sheet.starting_gold,
+        hitDie: sheet.hit_die,
+        hitDiceRemaining: level,
+        spellcastingProgression: sheet.spellcasting_progression,
+        slotRows: slotRows.map((r) => ({ slotLevel: r.slotLevel, max: r.max })),
         skills: sheet.skills.map((s) => ({
           name: s.name,
           proficiencyLevel: proficiencyLevel(s),
         })),
         // feature_source has no Zod field — populated with the class, the
         // source of nearly every level-1 feature (see file header).
-        features: sheet.features.map((f) => ({
+        features: features.map((f) => ({
           name: f.name,
           source: args.narrative.class,
           description: f.description,
+          maxUses: f.max_uses,
+          recharge: f.recharge,
         })),
-        equipment: sheet.equipment.map((e) => ({ name: e.name, quantity: e.quantity })),
-        spells: sheet.spells.map((sp) => ({
+        equipment: equipment.map((e) => ({
+          name: e.name,
+          quantity: e.quantity,
+          consumable: e.consumable,
+        })),
+        spells: spells.map((sp) => ({
           name: sp.name,
           level: sp.level,
           prepared: sp.prepared,
+          ritual: sp.ritual,
         })),
       }),
     ),

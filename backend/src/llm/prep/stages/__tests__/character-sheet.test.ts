@@ -30,7 +30,15 @@ import {
 } from '../../../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../../../repo/__tests__/_helpers/test-pool.js'
 import { createRepo } from '../../../../repo/index.js'
-import { runCharacterSheetStage } from '../character-sheet.js'
+import {
+  runCharacterSheetStage,
+  CharacterSheetCoherenceError,
+  dedupeMergeEquipment,
+  dedupeMergeFeatures,
+  dedupeMergeSpells,
+  validateCoherence,
+} from '../character-sheet.js'
+import type { CharacterSheetOutput } from '../../../schemas/character-sheet.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -77,7 +85,7 @@ const NARRATIVE = {
     'Bran was apprenticed at the Bone Sept in his twelfth year, when the priests took him in after a winter on the moors orphaned him. Twenty years later, when the Sept burned, he walked out with a tin ladle and a name he was no longer sure was his. He has been on the road since, doing temple work for coin, telling himself he is still a cleric of the Hollow, listening for the small voice that used to answer him at the altar.',
 }
 
-const SHEET = {
+const SHEET: CharacterSheetOutput = {
   str: 12,
   dex: 10,
   con: 14,
@@ -88,12 +96,22 @@ const SHEET = {
   max_hit_points: 9,
   armor_class: 14,
   proficiency_bonus: 2,
+  // MYT-70 §3.2 ledger-init source fields.
+  starting_gold: 15,
+  hit_die: 8,
+  // cleric: a full caster — L1 cleric has a single level-1 slot row [{1,2}].
+  spellcasting_progression: 'full',
   skills: [{ name: 'Insight', proficient: true, expertise: false }],
   features: [
-    { name: 'Divine Domain: Life', description: 'extra healing for allies' },
+    {
+      name: 'Divine Domain: Life',
+      description: 'extra healing for allies',
+      max_uses: null,
+      recharge: 'none',
+    },
   ],
-  equipment: [{ name: 'Mace', quantity: 1 }],
-  spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
+  equipment: [{ name: 'Mace', quantity: 1, consumable: false }],
+  spells: [{ name: 'Cure Wounds', level: 1, prepared: true, ritual: false }],
 }
 
 interface SeedResult {
@@ -196,7 +214,8 @@ describe('runCharacterSheetStage', () => {
 
     const c = await pool.query(
       `SELECT class, species, background, str, dex, con, int, wis, cha,
-              hit_points, max_hit_points, armor_class, proficiency_bonus, level, name, user_id
+              hit_points, max_hit_points, armor_class, proficiency_bonus, level, name, user_id,
+              gold, hit_die, hit_dice_remaining, spellcasting_progression
          FROM characters WHERE id = $1`,
       [result.characterId],
     )
@@ -217,6 +236,26 @@ describe('runCharacterSheetStage', () => {
       level: 1,
       name: 'Bran of the Hollow',
       user_id: userId,
+      // §3.2 ledger init.
+      gold: 15,
+      hit_die: 8,
+      hit_dice_remaining: 1,
+      spellcasting_progression: 'full',
+    })
+
+    // §3.2 slot rows: a level-1 full caster has exactly one row — two level-1
+    // slots, written full (max = remaining).
+    const slots = await pool.query(
+      `SELECT slot_level, slots_max, slots_remaining
+         FROM character_spell_slots WHERE character_id = $1
+         ORDER BY slot_level`,
+      [result.characterId],
+    )
+    expect(slots.rowCount).toBe(1)
+    expect(slots.rows[0]).toMatchObject({
+      slot_level: 1,
+      slots_max: 2,
+      slots_remaining: 2,
     })
 
     const join = await pool.query(
@@ -241,7 +280,7 @@ describe('runCharacterSheetStage', () => {
     })
 
     const features = await pool.query(
-      `SELECT feature_name, feature_source, description
+      `SELECT feature_name, feature_source, description, max_uses, uses_remaining, recharge
          FROM character_features WHERE character_id = $1`,
       [result.characterId],
     )
@@ -250,10 +289,14 @@ describe('runCharacterSheetStage', () => {
       feature_name: 'Divine Domain: Life',
       feature_source: 'cleric',
       description: 'extra healing for allies',
+      // §3.2: untracked feature — both NULL (max IS NULL ⟺ uses_remaining IS NULL).
+      max_uses: null,
+      uses_remaining: null,
+      recharge: 'none',
     })
 
-    const equipment = await pool.query(
-      `SELECT item_name, quantity, equipped FROM character_equipment WHERE character_id = $1`,
+    const equipment = await pool.query<{ item_name: string; quantity: number }>(
+`SELECT item_name, quantity, equipped, consumable FROM character_equipment WHERE character_id = $1`,
       [result.characterId],
     )
     expect(equipment.rowCount).toBe(1)
@@ -261,10 +304,11 @@ describe('runCharacterSheetStage', () => {
       item_name: 'Mace',
       quantity: 1,
       equipped: false,
+      consumable: false,
     })
 
     const spells = await pool.query(
-      `SELECT spell_name, spell_level, prepared FROM character_spells WHERE character_id = $1`,
+      `SELECT spell_name, spell_level, prepared, ritual FROM character_spells WHERE character_id = $1`,
       [result.characterId],
     )
     expect(spells.rowCount).toBe(1)
@@ -272,6 +316,7 @@ describe('runCharacterSheetStage', () => {
       spell_name: 'Cure Wounds',
       spell_level: 1,
       prepared: true,
+      ritual: false,
     })
   })
 
@@ -379,5 +424,283 @@ describe('runCharacterSheetStage', () => {
       [first.characterId],
     )
     expect(spells.rowCount).toBe(1)
+  })
+
+  it('dedupe-merges equipment (SUM qty) + features/spells (keep-first) before the write', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    const DUPED: CharacterSheetOutput = {
+      ...SHEET,
+      // Two "Healing Potion" rows (case-different) → one row, qty summed (2+3).
+      equipment: [
+        { name: 'Healing Potion', quantity: 2, consumable: true },
+        { name: 'Mace', quantity: 1, consumable: false },
+        { name: 'healing potion', quantity: 3, consumable: true },
+      ],
+      // Two same-name features (keep-first: the FIRST description wins).
+      features: [
+        { name: 'Channel Divinity', description: 'first wins', max_uses: 1, recharge: 'short_rest' },
+        { name: 'channel divinity', description: 'second loses', max_uses: 2, recharge: 'long_rest' },
+      ],
+      // Two same-name spells (keep-first).
+      spells: [
+        { name: 'Cure Wounds', level: 1, prepared: true, ritual: false },
+        { name: 'cure wounds', level: 1, prepared: false, ritual: false },
+      ],
+    }
+
+    mockGenerateText.mockResolvedValueOnce({
+      output: DUPED,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    const result = await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: NARRATIVE,
+      worldTone: 't',
+      worldEra: 'e',
+    })
+
+    const equipment = await pool.query<{ item_name: string; quantity: number }>(
+      `SELECT item_name, quantity FROM character_equipment
+         WHERE character_id = $1 ORDER BY item_name`,
+      [result.characterId],
+    )
+    expect(equipment.rowCount).toBe(2)
+    const potion = equipment.rows.find((r) => r.item_name === 'Healing Potion')
+    expect(potion).toMatchObject({ item_name: 'Healing Potion', quantity: 5 })
+
+    const features = await pool.query(
+      `SELECT feature_name, description, max_uses FROM character_features WHERE character_id = $1`,
+      [result.characterId],
+    )
+    expect(features.rowCount).toBe(1)
+    expect(features.rows[0]).toMatchObject({
+      feature_name: 'Channel Divinity',
+      description: 'first wins',
+      max_uses: 1,
+    })
+
+    const spells = await pool.query(
+      `SELECT spell_name, prepared FROM character_spells WHERE character_id = $1`,
+      [result.characterId],
+    )
+    expect(spells.rowCount).toBe(1)
+    expect(spells.rows[0]).toMatchObject({ spell_name: 'Cure Wounds', prepared: true })
+  })
+
+  it('initializes a tracked feature (uses_remaining = max_uses, written full)', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    const TRACKED: CharacterSheetOutput = {
+      ...SHEET,
+      features: [
+        { name: 'Channel Divinity', description: 'turn undead', max_uses: 1, recharge: 'short_rest' },
+      ],
+    }
+    mockGenerateText.mockResolvedValueOnce({
+      output: TRACKED,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    const result = await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: NARRATIVE,
+      worldTone: 't',
+      worldEra: 'e',
+    })
+
+    const features = await pool.query(
+      `SELECT max_uses, uses_remaining, recharge FROM character_features WHERE character_id = $1`,
+      [result.characterId],
+    )
+    expect(features.rows[0]).toMatchObject({
+      max_uses: 1,
+      uses_remaining: 1,
+      recharge: 'short_rest',
+    })
+  })
+
+  it('regenerates on a coherence violation, then succeeds (incoherent → coherent)', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    // First generation: a level-3 spell on a level-1 full caster (max slot
+    // level 1) — incoherent, must trigger a regenerate.
+    const INCOHERENT: CharacterSheetOutput = {
+      ...SHEET,
+      spells: [{ name: 'Fireball', level: 3, prepared: true, ritual: false }],
+    }
+    mockGenerateText
+      .mockResolvedValueOnce({
+        output: INCOHERENT,
+        finishReason: 'stop',
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      } as never)
+      // Second generation: coherent.
+      .mockResolvedValueOnce({
+        output: SHEET,
+        finishReason: 'stop',
+        usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+      } as never)
+
+    const result = await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: NARRATIVE,
+      worldTone: 't',
+      worldEra: 'e',
+    })
+
+    // Two generations happened; cost accrued across BOTH attempts.
+    expect(mockGenerateText).toHaveBeenCalledTimes(2)
+    expect(result.inputTokens).toBe(12)
+    expect(result.outputTokens).toBe(8)
+
+    // The persisted sheet is the coherent one (Cure Wounds, level 1).
+    const spells = await pool.query(
+      `SELECT spell_name FROM character_spells WHERE character_id = $1`,
+      [result.characterId],
+    )
+    expect(spells.rows[0]).toMatchObject({ spell_name: 'Cure Wounds' })
+  })
+
+  it('terminal-fails LOUD after the coherence-retry budget is exhausted', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    const INCOHERENT: CharacterSheetOutput = {
+      ...SHEET,
+      spells: [{ name: 'Fireball', level: 3, prepared: true, ritual: false }],
+    }
+    // Every attempt returns the incoherent sheet — exhausts the budget.
+    mockGenerateText.mockResolvedValue({
+      output: INCOHERENT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    await expect(
+      runCharacterSheetStage(createRepo(pool), {
+        campaignId,
+        userId,
+        worldId,
+        narrative: NARRATIVE,
+        worldTone: 't',
+        worldEra: 'e',
+      }),
+    ).rejects.toBeInstanceOf(CharacterSheetCoherenceError)
+
+    // No character was written for this member (the write is gated on coherence).
+    const join = await pool.query(
+      `SELECT * FROM campaign_characters WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(join.rowCount).toBe(0)
+  })
+})
+
+// Pure-helper unit tests — no LLM, no DB; the dedupe/coherence functions are
+// pure and testable directly (the plan's Step 1).
+describe('character-sheet pure helpers', () => {
+  describe('dedupeMergeEquipment', () => {
+    it('sums quantities for normalized name collisions', () => {
+      const merged = dedupeMergeEquipment([
+        { name: 'Torch', quantity: 2, consumable: true },
+        { name: ' torch ', quantity: 3, consumable: true },
+        { name: 'Rope', quantity: 1, consumable: false },
+      ])
+      expect(merged).toHaveLength(2)
+      expect(merged.find((e) => e.name === 'Torch')).toMatchObject({ quantity: 5 })
+      expect(merged.find((e) => e.name === 'Rope')).toMatchObject({ quantity: 1 })
+    })
+  })
+
+  describe('dedupeMergeFeatures', () => {
+    it('keeps the first occurrence on a name collision', () => {
+      const merged = dedupeMergeFeatures([
+        { name: 'Rage', description: 'first', max_uses: 2, recharge: 'long_rest' },
+        { name: 'rage', description: 'second', max_uses: 3, recharge: 'long_rest' },
+      ])
+      expect(merged).toHaveLength(1)
+      expect(merged[0]).toMatchObject({ description: 'first', max_uses: 2 })
+    })
+  })
+
+  describe('dedupeMergeSpells', () => {
+    it('keeps the first occurrence on a name collision', () => {
+      const merged = dedupeMergeSpells([
+        { name: 'Light', level: 0, prepared: true, ritual: false },
+        { name: 'light', level: 0, prepared: false, ritual: false },
+      ])
+      expect(merged).toHaveLength(1)
+      expect(merged[0]).toMatchObject({ prepared: true })
+    })
+  })
+
+  describe('validateCoherence', () => {
+    function sheetWith(over: Partial<CharacterSheetOutput>): CharacterSheetOutput {
+      return { ...SHEET, ...over }
+    }
+
+    it('passes a cantrip-only list with progression none', () => {
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            spellcasting_progression: 'none',
+            spells: [{ name: 'Light', level: 0, prepared: true, ritual: false }],
+          }),
+          1,
+        ); },
+      ).not.toThrow()
+    })
+
+    it('passes an empty spell list with progression none', () => {
+      expect(() =>
+        { validateCoherence(sheetWith({ spellcasting_progression: 'none', spells: [] }), 1); },
+      ).not.toThrow()
+    })
+
+    it('throws when leveled spells are present with progression none', () => {
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            spellcasting_progression: 'none',
+            spells: [{ name: 'Cure Wounds', level: 1, prepared: true, ritual: false }],
+          }),
+          1,
+        ); },
+      ).toThrow(CharacterSheetCoherenceError)
+    })
+
+    it('throws when a leveled spell exceeds the max slot level', () => {
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            spellcasting_progression: 'full',
+            spells: [{ name: 'Fireball', level: 3, prepared: true, ritual: false }],
+          }),
+          1,
+        ); },
+      ).toThrow(CharacterSheetCoherenceError)
+    })
+
+    it('passes a leveled spell at exactly the max slot level', () => {
+      // L5 full caster has level-3 slots (FULL_TABLE L5 = [4,3,2]).
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            spellcasting_progression: 'full',
+            spells: [{ name: 'Fireball', level: 3, prepared: true, ritual: false }],
+          }),
+          5,
+        ); },
+      ).not.toThrow()
+    })
   })
 })
