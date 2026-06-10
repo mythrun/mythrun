@@ -39,6 +39,10 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   'src/repo/types.ts',
   // Minimal pg.ClientLike interface — type-only, no runtime code.
   'src/repo/_types.ts',
+  // MYT-68 tier-boundary seam — type/interface-only (FtTurnContext, TurnEmitter,
+  // LedgerUpdatePayload, the frame payload types). No executable code; consumers
+  // import the types transitively.
+  'src/session/tiers/types.ts',
   'src/contract/pipeline-jobs.ts',
   // Stripe SDK pricing-data fixture — module-level price tables that are
   // imported wholesale; the contract is "data is present + well-typed,"

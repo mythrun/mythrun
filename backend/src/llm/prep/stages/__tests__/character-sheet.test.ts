@@ -603,6 +603,36 @@ describe('runCharacterSheetStage', () => {
     )
     expect(join.rowCount).toBe(0)
   })
+
+  it('rethrows a NON-coherence error from the validation pass instead of retrying', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    // SHEET carries a leveled spell, so validateCoherence reaches maxSlotLevel →
+    // spellSlotsFor, which THROWS a plain Error (not a CharacterSheetCoherenceError)
+    // on an out-of-range character level. The loop must rethrow it immediately
+    // (the §138 `throw err` arm) — never swallow it as a coherence retry.
+    mockGenerateText.mockResolvedValue({
+      output: SHEET,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    await expect(
+      runCharacterSheetStage(createRepo(pool), {
+        campaignId,
+        userId,
+        worldId,
+        // Out of the 1..20 range spellSlotsFor accepts → a plain Error, not a
+        // coherence violation.
+        narrative: { ...NARRATIVE, level: 99 },
+        worldTone: 't',
+        worldEra: 'e',
+      }),
+    ).rejects.toThrow(/level out of range/)
+
+    // The non-coherence error short-circuits: only ONE generation, no retry budget burn.
+    expect(mockGenerateText).toHaveBeenCalledTimes(1)
+  })
 })
 
 // Pure-helper unit tests — no LLM, no DB; the dedupe/coherence functions are

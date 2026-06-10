@@ -1197,6 +1197,16 @@ describe('repo.characters', () => {
         )
         expect(up.rows[0]?.count).toBe('0')
       })
+
+      it('throws when the character row does not exist (UPDATE affects no row)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const { uuidv7 } = await import('../uuidv7.js')
+        // A well-formed but non-existent character id → the UPDATE returns 0 rows
+        // → the `!row` defensive guard throws rather than returning garbage.
+        await expect(ledger.writeHp(uuidv7(), 10)).rejects.toThrow(
+          /characters\.writeHp: no character row/,
+        )
+      })
     })
 
     describe('applyCondition / clearCondition', () => {

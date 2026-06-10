@@ -120,6 +120,9 @@ function assertLevelInRange(level: number): void {
 function rowsFromMaxima(maxima: readonly number[]): SpellSlotRow[] {
   const rows: SpellSlotRow[] = []
   for (let i = 0; i < maxima.length; i += 1) {
+    // noUncheckedIndexedAccess narrowing: i < length, so maxima[i] is always a
+    // number; the `?? 0` arm is unreachable.
+    /* c8 ignore next */
     const max = maxima[i] ?? 0
     if (max > 0) rows.push({ slotLevel: i + 1, max })
   }
@@ -155,12 +158,18 @@ export function spellSlotsFor(
   level: number,
 ): readonly SpellSlotRow[] {
   assertLevelInRange(level)
+  // noUncheckedIndexedAccess narrowing: `level` is range-checked to 1..20 above
+  // and every table carries rows 0..20, so each `TABLE[level]` is always
+  // defined — the `?? []` fallbacks are TS-mandated but unreachable.
   switch (progression) {
     case 'full':
+      /* c8 ignore next */
       return rowsFromMaxima(FULL_TABLE[level] ?? [])
     case 'half':
+      /* c8 ignore next */
       return rowsFromMaxima(HALF_TABLE[level] ?? [])
     case 'third':
+      /* c8 ignore next */
       return rowsFromMaxima(THIRD_TABLE[level] ?? [])
     case 'pact':
       return [{ slotLevel: pactSlotLevel(level), max: pactSlotCount(level) }]

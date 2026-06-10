@@ -104,12 +104,20 @@ const VALID_SHEET = {
   max_hit_points: 9,
   armor_class: 14,
   proficiency_bonus: 2,
+  starting_gold: 15,
+  hit_die: 8,
+  spellcasting_progression: 'full',
   skills: [{ name: 'Insight', proficient: true, expertise: false }],
   features: [
-    { name: 'Divine Domain: Life', description: 'extra healing for allies' },
+    {
+      name: 'Divine Domain: Life',
+      description: 'extra healing for allies',
+      max_uses: null,
+      recharge: 'none',
+    },
   ],
-  equipment: [{ name: 'Mace', quantity: 1 }],
-  spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
+  equipment: [{ name: 'Mace', quantity: 1, consumable: false }],
+  spells: [{ name: 'Cure Wounds', level: 1, prepared: true, ritual: false }],
 }
 
 // VALID_INTEGRATION (the stage-4 fixture) lived here under MYT-53.
