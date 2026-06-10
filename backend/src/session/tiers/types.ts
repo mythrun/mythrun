@@ -8,11 +8,16 @@
 // this type. As of MYT-68 the seam is STRENGTHENED: `ftContext` is the
 // enforced-ignorance-safe prep document (session_preps.ft_context; the
 // secret-bearing sd_playbook never loads here), and the old `runningSummary`
-// is REMOVED — it is authored by the secret-bearing Slow Thinker tier, the FT
-// never reads it, and from MYT-69 the ST gets its own widened view via
-// `TurnContext = FtTurnContext & StSecrets`. If you ever feel the urge to add
-// a plot/NPC-secret field here so the FT can "see a little more," that is the
-// bug the type system exists to prevent.
+// is REMOVED — it is authored by the secret-bearing Slow Thinker, the FT never
+// reads it. MYT-69 then retires the in-turn ST seam entirely: under the
+// POST-HOC model the ST runs OFF the turn path in its own worker (it loads its
+// own view from PG + Redis), so the `SlowThinker`/`StEvaluation` interfaces and
+// the reserved `TurnContext = FtTurnContext & StSecrets` widening are GONE —
+// the ST never consumes the FT's context object. The only ST-authored value
+// that rides this type is `standingDirective`, which is public-by-construction
+// (behavior-bound under the §4 channel contract — never secret rationale). If
+// you ever feel the urge to add a plot/NPC-secret field here so the FT can
+// "see a little more," that is the bug the type system exists to prevent.
 //
 // This module is self-contained on purpose (H5): the emit seam (`TurnEmitter`)
 // is a plain set of methods that does NOT import any frame type from
@@ -68,10 +73,12 @@ export interface TokenUsage {
  * PUBLIC-BY-CONSTRUCTION (H4) — and as of MYT-68, STRENGTHENED: ftContext is
  * the enforced-ignorance-safe prep doc (session_preps.ft_context; sd_playbook
  * never loads here), and runningSummary is REMOVED (ST-authored — secrets had
- * a place to live; the ST gets its own view in MYT-69 via
- * `TurnContext = FtTurnContext & StSecrets`). ftHistory is the WHOLE turn
- * context reconstructed from session_messages (§3.7 single-piece predicate)
- * including the current batch — there is no separate batch append.
+ * a place to live). Under the MYT-69 post-hoc model the ST no longer consumes
+ * this object at all (it runs off the turn path); the only ST-authored field
+ * here is `standingDirective`, behavior-bound and public-by-construction.
+ * ftHistory is the WHOLE turn context reconstructed from session_messages
+ * (§3.7 single-piece predicate) including the current batch — there is no
+ * separate batch append.
  */
 export interface FtTurnContext {
   readonly campaignId: string
@@ -81,17 +88,24 @@ export interface FtTurnContext {
   readonly usage: TokenUsage
   /** Reserved (H9); empty in MYT-68. */
   readonly workingSet: readonly unknown[]
+  /** §6 standing directive: a behavior-bound stage direction the ST authored
+   *  under the §4 channel contract — public-by-construction (never secret
+   *  rationale). The FT appends it as a raw `[DM direction: …]` tail message
+   *  AFTER buildModelMessages places the cache breakpoints (T14). Optional;
+   *  absent when no standing directive is live. */
+  readonly standingDirective?: string
 }
 
-/** Alias today; the ST's view becomes `FtTurnContext & StSecrets` in MYT-69. */
+/**
+ * Alias for `FtTurnContext`. MYT-66 reserved this as the SlowThinker's widened
+ * view (`TurnContext = FtTurnContext & StSecrets`), but the MYT-69 POST-HOC
+ * model SUPERSEDES that: the ST runs OFF the turn path in its own worker and
+ * never consumes the FT's context object at all (it loads its own view from
+ * PG + Redis). The `& StSecrets` widening is therefore NOT needed and was never
+ * introduced — this stays a plain alias, retained only as a stable name for
+ * the FT-facing turn context.
+ */
 export type TurnContext = FtTurnContext
-
-export interface StEvaluation {
-  readonly intervene: boolean
-  readonly direction?: string
-  readonly summaryUpdate?: string
-  readonly usage?: TokenUsage
-}
 
 /** Controller flushes these (H9). */
 export interface ScribeResult {
@@ -135,10 +149,6 @@ export interface AssistantMessage {
   readonly parts: readonly ContentPart[]
   /** totalUsage of the whole tool loop (all steps). */
   readonly usage?: TokenUsage
-}
-
-export interface SlowThinker {
-  evaluate(ctx: FtTurnContext): Promise<StEvaluation>
 }
 
 export interface FastThinker {

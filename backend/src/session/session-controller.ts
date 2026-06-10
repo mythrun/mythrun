@@ -5,22 +5,25 @@
 // One SessionController exists for the life of ONE DM turn on the worker. It is
 // a thin orchestration shell (Zero Framework Cognition): it makes no judgment
 // calls — it reconstructs the turn's in-memory FT history from session_messages
-// (§3.7), sequences the tiers (Slow Thinker → Fast Thinker → Scribe), persists
+// (§3.7), optionally fuses the worker-resolved one-shot direction onto the last
+// user message, sequences the on-path tiers (Fast Thinker → Scribe), persists
 // the rendered DM turn as ONE atomic PG append, and flushes the small turn
-// state (summary/usage) back to Redis. Every reasoning call lives behind the
-// injected tier seams (`tiers/types.ts`).
+// state (usage) back to Redis. The SlowThinker is OFF this path under the
+// MYT-69 post-hoc model — it runs in its own worker; directions reach the turn
+// as worker-resolved deps (`pendingDirection`, `standingDirective`). Every
+// reasoning call lives behind the injected tier seams (`tiers/types.ts`).
 //
 // THE RECOVERY INVARIANT (rewritten for the PG-direct model):
 //
 //   load → (in-memory only) → persistTurn → flushToRedis → [worker: turn_end]
 //
 // Between `loadFromRedis()`/`processDmTurn()` and `persistTurn()` the controller
-// mutates ONLY its in-memory state (the reconstructed history, the running
-// summary, the usage accumulator, the rendered assistant message) — it issues
-// NO durable write of its own. `persistTurn()` is the SINGLE durability point: a
-// ONE-statement, atomic, idempotent-on-turnId PG append (ON CONFLICT
-// (turn_id, turn_ordinal) DO NOTHING in the repo). `flushToRedis()` then carries
-// only the small {summary, usage} turn state. A crash BEFORE `persistTurn`
+// mutates ONLY its in-memory state (the reconstructed history, the usage
+// accumulator, the rendered assistant message) — it issues NO durable write of
+// its own. `persistTurn()` is the SINGLE durability point: a ONE-statement,
+// atomic, idempotent-on-turnId PG append (ON CONFLICT (turn_id, turn_ordinal)
+// DO NOTHING in the repo). `flushToRedis()` then carries only the small {usage}
+// turn state (MYT-69: the running summary is the ST job's, not the turn's). A crash BEFORE `persistTurn`
 // therefore leaves both Postgres and Redis at the pre-turn snapshot — nothing to
 // undo; BullMQ redelivery re-runs the turn cleanly. The `turn_end` frame is the
 // WORKER's (Task 15): it is published only AFTER persist + flush + the trigger
@@ -36,8 +39,6 @@ import type {
   FastThinker,
   FtTurnContext,
   Scribe,
-  SlowThinker,
-  StEvaluation,
   TokenUsage,
   TurnEmitter,
 } from './tiers/types.js'
@@ -68,7 +69,6 @@ export interface TranscriptStore {
 
 export interface SessionControllerDeps {
   readonly sessionState: SessionState
-  readonly st: SlowThinker
   readonly ft: FastThinker
   readonly scribe: Scribe
   /** The latched frame emitter the worker builds (Task 15): the FT streams every
@@ -91,6 +91,16 @@ export interface SessionControllerDeps {
   /** The enforced-ignorance-safe prep doc (session_preps.ft_context), resolved
    *  by the worker (`:state` blob → PG re-load, §3.10). */
   readonly ftContext: string
+  /** §6 one-shot direction (worker-resolved; GETDEL'd by the worker's fresh-run
+   *  arm, passed in here). Fused onto the last user message BEFORE the FT render
+   *  via the unchanged MYT-68 fusion seam. Optional; absent when no one-shot is
+   *  pending. */
+  readonly pendingDirection?: string
+  /** §6 standing directive (worker-resolved; READ not consumed). Threaded onto
+   *  the FT context — public-by-construction, rides the FT-facing context
+   *  exactly like a fused one-shot. The FT appends it as a raw tail message
+   *  AFTER the cache breakpoints (T14). Optional; absent when none is live. */
+  readonly standingDirective?: string
   /** Allocates the next server-ordered seq (bound to `sessionState.nextSeq`). */
   readonly allocSeq: () => Promise<number>
   readonly logger?: MinimalLogger
@@ -108,10 +118,11 @@ export class SessionController {
   // invariant). `history` is reconstructed from session_messages each turn (no
   // longer Redis). The participant roster is NOT held here — it is a per-turn
   // dep (`deps.participants`), resolved by the worker from session_participants.
-  // `assistant` is null until the FT renders it — persisting before
-  // processDmTurn runs is a programmer error.
+  // The running summary is NOT held here either: under the MYT-69 post-hoc
+  // model the ST owns the `:summary` key from its own worker, so the controller
+  // neither reads nor writes it. `assistant` is null until the FT renders it —
+  // persisting before processDmTurn runs is a programmer error.
   private history: ConversationMessage[] = []
-  private summary = ''
   private usage: TokenUsage = ZERO_USAGE
   private assistant: AssistantMessage | null = null
 
@@ -122,23 +133,26 @@ export class SessionController {
     this.turnId = turnId
   }
 
-  /** Hydrate the small in-memory turn state from Redis: the running summary +
-   *  usage via `loadTurnState`. The participant roster is NOT read here — it is
-   *  worker-resolved per turn from session_participants (deterministic order)
-   *  and injected via `deps.participants`. The FT history is NOT loaded here
-   *  either — it is reconstructed from session_messages in `processDmTurn`
+  /** Hydrate the small in-memory turn state from Redis: the usage accumulator
+   *  via `loadTurnState`. The running summary on `loadTurnState`'s result is the
+   *  ST job's artifact (MYT-69) — the controller ignores it; only `usage` is
+   *  the turn's to accumulate and flush. The participant roster is NOT read here
+   *  — it is worker-resolved per turn from session_participants (deterministic
+   *  order) and injected via `deps.participants`. The FT history is NOT loaded
+   *  here either — it is reconstructed from session_messages in `processDmTurn`
    *  (PG-direct, §3.7). */
   async loadFromRedis(): Promise<void> {
     const turnState = await this.deps.sessionState.loadTurnState(this.campaignId)
-    this.summary = turnState.summary
     this.usage = turnState.usage
   }
 
   /** Sequence one DM turn (no durable writes): reconstruct the FT history from
-   *  session_messages → ST evaluate → apply evaluation (summary + usage) →
-   *  optionally fuse the stage direction onto the last user message (in-memory
-   *  only) → FT render → fire-and-forget Scribe. The `turn_end` frame is the
-   *  worker's, published only after persist + flush + watermark. */
+   *  session_messages → optionally fuse the worker-resolved one-shot direction
+   *  onto the last user message (in-memory only) → FT render → fire-and-forget
+   *  Scribe. Under the MYT-69 post-hoc model the ST does NOT run on this path
+   *  (it runs in its own worker); directions arrive as worker-resolved deps. The
+   *  `turn_end` frame is the worker's, published only after persist + flush +
+   *  watermark. */
   async processDmTurn(maxConsumedSeq: number): Promise<void> {
     // §3.7: reconstruct the WHOLE FT context from session_messages. The codec
     // THROWS TranscriptCorruptError on an incoherent row — let it propagate
@@ -146,9 +160,20 @@ export class SessionController {
     const rows = await this.deps.transcript.listFtContextRows(this.sessionId, maxConsumedSeq)
     this.history = rowsToConversation(rows, this.deps.attributionNames)
 
-    const evaluation = await this.deps.st.evaluate(this.buildContext())
-    this.applyEvaluation(evaluation)
-    this.fuseDirection(evaluation)
+    // §6: fuse the one-shot onto the LAST user message BEFORE the render. The
+    // fuser targets the last user message; the standing tail is appended later,
+    // at the FT boundary (T14), so it must not be present yet. The direction is
+    // per-turn ephemera (never persisted — §3.7); enforced ignorance holds: the
+    // FT sees the constraint, never WHY it was injected. With no user message in
+    // the batch (an empty-batch edge), skip with a warn.
+    if (this.deps.pendingDirection !== undefined) {
+      if (!fuseDirectionIntoLastUserMessage(this.history, this.deps.pendingDirection)) {
+        this.deps.logger?.warn(
+          { campaignId: this.campaignId, turnId: this.turnId },
+          'one-shot direction with no user message to fuse onto; skipping fusion',
+        )
+      }
+    }
 
     this.assistant = await this.deps.ft.render(this.buildContext(), this.deps.emitter)
     this.usage = addUsage(this.usage, this.assistant.usage)
@@ -194,14 +219,13 @@ export class SessionController {
     })
   }
 
-  /** Flush the small in-memory turn state back to Redis: {summary, usage} only.
-   *  The transcript is durable in Postgres (persistTurn); Redis carries no
-   *  FT history as of MYT-68 (§3.7). */
+  /** Flush the small in-memory turn state back to Redis: {usage} only (MYT-69
+   *  narrowed signature). The running summary is the ST job's artifact now — a
+   *  blind summary SET here would clobber the ST's background write. The
+   *  transcript is durable in Postgres (persistTurn); Redis carries no FT
+   *  history as of MYT-68 (§3.7). */
   async flushToRedis(): Promise<void> {
-    await this.deps.sessionState.flushTurnState(this.campaignId, {
-      summary: this.summary,
-      usage: this.usage,
-    })
+    await this.deps.sessionState.flushTurnState(this.campaignId, { usage: this.usage })
   }
 
   private buildContext(): FtTurnContext {
@@ -212,34 +236,13 @@ export class SessionController {
       participants: this.deps.participants,
       usage: this.usage,
       workingSet: [],
-    }
-  }
-
-  /** Apply the ST's evaluation: append ANY summary update (the running-summary
-   *  is decoupled from `intervene` per the runtime spec §6 step 2 / MYT-66
-   *  design §5 — only the stage `direction` is gated on `intervene`, in
-   *  `fuseDirection`) and accumulate its token usage (H12.a). */
-  private applyEvaluation(evaluation: StEvaluation): void {
-    if (evaluation.summaryUpdate !== undefined) {
-      this.summary = this.summary === ''
-        ? evaluation.summaryUpdate
-        : `${this.summary}\n${evaluation.summaryUpdate}`
-    }
-    this.usage = addUsage(this.usage, evaluation.usage)
-  }
-
-  /** When the ST chose to intervene with a direction, fuse it onto the LAST user
-   *  message in the reconstructed history (in-memory ONLY; directions are
-   *  per-turn ephemera, never persisted — §3.7). Enforced ignorance holds: the
-   *  direction is a constraint, the FT never learns WHY it was injected. With no
-   *  user message in the batch (an empty-batch edge), skip with a warn. */
-  private fuseDirection(evaluation: StEvaluation): void {
-    if (!evaluation.intervene || evaluation.direction === undefined) return
-    if (!fuseDirectionIntoLastUserMessage(this.history, evaluation.direction)) {
-      this.deps.logger?.warn(
-        { campaignId: this.campaignId, turnId: this.turnId },
-        'ST direction with no user message to fuse onto; skipping fusion',
-      )
+      // §6 standing directive: rides the FT-facing context (public-by-
+      // construction). exactOptionalPropertyTypes — conditionally spread so the
+      // key is ABSENT when no directive is live, never present-with-undefined.
+      // An EMPTY string can arrive (the ST schema's text has no .min(1)); the
+      // FT's buildModelMessages owns empty-string suppression — don't "tighten"
+      // this guard and assume symmetry.
+      ...(this.deps.standingDirective !== undefined ? { standingDirective: this.deps.standingDirective } : {}),
     }
   }
 }

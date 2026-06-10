@@ -1,6 +1,7 @@
 // backend/src/session/__tests__/session-controller.test.ts
 //
-// MYT-68 Task 14 — the SessionController v2 (PG-direct turn model) suite.
+// MYT-68 Task 14 / MYT-69 Task 13 — the SessionController v2 (PG-direct turn
+// model) suite, narrowed for the POST-HOC SlowThinker.
 //
 // The transcript now lives ONLY in session_messages. The controller loads the
 // WHOLE FT context via `transcript.listFtContextRows(sessionId, maxConsumedSeq)`
@@ -10,9 +11,16 @@
 // `turn_end` (that moved to the worker, after persist+flush+watermark). The
 // single PG append in `persistTurn` is the durability point.
 //
+// MYT-69 retires the in-turn ST seam: the ST runs OFF the turn path in its own
+// worker. The controller no longer has an `st` dep, no `applyEvaluation`, no
+// summary handling, and no evaluation-based fusion. Directions arrive as
+// worker-resolved deps: `pendingDirection` (one-shot, GETDEL'd by the worker
+// and fused onto the last user message BEFORE the FT render) and
+// `standingDirective` (threaded onto `FtTurnContext`; the FT appends the tail).
+//
 // Everything below is exercised against in-memory fakes — no Redis-mock for the
 // turn-state writes (a recording fake SessionState proves `flushToRedis` writes
-// exactly {summary, usage}), and an in-memory TranscriptStore captures the
+// exactly {usage}), and an in-memory TranscriptStore captures the
 // listFtContextRows query + the appendDmTurn payload.
 
 import { describe, expect, it, vi } from 'vitest'
@@ -32,8 +40,6 @@ import type {
   FtTurnContext,
   Scribe,
   ScribeResult,
-  SlowThinker,
-  StEvaluation,
   TurnEmitter,
 } from '../tiers/types.js'
 
@@ -107,10 +113,6 @@ function fakeTranscript(
   }
 }
 
-function fakeSt(evaluation: StEvaluation): SlowThinker {
-  return { evaluate: vi.fn((): Promise<StEvaluation> => Promise.resolve(evaluation)) }
-}
-
 function fakeFt(message: AssistantMessage, captured: { ctx?: FtTurnContext }): FastThinker {
   return {
     render: vi.fn(async (ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> => {
@@ -142,13 +144,19 @@ function recordingEmitter(emitted: string[]): TurnEmitter {
   }
 }
 
+/** What `flushToRedis` writes as of MYT-69: usage only (the `:summary` key is
+ *  the ST job's artifact now — `flushTurnState`'s narrowed signature). */
+interface FlushedTurnState {
+  readonly usage: TurnState['usage']
+}
+
 /** A recording SessionState: only loadTurnState/flushTurnState are exercised by
  *  the controller (MYT-68: participants are a per-turn DEP now, not a getState
  *  read — so getState joins the `unused` throwers and an accidental call is
  *  loud). The rest throw so an accidental call is loud. */
 function fakeSessionState(opts: {
   turnState?: TurnState
-  flushed: { value?: TurnState }
+  flushed: { value?: FlushedTurnState }
 }): SessionState {
   const unused = (name: string) => (): never => {
     throw new Error(`SessionState.${name} must not be called by the controller`)
@@ -157,7 +165,7 @@ function fakeSessionState(opts: {
     loadTurnState: vi.fn((): Promise<TurnState> =>
       Promise.resolve(opts.turnState ?? { summary: '', usage: { input: 0, output: 0 } }),
     ),
-    flushTurnState: vi.fn((_campaignId: string, ts: TurnState): Promise<void> => {
+    flushTurnState: vi.fn((_campaignId: string, ts: { readonly usage: TurnState['usage'] }): Promise<void> => {
       opts.flushed.value = ts
       return Promise.resolve()
     }),
@@ -194,7 +202,8 @@ function scriptedAllocSeq(start: number): () => Promise<number> {
 
 interface BuildOpts {
   rows?: readonly SessionMessage[]
-  evaluation?: StEvaluation
+  pendingDirection?: string
+  standingDirective?: string
   assistant?: AssistantMessage
   scribe?: Scribe
   turnState?: TurnState
@@ -209,14 +218,14 @@ function build(opts: BuildOpts = {}): {
   capturedFtCtx: { ctx?: FtTurnContext }
   transcriptCapture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture }
   emitted: string[]
-  flushed: { value?: TurnState }
+  flushed: { value?: FlushedTurnState }
   emitter: TurnEmitter
   deps: SessionControllerDeps
 } {
   const capturedFtCtx: { ctx?: FtTurnContext } = {}
   const transcriptCapture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture } = {}
   const emitted: string[] = []
-  const flushed: { value?: TurnState } = {}
+  const flushed: { value?: FlushedTurnState } = {}
 
   const emitter = recordingEmitter(emitted)
   const deps: SessionControllerDeps = {
@@ -224,7 +233,6 @@ function build(opts: BuildOpts = {}): {
       ...(opts.turnState !== undefined ? { turnState: opts.turnState } : {}),
       flushed,
     }),
-    st: fakeSt(opts.evaluation ?? { intervene: false }),
     ft: fakeFt(opts.assistant ?? ASSISTANT, capturedFtCtx),
     scribe: opts.scribe ?? fakeScribe(),
     emitter,
@@ -235,6 +243,10 @@ function build(opts: BuildOpts = {}): {
     participants: opts.participants ?? [],
     ftContext: opts.ftContext ?? FT_CONTEXT,
     allocSeq: scriptedAllocSeq(opts.allocStart ?? 100),
+    // §6 worker-resolved direction deps (conditionally spread —
+    // exactOptionalPropertyTypes: a missing dep is ABSENT, never `undefined`).
+    ...(opts.pendingDirection !== undefined ? { pendingDirection: opts.pendingDirection } : {}),
+    ...(opts.standingDirective !== undefined ? { standingDirective: opts.standingDirective } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   }
 
@@ -256,9 +268,9 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(capturedFtCtx.ctx?.ftHistory).toEqual(expected)
   })
 
-  it('fuses an ST direction onto the LAST user message in-memory only (never persisted)', async () => {
+  it('fuses the worker-resolved pendingDirection onto the LAST user message in-memory only (never persisted)', async () => {
     const { controller, capturedFtCtx, transcriptCapture } = build({
-      evaluation: { intervene: true, direction: 'D', summaryUpdate: 'x' },
+      pendingDirection: 'D',
     })
     await controller.loadFromRedis()
     await controller.processDmTurn(1)
@@ -277,6 +289,33 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     // mention of the direction).
     const writtenContents = (transcriptCapture.append?.rows ?? []).map((r) => r.content)
     expect(writtenContents.join('\n')).not.toContain('DM direction')
+  })
+
+  it('does NOT fuse anything when no pendingDirection is injected (raw codec output reaches the FT)', async () => {
+    const { controller, capturedFtCtx } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    // ctx.ftHistory is EXACTLY rowsToConversation's output — no [DM direction:]
+    // tail anywhere.
+    const expected = rowsToConversation(HISTORY_ROWS, ATTRIBUTION_NAMES)
+    expect(capturedFtCtx.ctx?.ftHistory).toEqual(expected)
+    const fusedAnywhere = (capturedFtCtx.ctx?.ftHistory ?? []).some((m) =>
+      m.parts.some((p) => p.kind === 'text' && p.text.includes('[DM direction:')),
+    )
+    expect(fusedAnywhere).toBe(false)
+  })
+
+  it('has no `st` tier dep: the FT (besides the Scribe) is the only tier invoked', async () => {
+    const { controller, capturedFtCtx, deps } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    // Type-level + runtime: the post-hoc model removed the in-turn ST seam.
+    expect('st' in deps).toBe(false)
+    // The FT still ran (it captured the ctx + drove the emitter); that is the
+    // only reasoning tier on the turn path now.
+    expect(capturedFtCtx.ctx).toBeDefined()
   })
 
   it('fusion on a MULTI-PART last user message suffixes the first text part and preserves the rest verbatim', () => {
@@ -321,6 +360,23 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
 
     expect(capturedFtCtx.ctx?.ftContext).toBe('INJECTED')
     expect('runningSummary' in (capturedFtCtx.ctx ?? {})).toBe(false)
+  })
+
+  it('buildContext carries standingDirective onto the FT context when the dep is set', async () => {
+    const { controller, capturedFtCtx } = build({ standingDirective: 'keep scenes short' })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    expect(capturedFtCtx.ctx?.standingDirective).toBe('keep scenes short')
+  })
+
+  it('buildContext OMITS the standingDirective key when the dep is absent (exactOptionalPropertyTypes — key ABSENT, not undefined)', async () => {
+    const { controller, capturedFtCtx } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+
+    // The key must be ABSENT, not present-with-undefined.
+    expect('standingDirective' in (capturedFtCtx.ctx ?? {})).toBe(false)
   })
 
   it('emits NO turn_end: only the FT drives the injected emitter; there is no publisher dep', async () => {
@@ -378,21 +434,17 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     await expect(controller.persistTurn()).rejects.toThrow()
   })
 
-  it('flushToRedis writes exactly {summary, usage}', async () => {
-    const { controller, flushed } = build({
-      evaluation: { intervene: false, summaryUpdate: 'turn summary', usage: { input: 3, output: 2 } },
-    })
+  it('flushToRedis writes exactly {usage} (no summary — that key is the ST job\'s artifact now)', async () => {
+    const { controller, flushed } = build()
     await controller.loadFromRedis()
     await controller.processDmTurn(1)
     await controller.flushToRedis()
 
-    // ST usage {3,2} + FT usage {5,7} = {8,9}; summary is the lone update.
-    expect(flushed.value).toEqual<TurnState>({
-      summary: 'turn summary',
-      usage: { input: 8, output: 9 },
-    })
-    // Exactly those two keys — no stray ftHistory / participants leakage.
-    expect(Object.keys(flushed.value ?? {}).sort()).toEqual(['summary', 'usage'])
+    // The ST no longer runs on the turn path, so the only usage is the FT's
+    // {5,7} from the ASSISTANT fixture.
+    expect(flushed.value).toEqual<FlushedTurnState>({ usage: { input: 5, output: 7 } })
+    // Exactly the one key — no summary, no stray ftHistory / participants leakage.
+    expect(Object.keys(flushed.value ?? {})).toEqual(['usage'])
   })
 
   it('does not throw out of processDmTurn when the Scribe rejects; logger.warn is called', async () => {
@@ -417,30 +469,7 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     await expect(controller.processDmTurn(1)).rejects.toThrow(/transcript corrupt/)
   })
 
-  it('applyEvaluation: a fresh summaryUpdate APPENDS onto an existing summary (newline-joined), not overwriting', async () => {
-    const { controller, flushed } = build({
-      turnState: { summary: 'turn one summary', usage: { input: 0, output: 0 } },
-      evaluation: { intervene: false, summaryUpdate: 'turn two summary' },
-    })
-    await controller.loadFromRedis()
-    await controller.processDmTurn(1)
-    await controller.flushToRedis()
-
-    expect(flushed.value?.summary).toBe('turn one summary\nturn two summary')
-  })
-
-  it('applyEvaluation: summaryUpdate sets the summary when none exists yet', async () => {
-    const { controller, flushed } = build({
-      evaluation: { intervene: false, summaryUpdate: 'first summary' },
-    })
-    await controller.loadFromRedis()
-    await controller.processDmTurn(1)
-    await controller.flushToRedis()
-
-    expect(flushed.value?.summary).toBe('first summary')
-  })
-
-  it('skips direction fusion (with a warn) when the batch holds no user message', async () => {
+  it('skips pendingDirection fusion (with a warn) when the batch holds no user message', async () => {
     const warn = vi.fn()
     // DM-only rows: no player_message, so rowsToConversation yields no user msg.
     const dmOnly: readonly SessionMessage[] = [
@@ -448,7 +477,7 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     ]
     const { controller, capturedFtCtx } = build({
       rows: dmOnly,
-      evaluation: { intervene: true, direction: 'be terse' },
+      pendingDirection: 'be terse',
       logger: { warn },
     })
     await controller.loadFromRedis()
