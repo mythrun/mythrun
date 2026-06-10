@@ -6,7 +6,6 @@ export const TYPING_TTL_S = 8
 export const QUIET_WINDOW_MS = 4_000
 export const MAX_QUIET_EXTENSION_MS = 30_000
 export const DEAD_AIR_MS = 60_000
-export const DEDUP_TTL_MS = DEAD_AIR_MS + 4_000
 export const MAX_BATCH = 30
 export const CONFIDENCE_FLOOR = 0.8
 export const DM_TRIGGER_CONCURRENCY = 5

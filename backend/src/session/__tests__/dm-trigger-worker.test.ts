@@ -418,9 +418,11 @@ describe('makeDmTriggerDeps — forwarding closures', () => {
     parts: DmTriggerDepsParts
     turnAdds: { name: string; payload: unknown }[]
     debounceAdds: { name: string; payload: unknown; opts: unknown }[]
+    dedupRemovals: string[]
   } {
     const turnAdds: { name: string; payload: unknown }[] = []
     const debounceAdds: { name: string; payload: unknown; opts: unknown }[] = []
+    const dedupRemovals: string[] = []
     const parts: DmTriggerDepsParts = {
       triggerState: {
         lastActivityMs: () => Promise.resolve(0),
@@ -444,13 +446,20 @@ describe('makeDmTriggerDeps — forwarding closures', () => {
           debounceAdds.push({ name, payload, opts })
           return Promise.resolve({})
         },
+        // The worker-side self-re-arm must clear its OWN dedup key before
+        // re-adding (a running job can't be replaced — its key would swallow
+        // the add). Recorded so the forwarding test pins remove-then-add.
+        removeDeduplicationKey: (id: string) => {
+          dedupRemovals.push(id)
+          return Promise.resolve(1)
+        },
       } as unknown as DmTriggerDepsParts['dmTriggerQueue'],
       classify: () => Promise.resolve(defaultClassification()),
       randomTurnId: () => 'turn-fixed',
       now: () => 123,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     }
-    return { parts, turnAdds, debounceAdds }
+    return { parts, turnAdds, debounceAdds, dedupRemovals }
   }
 
   it('buildTurnBatch closure delegates to the shared builder over the repo', async () => {
@@ -480,12 +489,16 @@ describe('makeDmTriggerDeps — forwarding closures', () => {
     expect(turnAdds).toEqual([{ name: TURN_JOB_NAME, payload }])
   })
 
-  it('rescheduleDebounce closure forwards to the dm-trigger producer', async () => {
-    const { parts, debounceAdds } = makeParts()
+  it('rescheduleDebounce closure clears its OWN dedup key, then re-adds', async () => {
+    const { parts, debounceAdds, dedupRemovals } = makeParts()
     const deps = makeDmTriggerDeps(makeFakeRepo(), parts)
 
     await deps.rescheduleDebounce(CAMPAIGN, 2_000)
 
+    // remove-then-add: without the removal, the running evaluate's own dedup
+    // key swallows the re-arm (both §4.3 self-re-arm paths were dead in
+    // effect until the MYT-68 smoke caught it).
+    expect(dedupRemovals).toEqual([`dm-trigger:${CAMPAIGN}`])
     expect(debounceAdds).toHaveLength(1)
     expect(debounceAdds[0]?.name).toBe(DM_TRIGGER_JOB_NAME)
     expect(debounceAdds[0]?.payload).toEqual({ campaignId: CAMPAIGN })

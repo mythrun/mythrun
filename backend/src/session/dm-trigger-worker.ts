@@ -50,9 +50,10 @@ import {
   DM_TRIGGER_MAX_STALLED_COUNT,
 } from './dm-trigger-config.js'
 import {
+  dedupId,
   rescheduleDebounce as rescheduleDebounceProducer,
   type DmTriggerPayload,
-  type DmTriggerQueueLike,
+  type DmTriggerQueueWithDedup,
 } from './dm-trigger-queue.js'
 import { makeTriggerState } from './trigger-state.js'
 import { buildTurnBatch } from './turn-batch.js'
@@ -266,7 +267,7 @@ export interface DmTriggerDepsParts {
   readonly triggerState: TriggerStateReads
   readonly repo: RepoReads
   readonly sessionState: SessionStateReads
-  readonly dmTriggerQueue: DmTriggerQueueLike
+  readonly dmTriggerQueue: DmTriggerQueueWithDedup
   readonly sessionTurnQueue: TurnQueueLike
   readonly classify: (ctx: DmTriggerContext) => Promise<DmTriggerClassification>
   // Property-style (not method-style) so `parts.randomTurnId` / `parts.now` are
@@ -300,6 +301,12 @@ export function makeDmTriggerDeps(repo: Repo, parts: DmTriggerDepsParts): DmTrig
       await enqueueTurnProducer(sessionTurnQueue, payload)
     },
     rescheduleDebounce: async (campaignId, delayMs) => {
+      // Self-re-arm from inside the running evaluate: clear our OWN dedup key
+      // first — replace-mode cannot displace a non-delayed job, so without
+      // this the re-arm add is swallowed by the key this very job holds
+      // (see DmTriggerQueueWithDedup). A racing server-side add between the
+      // remove and the add just lands first and debounces ours — harmless.
+      await dmTriggerQueue.removeDeduplicationKey(dedupId(campaignId))
       await rescheduleDebounceProducer(dmTriggerQueue, campaignId, delayMs)
     },
     randomTurnId: parts.randomTurnId,
@@ -328,7 +335,7 @@ export function buildDmTriggerWorker(
   const triggerState = makeTriggerState(redisRealtime, redisKeyPrefix)
   const sessionState = makeSessionState(redisRealtime, redisKeyPrefix)
 
-  const dmTriggerQueue: DmTriggerQueueLike = new Queue<DmTriggerPayload>(QUEUE_DM_TRIGGER, {
+  const dmTriggerQueue: DmTriggerQueueWithDedup = new Queue<DmTriggerPayload>(QUEUE_DM_TRIGGER, {
     connection: redisBatch,
   })
   const sessionTurnQueue: TurnQueueLike = new Queue<TurnJobPayload>(QUEUE_SESSION_TURN, {

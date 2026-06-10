@@ -12,7 +12,6 @@ describe('dm-trigger-config', () => {
     expect(cfg.CONFIDENCE_FLOOR).toBe(0.8)
     expect(cfg.MAX_BATCH).toBeGreaterThan(0)
     expect(cfg.HAIKU_CLASSIFY_TIMEOUT_MS).toBeLessThan(cfg.DM_TRIGGER_LOCK_DURATION_MS)
-    expect(cfg.DEDUP_TTL_MS).toBeGreaterThan(cfg.DEAD_AIR_MS)
     expect(cfg.TYPING_TTL_S).toBeGreaterThan(2 * cfg.TYPING_HEARTBEAT_S)
   })
 })
