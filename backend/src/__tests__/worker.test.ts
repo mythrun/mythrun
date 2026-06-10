@@ -134,14 +134,16 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up. Five workers:
+    // Wait for startup: workers registered, health server up. Six workers:
     // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66),
-    // dm-trigger (MYT-67 T9, added in T16).
+    // dm-trigger (MYT-67 T9), st-evaluation (MYT-69 T15).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(5)
+      expect(workerInstances).toHaveLength(6)
     })
-    // The dm-trigger worker is the fifth, on QUEUE_DM_TRIGGER ('dm-trigger').
+    // The dm-trigger worker is on QUEUE_DM_TRIGGER ('dm-trigger').
     expect(workerInstances.map((w) => w.name)).toContain('dm-trigger')
+    // The st-evaluation worker (MYT-69) is on QUEUE_ST_EVAL ('st-evaluation').
+    expect(workerInstances.map((w) => w.name)).toContain('st-evaluation')
     // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12) — one
     // QueueEvents on a duplicate()d blocking connection.
     expect(queueEventsInstances).toHaveLength(1)

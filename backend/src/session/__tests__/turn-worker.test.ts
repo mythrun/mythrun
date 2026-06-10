@@ -1,11 +1,11 @@
 import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
 import type { Pool } from 'pg'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { makeSessionState, type SessionState } from '../../redis/session-state.js'
 import { sessionChannelPattern } from '../../contract/session-channel.js'
 import { SessionController } from '../session-controller.js'
-import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
+import { StubFastThinker, StubScribe } from '../tiers/stubs.js'
 import type {
   AssistantMessage,
   FastThinker,
@@ -18,6 +18,11 @@ import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import type { TurnPublisher } from '../turn-publisher.js'
 import { TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
 import { type DmTriggerQueueLike } from '../dm-trigger-queue.js'
+import {
+  ST_EVAL_JOB_NAME,
+  type StEvalPayload,
+  type StEvalQueueLike,
+} from '../st-eval-queue.js'
 import { QUIET_WINDOW_MS } from '../dm-trigger-config.js'
 import { UnrecoverableError } from 'bullmq'
 import {
@@ -193,8 +198,27 @@ function fakeLock(handle: SessionLockHandle | null): SessionLock {
 
 const silentLogger = { warn: vi.fn(), error: vi.fn() }
 
+/** Install a SLOW `processDmTurn` on the controller so a tiny-interval heartbeat
+ *  fires (flipping lockLost) DURING the turn body, before its next lock-gate
+ *  checkpoint. The in-turn SlowThinker seam is retired (MYT-69), so the slow
+ *  phase that used to be a stubbed `st.evaluate` is now the controller's render
+ *  step. Returns the spy so the caller can restore it (a describe-wide
+ *  restoreAllMocks would tear down the module-level `bullmq` mock). */
+function installSlowProcessDmTurn(): MockInstance<(maxConsumedSeq: number) => Promise<void>> {
+  const spy = vi.spyOn(SessionController.prototype, 'processDmTurn')
+  spy.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve()
+        }, 40)
+      }),
+  )
+  return spy
+}
+
 function makeTiers(): ReturnType<TurnProcessorDeps['makeTiers']> {
-  return { st: new StubSlowThinker(), ft: new StubFastThinker(), scribe: new StubScribe() }
+  return { ft: new StubFastThinker(), scribe: new StubScribe() }
 }
 
 /** A minimal in-memory `TurnWorkerRepo`. Overrides let a test set
@@ -289,6 +313,26 @@ function inertDmTriggerQueue(): DmTriggerQueueLike {
   return recordingDmTriggerQueue([])
 }
 
+/** Records every `(name, data)` the §2 st-evaluation producer receives, so the
+ *  success-path enqueue assertions read the payload off a plain array. */
+interface StEvalCall {
+  readonly name: string
+  readonly data: StEvalPayload
+}
+
+function recordingStEvalQueue(calls: StEvalCall[]): StEvalQueueLike {
+  const add = vi.fn((name: string, data: StEvalPayload): Promise<never> => {
+    calls.push({ name, data })
+    return Promise.resolve(undefined as never)
+  })
+  return { add }
+}
+
+/** A no-op st-eval queue for the paths that never enqueue (the default case). */
+function inertStEvalQueue(): StEvalQueueLike {
+  return recordingStEvalQueue([])
+}
+
 describe('processTurnJob', () => {
   let redis: Redis
   let sessionState: SessionState
@@ -317,6 +361,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -354,6 +399,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -400,6 +446,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -435,15 +482,10 @@ describe('processTurnJob', () => {
       release,
     }
 
-    const slowSt = new StubSlowThinker()
-    vi.spyOn(slowSt, 'evaluate').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({ intervene: false })
-          }, 40)
-        }),
-    )
+    // A slow render step so the tiny-interval heartbeat fires (flipping
+    // lockLost via the rejecting extend) BEFORE the turn body reaches its next
+    // lockLost checkpoint.
+    const processSpy = installSlowProcessDmTurn()
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
@@ -452,8 +494,9 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
+      makeTiers,
       heartbeatMs: 5,
       logger: silentLogger,
     }
@@ -473,6 +516,8 @@ describe('processTurnJob', () => {
     expect(turnState.summary).toBe('')
     expect(turnState.usage).toEqual({ input: 0, output: 0 })
     expect(release).toHaveBeenCalledTimes(1)
+
+    processSpy.mockRestore()
   })
 
   it('a real (non-lock-lost) error RETHROWS so BullMQ owns the retry; lock still released', async () => {
@@ -495,8 +540,9 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ st: new StubSlowThinker(), ft, scribe: new StubScribe() }),
+      makeTiers: () => ({ ft, scribe: new StubScribe() }),
       heartbeatMs: 10_000,
       logger: silentLogger,
     }
@@ -519,19 +565,9 @@ describe('processTurnJob', () => {
     const release = vi.fn((): Promise<void> => Promise.resolve())
     const handle = fakeHandle({ extendReturns: false, release })
 
-    // A slow ST so the tiny-interval heartbeat fires (flipping lockLost) BEFORE
-    // the turn body reaches its next lockLost checkpoint.
-    const slowSt = new StubSlowThinker()
-    const evaluate = vi
-      .spyOn(slowSt, 'evaluate')
-      .mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            setTimeout(() => {
-              resolve({ intervene: false })
-            }, 40)
-          }),
-      )
+    // A slow render step so the tiny-interval heartbeat fires (flipping lockLost)
+    // BEFORE the turn body reaches its next lockLost checkpoint.
+    const processSpy = installSlowProcessDmTurn()
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
@@ -540,8 +576,9 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
+      makeTiers,
       heartbeatMs: 5,
       logger: silentLogger,
     }
@@ -550,7 +587,7 @@ describe('processTurnJob', () => {
 
     // It ran but aborted on lock loss: never flushed, never published turn_error.
     expect(result).toEqual({ ran: true })
-    expect(evaluate).toHaveBeenCalled()
+    expect(processSpy).toHaveBeenCalled()
     expect(calls.order).not.toContain('turn_error')
 
     const turnState = await sessionState.loadTurnState(CAMPAIGN)
@@ -562,6 +599,8 @@ describe('processTurnJob', () => {
     // The lock-lost branch warns and still releases in finally.
     expect(silentLogger.warn).toHaveBeenCalled()
     expect(release).toHaveBeenCalledTimes(1)
+
+    processSpy.mockRestore()
   })
 
   it('sets dm_responding during the turn body and clears it after release (§4.7)', async () => {
@@ -591,6 +630,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -618,6 +658,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -642,15 +683,7 @@ describe('processTurnJob', () => {
     const release = vi.fn((): Promise<void> => Promise.resolve())
     const handle = fakeHandle({ extendReturns: false, release })
 
-    const slowSt = new StubSlowThinker()
-    vi.spyOn(slowSt, 'evaluate').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({ intervene: false })
-          }, 40)
-        }),
-    )
+    const processSpy = installSlowProcessDmTurn()
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
@@ -659,8 +692,9 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
+      makeTiers,
       heartbeatMs: 5,
       logger: silentLogger,
     }
@@ -675,6 +709,8 @@ describe('processTurnJob', () => {
     expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(0)
     // …but dm_responding is still cleared in finally so the campaign isn't wedged.
     expect(await triggerState.isResponding(CAMPAIGN)).toBe(false)
+
+    processSpy.mockRestore()
   })
 
   it('drains a pending explicit summon on release: enqueues exactly one explicit follow-up turn (§4.7)', async () => {
@@ -696,6 +732,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: recordingTurnQueue(queueCalls),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -738,6 +775,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: recordingTurnQueue(queueCalls),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -772,6 +810,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: failingQueue,
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -803,6 +842,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -836,6 +876,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -863,6 +904,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -891,6 +933,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -922,6 +965,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -961,6 +1005,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1009,6 +1054,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1046,6 +1092,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1123,6 +1170,7 @@ describe('processTurnJob', () => {
       triggerState: recordingTrigger,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -1159,17 +1207,9 @@ describe('processTurnJob', () => {
 
     const appendDmTurn = vi.fn((): Promise<void> => Promise.resolve())
 
-    // A slow ST so the tiny heartbeat fires (flipping lockLost) DURING
+    // A slow render step so the tiny heartbeat fires (flipping lockLost) DURING
     // processDmTurn, before its post-process lock-gate checkpoint.
-    const slowSt = new StubSlowThinker()
-    vi.spyOn(slowSt, 'evaluate').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({ intervene: false })
-          }, 40)
-        }),
-    )
+    const processSpy = installSlowProcessDmTurn()
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
@@ -1178,8 +1218,9 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
+      makeTiers,
       heartbeatMs: 5,
       logger: silentLogger,
     }
@@ -1192,6 +1233,8 @@ describe('processTurnJob', () => {
     expect(calls.order).not.toContain('turn_end')
     expect(calls.order).not.toContain('turn_error')
     expect(release).toHaveBeenCalledTimes(1)
+
+    processSpy.mockRestore()
   })
 
   // ── per-turn context resolution from the :state blob ─────────────────────
@@ -1222,10 +1265,11 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: (turn) => {
         seenTone = turn.worldTone
-        return { st: new StubSlowThinker(), ft: new StubFastThinker(), scribe: new StubScribe() }
+        return { ft: new StubFastThinker(), scribe: new StubScribe() }
       },
       heartbeatMs: 10_000,
       logger: silentLogger,
@@ -1264,6 +1308,7 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1340,8 +1385,9 @@ describe('processTurnJob', () => {
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ st: new StubSlowThinker(), ft: capturingFt, scribe: new StubScribe() }),
+      makeTiers: () => ({ ft: capturingFt, scribe: new StubScribe() }),
       heartbeatMs: 10_000,
       logger: silentLogger,
     }
@@ -1355,6 +1401,292 @@ describe('processTurnJob', () => {
     const history = seenHistory as unknown as FtTurnContext['ftHistory']
     const userMsg = history.find((m) => m.role === 'user')
     expect(userMsg?.role === 'user' ? userMsg.characterName : undefined).toBe('Bryn')
+  })
+
+  // ── MYT-69 §6/§2 — direction slots + st-evaluation enqueue ────────────────
+  it('fresh run takes the one-shot direction (GETDEL) and READS the standing directive (§6)', async () => {
+    // The fresh-run arm resolves both direction slots AFTER the converge/latch
+    // exits and passes them into the controller deps. Seed both on the trigger
+    // state; capture what the controller received.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await triggerState.setOneShotDirection(CAMPAIGN, 'D')
+    await triggerState.setStandingDirection(CAMPAIGN, 'S')
+
+    const captureSpy = vi.spyOn(SessionController.prototype, 'loadFromRedis')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The controller was constructed with both slots threaded in. `this.deps` is
+    // captured off the controller instance the spy's `this` is bound to.
+    const ctorDeps = (captureSpy.mock.instances[0] as unknown as {
+      deps: { pendingDirection?: string; standingDirective?: string }
+    }).deps
+    expect(ctorDeps.pendingDirection).toBe('D')
+    expect(ctorDeps.standingDirective).toBe('S')
+
+    // The one-shot was CONSUMED (GETDEL): a second read sees nothing.
+    expect(await triggerState.takeOneShotDirection(CAMPAIGN)).toBeNull()
+    // The standing directive was READ, not cleared — it survives the turn.
+    expect(await triggerState.readStandingDirection(CAMPAIGN)).toBe('S')
+
+    captureSpy.mockRestore()
+  })
+
+  it('the converge path does NOT take the one-shot direction (a take on a non-rendering path burns a reveal, §6)', async () => {
+    // A take before the converge exit would consume a sanctioned one-shot reveal
+    // on a turn that never renders. The converge arm must leave the slot intact.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await triggerState.setOneShotDirection(CAMPAIGN, 'D')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: true }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order).toEqual(['turn_end'])
+    // The one-shot was NOT consumed by the converge path — it survives.
+    expect(await triggerState.takeOneShotDirection(CAMPAIGN)).toBe('D')
+  })
+
+  it('the latch-terminal path does NOT take the one-shot direction (§6)', async () => {
+    // The §5 latch-terminal exits before the fresh-run take, so a streamed-but-
+    // uncommitted turn leaves the one-shot intact for the next real render.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await triggerState.setOneShotDirection(CAMPAIGN, 'D')
+    await triggerState.markTurnEmitted(TURN)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: false }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    await expect(processTurnJob(deps, payload())).rejects.toBeInstanceOf(UnrecoverableError)
+    // The one-shot survives the terminal.
+    expect(await triggerState.takeOneShotDirection(CAMPAIGN)).toBe('D')
+  })
+
+  it('a contention loser (no lock) does NOT take the one-shot direction (§6)', async () => {
+    const calls = newCalls()
+
+    await triggerState.setOneShotDirection(CAMPAIGN, 'D')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(null),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: false })
+    // A contention loser never renders, so it never burns the one-shot — it
+    // survives for the lock holder.
+    expect(await triggerState.takeOneShotDirection(CAMPAIGN)).toBe('D')
+  })
+
+  it('a flushed success bumps the ST floor counter, then enqueues the st-evaluation, after the watermark (§2/§8)', async () => {
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const stEvalCalls: StEvalCall[] = []
+
+    // Record the relative order of the watermark advance, the floor-counter bump,
+    // and the enqueue.
+    const order: string[] = []
+    const recordingTrigger: TriggerState = {
+      ...triggerState,
+      setRespondedSeq: vi.fn((c: string, seq: number): Promise<void> => {
+        order.push('watermark')
+        return triggerState.setRespondedSeq(c, seq)
+      }),
+      incrTurnsSinceSt: vi.fn((c: string): Promise<number> => {
+        order.push('incr')
+        return triggerState.incrTurnsSinceSt(c)
+      }),
+    }
+    const stEvalQueue: StEvalQueueLike = {
+      add: vi.fn((name: string, data: StEvalPayload): Promise<never> => {
+        order.push('enqueue')
+        stEvalCalls.push({ name, data })
+        return Promise.resolve(undefined as never)
+      }),
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState: recordingTrigger,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The §2 enqueue carries the campaign + session ids.
+    expect(stEvalCalls).toHaveLength(1)
+    expect(stEvalCalls[0]?.name).toBe(ST_EVAL_JOB_NAME)
+    expect(stEvalCalls[0]?.data).toEqual({ campaignId: CAMPAIGN, sessionId: SESSION })
+    // Order: watermark (setRespondedSeq) → floor bump → enqueue.
+    expect(order).toEqual(['watermark', 'incr', 'enqueue'])
+  })
+
+  it('the converge path does NOT enqueue an st-evaluation (only a fresh flushed turn has an FT response, §2)', async () => {
+    // Converge advances the watermark but does NOT enqueue — there is no fresh FT
+    // response to evaluate.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const stEvalCalls: StEvalCall[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: true }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: recordingStEvalQueue(stEvalCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order).toEqual(['turn_end'])
+    expect(stEvalCalls).toHaveLength(0)
+  })
+
+  it('a lock-lost abort does NOT enqueue an st-evaluation (no fresh FT response, §2)', async () => {
+    // A lock-lost run never flushes, so the gated enqueue never fires.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: false, release })
+    const stEvalCalls: StEvalCall[] = []
+
+    const processSpy = installSlowProcessDmTurn()
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: recordingStEvalQueue(stEvalCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 5,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order).not.toContain('turn_end')
+    expect(stEvalCalls).toHaveLength(0)
+
+    processSpy.mockRestore()
+  })
+
+  it('an st-evaluation enqueue failure is isolated: logged, turn still returns {ran:true} (§2)', async () => {
+    // The enqueue is in its own try/catch — an enqueue hiccup never masks the
+    // turn outcome (the turn already flushed; a rethrow would re-run it).
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const logger = { warn: vi.fn(), error: vi.fn() }
+
+    const boom = new Error('st-eval queue unreachable')
+    const stEvalQueue: StEvalQueueLike = {
+      add: vi.fn((): Promise<never> => Promise.reject(boom)),
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    // The turn itself succeeded; the enqueue failure didn't surface.
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
+      'failed to enqueue st-evaluation',
+    )
   })
 })
 

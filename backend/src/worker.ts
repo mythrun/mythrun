@@ -29,6 +29,8 @@ import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js
 import { buildSessionTurnWorker } from './session/turn-worker.js'
 import { QUEUE_SESSION_TURN } from './session/turn-queue.js'
 import { buildDmTriggerWorker } from './session/dm-trigger-worker.js'
+import { buildStEvaluationWorker } from './session/st-evaluation-worker.js'
+import { QUEUE_ST_EVAL } from './session/st-eval-queue.js'
 import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
@@ -166,6 +168,17 @@ export async function main(): Promise<void> {
     logger,
   )
 
+  // ST-evaluation (MYT-69) — the post-hoc narrative director, OFF the hot path.
+  // Wired HERE in the dedicated worker process. Takes the pg Pool (builds its
+  // own repo) + both Redis connections; its Queue producer rides redisBatch.
+  const stEvaluationWorker = buildStEvaluationWorker(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    pg,
+    logger,
+  )
+
   // Session-turn QueueEvents subscriber (MYT-67 §4.8) — the broker-side terminal
   // `turn_error` publisher that closes the `maxStalledCount`-exhaustion gap the
   // per-worker `on('failed')` listener can't see. It `duplicate()`s `redisBatch`
@@ -191,6 +204,7 @@ export async function main(): Promise<void> {
       sessionPrepWorker,
       sessionTurnWorker,
       dmTriggerWorker,
+      stEvaluationWorker,
     ],
   })
 
@@ -204,6 +218,7 @@ export async function main(): Promise<void> {
         QUEUE_SESSION_PREP,
         QUEUE_SESSION_TURN,
         QUEUE_DM_TRIGGER,
+        QUEUE_ST_EVAL,
       ],
     },
     'worker started',
@@ -225,6 +240,7 @@ export async function main(): Promise<void> {
       closeWithDeadline(sessionPrepWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionTurnWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(dmTriggerWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(stEvaluationWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     // Tear down the session-turn QueueEvents subscriber's dedicated blocking

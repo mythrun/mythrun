@@ -40,7 +40,10 @@
 // `SonnetFastThinker` per turn with that turn's scoped skill-check `mech`
 // projection (ONLY `findSessionParticipantCharacterByName`, §8 — never the whole
 // repo), the resolved `worldTone`, and the latched emitter the worker owns. The
-// ST + Scribe remain stubs until MYT-69. Per-turn context (ftContext, the
+// SlowThinker is retired off this path (MYT-69 — it runs post-hoc in its own
+// st-evaluation worker, enqueued on the flushed-success path); Scribe stays a
+// stub. The fresh-run arm resolves the §6 direction slots (one-shot GETDEL +
+// standing read) and threads them into the controller. Per-turn context (ftContext, the
 // session-participant roster + character-name attribution, world tone) is
 // resolved here from the `:state` blob with a PG re-load fallback (§3.10).
 
@@ -54,8 +57,8 @@ import { SessionController, type TranscriptStore } from './session-controller.js
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
 import { buildFtTools } from './tiers/ft-tools.js'
-import { StubScribe, StubSlowThinker } from './tiers/stubs.js'
-import type { FastThinker, Scribe, SlowThinker, TurnEmitter } from './tiers/types.js'
+import { StubScribe } from './tiers/stubs.js'
+import type { FastThinker, Scribe, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import {
@@ -66,6 +69,12 @@ import {
 import { QUEUE_DM_TRIGGER, QUIET_WINDOW_MS } from './dm-trigger-config.js'
 import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
 import { enqueueTurn, QUEUE_SESSION_TURN, type TurnJobPayload, type TurnQueueLike } from './turn-queue.js'
+import {
+  enqueueStEval,
+  QUEUE_ST_EVAL,
+  type StEvalPayload,
+  type StEvalQueueLike,
+} from './st-eval-queue.js'
 
 /** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
  *  meaning a successor re-acquired it). Distinguished from a real failure so the
@@ -150,11 +159,18 @@ export interface TurnProcessorDeps {
    *  explicit follow-up turn on release so the summon fires the instant the
    *  current turn ends. */
   readonly sessionTurnQueue: TurnQueueLike
+  /** MYT-69 §2 — the st-evaluation producer. Enqueued ONLY on the flushed-success
+   *  path (post-hoc, off the hot path) — the post-turn narrative director runs in
+   *  its own worker. The producer NEVER touches the dedup key (the job
+   *  self-re-arms). */
+  readonly stEvalQueue: StEvalQueueLike
   readonly publisher: TurnPublisher
   /** Per-turn tier factory. Takes the resolved per-turn args (the latched
    *  emitter is passed IN so tests can fake the tiers while the worker owns the
-   *  latch wiring; the controller receives the SAME emitter via its deps). */
-  readonly makeTiers: (turn: TierTurnArgs) => { st: SlowThinker; ft: FastThinker; scribe: Scribe }
+   *  latch wiring; the controller receives the SAME emitter via its deps). The
+   *  SlowThinker seam is retired (MYT-69 — the ST runs off the turn path in its
+   *  own worker), so the factory returns only `{ ft, scribe }`. */
+  readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker; scribe: Scribe }
   readonly heartbeatMs: number
   readonly logger: MinimalLogger
 }
@@ -326,6 +342,13 @@ export async function processTurnJob(
       deps.triggerState.markTurnEmitted(turnId),
     )
 
+    // §6 — take the one-shot (GETDEL, latest-wins) and READ the standing
+    // directive. ONLY on the fresh-run arm: a take before the converge/latch
+    // exits (above) would burn a sanctioned reveal on a turn that never renders,
+    // and a take by a contention loser would starve the lock holder.
+    const pendingDirection = await deps.triggerState.takeOneShotDirection(campaignId)
+    const standingDirective = await deps.triggerState.readStandingDirection(campaignId)
+
     const tiers = deps.makeTiers({ sessionId, worldTone, emitter })
 
     const controller = new SessionController(
@@ -337,6 +360,8 @@ export async function processTurnJob(
         attributionNames,
         participants,
         ftContext,
+        ...(pendingDirection !== null ? { pendingDirection } : {}),
+        ...(standingDirective !== null ? { standingDirective } : {}),
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
         logger: deps.logger,
       },
@@ -357,6 +382,17 @@ export async function processTurnJob(
     // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
     // a lock-lost abort never flushes, so it must never advance the watermark.
     await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
+    // §8 — a flushed turn happened; bump the ST floor counter.
+    await deps.triggerState.incrTurnsSinceSt(campaignId)
+    // §2 — enqueue the st-evaluation (post-hoc, off the hot path). Gated on the
+    // flushed-success path ONLY (a failed/lock-lost/converge run has no fresh FT
+    // response to evaluate). Own try/catch — an enqueue hiccup never masks the
+    // turn outcome.
+    try {
+      await enqueueStEval(deps.stEvalQueue, { campaignId, sessionId })
+    } catch (enqErr) {
+      deps.logger.error({ err: enqErr, campaignId, turnId }, 'failed to enqueue st-evaluation')
+    }
     // turn_end is the WORKER's, published only AFTER persist + flush + watermark
     // (so a client never sees turn_end for a turn that did not durably land).
     await deps.publisher.turnEnd(campaignId, turnId)
@@ -454,8 +490,9 @@ const TURN_HEARTBEAT_MS = 15_000
  *
  * The FastThinker is now REAL (MYT-68): `makeTiers` constructs a fresh
  * `SonnetFastThinker` per turn with that turn's scoped skill-check `mech`
- * projection + resolved world tone + latched emitter. ST + Scribe remain stubs
- * until MYT-69.
+ * projection + resolved world tone + latched emitter. The SlowThinker is retired
+ * off this path (MYT-69 — it runs post-hoc in the st-evaluation worker); Scribe
+ * stays a stub.
  */
 export function buildSessionTurnWorker(
   redisBatch: Redis,
@@ -480,6 +517,9 @@ export function buildSessionTurnWorker(
     add: (n, d, o) => dmTriggerBullQueue.add(n, d, o),
   }
   const sessionTurnQueue: TurnQueueLike = { add: (n, d, o) => turnQueue.add(n, d, o) }
+  // §2 post-turn st-evaluation producer (one Queue per process, like the others).
+  const stEvalBullQueue = new Queue<StEvalPayload>(QUEUE_ST_EVAL, { connection: redisBatch })
+  const stEvalQueue: StEvalQueueLike = { add: (n, d, o) => stEvalBullQueue.add(n, d, o) }
 
   const deps: TurnProcessorDeps = {
     lock: createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS),
@@ -487,12 +527,13 @@ export function buildSessionTurnWorker(
     repo,
     triggerState,
     sessionTurnQueue,
+    stEvalQueue,
     dmTriggerQueue,
     publisher,
     // The real FastThinker, constructed per turn with the scoped skill-check
     // mechanical projection (§8 — ONLY findSessionParticipantCharacterByName,
     // never the whole repo), the turn's world tone, and the worker-owned latched
-    // emitter. ST + Scribe stay stubs until MYT-69.
+    // emitter. The SlowThinker is retired off this path (MYT-69); Scribe stays a stub.
     /* c8 ignore start -- real-FT construction: invoking it spends Sonnet tokens;
        wiring is exercised by the §10 real-Anthropic E2E smoke (T19), and the
        converge-path builder tests prove the surrounding wiring */
@@ -502,7 +543,6 @@ export function buildSessionTurnWorker(
           repo.characters.findSessionParticipantCharacterByName(sid, name),
       }
       return {
-        st: new StubSlowThinker(),
         scribe: new StubScribe(),
         ft: new SonnetFastThinker({
           tools: buildFtTools({ mech, sessionId, worldTone, logger }, undefined),
