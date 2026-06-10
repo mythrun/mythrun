@@ -16,6 +16,9 @@
 //   session:{cId}:responded-seq        int watermark; set at turn flush (§4.3/§4.7)
 //   session:{cId}:dm_responding        "a turn is in flight" drain guard (§4.7)
 //   session:{cId}:dm-trigger-explicit  explicit-pending flag, drained on release (§4.7)
+//   session:{cId}:direction:oneshot    MYT-69 one-shot direction; GETDEL-consumed (§6)
+//   session:{cId}:direction:standing   MYT-69 standing directive; read (not cleared) (§6)
+//   session:{cId}:turns-since-st       MYT-69 int counter; INCR per flushed turn (§8)
 //   turn-error-published:{turnId}      SET NX idempotency latch (§4.8)
 //   turn:{turnId}:emitted              SET NX emitted-anything latch (§5)
 //
@@ -43,6 +46,13 @@ const TURN_ERROR_LATCH_TTL_S = 60
  *  past that, a re-run can't credibly re-stream the same turnId, so the latch is
  *  free to lapse rather than leak a key per turn on a long-lived process. */
 const TURN_EMITTED_LATCH_TTL_S = 3600
+
+/** TTL (seconds) on the MYT-69 direction slots. `STATE_TTL` is private to
+ *  redis/session-state.ts; a deliberate same-valued MIRROR of its 2h (not a
+ *  shared export — the two TTLs merely coincide and need not move in lockstep)
+ *  so a gate-quiet stretch doesn't let a pending reveal lapse mid-session
+ *  (§6/§8). */
+const DIRECTION_TTL_S = 2 * 60 * 60
 
 export interface TriggerState {
   /** Set/refresh this user's typing key with a TTL (`TYPING_TTL_S`). The
@@ -98,6 +108,31 @@ export interface TriggerState {
    *  job doesn't arrive via a failure path). Cross-container by construction. */
   markTurnEmitted(turnId: string): Promise<void>
   wasTurnEmitted(turnId: string): Promise<boolean>
+  // §6 one-shot direction slot. Latest-wins SET (a newer evaluation overwrites
+  // an unconsumed direction — the ST sees the pending value in its context, so
+  // the overwrite is informed). Taken-and-cleared atomically (GETDEL) ONLY on
+  // the turn worker's fresh-run arm. Carries the session-state TTL.
+  setOneShotDirection(campaignId: string, text: string): Promise<void>
+  takeOneShotDirection(campaignId: string): Promise<string | null>
+  /** §4 read-only peek for the ST's own context (its unconsumed pending
+   *  one-shot) — a plain GET. The turn worker's fresh-run arm is the ONLY
+   *  consumer (takeOneShotDirection); the ST NEVER consumes. */
+  peekOneShotDirection(campaignId: string): Promise<string | null>
+  // §6 standing directive. SET/clear by the ST job; READ (not cleared) every
+  // DM turn. Carries the session-state TTL.
+  setStandingDirection(campaignId: string, text: string): Promise<void>
+  readStandingDirection(campaignId: string): Promise<string | null>
+  clearStandingDirection(campaignId: string): Promise<void>
+  // §8 turns-since-the-last-ST-RAN. INCR on the flushed-success path; reset only
+  // when an Opus evaluation actually ran (the reset-vs-INCR race is accepted at
+  // ±1 — the floor still fires within a turn or two).
+  incrTurnsSinceSt(campaignId: string): Promise<number>
+  turnsSinceSt(campaignId: string): Promise<number>
+  resetTurnsSinceSt(campaignId: string): Promise<void>
+  /** §8 session-boundary hygiene: clear the ST-owned slots + counter at session
+   *  start. (The :usage / :usage:st / :summary resets are session-state's, called
+   *  alongside this from the route.) */
+  resetSessionKeys(campaignId: string): Promise<void>
 }
 
 export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState {
@@ -112,6 +147,9 @@ export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState 
   const explicitKey = (campaignId: string): string => `${base(campaignId)}:dm-trigger-explicit`
   const latchKey = (turnId: string): string => `${keyPrefix}turn-error-published:${turnId}`
   const emittedKey = (turnId: string): string => `${keyPrefix}turn:${turnId}:emitted`
+  const oneShotKey = (campaignId: string): string => `${base(campaignId)}:direction:oneshot`
+  const standingKey = (campaignId: string): string => `${base(campaignId)}:direction:standing`
+  const turnsSinceStKey = (campaignId: string): string => `${base(campaignId)}:turns-since-st`
 
   // The `typing:` segment length, so listTyping can slice the userId suffix off
   // a matched key without a fragile index calc at the call site.
@@ -214,6 +252,41 @@ export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState 
     },
 
     wasTurnEmitted: async (turnId) => (await redis.exists(emittedKey(turnId))) === 1,
+
+    setOneShotDirection: async (campaignId, text) => {
+      await redis.set(oneShotKey(campaignId), text, 'EX', DIRECTION_TTL_S)
+    },
+
+    takeOneShotDirection: async (campaignId) => redis.getdel(oneShotKey(campaignId)),
+
+    peekOneShotDirection: async (campaignId) => redis.get(oneShotKey(campaignId)),
+
+    setStandingDirection: async (campaignId, text) => {
+      await redis.set(standingKey(campaignId), text, 'EX', DIRECTION_TTL_S)
+    },
+
+    readStandingDirection: async (campaignId) => redis.get(standingKey(campaignId)),
+
+    clearStandingDirection: async (campaignId) => {
+      await redis.del(standingKey(campaignId))
+    },
+
+    incrTurnsSinceSt: async (campaignId) => redis.incr(turnsSinceStKey(campaignId)),
+
+    turnsSinceSt: async (campaignId) => {
+      const raw = await redis.get(turnsSinceStKey(campaignId))
+      if (raw === null) return 0
+      const n = Number(raw)
+      return Number.isFinite(n) ? n : 0
+    },
+
+    resetTurnsSinceSt: async (campaignId) => {
+      await redis.del(turnsSinceStKey(campaignId))
+    },
+
+    resetSessionKeys: async (campaignId) => {
+      await redis.del(oneShotKey(campaignId), standingKey(campaignId), turnsSinceStKey(campaignId))
+    },
   }
 }
 

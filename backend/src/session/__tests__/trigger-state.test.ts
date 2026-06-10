@@ -59,3 +59,53 @@ describe('trigger-state', () => {
     expect(await s.firstUnrespondedMs('c1')).toBeNull()
   })
 })
+
+describe('MYT-69 direction slots', () => {
+  it('one-shot: set latest-wins, GETDEL take returns then clears', async () => {
+    const ts = mk()
+    await ts.setOneShotDirection('c', 'first')
+    await ts.setOneShotDirection('c', 'second') // latest wins
+    expect(await ts.takeOneShotDirection('c')).toBe('second')
+    expect(await ts.takeOneShotDirection('c')).toBeNull() // cleared
+  })
+  it('one-shot: peek reads WITHOUT consuming (the ST-side read)', async () => {
+    const ts = mk()
+    await ts.setOneShotDirection('c', 'pending')
+    expect(await ts.peekOneShotDirection('c')).toBe('pending')
+    expect(await ts.peekOneShotDirection('c')).toBe('pending') // peek does not clear
+    expect(await ts.takeOneShotDirection('c')).toBe('pending') // take still consumes
+  })
+  it('standing: set / read (NOT cleared by read) / clear', async () => {
+    const ts = mk()
+    expect(await ts.readStandingDirection('c')).toBeNull()
+    await ts.setStandingDirection('c', 'wind down')
+    expect(await ts.readStandingDirection('c')).toBe('wind down')
+    expect(await ts.readStandingDirection('c')).toBe('wind down') // read does not clear
+    await ts.clearStandingDirection('c')
+    expect(await ts.readStandingDirection('c')).toBeNull()
+  })
+  it('turns-since-ST: INCR returns the new value, reset zeroes it', async () => {
+    const ts = mk()
+    expect(await ts.incrTurnsSinceSt('c')).toBe(1)
+    expect(await ts.incrTurnsSinceSt('c')).toBe(2)
+    expect(await ts.turnsSinceSt('c')).toBe(2)
+    await ts.resetTurnsSinceSt('c')
+    expect(await ts.turnsSinceSt('c')).toBe(0)
+  })
+  it('turns-since-ST: falls back to 0 when the raw key holds a non-numeric value', async () => {
+    // Mirror the responded-seq garbage-fallback test — no public setter writes a
+    // non-number, so plant garbage at the exact key directly on the mock.
+    const { s, redis } = mkWithRedis()
+    await redis.set('t:session:c:turns-since-st', 'garbage')
+    expect(await s.turnsSinceSt('c')).toBe(0)
+  })
+  it('resetSessionKeys clears all ST keys (+ leaves transport keys)', async () => {
+    const ts = mk()
+    await ts.setOneShotDirection('c', 'x'); await ts.setStandingDirection('c', 'y')
+    await ts.incrTurnsSinceSt('c')
+    await ts.resetSessionKeys('c')
+    expect(await ts.takeOneShotDirection('c')).toBeNull()
+    expect(await ts.readStandingDirection('c')).toBeNull()
+    expect(await ts.turnsSinceSt('c')).toBe(0)
+  })
+})
