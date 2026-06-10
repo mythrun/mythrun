@@ -27,15 +27,18 @@ const EXPECTED_TABLES = [
   'campaign_members',
   'campaigns',
   'character_concepts',
+  'character_conditions',
   'character_equipment',
   'character_features',
   'character_skills',
+  'character_spell_slots',
   'character_spells',
   'characters',
   'credit_ledger',
   'entities',
   'entity_hierarchy',
   'facts',
+  'ledger_events',
   'moderation_flags',
   'pipeline_runs',
   'prose_kernels',
@@ -71,6 +74,10 @@ const EXPECTED_IDX_NAMES = [
   'idx_campaign_members_user',
   'idx_campaigns_created_by',
   'idx_character_concepts_campaign_status',
+  'idx_character_equipment_name',
+  'idx_character_features_name',
+  'idx_character_skills_character',
+  'idx_character_spells_name',
   'idx_characters_user',
   'idx_credit_ledger_source_billing_history',
   'idx_credit_ledger_source_purchase',
@@ -148,8 +155,88 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
     check_clause: `CHECK ((status = ANY (ARRAY['submitted'::text, 'processing'::text, 'completed'::text, 'failed'::text, 'integrated'::text])))`,
   },
   {
+    table_name: 'character_conditions',
+    check_clause: `CHECK (((condition = 'exhaustion'::text) = (level IS NOT NULL)))`,
+  },
+  {
+    table_name: 'character_conditions',
+    check_clause: `CHECK ((condition = ANY (ARRAY['blinded'::text, 'charmed'::text, 'deafened'::text, 'exhaustion'::text, 'frightened'::text, 'grappled'::text, 'incapacitated'::text, 'invisible'::text, 'paralyzed'::text, 'petrified'::text, 'poisoned'::text, 'prone'::text, 'restrained'::text, 'stunned'::text, 'unconscious'::text])))`,
+  },
+  {
+    table_name: 'character_conditions',
+    check_clause: `CHECK (((level >= 1) AND (level <= 6)))`,
+  },
+  {
+    table_name: 'character_equipment',
+    check_clause: `CHECK ((quantity >= 0))`,
+  },
+  {
+    table_name: 'character_features',
+    check_clause: `CHECK (((max_uses IS NULL) OR (max_uses >= 1)))`,
+  },
+  {
+    table_name: 'character_features',
+    check_clause: `CHECK ((recharge = ANY (ARRAY['short_rest'::text, 'long_rest'::text, 'none'::text])))`,
+  },
+  {
+    table_name: 'character_features',
+    check_clause: `CHECK (((max_uses IS NOT NULL) OR (recharge = 'none'::text)))`,
+  },
+  {
+    table_name: 'character_features',
+    check_clause: `CHECK (((uses_remaining IS NULL) OR (uses_remaining <= max_uses)))`,
+  },
+  {
+    table_name: 'character_features',
+    check_clause: `CHECK (((max_uses IS NULL) = (uses_remaining IS NULL)))`,
+  },
+  {
+    table_name: 'character_features',
+    check_clause: `CHECK (((uses_remaining IS NULL) OR (uses_remaining >= 0)))`,
+  },
+  {
     table_name: 'character_skills',
     check_clause: `CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))`,
+  },
+  {
+    table_name: 'character_spell_slots',
+    check_clause: `CHECK ((slots_remaining <= slots_max))`,
+  },
+  {
+    table_name: 'character_spell_slots',
+    check_clause: `CHECK (((slot_level >= 1) AND (slot_level <= 9)))`,
+  },
+  {
+    table_name: 'character_spell_slots',
+    check_clause: `CHECK ((slots_max >= 0))`,
+  },
+  {
+    table_name: 'character_spell_slots',
+    check_clause: `CHECK ((slots_remaining >= 0))`,
+  },
+  {
+    table_name: 'characters',
+    check_clause: `CHECK ((gold >= 0))`,
+  },
+  {
+    table_name: 'characters',
+    check_clause: `CHECK ((hit_dice_remaining <= level))`,
+  },
+  {
+    table_name: 'characters',
+    check_clause: `CHECK ((hit_dice_remaining >= 0))`,
+  },
+  {
+    table_name: 'characters',
+    check_clause: `CHECK ((hit_die = ANY (ARRAY[6, 8, 10, 12])))`,
+  },
+  {
+    table_name: 'characters',
+    check_clause: `CHECK (((hit_points >= 0) AND (hit_points <= max_hit_points)))`,
+  },
+  {
+    table_name: 'characters',
+    check_clause: `CHECK ((spellcasting_progression = ANY (ARRAY['full'::text, 'half'::text, 'third'::text, 'pact'::text, 'none'::text])))`,
   },
   {
     table_name: 'credit_ledger',
@@ -368,6 +455,12 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     delete_rule: 'CASCADE',
   },
   {
+    table_name: 'character_conditions',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
     table_name: 'character_equipment',
     column_name: 'character_id',
     foreign_table_name: 'characters',
@@ -381,6 +474,12 @@ const EXPECTED_FK_DELETE_RULES: readonly {
   },
   {
     table_name: 'character_skills',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'character_spell_slots',
     column_name: 'character_id',
     foreign_table_name: 'characters',
     delete_rule: 'CASCADE',
@@ -449,6 +548,18 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     table_name: 'facts',
     column_name: 'entity_id',
     foreign_table_name: 'entities',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'ledger_events',
+    column_name: 'character_id',
+    foreign_table_name: 'characters',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'ledger_events',
+    column_name: 'session_id',
+    foreign_table_name: 'sessions',
     delete_rule: 'CASCADE',
   },
   {
@@ -682,6 +793,7 @@ describe('schema-parity (integration)', () => {
       '022_session_preps_unique.sql',
       '023_session_messages_unique_seq.sql',
       '024_session_messages_dm_rows.sql',
+      '025_character_ledger.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
