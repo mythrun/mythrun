@@ -42,7 +42,7 @@ const SESSION = 's-ctrl-1'
 const TURN = 't-ctrl-1'
 const FT_CONTEXT = 'the enforced-ignorance-safe prep doc'
 
-const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
+const ATTRIBUTION_NAMES: ReadonlyMap<string, string> = new Map([
   ['u1', 'Mara'],
   ['u2', 'Bram'],
 ])
@@ -142,11 +142,12 @@ function recordingEmitter(emitted: string[]): TurnEmitter {
   }
 }
 
-/** A recording SessionState: only loadTurnState/getState/flushTurnState are
- *  exercised by the controller; the rest throw so an accidental call is loud. */
+/** A recording SessionState: only loadTurnState/flushTurnState are exercised by
+ *  the controller (MYT-68: participants are a per-turn DEP now, not a getState
+ *  read — so getState joins the `unused` throwers and an accidental call is
+ *  loud). The rest throw so an accidental call is loud. */
 function fakeSessionState(opts: {
   turnState?: TurnState
-  participants?: readonly string[]
   flushed: { value?: TurnState }
 }): SessionState {
   const unused = (name: string) => (): never => {
@@ -156,17 +157,11 @@ function fakeSessionState(opts: {
     loadTurnState: vi.fn((): Promise<TurnState> =>
       Promise.resolve(opts.turnState ?? { summary: '', usage: { input: 0, output: 0 } }),
     ),
-    getState: vi.fn((): Promise<ReturnType<SessionState['getState']> extends Promise<infer T> ? T : never> =>
-      Promise.resolve(
-        opts.participants === undefined
-          ? null
-          : { participants: opts.participants, mode: 'exploration', status: 'active' },
-      ),
-    ),
     flushTurnState: vi.fn((_campaignId: string, ts: TurnState): Promise<void> => {
       opts.flushed.value = ts
       return Promise.resolve()
     }),
+    getState: unused('getState'),
     nextSeq: unused('nextSeq'),
     reseedSeq: unused('reseedSeq'),
     addPresence: unused('addPresence'),
@@ -221,7 +216,6 @@ function build(opts: BuildOpts = {}): {
   const deps: SessionControllerDeps = {
     sessionState: fakeSessionState({
       ...(opts.turnState !== undefined ? { turnState: opts.turnState } : {}),
-      ...(opts.participants !== undefined ? { participants: opts.participants } : {}),
       flushed,
     }),
     st: fakeSt(opts.evaluation ?? { intervene: false }),
@@ -229,7 +223,10 @@ function build(opts: BuildOpts = {}): {
     scribe: opts.scribe ?? fakeScribe(),
     emitter,
     transcript: fakeTranscript(opts.rows ?? HISTORY_ROWS, transcriptCapture),
-    displayNames: DISPLAY_NAMES,
+    attributionNames: ATTRIBUTION_NAMES,
+    // MYT-68: the FT prompt roster is now a per-turn dep (worker-resolved from
+    // session_participants), not a getState read. Default to [].
+    participants: opts.participants ?? [],
     ftContext: opts.ftContext ?? FT_CONTEXT,
     allocSeq: scriptedAllocSeq(opts.allocStart ?? 100),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
@@ -249,7 +246,7 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(transcriptCapture.listArgs).toEqual({ sessionId: SESSION, maxPlayerSeq: 7 })
     // ctx.ftHistory is EXACTLY rowsToConversation's output on the same fixture —
     // no extra trigger batch appended by the controller.
-    const expected = rowsToConversation(HISTORY_ROWS, DISPLAY_NAMES)
+    const expected = rowsToConversation(HISTORY_ROWS, ATTRIBUTION_NAMES)
     expect(capturedFtCtx.ctx?.ftHistory).toEqual(expected)
   })
 
@@ -459,7 +456,7 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(warn).toHaveBeenCalled()
   })
 
-  it('defaults participants to [] (and workingSet to []) when no :state blob is set', async () => {
+  it('defaults participants to [] (and workingSet to []) when none are injected', async () => {
     const { controller, capturedFtCtx } = build()
     await controller.loadFromRedis()
     await controller.processDmTurn(1)
@@ -468,11 +465,14 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(capturedFtCtx.ctx?.workingSet).toEqual([])
   })
 
-  it('carries loaded participants into the FT context', async () => {
-    const { controller, capturedFtCtx } = build({ participants: ['Mara', 'Bram'] })
+  it('carries the injected participants dep through to the FT context (MYT-68: deps → ctx)', async () => {
+    // The roster is a per-turn DEP now (worker-resolved from session_participants
+    // in deterministic order), not a getState read. The fake SessionState throws
+    // if getState is called, so this also pins that the controller never reads it.
+    const { controller, capturedFtCtx } = build({ participants: ['Bryn', 'Arin'] })
     await controller.loadFromRedis()
     await controller.processDmTurn(1)
 
-    expect(capturedFtCtx.ctx?.participants).toEqual(['Mara', 'Bram'])
+    expect(capturedFtCtx.ctx?.participants).toEqual(['Bryn', 'Arin'])
   })
 })

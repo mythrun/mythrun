@@ -40,9 +40,9 @@
 // `SonnetFastThinker` per turn with that turn's scoped skill-check `mech`
 // projection (ONLY `findSessionParticipantCharacterByName`, §8 — never the whole
 // repo), the resolved `worldTone`, and the latched emitter the worker owns. The
-// ST + Scribe remain stubs until MYT-69. Per-turn context (ftContext, display
-// names, world tone) is resolved here from the `:state` blob with a PG re-load
-// fallback (§3.10).
+// ST + Scribe remain stubs until MYT-69. Per-turn context (ftContext, the
+// session-participant roster + character-name attribution, world tone) is
+// resolved here from the `:state` blob with a PG re-load fallback (§3.10).
 
 import { Queue, UnrecoverableError, Worker as BullmqWorker, type Job } from 'bullmq'
 import { randomUUID } from 'node:crypto'
@@ -58,6 +58,12 @@ import { StubScribe, StubSlowThinker } from './tiers/stubs.js'
 import type { FastThinker, Scribe, SlowThinker, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
+import {
+  rescheduleDebounce,
+  type DmTriggerPayload,
+  type DmTriggerQueueLike,
+} from './dm-trigger-queue.js'
+import { QUEUE_DM_TRIGGER, QUIET_WINDOW_MS } from './dm-trigger-config.js'
 import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
 import { enqueueTurn, QUEUE_SESSION_TURN, type TurnJobPayload, type TurnQueueLike } from './turn-queue.js'
 
@@ -80,7 +86,8 @@ interface MinimalLogger {
 
 /** The narrow repo surface the worker reads — the §3.7 idempotency probe +
  *  transcript I/O (passed through to the controller's TranscriptStore), the
- *  display-name roster, the session-row → session-number read, the prep
+ *  session-participant roster (names + the userId→character-name attribution
+ *  map, off one read), the session-row → session-number read, the prep
  *  ft_context read, and the scoped skill-check mechanical projection. Defining
  *  the worker's needs as a narrow interface (rather than the full `Repo`) keeps
  *  the in-memory test fakes small and makes the §8 scoping explicit. The real
@@ -88,11 +95,8 @@ interface MinimalLogger {
 export interface TurnWorkerRepo {
   readonly sessionMessages: TranscriptStore & {
     turnRowsExist(turnId: string): Promise<boolean>
-  }
-  readonly campaigns: {
-    listMembersBasic(
-      campaignId: string,
-    ): Promise<readonly { user_id: string; display_name: string }[]>
+    /** §4.7 post-turn re-mature: the unanswered-rows probe. */
+    listAfterSeq(sessionId: string, afterSeq: number): Promise<readonly { messageType: string }[]>
   }
   readonly sessions: {
     getById(id: string): Promise<{ sessionNumber: number } | null>
@@ -100,7 +104,20 @@ export interface TurnWorkerRepo {
   readonly sessionPreps: {
     getBy(campaignId: string, sessionNumber: number): Promise<{ ftContext: string } | null>
   }
-  readonly characters: Pick<MechanicalReads, 'findSessionParticipantCharacterByName'>
+  readonly characters: Pick<MechanicalReads, 'findSessionParticipantCharacterByName'> & {
+    /** MYT-68: the FT prompt roster + the per-turn player-attribution map, off
+     *  one read — the session's joined PCs as `{userId, name}` in a deterministic
+     *  order, derived per turn from session_participants (the source of truth the
+     *  skill-check resolver also reads), never from the racy :state blob (two
+     *  simultaneous joins lost a name to last-write-wins). The names feed the FT
+     *  system-prompt roster; the userId→name map is the codec's player
+     *  attribution (CHARACTER names — the prompt echoes the attributed name into
+     *  roll_skill_check.character_name, which resolves against
+     *  session_participants). */
+    listSessionParticipantCharacters(
+      sessionId: string,
+    ): Promise<readonly { userId: string; name: string }[]>
+  }
 }
 
 /** Per-turn arguments the tiers factory needs. The emitter is passed IN (the
@@ -121,6 +138,13 @@ export interface TurnProcessorDeps {
    *  on release, runs the §5 emitted-anything latch, and gates the §4.8 terminal
    *  turn_error publish. */
   readonly triggerState: TriggerState
+  /** §4.7 post-turn re-mature (auto path): the dm-trigger debounce producer.
+   *  A message that lands while a turn is in flight is swallowed (the evaluate
+   *  job exits on `isResponding`, and a dedup'd add during an in-flight
+   *  evaluation is dropped) — at turn end, if player rows sit above the
+   *  responded watermark, the worker re-arms the quiet window so the DM comes
+   *  back for them. Found live in the MYT-68 E2E smoke. */
+  readonly dmTriggerQueue: DmTriggerQueueLike
   /** MYT-67 §4.7 — the `session-turn` producer used ONLY for the explicit drain:
    *  if an `@dm` landed while this turn was in flight, the worker enqueues one
    *  explicit follow-up turn on release so the summon fires the instant the
@@ -277,17 +301,23 @@ export async function processTurnJob(
     await deps.publisher.dmThinking(campaignId, turnId)
 
     // Resolve per-turn context from the `:state` blob, with a PG re-load
-    // fallback for ftContext (§3.10) and the campaign roster for display names.
+    // fallback for ftContext (§3.10).
     const state = await deps.sessionState.getState(campaignId)
     const ftContext =
       state?.ftContext ?? (await reloadFtContext(deps.repo, campaignId, sessionId, deps.logger))
     const worldTone = state?.worldTone ?? ''
-    const displayNames = new Map(
-      (await deps.repo.campaigns.listMembersBasic(campaignId)).map((m) => [
-        m.user_id,
-        m.display_name,
-      ]),
-    )
+    // MYT-68: one read off session_participants (the same source the skill-check
+    // resolver reads), in deterministic joined order, never the racy :state blob
+    // (two simultaneous joins lost a name to last-write-wins; caught live in the
+    // MYT-68 smoke). The names feed the FT system-prompt roster; the
+    // userId→character-name map is the codec's player attribution — CHARACTER
+    // names, because the ft-system prompt tells the model to echo the attributed
+    // name into roll_skill_check.character_name, which resolves against
+    // session_participants (a display-name attribution fail-softed the first
+    // check live in the smoke).
+    const sessionPcs = await deps.repo.characters.listSessionParticipantCharacters(sessionId)
+    const participants = sessionPcs.map((p) => p.name)
+    const attributionNames = new Map(sessionPcs.map((p) => [p.userId, p.name]))
 
     // The latched emitter (§5): the FIRST frame of any kind marks the
     // emitted-anything latch BEFORE publishing, so a crash between mark and
@@ -304,7 +334,8 @@ export async function processTurnJob(
         ...tiers,
         emitter,
         transcript: deps.repo.sessionMessages,
-        displayNames,
+        attributionNames,
+        participants,
         ftContext,
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
         logger: deps.logger,
@@ -378,6 +409,25 @@ export async function processTurnJob(
         'failed to drain pending explicit summon',
       )
     }
+    // §4.7 post-turn re-mature (auto path). The in-flight guard makes the
+    // evaluate job exit while a turn runs, so a message that arrived mid-turn
+    // has no pending evaluation — without this re-arm it would sit unanswered
+    // until the NEXT message (or forever, at a quiet table). Re-arm only when
+    // unanswered player rows actually exist above the watermark; the
+    // re-armed evaluation classifies them like any other batch. Own
+    // try/catch: a re-arm hiccup must never mask the turn outcome.
+    try {
+      const watermark = await deps.triggerState.respondedSeq(campaignId)
+      const trailing = await deps.repo.sessionMessages.listAfterSeq(sessionId, watermark)
+      if (trailing.some((r) => r.messageType === 'player_message')) {
+        await rescheduleDebounce(deps.dmTriggerQueue, campaignId, QUIET_WINDOW_MS)
+      }
+    } catch (rearmErr) {
+      deps.logger.error(
+        { err: rearmErr, campaignId, turnId },
+        'failed to re-arm the quiet window after the turn',
+      )
+    }
   }
 }
 
@@ -422,6 +472,13 @@ export function buildSessionTurnWorker(
   // shared BullMQ connection `redisBatch`, like every other producer) and reuse
   // it; a fresh `new Queue(...)` per enqueue would leak a client per drain.
   const turnQueue = new Queue<TurnJobPayload>(QUEUE_SESSION_TURN, { connection: redisBatch })
+  // §4.7 post-turn re-mature producer (one Queue per process, like turnQueue).
+  const dmTriggerBullQueue = new Queue<DmTriggerPayload>(QUEUE_DM_TRIGGER, {
+    connection: redisBatch,
+  })
+  const dmTriggerQueue: DmTriggerQueueLike = {
+    add: (n, d, o) => dmTriggerBullQueue.add(n, d, o),
+  }
   const sessionTurnQueue: TurnQueueLike = { add: (n, d, o) => turnQueue.add(n, d, o) }
 
   const deps: TurnProcessorDeps = {
@@ -430,6 +487,7 @@ export function buildSessionTurnWorker(
     repo,
     triggerState,
     sessionTurnQueue,
+    dmTriggerQueue,
     publisher,
     // The real FastThinker, constructed per turn with the scoped skill-check
     // mechanical projection (§8 — ONLY findSessionParticipantCharacterByName,

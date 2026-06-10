@@ -770,5 +770,73 @@ describe('repo.characters', () => {
       expect(result.character.id).toBe(id)
       expect(result.skills).toEqual([])
     })
+
+    // MYT-68: the FT prompt roster + the per-turn player-attribution map, off one
+    // read — derived per turn from session_participants (the same source this
+    // resolver reads), in deterministic joined order, never from the racy :state
+    // blob. Two simultaneous joins lost a name to last-write-wins; caught live in
+    // the MYT-68 smoke. The map MUST carry CHARACTER names (not display names):
+    // the model echoes the attributed name into roll_skill_check.character_name,
+    // which resolves against session_participants.
+    describe('listSessionParticipantCharacters', () => {
+      it("returns both joined participants' {userId, name} in joined order, excluding other sessions", async () => {
+        const users = createUsersRepo(pool)
+        const sessions = createSessionsRepo(pool)
+        const characters = createCharactersRepo(pool)
+        const session = await sessions.create({ campaignId, sessionNumber: 1 })
+        const otherSession = await sessions.create({
+          campaignId,
+          sessionNumber: 2,
+          status: 'ended',
+        })
+
+        // replaceSubTables is keyed on (campaign_id, user_id) — one PC per user
+        // per campaign — so each distinct character needs a distinct owner.
+        const second = await users.create(pool, {
+          cognitoSub: scope.userSub(1),
+          username: scope.username(1),
+          displayName: scope.displayName(1),
+        })
+        const third = await users.create(pool, {
+          cognitoSub: scope.userSub(2),
+          username: scope.username(2),
+          displayName: scope.displayName(2),
+        })
+
+        // Two participants joined to `session`, in this order: Bryn then Arin.
+        await seedRosterCharacter({
+          ownerId: userId,
+          campaignId,
+          sessionId: session.id,
+          name: 'Bryn',
+        })
+        await seedRosterCharacter({
+          ownerId: second.id,
+          campaignId,
+          sessionId: session.id,
+          name: 'Arin',
+        })
+        // A participant in a DIFFERENT session must not surface.
+        await seedRosterCharacter({
+          ownerId: third.id,
+          campaignId,
+          sessionId: otherSession.id,
+          name: 'Elsewhere',
+        })
+
+        const pcs = await characters.listSessionParticipantCharacters(session.id)
+        expect(pcs).toEqual([
+          { userId, name: 'Bryn' },
+          { userId: second.id, name: 'Arin' },
+        ])
+      })
+
+      it('returns [] for a session with no participants', async () => {
+        const sessions = createSessionsRepo(pool)
+        const characters = createCharactersRepo(pool)
+        const session = await sessions.create({ campaignId, sessionNumber: 1 })
+        expect(await characters.listSessionParticipantCharacters(session.id)).toEqual([])
+      })
+    })
   })
 })

@@ -48,6 +48,7 @@ import type {
   TurnEmitter,
 } from '../tiers/types.js'
 import { processTurnJob, type TurnProcessorDeps, type TurnWorkerRepo } from '../turn-worker.js'
+import type { DmTriggerQueueLike } from '../dm-trigger-queue.js'
 import type { TurnJobPayload, TurnQueueLike } from '../turn-queue.js'
 
 // A fresh-run in-memory repo: no durable rows (so both A and B take the
@@ -59,11 +60,15 @@ const recoveryRepo: TurnWorkerRepo = {
     turnRowsExist: () => Promise.resolve(false),
     listFtContextRows: () => Promise.resolve([]),
     appendDmTurn: () => Promise.resolve(),
+    // No trailing rows → the post-turn re-mature never re-arms in this flow.
+    listAfterSeq: () => Promise.resolve([]),
   },
-  campaigns: { listMembersBasic: () => Promise.resolve([]) },
   sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
   sessionPreps: { getBy: () => Promise.resolve(null) },
-  characters: { findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }) },
+  characters: {
+    findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
+    listSessionParticipantCharacters: () => Promise.resolve([]),
+  },
 }
 
 const REDIS_REALTIME_URL = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
@@ -90,6 +95,12 @@ const silentLogger = {
 // worker's `takeExplicitPending` is always false → `add` is never called; an
 // inert no-op stub satisfies the dep without a broker.
 const inertTurnQueue: TurnQueueLike = {
+  add: () => Promise.resolve(undefined as never),
+}
+
+// The §4.7 post-turn re-mature producer. recoveryRepo has no trailing player
+// rows, so the worker never reschedules — an inert no-op satisfies the dep.
+const inertDmTriggerQueue: DmTriggerQueueLike = {
   add: () => Promise.resolve(undefined as never),
 }
 
@@ -221,6 +232,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       repo: recoveryRepo,
       triggerState,
       sessionTurnQueue: inertTurnQueue,
+      dmTriggerQueue: inertDmTriggerQueue,
       publisher,
       makeTiers: () => ({
         st: new StubSlowThinker(),
@@ -257,6 +269,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       repo: recoveryRepo,
       triggerState,
       sessionTurnQueue: inertTurnQueue,
+      dmTriggerQueue: inertDmTriggerQueue,
       publisher,
       makeTiers: () => ({
         st: new StubSlowThinker(),

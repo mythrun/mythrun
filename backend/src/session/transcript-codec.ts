@@ -77,13 +77,19 @@ export function assistantToRows(assistant: AssistantMessage): DmTurnRow[] {
 }
 
 /** Rows (seq ASC) → ConversationMessages. Player row → one user message with
- *  attribution (displayNames.get(userId) ?? userId ?? 'Player'); contiguous
+ *  attribution (attributionNames.get(userId) ?? userId ?? 'Player'); contiguous
  *  DM rows sharing a turnId → ONE assistant message (dm_text → text part;
  *  roll row JSON → tool_call part + tool_result part, toolName from kind).
- *  Foreign message_types are ignored. Deterministic. */
+ *  Foreign message_types are ignored. Deterministic.
+ *
+ *  `attributionNames` is the userId→CHARACTER-name map (NOT display names): the
+ *  ft-system prompt tells the model to echo the attributed name into
+ *  roll_skill_check.character_name, which resolves against session_participants,
+ *  so the attribution must speak character names. The `userId ?? 'Player'`
+ *  fallback covers a departed/unknown author with no map entry. */
 export function rowsToConversation(
   rows: readonly SessionMessage[],
-  displayNames: ReadonlyMap<string, string>,
+  attributionNames: ReadonlyMap<string, string>,
 ): ConversationMessage[] {
   const conversation: ConversationMessage[] = []
   let currentTurnId: string | null = null
@@ -100,7 +106,7 @@ export function rowsToConversation(
   for (const row of rows) {
     if (row.messageType === 'player_message') {
       flushTurn()
-      const characterName = displayNames.get(row.userId ?? '') ?? row.userId ?? 'Player'
+      const characterName = attributionNames.get(row.userId ?? '') ?? row.userId ?? 'Player'
       conversation.push({
         v: 1,
         role: 'user',

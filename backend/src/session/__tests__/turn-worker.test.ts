@@ -6,11 +6,19 @@ import { makeSessionState, type SessionState } from '../../redis/session-state.j
 import { sessionChannelPattern } from '../../contract/session-channel.js'
 import { SessionController } from '../session-controller.js'
 import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
-import type { TriggerMessage, TurnEmitter } from '../tiers/types.js'
+import type {
+  AssistantMessage,
+  FastThinker,
+  FtTurnContext,
+  TriggerMessage,
+  TurnEmitter,
+} from '../tiers/types.js'
 import type { SessionLock, SessionLockHandle } from '../session-lock.js'
 import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import type { TurnPublisher } from '../turn-publisher.js'
 import { TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
+import { type DmTriggerQueueLike } from '../dm-trigger-queue.js'
+import { QUIET_WINDOW_MS } from '../dm-trigger-config.js'
 import { UnrecoverableError } from 'bullmq'
 import {
   buildSessionTurnWorker,
@@ -195,21 +203,32 @@ function makeTiers(): ReturnType<TurnProcessorDeps['makeTiers']> {
  *  participant character — the fresh-run path against the stub tiers. */
 function fakeRepo(overrides?: {
   turnRowsExist?: boolean
-  members?: readonly { user_id: string; display_name: string }[]
   session?: { sessionNumber: number } | null
   ftContext?: string | null
   appendDmTurn?: (input: unknown) => Promise<void>
+  /** §4.7 post-turn re-mature probe: the rows above the responded watermark the
+   *  `finally` re-arm reads. Default empty → no re-arm. */
+  trailingRows?: readonly { messageType: string }[]
+  /** Make `listAfterSeq` reject, to drive the re-arm catch arm. */
+  listAfterSeqRejects?: Error
+  /** MYT-68: the session-participant roster the worker resolves per turn from
+   *  session_participants — `{userId, name}` in joined order. The names feed the
+   *  FT prompt roster; the userId→name map is the codec's player attribution.
+   *  Default [] → an empty roster. */
+  participants?: readonly { userId: string; name: string }[]
 }): TurnWorkerRepo {
   const session = overrides?.session === undefined ? { sessionNumber: 1 } : overrides.session
   const prep = overrides?.ftContext == null ? null : { ftContext: overrides.ftContext }
+  const trailing = overrides?.trailingRows ?? []
   return {
     sessionMessages: {
       turnRowsExist: () => Promise.resolve(overrides?.turnRowsExist ?? false),
       listFtContextRows: () => Promise.resolve([]),
       appendDmTurn: overrides?.appendDmTurn ?? ((): Promise<void> => Promise.resolve()),
-    },
-    campaigns: {
-      listMembersBasic: () => Promise.resolve(overrides?.members ?? []),
+      listAfterSeq: () =>
+        overrides?.listAfterSeqRejects
+          ? Promise.reject(overrides.listAfterSeqRejects)
+          : Promise.resolve(trailing),
     },
     sessions: {
       getById: () => Promise.resolve(session),
@@ -219,6 +238,7 @@ function fakeRepo(overrides?: {
     },
     characters: {
       findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
+      listSessionParticipantCharacters: () => Promise.resolve(overrides?.participants ?? []),
     },
   }
 }
@@ -243,6 +263,30 @@ function recordingTurnQueue(calls: QueueCall[]): TurnQueueLike {
 /** A no-op trigger queue for the paths that never drain (the default case). */
 function inertTurnQueue(): TurnQueueLike {
   return recordingTurnQueue([])
+}
+
+/** Records every `(name, data, opts)` the §4.7 post-turn re-mature producer
+ *  receives, so the re-arm assertions read the dedup opt + delay off a plain
+ *  array. */
+interface DmTriggerCall {
+  readonly name: string
+  readonly data: { campaignId: string }
+  readonly opts: unknown
+}
+
+function recordingDmTriggerQueue(calls: DmTriggerCall[]): DmTriggerQueueLike {
+  const add = vi.fn(
+    (name: string, data: { campaignId: string }, opts: unknown): Promise<never> => {
+      calls.push({ name, data, opts })
+      return Promise.resolve(undefined as never)
+    },
+  )
+  return { add }
+}
+
+/** A no-op dm-trigger queue for the paths that never re-arm (the default case). */
+function inertDmTriggerQueue(): DmTriggerQueueLike {
+  return recordingDmTriggerQueue([])
 }
 
 describe('processTurnJob', () => {
@@ -272,6 +316,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -308,6 +353,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -353,6 +399,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -404,6 +451,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
       heartbeatMs: 5,
@@ -446,6 +494,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: new StubSlowThinker(), ft, scribe: new StubScribe() }),
       heartbeatMs: 10_000,
@@ -490,6 +539,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
       heartbeatMs: 5,
@@ -540,6 +590,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -566,6 +617,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -606,6 +658,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
       heartbeatMs: 5,
@@ -642,6 +695,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: recordingTurnQueue(queueCalls),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -683,6 +737,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: recordingTurnQueue(queueCalls),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -716,6 +771,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: failingQueue,
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -727,6 +783,160 @@ describe('processTurnJob', () => {
     // The turn itself succeeded; the drain failure didn't surface.
     expect(result).toEqual({ ran: true })
     expect(silentLogger.error).toHaveBeenCalled()
+  })
+
+  // ── §4.7 post-turn re-mature (auto path) ─────────────────────────────────
+  it('re-arms the quiet window when player rows sit above the watermark after a turn (§4.7)', async () => {
+    // A message that lands mid-turn has no pending evaluation (the in-flight
+    // guard exited it). At turn end, the worker probes for unanswered rows above
+    // the responded watermark — finding a player_message row, it re-arms the
+    // debounce so the DM comes back for it.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const triggerCalls: DmTriggerCall[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ trailingRows: [{ messageType: 'player_message' }] }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The re-arm fired exactly once with the debounce name + dedup opt + delay.
+    expect(triggerCalls).toHaveLength(1)
+    expect(triggerCalls[0]?.name).toBe('evaluate')
+    expect(triggerCalls[0]?.data).toEqual({ campaignId: CAMPAIGN })
+    expect(triggerCalls[0]?.opts).toEqual({
+      deduplication: { id: `dm-trigger:${CAMPAIGN}`, replace: true },
+      delay: QUIET_WINDOW_MS,
+    })
+  })
+
+  it('does NOT re-arm when no player rows sit above the watermark after a turn (§4.7)', async () => {
+    // The default repo has no trailing rows → nothing unanswered → no re-arm.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const triggerCalls: DmTriggerCall[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(triggerCalls).toHaveLength(0)
+  })
+
+  it('does NOT re-arm when the only trailing rows are DM rows (§4.7)', async () => {
+    // Rows above the watermark exist, but they are the DM's own just-written
+    // turn (no player_message) — there is nothing unanswered, so no re-arm.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const triggerCalls: DmTriggerCall[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ trailingRows: [{ messageType: 'dm_text' }] }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(triggerCalls).toHaveLength(0)
+  })
+
+  it('re-arms on the §5 converge path too (the re-mature lives in the shared finally)', async () => {
+    // The post-turn re-mature is in the shared `finally`, so it runs on the
+    // converge path as well — a turn that converged a durable row still re-arms
+    // if player rows sit unanswered above the watermark.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const triggerCalls: DmTriggerCall[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: true, trailingRows: [{ messageType: 'player_message' }] }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // Converged (no render) AND re-armed.
+    expect(calls.order).toEqual(['turn_end'])
+    expect(triggerCalls).toHaveLength(1)
+    expect(triggerCalls[0]?.name).toBe('evaluate')
+  })
+
+  it('a re-arm failure is swallowed and does not mask the turn outcome (§4.7)', async () => {
+    // The post-turn re-mature is in its own try/catch: if the probe rejects, the
+    // turn still resolves {ran:true} and the failure is logged, never rethrown —
+    // a re-arm hiccup must not retry an already-flushed turn.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const logger = { warn: vi.fn(), error: vi.fn() }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ listAfterSeqRejects: new Error('pg unreachable') }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    // The turn itself succeeded; the re-arm failure didn't surface.
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
+      'failed to re-arm the quiet window after the turn',
+    )
   })
 
   // ── §5 converge: turnRowsExist → true ────────────────────────────────────
@@ -750,6 +960,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo({ turnRowsExist: true }),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -797,6 +1008,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo({ turnRowsExist: false }),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -833,6 +1045,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo({ turnRowsExist: false }),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -909,6 +1122,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo({ turnRowsExist: false }),
       triggerState: recordingTrigger,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -963,6 +1177,7 @@ describe('processTurnJob', () => {
       repo: fakeRepo({ turnRowsExist: false, appendDmTurn }),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ st: slowSt, ft: new StubFastThinker(), scribe: new StubScribe() }),
       heartbeatMs: 5,
@@ -1006,6 +1221,7 @@ describe('processTurnJob', () => {
       repo,
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers: (turn) => {
         seenTone = turn.worldTone
@@ -1023,11 +1239,11 @@ describe('processTurnJob', () => {
     expect(getBySpy).not.toHaveBeenCalled()
   })
 
-  it('builds the displayNames map from a non-empty campaign roster and completes the turn', async () => {
-    // Exercises the userId → display_name map construction (the
-    // listMembersBasic .map callback) on a non-empty roster. The stub tiers
-    // don't read the map's contents, so the observable effect is the turn
-    // completing through persist (appendDmTurn fired) with the roster present
+  it('builds the attribution map from a non-empty participant roster and completes the turn', async () => {
+    // Exercises the userId → character-name map construction (the
+    // listSessionParticipantCharacters .map callback) on a non-empty roster. The
+    // stub tiers don't read the map's contents, so the observable effect is the
+    // turn completing through persist (appendDmTurn fired) with the roster present
     // — the controller received a populated map without erroring.
     const calls = newCalls()
     const release = vi.fn((): Promise<void> => Promise.resolve())
@@ -1039,14 +1255,15 @@ describe('processTurnJob', () => {
       sessionState,
       repo: fakeRepo({
         turnRowsExist: false,
-        members: [
-          { user_id: 'u1', display_name: 'Mara' },
-          { user_id: 'u2', display_name: 'Theo' },
+        participants: [
+          { userId: 'u1', name: 'Mara' },
+          { userId: 'u2', name: 'Theo' },
         ],
         appendDmTurn,
       }),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1060,6 +1277,84 @@ describe('processTurnJob', () => {
     // appended (persistTurn) and turn_end shipped — with the roster mapped.
     expect(appendDmTurn).toHaveBeenCalledTimes(1)
     expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+  })
+
+  it('resolves the roster from session_participants and attributes player rows by CHARACTER name (MYT-68)', async () => {
+    // The bug this fixes: the roster (and the player-attribution map) used to come
+    // from the campaign DISPLAY names — so the FT ctx attributed a player row to
+    // "Dev User 1", the model echoed that into roll_skill_check.character_name,
+    // and the resolver (which speaks character names) returned not_found, fail-
+    // softing the first check. The worker now resolves BOTH off
+    // repo.characters.listSessionParticipantCharacters (CHARACTER names). Capture
+    // the ctx the FT receives to prove the resolved names reach BOTH the roster
+    // and the rendered ftHistory attribution.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    let seenParticipants: readonly string[] | null = null
+    let seenHistory: FtTurnContext['ftHistory'] | null = null
+    const capturingFt: FastThinker = {
+      render: vi.fn(
+        async (ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> => {
+          seenParticipants = ctx.participants
+          seenHistory = ctx.ftHistory
+          await emit.emitText('chunk')
+          return {
+            role: 'assistant',
+            parts: [{ kind: 'text', text: 'ok' }],
+            usage: { input: 0, output: 0 },
+          }
+        },
+      ),
+    }
+
+    const repo = fakeRepo({
+      turnRowsExist: false,
+      participants: [
+        { userId: 'u1', name: 'Bryn' },
+        { userId: 'u2', name: 'Arin' },
+      ],
+    })
+    // One player row authored by u1 — the codec must attribute it as the CHARACTER
+    // name "Bryn" (NOT the userId, NOT a display name), proving the attribution
+    // map carries character names into the rendered FT history.
+    repo.sessionMessages.listFtContextRows = () =>
+      Promise.resolve([
+        {
+          id: 'm1',
+          sessionId: SESSION,
+          seq: 1,
+          turnId: 't0',
+          messageType: 'player_message',
+          userId: 'u1',
+          content: 'I keep to the shadows.',
+          createdAt: new Date(),
+        } as never,
+      ])
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo,
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers: () => ({ st: new StubSlowThinker(), ft: capturingFt, scribe: new StubScribe() }),
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The resolved roster (deterministic joined order) reached the FT ctx.
+    expect(seenParticipants).toEqual(['Bryn', 'Arin'])
+    // The player row was attributed by CHARACTER name, not userId/display name.
+    const history = seenHistory as unknown as FtTurnContext['ftHistory']
+    const userMsg = history.find((m) => m.role === 'user')
+    expect(userMsg?.role === 'user' ? userMsg.characterName : undefined).toBe('Bryn')
   })
 })
 
@@ -1348,6 +1643,39 @@ function convergePool(): Pool {
   return { query } as unknown as Pool
 }
 
+/** Like `convergePool`, but the §4.7 re-mature probe (`listAfterSeq` → `SELECT *
+ *  … WHERE session_id = $1 AND seq > $2`) returns ONE unanswered player_message
+ *  row, so the worker's `finally` re-arms the quiet window through the REAL
+ *  builder-wired `dmTriggerQueue.add` arrow. */
+function convergePoolWithTrailingPlayer(): Pool {
+  const query = (text: string): Promise<{ rows: unknown[]; rowCount: number }> => {
+    if (text.includes('FROM session_messages') && text.includes('turn_id')) {
+      return Promise.resolve({ rows: [{ '?column?': 1 }], rowCount: 1 })
+    }
+    // listAfterSeq: a single trailing player row above the watermark.
+    if (text.includes('FROM session_messages') && text.includes('seq >')) {
+      return Promise.resolve({
+        rows: [
+          {
+            id: 'm1',
+            session_id: SESSION,
+            seq: 1,
+            user_id: 'u1',
+            message_type: 'player_message',
+            content: 'still here?',
+            created_at: new Date(),
+            turn_id: null,
+            turn_ordinal: null,
+          },
+        ],
+        rowCount: 1,
+      })
+    }
+    return Promise.resolve({ rows: [], rowCount: 0 })
+  }
+  return { query } as unknown as Pool
+}
+
 describe('buildSessionTurnWorker', () => {
   let redisBatch: Redis
   let redisRealtime: Redis
@@ -1410,6 +1738,25 @@ describe('buildSessionTurnWorker', () => {
     expect(capturedQueueAdds[0]?.data.trigger.kind).toBe('explicit')
     expect(capturedQueueAdds[0]?.data.campaignId).toBe(CAMPAIGN)
     expect(capturedQueueAdds[0]?.data.triggerMessages).toEqual([])
+  })
+
+  it('wires dmTriggerQueue: a trailing player row re-arms the quiet window on release (§4.7)', async () => {
+    // The builder-constructed dm-trigger producer: a converged turn with an
+    // unanswered player row above the watermark re-arms the debounce through the
+    // REAL `dmTriggerQueue.add` arrow (the mocked Queue records the add).
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePoolWithTrailingPlayer())
+
+    const cap = captured.worker
+    if (cap === null) throw new Error('Worker constructor was not captured')
+
+    const result = await cap.processor(payload())
+    expect(result).toEqual({ ran: true })
+
+    // The re-mature enqueued the debounce job ('evaluate') on the builder's Queue.
+    const rearm = capturedQueueAdds.find((a) => a.name === 'evaluate')
+    expect(rearm).toBeDefined()
+    expect((rearm?.data as unknown as { campaignId: string }).campaignId).toBe(CAMPAIGN)
   })
 
   it("registers a 'failed' handler that delegates to publishTerminalTurnError", async () => {

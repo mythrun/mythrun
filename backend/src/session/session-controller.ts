@@ -28,7 +28,7 @@
 // durably land.
 
 import type { SessionMessage } from '../repo/types.js'
-import type { SessionState, SessionStateBlob } from '../redis/session-state.js'
+import type { SessionState } from '../redis/session-state.js'
 import { assistantToRows, rowsToConversation } from './transcript-codec.js'
 import type {
   AssistantMessage,
@@ -75,8 +75,19 @@ export interface SessionControllerDeps {
    *  player-visible frame through it. The controller never emits itself. */
   readonly emitter: TurnEmitter
   readonly transcript: TranscriptStore
-  /** userId → display name, for the codec's player-row attribution. */
-  readonly displayNames: ReadonlyMap<string, string>
+  /** userId → CHARACTER name, for the codec's player-row attribution. The
+   *  attribution must be the character name (not a display name): the ft-system
+   *  prompt instructs the model to echo the attributed name into
+   *  roll_skill_check.character_name, which the skill-check resolver matches
+   *  against session_participants — so the attribution and the resolver speak
+   *  the same names. Resolved by the worker per turn from session_participants. */
+  readonly attributionNames: ReadonlyMap<string, string>
+  /** MYT-68: the FT prompt roster — the session's joined PC names. Resolved by
+   *  the worker per turn from session_participants (the source of truth the
+   *  skill-check resolver reads), in deterministic joined order — NOT the racy
+   *  `:state` blob (two simultaneous joins lost a name to last-write-wins;
+   *  caught live in the MYT-68 smoke). */
+  readonly participants: readonly string[]
   /** The enforced-ignorance-safe prep doc (session_preps.ft_context), resolved
    *  by the worker (`:state` blob → PG re-load, §3.10). */
   readonly ftContext: string
@@ -95,13 +106,13 @@ export class SessionController {
 
   // In-memory turn state, mutated between load and persist (the recovery
   // invariant). `history` is reconstructed from session_messages each turn (no
-  // longer Redis). `participants` comes from the `:state` blob and is read-only
-  // for the turn. `assistant` is null until the FT renders it — persisting
-  // before processDmTurn runs is a programmer error.
+  // longer Redis). The participant roster is NOT held here — it is a per-turn
+  // dep (`deps.participants`), resolved by the worker from session_participants.
+  // `assistant` is null until the FT renders it — persisting before
+  // processDmTurn runs is a programmer error.
   private history: ConversationMessage[] = []
   private summary = ''
   private usage: TokenUsage = ZERO_USAGE
-  private participants: readonly string[] = []
   private assistant: AssistantMessage | null = null
 
   constructor(deps: SessionControllerDeps, campaignId: string, sessionId: string, turnId: string) {
@@ -112,16 +123,15 @@ export class SessionController {
   }
 
   /** Hydrate the small in-memory turn state from Redis: the running summary +
-   *  usage via `loadTurnState`, and the participant roster from the `:state`
-   *  blob. The FT history is NOT loaded here — it is reconstructed from
-   *  session_messages in `processDmTurn` (PG-direct, §3.7). */
+   *  usage via `loadTurnState`. The participant roster is NOT read here — it is
+   *  worker-resolved per turn from session_participants (deterministic order)
+   *  and injected via `deps.participants`. The FT history is NOT loaded here
+   *  either — it is reconstructed from session_messages in `processDmTurn`
+   *  (PG-direct, §3.7). */
   async loadFromRedis(): Promise<void> {
     const turnState = await this.deps.sessionState.loadTurnState(this.campaignId)
     this.summary = turnState.summary
     this.usage = turnState.usage
-
-    const state: SessionStateBlob | null = await this.deps.sessionState.getState(this.campaignId)
-    this.participants = state === null ? [] : state.participants
   }
 
   /** Sequence one DM turn (no durable writes): reconstruct the FT history from
@@ -134,7 +144,7 @@ export class SessionController {
     // THROWS TranscriptCorruptError on an incoherent row — let it propagate
     // (crash-loud; the worker owns the terminal turn handling).
     const rows = await this.deps.transcript.listFtContextRows(this.sessionId, maxConsumedSeq)
-    this.history = rowsToConversation(rows, this.deps.displayNames)
+    this.history = rowsToConversation(rows, this.deps.attributionNames)
 
     const evaluation = await this.deps.st.evaluate(this.buildContext())
     this.applyEvaluation(evaluation)
@@ -199,7 +209,7 @@ export class SessionController {
       campaignId: this.campaignId,
       ftContext: this.deps.ftContext,
       ftHistory: this.history,
-      participants: this.participants,
+      participants: this.deps.participants,
       usage: this.usage,
       workingSet: [],
     }

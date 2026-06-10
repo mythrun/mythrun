@@ -373,6 +373,36 @@ export function charactersNs(c: ClientLike) {
       return characterId
     },
 
+    /** MYT-68: the FT prompt roster AND the per-turn player-attribution map —
+     *  the session's joined PCs as `{userId, name}`, in a DETERMINISTIC order
+     *  (joined_at, then id). Two consumers off one read: the worker renders the
+     *  names into the FT system prompt (a re-ordered roster would silently
+     *  invalidate the prompt-cache prefix every turn), AND builds the
+     *  userId→character-name map the transcript codec attributes player rows by.
+     *  Player attribution MUST be the CHARACTER name (not the display name): the
+     *  ft-system prompt tells the model to echo the attributed name into
+     *  `roll_skill_check.character_name`, which resolves against
+     *  session_participants — so the attribution and the resolver must speak the
+     *  same names (an early smoke fail-softed the first check when the model
+     *  passed a display name). Derived per turn from session_participants (the
+     *  same source the skill-check resolver uses) — never from the racy :state
+     *  blob (two simultaneous joins lost a name to last-write-wins; caught live
+     *  in the MYT-68 smoke). */
+    listSessionParticipantCharacters: async (
+      sessionId: string,
+    ): Promise<readonly { userId: string; name: string }[]> => {
+      // (joined_at, id) order — the roster renders into the FT system prompt;
+      // a re-ordered roster would invalidate the prompt-cache prefix.
+      const result = await c.query<{ user_id: string; name: string }>(
+        `SELECT sp.user_id, ch.name FROM session_participants sp
+           JOIN characters ch ON ch.id = sp.character_id
+          WHERE sp.session_id = $1
+          ORDER BY sp.joined_at ASC, sp.id ASC`,
+        [sessionId],
+      )
+      return result.rows.map((r) => ({ userId: r.user_id, name: r.name }))
+    },
+
     /** MYT-68 §3.5 step 1 — resolve a skill-check roller from the SESSION
      *  roster (session_participants carries character_id; a campaign member
      *  who never joined isn't rollable). Exact match on normalized name —

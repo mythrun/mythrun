@@ -423,10 +423,14 @@ describe('ws-session route (integration)', () => {
     }
   })
 
-  it('MYT-68 §3.5: a join appends the character to the FT roster (no dup on re-join)', async () => {
-    // The roster lives on the :state blob, which /start would have written. Here
-    // there's no /start, so seed an empty-participants blob first; the join path
-    // then read-modify-writes the character name in.
+  it('MYT-68: a join does NOT write the FT roster onto :state.participants (worker-derived now)', async () => {
+    // The racy :state.participants read-modify-write was DELETED: two
+    // simultaneous joins lost a name to last-write-wins (caught live in the
+    // MYT-68 smoke). The roster is now worker-derived per turn from
+    // session_participants — the join path must leave :state.participants alone.
+    // Seed an empty-participants blob; after a join it must STILL be empty (the
+    // join wrote the session_participants row, not this blob).
+    const repo = createRepo(pool)
     const sessionState = makeSessionState(redis, KEY_PREFIX)
     await sessionState.setState(campaignId, {
       participants: [],
@@ -438,33 +442,19 @@ describe('ws-session route (integration)', () => {
     const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
     try {
       await collectFrames(ws, 2) // drain session_ready + player_joined
-      // The owner's integrated character (sheetInput.name) is now on the roster.
+      // The join persisted the participant row (the worker's source of truth)…
       await vi.waitFor(
         async () => {
-          const blob = await sessionState.getState(campaignId)
-          expect(blob?.participants).toEqual([sheetInput.name])
+          const participants = await repo.sessionParticipants.list(sessionId)
+          expect(participants).toHaveLength(1)
         },
         { timeout: 4000, interval: 50 },
       )
+      // …but did NOT touch :state.participants (the old racy RMW is gone).
+      const blob = await sessionState.getState(campaignId)
+      expect(blob?.participants).toEqual([])
     } finally {
       ws.terminate()
-    }
-
-    // A re-join by the SAME character does not duplicate the roster entry.
-    const ticket2 = await mint()
-    const ws2 = await connect(`/ws/session/${sessionId}?ticket=${ticket2}`)
-    try {
-      await collectFrames(ws2, 2)
-      // Give the read-modify-write a beat, then assert no duplication.
-      await vi.waitFor(
-        async () => {
-          const blob = await sessionState.getState(campaignId)
-          expect(blob?.participants).toEqual([sheetInput.name])
-        },
-        { timeout: 4000, interval: 50 },
-      )
-    } finally {
-      ws2.terminate()
     }
   })
 

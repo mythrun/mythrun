@@ -45,11 +45,15 @@ const e2eRepo: TurnWorkerRepo = {
     turnRowsExist: () => Promise.resolve(false),
     listFtContextRows: () => Promise.resolve([]),
     appendDmTurn: () => Promise.resolve(),
+    // No trailing rows → the post-turn re-mature never re-arms in this flow.
+    listAfterSeq: () => Promise.resolve([]),
   },
-  campaigns: { listMembersBasic: () => Promise.resolve([]) },
   sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
   sessionPreps: { getBy: () => Promise.resolve(null) },
-  characters: { findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }) },
+  characters: {
+    findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
+    listSessionParticipantCharacters: () => Promise.resolve([]),
+  },
 }
 
 const REDIS_BATCH_URL = process.env.REDIS_BATCH_URL ?? 'redis://127.0.0.1:6380'
@@ -133,6 +137,9 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             // The explicit-drain producer — references the same `queue` built
             // below in this `beforeAll` (resolved lazily at job-run time).
             sessionTurnQueue: { add: (name, data, opts) => queue.add(name, data, opts) },
+            // §4.7 post-turn re-mature producer. e2eRepo has no trailing player
+            // rows, so the worker never reschedules — an inert no-op suffices.
+            dmTriggerQueue: { add: () => Promise.resolve(undefined as never) },
             publisher,
             makeTiers: () => ({
               st: new StubSlowThinker(),

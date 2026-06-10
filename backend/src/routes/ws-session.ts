@@ -344,20 +344,11 @@ async function handleConnection(
     // A returning player cancels any pending all-disconnected suspend.
     await cancelSuspend(suspendQueue, sessionId)
 
-    // MYT-68 §3.5 step 1 — maintain the FT's prompt roster. Read-modify-write
-    // (a lost-update race between two simultaneous joins costs one name until
-    // the next join; the skill-check RESOLVER reads session_participants, not
-    // this list, so correctness never depends on it). No removal on leave — a
-    // departed character is still in the scene.
-    if (characterName !== '') {
-      const state = await sessionState.getState(campaignId)
-      if (state !== null && !state.participants.includes(characterName)) {
-        await sessionState.setState(campaignId, {
-          ...state,
-          participants: [...state.participants, characterName],
-        })
-      }
-    }
+    // MYT-68: the FT's prompt roster is NOT maintained here. The worker derives
+    // it per turn from session_participants (`join` above wrote this player's
+    // row), in deterministic order — the racy `:state.participants` RMW this
+    // path used to do lost a name to last-write-wins when two players joined at
+    // once (the normal session-start case; caught live in the MYT-68 smoke).
 
     if (lastSeq !== null) {
       // Reconnect: send the replay frame DIRECTLY (synchronous socket.send)
