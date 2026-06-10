@@ -20,7 +20,20 @@ const getActiveByCampaignMock = vi.fn()
 const sessionCreateMock = vi.fn()
 const sessionDeleteByIdMock = vi.fn()
 const tryDebitForSessionMock = vi.fn()
+// Happy-path-only reads (the 200 /start path reaches them after the debit):
+const prepGetByMock = vi.fn()
+const getWorldIdMock = vi.fn()
+const getToneAndEraMock = vi.fn()
 const setStateMock = vi.fn()
+// §8 session-boundary hygiene resets — driven on the injected fakes. The route
+// constructs sessionState via makeSessionState (mocked) and triggerState via
+// makeTriggerState (mocked); the /start handler calls resetSessionSpend +
+// resetSessionKeys after setState. `resetSessionSpend` is added to SessionState
+// by the sibling MYT-69 T12; here we stub it on the mocked makeSessionState
+// return so the route's call resolves at runtime (the prod symbol converges
+// when T12 lands).
+const resetSessionSpendMock = vi.fn()
+const resetSessionKeysMock = vi.fn()
 
 vi.mock('../../repo/index.js', () => ({
   createRepo: () => ({
@@ -28,6 +41,7 @@ vi.mock('../../repo/index.js', () => ({
       getMembership: getMembershipMock,
       getById: getCampaignByIdMock,
       getOwner: getOwnerMock,
+      getWorldId: getWorldIdMock,
     },
     sessions: {
       getById: getSessionByIdMock,
@@ -36,9 +50,9 @@ vi.mock('../../repo/index.js', () => ({
       create: sessionCreateMock,
       deleteById: sessionDeleteByIdMock,
     },
-    sessionPreps: { existsFor: prepExistsForMock },
+    sessionPreps: { existsFor: prepExistsForMock, getBy: prepGetByMock },
     credits: { tryDebitForSession: tryDebitForSessionMock },
-    worlds: { getById: vi.fn() },
+    worlds: { getToneAndEra: getToneAndEraMock },
   }),
 }))
 
@@ -46,7 +60,17 @@ vi.mock('../../repo/index.js', () => ({
 // setState on it. Mock the module so we can assert setState without a real
 // Redis state read (and so a throwing setState is controllable).
 vi.mock('../../redis/session-state.js', () => ({
-  makeSessionState: () => ({ setState: setStateMock }),
+  makeSessionState: () => ({
+    setState: setStateMock,
+    resetSessionSpend: resetSessionSpendMock,
+  }),
+}))
+
+// makeTriggerState wraps the realtime redis client; the /start handler only
+// calls resetSessionKeys on it (§8). Mock the module so we can assert the reset
+// without a real Redis round-trip.
+vi.mock('../../session/trigger-state.js', () => ({
+  makeTriggerState: () => ({ resetSessionKeys: resetSessionKeysMock }),
 }))
 
 import { sessionsRoutes } from '../sessions.js'
@@ -198,6 +222,11 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
       sessionDeleteByIdMock,
       tryDebitForSessionMock,
       setStateMock,
+      resetSessionSpendMock,
+      resetSessionKeysMock,
+      prepGetByMock,
+      getWorldIdMock,
+      getToneAndEraMock,
     ]) {
       m.mockReset()
     }
@@ -209,6 +238,13 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
     prepExistsForMock.mockResolvedValue(true)
     getActiveByCampaignMock.mockResolvedValue(null)
     setStateMock.mockResolvedValue(undefined)
+    resetSessionSpendMock.mockResolvedValue(undefined)
+    resetSessionKeysMock.mockResolvedValue(undefined)
+    // Happy-path reads after the debit (200 path): a prep with an ft_context,
+    // a world id, and a tone.
+    prepGetByMock.mockResolvedValue({ ftContext: 'ft-ctx' })
+    getWorldIdMock.mockResolvedValue('w-1')
+    getToneAndEraMock.mockResolvedValue({ tone: 'wry', era: null })
   })
 
   afterEach(async () => {
@@ -286,5 +322,117 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
     const res = await start()
     expect(res.statusCode).toBe(402)
     expect(res.json<{ code: string }>().code).toBe('insufficient_credits')
+  })
+
+  it('a successful start resets the spend + ST-owned session keys (§8 boundary hygiene)', async () => {
+    // §8: a same-campaign session started within the 2h state TTL must NOT
+    // inherit the prior session's usage/summary or a standing wind-down
+    // directive. The handler resets BOTH spend keys (resetSessionSpend →
+    // :usage/:usage:st/:summary) AND the ST-owned slots + counter
+    // (resetSessionKeys → direction:oneshot/standing + turns-since-st) AFTER the
+    // Redis state init, on the 200 path only.
+    sessionCreateMock.mockResolvedValueOnce(undefined)
+    tryDebitForSessionMock.mockResolvedValueOnce({ ok: true })
+    app = await build({ user: fakeUser, redis })
+    const res = await start()
+    expect(res.statusCode).toBe(200)
+    expect(res.json<{ sessionId: string }>().sessionId).toMatch(/^[0-9a-f-]{36}$/)
+    // setState ran (Redis init), THEN both resets fired exactly once.
+    expect(setStateMock).toHaveBeenCalledTimes(1)
+    expect(resetSessionSpendMock).toHaveBeenCalledTimes(1)
+    expect(resetSessionSpendMock).toHaveBeenCalledWith('c-1')
+    expect(resetSessionKeysMock).toHaveBeenCalledTimes(1)
+    expect(resetSessionKeysMock).toHaveBeenCalledWith('c-1')
+  })
+
+  it('the 402 path does NOT reset session keys (no fresh session to hygiene)', async () => {
+    // The resets are part of the 200 session-init sequence; an unpaid /start
+    // that rolls back must not touch the spend/ST keys.
+    sessionCreateMock.mockResolvedValueOnce(undefined)
+    tryDebitForSessionMock.mockResolvedValueOnce({
+      ok: false,
+      code: 'insufficient_credits',
+      available: 0,
+      required: 1,
+    })
+    sessionDeleteByIdMock.mockResolvedValueOnce(undefined)
+    app = await build({ user: fakeUser, redis })
+    const res = await start()
+    expect(res.statusCode).toBe(402)
+    expect(resetSessionSpendMock).not.toHaveBeenCalled()
+    expect(resetSessionKeysMock).not.toHaveBeenCalled()
+  })
+})
+
+// GET /:campaignId/active — the §9 enforced-ignorance LEAK FIX. The full mapped
+// Session row carries `stRunningSummary` (ST-authored, secret-adjacent) +
+// checkpoint material (`summary`, `handoff`). Once the ST writes real summaries,
+// returning the whole row to ANY campaign member is a one-REST-call read of
+// secret-adjacent state. The route must strip to an explicit player-safe
+// allowlist: { id, status, sessionNumber, startedAt, endedAt }.
+describe('GET /api/sessions/:campaignId/active (response allowlist)', () => {
+  let app: FastifyInstance | undefined
+  let redis: Redis
+
+  beforeEach(() => {
+    redis = new IoRedisMock()
+    getMembershipMock.mockReset()
+    getActiveByCampaignMock.mockReset()
+    // Member by default — the allowlist (not access control) is under test here.
+    getMembershipMock.mockResolvedValue(memberRow())
+  })
+
+  afterEach(async () => {
+    if (app) await app.close()
+    app = undefined
+    await redis.quit()
+  })
+
+  function getActive(): Promise<LightMyRequestResponse> {
+    if (!app) throw new Error('app not built')
+    return app.inject({ method: 'GET', url: '/api/sessions/c-1/active' })
+  }
+
+  it('an active session → ONLY the allowlisted fields; ST/checkpoint material is ABSENT', async () => {
+    // Seed a row with a NON-null stRunningSummary + summary + handoff to prove
+    // the strip is real, not just "null happens not to serialize".
+    getActiveByCampaignMock.mockResolvedValueOnce({
+      ...sessionRow,
+      summary: 'recap players never see',
+      stRunningSummary: 'rapport: wary; ladder: rung 3; secret: the regent lies',
+      handoff: 'next-session seed the ST authored',
+    })
+    app = await build({ user: fakeUser, redis })
+    const res = await getActive()
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ session: Record<string, unknown> }>()
+    // EXACTLY the allowlist key set — no more, no less.
+    expect(Object.keys(body.session).sort()).toEqual(
+      ['endedAt', 'id', 'sessionNumber', 'startedAt', 'status'].sort(),
+    )
+    expect(body.session['id']).toBe('s-1')
+    expect(body.session['status']).toBe('active')
+    expect(body.session['sessionNumber']).toBe(1)
+    // The leak-bearing fields are NOT present (not "present but null" — absent).
+    expect(body.session).not.toHaveProperty('stRunningSummary')
+    expect(body.session).not.toHaveProperty('summary')
+    expect(body.session).not.toHaveProperty('handoff')
+    expect(body.session).not.toHaveProperty('campaignId')
+  })
+
+  it('no active session → { session: null }', async () => {
+    getActiveByCampaignMock.mockResolvedValueOnce(null)
+    app = await build({ user: fakeUser, redis })
+    const res = await getActive()
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ session: null })
+  })
+
+  it('a non-member is rejected before the row is ever read', async () => {
+    getMembershipMock.mockResolvedValueOnce(null)
+    app = await build({ user: fakeUser, redis })
+    const res = await getActive()
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toEqual({ code: 'not_campaign_member' })
   })
 })

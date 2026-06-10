@@ -30,6 +30,7 @@ import { requireDbUser } from '../auth/require-db-user.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { mintWsTicket } from '../auth/ws-ticket.js'
 import { makeSessionState, type SessionState } from '../redis/session-state.js'
+import { makeTriggerState, type TriggerState } from '../session/trigger-state.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 
 interface Opts {
@@ -51,6 +52,10 @@ interface Opts {
 export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const repo = createRepo(opts.pool)
   const sessionState = makeSessionState(opts.redisRealtime, opts.redisKeyPrefix)
+  // MYT-69 §8: the session-start handler resets the ST-owned direction slots +
+  // turns-since-ST counter at start so a same-campaign session begun within the
+  // 2h state TTL isn't born inheriting a standing wind-down directive.
+  const triggerState = makeTriggerState(opts.redisRealtime, opts.redisKeyPrefix)
   // The ws-ticket store lives under the `ws:ticket:` sub-prefix. This MUST
   // match routes/ws-session.ts's consume side (`${redisKeyPrefix}ws:ticket:`):
   // mint and consume key the same Redis slot, so a divergence 401s every WS
@@ -139,7 +144,7 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
     (request, reply) =>
       handleSessionStart(
-        { repo, sessionState, log: request.log },
+        { repo, sessionState, triggerState, log: request.log },
         request.params.campaignId,
         reply,
       ),
@@ -154,7 +159,26 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
     async (request, reply) => {
       const session = await repo.sessions.getActiveByCampaign(request.params.campaignId)
-      return reply.code(200).send({ session })
+      // §9 LEAK FIX: an explicit response allowlist. The full Session row carries
+      // `stRunningSummary` (ST-authored, secret-adjacent) + checkpoint material
+      // (`summary`, `handoff`); returning the whole row to any member is the
+      // round-1 showstopper — the moment the ST writes rapport/ladder state,
+      // players read it with one REST call after any suspend. Strip to exactly
+      // the player-safe fields. (The deeper "member-guarded route returns whole
+      // repo rows" landmine is noted for the API-hygiene sweep; the strip ships
+      // here because MYT-69 is what arms it.)
+      return reply.code(200).send({
+        session:
+          session === null
+            ? null
+            : {
+                id: session.id,
+                status: session.status,
+                sessionNumber: session.sessionNumber,
+                startedAt: session.startedAt,
+                endedAt: session.endedAt,
+              },
+      })
     },
   )
 
@@ -198,6 +222,7 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 interface SessionStartDeps {
   readonly repo: Repo
   readonly sessionState: SessionState
+  readonly triggerState: TriggerState
   readonly log: FastifyBaseLogger
 }
 
@@ -212,7 +237,7 @@ async function handleSessionStart(
   campaignId: string,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
-  const { repo, sessionState, log } = deps
+  const { repo, sessionState, triggerState, log } = deps
   // Precondition 1: the campaign is active.
   const campaign = await repo.campaigns.getById(campaignId)
   /* c8 ignore start — requireCampaignMember already 403s for a campaign with no
@@ -339,6 +364,15 @@ async function handleSessionStart(
     /* c8 ignore stop */
     worldTone: world?.tone ?? '',
   })
+
+  // §8 session-boundary hygiene: a same-campaign session started within the 2h
+  // state TTL must NOT inherit the prior session's usage, summary, or a standing
+  // wind-down directive (it would be born dying). Reset both spend keys + the
+  // ST-owned direction slots + counter at start.
+  // resetSessionSpend lands with T12 (pinned sibling symbol; typecheck
+  // converges when session-state.ts gains it).
+  await sessionState.resetSessionSpend(campaignId)
+  await triggerState.resetSessionKeys(campaignId)
 
   return reply.code(200).send({ sessionId })
 }
