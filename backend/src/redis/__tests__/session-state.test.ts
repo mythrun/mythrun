@@ -264,6 +264,16 @@ describe('makeSessionState — turn state', () => {
     expect(await makeSessionState(redis, 'p:').totalUsageTokens('c-none')).toBe(0)
   })
 
+  it('totalUsageTokens ignores a non-numeric :usage:st value (Number.isFinite false arm)', async () => {
+    // A corrupt/garbage :usage:st value (Number('garbage') → NaN) must not poison
+    // the budget sum — it falls back to contributing 0, so the total is the
+    // :usage(input+output) sum alone.
+    const s = makeSessionState(redis, 'p:')
+    await s.flushTurnState('c1', { usage: { input: 5, output: 9 } })
+    await redis.set('p:session:c1:usage:st', 'garbage')
+    expect(await s.totalUsageTokens('c1')).toBe(14)
+  })
+
   it('resetSessionSpend DELs :usage, :usage:st, and :summary (§8 session-start reset)', async () => {
     const s = makeSessionState(redis, 'p:')
     await s.flushTurnState('c1', { usage: { input: 5, output: 9 } })

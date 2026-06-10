@@ -447,6 +447,26 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(Object.keys(flushed.value ?? {})).toEqual(['usage'])
   })
 
+  it('an assistant with usage OMITTED contributes nothing — flushToRedis writes the pre-turn usage unchanged (addUsage undefined arm)', async () => {
+    // The FT render returned no usage (the optional `usage` field is absent), so
+    // addUsage's `delta === undefined` arm short-circuits and the accumulator is
+    // exactly the pre-turn usage loaded from Redis.
+    const noUsage: AssistantMessage = {
+      role: 'assistant',
+      parts: [{ kind: 'text', text: 'The room is silent.' }],
+    }
+    const { controller, flushed } = build({
+      assistant: noUsage,
+      turnState: { summary: '', usage: { input: 11, output: 13 } },
+    })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.flushToRedis()
+
+    // Unchanged from the pre-turn snapshot — the omitted-usage render added 0.
+    expect(flushed.value).toEqual<FlushedTurnState>({ usage: { input: 11, output: 13 } })
+  })
+
   it('does not throw out of processDmTurn when the Scribe rejects; logger.warn is called', async () => {
     const warn = vi.fn()
     const { controller } = build({ scribe: rejectingScribe(), logger: { warn } })

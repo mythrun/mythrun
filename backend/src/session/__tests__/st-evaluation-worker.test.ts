@@ -16,197 +16,22 @@
 // director's input — structurally enforced by StDirectorInput having no gate
 // field, and pinned by a capture assertion (case 8).
 
-import type { LanguageModelUsage } from '../../llm/ai.js'
-import type { StGateOutput } from '../../llm/st-gate.js'
-import type { StDirectorInput, StDirectorOutput } from '../../llm/st-director.js'
-import type { StDirectorResult } from '../../llm/schemas/st-director.js'
-import type { SessionMessage } from '../../repo/types.js'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   ST_EVAL_FLOOR_TURNS,
   SESSION_TOKEN_BUDGET,
   WIND_DOWN_FRACTION,
 } from '../st-config.js'
-import type { StEvalPayload } from '../st-eval-queue.js'
-import { processStEvalJob, type StEvalProcessorDeps } from '../st-evaluation-worker.js'
-
-const CAMPAIGN = 'c-st-1'
-const SESSION = 's-st-1'
-
-function usage(total: number): LanguageModelUsage {
-  return {
-    inputTokens: total,
-    outputTokens: 0,
-    totalTokens: total,
-    inputTokenDetails: { noCacheTokens: total, cacheReadTokens: 0, cacheWriteTokens: 0 },
-    outputTokenDetails: { reasoningTokens: 0 },
-  } as unknown as LanguageModelUsage
-}
-
-/** A usage blob WITHOUT totalTokens — exercises usageTokens' input+output
- *  fallback arm (case 16). */
-function partialUsage(input: number, output: number): LanguageModelUsage {
-  return {
-    inputTokens: input,
-    outputTokens: output,
-    totalTokens: undefined,
-    inputTokenDetails: { noCacheTokens: input, cacheReadTokens: 0, cacheWriteTokens: 0 },
-    outputTokenDetails: { reasoningTokens: 0 },
-  } as unknown as LanguageModelUsage
-}
-
-function defaultDirectorResult(overrides: Partial<StDirectorResult> = {}): StDirectorResult {
-  return {
-    reasoning: 'the party is at a decision point',
-    intervene: true,
-    direction: 'D',
-    standingDirective: { action: 'set', text: 'S' },
-    summaryUpdate: 'updated running summary',
-    ...overrides,
-  }
-}
-
-/** Recording fakes + knobs. Defaults: an active matching session, policy NOT
- *  tripped (turnsSinceSt low, usage well under wind-down), gate fires
- *  (needed:true), director returns a full intervene+set result, watermark
- *  unchanged (no re-arm). Each test overrides only the fields it cares about. */
-interface Knobs {
-  session: { id: string; sessionNumber: number } | null
-  turnsSinceSt: number
-  totalUsed: number
-  startWatermark: number
-  endWatermark: number
-  standing: string | null
-  pending: string | null
-  gate: StGateOutput
-  gateThrows: boolean
-  director: StDirectorOutput
-  directorThrows: boolean
-}
-
-interface Recorders {
-  setOneShot: string[]
-  setStanding: string[]
-  clearStandingCalls: number
-  setSummary: string[]
-  incrUsage: number[]
-  resetTurnsCalls: number
-  reArmCalls: { campaignId: string; sessionId: string }[]
-  gateCalls: number
-  directorInputs: StDirectorInput[]
-}
-
-function makeHarness(overrides: Partial<Knobs> = {}): {
-  deps: StEvalProcessorDeps
-  rec: Recorders
-  knobs: Knobs
-} {
-  const knobs: Knobs = {
-    session: { id: SESSION, sessionNumber: 1 },
-    turnsSinceSt: 1,
-    totalUsed: 1_000,
-    startWatermark: 5,
-    endWatermark: 5,
-    standing: null,
-    pending: null,
-    gate: { result: { needed: true, confidence: 0.5, reason: 'tension rising' }, usage: usage(10) },
-    gateThrows: false,
-    director: {
-      result: defaultDirectorResult(),
-      usage: usage(100),
-      repairAttempted: false,
-    },
-    directorThrows: false,
-    ...overrides,
-  }
-
-  const rec: Recorders = {
-    setOneShot: [],
-    setStanding: [],
-    clearStandingCalls: 0,
-    setSummary: [],
-    incrUsage: [],
-    resetTurnsCalls: 0,
-    reArmCalls: [],
-    gateCalls: 0,
-    directorInputs: [],
-  }
-
-  // respondedSeq is asked twice: at start (snapshot) then at end (re-arm check).
-  let respondedCalls = 0
-
-  const deps: StEvalProcessorDeps = {
-    repo: {
-      sessions: { getActiveByCampaign: () => Promise.resolve(knobs.session) },
-      sessionPreps: { getBy: () => Promise.resolve({ sdPlaybook: 'PLAYBOOK SECRETS' }) },
-      sessionMessages: {
-        listFtContextRows: (): Promise<SessionMessage[]> => Promise.resolve([]),
-      },
-      characters: {
-        listSessionParticipantRoster: () =>
-          Promise.resolve([{ name: 'Mara', characterClass: 'rogue', background: 'criminal' }]),
-        listSessionParticipantCharacters: () =>
-          Promise.resolve([{ userId: 'u1', name: 'Mara' }]),
-      },
-    },
-    sessionState: {
-      loadTurnState: () => Promise.resolve({ summary: 'running summary' }),
-      setRunningSummary: (_c, s) => {
-        rec.setSummary.push(s)
-        return Promise.resolve()
-      },
-      totalUsageTokens: () => Promise.resolve(knobs.totalUsed),
-      incrUsageSt: (_c, t) => {
-        rec.incrUsage.push(t)
-        return Promise.resolve()
-      },
-    },
-    triggerState: {
-      setOneShotDirection: (_c, text) => {
-        rec.setOneShot.push(text)
-        return Promise.resolve()
-      },
-      setStandingDirection: (_c, text) => {
-        rec.setStanding.push(text)
-        return Promise.resolve()
-      },
-      clearStandingDirection: () => {
-        rec.clearStandingCalls += 1
-        return Promise.resolve()
-      },
-      readStandingDirection: () => Promise.resolve(knobs.standing),
-      peekOneShotDirection: () => Promise.resolve(knobs.pending),
-      turnsSinceSt: () => Promise.resolve(knobs.turnsSinceSt),
-      resetTurnsSinceSt: () => {
-        rec.resetTurnsCalls += 1
-        return Promise.resolve()
-      },
-      respondedSeq: () => {
-        respondedCalls += 1
-        return Promise.resolve(respondedCalls === 1 ? knobs.startWatermark : knobs.endWatermark)
-      },
-    },
-    runGate: () => {
-      rec.gateCalls += 1
-      if (knobs.gateThrows) return Promise.reject(new Error('gate boom'))
-      return Promise.resolve(knobs.gate)
-    },
-    runDirector: (input: StDirectorInput) => {
-      rec.directorInputs.push(input)
-      if (knobs.directorThrows) return Promise.reject(new Error('director boom'))
-      return Promise.resolve(knobs.director)
-    },
-    reArm: (campaignId, sessionId) => {
-      rec.reArmCalls.push({ campaignId, sessionId })
-      return Promise.resolve()
-    },
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  }
-
-  return { deps, rec, knobs }
-}
-
-const job = { data: { campaignId: CAMPAIGN, sessionId: SESSION } satisfies StEvalPayload }
+import { processStEvalJob } from '../st-evaluation-worker.js'
+import {
+  CAMPAIGN,
+  defaultDirectorResult,
+  job,
+  makeHarness,
+  partialUsage,
+  SESSION,
+  usage,
+} from './st-evaluation-worker-harness.js'
 
 describe('processStEvalJob — active-session gate (§ pipeline step 1)', () => {
   it('case 1: no active session → no gate, no director, no writes, no re-arm', async () => {

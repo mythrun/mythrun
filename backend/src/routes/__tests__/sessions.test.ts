@@ -410,9 +410,9 @@ describe('GET /api/sessions/:campaignId/active (response allowlist)', () => {
     expect(Object.keys(body.session).sort()).toEqual(
       ['endedAt', 'id', 'sessionNumber', 'startedAt', 'status'].sort(),
     )
-    expect(body.session['id']).toBe('s-1')
-    expect(body.session['status']).toBe('active')
-    expect(body.session['sessionNumber']).toBe(1)
+    expect(body.session.id).toBe('s-1')
+    expect(body.session.status).toBe('active')
+    expect(body.session.sessionNumber).toBe(1)
     // The leak-bearing fields are NOT present (not "present but null" — absent).
     expect(body.session).not.toHaveProperty('stRunningSummary')
     expect(body.session).not.toHaveProperty('summary')

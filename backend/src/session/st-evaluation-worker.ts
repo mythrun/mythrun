@@ -116,6 +116,11 @@ function formatExchanges(history: readonly ConversationMessage[], window: number
   const slice = history.slice(-window)
   return slice
     .map((m) => {
+      // The `?? 'Player'` default is defensive: ConversationMessage types
+      // characterName as optional, but the §3.7 codec (the ONLY producer of this
+      // history) always sets it to a string for user rows (userId ?? 'Player'),
+      // so the nullish-true arm is unreachable through processStEvalJob's seam.
+      /* c8 ignore next */
       const who = m.role === 'user' ? (m.characterName ?? 'Player') : 'DM'
       const text = m.parts.map((p) => (p.kind === 'text' ? p.text : `[${p.kind}]`)).join(' ')
       return `${who}: ${text}`
