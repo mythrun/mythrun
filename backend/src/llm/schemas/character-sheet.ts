@@ -19,17 +19,27 @@ export const featureEntrySchema = z.object({
   // myth-vimk. The haiku→sonnet repair only fixes malformed JSON, so a max()
   // terminal-fails the stage on valid-but-long feature text.
   description: z.string().min(5),
+  // MYT-70 §3.2: limited features carry both uses and recharge; null = unlimited
+  // (untracked — no counter, no resolver debit). Short structured field, max OK.
+  max_uses: z.number().int().min(1).max(20).nullable(),
+  recharge: z.enum(['short_rest', 'long_rest', 'none']),
 })
 
 export const equipmentEntrySchema = z.object({
   name: z.string().min(2).max(80),
   quantity: z.number().int().min(1).max(99),
+  // MYT-70 §3.2: consume-on-use metadata (potions, scrolls, rations). §7 snapshot
+  // display flag; not name-matched in code.
+  consumable: z.boolean(),
 })
 
 export const spellEntrySchema = z.object({
   name: z.string().min(2).max(80),
   level: z.number().int().min(0).max(9),
   prepared: z.boolean(),
+  // MYT-70 §3.2 / §5 cast_spell: castable as a ritual (no slot debit). Prep-structured,
+  // not name-matched against the SRD ritual list.
+  ritual: z.boolean(),
 })
 
 export const CharacterSheetOutputSchema = z.object({
@@ -43,6 +53,14 @@ export const CharacterSheetOutputSchema = z.object({
   max_hit_points: z.number().int().min(1).max(500),
   armor_class: z.number().int().min(8).max(30),
   proficiency_bonus: z.number().int().min(2).max(6),
+  // MYT-70 §3.2: starting wealth → the ledger's opening gold balance.
+  starting_gold: z.number().int().min(0).max(500),
+  // MYT-70 §3.2: the class hit die (6/8/10/12) — short-rest healing currency.
+  hit_die: z.union([z.literal(6), z.literal(8), z.literal(10), z.literal(12)]),
+  // MYT-70 §3.2 / §9.1: what KIND of caster this character is — the model's
+  // one-time judgment. Code derives slot tables from (progression, level); never
+  // string-matches the free-text class name. 'none' = no leveled slots.
+  spellcasting_progression: z.enum(['full', 'half', 'third', 'pact', 'none']),
   skills: z.array(skillEntrySchema).min(1).max(20),
   features: z.array(featureEntrySchema).min(1).max(20),
   equipment: z.array(equipmentEntrySchema).min(1).max(40),

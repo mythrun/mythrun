@@ -21,11 +21,60 @@ World era: {{era}}
 - hit_points + max_hit_points: level-1 class HP per SRD (cleric/fighter/etc.).
 - armor_class: derived from starting equipment + dex.
 - proficiency_bonus: 2 (level 1).
+- starting_gold: class/background-appropriate starting wealth in gold pieces,
+  0-500. A typical level-1 adventurer carries a modest purse after buying their
+  starting kit.
+- hit_die: the class hit die — one of 6, 8, 10, 12 (e.g. wizard d6, rogue d8,
+  fighter d10, barbarian d12).
+- spellcasting_progression: decide what KIND of caster THIS character is — your
+  judgment, made once, from the concept and class. One of:
+  - "full"  — full caster (wizard, cleric, druid, bard, sorcerer-style).
+  - "half"  — half caster, slots from level 2 (paladin, ranger-style).
+  - "third" — third caster, slots from level 3 (eldritch knight, arcane
+    trickster-style).
+  - "pact"  — pact magic (warlock-style: few slots, all at one level, restore
+    on a short rest).
+  - "none"  — no leveled spell slots (most martials; also cantrip-only dabblers).
+  Flavored class names ("Storm-Touched Sorcerer", "Hollow Knight") still map to
+  one of these by their mechanical nature — pick the closest fit.
 - skills: every proficient skill (background + class grants), as
   {name, proficient:true, expertise:false}.
-- features: class features + background features for level 1.
-- equipment: starting equipment for the class + background, with quantities.
-- spells: if class is a caster, level-0 and level-1 spells as appropriate;
-  otherwise [].
+- features: class features + background features for level 1. Each feature
+  carries max_uses + recharge:
+  - Limited features carry BOTH: e.g. Second Wind = {max_uses: 1, recharge:
+    "short_rest"}; Channel Divinity = {max_uses: 1, recharge: "short_rest"};
+    a 1/long-rest feature = {max_uses: 1, recharge: "long_rest"}.
+  - Always-on / passive features (Darkvision, Fighting Style, a domain's static
+    bonus) are unlimited: {max_uses: null, recharge: "none"}.
+  - Do NOT emit slot-RESTORATION features (Arcane Recovery, Font of Magic /
+    sorcery-point slot conversion, or any feature whose effect is "regain a
+    spell slot") as TRACKED features (max_uses set). No tool credits a spell
+    slot, so a tracked counter on them would mislead. Emit them untracked
+    ({max_uses: null, recharge: "none"}) as flavor, or omit them.
+- equipment: starting equipment for the class + background, with quantities and
+  a consumable flag:
+  - consumable: true for items that are used up on use — potions, scrolls,
+    rations, ammunition, oil, etc.
+  - consumable: false for durable gear — weapons, armor, tools, a holy symbol,
+    rope.
+- spells: if the character knows any spells, list cantrips (level 0) and level-1
+  spells as appropriate; otherwise []. Each spell carries:
+  - ritual: true if and only if the spell can be cast as a ritual; false
+    otherwise.
+  - prepared: see the rule below — this is load-bearing.
+
+# The `prepared` flag means "currently castable" (read carefully)
+`prepared` does NOT mean "this character uses the prepare-spells mechanic." It
+means "is this spell castable right now?" — the live play engine gates every
+leveled cast on it. Set it as follows:
+- Known / spontaneous casters — sorcerer, bard, warlock, ranger, or ANY class
+  that does not prepare a daily list: set ALL known leveled spells
+  `prepared: true`. (A sorcerer's spells are always castable; emitting them as
+  `prepared: false` because "sorcerers don't prepare" would brick every leveled
+  cast that character ever attempts.)
+- Prepare-casters — cleric, druid, wizard, paladin: emit a sensible daily
+  prepared set as `prepared: true`, and the rest as `prepared: false`.
+- Cantrips (level 0): ALWAYS `prepared: true` — cantrips are always castable if
+  known.
 
 Return ONLY the JSON conforming to CharacterSheetOutputSchema.

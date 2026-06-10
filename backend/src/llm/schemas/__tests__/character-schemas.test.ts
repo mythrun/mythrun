@@ -74,10 +74,20 @@ const validSheet = {
   max_hit_points: 9,
   armor_class: 14,
   proficiency_bonus: 2,
+  starting_gold: 15,
+  hit_die: 8,
+  spellcasting_progression: 'full',
   skills: [{ name: 'Insight', proficient: true, expertise: false }],
-  features: [{ name: 'Divine Domain: Life', description: 'extra healing' }],
-  equipment: [{ name: 'Mace', quantity: 1 }],
-  spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
+  features: [
+    {
+      name: 'Second Wind',
+      description: 'recover hit points as a bonus action',
+      max_uses: 1,
+      recharge: 'short_rest',
+    },
+  ],
+  equipment: [{ name: 'Mace', quantity: 1, consumable: false }],
+  spells: [{ name: 'Cure Wounds', level: 1, prepared: true, ritual: false }],
 }
 
 describe('CharacterSheetOutputSchema', () => {
@@ -94,6 +104,79 @@ describe('CharacterSheetOutputSchema', () => {
   })
   it('rejects empty skills array', () => {
     expect(CharacterSheetOutputSchema.safeParse({ ...validSheet, skills: [] }).success).toBe(false)
+  })
+
+  // --- MYT-70 §3.2: prep emits ledger structure ---
+  it('rejects negative starting_gold', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({ ...validSheet, starting_gold: -1 }).success,
+    ).toBe(false)
+  })
+  it('rejects starting_gold above 500', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({ ...validSheet, starting_gold: 501 }).success,
+    ).toBe(false)
+  })
+  it('rejects a non-SRD hit_die (7)', () => {
+    expect(CharacterSheetOutputSchema.safeParse({ ...validSheet, hit_die: 7 }).success).toBe(false)
+  })
+  it('rejects an unknown spellcasting_progression', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({ ...validSheet, spellcasting_progression: 'arcane' })
+        .success,
+    ).toBe(false)
+  })
+  it('accepts spellcasting_progression "pact"', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({ ...validSheet, spellcasting_progression: 'pact' })
+        .success,
+    ).toBe(true)
+  })
+  it('rejects a feature with max_uses of 0', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        features: [
+          { name: 'Second Wind', description: 'd10 heal', max_uses: 0, recharge: 'short_rest' },
+        ],
+      }).success,
+    ).toBe(false)
+  })
+  it('rejects a feature with an unknown recharge', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        features: [
+          { name: 'Second Wind', description: 'd10 heal', max_uses: 1, recharge: 'daily' },
+        ],
+      }).success,
+    ).toBe(false)
+  })
+  it('accepts an unlimited feature (max_uses null, recharge none)', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        features: [
+          { name: 'Darkvision', description: 'see in the dark', max_uses: null, recharge: 'none' },
+        ],
+      }).success,
+    ).toBe(true)
+  })
+  it('rejects equipment missing the consumable flag', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        equipment: [{ name: 'Mace', quantity: 1 }],
+      }).success,
+    ).toBe(false)
+  })
+  it('rejects a spell missing the ritual flag', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
+      }).success,
+    ).toBe(false)
   })
 })
 
