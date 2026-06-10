@@ -76,6 +76,16 @@ export interface SpellSlotRow {
   readonly slotsRemaining: number
 }
 
+/** A single `character_spells` row — what cast_spell needs to validate
+ *  known/castable + select an upcast level. `prepared` is the §3.2 "currently
+ *  castable" flag; `ritual` lets a ritual cast skip the slot debit. */
+export interface CharacterSpellRow {
+  readonly name: string
+  readonly level: number
+  readonly prepared: boolean
+  readonly ritual: boolean
+}
+
 export type ConditionName =
   | 'blinded' | 'charmed' | 'deafened' | 'exhaustion' | 'frightened' | 'grappled'
   | 'incapacitated' | 'invisible' | 'paralyzed' | 'petrified' | 'poisoned'
@@ -104,6 +114,18 @@ export interface ShortRestRequest {
   readonly diceSpent: number
   /** Total HP healed by those dice (resolver-summed, per-die floor 0). */
   readonly healTotal: number
+}
+
+/** A session participant's rest-relevant numbers — what `take_rest` needs to
+ *  roll the short-rest hit-dice heal (per-die `max(0, roll(hitDie) + conMod)`)
+ *  and itemize the per-character payload. `conMod` is pre-derived here (the
+ *  party snapshot omits CON; the resolver rolls and must not re-derive). */
+export interface RestParticipant {
+  readonly characterId: string
+  readonly name: string
+  readonly hitDie: number
+  readonly hitDiceRemaining: number
+  readonly conMod: number
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +195,7 @@ export interface LedgerOps {
   debitFeatureUse(characterId: string, name: string): Promise<DebitFeatureUseResult>
   debitSpellSlot(characterId: string, slotLevel: number): Promise<DebitSpellSlotResult>
   readSpellSlots(characterId: string): Promise<readonly SpellSlotRow[]>
+  readCharacterSpells(characterId: string): Promise<readonly CharacterSpellRow[]>
   writeHp(characterId: string, newHp: number): Promise<{ hp: number; maxHp: number }>
   applyCondition(
     characterId: string,
@@ -182,8 +205,69 @@ export interface LedgerOps {
   clearCondition(characterId: string, condition: ConditionName): Promise<ConditionWriteResult>
   shortRest(sessionId: string, requests: readonly ShortRestRequest[]): Promise<void>
   longRest(sessionId: string): Promise<void>
+  /** The rest-relevant per-participant numbers (incl. pre-derived CON mod) the
+   *  `take_rest` resolver rolls its short-rest hit-dice heal from. */
+  readRestParticipants(sessionId: string): Promise<readonly RestParticipant[]>
   writeLedgerEvent(input: LedgerEventInput): Promise<string | null>
+  /** Idempotency check (§10): has this exact (turn, call, character) already
+   *  committed? The resolver checks BEFORE mutating so a BullMQ redelivery
+   *  cannot double-apply a debit (the journal alone can't prevent that — the
+   *  mutation runs before the journal's ON CONFLICT fires). */
+  findLedgerEvent(turnId: string, toolCallId: string, characterId: string): Promise<boolean>
   readPartyLedgerSnapshot(sessionId: string): Promise<PartyLedgerSnapshot>
+}
+
+// ---------------------------------------------------------------------------
+// The §5a single owner of the HP↔unconscious invariant
+// ---------------------------------------------------------------------------
+
+/** Every HP write routes through here — `writeHp`, `shortRest`'s hit-dice
+ *  heal, and `longRest`'s HP→max all call this ONE helper (§5a pins a single
+ *  owner; inlined copies are a drift hazard). Clamps to [0, max_hit_points]
+ *  and syncs the HP-derived `unconscious` condition: →0 applies it
+ *  idempotently, positive clears it. `target` selects the new-HP expression:
+ *  an absolute value, a delta off the current HP, or max_hit_points. */
+async function applyHpAndSyncUnconscious(
+  c: ClientLike,
+  characterId: string,
+  target:
+    | { readonly kind: 'set'; readonly value: number }
+    | { readonly kind: 'delta'; readonly value: number }
+    | { readonly kind: 'max' },
+): Promise<{ hp: number; maxHp: number }> {
+  const expr =
+    target.kind === 'set'
+      ? 'LEAST(GREATEST($2, 0), max_hit_points)'
+      : target.kind === 'delta'
+        ? 'LEAST(GREATEST(hit_points + $2, 0), max_hit_points)'
+        : 'max_hit_points'
+  const params = target.kind === 'max' ? [characterId] : [characterId, target.value]
+  const updated = await c.query<{ hit_points: number; max_hit_points: number }>(
+    `UPDATE characters
+        SET hit_points = ${expr}, updated_at = now()
+      WHERE id = $1
+    RETURNING hit_points, max_hit_points`,
+    params,
+  )
+  const row = updated.rows[0]
+  if (!row) throw new Error('characters.writeHp: no character row')
+  if (row.hit_points === 0) {
+    // →0: apply unconscious idempotently.
+    await c.query(
+      `INSERT INTO character_conditions (id, character_id, condition, level)
+       VALUES ($1, $2, 'unconscious', NULL)
+       ON CONFLICT (character_id, condition) DO NOTHING`,
+      [uuidv7(), characterId],
+    )
+  } else {
+    // positive: clear unconscious (HP-derived).
+    await c.query(
+      `DELETE FROM character_conditions
+        WHERE character_id = $1 AND condition = 'unconscious'`,
+      [characterId],
+    )
+  }
+  return { hp: row.hit_points, maxHp: row.max_hit_points }
 }
 
 // ---------------------------------------------------------------------------
@@ -339,37 +423,32 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
       }))
     },
 
-    /** The ONE owner of the §5a HP↔unconscious invariant. Clamps to
+    /** All of a character's spell rows (name, level, prepared, ritual) — the
+     *  cast_spell resolver matches by normalized name + reads the flags. */
+    readCharacterSpells: async (characterId): Promise<readonly CharacterSpellRow[]> => {
+      const res = await c.query<{
+        spell_name: string
+        spell_level: number
+        prepared: boolean
+        ritual: boolean
+      }>(
+        `SELECT spell_name, spell_level, prepared, ritual FROM character_spells
+          WHERE character_id = $1 ORDER BY spell_level ASC, spell_name ASC`,
+        [characterId],
+      )
+      return res.rows.map((r) => ({
+        name: r.spell_name,
+        level: r.spell_level,
+        prepared: r.prepared,
+        ritual: r.ritual,
+      }))
+    },
+
+    /** The §5a HP↔unconscious invariant via the single-owner helper. Clamps to
      *  [0, max_hit_points]; →0 applies `unconscious`, 0→positive clears it.
      *  Multi-statement — must run on a tx-bound client (the resolver opens it). */
-    writeHp: async (characterId, newHp): Promise<{ hp: number; maxHp: number }> => {
-      const updated = await c.query<{ hit_points: number; max_hit_points: number }>(
-        `UPDATE characters
-            SET hit_points = LEAST(GREATEST($2, 0), max_hit_points), updated_at = now()
-          WHERE id = $1
-        RETURNING hit_points, max_hit_points`,
-        [characterId, newHp],
-      )
-      const row = updated.rows[0]
-      if (!row) throw new Error('characters.writeHp: no character row')
-      if (row.hit_points === 0) {
-        // →0: apply unconscious idempotently.
-        await c.query(
-          `INSERT INTO character_conditions (id, character_id, condition, level)
-           VALUES ($1, $2, 'unconscious', NULL)
-           ON CONFLICT (character_id, condition) DO NOTHING`,
-          [uuidv7(), characterId],
-        )
-      } else {
-        // positive: clear unconscious (HP-derived).
-        await c.query(
-          `DELETE FROM character_conditions
-            WHERE character_id = $1 AND condition = 'unconscious'`,
-          [characterId],
-        )
-      }
-      return { hp: row.hit_points, maxHp: row.max_hit_points }
-    },
+    writeHp: async (characterId, newHp): Promise<{ hp: number; maxHp: number }> =>
+      applyHpAndSyncUnconscious(c, characterId, { kind: 'set', value: newHp }),
 
     applyCondition: async (characterId, condition, level): Promise<ConditionWriteResult> => {
       // Upsert; for exhaustion an apply-when-present updates the level. The
@@ -417,21 +496,11 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
               WHERE id = $1`,
             [p.character_id, req.diceSpent],
           )
-          // Route HP through writeHp's clamp + §5a invariant. Inline here to
-          // reuse the same client without re-binding.
-          await c.query<{ hit_points: number }>(
-            `UPDATE characters
-                SET hit_points = LEAST(GREATEST(hit_points + $2, 0), max_hit_points), updated_at = now()
-              WHERE id = $1
-            RETURNING hit_points`,
-            [p.character_id, req.healTotal],
-          )
-          await c.query(
-            `DELETE FROM character_conditions
-              WHERE character_id = $1 AND condition = 'unconscious'
-                AND (SELECT hit_points FROM characters WHERE id = $1) > 0`,
-            [p.character_id],
-          )
+          // HP heal through the §5a single owner (clamp + unconscious sync).
+          await applyHpAndSyncUnconscious(c, p.character_id, {
+            kind: 'delta',
+            value: req.healTotal,
+          })
         }
         // Pact slots + short_rest features restore for EVERY participant.
         await c.query(
@@ -465,18 +534,14 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
         const regain = Math.max(1, Math.floor(p.level / 2))
         await c.query(
           `UPDATE characters
-              SET hit_points = max_hit_points,
-                  hit_dice_remaining = LEAST(hit_dice_remaining + $2, level),
+              SET hit_dice_remaining = LEAST(hit_dice_remaining + $2, level),
                   updated_at = now()
             WHERE id = $1`,
           [p.character_id, regain],
         )
-        // HP→max is positive (max_hit_points >= 1 by 001) → clear unconscious.
-        await c.query(
-          `DELETE FROM character_conditions
-            WHERE character_id = $1 AND condition = 'unconscious'`,
-          [p.character_id],
-        )
+        // HP→max through the §5a single owner — max_hit_points >= 1 (001), so
+        // the sync always clears unconscious.
+        await applyHpAndSyncUnconscious(c, p.character_id, { kind: 'max' })
         await c.query(
           `UPDATE character_spell_slots SET slots_remaining = slots_max WHERE character_id = $1`,
           [p.character_id],
@@ -499,6 +564,32 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
           [p.character_id],
         )
       }
+    },
+
+    /** Rest-relevant per-participant numbers (CON mod pre-derived). Same
+     *  participant set + JOIN as the rests; the resolver rolls from these. */
+    readRestParticipants: async (sessionId): Promise<readonly RestParticipant[]> => {
+      const res = await c.query<{
+        character_id: string
+        name: string
+        hit_die: number
+        hit_dice_remaining: number
+        con: number
+      }>(
+        `SELECT ch.id AS character_id, ch.name, ch.hit_die, ch.hit_dice_remaining, ch.con
+           FROM session_participants sp
+           JOIN characters ch ON ch.id = sp.character_id
+          WHERE sp.session_id = $1
+          ORDER BY sp.joined_at ASC, sp.id ASC`,
+        [sessionId],
+      )
+      return res.rows.map((r) => ({
+        characterId: r.character_id,
+        name: r.name,
+        hitDie: r.hit_die,
+        hitDiceRemaining: r.hit_dice_remaining,
+        conMod: conModifier(r.con),
+      }))
     },
 
     /** Append-only journal row, written in the SAME tx as the mutation (§10).
@@ -525,6 +616,15 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
       return res.rows[0]?.id ?? null
     },
 
+    findLedgerEvent: async (turnId, toolCallId, characterId): Promise<boolean> => {
+      const res = await c.query<{ one: number }>(
+        `SELECT 1 AS one FROM ledger_events
+          WHERE turn_id = $1 AND tool_call_id = $2 AND character_id = $3`,
+        [turnId, toolCallId, characterId],
+      )
+      return res.rows.length > 0
+    },
+
     /** §7 per-turn party ledger snapshot — numbers AND nouns. Deterministic
      *  (joined_at, id) order matching listSessionParticipantCharacters. */
     readPartyLedgerSnapshot: async (sessionId): Promise<PartyLedgerSnapshot> => {
@@ -548,33 +648,35 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
       )
       const result: PartyLedgerCharacter[] = []
       for (const row of chars.rows) {
-        const [slots, conditions, features, spells, equipment] = await Promise.all([
-          c.query<{ slot_level: number; slots_max: number; slots_remaining: number }>(
-            `SELECT slot_level, slots_max, slots_remaining FROM character_spell_slots
-              WHERE character_id = $1 ORDER BY slot_level ASC`,
-            [row.character_id],
-          ),
-          c.query<{ condition: string; level: number | null }>(
-            `SELECT condition, level FROM character_conditions
-              WHERE character_id = $1 ORDER BY condition ASC`,
-            [row.character_id],
-          ),
-          c.query<{ feature_name: string; max_uses: number; uses_remaining: number; recharge: string }>(
-            `SELECT feature_name, max_uses, uses_remaining, recharge FROM character_features
-              WHERE character_id = $1 AND max_uses IS NOT NULL ORDER BY feature_name ASC`,
-            [row.character_id],
-          ),
-          c.query<{ spell_name: string; spell_level: number; prepared: boolean; ritual: boolean }>(
-            `SELECT spell_name, spell_level, prepared, ritual FROM character_spells
-              WHERE character_id = $1 ORDER BY spell_level ASC, spell_name ASC`,
-            [row.character_id],
-          ),
-          c.query<{ item_name: string; quantity: number; consumable: boolean }>(
-            `SELECT item_name, quantity, consumable FROM character_equipment
-              WHERE character_id = $1 ORDER BY item_name ASC`,
-            [row.character_id],
-          ),
-        ])
+        // SEQUENTIAL awaits, NOT Promise.all: this read runs on a tx-bound
+        // client (replay builders, rest payloads, adjust_hp's pre-read), and
+        // node-postgres cannot run concurrent queries on a single client —
+        // deprecated today, a hard throw in pg@9.
+        const slots = await c.query<{ slot_level: number; slots_max: number; slots_remaining: number }>(
+          `SELECT slot_level, slots_max, slots_remaining FROM character_spell_slots
+            WHERE character_id = $1 ORDER BY slot_level ASC`,
+          [row.character_id],
+        )
+        const conditions = await c.query<{ condition: string; level: number | null }>(
+          `SELECT condition, level FROM character_conditions
+            WHERE character_id = $1 ORDER BY condition ASC`,
+          [row.character_id],
+        )
+        const features = await c.query<{ feature_name: string; max_uses: number; uses_remaining: number; recharge: string }>(
+          `SELECT feature_name, max_uses, uses_remaining, recharge FROM character_features
+            WHERE character_id = $1 AND max_uses IS NOT NULL ORDER BY feature_name ASC`,
+          [row.character_id],
+        )
+        const spells = await c.query<{ spell_name: string; spell_level: number; prepared: boolean; ritual: boolean }>(
+          `SELECT spell_name, spell_level, prepared, ritual FROM character_spells
+            WHERE character_id = $1 ORDER BY spell_level ASC, spell_name ASC`,
+          [row.character_id],
+        )
+        const equipment = await c.query<{ item_name: string; quantity: number; consumable: boolean }>(
+          `SELECT item_name, quantity, consumable FROM character_equipment
+            WHERE character_id = $1 ORDER BY item_name ASC`,
+          [row.character_id],
+        )
         result.push({
           characterId: row.character_id,
           name: row.name,
