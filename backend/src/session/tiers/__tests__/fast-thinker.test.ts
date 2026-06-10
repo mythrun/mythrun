@@ -479,6 +479,27 @@ describe('SonnetFastThinker.render', () => {
       { kind: 'text', text: 'still narrating' },
     ])
   })
+
+  it('15. standing directive: rides the streamText messages but is NEVER echoed into the returned parts', async () => {
+    mockResult([{ type: 'text-delta', id: '1', text: 'narration' }])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit } = makeEmitter()
+
+    const msg = await ft.render(makeCtx({ standingDirective: 'Wind toward a close' }), emit)
+
+    // The tail is present in the model messages the FT sent.
+    const callArgs = streamTextMock.mock.calls[0]?.[0] as {
+      messages: import('../../../llm/ai.js').ModelMessage[]
+    }
+    const last = callArgs.messages[callArgs.messages.length - 1]
+    expect(last).toEqual({ role: 'user', content: '[DM direction: Wind toward a close]' })
+
+    // …but the FT never echoes a DM direction into the transcript it returns.
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'narration' }])
+    for (const part of msg.parts) {
+      if (part.kind === 'text') expect(part.text.startsWith('[DM direction:')).toBe(false)
+    }
+  })
 })
 
 describe('buildModelMessages', () => {
@@ -574,5 +595,58 @@ describe('buildModelMessages', () => {
     const a = JSON.stringify(buildModelMessages(ctx))
     const b = JSON.stringify(buildModelMessages(ctx))
     expect(a).toBe(b)
+  })
+
+  it('15. standing directive: appends ONE raw uncached [DM direction: …] tail as the LAST message', () => {
+    const ctx = makeCtx({
+      ftHistory: [
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+        { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'two' }], characterName: 'Bel' },
+      ],
+      standingDirective: 'Steer toward a close',
+    })
+    const messages = buildModelMessages(ctx)
+
+    const last = messages[messages.length - 1]
+    expect(last).toEqual({ role: 'user', content: '[DM direction: Steer toward a close]' })
+    // The standing tail rides the always-uncached zone: NO providerOptions.
+    expect(last?.providerOptions).toBeUndefined()
+  })
+
+  it('15b. standing directive does NOT shift the breakpoint: the same HISTORY message carries it with or without the tail', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'two' }], characterName: 'Bel' },
+    ]
+    const without = buildModelMessages(makeCtx({ ftHistory: history }))
+    const withTail = buildModelMessages(makeCtx({ ftHistory: history, standingDirective: 'Steer toward a close' }))
+
+    // Without the tail: breakpoint on the second-to-last message (the last
+    // settled history message). It must remain on the SAME content message
+    // when the tail is appended — i.e. the breakpointed message is identical.
+    const baselineBreakpointed = without.find((m) => m.providerOptions !== undefined && m.role !== 'system')
+    expect(baselineBreakpointed).toBeDefined()
+    const tailedBreakpointed = withTail.find((m) => m.providerOptions !== undefined && m.role !== 'system')
+    expect(tailedBreakpointed).toEqual(baselineBreakpointed)
+    // And the breakpoint is NOT on the appended tail.
+    expect(withTail[withTail.length - 1]?.providerOptions).toBeUndefined()
+  })
+
+  it('15c. no standing directive: no extra tail message (unchanged shape)', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+    ]
+    const without = buildModelMessages(makeCtx({ ftHistory: history }))
+    // exactOptionalPropertyTypes forbids an explicit `standingDirective:
+    // undefined` literal — "absent key" IS the undefined case, covered by
+    // `without` above. The runtime guard's empty-string arm is tested here.
+    const withEmpty = buildModelMessages(makeCtx({ ftHistory: history, standingDirective: '' }))
+
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
+    // No tail message wrapped as a DM direction.
+    expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[DM direction:'))).toBe(false)
   })
 })

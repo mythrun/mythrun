@@ -157,9 +157,15 @@ interface ToolResultBlock {
  * Build the SDK message array for a turn (EXPORTED for tests; deterministic —
  * the same ctx maps to byte-identical messages). Layout:
  *   [ system(ft_context + roster, cache breakpoint),
- *     ...history mapped to user/assistant/tool messages ]
+ *     ...history mapped to user/assistant/tool messages,
+ *     (optional) [DM direction: …] standing-directive tail ]
  * The cache breakpoint also rides the last SETTLED history message
- * (second-to-last entry; the current batch stays uncached).
+ * (second-to-last entry; the current batch stays uncached). The §6 standing
+ * directive, when live, is appended as ONE raw user message AFTER the
+ * breakpoint placement — it rides the always-uncached zone past the last
+ * breakpoint, never perturbing the cached prefix and never shifting the
+ * sliding-breakpoint index. It is render-only: never persisted, never pushed
+ * into ftHistory.
  */
 export function buildModelMessages(ctx: FtTurnContext): ModelMessage[] {
   const system = loadPrompt('session', 'ft-system', {
@@ -181,10 +187,23 @@ export function buildModelMessages(ctx: FtTurnContext): ModelMessage[] {
     }
   }
 
-  return [
+  const messages: ModelMessage[] = [
     { role: 'system', content: system, providerOptions: ANTHROPIC_CACHE_BREAKPOINT },
     ...historyMessages,
   ]
+
+  // §6 standing directive: a raw, uncached tail message AFTER the breakpoints.
+  // NEVER persisted, NEVER pushed into ftHistory (that would shift the
+  // sliding-breakpoint index and render through the codec's attribution as a
+  // phantom "Player"). The controller resolved it from the standing slot (read,
+  // not consumed). The wrapper form mirrors the fused one-shot's `[DM direction:
+  // …]` delimiter; the ft-system DM Direction Protocol amendment (T5) covers the
+  // standalone form.
+  if (ctx.standingDirective !== undefined && ctx.standingDirective !== '') {
+    messages.push({ role: 'user', content: `[DM direction: ${ctx.standingDirective}]` })
+  }
+
+  return messages
 }
 
 // ── prepareStep (cap close, §3.6) ────────────────────────────────────────────
