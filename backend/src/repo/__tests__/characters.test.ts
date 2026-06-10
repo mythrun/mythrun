@@ -838,5 +838,52 @@ describe('repo.characters', () => {
         expect(await characters.listSessionParticipantCharacters(session.id)).toEqual([])
       })
     })
+
+    // MYT-69 §4: the ST-side roster read — name + class + background, in the
+    // same deterministic joined order. A NEW read (the FT-side
+    // listSessionParticipantCharacters returns {userId, name} only).
+    // `seedRosterCharacter` integrates each PC with class 'rogue' /
+    // background 'criminal'.
+    describe('listSessionParticipantRoster', () => {
+      it('returns both joined participants with class/background in joined order', async () => {
+        const users = createUsersRepo(pool)
+        const sessions = createSessionsRepo(pool)
+        const characters = createCharactersRepo(pool)
+        const session = await sessions.create({ campaignId, sessionNumber: 1 })
+
+        const second = await users.create(pool, {
+          cognitoSub: scope.userSub(1),
+          username: scope.username(1),
+          displayName: scope.displayName(1),
+        })
+
+        // Bryn then Arin, in join order.
+        await seedRosterCharacter({
+          ownerId: userId,
+          campaignId,
+          sessionId: session.id,
+          name: 'Bryn',
+        })
+        await seedRosterCharacter({
+          ownerId: second.id,
+          campaignId,
+          sessionId: session.id,
+          name: 'Arin',
+        })
+
+        const roster = await characters.listSessionParticipantRoster(session.id)
+        expect(roster).toEqual([
+          { name: 'Bryn', characterClass: 'rogue', background: 'criminal' },
+          { name: 'Arin', characterClass: 'rogue', background: 'criminal' },
+        ])
+      })
+
+      it('returns [] for a session with no participants', async () => {
+        const sessions = createSessionsRepo(pool)
+        const characters = createCharactersRepo(pool)
+        const session = await sessions.create({ campaignId, sessionNumber: 1 })
+        expect(await characters.listSessionParticipantRoster(session.id)).toEqual([])
+      })
+    })
   })
 })

@@ -403,6 +403,27 @@ export function charactersNs(c: ClientLike) {
       return result.rows.map((r) => ({ userId: r.user_id, name: r.name }))
     },
 
+    /** MYT-69 §4 — the PC roster with class/background for the ST's world-state
+     *  block. A NEW read: the existing listSessionParticipantCharacters returns
+     *  {userId, name} only and is read on the FT hot path — leave it untouched.
+     *  Same (joined_at, id) deterministic order as its sibling. */
+    listSessionParticipantRoster: async (
+      sessionId: string,
+    ): Promise<readonly { name: string; characterClass: string; background: string }[]> => {
+      const result = await c.query<{ name: string; class: string; background: string }>(
+        `SELECT ch.name, ch.class, ch.background FROM session_participants sp
+           JOIN characters ch ON ch.id = sp.character_id
+          WHERE sp.session_id = $1
+          ORDER BY sp.joined_at ASC, sp.id ASC`,
+        [sessionId],
+      )
+      return result.rows.map((r) => ({
+        name: r.name,
+        characterClass: r.class,
+        background: r.background,
+      }))
+    },
+
     /** MYT-68 §3.5 step 1 — resolve a skill-check roller from the SESSION
      *  roster (session_participants carries character_id; a campaign member
      *  who never joined isn't rollable). Exact match on normalized name —
