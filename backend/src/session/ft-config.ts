@@ -29,3 +29,9 @@ export const FALLBACK_OUTCOMES = {
   success: 'The attempt clearly succeeds.',
   great_success: 'The attempt succeeds remarkably well.',
 } as const
+
+/** §11: a fat-finger shape guard on a single gold credit/debit (structural
+ *  validation), NOT an economy rule. Per-call hit-dice counts and amount
+ *  floors are bounded in the TOOL input schemas, not here — this is the one
+ *  shared constant. */
+export const MAX_GOLD_TRANSACTION = 100_000
