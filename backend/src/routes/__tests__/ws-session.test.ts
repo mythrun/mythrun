@@ -727,6 +727,19 @@ describe('ws-session route (integration)', () => {
         // count/sides carried on OUTPUT (no input fallback needed).
         content: JSON.stringify({ toolCallId: 'tc-d', input: {}, output: { count: 1, sides: 20, results: [13], total: 13 } }),
       },
+      {
+        // An ok:true ledger_update row with a NULL turn_id → exercises the
+        // ledger frame's `row.turnId ?? ''` fallback (parseLedgerUpdateRow path).
+        type: 'spend_resource',
+        content: JSON.stringify({
+          toolCallId: 'tc-l',
+          input: {},
+          output: {
+            ok: true,
+            payload: { characterName: sheetInput.name, kind: 'gold', summary: 'Pays 3 gold.', gold: 3 },
+          },
+        }),
+      },
       { type: 'skill_check', content: '42' }, // valid JSON, not an object → drop
       {
         type: 'skill_check',
@@ -751,14 +764,22 @@ describe('ws-session route (integration)', () => {
     try {
       const [first] = await collectFrames(ws, 1)
       if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
-      // The two corrupt rows (seqs 5, 6) + the unmapped row kind (seq 7)
-      // dropped; the four valid frames replay with null turn_id degraded to ''.
+      // The two corrupt rows (seqs 6, 7) + the unmapped row kind (seq 8)
+      // dropped; the five valid frames replay with null turn_id degraded to ''.
       expect(first.messages.map((m) => m.type)).toEqual([
         'dm_message',
         'skill_check',
         'skill_check',
         'dice_roll',
+        'ledger_update',
       ])
+      expect(first.messages[4]).toMatchObject({
+        type: 'ledger_update',
+        seq: 5,
+        turnId: '',
+        kind: 'gold',
+        gold: 3,
+      })
       expect(first.messages[0]).toMatchObject({ type: 'dm_message', seq: 1, turnId: '' })
       expect(first.messages[1]).toMatchObject({
         type: 'skill_check',
@@ -783,6 +804,355 @@ describe('ws-session route (integration)', () => {
         results: [13],
         total: 13,
       })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: an ok:true cast_spell row → a spell_slot ledger_update frame (characterName + seq)', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a001'
+    // The persisted OUTPUT is the resolver's LedgerResolution success arm:
+    // { ok: true, payload: LedgerUpdatePayload }.
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        {
+          kind: 'cast_spell',
+          content: JSON.stringify({
+            toolCallId: 'tc-cs1',
+            input: { characterName: sheetInput.name, spellName: 'Cure Wounds', slotLevel: 1 },
+            output: {
+              ok: true,
+              payload: {
+                characterName: sheetInput.name,
+                kind: 'spell_slot',
+                summary: `${sheetInput.name} casts Cure Wounds (1 level-1 slot remaining).`,
+                slotLevel: 1,
+                slotsRemaining: 1,
+              },
+            },
+          }),
+        },
+      ],
+      seqs: [1],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages).toHaveLength(1)
+      expect(first.messages[0]).toMatchObject({
+        type: 'ledger_update',
+        turnId,
+        seq: 1,
+        characterName: sheetInput.name,
+        kind: 'spell_slot',
+        summary: `${sheetInput.name} casts Cure Wounds (1 level-1 slot remaining).`,
+        slotLevel: 1,
+        slotsRemaining: 1,
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: an ok:false ledger row is SILENTLY skipped — no frame, no warn', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a002'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The vial is empty.' },
+        {
+          kind: 'spend_resource',
+          // A binding rejection — expected, NOT corrupt. Replay drops the frame
+          // but must NOT warn (distinct from the corrupt-blob warn path).
+          content: JSON.stringify({
+            toolCallId: 'tc-sr-rej',
+            input: { characterName: sheetInput.name, resource: 'Potion of Healing' },
+            output: {
+              ok: false,
+              binding: true,
+              found: true,
+              constraint: 'There are no Potions of Healing left to spend.',
+            },
+          }),
+        },
+      ],
+      seqs: [1, 2],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The ok:false row produced NO frame; the dm_text replays intact.
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+      // The rejection is expected, not corrupt → the warn log must NOT fire for it.
+      // (No corrupt rows in this turn, so no warn at all.)
+      const warn = app?.log.warn
+      if (warn && 'mock' in warn) {
+        const calls = (warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        const droppedLedger = calls.some((c) =>
+          c.some((a) => typeof a === 'string' && a.includes('dropped corrupt')),
+        )
+        expect(droppedLedger).toBe(false)
+      }
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: a ledger row whose output.ok is neither true nor false is dropped + WARNED (corrupt blob)', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a009'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'A strange shimmer in the ledger.' },
+        {
+          kind: 'spend_resource',
+          // A persisted output whose `ok` discriminant is a non-boolean: a valid
+          // record (so it passes asRecord), but neither the ok:true success nor
+          // the ok:false rejection arm — a corrupt blob → dropped + WARNED.
+          content: JSON.stringify({
+            toolCallId: 'tc-sr-corrupt',
+            input: { characterName: sheetInput.name, resource: 'Potion of Healing' },
+            output: { ok: 'maybe', payload: { characterName: sheetInput.name } },
+          }),
+        },
+      ],
+      seqs: [1, 2],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The corrupt-ok row produced NO ledger_update frame; the dm_text replays.
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+      // A malformed blob → the corrupt-drop warn MUST fire (distinct from ok:false).
+      const warn = app?.log.warn
+      if (warn && 'mock' in warn) {
+        const calls = (warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        const droppedLedger = calls.some((c) =>
+          c.some((a) => typeof a === 'string' && a.includes('dropped corrupt ledger_update row')),
+        )
+        expect(droppedLedger).toBe(true)
+      }
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: a take_rest row affecting two characters → two ledger_update frames', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a003'
+    // take_rest persists ONE row whose payload is an ARRAY (one entry per
+    // character); replay emits one frame per entry.
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        {
+          kind: 'take_rest',
+          content: JSON.stringify({
+            toolCallId: 'tc-rest',
+            input: { type: 'short' },
+            output: {
+              ok: true,
+              payload: [
+                {
+                  characterName: sheetInput.name,
+                  kind: 'rest',
+                  summary: `${sheetInput.name} takes a short rest (12/12 HP).`,
+                  hp: 12,
+                  maxHp: 12,
+                  diceRolled: [5],
+                },
+                {
+                  characterName: 'Borin Stoneff',
+                  kind: 'rest',
+                  summary: 'Borin Stoneff takes a short rest (9/14 HP).',
+                  hp: 9,
+                  maxHp: 14,
+                  diceRolled: [],
+                },
+              ],
+            },
+          }),
+        },
+      ],
+      seqs: [1],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages.map((m) => m.type)).toEqual(['ledger_update', 'ledger_update'])
+      expect(first.messages[0]).toMatchObject({
+        type: 'ledger_update',
+        turnId,
+        seq: 1,
+        characterName: sheetInput.name,
+        kind: 'rest',
+        hp: 12,
+        maxHp: 12,
+        diceRolled: [5],
+      })
+      expect(first.messages[1]).toMatchObject({
+        type: 'ledger_update',
+        turnId,
+        seq: 1,
+        characterName: 'Borin Stoneff',
+        kind: 'rest',
+        hp: 9,
+        maxHp: 14,
+        diceRolled: [],
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: an update_condition row with changed:false replays NO frame', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a004'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'Nothing changes.' },
+        {
+          kind: 'update_condition',
+          // changed:false no-op — same rule as live emission: replay no frame.
+          content: JSON.stringify({
+            toolCallId: 'tc-cond-noop',
+            input: { characterName: sheetInput.name, condition: 'prone', apply: false },
+            output: {
+              ok: true,
+              payload: {
+                characterName: sheetInput.name,
+                kind: 'condition',
+                changed: false,
+                summary: `${sheetInput.name}'s prone state is unchanged (no-op).`,
+                condition: 'prone',
+              },
+            },
+          }),
+        },
+      ],
+      seqs: [1, 2],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The changed:false condition produced NO frame; the dm_text replays.
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: an update_condition row with changed:true → one condition ledger_update frame', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a005'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        {
+          kind: 'update_condition',
+          content: JSON.stringify({
+            toolCallId: 'tc-cond',
+            input: { characterName: sheetInput.name, condition: 'poisoned', apply: true },
+            output: {
+              ok: true,
+              payload: {
+                characterName: sheetInput.name,
+                kind: 'condition',
+                changed: true,
+                summary: `${sheetInput.name} is now poisoned.`,
+                condition: 'poisoned',
+              },
+            },
+          }),
+        },
+      ],
+      seqs: [1],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages).toHaveLength(1)
+      expect(first.messages[0]).toMatchObject({
+        type: 'ledger_update',
+        turnId,
+        seq: 1,
+        characterName: sheetInput.name,
+        kind: 'condition',
+        condition: 'poisoned',
+        summary: `${sheetInput.name} is now poisoned.`,
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-70 §8: a corrupt ledger blob is dropped + warned (distinct from the silent ok:false skip)', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a006'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'A flask shatters.' },
+        // Non-JSON content → corrupt blob → drop + warn (the existing posture).
+        { kind: 'acquire_resource', content: 'not-json{' },
+        // Valid JSON but payload missing required fields → drop + warn.
+        {
+          kind: 'adjust_hp',
+          content: JSON.stringify({
+            toolCallId: 'tc-hp-bad',
+            input: {},
+            output: { ok: true, payload: { kind: 'hp' } },
+          }),
+        },
+      ],
+      seqs: [1, 2, 3],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // Both corrupt rows dropped; only the dm_text replays.
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message'])
+      const warn = app?.log.warn
+      if (warn && 'mock' in warn) {
+        const calls = (warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        const dropped = calls.filter((c) =>
+          c.some((a) => typeof a === 'string' && a.includes('dropped corrupt ledger_update')),
+        )
+        expect(dropped.length).toBe(2)
+      }
     } finally {
       ws.terminate()
     }
@@ -1278,12 +1648,14 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
     textDelta: vi.fn().mockResolvedValue(undefined),
     skillCheck: vi.fn().mockResolvedValue(undefined),
     diceRoll: vi.fn().mockResolvedValue(undefined),
+    ledgerUpdate: vi.fn().mockResolvedValue(undefined),
     turnEnd: vi.fn().mockResolvedValue(undefined),
     turnError: vi.fn().mockResolvedValue(undefined),
     emitFor: vi.fn().mockReturnValue({
       emitText: () => Promise.resolve(undefined),
       emitSkillCheck: () => Promise.resolve(undefined),
       emitDiceRoll: () => Promise.resolve(undefined),
+      emitLedgerUpdate: () => Promise.resolve(undefined),
     }),
   }
 }
@@ -1553,6 +1925,57 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     // The departed participant degrades too, and mode defaults to exploration.
     expect(reconnect.participants[0]?.displayName).toBe('Former player')
     expect(reconnect.mode).toBe('exploration')
+  })
+
+  it('MYT-70 §8: ledger replay — ok:false skipped silently (no warn); corrupt blob dropped + warned', async () => {
+    const sessionState = makeStubSessionState()
+    const okTrue = JSON.stringify({
+      toolCallId: 'tc-ok',
+      input: {},
+      output: {
+        ok: true,
+        payload: { characterName: 'Aila', kind: 'gold', summary: 'Aila now has 12 gold.', gold: 12 },
+      },
+    })
+    const okFalse = JSON.stringify({
+      toolCallId: 'tc-rej',
+      input: {},
+      output: { ok: false, binding: true, found: true, constraint: 'No gold to spend.' },
+    })
+    const { repo } = makeStubRepo({
+      sessionMessages: {
+        append: vi.fn().mockResolvedValue(undefined),
+        listAfterSeq: vi.fn().mockResolvedValue([
+          { seq: 1, userId: null, content: okTrue, messageType: 'acquire_resource', turnId: 't1' },
+          // ok:false rejection — EXPECTED, not corrupt → skipped with NO warn.
+          { seq: 2, userId: null, content: okFalse, messageType: 'spend_resource', turnId: 't1' },
+          // Corrupt blob — non-JSON → dropped + warned.
+          { seq: 3, userId: null, content: 'not-json{', messageType: 'cast_spell', turnId: 't1' },
+        ]),
+      },
+    })
+    const { handler, appLog } = await captureHandler(
+      makeUnitDeps({ repo, sessionState, hub: makeStubHub() }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({ lastSeq: '0' }))
+    await flush()
+
+    const reconnect = socket.sent
+      .map((s) => JSON.parse(s) as { type: string; messages?: { type: string; kind?: string }[] })
+      .find((f) => f.type === 'session_reconnect')
+    if (!reconnect?.messages) throw new Error('expected session_reconnect')
+    // Only the ok:true row produced a frame; ok:false + corrupt yielded none.
+    expect(reconnect.messages.map((m) => m.type)).toEqual(['ledger_update'])
+    expect(reconnect.messages[0]).toMatchObject({ type: 'ledger_update', kind: 'gold' })
+
+    const warnCalls = appLog.log.warn.mock.calls
+    const corruptWarns = warnCalls.filter((c) =>
+      c.some((a) => typeof a === 'string' && a.includes('dropped corrupt ledger_update')),
+    )
+    // Exactly ONE warn — the corrupt seq-3 row. The ok:false seq-2 row warns NOT.
+    expect(corruptWarns).toHaveLength(1)
+    expect(corruptWarns[0]?.[0]).toMatchObject({ seq: 3 })
   })
 
   it('connect fallbacks: a null user / null character resolve to empty display/character names', async () => {

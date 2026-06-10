@@ -58,6 +58,7 @@ import type { TriggerState } from '../session/trigger-state.js'
 import type { TurnPublisher } from '../session/turn-publisher.js'
 import type { DmTriggerQueueLike } from '../session/dm-trigger-queue.js'
 import type { TurnQueueLike } from '../session/turn-queue.js'
+import type { LedgerUpdatePayload } from '../session/tiers/types.js'
 import { consumeWsTicket } from '../auth/ws-ticket.js'
 import { scheduleSuspend, cancelSuspend } from '../session/session-suspend.js'
 import {
@@ -469,10 +470,9 @@ async function buildReconnectFrame(
   // skill_check / dice_roll) reconstruct from their JSON content. A row that
   // doesn't map (unknown messageType, or a corrupt DM-row blob) yields null and
   // is dropped — replay degrades GRACEFULLY (drop one frame, keep the rest).
-  const messages: ServerFrame[] = rows.flatMap((row) => {
-    const frame = rowToReplayFrame(row, displayByUser, characterByUser, ctx.app.log)
-    return frame === null ? [] : [frame]
-  })
+  const messages: ServerFrame[] = rows.flatMap((row) =>
+    rowToReplayFrame(row, displayByUser, characterByUser, ctx.app.log),
+  )
 
   return {
     type: 'session_reconnect',
@@ -483,7 +483,9 @@ async function buildReconnectFrame(
 }
 
 /** Map one persisted `session_messages` row to its reconnect-replay
- *  ServerFrame, or null to DROP it (graceful degradation).
+ *  ServerFrame(s). Returns an ARRAY — `[]` to DROP the row (graceful
+ *  degradation), one frame for the common case, and >1 for a `take_rest` row
+ *  (one `ledger_update` frame per affected character; §8).
  *
  *   - `player_message` → a `player_message` frame, byline resolved through the
  *     two campaign-wide name maps (a departed author → the placeholder).
@@ -492,6 +494,13 @@ async function buildReconnectFrame(
  *     `{toolCallId, input, output}`. On a parse failure or a missing/ill-typed
  *     field the row is DROPPED + logged — a player-facing replay drops one
  *     corrupt frame rather than breaking the whole reconnect.
+ *   - the six MYT-70 ledger tools (`cast_spell` / `spend_resource` /
+ *     `acquire_resource` / `adjust_hp` / `update_condition` / `take_rest`) →
+ *     `ledger_update` frame(s) from the row's persisted `LedgerResolution`
+ *     output. An `ok:false` rejection is SILENTLY skipped (expected, not
+ *     corrupt → NO warn); a `changed:false` condition no-op emits no frame;
+ *     `take_rest` emits one frame per per-character payload entry. A malformed
+ *     blob still drops + warns (the existing posture).
  *   - any other messageType → dropped.
  */
 function rowToReplayFrame(
@@ -499,30 +508,43 @@ function rowToReplayFrame(
   displayByUser: ReadonlyMap<string, string>,
   characterByUser: ReadonlyMap<string, string>,
   log: FastifyBaseLogger,
-): ServerFrame | null {
+): ServerFrame[] {
   switch (row.messageType) {
     case 'player_message': {
       // userId is nullable on session_messages (system/DM rows carry null), but
       // a player_message row always carries its authoring user. A null author
       // (data anomaly) resolves to the same placeholder.
       const authorId = row.userId
-      return {
-        type: 'player_message',
-        seq: row.seq,
-        userId: authorId ?? '',
-        displayName: (authorId ? displayByUser.get(authorId) : undefined) ?? DEPARTED_AUTHOR_NAME,
-        characterName: (authorId ? characterByUser.get(authorId) : undefined) ?? '',
-        text: row.content,
-      }
+      return [
+        {
+          type: 'player_message',
+          seq: row.seq,
+          userId: authorId ?? '',
+          displayName: (authorId ? displayByUser.get(authorId) : undefined) ?? DEPARTED_AUTHOR_NAME,
+          characterName: (authorId ? characterByUser.get(authorId) : undefined) ?? '',
+          text: row.content,
+        },
+      ]
     }
     case 'dm_text':
-      return { type: 'dm_message', seq: row.seq, turnId: row.turnId ?? '', text: row.content }
-    case 'skill_check':
-      return parseSkillCheckRow(row, log)
-    case 'dice_roll':
-      return parseDiceRollRow(row, log)
+      return [{ type: 'dm_message', seq: row.seq, turnId: row.turnId ?? '', text: row.content }]
+    case 'skill_check': {
+      const frame = parseSkillCheckRow(row, log)
+      return frame === null ? [] : [frame]
+    }
+    case 'dice_roll': {
+      const frame = parseDiceRollRow(row, log)
+      return frame === null ? [] : [frame]
+    }
+    case 'cast_spell':
+    case 'spend_resource':
+    case 'acquire_resource':
+    case 'adjust_hp':
+    case 'update_condition':
+    case 'take_rest':
+      return parseLedgerUpdateRow(row, log)
     default:
-      return null
+      return []
   }
 }
 
@@ -636,6 +658,133 @@ function parseDiceRollRow(
     results,
     total: output.total,
   }
+}
+
+/** The valid `kind` discriminator values a persisted `LedgerUpdatePayload`
+ *  carries — mirrors the §8 `ledger_update` frame union one-for-one. */
+const LEDGER_KINDS: ReadonlySet<string> = new Set([
+  'hp',
+  'gold',
+  'item',
+  'feature',
+  'spell_slot',
+  'condition',
+  'rest',
+])
+
+/**
+ * Reconstruct `ledger_update` frame(s) from a persisted ledger-tool row.
+ *
+ * The row's `output` is the resolver's `LedgerResolution` (a Mythrun-owned
+ * object, serialized verbatim — so the payload fields are camelCase, UNLIKE the
+ * snake_case SDK tool outputs of skill_check/dice_roll). Replay rules (§8):
+ *
+ *   - `ok:true` with a single payload → one frame (carrying the row's seq).
+ *   - `ok:true` with a `take_rest` array payload → one frame PER entry (players
+ *     watch their own row).
+ *   - an `update_condition` payload with `changed:false` → NO frame (the same
+ *     idempotent-no-op rule as live emission).
+ *   - `ok:false` (a rejection) → SILENTLY skipped: an empty array, NO warn. A
+ *     rejection is EXPECTED, not corrupt — distinct from the malformed-blob path.
+ *   - a malformed blob / out-of-shape payload → dropped + WARNED (the existing
+ *     player-facing-replay posture: drop one frame, keep the reconnect).
+ */
+function parseLedgerUpdateRow(
+  row: SessionMessage,
+  log: FastifyBaseLogger,
+): Extract<ServerFrame, { type: 'ledger_update' }>[] {
+  const parsed = parseDmRowContent(row.content)
+  const output = parsed ? asRecord(parsed.output) : null
+  if (output === null) {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt ledger_update row')
+    return []
+  }
+  // §8: a rejection is EXPECTED, not corrupt — skip it silently (no warn). We
+  // discriminate on the parsed output's `ok` field, BEFORE any field validation.
+  if (output.ok === false) return []
+  if (output.ok !== true) {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt ledger_update row')
+    return []
+  }
+  // take_rest persists ONE row whose payload is an ARRAY (one entry per
+  // character); every other ledger tool carries a single payload object.
+  const rawPayloads = Array.isArray(output.payload) ? output.payload : [output.payload]
+  const frames: Extract<ServerFrame, { type: 'ledger_update' }>[] = []
+  for (const raw of rawPayloads) {
+    const payload = asRecord(raw)
+    if (payload === null || !isLedgerPayload(payload)) {
+      log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt ledger_update row')
+      // A single malformed entry drops the WHOLE row — replay must not emit a
+      // partial multi-character rest (a half-applied frame set is worse than a
+      // clean drop the client backfills via REST).
+      return []
+    }
+    // §8: a changed:false condition no-op replays NO frame (same as live emit).
+    if (payload.kind === 'condition' && payload.changed === false) continue
+    frames.push(payloadToLedgerFrame(payload, row))
+  }
+  return frames
+}
+
+/** Narrow predicate: the parsed payload object carries the two always-present
+ *  `LedgerUpdatePayload` fields with the right types + a valid `kind`. The
+ *  optional value fields are mapped through `numberOrUndefined` /
+ *  `stringOrUndefined` below, so they don't need a guard here. */
+function isLedgerPayload(
+  p: Record<string, unknown>,
+): p is Record<string, unknown> & { characterName: string; kind: string; summary: string } {
+  return (
+    typeof p.characterName === 'string' &&
+    typeof p.summary === 'string' &&
+    typeof p.kind === 'string' &&
+    LEDGER_KINDS.has(p.kind)
+  )
+}
+
+/** Map a validated payload object onto the §8 `ledger_update` wire frame,
+ *  field-by-field. The optional value fields are copied only when present + of
+ *  the right type (a stray ill-typed optional degrades to absent rather than
+ *  dropping the frame — the always-present summary still narrates the delta). */
+function payloadToLedgerFrame(
+  payload: Record<string, unknown> & { characterName: string; kind: string; summary: string },
+  row: SessionMessage,
+): Extract<ServerFrame, { type: 'ledger_update' }> {
+  // The wire `kind` is the validated string; the union narrowing happens at the
+  // frame type. isLedgerPayload already gated it to LEDGER_KINDS membership.
+  const kind = payload.kind as LedgerUpdatePayload['kind']
+  const dice = payload.diceRolled
+  return {
+    type: 'ledger_update',
+    turnId: row.turnId ?? '',
+    seq: row.seq,
+    characterName: payload.characterName,
+    kind,
+    summary: payload.summary,
+    ...numField('hp', payload.hp),
+    ...numField('maxHp', payload.maxHp),
+    ...numField('gold', payload.gold),
+    ...numField('slotLevel', payload.slotLevel),
+    ...numField('slotsRemaining', payload.slotsRemaining),
+    ...strField('itemName', payload.itemName),
+    ...numField('quantity', payload.quantity),
+    ...strField('featureName', payload.featureName),
+    ...numField('usesRemaining', payload.usesRemaining),
+    ...strField('condition', payload.condition),
+    ...(Array.isArray(dice) && dice.every((d): d is number => typeof d === 'number')
+      ? { diceRolled: dice }
+      : {}),
+  }
+}
+
+/** Spread-helper: `{ [k]: v }` when `v` is a number, else `{}` (field absent).
+ *  Keeps `payloadToLedgerFrame` a flat field-by-field map without a mutable
+ *  accumulator + the strict-optional `exactOptionalPropertyTypes` dance. */
+function numField(key: string, v: unknown): Record<string, number> {
+  return typeof v === 'number' ? { [key]: v } : {}
+}
+
+function strField(key: string, v: unknown): Record<string, string> {
+  return typeof v === 'string' ? { [key]: v } : {}
 }
 
 /**
