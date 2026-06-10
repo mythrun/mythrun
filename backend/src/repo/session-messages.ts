@@ -68,7 +68,14 @@ export function sessionMessagesNs(c: ClientLike) {
         `SELECT * FROM session_messages
           WHERE session_id = $1
             AND ((message_type = 'player_message' AND seq <= $2)
-                 OR message_type IN ('dm_text','skill_check','dice_roll'))
+                 OR message_type IN (
+                   'dm_text','skill_check','dice_roll',
+                   -- MYT-70 §8: the six party-ledger tool rows MUST be in the
+                   -- FT-context rebuild, or the FT loses its own mutation
+                   -- record mid-session (a coherence break).
+                   'cast_spell','spend_resource','acquire_resource',
+                   'adjust_hp','update_condition','take_rest'
+                 ))
           ORDER BY seq ASC`,
         [sessionId, maxPlayerSeq],
       )

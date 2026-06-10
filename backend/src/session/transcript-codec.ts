@@ -10,7 +10,21 @@
 import type { SessionMessage } from '../repo/types.js'
 import type { AssistantMessage, ContentPart, ConversationMessage } from './tiers/types.js'
 
-export const DM_MESSAGE_TYPES = ['dm_text', 'skill_check', 'dice_roll'] as const
+export const DM_MESSAGE_TYPES = [
+  'dm_text',
+  'skill_check',
+  'dice_roll',
+  // MYT-70 §8 — the six party-ledger tools. For each, kind === tool name
+  // (simplest bijection). They persist the same {toolCallId, input, output}
+  // row JSON via assistantToRows; an ok:false (rejection) output is EXPECTED,
+  // not corruption — it persists and round-trips like any roll row.
+  'cast_spell',
+  'spend_resource',
+  'acquire_resource',
+  'adjust_hp',
+  'update_condition',
+  'take_rest',
+] as const
 export type DmMessageType = (typeof DM_MESSAGE_TYPES)[number]
 
 export interface DmTurnRow {
@@ -28,11 +42,25 @@ export class TranscriptCorruptError extends Error {
 const KIND_TO_TOOL: Record<Exclude<DmMessageType, 'dm_text'>, string> = {
   skill_check: 'roll_skill_check',
   dice_roll: 'roll_dice',
+  // MYT-70 §8 ledger tools: kind === tool name.
+  cast_spell: 'cast_spell',
+  spend_resource: 'spend_resource',
+  acquire_resource: 'acquire_resource',
+  adjust_hp: 'adjust_hp',
+  update_condition: 'update_condition',
+  take_rest: 'take_rest',
 }
 
 const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
   roll_skill_check: 'skill_check',
   roll_dice: 'dice_roll',
+  // MYT-70 §8 ledger tools: tool name === kind.
+  cast_spell: 'cast_spell',
+  spend_resource: 'spend_resource',
+  acquire_resource: 'acquire_resource',
+  adjust_hp: 'adjust_hp',
+  update_condition: 'update_condition',
+  take_rest: 'take_rest',
 }
 
 const DM_TYPE_SET: ReadonlySet<string> = new Set(DM_MESSAGE_TYPES)

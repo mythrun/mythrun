@@ -57,11 +57,92 @@ describe('assistantToRows', () => {
     const assistant: AssistantMessage = {
       role: 'assistant',
       parts: [
-        { kind: 'tool_call', toolCallId: 'cx', toolName: 'cast_spell', input: {} },
-        { kind: 'tool_result', toolCallId: 'cx', toolName: 'cast_spell', output: {} },
+        { kind: 'tool_call', toolCallId: 'cx', toolName: 'no_such_tool', input: {} },
+        { kind: 'tool_result', toolCallId: 'cx', toolName: 'no_such_tool', output: {} },
       ],
     }
     expect(() => assistantToRows(assistant)).toThrow(TranscriptCorruptError)
+  })
+})
+
+// MYT-70 §8 — the six ledger tools persist + round-trip exactly like roll rows.
+// kind === tool name for each (simplest bijection), and an ok:false (rejection)
+// output is EXPECTED, not corrupt: it persists and rebuilds.
+const LEDGER_TOOLS = [
+  'cast_spell',
+  'spend_resource',
+  'acquire_resource',
+  'adjust_hp',
+  'update_condition',
+  'take_rest',
+] as const
+
+describe('ledger tools (MYT-70 §8)', () => {
+  for (const tool of LEDGER_TOOLS) {
+    it(`${tool} round-trips: assistantToRows → rowsToConversation reconstructs the tool_call+tool_result pair`, () => {
+      const assistant: AssistantMessage = {
+        role: 'assistant',
+        parts: [
+          { kind: 'text', text: 'Before.' },
+          { kind: 'tool_call', toolCallId: 'c1', toolName: tool, input: { character_name: 'Arin', detail: 1 } },
+          { kind: 'tool_result', toolCallId: 'c1', toolName: tool, output: { ok: true, applied: true } },
+          { kind: 'text', text: 'After.' },
+        ],
+      }
+      const turnRows = assistantToRows(assistant)
+      // The tool pair collapses to ONE row keyed by `tool` (kind === tool name).
+      expect(turnRows).toEqual([
+        { kind: 'dm_text', content: 'Before.' },
+        {
+          kind: tool,
+          content: JSON.stringify({
+            toolCallId: 'c1',
+            input: { character_name: 'Arin', detail: 1 },
+            output: { ok: true, applied: true },
+          }),
+        },
+        { kind: 'dm_text', content: 'After.' },
+      ])
+
+      const rows = turnRows.map((r, i) =>
+        row({ messageType: r.kind, content: r.content, seq: 10 + i, turnOrdinal: i, turnId: 'tX' }),
+      )
+      const conv = rowsToConversation(rows, names)
+      expect(conv).toHaveLength(1)
+      expect(conv[0]).toEqual({ v: 1, role: 'assistant', parts: assistant.parts })
+    })
+  }
+
+  it('an ok:false (rejection) output persists and round-trips like any roll row', () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'tool_call', toolCallId: 'cr', toolName: 'spend_resource', input: { character_name: 'Arin' } },
+        {
+          kind: 'tool_result',
+          toolCallId: 'cr',
+          toolName: 'spend_resource',
+          output: { ok: false, reason: 'insufficient resource' },
+        },
+      ],
+    }
+    const turnRows = assistantToRows(assistant)
+    expect(turnRows).toEqual([
+      {
+        kind: 'spend_resource',
+        content: JSON.stringify({
+          toolCallId: 'cr',
+          input: { character_name: 'Arin' },
+          output: { ok: false, reason: 'insufficient resource' },
+        }),
+      },
+    ])
+    const rows = turnRows.map((r, i) =>
+      row({ messageType: r.kind, content: r.content, seq: 10 + i, turnOrdinal: i, turnId: 'tR' }),
+    )
+    const conv = rowsToConversation(rows, names)
+    expect(conv).toHaveLength(1)
+    expect(conv[0]).toEqual({ v: 1, role: 'assistant', parts: assistant.parts })
   })
 })
 
@@ -152,5 +233,15 @@ describe('rowsToConversation', () => {
 })
 
 it('DM_MESSAGE_TYPES is the closed kind set', () => {
-  expect(DM_MESSAGE_TYPES).toEqual(['dm_text', 'skill_check', 'dice_roll'])
+  expect(DM_MESSAGE_TYPES).toEqual([
+    'dm_text',
+    'skill_check',
+    'dice_roll',
+    'cast_spell',
+    'spend_resource',
+    'acquire_resource',
+    'adjust_hp',
+    'update_condition',
+    'take_rest',
+  ])
 })

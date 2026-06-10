@@ -330,6 +330,37 @@ describe('repo.sessionMessages (integration)', () => {
     expect(rows.some((r) => r.content === 'p6')).toBe(false)
   })
 
+  it('listFtContextRows includes the six MYT-70 ledger message_types (§8)', async () => {
+    // Without the IN-list extension the rebuilt FT history silently omits every
+    // ledger tool call/result — the FT loses its own mutation record mid-session.
+    const repo = createRepo(pool)
+    const ledgerKinds = [
+      'cast_spell',
+      'spend_resource',
+      'acquire_resource',
+      'adjust_hp',
+      'update_condition',
+      'take_rest',
+    ] as const
+
+    // player watermark row at seq 1
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'p1' })
+    // one DM turn carrying all six ledger rows, seqs 2..7
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-3333-7000-8000-000000000001',
+      rows: ledgerKinds.map((kind) => ({
+        kind,
+        content: JSON.stringify({ toolCallId: `c-${kind}`, input: {}, output: { ok: true } }),
+      })),
+      seqs: [2, 3, 4, 5, 6, 7],
+    })
+
+    const rows = await repo.sessionMessages.listFtContextRows(sessionId, 1)
+    expect(rows.map((r) => r.messageType)).toEqual(['player_message', ...ledgerKinds])
+    expect(rows.map((r) => r.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
+  })
+
   it('listFtContextRows isolates by session — another session never bleeds in', async () => {
     const repo = createRepo(pool)
     const sessions = createSessionsRepo(pool)
