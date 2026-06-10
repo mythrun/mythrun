@@ -339,6 +339,13 @@ export interface CharacterDbRow {
   readonly max_hit_points: number
   readonly armor_class: number
   readonly proficiency_bonus: number
+  // MYT-70 §3.1 ledger columns (migration 025). `toCharacter` does not map them
+  // onto the Character domain type (the live ledger projection is read
+  // separately by LedgerOps); they appear here so a `SELECT *` row is typed.
+  readonly gold: number
+  readonly hit_die: number
+  readonly hit_dice_remaining: number
+  readonly spellcasting_progression: string
   readonly created_at: Date
   readonly updated_at: Date
 }

@@ -363,10 +363,23 @@ describe('repo.characters', () => {
       maxHitPoints: 9,
       armorClass: 14,
       proficiencyBonus: 2,
+      startingGold: 15,
+      hitDie: 8,
+      hitDiceRemaining: 1,
+      spellcastingProgression: 'full' as const,
+      slotRows: [{ slotLevel: 1, max: 2 }],
       skills: [{ name: 'Insight', proficiencyLevel: 'proficient' as const }],
-      features: [{ name: 'Divine Domain', source: 'cleric', description: 'extra healing' }],
-      equipment: [{ name: 'Mace', quantity: 1 }],
-      spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
+      features: [
+        {
+          name: 'Divine Domain',
+          source: 'cleric',
+          description: 'extra healing',
+          maxUses: null,
+          recharge: 'none' as const,
+        },
+      ],
+      equipment: [{ name: 'Mace', quantity: 1, consumable: false }],
+      spells: [{ name: 'Cure Wounds', level: 1, prepared: true, ritual: false }],
       ...overrides,
     })
 
@@ -482,7 +495,9 @@ describe('repo.characters', () => {
         background: 'acolyte',
         str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10,
         hitPoints: 8, maxHitPoints: 8, armorClass: 12, proficiencyBonus: 2,
-        skills: [], features: [], equipment: [], spells: [],
+        startingGold: 0, hitDie: 8, hitDiceRemaining: 1,
+        spellcastingProgression: 'none',
+        slotRows: [], skills: [], features: [], equipment: [], spells: [],
       })
 
       // Seed a PC entity to link to (entities.world_id FK → the campaign's world).
@@ -528,10 +543,26 @@ describe('repo.characters', () => {
     maxHitPoints: 18,
     armorClass: 12,
     proficiencyBonus: 2,
+    startingGold: 40,
+    hitDie: 6,
+    hitDiceRemaining: 3,
+    spellcastingProgression: 'full' as const,
+    slotRows: [
+      { slotLevel: 1, max: 4 },
+      { slotLevel: 2, max: 2 },
+    ],
     skills: [{ name: 'Arcana', proficiencyLevel: 'proficient' as const }],
-    features: [{ name: 'Spellcasting', source: 'class', description: 'casts spells' }],
-    equipment: [{ name: 'Spellbook', quantity: 1 }],
-    spells: [{ name: 'Magic Missile', level: 1, prepared: true }],
+    features: [
+      {
+        name: 'Spellcasting',
+        source: 'class',
+        description: 'casts spells',
+        maxUses: null,
+        recharge: 'none' as const,
+      },
+    ],
+    equipment: [{ name: 'Spellbook', quantity: 1, consumable: false }],
+    spells: [{ name: 'Magic Missile', level: 1, prepared: true, ritual: false }],
   }
 
   describe('isInCampaign', () => {
@@ -654,6 +685,11 @@ describe('repo.characters', () => {
         maxHitPoints: 14,
         armorClass: 13,
         proficiencyBonus: 2,
+        startingGold: 0,
+        hitDie: 8,
+        hitDiceRemaining: 2,
+        spellcastingProgression: 'none',
+        slotRows: [],
         skills: (opts.skills ?? []).map((s) => ({ name: s.name, proficiencyLevel: s.proficiencyLevel })),
         features: [],
         equipment: [],
@@ -883,6 +919,580 @@ describe('repo.characters', () => {
         const characters = createCharactersRepo(pool)
         const session = await sessions.create({ campaignId, sessionNumber: 1 })
         expect(await characters.listSessionParticipantRoster(session.id)).toEqual([])
+      })
+    })
+  })
+
+  // MYT-70 §4/§5a/§10 — the LedgerOps atomic-mutation substrate. Real PG: the
+  // guard predicates ARE the behavior under test, so a fake would re-implement
+  // (and defeat) them. Scoped fixtures per CONVENTIONS.md.
+  describe('LedgerOps', () => {
+    type LedgerSeed = Partial<
+      Parameters<ReturnType<typeof createCharactersRepo>['replaceSubTables']>[0]
+    >
+
+    // Seed a finalized ledger character (via replaceSubTables) and JOIN it to a
+    // fresh session as a participant. Returns the session + character ids and
+    // the participant's owner. A distinct user per seed (idx) keeps the
+    // one-PC-per-user-per-campaign join invariant happy across multi-char tests.
+    async function seedLedgerChar(
+      sessionId: string,
+      idx: number,
+      overrides?: LedgerSeed,
+    ): Promise<{ characterId: string; ownerId: string }> {
+      const users = createUsersRepo(pool)
+      const characters = createCharactersRepo(pool)
+      const { uuidv7 } = await import('../uuidv7.js')
+      // Offset past the beforeEach owner (idx 0). Each seed needs a distinct
+      // user — the (campaign, user) join is one-PC-per-user-per-campaign.
+      const u = idx + 10
+      const owner = await users.create(pool, {
+        cognitoSub: scope.userSub(u),
+        username: scope.username(u),
+        displayName: scope.displayName(u),
+      })
+      const characterId = await characters.replaceSubTables({
+        campaignId,
+        userId: owner.id,
+        name: overrides?.name ?? `Hero${String(idx)}`,
+        level: 5,
+        class: 'fighter',
+        species: 'human',
+        background: 'soldier',
+        str: 14, dex: 12, con: 14, int: 10, wis: 11, cha: 9,
+        hitPoints: 40, maxHitPoints: 40, armorClass: 16, proficiencyBonus: 3,
+        startingGold: 50,
+        hitDie: 10,
+        hitDiceRemaining: 5,
+        spellcastingProgression: 'none',
+        slotRows: [],
+        skills: [],
+        features: [],
+        equipment: [],
+        spells: [],
+        ...overrides,
+      })
+      await pool.query(
+        `INSERT INTO session_participants (id, session_id, user_id, character_id)
+         VALUES ($1, $2, $3, $4)`,
+        [uuidv7(), sessionId, owner.id, characterId],
+      )
+      return { characterId, ownerId: owner.id }
+    }
+
+    async function freshSession(): Promise<string> {
+      const sessions = createSessionsRepo(pool)
+      const s = await sessions.create({ campaignId, sessionNumber: 1 })
+      return s.id
+    }
+
+    describe('findLedgerCharacterByName', () => {
+      it('returns the character + live ledger projection on a normalized match', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, {
+          name: 'Mara',
+          startingGold: 77,
+          hitDie: 12,
+          hitDiceRemaining: 4,
+          spellcastingProgression: 'pact',
+          con: 14,
+        })
+        const res = await ledger.findLedgerCharacterByName(sessionId, '  mARa ')
+        expect(res.outcome).toBe('found')
+        if (res.outcome !== 'found') throw new Error('expected found')
+        expect(res.projection.character.id).toBe(characterId)
+        expect(res.projection.gold).toBe(77)
+        expect(res.projection.hitDie).toBe(12)
+        expect(res.projection.hitDiceRemaining).toBe(4)
+        expect(res.projection.spellcastingProgression).toBe('pact')
+        expect(res.projection.conMod).toBe(2) // (14-10)/2
+      })
+
+      it('returns not_found / ambiguous', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        await seedLedgerChar(sessionId, 0, { name: 'Twin' })
+        await seedLedgerChar(sessionId, 1, { name: 'Twin' })
+        expect((await ledger.findLedgerCharacterByName(sessionId, 'Ghost')).outcome).toBe(
+          'not_found',
+        )
+        expect((await ledger.findLedgerCharacterByName(sessionId, 'twin')).outcome).toBe(
+          'ambiguous',
+        )
+      })
+    })
+
+    describe('debitGold / creditGold', () => {
+      it('debits when sufficient (rowcount 1, decrement) and rejects when not (value unchanged)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, { startingGold: 30 })
+
+        const ok = await ledger.debitGold(characterId, 20)
+        expect(ok).toEqual({ outcome: 'debited', gold: 10 })
+
+        const reject = await ledger.debitGold(characterId, 50)
+        expect(reject).toEqual({ outcome: 'insufficient', gold: 10 })
+
+        const cur = await pool.query<{ gold: number }>(`SELECT gold FROM characters WHERE id = $1`, [
+          characterId,
+        ])
+        expect(cur.rows[0]?.gold).toBe(10)
+      })
+
+      it('credits gold (returns new balance)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, { startingGold: 5 })
+        expect(await ledger.creditGold(characterId, 95)).toBe(100)
+      })
+    })
+
+    describe('debitItem / acquireItem', () => {
+      it('debits a present item, retains the row at 0, then discriminates insufficient vs absent', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, {
+          equipment: [{ name: 'Healing Potion', quantity: 2, consumable: true }],
+        })
+
+        expect(await ledger.debitItem(characterId, 'healing potion', 1)).toEqual({
+          outcome: 'debited',
+          quantity: 1,
+        })
+        expect(await ledger.debitItem(characterId, 'Healing Potion', 1)).toEqual({
+          outcome: 'debited',
+          quantity: 0,
+        })
+        // Row retained at 0 → a further spend is insufficient (present), not absent.
+        expect(await ledger.debitItem(characterId, 'healing potion', 1)).toEqual({
+          outcome: 'insufficient',
+          quantity: 0,
+        })
+        // Never-owned item → absent.
+        expect(await ledger.debitItem(characterId, 'Vorpal Sword', 1)).toEqual({ outcome: 'absent' })
+
+        const rows = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM character_equipment
+            WHERE character_id = $1 AND lower(btrim(item_name)) = 'healing potion'`,
+          [characterId],
+        )
+        expect(rows.rows[0]?.count).toBe('1')
+      })
+
+      it('acquireItem upserts a new row and merges into an existing one (functional-index conflict)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0)
+
+        expect(await ledger.acquireItem(characterId, 'Torch', 3, false)).toBe(3)
+        // Case/whitespace variant collides via the functional index → merge.
+        expect(await ledger.acquireItem(characterId, '  torch ', 2, false)).toBe(5)
+
+        const rows = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM character_equipment
+            WHERE character_id = $1 AND lower(btrim(item_name)) = 'torch'`,
+          [characterId],
+        )
+        expect(rows.rows[0]?.count).toBe('1')
+      })
+    })
+
+    describe('debitFeatureUse', () => {
+      it('debits a tracked feature, reports exhausted at 0, untracked, and absent', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, {
+          features: [
+            {
+              name: 'Second Wind',
+              source: 'fighter',
+              description: 'self-heal',
+              maxUses: 1,
+              recharge: 'short_rest',
+            },
+            {
+              name: 'Sword Mastery',
+              source: 'fighter',
+              description: 'always on',
+              maxUses: null,
+              recharge: 'none',
+            },
+          ],
+        })
+
+        expect(await ledger.debitFeatureUse(characterId, 'second wind')).toEqual({
+          outcome: 'debited',
+          usesRemaining: 0,
+          recharge: 'short_rest',
+        })
+        expect(await ledger.debitFeatureUse(characterId, 'Second Wind')).toEqual({
+          outcome: 'exhausted',
+          recharge: 'short_rest',
+        })
+        expect(await ledger.debitFeatureUse(characterId, 'sword mastery')).toEqual({
+          outcome: 'untracked',
+        })
+        expect(await ledger.debitFeatureUse(characterId, 'Action Surge')).toEqual({
+          outcome: 'absent',
+        })
+      })
+    })
+
+    describe('debitSpellSlot / readSpellSlots', () => {
+      it('debits a slot when available, rejects when empty, and reads the full set', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, {
+          spellcastingProgression: 'full',
+          slotRows: [
+            { slotLevel: 1, max: 2 },
+            { slotLevel: 2, max: 1 },
+          ],
+        })
+
+        expect(await ledger.debitSpellSlot(characterId, 1)).toEqual({
+          outcome: 'debited',
+          slotsRemaining: 1,
+        })
+        expect(await ledger.debitSpellSlot(characterId, 2)).toEqual({
+          outcome: 'debited',
+          slotsRemaining: 0,
+        })
+        expect(await ledger.debitSpellSlot(characterId, 2)).toEqual({ outcome: 'insufficient' })
+
+        const slots = await ledger.readSpellSlots(characterId)
+        expect(slots).toEqual([
+          { slotLevel: 1, slotsMax: 2, slotsRemaining: 1 },
+          { slotLevel: 2, slotsMax: 1, slotsRemaining: 0 },
+        ])
+      })
+    })
+
+    describe('writeHp (§5a invariant)', () => {
+      it('clamps to [0, max] and applies/clears unconscious at the write', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0) // 40/40
+
+        // Over-max clamps.
+        expect(await ledger.writeHp(characterId, 999)).toEqual({ hp: 40, maxHp: 40 })
+
+        // →0 applies unconscious.
+        expect(await ledger.writeHp(characterId, -5)).toEqual({ hp: 0, maxHp: 40 })
+        const downed = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM character_conditions
+            WHERE character_id = $1 AND condition = 'unconscious'`,
+          [characterId],
+        )
+        expect(downed.rows[0]?.count).toBe('1')
+
+        // 0→positive clears unconscious.
+        expect(await ledger.writeHp(characterId, 12)).toEqual({ hp: 12, maxHp: 40 })
+        const up = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM character_conditions
+            WHERE character_id = $1 AND condition = 'unconscious'`,
+          [characterId],
+        )
+        expect(up.rows[0]?.count).toBe('0')
+      })
+    })
+
+    describe('applyCondition / clearCondition', () => {
+      it('is idempotent and carries exhaustion level', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0)
+
+        expect(await ledger.applyCondition(characterId, 'poisoned', null)).toEqual({
+          outcome: 'changed',
+        })
+        // Identical re-apply → no-op.
+        expect(await ledger.applyCondition(characterId, 'poisoned', null)).toEqual({
+          outcome: 'noop',
+        })
+        // Exhaustion carries level; re-apply at a new level → changed.
+        expect(await ledger.applyCondition(characterId, 'exhaustion', 1)).toEqual({
+          outcome: 'changed',
+        })
+        expect(await ledger.applyCondition(characterId, 'exhaustion', 1)).toEqual({
+          outcome: 'noop',
+        })
+        expect(await ledger.applyCondition(characterId, 'exhaustion', 3)).toEqual({
+          outcome: 'changed',
+        })
+        const lvl = await pool.query<{ level: number }>(
+          `SELECT level FROM character_conditions WHERE character_id = $1 AND condition = 'exhaustion'`,
+          [characterId],
+        )
+        expect(lvl.rows[0]?.level).toBe(3)
+
+        expect(await ledger.clearCondition(characterId, 'poisoned')).toEqual({ outcome: 'changed' })
+        // Clear-when-absent → no-op.
+        expect(await ledger.clearCondition(characterId, 'poisoned')).toEqual({ outcome: 'noop' })
+      })
+    })
+
+    describe('shortRest / longRest', () => {
+      it('short rest: spends dice, heals via §5a, restores pact slots + short_rest features', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, {
+          spellcastingProgression: 'pact',
+          slotRows: [{ slotLevel: 3, max: 2 }],
+          features: [
+            {
+              name: 'Action Surge',
+              source: 'fighter',
+              description: 'extra action',
+              maxUses: 1,
+              recharge: 'short_rest',
+            },
+          ],
+        })
+        // Drain: HP to 5, both pact slots, the feature use.
+        await ledger.writeHp(characterId, 5)
+        await ledger.debitSpellSlot(characterId, 3)
+        await ledger.debitSpellSlot(characterId, 3)
+        await ledger.debitFeatureUse(characterId, 'Action Surge')
+
+        await ledger.shortRest(sessionId, [
+          { characterId, diceSpent: 2, healTotal: 15 },
+        ])
+
+        const after = await pool.query<{
+          hit_points: number
+          hit_dice_remaining: number
+        }>(`SELECT hit_points, hit_dice_remaining FROM characters WHERE id = $1`, [characterId])
+        expect(after.rows[0]).toMatchObject({ hit_points: 20, hit_dice_remaining: 3 })
+        const slot = await ledger.readSpellSlots(characterId)
+        expect(slot[0]?.slotsRemaining).toBe(2) // pact restored
+        const feat = await pool.query<{ uses_remaining: number }>(
+          `SELECT uses_remaining FROM character_features WHERE character_id = $1`,
+          [characterId],
+        )
+        expect(feat.rows[0]?.uses_remaining).toBe(1)
+      })
+
+      it('long rest: HP→max (clears unconscious), hit-dice regain, slots+features, exhaustion −1 (delete at 1)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0, {
+          level: 5, // regain = max(1, floor(5/2)) = 2
+          hitDiceRemaining: 1,
+          spellcastingProgression: 'full',
+          slotRows: [{ slotLevel: 1, max: 3 }],
+          features: [
+            {
+              name: 'Rage',
+              source: 'barbarian',
+              description: 'rage',
+              maxUses: 2,
+              recharge: 'long_rest',
+            },
+          ],
+        })
+        await ledger.writeHp(characterId, 0) // downed → unconscious
+        await ledger.debitSpellSlot(characterId, 1)
+        await ledger.debitFeatureUse(characterId, 'Rage')
+        await ledger.applyCondition(characterId, 'exhaustion', 1)
+
+        await ledger.longRest(sessionId)
+
+        const after = await pool.query<{ hit_points: number; hit_dice_remaining: number }>(
+          `SELECT hit_points, hit_dice_remaining FROM characters WHERE id = $1`,
+          [characterId],
+        )
+        expect(after.rows[0]).toMatchObject({ hit_points: 40, hit_dice_remaining: 3 }) // 1+2
+        const conds = await pool.query<{ condition: string }>(
+          `SELECT condition FROM character_conditions WHERE character_id = $1`,
+          [characterId],
+        )
+        expect(conds.rows).toHaveLength(0) // unconscious cleared, exhaustion-1 deleted
+        const slot = await ledger.readSpellSlots(characterId)
+        expect(slot[0]?.slotsRemaining).toBe(3)
+        const feat = await pool.query<{ uses_remaining: number }>(
+          `SELECT uses_remaining FROM character_features WHERE character_id = $1`,
+          [characterId],
+        )
+        expect(feat.rows[0]?.uses_remaining).toBe(2)
+      })
+
+      it('long rest decrements exhaustion 3 → 2 (row kept)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0)
+        await ledger.applyCondition(characterId, 'exhaustion', 3)
+        await ledger.longRest(sessionId)
+        const lvl = await pool.query<{ level: number }>(
+          `SELECT level FROM character_conditions WHERE character_id = $1 AND condition = 'exhaustion'`,
+          [characterId],
+        )
+        expect(lvl.rows[0]?.level).toBe(2)
+      })
+    })
+
+    describe('writeLedgerEvent (§10 idempotency)', () => {
+      it('inserts once; a conflicting (turn, toolCall, character) returns NULL (no second row)', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        const { characterId } = await seedLedgerChar(sessionId, 0)
+        const evt = {
+          characterId,
+          sessionId,
+          turnId: 'turn-1',
+          toolCallId: 'tc-1',
+          tool: 'spend_resource',
+          delta: { kind: 'gold', amount: 5 },
+        }
+        const first = await ledger.writeLedgerEvent(evt)
+        expect(first).toMatch(/^[0-9a-f-]{36}$/)
+        const second = await ledger.writeLedgerEvent(evt)
+        expect(second).toBeNull()
+        const rows = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM ledger_events
+            WHERE turn_id = 'turn-1' AND tool_call_id = 'tc-1' AND character_id = $1`,
+          [characterId],
+        )
+        expect(rows.rows[0]?.count).toBe('1')
+      })
+    })
+
+    describe('readPartyLedgerSnapshot (§7)', () => {
+      it('returns per-participant numbers AND nouns in joined order', async () => {
+        const ledger = createCharactersRepo(pool)
+        const sessionId = await freshSession()
+        await seedLedgerChar(sessionId, 0, {
+          name: 'Alpha',
+          startingGold: 12,
+          spellcastingProgression: 'full',
+          slotRows: [{ slotLevel: 1, max: 2 }],
+          features: [
+            {
+              name: 'Channel Divinity',
+              source: 'cleric',
+              description: 'cd',
+              maxUses: 1,
+              recharge: 'short_rest',
+            },
+            {
+              name: 'Passive Trait',
+              source: 'race',
+              description: 'always',
+              maxUses: null,
+              recharge: 'none',
+            },
+          ],
+          equipment: [
+            { name: 'Rope', quantity: 1, consumable: false },
+            { name: 'Ration', quantity: 5, consumable: true },
+          ],
+          spells: [{ name: 'Bless', level: 1, prepared: true, ritual: false }],
+        })
+        await seedLedgerChar(sessionId, 1, { name: 'Beta' })
+
+        const snap = await ledger.readPartyLedgerSnapshot(sessionId)
+        expect(snap).toHaveLength(2)
+        expect(snap.map((s) => s.name)).toEqual(['Alpha', 'Beta'])
+
+        const alpha = snap[0]
+        if (!alpha) throw new Error('expected alpha')
+        expect(alpha.gold).toBe(12)
+        expect(alpha.hitPoints).toBe(40)
+        expect(alpha.maxHitPoints).toBe(40)
+        expect(alpha.slots).toEqual([{ slotLevel: 1, slotsMax: 2, slotsRemaining: 2 }])
+        // Only TRACKED features surface.
+        expect(alpha.trackedFeatures).toEqual([
+          { name: 'Channel Divinity', maxUses: 1, usesRemaining: 1, recharge: 'short_rest' },
+        ])
+        expect(alpha.spells).toEqual([
+          { name: 'Bless', level: 1, prepared: true, ritual: false },
+        ])
+        expect(alpha.equipment).toEqual([
+          { name: 'Ration', quantity: 5, consumable: true },
+          { name: 'Rope', quantity: 1, consumable: false },
+        ])
+        expect(alpha.conditions).toEqual([])
+      })
+    })
+
+    describe('replaceSubTables ledger fields + slot-set convergence', () => {
+      it('writes the new characters columns + slot rows, and a re-run converges (no slot dup)', async () => {
+        const characters = createCharactersRepo(pool)
+        const input = {
+          campaignId,
+          userId,
+          name: 'Convergent',
+          level: 3,
+          class: 'sorcerer',
+          species: 'tiefling',
+          background: 'noble',
+          str: 8, dex: 14, con: 13, int: 11, wis: 10, cha: 16,
+          hitPoints: 20, maxHitPoints: 20, armorClass: 12, proficiencyBonus: 2,
+          startingGold: 25,
+          hitDie: 6,
+          hitDiceRemaining: 3,
+          spellcastingProgression: 'full' as const,
+          slotRows: [
+            { slotLevel: 1, max: 4 },
+            { slotLevel: 2, max: 2 },
+          ],
+          skills: [],
+          features: [
+            {
+              name: 'Font of Magic',
+              source: 'sorcerer',
+              description: 'sp',
+              maxUses: 3,
+              recharge: 'long_rest' as const,
+            },
+          ],
+          equipment: [{ name: 'Dagger', quantity: 2, consumable: false }],
+          spells: [
+            { name: 'Fireball', level: 3, prepared: true, ritual: false },
+            { name: 'Detect Magic', level: 1, prepared: true, ritual: true },
+          ],
+        }
+        const id1 = await characters.replaceSubTables(input)
+
+        const cRow = await pool.query<{
+          gold: number
+          hit_die: number
+          hit_dice_remaining: number
+          spellcasting_progression: string
+        }>(
+          `SELECT gold, hit_die, hit_dice_remaining, spellcasting_progression
+             FROM characters WHERE id = $1`,
+          [id1],
+        )
+        expect(cRow.rows[0]).toMatchObject({
+          gold: 25,
+          hit_die: 6,
+          hit_dice_remaining: 3,
+          spellcasting_progression: 'full',
+        })
+        const ritual = await pool.query<{ ritual: boolean }>(
+          `SELECT ritual FROM character_spells WHERE character_id = $1 AND spell_name = 'Detect Magic'`,
+          [id1],
+        )
+        expect(ritual.rows[0]?.ritual).toBe(true)
+        const feat = await pool.query<{ max_uses: number; uses_remaining: number; recharge: string }>(
+          `SELECT max_uses, uses_remaining, recharge FROM character_features WHERE character_id = $1`,
+          [id1],
+        )
+        expect(feat.rows[0]).toMatchObject({ max_uses: 3, uses_remaining: 3, recharge: 'long_rest' })
+
+        // Re-run with a different slot set must converge (DELETE+re-INSERT),
+        // not terminal-fail on the (character_id, slot_level) unique index.
+        const id2 = await characters.replaceSubTables({ ...input, slotRows: [{ slotLevel: 1, max: 3 }] })
+        expect(id2).toBe(id1)
+        const slots = await pool.query<{ slot_level: number; slots_max: number }>(
+          `SELECT slot_level, slots_max FROM character_spell_slots
+            WHERE character_id = $1 ORDER BY slot_level`,
+          [id1],
+        )
+        expect(slots.rows).toEqual([{ slot_level: 1, slots_max: 3 }])
       })
     })
   })

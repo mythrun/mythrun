@@ -85,6 +85,12 @@ const sheetInput = {
   maxHitPoints: 11,
   armorClass: 14,
   proficiencyBonus: 2,
+  // MYT-70 ledger-init fields (empty sub-tables → no per-entry fields).
+  startingGold: 0,
+  hitDie: 8,
+  hitDiceRemaining: 1,
+  spellcastingProgression: 'none',
+  slotRows: [],
   skills: [],
   features: [],
   equipment: [],

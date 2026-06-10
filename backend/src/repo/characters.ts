@@ -4,10 +4,12 @@ import { toCharacter } from './mappers.js'
 import type { CharacterDbRow } from './mappers.js'
 import type { ClientLike } from './_types.js'
 import type { Character, CreateCharacterInput } from './types.js'
+import type { SpellcastingProgression } from '../session/srd/spell-slots.js'
 import {
   CharacterAlreadyInCampaignError,
   UserAlreadyHasCharacterInCampaignError,
 } from './characters-errors.js'
+import { charactersLedgerNs } from './characters-ledger.js'
 
 /** Resolved (Zod-already-mapped) shape of the character-sheet write absorbed
  *  by `replaceSubTables`. The caller (character-sheet stage) does the
@@ -33,6 +35,17 @@ export interface ReplaceSubTablesInput {
   readonly maxHitPoints: number
   readonly armorClass: number
   readonly proficiencyBonus: number
+  // MYT-70 §3.2 ledger-init fields (the prep stage derives these). The binder
+  // writes them onto the `characters` row + the joined slot set so a finalized
+  // sheet lands fully playable (gold, hit-dice pool, caster progression, slots).
+  readonly startingGold: number
+  readonly hitDie: number
+  readonly hitDiceRemaining: number
+  readonly spellcastingProgression: SpellcastingProgression
+  /** Derived from `spellSlotsFor(progression, level)` (§9.1), written full
+   *  (max = remaining). Joins replaceSubTables' delete+re-insert set so a
+   *  retried stage converges instead of terminal-failing the slot index. */
+  readonly slotRows: readonly { readonly slotLevel: number; readonly max: number }[]
   readonly skills: readonly {
     readonly name: string
     readonly proficiencyLevel: 'expertise' | 'proficient' | 'none'
@@ -41,12 +54,22 @@ export interface ReplaceSubTablesInput {
     readonly name: string
     readonly source: string
     readonly description: string
+    // §3.2: tracked-feature counters. null max ⟹ unlimited (untracked); the
+    // 025 CHECK pairs (max IS NULL) = (uses_remaining IS NULL) and forbids a
+    // recharge schedule on an untracked feature.
+    readonly maxUses: number | null
+    readonly recharge: 'short_rest' | 'long_rest' | 'none'
   }[]
-  readonly equipment: readonly { readonly name: string; readonly quantity: number }[]
+  readonly equipment: readonly {
+    readonly name: string
+    readonly quantity: number
+    readonly consumable: boolean
+  }[]
   readonly spells: readonly {
     readonly name: string
     readonly level: number
     readonly prepared: boolean
+    readonly ritual: boolean
   }[]
 }
 
@@ -59,6 +82,12 @@ export interface ReplaceSubTablesInput {
 // it preserves the byte-for-byte caller contract.
 export function charactersNs(c: ClientLike) {
   return {
+    // MYT-70 §4/§5a/§10: the atomic-mutation ledger substrate (the scoped
+    // `LedgerOps` methods + the per-turn party snapshot read). Homed in a
+    // sibling binder so this module stays under the 400-line cap; composed
+    // here so `repo.characters.*` / `tx.characters.*` surface them unchanged.
+    ...charactersLedgerNs(c),
+
     create: async (tx: ClientLike, input: CreateCharacterInput): Promise<Character> => {
       const id = uuidv7()
       const result = await tx.query<CharacterDbRow>(
@@ -278,9 +307,11 @@ export function charactersNs(c: ClientLike) {
           `INSERT INTO characters (
            id, user_id, name, level, class, species, background,
            str, dex, con, int, wis, cha,
-           hit_points, max_hit_points, armor_class, proficiency_bonus
+           hit_points, max_hit_points, armor_class, proficiency_bonus,
+           gold, hit_die, hit_dice_remaining, spellcasting_progression
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                 $18, $19, $20, $21)`,
           [
             characterId,
             input.userId,
@@ -299,6 +330,10 @@ export function charactersNs(c: ClientLike) {
             input.maxHitPoints,
             input.armorClass,
             input.proficiencyBonus,
+            input.startingGold,
+            input.hitDie,
+            input.hitDiceRemaining,
+            input.spellcastingProgression,
           ],
         )
         await c.query(
@@ -312,6 +347,7 @@ export function charactersNs(c: ClientLike) {
            name = $2, level = $3, class = $4, species = $5, background = $6,
            str = $7, dex = $8, con = $9, int = $10, wis = $11, cha = $12,
            hit_points = $13, max_hit_points = $14, armor_class = $15, proficiency_bonus = $16,
+           gold = $17, hit_die = $18, hit_dice_remaining = $19, spellcasting_progression = $20,
            updated_at = now()
          WHERE id = $1`,
           [
@@ -331,13 +367,21 @@ export function charactersNs(c: ClientLike) {
             input.maxHitPoints,
             input.armorClass,
             input.proficiencyBonus,
+            input.startingGold,
+            input.hitDie,
+            input.hitDiceRemaining,
+            input.spellcastingProgression,
           ],
         )
-        // DELETE-by-character-id on sub-tables; re-INSERT below.
+        // DELETE-by-character-id on sub-tables; re-INSERT below. The slot set
+        // joins this delete (§3.2) so a retried stage converges; conditions too
+        // (prep inits none, but the delete-set must be clean for a re-run).
         await c.query(`DELETE FROM character_skills WHERE character_id = $1`, [characterId])
         await c.query(`DELETE FROM character_features WHERE character_id = $1`, [characterId])
         await c.query(`DELETE FROM character_equipment WHERE character_id = $1`, [characterId])
         await c.query(`DELETE FROM character_spells WHERE character_id = $1`, [characterId])
+        await c.query(`DELETE FROM character_spell_slots WHERE character_id = $1`, [characterId])
+        await c.query(`DELETE FROM character_conditions WHERE character_id = $1`, [characterId])
       }
 
       // Sub-table inserts. The caller has already done the Zod→DB mapping.
@@ -349,24 +393,36 @@ export function charactersNs(c: ClientLike) {
         )
       }
       for (const f of input.features) {
+        // §3.2: a tracked feature inits uses_remaining = max_uses (written
+        // full at finalize); an untracked one carries both NULL (025 pair CHECK).
         await c.query(
-          `INSERT INTO character_features (id, character_id, feature_name, feature_source, description)
-         VALUES ($1, $2, $3, $4, $5)`,
-          [uuidv7(), characterId, f.name, f.source, f.description],
+          `INSERT INTO character_features
+             (id, character_id, feature_name, feature_source, description, max_uses, uses_remaining, recharge)
+         VALUES ($1, $2, $3, $4, $5, $6, $6, $7)`,
+          [uuidv7(), characterId, f.name, f.source, f.description, f.maxUses, f.recharge],
         )
       }
       for (const e of input.equipment) {
         await c.query(
-          `INSERT INTO character_equipment (id, character_id, item_name, quantity)
-         VALUES ($1, $2, $3, $4)`,
-          [uuidv7(), characterId, e.name, e.quantity],
+          `INSERT INTO character_equipment (id, character_id, item_name, quantity, consumable)
+         VALUES ($1, $2, $3, $4, $5)`,
+          [uuidv7(), characterId, e.name, e.quantity, e.consumable],
         )
       }
       for (const sp of input.spells) {
         await c.query(
-          `INSERT INTO character_spells (id, character_id, spell_name, spell_level, prepared)
-         VALUES ($1, $2, $3, $4, $5)`,
-          [uuidv7(), characterId, sp.name, sp.level, sp.prepared],
+          `INSERT INTO character_spells (id, character_id, spell_name, spell_level, prepared, ritual)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+          [uuidv7(), characterId, sp.name, sp.level, sp.prepared, sp.ritual],
+        )
+      }
+      for (const slot of input.slotRows) {
+        // Written full: max = remaining (a finalized sheet starts rested).
+        await c.query(
+          `INSERT INTO character_spell_slots
+             (id, character_id, slot_level, slots_max, slots_remaining)
+         VALUES ($1, $2, $3, $4, $4)`,
+          [uuidv7(), characterId, slot.slotLevel, slot.max],
         )
       }
 
