@@ -1,0 +1,48 @@
+// MYT-69 §11 — SlowThinker + Haiku-gate tuning constants. The deterministic
+// policy arms (floor turns, wind-down fraction) are CODE around the gate, not
+// prompt content — mechanical policy, ZFC-exempt. Never hardcode model names
+// or budgets at call sites.
+
+import { HAIKU, OPUS } from '../llm/models.js'
+
+/** The architecture's tier assignment: Opus narrates direction, Haiku gates. */
+export const ST_MODEL = OPUS
+export const ST_GATE_MODEL = HAIKU
+
+/** runtime §8's every-5-turns oversight floor: turns-since-the-last-ST-RAN ≥
+ *  this forces an evaluation, skipping the gate. "Evaluated" == an Opus ST ran
+ *  (NOT a skipped gate). */
+export const ST_EVAL_FLOOR_TURNS = 5
+
+/** Skip the Opus call IFF `!needed && confidence ≥ this`. An EMPIRICAL knob —
+ *  Haiku confidence calibration is poor; the §13 smoke measures the skip rate
+ *  and tunes this. Only a confident "no" skips; everything else evaluates
+ *  (fail-toward-oversight). */
+export const ST_GATE_CONFIDENCE_FLOOR = 0.8
+
+/** Recent-slice sizes (player+DM exchanges). The gate sees a tighter window;
+ *  the evaluation sees more. Plan-time tune; the smoke validates. */
+export const ST_GATE_EXCHANGE_WINDOW = 6
+export const ST_EVAL_EXCHANGE_WINDOW = 10
+
+/** The §3.11 session bound proxy — the total token budget that, at
+ *  WIND_DOWN_FRACTION, trips the wind-down policy arm. Plan-time; tuned in the
+ *  smoke. The FT-context hard cap (session-end issue) is the real bound; this
+ *  is the ST-side signal. */
+export const SESSION_TOKEN_BUDGET = 400_000
+export const WIND_DOWN_FRACTION = 0.9
+
+/** Background-tolerant budgets (nothing player-visible waits on these). NOTE:
+ *  ST_EVAL_TIMEOUT_MS > worker.ts WORKER_CLOSE_GRACE_MS slack only at the
+ *  margin — a deploy mid-eval force-closes the worker and the job re-runs after
+ *  reboot (double Opus spend per deploy-during-eval, accepted — §11). */
+export const ST_EVAL_TIMEOUT_MS = 120_000
+export const ST_GATE_TIMEOUT_MS = 30_000
+
+/** reasoning + direction + a FULL summary rewrite is long; the SDK default
+ *  truncates (§4). */
+export const ST_EVAL_MAX_OUTPUT_TOKENS = 4_000
+
+/** The rewrite-semantics target (the prompt instructs this; not enforced in
+ *  code — a hard max on prose is forbidden, feedback_no_max_on_llm_prose_fields). */
+export const ST_SUMMARY_TARGET_WORDS = 250
