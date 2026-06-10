@@ -217,17 +217,62 @@ describe('makeSessionState — turn state', () => {
     await redis.quit()
   })
 
-  it('loadTurnState round-trips an atomic flushTurnState', async () => {
+  it('loadTurnState reads a usage-only flushTurnState plus a separately-written summary', async () => {
+    // MYT-69 §7: flushTurnState is usage-only now (the ST job owns :summary via
+    // setRunningSummary). loadTurnState STILL reads both keys.
     const s = makeSessionState(redis, 'p:')
-    // ft_history retired — PG-direct (MYT-68 §3.7); only summary/usage flush.
-    await s.flushTurnState('c1', {
-      summary: 'sum',
-      usage: { input: 2, output: 3 },
-    })
+    await s.setRunningSummary('c1', 'sum')
+    await s.flushTurnState('c1', { usage: { input: 2, output: 3 } })
     expect(await s.loadTurnState('c1')).toEqual({
       summary: 'sum',
       usage: { input: 2, output: 3 },
     })
+  })
+
+  it('flushTurnState writes :usage only — never clobbers :summary (MYT-69 §7)', async () => {
+    // The ST job is the only :summary writer; a blind summary SET at flush would
+    // erase the ST's background write. Seed :summary, flush, assert it survives.
+    const s = makeSessionState(redis, 'p:')
+    await redis.set('p:session:c1:summary', 'X')
+    await s.flushTurnState('c1', { usage: { input: 2, output: 3 } })
+    expect(await redis.get('p:session:c1:summary')).toBe('X')
+    expect(JSON.parse((await redis.get('p:session:c1:usage')) ?? 'null')).toEqual({
+      input: 2,
+      output: 3,
+    })
+  })
+
+  it('setRunningSummary SETs :summary with a state TTL', async () => {
+    // The turn flush no longer refreshes the summary's TTL, so the ST's writer
+    // must apply it — a gate-quiet stretch must not let the summary lapse (§7).
+    const s = makeSessionState(redis, 'p:')
+    await s.setRunningSummary('c1', 'a running summary')
+    expect(await redis.get('p:session:c1:summary')).toBe('a running summary')
+    expect(await redis.pttl('p:session:c1:summary')).toBeGreaterThan(0)
+  })
+
+  it('incrUsageSt INCRBYs :usage:st; totalUsageTokens sums :usage(input+output) + :usage:st', async () => {
+    const s = makeSessionState(redis, 'p:')
+    await s.flushTurnState('c1', { usage: { input: 5, output: 9 } })
+    await s.incrUsageSt('c1', 4)
+    await s.incrUsageSt('c1', 6)
+    // 5 + 9 (turn usage) + 4 + 6 (ST usage) = 24
+    expect(await s.totalUsageTokens('c1')).toBe(24)
+  })
+
+  it('totalUsageTokens returns 0 when neither usage key is set', async () => {
+    expect(await makeSessionState(redis, 'p:').totalUsageTokens('c-none')).toBe(0)
+  })
+
+  it('resetSessionSpend DELs :usage, :usage:st, and :summary (§8 session-start reset)', async () => {
+    const s = makeSessionState(redis, 'p:')
+    await s.flushTurnState('c1', { usage: { input: 5, output: 9 } })
+    await s.incrUsageSt('c1', 4)
+    await s.setRunningSummary('c1', 'a running summary')
+    await s.resetSessionSpend('c1')
+    expect(await redis.exists('p:session:c1:usage')).toBe(0)
+    expect(await redis.exists('p:session:c1:usage:st')).toBe(0)
+    expect(await redis.exists('p:session:c1:summary')).toBe(0)
   })
 
   it('loadTurnState returns empties when unset', async () => {
@@ -249,13 +294,9 @@ describe('makeSessionState — turn state', () => {
     })
   })
 
-  it('flushTurnState sets a TTL on both turn-state keys', async () => {
+  it('flushTurnState sets a TTL on the :usage key', async () => {
     const s = makeSessionState(redis, 'p:')
-    await s.flushTurnState('c1', {
-      summary: 's',
-      usage: { input: 1, output: 1 },
-    })
-    expect(await redis.ttl('p:session:c1:summary')).toBeGreaterThan(0)
+    await s.flushTurnState('c1', { usage: { input: 1, output: 1 } })
     expect(await redis.ttl('p:session:c1:usage')).toBeGreaterThan(0)
   })
 })
@@ -293,10 +334,10 @@ describe('makeSessionState — checkpoint', () => {
     }
 
     // Seed turn-state so the widened envelope (H6) carries a non-empty turnState.
-    await ss.flushTurnState(cId, {
-      summary: 'a running summary',
-      usage: { input: 5, output: 9 },
-    })
+    // MYT-69 §7: :summary is the ST job's artifact (setRunningSummary), the flush
+    // is usage-only. The checkpoint STILL folds the summary in via loadTurnState.
+    await ss.setRunningSummary(cId, 'a running summary')
+    await ss.flushTurnState(cId, { usage: { input: 5, output: 9 } })
 
     const result = await ss.checkpoint(cId, 's-1', store)
     expect(result.maxSeq).toBe(7) // from the durable store, NOT the :seq counter (8)
@@ -313,9 +354,10 @@ describe('makeSessionState — checkpoint', () => {
         usage: { input: number; output: number }
       }
     }
-    // H6: envelope kind bumped to myt68; the turn-state superset shed ft_history
-    // (PG-direct — §3.7), so the snapshot now carries only summary + usage.
-    expect(parsed.kind).toBe('myt68-checkpoint')
+    // H6: envelope kind bumped to myt69 (the flush shape changed — usage-only;
+    // §7). The reader must fail loud on the old myt68 shape. The snapshot still
+    // carries summary (from setRunningSummary, read via loadTurnState) + usage.
+    expect(parsed.kind).toBe('myt69-checkpoint')
     expect(parsed.maxSeq).toBe(7)
     expect(parsed.state?.mode).toBe('exploration')
     expect(parsed.turnState).toEqual({

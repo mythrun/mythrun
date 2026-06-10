@@ -170,6 +170,12 @@ function fakeSessionState(opts: {
     setState: unused('setState'),
     refreshTtls: unused('refreshTtls'),
     checkpoint: unused('checkpoint'),
+    // MYT-69 §7 additions — the ST job owns these; the controller never calls
+    // them, so they stay as throwing stubs.
+    setRunningSummary: unused('setRunningSummary'),
+    incrUsageSt: unused('incrUsageSt'),
+    totalUsageTokens: unused('totalUsageTokens'),
+    resetSessionSpend: unused('resetSessionSpend'),
   }
 }
 

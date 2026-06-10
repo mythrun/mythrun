@@ -123,7 +123,7 @@ describe('processSuspendJob — self-validating presence re-read', () => {
       maxSeq?: number
       state?: { mode?: string } | null
     }
-    expect(parsed.kind).toBe('myt68-checkpoint')
+    expect(parsed.kind).toBe('myt69-checkpoint')
     expect(parsed.maxSeq).toBe(7)
     expect(parsed.state?.mode).toBe('exploration')
     // Redis keys held (~1h) for a cheap reconnect cold-start; status untouched
