@@ -33,7 +33,7 @@ import { makeSessionState } from '../../redis/session-state.js'
 import { createSessionLock } from '../session-lock.js'
 import { makeTriggerState } from '../trigger-state.js'
 import { createTurnPublisher } from '../turn-publisher.js'
-import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
+import { StubFastThinker, StubScribe } from '../tiers/stubs.js'
 import { processTurnJob, type TurnWorkerRepo } from '../turn-worker.js'
 import { enqueueTurn, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
 
@@ -140,9 +140,10 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             // §4.7 post-turn re-mature producer. e2eRepo has no trailing player
             // rows, so the worker never reschedules — an inert no-op suffices.
             dmTriggerQueue: { add: () => Promise.resolve(undefined as never) },
+            // Post-hoc ST eval producer (MYT-69) — runs off this path; inert here.
+            stEvalQueue: { add: () => Promise.resolve(undefined as never) },
             publisher,
             makeTiers: () => ({
-              st: new StubSlowThinker(),
               ft: new StubFastThinker(),
               scribe: new StubScribe(),
             }),

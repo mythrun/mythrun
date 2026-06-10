@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { FtTurnContext, TurnEmitter } from '../types.js'
-import { StubFastThinker, StubScribe, StubSlowThinker } from '../stubs.js'
+import { StubFastThinker, StubScribe } from '../stubs.js'
 
 const ctx: FtTurnContext = {
   campaignId: 'c',
@@ -21,10 +21,6 @@ const ctx: FtTurnContext = {
 }
 
 describe('tier stubs', () => {
-  it('StubSlowThinker does not intervene', async () => {
-    expect(await new StubSlowThinker().evaluate(ctx)).toEqual({ intervene: false })
-  })
-
   it('StubFastThinker emits one delta and returns a canned line', async () => {
     const emitted: string[] = []
     const emit: TurnEmitter = {

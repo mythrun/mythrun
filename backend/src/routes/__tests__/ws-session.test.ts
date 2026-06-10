@@ -1251,6 +1251,16 @@ function makeStubTriggerState(): WsSessionDeps['triggerState'] {
     claimTurnErrorPublish: vi.fn().mockResolvedValue(true),
     markTurnEmitted: vi.fn().mockResolvedValue(undefined),
     wasTurnEmitted: vi.fn().mockResolvedValue(false),
+    setOneShotDirection: vi.fn().mockResolvedValue(undefined),
+    takeOneShotDirection: vi.fn().mockResolvedValue(null),
+    peekOneShotDirection: vi.fn().mockResolvedValue(null),
+    setStandingDirection: vi.fn().mockResolvedValue(undefined),
+    readStandingDirection: vi.fn().mockResolvedValue(null),
+    clearStandingDirection: vi.fn().mockResolvedValue(undefined),
+    incrTurnsSinceSt: vi.fn().mockResolvedValue(0),
+    turnsSinceSt: vi.fn().mockResolvedValue(0),
+    resetTurnsSinceSt: vi.fn().mockResolvedValue(undefined),
+    resetSessionKeys: vi.fn().mockResolvedValue(undefined),
   }
 }
 

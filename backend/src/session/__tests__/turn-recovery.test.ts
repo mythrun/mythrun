@@ -39,7 +39,7 @@ import { makeSessionState, type SessionState } from '../../redis/session-state.j
 import { createSessionLock, type SessionLock } from '../session-lock.js'
 import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import { createTurnPublisher, type TurnPublisher } from '../turn-publisher.js'
-import { StubFastThinker, StubScribe, StubSlowThinker } from '../tiers/stubs.js'
+import { StubFastThinker, StubScribe } from '../tiers/stubs.js'
 import type {
   AssistantMessage,
   FastThinker,
@@ -49,6 +49,7 @@ import type {
 } from '../tiers/types.js'
 import { processTurnJob, type TurnProcessorDeps, type TurnWorkerRepo } from '../turn-worker.js'
 import type { DmTriggerQueueLike } from '../dm-trigger-queue.js'
+import type { StEvalQueueLike } from '../st-eval-queue.js'
 import type { TurnJobPayload, TurnQueueLike } from '../turn-queue.js'
 
 // A fresh-run in-memory repo: no durable rows (so both A and B take the
@@ -101,6 +102,13 @@ const inertTurnQueue: TurnQueueLike = {
 // The §4.7 post-turn re-mature producer. recoveryRepo has no trailing player
 // rows, so the worker never reschedules — an inert no-op satisfies the dep.
 const inertDmTriggerQueue: DmTriggerQueueLike = {
+  add: () => Promise.resolve(undefined as never),
+}
+
+// The post-hoc ST eval producer (MYT-69) — runs off the turn path in its own
+// worker; this recovery flow never asserts on it, so an inert no-op satisfies
+// the dep without a broker.
+const inertStEvalQueue: StEvalQueueLike = {
   add: () => Promise.resolve(undefined as never),
 }
 
@@ -233,9 +241,9 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       triggerState,
       sessionTurnQueue: inertTurnQueue,
       dmTriggerQueue: inertDmTriggerQueue,
+      stEvalQueue: inertStEvalQueue,
       publisher,
       makeTiers: () => ({
-        st: new StubSlowThinker(),
         ft: new LockKillingFastThinker(realtime, lockKeyFor(CAMPAIGN)),
         scribe: new StubScribe(),
       }),
@@ -270,9 +278,9 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       triggerState,
       sessionTurnQueue: inertTurnQueue,
       dmTriggerQueue: inertDmTriggerQueue,
+      stEvalQueue: inertStEvalQueue,
       publisher,
       makeTiers: () => ({
-        st: new StubSlowThinker(),
         ft: new StubFastThinker(),
         scribe: new StubScribe(),
       }),
