@@ -37,4 +37,14 @@ describe('session-events contract', () => {
       expect(classifyClientFrame('roll_complete')).toBe(false)
     })
   })
+
+  describe('MYT-70 ledger_update frame', () => {
+    it('server allowlist gains ledger_update', () => {
+      expect(SERVER_FRAME_TYPES).toContain('ledger_update')
+    })
+    it('ledger_update is server-only — never an inbound client frame', () => {
+      expect(CLIENT_FRAME_TYPES).not.toContain('ledger_update')
+      expect(classifyClientFrame('ledger_update')).toBe(false)
+    })
+  })
 })

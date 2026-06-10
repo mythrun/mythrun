@@ -6,7 +6,10 @@
 // (dm_thinking, text_delta, turn_end, turn_error) as server->client only.
 // MYT-68 adds the DM-turn mechanical frames (skill_check, dice_roll,
 // dm_message) the FastThinker tool loop emits — live-streamed during a turn
-// and replayed from session_messages rows on reconnect. The remaining §5.2
+// and replayed from session_messages rows on reconnect. MYT-70 adds
+// ledger_update (server->client only) — a post-mutation character-sheet delta
+// (hp/gold/item/feature/spell_slot/condition/rest), same live-then-replayed
+// lifecycle as the MYT-68 mechanical frames. The remaining §5.2
 // DM-turn frames (combat_*, session_end, st_evaluation, scribe_result,
 // reaction_window, ...) are still deliberately ABSENT here — they land as
 // those surfaces are built. Adding them prematurely would let the transport
@@ -36,8 +39,9 @@ export const CLIENT_FRAME_TYPES = [
 
 // Server -> Client frame types. The MYT-65 subset, the MYT-66 DM-turn
 // streaming frames (`dm_thinking`, `text_delta`, `turn_end`, `turn_error`),
-// and the MYT-68 mechanical frames (`skill_check`, `dice_roll`, `dm_message`).
-// `combat_*`, `session_end`, etc. are further DM-turn frames added later.
+// the MYT-68 mechanical frames (`skill_check`, `dice_roll`, `dm_message`), and
+// the MYT-70 `ledger_update` character-sheet delta frame. `combat_*`,
+// `session_end`, etc. are further DM-turn frames added later.
 export const SERVER_FRAME_TYPES = [
   'session_ready',
   'session_reconnect',
@@ -64,6 +68,10 @@ export const SERVER_FRAME_TYPES = [
   'skill_check',
   'dice_roll',
   'dm_message',
+  // MYT-70 character-sheet delta frame. Same live-then-replayed lifecycle as
+  // the mechanical frames above: streamed during a turn (no seq) and replayed
+  // from session_messages rows on reconnect (carrying the row's seq).
+  'ledger_update',
 ] as const
 
 // Snapshot of a connected participant, used in the reconnect replay payload.
@@ -157,6 +165,34 @@ export type ServerFrame =
     }
   // Replay-only: one consolidated DM prose row (live prose = text_delta).
   | { type: 'dm_message'; seq: number; turnId: string; text: string }
+  // MYT-70 character-sheet delta. Live-streamed during a turn (no seq) and
+  // replayed from session_messages rows on reconnect (carrying the row's seq),
+  // same lifecycle as skill_check/dice_roll above. ONE flat member: `kind`
+  // discriminates which post-mutation value fields are populated (e.g. `hp` +
+  // `maxHp` on an hp change, `slotLevel` + `slotsRemaining` on a spell_slot),
+  // and `summary` is the always-present human-readable line. The concrete
+  // value fields are all optional so a single shape covers every kind without a
+  // union explosion. The publisher (later task) maps the LedgerUpdatePayload
+  // onto these fields one-for-one; typecheck catches drift at the publisher.
+  | {
+      type: 'ledger_update'
+      turnId: string
+      seq?: number // present only on reconnect replay (persisted row)
+      characterName: string
+      kind: 'hp' | 'gold' | 'item' | 'feature' | 'spell_slot' | 'condition' | 'rest'
+      summary: string
+      hp?: number
+      maxHp?: number
+      gold?: number
+      slotLevel?: number
+      slotsRemaining?: number
+      itemName?: string
+      quantity?: number
+      featureName?: string
+      usesRemaining?: number
+      condition?: string
+      diceRolled?: readonly number[]
+    }
 
 // Tripwire over the client allowlist. Only these client frame types may
 // originate a persisted/broadcast frame; everything else (DM-turn frames,
