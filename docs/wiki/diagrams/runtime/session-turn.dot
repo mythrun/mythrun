@@ -4,13 +4,17 @@ digraph session_turn {
   // process) acquires the per-session distributed lock, runs the §5 decision
   // order (converge a durable turn / terminate a streamed-but-uncommitted turn
   // / render fresh), and on a fresh run drives a transient SessionController
-  // through the deterministic ST → FT → Scribe conductor. The FT is now REAL
-  // (Sonnet); ST + Scribe stay stubs. The conductor RECONSTRUCTS the FT history
-  // from session_messages (PG) each turn — the Redis ft_history hot cache is
-  // retired. The rendered DM turn persists as ONE atomic, idempotent PG append
-  // (the single durability point); only the small {summary, usage} flushes to
-  // Redis. The worker holds no socket: it PUBLISHes frames to the per-campaign
-  // channel, which the API containers' SessionHub fans out to live WebSockets.
+  // through the deterministic FT → Scribe conductor (MYT-69 retired the in-turn
+  // ST seam — the SlowThinker now runs post-hoc in its own worker). The FT is
+  // REAL (Sonnet); Scribe stays a stub. The fresh-run arm takes the one-shot
+  // direction (GETDEL) + reads the standing directive from trigger-state and
+  // fuses/appends them. The conductor RECONSTRUCTS the FT history from
+  // session_messages (PG) each turn — the Redis ft_history hot cache is retired.
+  // The rendered DM turn persists as ONE atomic, idempotent PG append (the
+  // single durability point); only the small {usage} flushes to Redis, and the
+  // post-turn finally enqueues the st-evaluation job. The worker holds no socket:
+  // it PUBLISHes frames to the per-campaign channel, which the API containers'
+  // SessionHub fans out to live WebSockets.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -31,8 +35,8 @@ digraph session_turn {
     fontcolor="ember";
 
     proc [label="processTurnJob\ntryAcquire lock → heartbeat\n§5 decision: converge / terminal / fresh\nrelease in finally", color="ember", fontcolor="ember"];
-    ctrl [label="SessionController (transient)\nload → reconstruct history → render\n→ persistTurn → flushToRedis · GC'd per turn"];
-    tiers [label="conductor (deterministic)\nST.evaluate → FT.render(emit) → async Scribe\n(FT REAL — Sonnet; ST + Scribe STUBBED)", color="ember", fontcolor="ember"];
+    ctrl [label="SessionController (transient)\nload → reconstruct history → fuse one-shot →\nrender → persistTurn → flushToRedis · GC'd per turn"];
+    tiers [label="conductor (deterministic)\nfuse one-shot → FT.render(emit) → async Scribe\n(FT REAL — Sonnet; Scribe STUBBED; ST off-path)", color="ember", fontcolor="ember"];
     pub  [label="TurnPublisher (latched emitter)\nPUBLISH dm_thinking / text_delta /\n  skill_check / dice_roll / turn_end / turn_error"];
   }
 
@@ -52,7 +56,7 @@ digraph session_turn {
     fontcolor="ember";
 
     lock  [label="session:lock:{cId}\nSET NX PX (token)\nLua compare-extend / -release"];
-    turnstate [label="session:{cId}:summary · :usage · :seq\n:state (participants · ftContext · worldTone)\n(NO ft_history — retired)"];
+    turnstate [label="session:{cId}:usage · :seq · :state\n:summary (ST job's — not flushed here)\ndirection:oneshot (GETDEL) · direction:standing (read)\n(NO ft_history — retired)"];
     channel [label="session:campaign:{cId}\n(PUBLISH frame JSON)", color="ember", fontcolor="ember"];
   }
 
@@ -63,6 +67,7 @@ digraph session_turn {
   }
 
   client [label="player / SPA\ndedup on turnId", color="ember", fontcolor="ember"];
+  steval [label="st-evaluation queue\n(post-hoc SlowThinker)\nenqueued on flushed success", color="ember", fontcolor="ember"];
 
   trigger -> q_turn  [label="add job"];
   q_turn  -> proc    [label="BLPOP-style\n+ stalled redelivery"];
@@ -72,11 +77,12 @@ digraph session_turn {
   proc -> ctrl  [label="new + drive (fresh run)"];
   ctrl -> tiers [label="conductor"];
   ctrl -> msgs  [label="reconstruct history\n+ persist DM turn (atomic)", color="ember"];
-  ctrl -> turnstate [label="load / flush\n{summary, usage}"];
+  ctrl -> turnstate [label="load / flush {usage}\ntake one-shot · read standing"];
 
   tiers   -> pub     [label="emit text / skill_check / dice_roll"];
   proc    -> pub     [label="dm_thinking / turn_end", style=dashed];
   pub     -> channel [label="PUBLISH"];
   channel -> hub     [label="pmessage\n(every container)", color="ember"];
   hub     -> client  [label="ws.send"];
+  proc    -> steval  [label="post-turn enqueue\n(off the hot path)", style=dashed, color="ember"];
 }

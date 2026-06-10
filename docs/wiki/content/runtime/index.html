@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:76e02a206bbbfac7d745da18a3642efb4c1b166cd512b4386401e69a195a2243 -->
+<!-- source-hash: sha256:f634135e9d194282badab4d31a2983eff01989a6d3260527515aa77edf6fbd9a -->
 <!-- last-ticket: MYT-67 -->
 
 <h1>Backend</h1>
@@ -346,12 +346,14 @@
   <a href="./worker.html">Worker</a> page. The short version: it loads the same
   <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
   BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
-  registers five BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
+  registers six BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
   <code>QUEUE_CAMPAIGN_SETUP</code>, <code>QUEUE_SESSION_PREP</code>, the MYT-66
   <code>QUEUE_SESSION_TURN</code> (the lock-fenced
-  <a href="./session-turn.html">DM-turn</a> conductor), and the MYT-67
-  <code>QUEUE_DM_TRIGGER</code> (the <a href="./dm-trigger.html">DM trigger</a> decision worker) —
-  plus a <code>QueueEvents('session-turn')</code> subscriber — and binds a Fastify
+  <a href="./session-turn.html">DM-turn</a> conductor), the MYT-67
+  <code>QUEUE_DM_TRIGGER</code> (the <a href="./dm-trigger.html">DM trigger</a> decision worker),
+  and the MYT-69 <code>QUEUE_ST_EVAL</code> (the post-hoc
+  <a href="./slow-thinker.html">Slow Thinker</a>) — plus a
+  <code>QueueEvents('session-turn')</code> subscriber — and binds a Fastify
   <code>/health</code> server on <code>127.0.0.1:3001</code> that the ECS container
   <code>healthCheck</code> probes. Graceful shutdown drains the workers within a
   <code>100s</code> deadline (under the task's 120s <code>stopTimeout</code>) and falls back to a
@@ -359,8 +361,9 @@
   stub processors that logged and completed; the real prep-stage processors landed across MYT-51
   (world-gen), MYT-52 (streaming entity / edge events), MYT-53 (per-player character creation),
   MYT-54 (campaign-scoped character integration), MYT-61 (session prep), MYT-66 (the session-turn
-  conductor), and MYT-67 (the <a href="./dm-trigger.html">DM trigger</a> decision worker). The
-  dedicated worker container caught up to the API container's wiring in MYT-55.
+  conductor), MYT-67 (the <a href="./dm-trigger.html">DM trigger</a> decision worker), and MYT-69
+  (the post-hoc <a href="./slow-thinker.html">Slow Thinker</a>). The dedicated worker container
+  caught up to the API container's wiring in MYT-55.
 </p>
 
 <h2>The env loader accepts two shapes</h2>
@@ -682,9 +685,11 @@
   <code>config/env.ts</code> validates <code>ANTHROPIC_API_KEY</code> at boot alongside the database
   and Stripe secrets. The <a href="./worker.html">Worker</a> page covers the second runtime process
   in this repo — the async-execution half — running the same Dockerfile and config contract as the
-  API. The remaining cognitive tiers (Fast Thinker, Slow Thinker, Scribe, DM Trigger) land as
-  additional modules under <code>backend/src/</code> on top of that foundation; they'll share this
-  server's lifecycle, <code>AppDeps</code> shape, and Dockerfile.
+  API. The cognitive tiers land as additional modules under <code>backend/src/</code> on top of that
+  foundation, sharing this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile: the
+  <a href="./fast-thinker.html">Fast Thinker</a>, the post-hoc
+  <a href="./slow-thinker.html">Slow Thinker</a>, and the <a href="./dm-trigger.html">DM trigger</a>
+  classifier are live; the Scribe lands with MYT-73.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>

@@ -9,7 +9,7 @@
 <!-- source: backend/src/llm/schemas/dm-trigger-classification.ts -->
 <!-- source: backend/src/llm/prompts/session/dm-trigger-classifier.txt -->
 <!-- source: docs/superpowers/specs/2026-06-08-myt-67-dm-trigger-system-design.md -->
-<!-- source-hash: sha256:8552e0fb6d3b650b418d9752b7fc4631ce4239169a64bbf1df53349a6a41e498 -->
+<!-- source-hash: sha256:291b67c063454d1261b395fa47c27bd628067173b5b15ac58cbbe0aaa18b7051 -->
 <!-- last-ticket: MYT-68 -->
 
 <h1>DM trigger</h1>
@@ -194,8 +194,10 @@
     <strong>Dead-air ceiling.</strong> If the table has been totally silent — no message
     <em>or</em> typing — for <code>DEAD_AIR_MS</code> (≈60s), open a proactive turn
     <em>without</em> the classifier. A 60s dead-air step-in is a deterministic policy threshold,
-    like a rate limit; the Slow Thinker authors the actual beat. The non-empty batch is the
-    no-monologue guard, so this can't fire back-to-back.
+    like a rate limit. The Fast Thinker authors the actual beat (any
+    <a href="./slow-thinker.html">Slow Thinker</a> direction usually isn't ready for a proactive
+    open — the ST refines on a following beat). The non-empty batch is the no-monologue guard, so
+    this can't fire back-to-back.
   </li>
   <li>
     <strong>Explicit pending.</strong> An <code>@dm</code> / <code>dm_invoke</code> that landed
@@ -241,11 +243,13 @@
 
 <aside class="wiki-rationale">
   <strong>The classifier opens the door; it never decides what the DM says</strong> — the
-  sit-back-vs-step-in call is a coarse read. The classifier only decides to open a turn; the Slow
-  Thinker (MYT-69) makes the fine intervene-or-stay-silent call and authors any world beat. The
-  <em>quality</em> of the read (telling good RP from drift) is an eval-harness concern: this issue
-  builds the mechanism, and the smoke verifies a proactive open <em>can</em> fire; tuning happens
-  against the eval harness.
+  sit-back-vs-step-in call is a coarse read. The classifier only decides to open a turn; the
+  <a href="./slow-thinker.html">Slow Thinker</a> makes the fine intervene-or-stay-silent call — but
+  post-hoc, <em>after</em> the turn, not in-line. A proactive step-in's stage direction usually
+  doesn't exist yet (player-only chat produces no DM turns, hence no evaluations), so the Fast
+  Thinker improvises the intrusion and the ST refines on the following beat. The <em>quality</em> of
+  the read (telling good RP from drift) is an eval-harness concern; the smoke verifies a proactive
+  open <em>can</em> fire.
 </aside>
 
 <aside class="wiki-rationale">
@@ -255,11 +259,23 @@
   player-message batch, the DM's last <em>player-facing</em> line, two pacing counters (<code
     >turnsSinceLastDmBeat</code
   >
-  / <code>secondsSinceLastDmBeat</code>), and an optional public scene-grounding line. A secret has
-  nowhere to live on the type, so there is no path for plot or hidden NPC motive to reach this call.
-  While the Slow Thinker and Scribe are stubbed, the only public scene material available is the
-  running summary — used for both the last-DM-output and scene-grounding slots; both fill in for
-  real at MYT-69 / 73, but the type forbids wiring secret material in later.
+  / <code>secondsSinceLastDmBeat</code>), and an optional scene-grounding line — the running
+  summary, used for both the last-DM-output and scene-grounding slots. Crucially, the classifier's
+  output (<code>shouldRespond</code> / <code>intent</code> / <code>complexity</code>) is consumed by
+  <strong>code only</strong> — it never reaches a player or the Fast Thinker, exactly like the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s Haiku gate. So the classifier is ST-side-adjacent
+  infrastructure.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The summary input is secret-adjacent after MYT-69 — and that is acceptable here</strong> —
+  MYT-65 framed the classifier's summary input as "public table material only." Once the
+  <a href="./slow-thinker.html">Slow Thinker</a> owns the running summary, it deliberately carries
+  secret-adjacent state (NPC rapport, reveal-ladder progress). That would break a "public-only"
+  input contract — but the contract is superseded, not violated: there is
+  <em>no output path from this call to a player-facing surface</em>, so grounding the
+  respond/sit-back/step-in call on rapport state leaks nothing. The reframed rule is "no output path
+  to a player-facing surface," not "public-only input."
 </aside>
 
 <p>
@@ -267,12 +283,19 @@
   mark (<code>delay = DEAD_AIR_MS − sinceLastActivity</code>) so the 60s backstop still fires if the
   silence persists; any new activity reschedules it back to the normal quiet window. The verdict's
   <code>intent</code> (reactive vs proactive) and <code>complexity</code> (low vs high) ride the
-  turn payload as the skip-ST routing hint that MYT-68 / 69 consume; a proactive open always routes
-  through the Slow Thinker (the enforced-ignorant Fast Thinker can't invent a world beat). The
-  <code>confidence</code> anchors the <code>CONFIDENCE_FLOOR</code> (0.8) escalation. The free-prose
-  <code>reason</code> is debug-only — it is structured-logged, never plumbed onto the payload and
-  never sent to a player.
+  turn payload as metadata; the <code>confidence</code> anchors the
+  <code>CONFIDENCE_FLOOR</code> (0.8) escalation. The free-prose <code>reason</code> is debug-only —
+  it is structured-logged, never plumbed onto the payload and never sent to a player.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The classification is <em>not</em> the post-hoc ST's spend gate</strong> — it was once
+  framed as a skip-ST routing hint, but the <a href="./slow-thinker.html">Slow Thinker</a> runs
+  after the turn in its own worker and reads neither this payload (persisted nowhere it can reach)
+  nor a classification that is ill-defined under its job collapse. The ST makes its own spend
+  decision via its own Haiku gate. The classification stays useful only as turn-payload metadata and
+  a dev signal.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Fail-closed, no fail-open fallback</strong> — a classifier failure (timeout, transient,
@@ -568,6 +591,21 @@
         flag, <code>SET NX EX 60</code>. The cross-container terminal-error idempotency latch.
       </td>
     </tr>
+    <tr>
+      <td><code>session:{cId}:direction:oneshot</code> / <code>:direction:standing</code></td>
+      <td>
+        MYT-69 stage-direction slots written by the
+        <a href="./slow-thinker.html">Slow Thinker</a>: one-shot (GETDEL-consumed by the turn
+        worker) and standing (read every turn). 2h TTL.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:turns-since-st</code></td>
+      <td>
+        MYT-69 int counter; INCR per flushed turn, reset when an Opus evaluation runs — the ST's
+        every-N-turns oversight floor.
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -607,7 +645,10 @@
       <td><code>src/session/trigger-state.ts</code></td>
       <td>
         <code>makeTriggerState</code> — all the DM-trigger Redis keys (typing, activity, watermark,
-        flags, the error latch).
+        flags, the error latch) plus the MYT-69
+        <a href="./slow-thinker.html">Slow Thinker</a> direction slots + turns-since-ST counter, and
+        <code>resetSessionKeys</code> (session-start hygiene that also sweeps the no-TTL
+        coordination keys).
       </td>
     </tr>
     <tr>

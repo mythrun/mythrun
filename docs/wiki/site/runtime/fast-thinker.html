@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html" class="active">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html" class="active">Fast Thinker</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Fast Thinker</div>
         <article>
@@ -40,15 +40,15 @@
 
 <figure class="wiki-diagram">
   
-<svg width="964pt" height="589pt"
- viewBox="14.00 14.00 949.00 574.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 570.4)">
+<svg width="964pt" height="615pt"
+ viewBox="14.00 14.00 949.00 601.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 596.8)">
 <title>fast_thinker</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-556 930.86,-556 930.86,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-582.4 930.86,-582.4 930.86,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_ft</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="215,-156.28 215,-461.12 511,-461.12 511,-156.28 215,-156.28"/>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-447.22" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SonnetFastThinker.render(ctx, emit)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="189,-156.28 189,-474.32 537,-474.32 537,-156.28 189,-156.28"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-460.42" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SonnetFastThinker.render(ctx, emit)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_tools</title>
@@ -58,24 +58,26 @@
 <!-- ctx -->
 <g id="node1" class="node">
 <title>ctx</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="520.76,-552 205.24,-552 205.24,-495.12 520.76,-495.12 520.76,-552"/>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-533.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FtTurnContext (public&#45;by&#45;construction)</text>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-520.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ftContext · ftHistory · participants</text>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-507.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(no plot/secret field has anywhere to live)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="520.76,-578.4 205.24,-578.4 205.24,-508.32 520.76,-508.32 520.76,-578.4"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-559.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FtTurnContext (public&#45;by&#45;construction)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-546.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ftContext · ftHistory · participants ·</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-533.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">standingDirective (behavior&#45;bound)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-520.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(no plot/secret field has anywhere to live)</text>
 </g>
 <!-- build -->
 <g id="node2" class="node">
 <title>build</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="510.86,-439.92 215.14,-439.92 215.14,-383.04 510.86,-383.04 510.86,-439.92"/>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-421.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildModelMessages</text>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-408.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">system (ft&#45;system.txt) + full transcript</text>
-<text xml:space="preserve" text-anchor="middle" x="363" y="-394.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sliding cache breakpoints (§3.9)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="537.27,-453.12 188.73,-453.12 188.73,-383.04 537.27,-383.04 537.27,-453.12"/>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-434.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildModelMessages</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-421.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">system (ft&#45;system.txt) + full transcript</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-408.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sliding cache breakpoints (§3.9)</text>
+<text xml:space="preserve" text-anchor="middle" x="363" y="-394.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ standing directive as raw post&#45;breakpoint tail</text>
 </g>
 <!-- ctx&#45;&gt;build -->
 <g id="edge1" class="edge">
 <title>ctx&#45;&gt;build</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-494.5C363,-480.65 363,-463.78 363,-448.95"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-449.31 363,-442.31 360.55,-449.31 365.45,-449.31"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-507.69C363,-493.52 363,-476.99 363,-462.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-462.3 363,-455.3 360.55,-462.3 365.45,-462.3"/>
 </g>
 <!-- loop -->
 <g id="node3" class="node">
@@ -88,8 +90,8 @@
 <!-- build&#45;&gt;loop -->
 <g id="edge2" class="edge">
 <title>build&#45;&gt;loop</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-382.38C363,-369.72 363,-354.6 363,-341.08"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-341.28 363,-334.28 360.55,-341.28 365.45,-341.28"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M363,-382.41C363,-369.28 363,-354.3 363,-341.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.45,-341.38 363,-334.38 360.55,-341.38 365.45,-341.38"/>
 </g>
 <!-- consume -->
 <g id="node4" class="node">
@@ -393,12 +395,35 @@
   without inventing a result.
 </p>
 
+<p>
+  MYT-69 added the <strong>NPC-authenticity</strong> half of the prompt — the FT's side of the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s social clock. NPCs are normal people, not quest
+  dispensers: a stranger gets weather, prices, and wary politeness, not the NPC's troubles or
+  secrets; small talk is the texture of the world, played in full; trust is earned across a
+  conversation, and what an NPC has to share, the story tells the FT when it is time — via a
+  direction. Two craft rules ride alongside: the check-frequency rule carves out genuine no-stakes
+  chat (checks gate attempts to change a mind, deceive, or read what's hidden — never ordinary
+  conversation), and a successful social check against an NPC whose depths the FT doesn't know
+  yields demeanor or plausible public content, <em>never</em> invented hidden plot.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The FT cannot plot-dump what it does not know — that is the authenticity engine</strong> —
+  these prompt rules only hold because enforced ignorance is structural. The FT has no playbook, no
+  secrets, no plot in its context, so it genuinely cannot hand a stranger a quest hook. The
+  <a href="./slow-thinker.html">Slow Thinker</a> holds the secrets and the social clock and decides,
+  post-hoc, when a conversation has earned a reveal — portioning out exactly what an NPC entrusts
+  via a stage direction. Without the split, the carve-out would be a prompting suggestion the model
+  could ignore; with it, the FT's ignorance is the boundary.
+</aside>
+
 <aside class="wiki-rationale">
   <strong>The running summary is the Slow Thinker's tool, not the FT's memory</strong> — the FT
   never reads the running summary. It holds the literal full transcript every turn, so there is no
-  compressed history to hallucinate around. The summary is the Slow Thinker's input and the Scribe's
-  session-end input; it plays no role in FT grounding or recovery. Removing it from the FT's context
-  type is what makes "secrets have nowhere to live" structural rather than a convention.
+  compressed history to hallucinate around. The summary is the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s own compression and the Scribe's session-end
+  input; it plays no role in FT grounding or recovery. Removing it from the FT's context type is
+  what makes "secrets have nowhere to live" structural rather than a convention.
 </aside>
 
 <h2 id="prompt-caching-the-cost-lever">Prompt caching: the cost lever</h2>
@@ -422,15 +447,32 @@
   otherwise invisible. The smoke asserts cache reads are non-zero on turn ≥ 2.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>The standing directive is a raw tail message <em>after</em> the breakpoints</strong> —
+  when the <a href="./slow-thinker.html">Slow Thinker</a> has a live standing directive, the worker
+  reads it from its Redis slot and threads it onto <code>FtTurnContext.standingDirective</code>;
+  <code>buildModelMessages</code> appends it as one raw <code>[DM direction: …]</code> user message
+  <em>after</em> placing the cache breakpoints. It rides the always-uncached zone past the last
+  breakpoint, so it never perturbs the cached prefix and never shifts the sliding-breakpoint index.
+  It is render-only: never persisted, never pushed into <code>ftHistory</code> (which would render
+  through the codec's attribution as a phantom "Player"). A one-shot direction, by contrast, is
+  fused onto the last user message by the <a href="./session-turn.html">conductor</a> before this
+  assembly runs — fuse-then-append, so the one-shot lands on the real player message, not the
+  ephemeral tail.
+</aside>
+
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The Fast Thinker is the first real cognitive tier behind the
-  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; the Slow Thinker and Scribe
-  remain stubs until later issues. It runs through the <a href="./llm.html">LLM client</a>'s
-  <code>streamTextWithTools</code> wrapper (Sonnet) and its skill-check resolver makes a nested
-  Haiku call through the same abstraction. Its roller resolution and per-skill proficiency reads
-  come from the <a href="../data/repository.html">repository layer</a>'s
+  The Fast Thinker is the player-facing cognitive tier behind the
+  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; the Scribe remains a stub
+  until MYT-73, and the <a href="./slow-thinker.html">Slow Thinker</a> now runs off the turn path —
+  its stage directions reach the FT as a fused one-shot (on the player's last message) and a
+  standing tail message, both consumed silently. It runs through the
+  <a href="./llm.html">LLM client</a>'s <code>streamTextWithTools</code> wrapper (Sonnet) and its
+  skill-check resolver makes a nested Haiku call through the same abstraction. Its roller resolution
+  and per-skill proficiency reads come from the
+  <a href="../data/repository.html">repository layer</a>'s
   <code>characters.findSessionParticipantCharacterByName</code>. The frames it emits
   (<code>skill_check</code>, <code>dice_roll</code>, plus the streamed <code>text_delta</code>) flow
   through the worker-latched emitter to the

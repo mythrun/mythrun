@@ -774,8 +774,11 @@
   / <code>turnRowsExist</code> / <code>appendDmTurn</code>) and <code>characters</code> gained the
   session-roster resolution the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s skill
   checks read (<code>findSessionParticipantCharacterByName</code> /
-  <code>listSessionParticipantCharacters</code>). The namespaces still unfilled by any consumer are
-  tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
+  <code>listSessionParticipantCharacters</code>) plus the class/background roster the
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a> reads for its world-state block
+  (<code>listSessionParticipantRoster</code>, MYT-69 — a new read, leaving the FT-hot-path sibling
+  untouched). The namespaces still unfilled by any consumer are tracked as beads under the
+  <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">

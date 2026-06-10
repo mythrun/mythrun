@@ -10,7 +10,7 @@
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:5ed2a01fd1eef29a160d995d2c738487e6e2fa14dda81a7846fa57166af93a1d -->
+<!-- source-hash: sha256:1fa1dd68ce34a897645e0331b4e9952c9c176e9d1e75410ce05d8dbeaf22be21 -->
 <!-- last-ticket: MYT-68 -->
 
 <h1>Session turn</h1>
@@ -18,11 +18,14 @@
 <p class="lead">
   The DM-turn execution engine: a transient <code>SessionController</code> that, per turn, acquires
   a per-session distributed lock, reconstructs the Fast Thinker's history from the durable
-  <code>session_messages</code> transcript, runs the fixed ST → FT → Scribe macro sequence as
-  deterministic code, persists the rendered turn as one atomic Postgres append, and releases the
-  lock — surviving a mid-turn container crash by converging on the durable transcript or re-running
-  from clean state. The <a href="./fast-thinker.html">Fast Thinker</a> is now real (Sonnet); the
-  Slow Thinker and Scribe remain stubs behind the same seams MYT-69 / 73 will fill.
+  <code>session_messages</code> transcript, fuses any pending stage direction, runs the FT → Scribe
+  macro sequence as deterministic code, persists the rendered turn as one atomic Postgres append,
+  and releases the lock — surviving a mid-turn container crash by converging on the durable
+  transcript or re-running from clean state. The <a href="./fast-thinker.html">Fast Thinker</a> is
+  real (Sonnet). The <a href="./slow-thinker.html">Slow Thinker</a> is no longer on this path:
+  MYT-69 moved it off the hot path into a post-turn background pipeline, so directions arrive as
+  worker-resolved Redis slots, not an in-turn tier call. The Scribe remains a stub behind its seam
+  until MYT-73.
 </p>
 
 <!-- @diagram: runtime/session-turn -->
@@ -71,12 +74,14 @@
 </p>
 
 <p>
-  <code>loadFromRedis</code> reads only the small turn state: the running summary and the usage
-  accumulator. The FT history is <strong>not</strong> in Redis —
-  <code>processDmTurn</code> reconstructs it from <code>session_messages</code> in Postgres each
-  turn (below). The participant roster, the FT prep context, and the world tone are not loaded here
-  either; the worker resolves them per turn and injects them. Between load and persist the
-  controller mutates <strong>only its in-memory copy</strong>.
+  <code>loadFromRedis</code> reads only the small turn state: the usage accumulator. The running
+  summary is <strong>not</strong> the turn's any more — as of MYT-69 the
+  <a href="./slow-thinker.html">Slow Thinker</a> owns the <code>:summary</code> key from its own
+  worker, so the controller neither reads nor writes it. The FT history is <strong>not</strong> in
+  Redis either — <code>processDmTurn</code> reconstructs it from <code>session_messages</code> in
+  Postgres each turn (below). The participant roster, the FT prep context, the world tone, and the
+  pending stage directions are not loaded here either; the worker resolves them per turn and injects
+  them. Between load and persist the controller mutates <strong>only its in-memory copy</strong>.
 </p>
 
 <aside class="wiki-rationale">
@@ -85,7 +90,8 @@
   per row, and writes them in a single, idempotent
   <code>INSERT … ON CONFLICT (turn_id, turn_ordinal) DO NOTHING</code>. That one statement is the
   only durable write the controller makes. <code>flushToRedis</code> afterward carries only the
-  small <code>{summary, usage}</code> turn state. A crash <em>before</em>
+  small <code>{usage}</code> turn state (usage-only as of MYT-69 — the summary is the
+  <a href="./slow-thinker.html">Slow Thinker</a> job's). A crash <em>before</em>
   <code>persistTurn</code> leaves both Postgres and Redis at the pre-turn snapshot — nothing to
   undo; BullMQ redelivery re-runs the turn. A crash <em>after</em> the commit means the turn is
   durable, and the re-run converges to completion rather than re-rendering (the §5 decision order
@@ -152,19 +158,20 @@
     in-memory multi-part history.
   </li>
   <li>
-    <strong>ST evaluate</strong> — <code>st.evaluate(ctx)</code> returns an
-    <code>StEvaluation</code>. Any <code>summaryUpdate</code> is appended to the running summary
-    in-memory (decoupled from <code>intervene</code>); the ST's token usage is accumulated.
+    <strong>Fuse the pending one-shot</strong> — when the worker resolved a one-shot direction
+    (<code>deps.pendingDirection</code>), it is fused onto the <em>last</em> user message in the
+    reconstructed history as a bracketed <code>[DM direction: …]</code> constraint, in-memory only.
+    The direction was authored by the <a href="./slow-thinker.html">Slow Thinker</a> on a
+    <em>prior</em> turn (post-hoc), not computed here; the conductor only consumes it.
   </li>
   <li>
-    <strong>FT render</strong> — when the ST chose to intervene with a <code>direction</code>, it is
-    fused onto the <em>last</em> user message in the reconstructed history as a bracketed
-    <code>[DM direction: …]</code> constraint, in-memory only.
-    <code>ft.render(ctx, emit)</code> runs the <a href="./fast-thinker.html">Fast Thinker</a>'s tool
-    loop, streaming <code>text_delta</code> / <code>skill_check</code> /
-    <code>dice_roll</code> frames through the latched emitter, and returns a multi-part
-    <code>AssistantMessage</code>; its token usage is accumulated. (The Slow Thinker is stubbed in
-    MYT-68, so no direction is injected yet.)
+    <strong>FT render</strong> — <code>ft.render(ctx, emit)</code> runs the
+    <a href="./fast-thinker.html">Fast Thinker</a>'s tool loop, streaming <code>text_delta</code> /
+    <code>skill_check</code> / <code>dice_roll</code> frames through the latched emitter, and
+    returns a multi-part <code>AssistantMessage</code>; its token usage is accumulated. The standing
+    directive (also worker-resolved) rides the FT context and is appended by the FT as a raw tail
+    message after its cache breakpoints — see the <a href="./fast-thinker.html">Fast Thinker</a>'s
+    prompt assembly.
   </li>
   <li>
     <strong>Scribe</strong> — <code>scribe.extract(ctx)</code> fires async and non-blocking; its
@@ -173,22 +180,35 @@
 </ol>
 
 <aside class="wiki-rationale">
-  <strong>The stage direction is a constraint, and the FT never learns why</strong> — when the ST
-  intervenes, only the <code>direction</code> text reaches the FT, fused onto the player's last
-  message. The FT renders prose under the constraint but is never told the ST intervened or why.
-  This is enforced ignorance at the turn level: the FT's view is the public conversation plus a
-  constraint, nothing about plot or intent.
+  <strong>The stage direction is a constraint, and the FT never learns why</strong> — only the
+  <code>direction</code> text reaches the FT, fused onto the player's last message. The FT renders
+  prose under the constraint but is never told the ST intervened or why — the ST's secret-aware
+  reasoning lives in a private field the FT-facing channel never carries (see the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s structural split). This is enforced ignorance at
+  the turn level: the FT's view is the public conversation plus a constraint, nothing about plot or
+  intent.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Directions arrive as worker-resolved deps, not an in-turn ST call</strong> — under the
+  MYT-69 post-hoc model the conductor no longer calls <code>st.evaluate</code>; the in-turn
+  <code>SlowThinker</code> tier seam is gone. The worker takes the one-shot from its Redis slot
+  (GETDEL, fresh-run arm only) and reads the standing directive, passing both into the controller as
+  <code>pendingDirection</code> / <code>standingDirective</code> — mirroring how
+  <code>ftContext</code>
+  is resolved. The conductor's only direction logic is the one-shot fusion.
 </aside>
 
 <aside class="wiki-rationale">
   <strong>Directions are per-turn ephemera, never transcript</strong> — the fused
   <code>[DM direction: …]</code> exists only in the in-memory messages assembled for that one turn's
   render; it is never written to <code>session_messages</code> (player rows persist at receipt,
-  pre-fusion; DM rows are output only). So past directions never accumulate in the FT's
+  pre-fusion; DM rows are output only). The standing directive is likewise a render-only tail
+  message, never pushed into <code>ftHistory</code>. So past directions never accumulate in the FT's
   reconstructed context and a direction can never leak into the player-visible transcript or
   reconnect replay — its narrative effect survives only through the prose it shaped. Under
   PG-direct, the FT's memory is <em>exactly</em> the public transcript plus the current turn's
-  direction.
+  directions.
 </aside>
 
 <aside class="wiki-rationale">
@@ -205,38 +225,39 @@
 <h2>The tier seam, and structural enforced ignorance</h2>
 
 <p>
-  The tier seam is defined once in <code>tiers/types.ts</code>. The FT (and, later, the ST) read an
+  The tier seam is defined once in <code>tiers/types.ts</code>. The FT reads an
   <code>FtTurnContext</code> — and that type is <strong>public by construction</strong>: every field
   on it (campaign id, the reconstructed conversation history, the participant roster, the
   enforced-ignorance-safe <code>ftContext</code> prep doc, usage counters, a reserved
-  <code>workingSet</code>) is FT-safe. Secrets simply have nowhere to live on this type. MYT-68
-  <em>strengthened</em> the seam: it added the FT-safe <code>ftContext</code> field and
-  <strong>removed</strong> the old <code>runningSummary</code> field — that was
-  Slow-Thinker-authored, the FT never reads it, and an ST-authored field on the FT's context type is
-  exactly what the boundary forbids. The ST gets the summary through its own widened view (<code
-    >TurnContext = FtTurnContext &amp; StSecrets</code
-  >) in MYT-69.
+  <code>workingSet</code>, and the behavior-bound <code>standingDirective</code>) is FT-safe.
+  Secrets simply have nowhere to live on this type. MYT-68 <em>strengthened</em> the seam: it added
+  the FT-safe <code>ftContext</code> field and <strong>removed</strong> the old
+  <code>runningSummary</code> field — that was Slow-Thinker-authored, the FT never reads it, and an
+  ST-authored secret-bearing field on the FT's context type is exactly what the boundary forbids.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Secrets reach the ST via constructor deps, never through <code>TurnContext</code></strong>
-  — enforced ignorance (CLAUDE.md non-negotiable #1) is made structural here, not a field-discipline
-  convention. The ST's secret material (the <code>sd_playbook</code>, NPC secrets, narrative
-  threads) is loaded from its constructor dependencies; the controller never threads it through the
-  context the FT also reads. Adding a secret to the ST's view is then a compile-time-isolated change
-  that <em>cannot</em> reach <code>FastThinker.render</code> — the type system is the boundary. If
-  you ever feel the urge to add a plot field to <code>FtTurnContext</code> so the FT can "see a
-  little more," that is the bug the type exists to prevent.
+  <strong>The in-turn ST seam is retired — the ST never consumes the FT's context object</strong> —
+  MYT-66 reserved <code>TurnContext = FtTurnContext &amp; StSecrets</code> as the Slow Thinker's
+  widened view. The MYT-69 post-hoc model supersedes that: the
+  <a href="./slow-thinker.html">Slow Thinker</a> runs off the turn path in its own worker and loads
+  its own secret-bearing view from Postgres + Redis, so the <code>SlowThinker</code> /
+  <code>StEvaluation</code> interfaces and the <code>&amp; StSecrets</code> widening are gone, and
+  <code>TurnContext</code> stays a plain alias for the FT-facing context. The only ST-authored value
+  that rides this type is <code>standingDirective</code>, which is public-by-construction
+  (behavior-bound under the Slow Thinker's channel contract — never secret rationale). If you ever
+  feel the urge to add a plot field to <code>FtTurnContext</code> so the FT can "see a little more,"
+  that is the bug the type exists to prevent.
 </aside>
 
 <p>
-  The controller takes its three tiers by constructor injection. As of MYT-68 the
-  <strong><a href="./fast-thinker.html">Fast Thinker</a> is real</strong> — the worker constructs a
-  fresh <code>SonnetFastThinker</code> per turn with that turn's scoped skill-check projection,
-  resolved world tone, and the worker-latched emitter — while the Slow Thinker and Scribe remain
-  stubs (a no-op ST that never intervenes, a no-op Scribe) until MYT-69. The seam is unchanged: a
-  later issue swaps <code>new StubSlowThinker()</code> for <code>new RealSlowThinker(deps)</code>
-  with no conductor change.
+  The controller takes its tiers by constructor injection. The
+  <strong><a href="./fast-thinker.html">Fast Thinker</a> is real</strong> (MYT-68) — the worker
+  constructs a fresh <code>SonnetFastThinker</code> per turn with that turn's scoped skill-check
+  projection, resolved world tone, and the worker-latched emitter. The Scribe remains a stub (a
+  no-op extractor) until MYT-73. The Slow Thinker is no longer a tier here at all:
+  <code>makeTiers</code> returns only <code>{ ft, scribe }</code>, and the narrative director runs
+  in its own <a href="./slow-thinker.html">post-turn pipeline</a>.
 </p>
 
 <h2>The distributed lock</h2>
@@ -344,8 +365,19 @@
   The fresh run resolves its per-turn context from the Redis <code>:state</code> blob: the FT prep
   context (<code>ftContext</code>) with a Postgres re-load fallback if the blob was evicted, the
   world tone, and — off one read of <code>session_participants</code> joined to
-  <code>characters</code> — the FT prompt roster plus the userId→character-name attribution map.
+  <code>characters</code> — the FT prompt roster plus the userId→character-name attribution map. It
+  also takes the pending one-shot direction (<code>takeOneShotDirection</code>, a GETDEL) and reads
+  the standing directive from the <a href="./slow-thinker.html">Slow Thinker</a>'s
+  <a href="./dm-trigger.html">trigger-state</a> slots, threading both into the controller.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The one-shot take rides the fresh-run arm only</strong> — the GETDEL happens after lock
+  acquisition and after the converge / latch early exits, never before them. A take before those
+  exits would burn a sanctioned reveal on a turn that never renders, and a take by a contention
+  loser would starve the lock holder. The standing directive is read (not consumed) here, because it
+  is a persistent constraint that holds across turns until the ST replaces or clears it.
+</aside>
 
 <aside class="wiki-rationale">
   <strong
@@ -393,7 +425,10 @@
   the next turn. It then runs two drains, each in its own try/catch so a hiccup never masks the turn
   outcome: an <strong>explicit drain</strong> (if an <code>@dm</code> landed mid-turn,
   <code>takeExplicitPending</code> enqueues one explicit follow-up immediately) and a
-  <strong>post-turn re-mature</strong>.
+  <strong>post-turn re-mature</strong>. On the flushed-success path it also bumps the
+  <code>turns-since-st</code> floor counter and enqueues the post-hoc
+  <a href="./slow-thinker.html">st-evaluation</a> job — both off the hot path, the enqueue in its
+  own try/catch so a queue hiccup never masks the turn outcome.
 </p>
 
 <aside class="wiki-rationale">
@@ -454,22 +489,27 @@
 <h2>Turn state and the residual Redis flush</h2>
 
 <p>
-  After the PG-direct change, the only LLM-tier state in Redis is the running summary and the usage
-  accumulator (<code>:summary</code>, <code>:usage</code> in the
-  <a href="./session-transport.html">session-state</a> module). The FT history key
+  After the PG-direct change, the LLM-tier turn state in Redis is the usage accumulator (<code
+    >:usage</code
+  >
+  in the <a href="./session-transport.html">session-state</a> module). The FT history key
   (<code>:ft_history</code>) and its periodic checkpoint are <strong>retired</strong> — the
-  transcript is durable in Postgres. <code>loadTurnState</code> reads the summary + usage with a
-  single read; <code>flushTurnState</code> writes them plus a TTL refresh in one <code>MULTI</code>
-  after the transcript has already committed.
+  transcript is durable in Postgres. As of MYT-69 the running summary (<code>:summary</code>) is no
+  longer the turn's: it is the <a href="./slow-thinker.html">Slow Thinker</a> job's artifact, so
+  <code>flushTurnState</code> shrank to usage-only and the controller's summary code is gone.
+  <code>loadTurnState</code> still reads usage with a single read;
+  <code>flushTurnState</code> writes it plus a TTL refresh after the transcript has already
+  committed.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The flush is the cheap tail, not the durability point</strong> — durability is the atomic
-  Postgres append in <code>persistTurn</code>; the Redis flush carries only the small summary/usage
-  state. A flush failure after the commit re-runs the job, which converges (the rows exist) and
-  finishes the flush — so the flush is never the all-or-nothing gate it was under the old
-  Redis-history model. Usage is accumulated in the in-memory copy and persisted by this flush, so a
-  converging re-run is usage-safe.
+  <strong>Usage-only flush, so the ST's background summary write can't be clobbered</strong> — a
+  blind <code>:summary</code> SET at flush would erase the ST's write: the turn worker reads at turn
+  start and SETs minutes later at flush, a window in which an ST evaluation lands. Narrowing the
+  flush to usage removes that clobber race outright. Durability is still the atomic Postgres append
+  in <code>persistTurn</code>; the flush carries only the small usage state, so a flush failure
+  after the commit re-runs the job, which converges (the rows exist) and finishes the flush — the
+  flush is never the all-or-nothing gate it was under the old Redis-history model.
 </aside>
 
 <h2>The producer and the dev fire-turn trigger</h2>
@@ -494,8 +534,10 @@
   >
   / <code>solo</code> / <code>auto</code>) and the optional <code>trigger.classification</code> is
   the Haiku verdict for the <code>auto</code> path. Both are metadata only — they never cross the
-  tier boundary into a Fast Thinker call. The classification is the skip-ST routing hint the Slow
-  Thinker work (MYT-69) consumes; the FT never sees it.
+  tier boundary into a Fast Thinker call, and the FT never sees them. (The post-hoc
+  <a href="./slow-thinker.html">Slow Thinker</a> does <em>not</em> consume the classification: it
+  rides only this turn payload, is persisted nowhere the st-evaluation job can read, and is
+  ill-defined under that job's collapse — the ST's own Haiku gate makes the spend decision instead.)
 </p>
 
 <p>
@@ -546,8 +588,9 @@
     >
     shows the DM turn's <code>dm_text</code> (and any <code>skill_check</code> /
     <code>dice_roll</code>) rows. <code>session:{campaignId}:lock</code> is gone (released);
-    <code>:summary</code> / <code>:usage</code> reflect the turn. There is no
-    <code>ft_history</code> key — the transcript is in Postgres.
+    <code>:usage</code> reflects the turn (the <code>:summary</code> key is the
+    <a href="./slow-thinker.html">Slow Thinker</a> job's, written after a post-turn evaluation, not
+    at flush). There is no <code>ft_history</code> key — the transcript is in Postgres.
   </li>
 </ol>
 
@@ -593,16 +636,18 @@
   <a href="./session-transport.html">session transport</a>'s <code>SessionHub</code> subscribes to —
   both deriving the channel from <code>contract/session-channel.ts</code>. The
   <a href="./fast-thinker.html">Fast Thinker</a> tier it runs is documented on its own page; the
-  Slow Thinker (MYT-69) and Scribe (MYT-73) seams are still stubs. The durable transcript it
-  reconstructs and appends lives in <code>session_messages</code> through the
+  Scribe (MYT-73) seam is still a stub. The <a href="./slow-thinker.html">Slow Thinker</a> is no
+  longer a tier here — this worker enqueues its post-turn evaluation on the flushed-success path
+  and, on the following turn, takes the one-shot and reads the standing directive it authored. The
+  durable transcript it reconstructs and appends lives in <code>session_messages</code> through the
   <a href="../data/repository.html">repository layer</a>, and the mechanical frames it streams
   (<code>skill_check</code> / <code>dice_roll</code>) join the <code>dm_thinking</code> /
   <code>text_delta</code> / <code>turn_end</code> / <code>turn_error</code> frames on the
   <a href="./session-transport.html">transport</a>'s wire contract — which also handles their
-  reconnect replay from the persisted rows. The residual summary/usage turn state extends the
-  session-state Redis module the transport owns. The <a href="./dev-tool.html">dev tool</a> drives
-  the fire-turn trigger from the System page; the <code>session-turn</code> queue handle is threaded
-  through the <a href="./index.html">backend</a>'s <code>AppDeps</code>. Upstream, the
+  reconnect replay from the persisted rows. The residual usage turn state extends the session-state
+  Redis module the transport owns. The <a href="./dev-tool.html">dev tool</a> drives the fire-turn
+  trigger from the System page; the <code>session-turn</code> queue handle is threaded through the
+  <a href="./index.html">backend</a>'s <code>AppDeps</code>. Upstream, the
   <a href="./dm-trigger.html">DM trigger</a> system decides <em>when</em> a turn fires and is what
   enqueues these jobs (other than the dev poke); this worker sets the
   <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
@@ -671,7 +716,10 @@
     </tr>
     <tr>
       <td><code>session:{campaignId}:summary</code></td>
-      <td>Running summary, maintained by the ST. JSON string.</td>
+      <td>
+        Running summary, written by the <a href="./slow-thinker.html">Slow Thinker</a> job (not the
+        turn flush as of MYT-69). Read here by no one — the FT never sees it.
+      </td>
     </tr>
     <tr>
       <td><code>session:{campaignId}:usage</code></td>
@@ -804,20 +852,23 @@
     <tr>
       <td><code>src/session/tiers/types.ts</code></td>
       <td>
-        <code>FtTurnContext</code> (public-by-construction; <code>ftContext</code> added,
-        <code>runningSummary</code> removed), the multi-part <code>ConversationMessage</code> /
-        <code>ContentPart</code>, <code>SlowThinker</code> / <code>FastThinker</code> /
+        <code>FtTurnContext</code> (public-by-construction; <code>ftContext</code> +
+        <code>standingDirective</code> added, <code>runningSummary</code> removed), the multi-part
+        <code>ConversationMessage</code> / <code>ContentPart</code>, <code>FastThinker</code> /
         <code>Scribe</code> interfaces, the widened <code>TurnEmitter</code> +
         <code>SkillCheckFramePayload</code> / <code>DiceRollFramePayload</code>,
-        <code>StEvaluation</code> / <code>AssistantMessage</code> / <code>ScribeResult</code>.
+        <code>AssistantMessage</code> / <code>ScribeResult</code>. The <code>SlowThinker</code> /
+        <code>StEvaluation</code> interfaces and the <code>&amp; StSecrets</code> widening are gone
+        (MYT-69 — the ST runs off the turn path).
       </td>
     </tr>
     <tr>
       <td><code>src/session/tiers/stubs.ts</code></td>
       <td>
-        <code>StubSlowThinker</code> / <code>StubFastThinker</code> / <code>StubScribe</code>. The
-        ST and Scribe stubs run in production; <code>StubFastThinker</code> is now test-only — the
-        real <a href="./fast-thinker.html">SonnetFastThinker</a> drives turns in MYT-68.
+        <code>StubFastThinker</code> / <code>StubScribe</code>. The Scribe stub runs in production;
+        <code>StubFastThinker</code> is test-only — the real
+        <a href="./fast-thinker.html">SonnetFastThinker</a> drives turns (MYT-68).
+        <code>StubSlowThinker</code> is gone — MYT-69 retired the in-turn ST seam.
       </td>
     </tr>
     <tr>

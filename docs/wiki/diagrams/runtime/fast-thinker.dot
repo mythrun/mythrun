@@ -14,7 +14,7 @@ digraph fast_thinker {
   nodesep=0.4;
   ranksep=0.7;
 
-  ctx [label="FtTurnContext (public-by-construction)\nftContext · ftHistory · participants\n(no plot/secret field has anywhere to live)", color="ember", fontcolor="ember"];
+  ctx [label="FtTurnContext (public-by-construction)\nftContext · ftHistory · participants ·\nstandingDirective (behavior-bound)\n(no plot/secret field has anywhere to live)", color="ember", fontcolor="ember"];
 
   subgraph cluster_ft {
     label="SonnetFastThinker.render(ctx, emit)";
@@ -22,7 +22,7 @@ digraph fast_thinker {
     color="ember";
     fontcolor="ember";
 
-    build [label="buildModelMessages\nsystem (ft-system.txt) + full transcript\nsliding cache breakpoints (§3.9)"];
+    build [label="buildModelMessages\nsystem (ft-system.txt) + full transcript\nsliding cache breakpoints (§3.9)\n+ standing directive as raw post-breakpoint tail"];
     loop  [label="streamTextWithTools (Sonnet)\nstopWhen stepCountIs(FT_MAX_TOOL_STEPS)\nprepareStep → final-step prose close"];
     consume [label="consume fullStream IN PART ORDER\n(the SINGLE emission point)\nerror/abort parts → throw", color="ember", fontcolor="ember"];
   }
