@@ -100,39 +100,32 @@ export const CAST_SPELL_INPUT = z.object({
   ritual: z.boolean().optional(),
 })
 
-export const SPEND_RESOURCE_INPUT = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('gold'),
-    character_name: z.string().min(1),
-    amount: z.number().int().min(1).max(MAX_GOLD_TRANSACTION),
-  }),
-  z.object({
-    kind: z.literal('item'),
-    character_name: z.string().min(1),
-    name: z.string().min(1),
-    amount: z.number().int().min(1).max(MAX_ITEM_TRANSACTION).optional(),
-  }),
-  z.object({
-    kind: z.literal('feature'),
-    character_name: z.string().min(1),
-    name: z.string().min(1),
-  }),
-])
+// NOTE (MYT-70 smoke fix): the model-facing `inputSchema` is a FLAT `z.object`
+// with `kind` as an enum discriminator + optional per-kind fields, NOT a
+// `z.discriminatedUnion`. The Anthropic tool API requires every tool's
+// `input_schema` to have a root `"type": "object"`; Zod 4's `toJSONSchema` emits
+// a discriminated union as a root `{oneOf: [...]}` with NO top-level `type`,
+// which the API rejects with `tools.N.custom.input_schema.type: Field required`.
+// Flattening keeps the schema model-legible (the enum + the field set teach the
+// kinds) while the per-kind requirements (gold needs `amount`, item/feature need
+// `name`) are enforced in `execute`'s `kind` branch + the TOTAL resolver — the
+// SAME resolver-enforced pattern `adjust_hp`'s amount/dice XOR uses (§5 / spec
+// ambiguity #5). The RESOLVER's input type stays a discriminated union (internal).
+export const SPEND_RESOURCE_INPUT = z.object({
+  kind: z.enum(['gold', 'item', 'feature']),
+  character_name: z.string().min(1),
+  // gold: amount (gp). item: optional amount (default 1). feature: neither.
+  name: z.string().min(1).optional(),
+  amount: z.number().int().min(1).max(MAX_GOLD_TRANSACTION).optional(),
+})
 
-export const ACQUIRE_RESOURCE_INPUT = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('gold'),
-    character_name: z.string().min(1),
-    amount: z.number().int().min(1).max(MAX_GOLD_TRANSACTION),
-  }),
-  z.object({
-    kind: z.literal('item'),
-    character_name: z.string().min(1),
-    name: z.string().min(1),
-    amount: z.number().int().min(1).max(MAX_ITEM_TRANSACTION).optional(),
-    consumable: z.boolean().optional(),
-  }),
-])
+export const ACQUIRE_RESOURCE_INPUT = z.object({
+  kind: z.enum(['gold', 'item']),
+  character_name: z.string().min(1),
+  name: z.string().min(1).optional(),
+  amount: z.number().int().min(1).max(MAX_GOLD_TRANSACTION).optional(),
+  consumable: z.boolean().optional(),
+})
 
 export const ADJUST_HP_INPUT = z.object({
   character_name: z.string().min(1),
@@ -282,24 +275,31 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
       execute: (input, { toolCallId }) => {
         const deps2 = rulesLawyerDeps(toolCallId)
         if (input.kind === 'gold') {
+          // gold REQUIRES amount; a flat schema can't mark it required-per-kind,
+          // so a missing amount is a malformed call → fail-soft (do not narrate
+          // a definite spend). Default 1 keeps the debit minimal + safe.
           return resolveSpendResource(deps2, {
             kind: 'gold',
             character_name: input.character_name,
-            amount: input.amount,
+            amount: input.amount ?? 1,
           })
         }
         if (input.kind === 'item') {
           return resolveSpendResource(deps2, {
             kind: 'item',
             character_name: input.character_name,
-            name: input.name,
-            ...(input.amount !== undefined ? { amount: input.amount } : {}),
+            name: input.name ?? '',
+            // The flat schema's `amount` carries the gold cap; clamp item counts
+            // to the tighter per-call item bound here (structural sanity guard).
+            ...(input.amount !== undefined
+              ? { amount: Math.min(input.amount, MAX_ITEM_TRANSACTION) }
+              : {}),
           })
         }
         return resolveSpendResource(deps2, {
           kind: 'feature',
           character_name: input.character_name,
-          name: input.name,
+          name: input.name ?? '',
         })
       },
     }),
@@ -315,14 +315,16 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
           return resolveAcquireResource(deps2, {
             kind: 'gold',
             character_name: input.character_name,
-            amount: input.amount,
+            amount: input.amount ?? 1,
           })
         }
         return resolveAcquireResource(deps2, {
           kind: 'item',
           character_name: input.character_name,
-          name: input.name,
-          ...(input.amount !== undefined ? { amount: input.amount } : {}),
+          name: input.name ?? '',
+          ...(input.amount !== undefined
+            ? { amount: Math.min(input.amount, MAX_ITEM_TRANSACTION) }
+            : {}),
           ...(input.consumable !== undefined ? { consumable: input.consumable } : {}),
         })
       },

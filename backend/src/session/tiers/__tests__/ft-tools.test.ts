@@ -14,6 +14,7 @@
 // config, and skill-check.ts is first-party so we exercise it for real.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import * as ai from 'ai'
 import type { ToolExecutionOptions, ToolSet } from 'ai'
 import {
@@ -483,6 +484,30 @@ describe('ACQUIRE_RESOURCE_INPUT schema', () => {
   })
 })
 
+// Regression (MYT-70 smoke): the Anthropic tool API requires every tool's
+// `input_schema` to have a root `"type": "object"`. Zod 4's `toJSONSchema`
+// emits a `z.discriminatedUnion` as a root `{oneOf: [...]}` with NO top-level
+// `type`, which the API rejects ("tools.N.custom.input_schema.type: Field
+// required") — caught only at a real LLM call, not by `safeParse` tests. Every
+// FT tool input schema MUST therefore be a flat object (kind-as-enum, not a
+// root union). This pins that invariant so a future re-introduction of a root
+// discriminated union fails here instead of at runtime against Anthropic.
+describe('every FT tool input schema serializes with root type:object (Anthropic requirement)', () => {
+  it.each([
+    ['ROLL_DICE_INPUT', ROLL_DICE_INPUT],
+    ['ROLL_SKILL_CHECK_INPUT', ROLL_SKILL_CHECK_INPUT],
+    ['CAST_SPELL_INPUT', CAST_SPELL_INPUT],
+    ['SPEND_RESOURCE_INPUT', SPEND_RESOURCE_INPUT],
+    ['ACQUIRE_RESOURCE_INPUT', ACQUIRE_RESOURCE_INPUT],
+    ['ADJUST_HP_INPUT', ADJUST_HP_INPUT],
+    ['UPDATE_CONDITION_INPUT', UPDATE_CONDITION_INPUT],
+    ['TAKE_REST_INPUT', TAKE_REST_INPUT],
+  ])('%s has root type:object', (_name, schema) => {
+    const json = z.toJSONSchema(schema) as { type?: unknown }
+    expect(json.type).toBe('object')
+  })
+})
+
 describe('ADJUST_HP_INPUT schema', () => {
   it('accepts amount-only, dice-only (XOR enforced in the resolver)', () => {
     expect(
@@ -803,6 +828,52 @@ describe('spend_resource execute', () => {
     expect(result.payload.kind).toBe('feature')
     expect(debitFeatureUse).toHaveBeenCalledWith(CHAR.id, 'Second Wind')
   })
+
+  // Flat-schema defensive arms (MYT-70 smoke fix): the model-facing schema marks
+  // name/amount optional, so `execute` defends per-kind. A malformed call (gold
+  // without amount, item/feature without name) must not throw — it fail-softs to
+  // a safe default (amount→1, name→'') and the TOTAL resolver handles it.
+  it('gold spend WITHOUT amount defaults to 1 (no throw)', async () => {
+    const debitGold = vi.fn().mockResolvedValue({ outcome: 'debited', gold: 9 })
+    const ledger = fakeLedger({
+      findLedgerCharacterByName: vi.fn().mockResolvedValue(foundChar()),
+      findLedgerEvent: vi.fn().mockResolvedValue(false),
+      writeLedgerEvent: vi.fn().mockResolvedValue('evt'),
+      debitGold,
+    })
+    const exec = requireExecute(buildFtTools(makeDeps(foundMech(makeCharacter(), []), ledger)), 'spend_resource')
+    const result = (await exec({ kind: 'gold', character_name: 'Vire' }, callOpts())) as { ok: boolean }
+    expect(result.ok).toBe(true)
+    expect(debitGold).toHaveBeenCalledWith(CHAR.id, 1)
+  })
+
+  it('item spend clamps an over-cap amount to MAX_ITEM_TRANSACTION and defaults a missing name', async () => {
+    const debitItem = vi.fn().mockResolvedValue({ outcome: 'absent' })
+    const ledger = fakeLedger({
+      findLedgerCharacterByName: vi.fn().mockResolvedValue(foundChar()),
+      findLedgerEvent: vi.fn().mockResolvedValue(false),
+      writeLedgerEvent: vi.fn().mockResolvedValue('evt'),
+      debitItem,
+    })
+    const exec = requireExecute(buildFtTools(makeDeps(foundMech(makeCharacter(), []), ledger)), 'spend_resource')
+    // No name (→ ''), amount above the per-call item cap (→ clamped to 99).
+    await exec({ kind: 'item', character_name: 'Vire', amount: 5000 }, callOpts())
+    expect(debitItem).toHaveBeenCalledWith(CHAR.id, '', 99)
+  })
+
+  it('feature spend WITHOUT name defaults to empty (no throw)', async () => {
+    const debitFeatureUse = vi.fn().mockResolvedValue({ outcome: 'untracked' })
+    const ledger = fakeLedger({
+      findLedgerCharacterByName: vi.fn().mockResolvedValue(foundChar()),
+      findLedgerEvent: vi.fn().mockResolvedValue(false),
+      writeLedgerEvent: vi.fn().mockResolvedValue('evt'),
+      debitFeatureUse,
+    })
+    const exec = requireExecute(buildFtTools(makeDeps(foundMech(makeCharacter(), []), ledger)), 'spend_resource')
+    const result = (await exec({ kind: 'feature', character_name: 'Vire' }, callOpts())) as { ok: boolean }
+    expect(result.ok).toBe(true)
+    expect(debitFeatureUse).toHaveBeenCalledWith(CHAR.id, '')
+  })
 })
 
 describe('acquire_resource execute', () => {
@@ -874,6 +945,34 @@ describe('acquire_resource execute', () => {
     expect(result.payload.kind).toBe('gold')
     expect(result.payload.gold).toBe(120)
     expect(creditGold).toHaveBeenCalledWith(CHAR.id, 100)
+  })
+
+  // Flat-schema defensive arms (MYT-70 smoke fix) — credit side.
+  it('gold credit WITHOUT amount defaults to 1', async () => {
+    const creditGold = vi.fn().mockResolvedValue(1)
+    const ledger = fakeLedger({
+      findLedgerCharacterByName: vi.fn().mockResolvedValue(foundChar()),
+      findLedgerEvent: vi.fn().mockResolvedValue(false),
+      writeLedgerEvent: vi.fn().mockResolvedValue('evt'),
+      creditGold,
+    })
+    const exec = requireExecute(buildFtTools(makeDeps(foundMech(makeCharacter(), []), ledger)), 'acquire_resource')
+    await exec({ kind: 'gold', character_name: 'Vire' }, callOpts())
+    expect(creditGold).toHaveBeenCalledWith(CHAR.id, 1)
+  })
+
+  it('item credit clamps an over-cap amount to MAX_ITEM_TRANSACTION and defaults a missing name', async () => {
+    const acquireItem = vi.fn().mockResolvedValue(99)
+    const ledger = fakeLedger({
+      findLedgerCharacterByName: vi.fn().mockResolvedValue(foundChar()),
+      findLedgerEvent: vi.fn().mockResolvedValue(false),
+      writeLedgerEvent: vi.fn().mockResolvedValue('evt'),
+      acquireItem,
+    })
+    const exec = requireExecute(buildFtTools(makeDeps(foundMech(makeCharacter(), []), ledger)), 'acquire_resource')
+    await exec({ kind: 'item', character_name: 'Vire', amount: 5000 }, callOpts())
+    // name → '', amount → clamped to 99, consumable → resolver default (false).
+    expect(acquireItem).toHaveBeenCalledWith(CHAR.id, '', 99, false)
   })
 })
 
