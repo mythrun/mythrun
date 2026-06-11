@@ -1,0 +1,437 @@
+<!-- source: backend/src/session/rules-lawyer.ts -->
+<!-- source: backend/src/session/rules-lawyer-resources.ts -->
+<!-- source: backend/src/session/rules-lawyer-vitals.ts -->
+<!-- source: backend/src/session/rules-lawyer-replay.ts -->
+<!-- source: backend/src/repo/characters-ledger.ts -->
+<!-- source: backend/src/session/srd/spell-slots.ts -->
+<!-- source: backend/migrations/025_character_ledger.sql -->
+<!-- source: docs/superpowers/plans/2026-06-10-myt-70-rules-lawyer.md -->
+<!-- source-hash: sha256:7adc2eb4121a419bc44ee63b5f7580ad030d4a08f2537e1b8e694c51289f3002 -->
+<!-- last-ticket: MYT-70 -->
+
+<h1>Character ledger &amp; the Rules Lawyer</h1>
+
+<p class="lead">
+  The shared live per-character ledger — HP, spell slots, gold, inventory, limited-feature uses, and
+  conditions, held PG-direct in <code>characters</code> and its satellite tables — and the
+  <strong>Rules Lawyer</strong>, the deterministic adjudication service that debits and credits it
+  when the <a href="./fast-thinker.html">Fast Thinker</a> calls a resource tool. Casting a spell
+  decrements a slot; an over-spend is rejected with an authoritative constraint the FT narrates;
+  every applied mutation persists. It is plain code, not an LLM tier: scarce numbers are moved by a
+  guard-predicate <code>UPDATE</code>, never by a model's say-so.
+</p>
+
+<!-- @diagram: runtime/character-ledger -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The ledger is the mutable companion to character creation's static sheet. When the
+  <a href="./character-creation.html">character-sheet stage</a> finalizes a PC it seeds the opening
+  balances — gold, a hit-dice pool, caster progression, the SRD-derived spell slots — and from then
+  on the only thing that moves those numbers out of combat is the Rules Lawyer. The FT's tool belt
+  (built by <code>buildFtTools</code>) gained six ledger tools alongside the
+  <a href="./fast-thinker.html">dice and skill-check tools</a>:
+</p>
+
+<ul>
+  <li>
+    <code>cast_spell</code> — spend a slot for a known, prepared spell (cantrips + rituals skip the
+    slot).
+  </li>
+  <li><code>spend_resource</code> — debit gold, a tracked item, or a limited-feature use.</li>
+  <li><code>acquire_resource</code> — credit gold or an item the fiction granted.</li>
+  <li><code>adjust_hp</code> — damage or heal, dice rolled in the resolver.</li>
+  <li><code>update_condition</code> — apply or clear a 5e condition.</li>
+  <li><code>take_rest</code> — short or long rest for the whole party.</li>
+</ul>
+
+<p>
+  Each tool's <code>execute</code> delegates to a resolver and returns its result <em>as data</em>;
+  the resolver does the whole job — resolve the actor, run the guarded mutation, write the journal
+  row, and hand back a <code>LedgerResolution</code>. On success the
+  <a href="./session-turn.html">conductor</a>'s consume loop emits a
+  <code>ledger_update</code> frame; on a rejection the structured constraint flows back to the model
+  unchanged, and the FT narrates <em>how</em> the attempt falls short — never a frame, never a
+  throw.
+</p>
+
+<h2>PG-direct, not a Redis cache</h2>
+
+<p>
+  The ledger lives in Postgres and is read and written directly there. There is no Redis projection
+  of character state to keep coherent — a debit is a single <code>UPDATE</code> against
+  <code>characters</code> (or a satellite table), and the per-turn snapshot the FT sees is a fresh
+  read.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>PG-direct over a Redis mirror</strong> — the ledger holds money and scarce resources, so
+  it is exactly the kind of state where a stale cached copy is a correctness bug, not a latency win.
+  The same logic that retired the <a href="./session-turn.html">FT transcript's Redis hot cache</a>
+  applies: there is no fan-out for a cache to serve (the resolver reads its own writes within a
+  turn), and the expensive repeated cost in a turn is LLM tokens, not an indexed row read. Keeping
+  the authoritative numbers in one store means the combat engine and the out-of-combat Rules Lawyer
+  share one source of truth rather than reconciling two.
+</aside>
+
+<h2>Binding vs. informational: the rock principle</h2>
+
+<p>
+  Every rejection a resolver returns is one of two kinds, and the distinction is the heart of the
+  design. A <strong>binding</strong> rejection means a scarce, tracked resource was exhausted or
+  insufficient — not enough gold, no castable slot, the spell is known but unprepared, a feature's
+  uses are spent. The constraint is authoritative: the FT narrates how the attempt falls short, the
+  same posture as a failed skill check. An <strong>informational</strong> miss means there was no
+  row to debit — the named item or feature simply isn't on the sheet. That is non-binding, and the
+  constraint hands the FT a three-branch choice it reasons over.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Scarcity is what makes a constraint binding — the rock is free</strong> — a player who
+  picks up a rock to throw should never be told "you don't have a rock." Improvised and
+  environmental objects are narrative, not ledger state, so <code>spend_resource</code> on an absent
+  item returns an <em>informational</em> miss, and the
+  <a href="./fast-thinker.html">ft-system prompt</a> tells the model: a plausibly-at-hand object →
+  narrate it freely; a thing the transcript shows the fiction already granted → call
+  <code>acquire_resource</code> now, then proceed; a never-established claim → correct the player
+  gently. Only things that genuinely run out — gold, slots, charges, HP — produce a binding
+  rejection. An unknown <em>spell</em> always takes the correction branch: there is no environmental
+  fireball.
+</aside>
+
+<h2>The journal is checked first — and that is what makes idempotency safe</h2>
+
+<p>
+  Every applied mutation writes one row to <code>ledger_events</code>, an append-only journal keyed
+  uniquely on <code>(turn_id, tool_call_id, character_id)</code>, in the
+  <em>same transaction</em> as the mutation. The shared helper <code>applyWithJournal</code> opens
+  that transaction and, before touching any mutable column, asks the journal whether this exact tool
+  call already committed (<code>findLedgerEvent</code>). If it has, the resolver short-circuits to a
+  replay builder that reports the current post-mutation state and mutates nothing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Check the journal FIRST, not the journal's <code>ON CONFLICT</code> alone</strong> — the
+  obvious idempotency design is "write the mutation, let the journal's unique constraint reject the
+  duplicate." It double-spends. A BullMQ redelivery of an in-flight turn job would re-run the
+  guarded debit, and the debit commits <em>before</em> the journal's <code>ON CONFLICT</code> can
+  fire — two slots gone for one cast. Checking the journal as the first statement inside the
+  transaction makes a replay a true no-op: it returns the current state and never re-runs the guard.
+  The <code>ON CONFLICT DO NOTHING</code> on the journal write remains as the belt-and-suspenders
+  backstop.
+</aside>
+
+<p>
+  The resolvers are <strong>total</strong>: every game-rule failure arm returns a structured
+  constraint rather than throwing. An uncaught throw would surface to the SDK as a tool-error part
+  the FT loop continues past — letting the model narrate an outcome that no adjudication produced, a
+  Principle #4/#5 violation. Infrastructure failures (Postgres down, a transaction throw) follow the
+  skill-check fail-soft precedent: a generic "could not be resolved" constraint that tells the FT
+  <em>not</em> to narrate a definite outcome, logged for the operator.
+</p>
+
+<h2>Guard-predicate writes: rowcount is the adjudication</h2>
+
+<p>
+  The <code>LedgerOps</code> projection (<code>charactersLedgerNs</code>, a sibling binder composed
+  into <code>repo.characters</code>) is where the scarce-resource discipline lives. Every debit is a
+  single guard-predicate statement —
+  <code>UPDATE … SET col = col - $n WHERE id = $1 AND col &gt;= $n RETURNING col</code>. A returned
+  row means the debit applied; <strong>zero rows means the guard failed</strong>, which is the
+  rejection. There is no <code>SELECT</code>-then-<code>UPDATE</code> anywhere on the success path:
+  the check and the write are one atomic statement, so two concurrent debits can't both read
+  "enough" and both spend. The credit side is a single <code>ON CONFLICT</code>
+  upsert against the functional name index.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One guard statement, not read-then-write</strong> — a <code>SELECT balance</code> followed
+  by a decision followed by an <code>UPDATE</code> is the classic TOCTOU race; it is the same trap
+  the <a href="../data/repository.html">credit ledger</a> avoids by locking the user row. Here the
+  guard predicate <em>is</em> the lock: Postgres evaluates <code>col &gt;= $n</code> and the
+  decrement in one statement under the row's write lock, so rowcount-0 is a serialized rejection,
+  not a lost-update. The one extra read on the rejection path (to report the current balance in the
+  binding constraint) never runs on the success path.
+</aside>
+
+<p>
+  Two cross-cutting invariants are pinned to single owners so inlined copies can't drift. The
+  <strong>§5a HP↔unconscious</strong> pair — clamping HP to <code>[0, max]</code> and syncing the
+  HP-derived <code>unconscious</code> condition (apply at 0, clear above 0) — runs through one
+  helper, <code>applyHpAndSyncUnconscious</code>, that <code>adjust_hp</code>, the short-rest heal,
+  and the long-rest restore all call. Clearing <code>unconscious</code> by hand while a character
+  sits at 0 HP is a binding rejection: the condition is HP-derived; heal them first.
+</p>
+
+<h2>Dice are rolled inside the resolver</h2>
+
+<p>
+  When <code>adjust_hp</code> takes a dice expression (<code>"2d4+2"</code>) or a short rest spends
+  hit dice, the numbers are rolled by the deterministic
+  <a href="./fast-thinker.html">dice engine</a> <em>inside the resolver</em> — never invented by the
+  model (Principle #4). The dice expression is parsed by a structural regex (mechanical computation,
+  ZFC-exempt), rolled over <code>crypto.randomInt</code>, and the rolled faces ride the payload so
+  the FT can narrate the specific result.
+</p>
+
+<h2>Prep co-evolution: the ledger is seeded, structured, and de-duplicated at creation</h2>
+
+<p>
+  The Rules Lawyer can only debit what character creation laid down coherently, so the
+  <a href="./character-creation.html">character-sheet stage</a> grew to emit the ledger's structure.
+  The schema now asks the model for <code>starting_gold</code>, a <code>hit_die</code> size, a
+  <code>spellcasting_progression</code> enum (<code>full | half | third | pact | none</code>), and
+  per-row flags: <code>consumable</code> on equipment, <code>ritual</code> on spells, a
+  <code>max_uses</code> + <code>recharge</code> pair on limited features. Spell slots are
+  <em>not</em> asked of the model — code derives them from <code>(progression, level)</code> against
+  the SRD slot tables in <code>spell-slots.ts</code> and writes the full per-level rows at finalize.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The model emits structure; code derives the slots (ZFC)</strong> — the free-text
+  <code>class</code> name is never string-matched. The model makes one bounded judgment — which of
+  five progression archetypes this character is — and the deterministic SRD tables turn
+  <code>(progression, level)</code> into the slot grid. A generated sheet that is Zod-valid but
+  mechanically incoherent (a level-9 spell on a level-1 caster) is caught by a coherence check that
+  triggers a full regeneration, up to a bounded number of attempts, then terminal-fails loud rather
+  than persisting a brickable character.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The <code>prepared</code> pin means "currently castable," not "uses the prepare
+    mechanic"</strong
+  >
+  — the Rules Lawyer keys casting on <code>prepared</code>, so the prep prompt is explicit that a
+  sorcerer (which never "prepares") must emit all known leveled spells as
+  <code>prepared: true</code>. Emitting them <code>false</code> because "sorcerers don't prepare"
+  would brick every leveled cast. Prepare-casters emit a sensible daily list; cantrips are always
+  castable regardless of the flag.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Dedupe-merge before insert, because the name index is the mutation key</strong> — the
+  Rules Lawyer matches items, features, and spells by normalized name, so migration 025 puts a
+  unique index on <code>(character_id, lower(btrim(name)))</code>. That index is load-bearing: a
+  debit <code>UPDATE</code> that matched two rows of the same item would read "rowcount 2" as
+  success while only the guard intended one, and the acquire upsert would have no conflict target.
+  So prep mechanically dedupe-merges the model's output first — equipment stacks SUM quantities,
+  features and spells keep-first — so an LLM duplicate can't terminal-fail the insert or corrupt the
+  debit math.
+</aside>
+
+<h2>The party-ledger snapshot: numbers AND nouns</h2>
+
+<p>
+  Once per turn the worker reads <code>readPartyLedgerSnapshot</code> — every session participant's
+  full mechanical state — and the <a href="./fast-thinker.html">Fast Thinker</a> renders it as a
+  <code>[Party ledger: …]</code> tail message: HP, hit dice, gold, the slot ledger, active
+  conditions, tracked features with uses, spells grouped by level with castable/ritual flags, and
+  the full equipment list with consumables flagged.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The nouns are the showstopper, not a nicety</strong> — an early shape carried only the
+  numbers (HP, gold, slot counts). That silently breaks the tools: the FT can't call
+  <code>cast_spell("fear spell")</code> or <code>spend_resource</code> on an item it can't name, so
+  slot enforcement never engages and the player's paraphrase has nothing to resolve against. The
+  snapshot therefore lists the canonical names, and the prompt tells the model to reuse them
+  exactly. The block is turn-<em>start</em> state: within a turn the tool-result payloads are the
+  live truth, not this tail.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The snapshot rides after the cache breakpoints, before the standing directive</strong> —
+  like the <a href="./slow-thinker.html">standing directive</a>, the ledger tail is a render-only
+  message appended <em>after</em> the FT's per-message cache breakpoints, so it sits in the
+  always-uncached zone and never perturbs the cached prefix or shifts the sliding-breakpoint index.
+  The merge order (ledger tail, then directive tail) is pinned. It is never persisted to the
+  transcript and never pushed into the FT history.
+</aside>
+
+<h2>The frame and its replay</h2>
+
+<p>
+  A successful mutation emits a <code>ledger_update</code> frame — one flat
+  <a href="./session-transport.html">wire member</a> whose <code>kind</code> discriminates which
+  value fields are populated (<code>hp</code>+<code>maxHp</code>, <code>slotLevel</code>+
+  <code>slotsRemaining</code>, and so on), plus an always-present human-readable
+  <code>summary</code>. It is persisted as one of six DM-turn row types (one per tool) by the
+  <a href="./session-turn.html">transcript codec</a> and live-streamed during the turn (no seq). On
+  reconnect the <a href="./session-transport.html">transport</a> rebuilds the frame from the
+  persisted row's stored <code>LedgerResolution</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A persisted <code>ok:false</code> row replays as nothing — silently</strong> — a rejection
+  is real adjudication and is journaled, but it produced no player-visible state change, so the
+  reconnect path skips it with no warning. A <code>take_rest</code> row, by contrast, carries an
+  array payload (one entry per character) and replays as one frame each. Only a genuinely corrupt
+  row warns; an expected rejection is not a corruption.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="drive-a-ledger-mutation">Drive a ledger mutation end-to-end</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes (<code>pnpm db:up</code>, <code>pnpm dev</code>, the
+    worker), start a session, and open a WebSocket — the same setup as
+    <a href="./session-turn.html#fire-a-dm-turn-end-to-end">firing a DM turn</a>.
+  </li>
+  <li>
+    Drive a turn whose prose warrants a cast or a spend (e.g. a player declares they cast a known,
+    prepared leveled spell). Watch for a <code>ledger_update</code> frame on the socket alongside
+    the <code>text_delta</code> stream.
+  </li>
+  <li>
+    Confirm the mutation is durable:
+    <code>SELECT slots_remaining FROM character_spell_slots WHERE character_id = '&lt;id&gt;'</code>
+    shows the decremented slot, and
+    <code>SELECT tool, delta FROM ledger_events WHERE turn_id = '&lt;turnId&gt;'</code> shows the
+    journal row.
+  </li>
+  <li>
+    To see a binding rejection, drive an over-spend (cast with no slot left, spend more gold than
+    the character has). Expect no <code>ledger_update</code> frame and FT prose that narrates the
+    shortfall — the constraint is the outcome.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The Rules Lawyer is invoked entirely through the <a href="./fast-thinker.html">Fast Thinker</a>'s
+  tool belt — <code>buildFtTools</code> wires the six ledger tools beside the dice and skill-check
+  tools, threading the scoped <code>LedgerOps</code> surface and a per-turn transaction runner from
+  the <a href="./session-turn.html">turn worker</a>. The
+  <a href="../data/repository.html">repository layer</a> owns the <code>LedgerOps</code> binder
+  (<code>characters-ledger.ts</code>, composed into <code>repo.characters</code>); the
+  <a href="../data/migrations.html">migration</a> that adds the ledger substrate is 025. The opening
+  balances are seeded by <a href="./character-creation.html">character creation</a>'s sheet stage,
+  whose schema and prompt co-evolved to emit the ledger's structure. The
+  <code>ledger_update</code> frame joins the mechanical frames on the
+  <a href="./session-transport.html">transport</a>'s wire contract and replays from the persisted DM
+  rows. The same per-character state is the contract the combat engine (later) shares.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>Migration 025 — ledger substrate</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Object</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <code>characters.gold / hit_die / hit_dice_remaining / spellcasting_progression</code>
+      </td>
+      <td>Mutable ledger columns on the existing character row; bounded by CHECKs.</td>
+    </tr>
+    <tr>
+      <td><code>characters_hp_bounds</code></td>
+      <td>HP invariant (<code>0 ≤ hit_points ≤ max_hit_points</code>) — 001 shipped HP bare.</td>
+    </tr>
+    <tr>
+      <td><code>character_spell_slots</code></td>
+      <td>
+        One row per <code>(character, slot_level)</code> with a <code>remaining/max</code> pair.
+      </td>
+    </tr>
+    <tr>
+      <td><code>character_conditions</code></td>
+      <td>The closed 5e condition list; <code>level</code> only for exhaustion (1–6).</td>
+    </tr>
+    <tr>
+      <td><code>character_features.max_uses / uses_remaining / recharge</code></td>
+      <td>Limited-feature counters; NULL <code>max_uses</code> = untracked (at-will).</td>
+    </tr>
+    <tr>
+      <td><code>character_equipment.consumable</code>, <code>character_spells.ritual</code></td>
+      <td>Prep-structured flags (not name-matched); a quantity floor on equipment.</td>
+    </tr>
+    <tr>
+      <td>Unique name indexes on equipment / features / spells</td>
+      <td><code>(character_id, lower(btrim(name)))</code> — the name-keyed mutation substrate.</td>
+    </tr>
+    <tr>
+      <td><code>ledger_events</code></td>
+      <td>
+        Append-only journal, one row per applied mutation, unique on
+        <code>(turn_id, tool_call_id, character_id)</code> — the §10 idempotency key.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/rules-lawyer.ts</code></td>
+      <td>
+        The §4 contract: <code>LedgerResolution</code>, the scoped <code>RulesLawyerDeps</code>,
+        name normalization, <code>resolveLedgerCharacter</code>, and the shared
+        <code>applyWithJournal</code> journal-first transaction helper.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/rules-lawyer-resources.ts</code></td>
+      <td>
+        <code>resolveCastSpell</code> / <code>resolveSpendResource</code> /
+        <code>resolveAcquireResource</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/rules-lawyer-vitals.ts</code></td>
+      <td>
+        <code>resolveAdjustHp</code> / <code>resolveUpdateCondition</code> /
+        <code>resolveTakeRest</code> (dice rolled in-resolver).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/rules-lawyer-replay.ts</code></td>
+      <td>
+        <code>makeReplayBuilders</code> — the idempotent-replay payload builders that report current
+        state.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/characters-ledger.ts</code></td>
+      <td>
+        <code>charactersLedgerNs</code> / <code>LedgerOps</code> — the guard-predicate mutation
+        substrate, the §5a HP single owner, and <code>readPartyLedgerSnapshot</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/srd/spell-slots.ts</code></td>
+      <td>
+        The SRD 5e slot-progression tables + the <code>(progression, level)</code> lookup math.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/session/rules-lawyer.ts</code>,
+  <code>backend/src/session/rules-lawyer-resources.ts</code>,
+  <code>backend/src/session/rules-lawyer-vitals.ts</code>,
+  <code>backend/src/session/rules-lawyer-replay.ts</code>,
+  <code>backend/src/repo/characters-ledger.ts</code>,
+  <code>backend/src/session/srd/spell-slots.ts</code>,
+  <code>backend/migrations/025_character_ledger.sql</code>. Implementation plan:
+  <code>docs/superpowers/plans/2026-06-10-myt-70-rules-lawyer.md</code>.
+</p>

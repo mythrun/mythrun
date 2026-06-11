@@ -10,7 +10,7 @@
 <!-- source: backend/src/repo/session-participants-errors.ts -->
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
-<!-- source-hash: sha256:5843ac7c7b48a5bc352bdd8da20eca8474ff9dd2dfd0153fc45591d2b870a3f9 -->
+<!-- source-hash: sha256:0de5870af4edee9dc404a0d8768161ddbe8aff68f0380c5b8c6623b3c7b1d301 -->
 <!-- last-ticket: MYT-68 -->
 
 <h1>Session transport</h1>
@@ -321,11 +321,13 @@
   that includes the DM-turn rows: a <code>player_message</code> row replays as a
   <code>player_message</code> frame; a <code>dm_text</code> row replays as a consolidated
   <code>dm_message</code> frame; <code>skill_check</code> / <code>dice_roll</code> rows are
-  reconstructed from their stored JSON content into their respective frames. So a reconnecting
-  client sees the prior DM turns, not just the player chat. Author display and character names are
-  resolved through two in-memory maps built <em>once</em> from campaign-wide reads — no per-message
-  DB lookup. An author who has since left the campaign falls back to a stable "Former player"
-  byline; their prose history still replays intact.
+  reconstructed from their stored JSON content into their respective frames; and the six MYT-70
+  <a href="./character-ledger.html">ledger-tool</a> rows reconstruct into
+  <code>ledger_update</code> frame(s) from the row's persisted <code>LedgerResolution</code>. So a
+  reconnecting client sees the prior DM turns, not just the player chat. Author display and
+  character names are resolved through two in-memory maps built <em>once</em> from campaign-wide
+  reads — no per-message DB lookup. An author who has since left the campaign falls back to a stable
+  "Former player" byline; their prose history still replays intact.
 </p>
 
 <aside class="wiki-rationale">
@@ -336,6 +338,17 @@
   <a href="./session-turn.html">turn worker</a>'s history reconstruction, which <em>does</em> fail
   loud on an incoherent transcript — there, an incoherent row is a persistence-layer invariant
   violation that must crash the turn; here, it is one missing frame in a best-effort replay.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A ledger row replays as 0, 1, or N frames — and <code>ok:false</code> is silent</strong> —
+  the <a href="./character-ledger.html">Rules Lawyer</a> persists a row for every adjudicated call,
+  including rejections, but only a successful mutation has a player-visible delta to replay. So the
+  reconstructor discriminates on the stored output's <code>ok</code> field first: an
+  <code>ok:false</code> rejection replays as an empty array with <strong>no warning</strong> (it is
+  expected, not corruption); an <code>ok:true</code> single payload replays as one frame; and a
+  <code>take_rest</code> row, whose payload is an <em>array</em> (one entry per rested character),
+  replays as one frame each. A genuinely malformed row still warns and drops, as above.
 </aside>
 
 <aside class="wiki-rationale">
@@ -439,9 +452,13 @@
   — <code>skill_check</code> and <code>dice_roll</code> (server → client), live-streamed during a
   turn with no seq and replayed from the persisted rows on reconnect (then carrying the row seq),
   plus <code>dm_message</code>, a replay-only frame for the consolidated DM prose row (live prose
-  streams as <code>text_delta</code>). The rest — <code>combat_*</code>, <code>session_end</code>,
-  <code>st_evaluation</code>, <code>scribe_result</code>, and the rest — is still deliberately
-  absent until its surface is built.
+  streams as <code>text_delta</code>). MYT-70 adds one more server → client frame,
+  <code>ledger_update</code> — the <a href="./character-ledger.html">Rules Lawyer</a>'s
+  character-sheet delta, one flat member whose <code>kind</code> discriminates which post-mutation
+  value fields are populated, on the same live-then-replayed lifecycle as the mechanical frames. The
+  rest — <code>combat_*</code>, <code>session_end</code>, <code>st_evaluation</code>,
+  <code>scribe_result</code>, and the rest — is still deliberately absent until its surface is
+  built.
 </p>
 
 <aside class="wiki-rationale">
@@ -724,9 +741,9 @@
         <code>CLIENT_FRAME_TYPES</code> (also <code>dm_invoke</code>;
         <code>roll_complete</code> deliberately NOT here) / <code>SERVER_FRAME_TYPES</code> (the
         MYT-66 streaming frames + the MYT-68 <code>skill_check</code> / <code>dice_roll</code> /
-        <code>dm_message</code> frames; no <code>dm_trigger</code> frame) allowlists,
-        <code>ClientFrame</code> / <code>ServerFrame</code> unions,
-        <code>classifyClientFrame</code> tripwire.
+        <code>dm_message</code> frames + the MYT-70 <code>ledger_update</code> frame; no
+        <code>dm_trigger</code> frame) allowlists, <code>ClientFrame</code> /
+        <code>ServerFrame</code> unions, <code>classifyClientFrame</code> tripwire.
       </td>
     </tr>
     <tr>
@@ -754,11 +771,10 @@
       </td>
       <td>
         Composable repo binders — <code>append</code> / <code>listAfterSeq</code> /
-        <code>maxSeq</code>, plus the MYT-68 PG-direct transcript surface (<code
-          >listFtContextRows</code
-        >
-        / <code>turnRowsExist</code> / <code>appendDmTurn</code>), and
-        <code>join</code> (server-side character resolution) / <code>leave</code> /
+        <code>maxSeq</code>, plus the MYT-68 PG-direct transcript surface
+        (<code>listFtContextRows</code>, whose <code>message_type</code> IN-list MYT-70 widened to
+        carry the six ledger-tool rows / <code>turnRowsExist</code> / <code>appendDmTurn</code>),
+        and <code>join</code> (server-side character resolution) / <code>leave</code> /
         <code>list</code>; <code>NoCharacterForParticipantError</code>.
       </td>
     </tr>

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session turn</div>
         <article>
@@ -366,7 +366,12 @@
   history from those rows via one repo read (<code>listFtContextRows</code>) and the
   <code>transcript-codec</code> — the one formatter that maps rows ↔ the Mythrun-owned multi-part
   <code>ConversationMessage</code> shape, both directions, so the round-trip is byte-stable by
-  construction (which the prompt cache depends on).
+  construction (which the prompt cache depends on). MYT-70 extends the codec's row vocabulary with
+  six per-tool ledger row types (one per <a href="./character-ledger.html">Rules Lawyer</a> tool —
+  <code>cast_spell</code> / <code>spend_resource</code> / <code>acquire_resource</code> /
+  <code>adjust_hp</code> / <code>update_condition</code> / <code>take_rest</code>), and
+  <code>listFtContextRows</code> widens its <code>message_type</code> IN-list to carry them, so a
+  persisted ledger mutation reconstructs into the FT's history alongside the prose and roll rows.
 </p>
 
 <aside class="wiki-rationale">
@@ -421,11 +426,11 @@
   <li>
     <strong>FT render</strong> — <code>ft.render(ctx, emit)</code> runs the
     <a href="./fast-thinker.html">Fast Thinker</a>'s tool loop, streaming <code>text_delta</code> /
-    <code>skill_check</code> / <code>dice_roll</code> frames through the latched emitter, and
-    returns a multi-part <code>AssistantMessage</code>; its token usage is accumulated. The standing
-    directive (also worker-resolved) rides the FT context and is appended by the FT as a raw tail
-    message after its cache breakpoints — see the <a href="./fast-thinker.html">Fast Thinker</a>'s
-    prompt assembly.
+    <code>skill_check</code> / <code>dice_roll</code> / <code>ledger_update</code> frames through
+    the latched emitter, and returns a multi-part <code>AssistantMessage</code>; its token usage is
+    accumulated. The standing directive (also worker-resolved) rides the FT context and is appended
+    by the FT as a raw tail message after its cache breakpoints — see the
+    <a href="./fast-thinker.html">Fast Thinker</a>'s prompt assembly.
   </li>
   <li>
     <strong>Scribe</strong> — <code>scribe.extract(ctx)</code> fires async and non-blocking; its
@@ -622,7 +627,15 @@
   <code>characters</code> — the FT prompt roster plus the userId→character-name attribution map. It
   also takes the pending one-shot direction (<code>takeOneShotDirection</code>, a GETDEL) and reads
   the standing directive from the <a href="./slow-thinker.html">Slow Thinker</a>'s
-  <a href="./dm-trigger.html">trigger-state</a> slots, threading both into the controller.
+  <a href="./dm-trigger.html">trigger-state</a> slots, threading both into the controller. MYT-70
+  adds one more per-turn read: <code>readPartyLedgerSnapshot</code> loads every participant's live
+  mechanical state, threaded onto the FT context as the <code>[Party ledger: …]</code> tail (see the
+  <a href="./character-ledger.html">character ledger</a>). The worker also builds the FT's
+  <a href="./character-ledger.html">Rules Lawyer</a> deps here — the scoped
+  <code>LedgerOps</code> surface (<code>repo.characters</code>, a <code>LedgerOps</code> superset,
+  for the pre-mutation reads) and a <code>runInTx</code> runner bound to
+  <code>repo.transaction</code> so each mutation + its journal row commit atomically — and passes
+  both into <code>buildFtTools</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -950,6 +963,15 @@
       <td><code>{ type, turnId, message }</code></td>
       <td>Terminal failure after retries exhausted, so the client stops waiting. No seq.</td>
     </tr>
+    <tr>
+      <td><code>ledger_update</code></td>
+      <td><code>{ type, turnId, characterName, kind, summary, … }</code></td>
+      <td>
+        MYT-70 character-sheet delta the <a href="./character-ledger.html">Rules Lawyer</a> emits on
+        a successful mutation. Live: no seq; reconnect replay carries the row seq. Owned by the
+        <a href="./session-transport.html">transport</a> contract.
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -1077,7 +1099,8 @@
       <td>
         <code>assistantToRows</code> / <code>rowsToConversation</code> — the one formatter between
         <code>session_messages</code> rows and the multi-part <code>ConversationMessage</code>;
-        <code>TranscriptCorruptError</code>.
+        <code>TranscriptCorruptError</code>. MYT-70 added the six ledger-tool row types to
+        <code>DM_MESSAGE_TYPES</code>.
       </td>
     </tr>
     <tr>
@@ -1092,7 +1115,8 @@
       <td>
         <code>createTurnPublisher</code>, <code>TurnPublisher</code> — <code>dmThinking</code> /
         <code>textDelta</code> / <code>turnEnd</code> / <code>turnError</code> /
-        <code>emitFor</code>.
+        <code>emitFor</code>, plus the MYT-70 <code>ledgerUpdate</code> + its
+        <code>emitLedgerUpdate</code> seam on the latched emitter.
       </td>
     </tr>
     <tr>
@@ -1113,7 +1137,9 @@
         <code>SkillCheckFramePayload</code> / <code>DiceRollFramePayload</code>,
         <code>AssistantMessage</code> / <code>ScribeResult</code>. The <code>SlowThinker</code> /
         <code>StEvaluation</code> interfaces and the <code>&amp; StSecrets</code> widening are gone
-        (MYT-69 — the ST runs off the turn path).
+        (MYT-69 — the ST runs off the turn path). MYT-70 added <code>LedgerUpdatePayload</code> and
+        re-exported <code>PartyLedgerSnapshot</code>, and widened <code>TurnEmitter</code> with
+        <code>emitLedgerUpdate</code>.
       </td>
     </tr>
     <tr>

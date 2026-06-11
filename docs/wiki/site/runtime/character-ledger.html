@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Character ledger · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="character-ledger">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html" class="active">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Character ledger</div>
+        <article>
+<h1>Character ledger &amp; the Rules Lawyer</h1>
+
+<p class="lead">
+  The shared live per-character ledger — HP, spell slots, gold, inventory, limited-feature uses, and
+  conditions, held PG-direct in <code>characters</code> and its satellite tables — and the
+  <strong>Rules Lawyer</strong>, the deterministic adjudication service that debits and credits it
+  when the <a href="./fast-thinker.html">Fast Thinker</a> calls a resource tool. Casting a spell
+  decrements a slot; an over-spend is rejected with an authoritative constraint the FT narrates;
+  every applied mutation persists. It is plain code, not an LLM tier: scarce numbers are moved by a
+  guard-predicate <code>UPDATE</code>, never by a model's say-so.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1406pt" height="655pt"
+ viewBox="14.00 14.00 1392.00 641.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 636.73)">
+<title>character_ledger</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-622.33 1373.27,-622.33 1373.27,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_rl</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="348.27,-234.89 348.27,-610.33 879.27,-610.33 879.27,-234.89 348.27,-234.89"/>
+<text xml:space="preserve" text-anchor="middle" x="613.77" y="-596.43" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Rules Lawyer &#160;— &#160;deterministic resolver (TOTAL: never throws on a game rule)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_ops</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="879.27,-129.21 879.27,-334.17 1361.27,-334.17 1361.27,-129.21 879.27,-129.21"/>
+<text xml:space="preserve" text-anchor="middle" x="1120.27" y="-320.27" font-family="Courier,monospace" font-size="11.00">LedgerOps &#160;— &#160;scoped repo projection (charactersLedgerNs)</text>
+</g>
+<!-- ft -->
+<g id="node1" class="node">
+<title>ft</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="348.53,-291.77 0,-291.77 0,-234.89 348.53,-234.89 348.53,-291.77"/>
+<text xml:space="preserve" text-anchor="middle" x="174.27" y="-273.23" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Fast Thinker tool loop</text>
+<text xml:space="preserve" text-anchor="middle" x="174.27" y="-260.03" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">cast_spell · spend_resource · acquire_resource</text>
+<text xml:space="preserve" text-anchor="middle" x="174.27" y="-246.83" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">adjust_hp · update_condition · take_rest</text>
+</g>
+<!-- resolve -->
+<g id="node2" class="node">
+<title>resolve</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="673.33,-567.93 351.2,-567.93 351.2,-511.05 673.33,-511.05 673.33,-567.93"/>
+<text xml:space="preserve" text-anchor="middle" x="512.27" y="-549.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolveLedgerCharacter</text>
+<text xml:space="preserve" text-anchor="middle" x="512.27" y="-536.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(session_participants → normalized name)</text>
+<text xml:space="preserve" text-anchor="middle" x="512.27" y="-522.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">not_found / ambiguous → informational miss</text>
+</g>
+<!-- ft&#45;&gt;resolve -->
+<g id="edge1" class="edge">
+<title>ft&#45;&gt;resolve</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.32,-292.49C171.04,-334.73 175.18,-414.39 219.24,-460.05 237.94,-479.42 288.45,-495.84 342.37,-508.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="341.56,-510.89 348.93,-510.08 342.67,-506.11 341.56,-510.89"/>
+<text xml:space="preserve" text-anchor="middle" x="285.26" y="-428.61" font-family="Courier,monospace" font-size="10.00">tool call + toolCallId</text>
+</g>
+<!-- journal -->
+<g id="node3" class="node">
+<title>journal</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="661.13,-460.05 365.4,-460.05 365.4,-403.17 661.13,-403.17 661.13,-460.05"/>
+<text xml:space="preserve" text-anchor="middle" x="513.27" y="-441.51" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">applyWithJournal — ONE transaction</text>
+<text xml:space="preserve" text-anchor="middle" x="513.27" y="-428.31" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">findLedgerEvent FIRST (§10 idempotency)</text>
+<text xml:space="preserve" text-anchor="middle" x="513.27" y="-415.11" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">then guard UPDATE + writeLedgerEvent</text>
+</g>
+<!-- resolve&#45;&gt;journal -->
+<g id="edge2" class="edge">
+<title>resolve&#45;&gt;journal</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M512.53,-510.39C512.65,-497.73 512.79,-482.61 512.92,-469.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="515.37,-469.31 512.99,-462.29 510.47,-469.26 515.37,-469.31"/>
+</g>
+<!-- journal&#45;&gt;ft -->
+<g id="edge9" class="edge">
+<title>journal&#45;&gt;ft</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M364.76,-403.05C343.49,-396.41 322.36,-388.22 303.23,-378.17 264.97,-358.06 228.75,-324.3 204.49,-298.75"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="206.4,-297.21 199.83,-293.78 202.83,-300.56 206.4,-297.21"/>
+<text xml:space="preserve" text-anchor="middle" x="405.25" y="-369.17" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">LedgerResolution</text>
+<text xml:space="preserve" text-anchor="middle" x="405.25" y="-357.17" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">ok:true → ledger_update frame</text>
+<text xml:space="preserve" text-anchor="middle" x="405.25" y="-345.17" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">ok:false → constraint (no frame)</text>
+</g>
+<!-- dice -->
+<g id="node4" class="node">
+<title>dice</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="653.23,-291.77 377.31,-291.77 377.31,-234.89 653.23,-234.89 653.23,-291.77"/>
+<text xml:space="preserve" text-anchor="middle" x="515.27" y="-273.23" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dice rolled IN the resolver</text>
+<text xml:space="preserve" text-anchor="middle" x="515.27" y="-260.03" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(adjust_hp dice, short&#45;rest hit dice)</text>
+<text xml:space="preserve" text-anchor="middle" x="515.27" y="-246.83" font-family="Courier,monospace" font-size="11.00" fill="#231b12">crypto.randomInt — Principle #4</text>
+</g>
+<!-- journal&#45;&gt;dice -->
+<g id="edge4" class="edge">
+<title>journal&#45;&gt;dice</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M513.6,-402.78C513.94,-374.84 514.46,-331.66 514.83,-300.95"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="517.27,-301.1 514.91,-294.07 512.37,-301.04 517.27,-301.1"/>
+</g>
+<!-- guard -->
+<g id="node5" class="node">
+<title>guard</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1148.93,-291.77 879.61,-291.77 879.61,-234.89 1148.93,-234.89 1148.93,-291.77"/>
+<text xml:space="preserve" text-anchor="middle" x="1014.27" y="-273.23" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guard&#45;predicate writes</text>
+<text xml:space="preserve" text-anchor="middle" x="1014.27" y="-260.03" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UPDATE … WHERE &lt;guard&gt; RETURNING</text>
+<text xml:space="preserve" text-anchor="middle" x="1014.27" y="-246.83" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(rowcount 0 = adjudicated rejection)</text>
+</g>
+<!-- journal&#45;&gt;guard -->
+<g id="edge3" class="edge">
+<title>journal&#45;&gt;guard</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M661.56,-427.32C822.9,-422.16 1061.82,-409.32 1090.27,-378.17 1112.74,-353.56 1087.78,-321.74 1060.61,-298.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1062.37,-296.29 1055.44,-293.63 1059.2,-300.03 1062.37,-296.29"/>
+</g>
+<!-- hp -->
+<g id="node6" class="node">
+<title>hp</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1225.53,-172.89 943.01,-172.89 943.01,-129.21 1225.53,-129.21 1225.53,-172.89"/>
+<text xml:space="preserve" text-anchor="middle" x="1084.27" y="-154.35" font-family="Courier,monospace" font-size="11.00" fill="#231b12">applyHpAndSyncUnconscious</text>
+<text xml:space="preserve" text-anchor="middle" x="1084.27" y="-141.15" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the §5a single HP↔unconscious owner</text>
+</g>
+<!-- guard&#45;&gt;hp -->
+<g id="edge5" class="edge">
+<title>guard&#45;&gt;hp</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1032.11,-234.22C1042.51,-217.84 1055.59,-197.23 1066.05,-180.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1068,-182.25 1069.68,-175.03 1063.86,-179.63 1068,-182.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1080.46" y="-200.89" font-family="Courier,monospace" font-size="10.00">HP / rest</text>
+</g>
+<!-- pg -->
+<g id="node8" class="node">
+<title>pg</title>
+<path fill="#efe9dc" stroke="#231b12" stroke-width="1.5" d="M1225.53,-71.1C1225.53,-75.02 1162.21,-78.21 1084.27,-78.21 1006.32,-78.21 943.01,-75.02 943.01,-71.1 943.01,-71.1 943.01,-7.11 943.01,-7.11 943.01,-3.19 1006.32,0 1084.27,0 1162.21,0 1225.53,-3.19 1225.53,-7.11 1225.53,-7.11 1225.53,-71.1 1225.53,-71.1"/>
+<path fill="none" stroke="#231b12" stroke-width="1.5" d="M1225.53,-71.1C1225.53,-67.18 1162.21,-63.99 1084.27,-63.99 1006.32,-63.99 943.01,-67.18 943.01,-71.1"/>
+<text xml:space="preserve" text-anchor="middle" x="1084.27" y="-49" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Postgres (migration 025)</text>
+<text xml:space="preserve" text-anchor="middle" x="1084.27" y="-35.8" font-family="Courier,monospace" font-size="11.00" fill="#231b12">characters · character_spell_slots ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1084.27" y="-22.61" font-family="Courier,monospace" font-size="11.00" fill="#231b12">character_conditions · ledger_events</text>
+</g>
+<!-- guard&#45;&gt;pg -->
+<g id="edge6" class="edge">
+<title>guard&#45;&gt;pg</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M975.29,-234.25C943.37,-207.64 906.72,-166.33 928.27,-129.21 939.49,-109.87 956.67,-94.37 975.57,-82.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="976.42,-84.44 981.07,-78.66 973.83,-80.28 976.42,-84.44"/>
+</g>
+<!-- hp&#45;&gt;pg -->
+<g id="edge7" class="edge">
+<title>hp&#45;&gt;pg</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1084.27,-128.59C1084.27,-116.89 1084.27,-101.93 1084.27,-87.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1086.72,-87.68 1084.27,-80.68 1081.82,-87.68 1086.72,-87.68"/>
+</g>
+<!-- snap -->
+<g id="node7" class="node">
+<title>snap</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1361.02,-285.17 1177.51,-285.17 1177.51,-241.49 1361.02,-241.49 1361.02,-285.17"/>
+<text xml:space="preserve" text-anchor="middle" x="1269.27" y="-266.63" font-family="Courier,monospace" font-size="11.00" fill="#231b12">readPartyLedgerSnapshot</text>
+<text xml:space="preserve" text-anchor="middle" x="1269.27" y="-253.43" font-family="Courier,monospace" font-size="11.00" fill="#231b12">numbers AND nouns (§7)</text>
+</g>
+<!-- snap&#45;&gt;ft -->
+<g id="edge10" class="edge">
+<title>snap&#45;&gt;ft</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1243.32,-285.8C1222.97,-302.1 1193.17,-323.13 1163.27,-334.17 1132.2,-345.64 1122.34,-341.01 1089.28,-342.96 925.78,-352.65 512.87,-366.35 352.27,-334.17 313.62,-326.43 272.61,-310.67 239.71,-295.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="241,-293.88 233.61,-293.23 238.98,-298.34 241,-293.88"/>
+<text xml:space="preserve" text-anchor="middle" x="984.27" y="-357.17" font-family="Courier,monospace" font-size="10.00">[Party ledger: …] turn&#45;start tail</text>
+</g>
+<!-- snap&#45;&gt;pg -->
+<g id="edge8" class="edge">
+<title>snap&#45;&gt;pg</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1269.51,-232.31C1268.29,-203.31 1262.46,-159.45 1240.27,-129.21 1224.67,-107.96 1202.38,-91.03 1179.5,-77.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1267.05,-232.06 1269.7,-238.99 1271.95,-231.92 1267.05,-232.06"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The ledger is the mutable companion to character creation's static sheet. When the
+  <a href="./character-creation.html">character-sheet stage</a> finalizes a PC it seeds the opening
+  balances — gold, a hit-dice pool, caster progression, the SRD-derived spell slots — and from then
+  on the only thing that moves those numbers out of combat is the Rules Lawyer. The FT's tool belt
+  (built by <code>buildFtTools</code>) gained six ledger tools alongside the
+  <a href="./fast-thinker.html">dice and skill-check tools</a>:
+</p>
+
+<ul>
+  <li>
+    <code>cast_spell</code> — spend a slot for a known, prepared spell (cantrips + rituals skip the
+    slot).
+  </li>
+  <li><code>spend_resource</code> — debit gold, a tracked item, or a limited-feature use.</li>
+  <li><code>acquire_resource</code> — credit gold or an item the fiction granted.</li>
+  <li><code>adjust_hp</code> — damage or heal, dice rolled in the resolver.</li>
+  <li><code>update_condition</code> — apply or clear a 5e condition.</li>
+  <li><code>take_rest</code> — short or long rest for the whole party.</li>
+</ul>
+
+<p>
+  Each tool's <code>execute</code> delegates to a resolver and returns its result <em>as data</em>;
+  the resolver does the whole job — resolve the actor, run the guarded mutation, write the journal
+  row, and hand back a <code>LedgerResolution</code>. On success the
+  <a href="./session-turn.html">conductor</a>'s consume loop emits a
+  <code>ledger_update</code> frame; on a rejection the structured constraint flows back to the model
+  unchanged, and the FT narrates <em>how</em> the attempt falls short — never a frame, never a
+  throw.
+</p>
+
+<h2 id="pg-direct-not-a-redis-cache">PG-direct, not a Redis cache</h2>
+
+<p>
+  The ledger lives in Postgres and is read and written directly there. There is no Redis projection
+  of character state to keep coherent — a debit is a single <code>UPDATE</code> against
+  <code>characters</code> (or a satellite table), and the per-turn snapshot the FT sees is a fresh
+  read.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>PG-direct over a Redis mirror</strong> — the ledger holds money and scarce resources, so
+  it is exactly the kind of state where a stale cached copy is a correctness bug, not a latency win.
+  The same logic that retired the <a href="./session-turn.html">FT transcript's Redis hot cache</a>
+  applies: there is no fan-out for a cache to serve (the resolver reads its own writes within a
+  turn), and the expensive repeated cost in a turn is LLM tokens, not an indexed row read. Keeping
+  the authoritative numbers in one store means the combat engine and the out-of-combat Rules Lawyer
+  share one source of truth rather than reconciling two.
+</aside>
+
+<h2 id="binding-vs-informational-the-rock-principle">Binding vs. informational: the rock principle</h2>
+
+<p>
+  Every rejection a resolver returns is one of two kinds, and the distinction is the heart of the
+  design. A <strong>binding</strong> rejection means a scarce, tracked resource was exhausted or
+  insufficient — not enough gold, no castable slot, the spell is known but unprepared, a feature's
+  uses are spent. The constraint is authoritative: the FT narrates how the attempt falls short, the
+  same posture as a failed skill check. An <strong>informational</strong> miss means there was no
+  row to debit — the named item or feature simply isn't on the sheet. That is non-binding, and the
+  constraint hands the FT a three-branch choice it reasons over.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Scarcity is what makes a constraint binding — the rock is free</strong> — a player who
+  picks up a rock to throw should never be told "you don't have a rock." Improvised and
+  environmental objects are narrative, not ledger state, so <code>spend_resource</code> on an absent
+  item returns an <em>informational</em> miss, and the
+  <a href="./fast-thinker.html">ft-system prompt</a> tells the model: a plausibly-at-hand object →
+  narrate it freely; a thing the transcript shows the fiction already granted → call
+  <code>acquire_resource</code> now, then proceed; a never-established claim → correct the player
+  gently. Only things that genuinely run out — gold, slots, charges, HP — produce a binding
+  rejection. An unknown <em>spell</em> always takes the correction branch: there is no environmental
+  fireball.
+</aside>
+
+<h2 id="the-journal-is-checked-first-and-that-is-what-makes-idempotency-safe">The journal is checked first — and that is what makes idempotency safe</h2>
+
+<p>
+  Every applied mutation writes one row to <code>ledger_events</code>, an append-only journal keyed
+  uniquely on <code>(turn_id, tool_call_id, character_id)</code>, in the
+  <em>same transaction</em> as the mutation. The shared helper <code>applyWithJournal</code> opens
+  that transaction and, before touching any mutable column, asks the journal whether this exact tool
+  call already committed (<code>findLedgerEvent</code>). If it has, the resolver short-circuits to a
+  replay builder that reports the current post-mutation state and mutates nothing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Check the journal FIRST, not the journal's <code>ON CONFLICT</code> alone</strong> — the
+  obvious idempotency design is "write the mutation, let the journal's unique constraint reject the
+  duplicate." It double-spends. A BullMQ redelivery of an in-flight turn job would re-run the
+  guarded debit, and the debit commits <em>before</em> the journal's <code>ON CONFLICT</code> can
+  fire — two slots gone for one cast. Checking the journal as the first statement inside the
+  transaction makes a replay a true no-op: it returns the current state and never re-runs the guard.
+  The <code>ON CONFLICT DO NOTHING</code> on the journal write remains as the belt-and-suspenders
+  backstop.
+</aside>
+
+<p>
+  The resolvers are <strong>total</strong>: every game-rule failure arm returns a structured
+  constraint rather than throwing. An uncaught throw would surface to the SDK as a tool-error part
+  the FT loop continues past — letting the model narrate an outcome that no adjudication produced, a
+  Principle #4/#5 violation. Infrastructure failures (Postgres down, a transaction throw) follow the
+  skill-check fail-soft precedent: a generic "could not be resolved" constraint that tells the FT
+  <em>not</em> to narrate a definite outcome, logged for the operator.
+</p>
+
+<h2 id="guard-predicate-writes-rowcount-is-the-adjudication">Guard-predicate writes: rowcount is the adjudication</h2>
+
+<p>
+  The <code>LedgerOps</code> projection (<code>charactersLedgerNs</code>, a sibling binder composed
+  into <code>repo.characters</code>) is where the scarce-resource discipline lives. Every debit is a
+  single guard-predicate statement —
+  <code>UPDATE … SET col = col - $n WHERE id = $1 AND col &gt;= $n RETURNING col</code>. A returned
+  row means the debit applied; <strong>zero rows means the guard failed</strong>, which is the
+  rejection. There is no <code>SELECT</code>-then-<code>UPDATE</code> anywhere on the success path:
+  the check and the write are one atomic statement, so two concurrent debits can't both read
+  "enough" and both spend. The credit side is a single <code>ON CONFLICT</code>
+  upsert against the functional name index.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One guard statement, not read-then-write</strong> — a <code>SELECT balance</code> followed
+  by a decision followed by an <code>UPDATE</code> is the classic TOCTOU race; it is the same trap
+  the <a href="../data/repository.html">credit ledger</a> avoids by locking the user row. Here the
+  guard predicate <em>is</em> the lock: Postgres evaluates <code>col &gt;= $n</code> and the
+  decrement in one statement under the row's write lock, so rowcount-0 is a serialized rejection,
+  not a lost-update. The one extra read on the rejection path (to report the current balance in the
+  binding constraint) never runs on the success path.
+</aside>
+
+<p>
+  Two cross-cutting invariants are pinned to single owners so inlined copies can't drift. The
+  <strong>§5a HP↔unconscious</strong> pair — clamping HP to <code>[0, max]</code> and syncing the
+  HP-derived <code>unconscious</code> condition (apply at 0, clear above 0) — runs through one
+  helper, <code>applyHpAndSyncUnconscious</code>, that <code>adjust_hp</code>, the short-rest heal,
+  and the long-rest restore all call. Clearing <code>unconscious</code> by hand while a character
+  sits at 0 HP is a binding rejection: the condition is HP-derived; heal them first.
+</p>
+
+<h2 id="dice-are-rolled-inside-the-resolver">Dice are rolled inside the resolver</h2>
+
+<p>
+  When <code>adjust_hp</code> takes a dice expression (<code>"2d4+2"</code>) or a short rest spends
+  hit dice, the numbers are rolled by the deterministic
+  <a href="./fast-thinker.html">dice engine</a> <em>inside the resolver</em> — never invented by the
+  model (Principle #4). The dice expression is parsed by a structural regex (mechanical computation,
+  ZFC-exempt), rolled over <code>crypto.randomInt</code>, and the rolled faces ride the payload so
+  the FT can narrate the specific result.
+</p>
+
+<h2 id="prep-co-evolution-the-ledger-is-seeded-structured-and-de-duplicated-at-creation">Prep co-evolution: the ledger is seeded, structured, and de-duplicated at creation</h2>
+
+<p>
+  The Rules Lawyer can only debit what character creation laid down coherently, so the
+  <a href="./character-creation.html">character-sheet stage</a> grew to emit the ledger's structure.
+  The schema now asks the model for <code>starting_gold</code>, a <code>hit_die</code> size, a
+  <code>spellcasting_progression</code> enum (<code>full | half | third | pact | none</code>), and
+  per-row flags: <code>consumable</code> on equipment, <code>ritual</code> on spells, a
+  <code>max_uses</code> + <code>recharge</code> pair on limited features. Spell slots are
+  <em>not</em> asked of the model — code derives them from <code>(progression, level)</code> against
+  the SRD slot tables in <code>spell-slots.ts</code> and writes the full per-level rows at finalize.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The model emits structure; code derives the slots (ZFC)</strong> — the free-text
+  <code>class</code> name is never string-matched. The model makes one bounded judgment — which of
+  five progression archetypes this character is — and the deterministic SRD tables turn
+  <code>(progression, level)</code> into the slot grid. A generated sheet that is Zod-valid but
+  mechanically incoherent (a level-9 spell on a level-1 caster) is caught by a coherence check that
+  triggers a full regeneration, up to a bounded number of attempts, then terminal-fails loud rather
+  than persisting a brickable character.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The <code>prepared</code> pin means "currently castable," not "uses the prepare
+    mechanic"</strong
+  >
+  — the Rules Lawyer keys casting on <code>prepared</code>, so the prep prompt is explicit that a
+  sorcerer (which never "prepares") must emit all known leveled spells as
+  <code>prepared: true</code>. Emitting them <code>false</code> because "sorcerers don't prepare"
+  would brick every leveled cast. Prepare-casters emit a sensible daily list; cantrips are always
+  castable regardless of the flag.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Dedupe-merge before insert, because the name index is the mutation key</strong> — the
+  Rules Lawyer matches items, features, and spells by normalized name, so migration 025 puts a
+  unique index on <code>(character_id, lower(btrim(name)))</code>. That index is load-bearing: a
+  debit <code>UPDATE</code> that matched two rows of the same item would read "rowcount 2" as
+  success while only the guard intended one, and the acquire upsert would have no conflict target.
+  So prep mechanically dedupe-merges the model's output first — equipment stacks SUM quantities,
+  features and spells keep-first — so an LLM duplicate can't terminal-fail the insert or corrupt the
+  debit math.
+</aside>
+
+<h2 id="the-party-ledger-snapshot-numbers-and-nouns">The party-ledger snapshot: numbers AND nouns</h2>
+
+<p>
+  Once per turn the worker reads <code>readPartyLedgerSnapshot</code> — every session participant's
+  full mechanical state — and the <a href="./fast-thinker.html">Fast Thinker</a> renders it as a
+  <code>[Party ledger: …]</code> tail message: HP, hit dice, gold, the slot ledger, active
+  conditions, tracked features with uses, spells grouped by level with castable/ritual flags, and
+  the full equipment list with consumables flagged.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The nouns are the showstopper, not a nicety</strong> — an early shape carried only the
+  numbers (HP, gold, slot counts). That silently breaks the tools: the FT can't call
+  <code>cast_spell("fear spell")</code> or <code>spend_resource</code> on an item it can't name, so
+  slot enforcement never engages and the player's paraphrase has nothing to resolve against. The
+  snapshot therefore lists the canonical names, and the prompt tells the model to reuse them
+  exactly. The block is turn-<em>start</em> state: within a turn the tool-result payloads are the
+  live truth, not this tail.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The snapshot rides after the cache breakpoints, before the standing directive</strong> —
+  like the <a href="./slow-thinker.html">standing directive</a>, the ledger tail is a render-only
+  message appended <em>after</em> the FT's per-message cache breakpoints, so it sits in the
+  always-uncached zone and never perturbs the cached prefix or shifts the sliding-breakpoint index.
+  The merge order (ledger tail, then directive tail) is pinned. It is never persisted to the
+  transcript and never pushed into the FT history.
+</aside>
+
+<h2 id="the-frame-and-its-replay">The frame and its replay</h2>
+
+<p>
+  A successful mutation emits a <code>ledger_update</code> frame — one flat
+  <a href="./session-transport.html">wire member</a> whose <code>kind</code> discriminates which
+  value fields are populated (<code>hp</code>+<code>maxHp</code>, <code>slotLevel</code>+
+  <code>slotsRemaining</code>, and so on), plus an always-present human-readable
+  <code>summary</code>. It is persisted as one of six DM-turn row types (one per tool) by the
+  <a href="./session-turn.html">transcript codec</a> and live-streamed during the turn (no seq). On
+  reconnect the <a href="./session-transport.html">transport</a> rebuilds the frame from the
+  persisted row's stored <code>LedgerResolution</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A persisted <code>ok:false</code> row replays as nothing — silently</strong> — a rejection
+  is real adjudication and is journaled, but it produced no player-visible state change, so the
+  reconnect path skips it with no warning. A <code>take_rest</code> row, by contrast, carries an
+  array payload (one entry per character) and replays as one frame each. Only a genuinely corrupt
+  row warns; an expected rejection is not a corruption.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="drive-a-ledger-mutation">Drive a ledger mutation end-to-end</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes (<code>pnpm db:up</code>, <code>pnpm dev</code>, the
+    worker), start a session, and open a WebSocket — the same setup as
+    <a href="./session-turn.html#fire-a-dm-turn-end-to-end">firing a DM turn</a>.
+  </li>
+  <li>
+    Drive a turn whose prose warrants a cast or a spend (e.g. a player declares they cast a known,
+    prepared leveled spell). Watch for a <code>ledger_update</code> frame on the socket alongside
+    the <code>text_delta</code> stream.
+  </li>
+  <li>
+    Confirm the mutation is durable:
+    <code>SELECT slots_remaining FROM character_spell_slots WHERE character_id = '&lt;id&gt;'</code>
+    shows the decremented slot, and
+    <code>SELECT tool, delta FROM ledger_events WHERE turn_id = '&lt;turnId&gt;'</code> shows the
+    journal row.
+  </li>
+  <li>
+    To see a binding rejection, drive an over-spend (cast with no slot left, spend more gold than
+    the character has). Expect no <code>ledger_update</code> frame and FT prose that narrates the
+    shortfall — the constraint is the outcome.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The Rules Lawyer is invoked entirely through the <a href="./fast-thinker.html">Fast Thinker</a>'s
+  tool belt — <code>buildFtTools</code> wires the six ledger tools beside the dice and skill-check
+  tools, threading the scoped <code>LedgerOps</code> surface and a per-turn transaction runner from
+  the <a href="./session-turn.html">turn worker</a>. The
+  <a href="../data/repository.html">repository layer</a> owns the <code>LedgerOps</code> binder
+  (<code>characters-ledger.ts</code>, composed into <code>repo.characters</code>); the
+  <a href="../data/migrations.html">migration</a> that adds the ledger substrate is 025. The opening
+  balances are seeded by <a href="./character-creation.html">character creation</a>'s sheet stage,
+  whose schema and prompt co-evolved to emit the ledger's structure. The
+  <code>ledger_update</code> frame joins the mechanical frames on the
+  <a href="./session-transport.html">transport</a>'s wire contract and replays from the persisted DM
+  rows. The same per-character state is the contract the combat engine (later) shares.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="migration-025-ledger-substrate">Migration 025 — ledger substrate</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Object</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <code>characters.gold / hit_die / hit_dice_remaining / spellcasting_progression</code>
+      </td>
+      <td>Mutable ledger columns on the existing character row; bounded by CHECKs.</td>
+    </tr>
+    <tr>
+      <td><code>characters_hp_bounds</code></td>
+      <td>HP invariant (<code>0 ≤ hit_points ≤ max_hit_points</code>) — 001 shipped HP bare.</td>
+    </tr>
+    <tr>
+      <td><code>character_spell_slots</code></td>
+      <td>
+        One row per <code>(character, slot_level)</code> with a <code>remaining/max</code> pair.
+      </td>
+    </tr>
+    <tr>
+      <td><code>character_conditions</code></td>
+      <td>The closed 5e condition list; <code>level</code> only for exhaustion (1–6).</td>
+    </tr>
+    <tr>
+      <td><code>character_features.max_uses / uses_remaining / recharge</code></td>
+      <td>Limited-feature counters; NULL <code>max_uses</code> = untracked (at-will).</td>
+    </tr>
+    <tr>
+      <td><code>character_equipment.consumable</code>, <code>character_spells.ritual</code></td>
+      <td>Prep-structured flags (not name-matched); a quantity floor on equipment.</td>
+    </tr>
+    <tr>
+      <td>Unique name indexes on equipment / features / spells</td>
+      <td><code>(character_id, lower(btrim(name)))</code> — the name-keyed mutation substrate.</td>
+    </tr>
+    <tr>
+      <td><code>ledger_events</code></td>
+      <td>
+        Append-only journal, one row per applied mutation, unique on
+        <code>(turn_id, tool_call_id, character_id)</code> — the §10 idempotency key.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="files">Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/rules-lawyer.ts</code></td>
+      <td>
+        The §4 contract: <code>LedgerResolution</code>, the scoped <code>RulesLawyerDeps</code>,
+        name normalization, <code>resolveLedgerCharacter</code>, and the shared
+        <code>applyWithJournal</code> journal-first transaction helper.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/rules-lawyer-resources.ts</code></td>
+      <td>
+        <code>resolveCastSpell</code> / <code>resolveSpendResource</code> /
+        <code>resolveAcquireResource</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/rules-lawyer-vitals.ts</code></td>
+      <td>
+        <code>resolveAdjustHp</code> / <code>resolveUpdateCondition</code> /
+        <code>resolveTakeRest</code> (dice rolled in-resolver).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/rules-lawyer-replay.ts</code></td>
+      <td>
+        <code>makeReplayBuilders</code> — the idempotent-replay payload builders that report current
+        state.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/characters-ledger.ts</code></td>
+      <td>
+        <code>charactersLedgerNs</code> / <code>LedgerOps</code> — the guard-predicate mutation
+        substrate, the §5a HP single owner, and <code>readPartyLedgerSnapshot</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/srd/spell-slots.ts</code></td>
+      <td>
+        The SRD 5e slot-progression tables + the <code>(progression, level)</code> lookup math.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/rules-lawyer.ts</code>,
+  <code>backend/src/session/rules-lawyer-resources.ts</code>,
+  <code>backend/src/session/rules-lawyer-vitals.ts</code>,
+  <code>backend/src/session/rules-lawyer-replay.ts</code>,
+  <code>backend/src/repo/characters-ledger.ts</code>,
+  <code>backend/src/session/srd/spell-slots.ts</code>,
+  <code>backend/migrations/025_character_ledger.sql</code>. Implementation plan:
+  <code>docs/superpowers/plans/2026-06-10-myt-70-rules-lawyer.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#pg-direct-not-a-redis-cache">PG-direct, not a Redis cache</a></li><li style="padding-left:0"><a href="#binding-vs-informational-the-rock-principle">Binding vs. informational: the rock principle</a></li><li style="padding-left:0"><a href="#the-journal-is-checked-first-and-that-is-what-makes-idempotency-safe">The journal is checked first — and that is what makes idempotency safe</a></li><li style="padding-left:0"><a href="#guard-predicate-writes-rowcount-is-the-adjudication">Guard-predicate writes: rowcount is the adjudication</a></li><li style="padding-left:0"><a href="#dice-are-rolled-inside-the-resolver">Dice are rolled inside the resolver</a></li><li style="padding-left:0"><a href="#prep-co-evolution-the-ledger-is-seeded-structured-and-de-duplicated-at-creation">Prep co-evolution: the ledger is seeded, structured, and de-duplicated at creation</a></li><li style="padding-left:0"><a href="#the-party-ledger-snapshot-numbers-and-nouns">The party-ledger snapshot: numbers AND nouns</a></li><li style="padding-left:0"><a href="#the-frame-and-its-replay">The frame and its replay</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#drive-a-ledger-mutation">Drive a ledger mutation end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#migration-025-ledger-substrate">Migration 025 — ledger substrate</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

@@ -8,7 +8,7 @@
 <!-- source: backend/src/llm/prompts/session/skill-check.txt -->
 <!-- source: backend/src/llm/schemas/skill-check.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:16854d1a2817622b0095c3cd62c0ee8461b57431aed8c9ab7cbd8a533e3701cf -->
+<!-- source-hash: sha256:173c0735463414036a6aca749f8da5657e4d4122ce62366a7f2aa2ec1a137bba -->
 <!-- last-ticket: MYT-68 -->
 
 <h1>Fast Thinker</h1>
@@ -128,12 +128,32 @@
 <h2>The tool registry: pure resolvers</h2>
 
 <p>
-  <code>ft-tools.ts</code> (<code>buildFtTools</code>) is the extension point — the place future
-  tools (<code>cast_spell</code>, <code>initiate_combat</code>, <code>world_fact_lookup</code>)
-  register as their resolvers land. MYT-68 wires two. Tools are <strong>pure resolvers</strong>:
-  their <code>execute</code> returns data only, never emits a frame, and the SDK feeds each result
-  back to the model as the next step's input.
+  <code>ft-tools.ts</code> (<code>buildFtTools</code>) is the extension point — the place tools
+  register as their resolvers land. MYT-68 wired two (<code>roll_dice</code>,
+  <code>roll_skill_check</code>); MYT-70 added the six
+  <a href="./character-ledger.html">Rules Lawyer</a> ledger tools (<code>cast_spell</code>,
+  <code>spend_resource</code>, <code>acquire_resource</code>, <code>adjust_hp</code>,
+  <code>update_condition</code>, <code>take_rest</code>); <code>world_fact_lookup</code> and combat
+  tools stay deferred. Tools are <strong>pure resolvers</strong>: their <code>execute</code>
+  returns data only, never emits a frame, and the SDK feeds each result back to the model as the
+  next step's input.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The ledger tools return a structured constraint, never throw, never emit</strong> — each
+  ledger tool's <code>execute</code> delegates to a <em>total</em>
+  <a href="./character-ledger.html">Rules Lawyer</a> resolver and returns its
+  <code>LedgerResolution</code> as data. On <code>ok:true</code> the consume loop emits a
+  <code>ledger_update</code> frame the same way it emits a <code>skill_check</code>; on
+  <code>ok:false</code> the constraint object surfaces unchanged and the model narrates
+  <em>how</em> the attempt falls short. The SDK-assigned <code>toolCallId</code> threads into the
+  resolver as the journal idempotency key. The tools' model-facing schemas are deliberately
+  <strong>flat</strong> <code>z.object</code>s with a <code>kind</code> enum, not discriminated
+  unions: the Anthropic tool API requires every <code>input_schema</code> to have a root
+  <code>"type": "object"</code>, and Zod's discriminated union emits a root <code>oneOf</code> with
+  no top-level type — which the API rejects. The per-kind requirements are enforced in
+  <code>execute</code> + the resolver instead. This was found by the MYT-70 smoke, not by typecheck.
+</aside>
 
 <ul>
   <li>
@@ -158,7 +178,9 @@
   enforced-ignorance bound. The discipline is held by scope: the skill-check resolver receives only
   a narrow mechanical-reads projection (<code>findSessionParticipantCharacterByName</code>), not the
   full repository, so no future tool can casually return a repo-fetched secret-tier string.
-  <code>world_fact_lookup</code> stays Slow-Thinker-gated for exactly this reason.
+  <code>world_fact_lookup</code> stays Slow-Thinker-gated for exactly this reason. The MYT-70 ledger
+  tools take the same shape: they receive the scoped <code>LedgerOps</code> surface and a per-turn
+  transaction runner, not the whole repository.
 </aside>
 
 <h2>The dice engine (Principle #4)</h2>
@@ -239,7 +261,13 @@
   it encodes the participant roster + character-name attribution, the tool protocol ("call the tool,
   then narrate the returned constraint; never decide an outcome; never roll yourself"), enforced
   ignorance (never reveal what a character can't know), and how to handle an error constraint
-  without inventing a result.
+  without inventing a result. MYT-70 added a <strong>Resources &amp; The Ledger</strong> section: it
+  teaches the six <a href="./character-ledger.html">ledger tools</a>, the rock principle (improvised
+  objects are narrated, never spent), the three-branch reasoning for a not-found debit
+  (environmental → narrate; fiction already granted → <code>acquire_resource</code> first; never
+  established → correct gently), that binding constraints are authoritative outcomes, actor-scoping
+  (mutate only the acting player's character), and that the <code>[Party ledger: …]</code> tail
+  names resources canonically — reuse those names exactly.
 </p>
 
 <p>
@@ -299,13 +327,14 @@
   when the <a href="./slow-thinker.html">Slow Thinker</a> has a live standing directive, the worker
   reads it from its Redis slot and threads it onto <code>FtTurnContext.standingDirective</code>;
   <code>buildModelMessages</code> appends it as one raw <code>[DM direction: …]</code> user message
-  <em>after</em> placing the cache breakpoints. It rides the always-uncached zone past the last
-  breakpoint, so it never perturbs the cached prefix and never shifts the sliding-breakpoint index.
-  It is render-only: never persisted, never pushed into <code>ftHistory</code> (which would render
-  through the codec's attribution as a phantom "Player"). A one-shot direction, by contrast, is
-  fused onto the last user message by the <a href="./session-turn.html">conductor</a> before this
-  assembly runs — fuse-then-append, so the one-shot lands on the real player message, not the
-  ephemeral tail.
+  <em>after</em> placing the cache breakpoints. The MYT-70 <code>[Party ledger: …]</code> snapshot
+  tail rides the same always-uncached zone, appended in pinned order (the ledger tail first, then
+  the directive). Both ride past the last breakpoint, so neither perturbs the cached prefix and
+  neither shifts the sliding-breakpoint index. It is render-only: never persisted, never pushed into
+  <code>ftHistory</code> (which would render through the codec's attribution as a phantom "Player").
+  A one-shot direction, by contrast, is fused onto the last user message by the
+  <a href="./session-turn.html">conductor</a> before this assembly runs — fuse-then-append, so the
+  one-shot lands on the real player message, not the ephemeral tail.
 </aside>
 
 <h2>Integration points</h2>
@@ -391,8 +420,9 @@
     <tr>
       <td><code>src/session/tiers/ft-tools.ts</code></td>
       <td>
-        <code>buildFtTools</code> — the extensible tool registry (<code>roll_dice</code> +
-        <code>roll_skill_check</code>).
+        <code>buildFtTools</code> — the extensible tool registry: <code>roll_dice</code> +
+        <code>roll_skill_check</code> (MYT-68) plus the six
+        <a href="./character-ledger.html">ledger tools</a> (MYT-70).
       </td>
     </tr>
     <tr>
@@ -420,7 +450,8 @@
     <tr>
       <td><code>src/llm/prompts/session/ft-system.txt</code></td>
       <td>
-        The multiplayer FT system prompt (roster, attribution, tool protocol, enforced ignorance).
+        The multiplayer FT system prompt (roster, attribution, tool protocol, enforced ignorance,
+        and the MYT-70 Resources &amp; The Ledger guidance).
       </td>
     </tr>
     <tr>

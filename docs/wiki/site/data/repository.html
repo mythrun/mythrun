@@ -1173,8 +1173,26 @@
   processor reaches the <code>characters</code>, <code>campaign_characters</code>, and
   four-satellite-table writes through its own per-stage SQL (the whole sheet is one tightly coupled
   transaction inside <code>character-sheet.ts</code>); the typed <code>characters</code> repo
-  primitives are the read-side surface today.
+  primitives are the read-side surface today. MYT-70 added a sibling binder,
+  <code>charactersLedgerNs</code> (<code>characters-ledger.ts</code>), composed into
+  <code>repo.characters</code> so its methods surface as <code>repo.characters.*</code> /
+  <code>tx.characters.*</code> — the scoped <code>LedgerOps</code> projection the
+  <a href="../runtime/character-ledger.html">Rules Lawyer</a> mutates. It lives in its own module
+  purely to keep <code>characters.ts</code> under the 400-line cap; the narrative for the
+  guard-predicate debits, the §5a HP single owner, and the per-turn snapshot is on the
+  <a href="../runtime/character-ledger.html">character ledger</a> page.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The Rules Lawyer receives <code>LedgerOps</code>, not the whole repo</strong> — the ledger
+  binder is exposed as a narrow interface (<code>LedgerOps</code>) the turn worker hands the FT's
+  resolvers, the same scoped-boundary discipline as the skill-check resolver's mechanical-reads
+  projection. A debit is a single guard-predicate
+  <code>UPDATE … WHERE &lt;guard&gt; RETURNING</code> (rowcount 0 = adjudicated rejection — no
+  <code>SELECT</code>-then-<code>UPDATE</code>), and the multi-row writes (the HP↔unconscious pair,
+  the party-wide rests) run on a tx-bound client so the mutation and its
+  <code>ledger_events</code> journal row commit atomically.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Translate <code>23505</code> by constraint name, not by FK shape</strong> — the join's two

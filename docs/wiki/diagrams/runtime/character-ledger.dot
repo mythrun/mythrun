@@ -1,0 +1,49 @@
+digraph character_ledger {
+  // The Rules Lawyer — a DETERMINISTIC adjudication service (not an LLM tier).
+  // The FT calls a ledger tool (cast_spell / spend_resource / acquire_resource /
+  // adjust_hp / update_condition / take_rest); the resolver checks the journal
+  // FIRST (idempotency), runs ONE guard-predicate UPDATE + its ledger_events
+  // journal row in a single transaction, and returns a LedgerResolution. ok:true
+  // → an emitted ledger_update frame; ok:false (binding | informational) → a
+  // constraint the FT narrates around, NEVER a frame. The party-ledger snapshot
+  // is read at turn START and rendered as the [Party ledger: …] tail.
+  rankdir=TB;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  ft [label="Fast Thinker tool loop\ncast_spell · spend_resource · acquire_resource\nadjust_hp · update_condition · take_rest", color="ember", fontcolor="ember"];
+
+  subgraph cluster_rl {
+    label="Rules Lawyer  —  deterministic resolver (TOTAL: never throws on a game rule)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    resolve [label="resolveLedgerCharacter\n(session_participants → normalized name)\nnot_found / ambiguous → informational miss"];
+    journal [label="applyWithJournal — ONE transaction\nfindLedgerEvent FIRST (§10 idempotency)\nthen guard UPDATE + writeLedgerEvent", color="ember", fontcolor="ember"];
+    dice [label="dice rolled IN the resolver\n(adjust_hp dice, short-rest hit dice)\ncrypto.randomInt — Principle #4"];
+  }
+
+  subgraph cluster_ops {
+    label="LedgerOps  —  scoped repo projection (charactersLedgerNs)";
+    style="dotted";
+    guard [label="guard-predicate writes\nUPDATE … WHERE <guard> RETURNING\n(rowcount 0 = adjudicated rejection)"];
+    hp [label="applyHpAndSyncUnconscious\nthe §5a single HP↔unconscious owner"];
+    snap [label="readPartyLedgerSnapshot\nnumbers AND nouns (§7)"];
+  }
+
+  pg [label="Postgres (migration 025)\ncharacters · character_spell_slots ·\ncharacter_conditions · ledger_events", shape=cylinder];
+
+  ft -> resolve [label="tool call + toolCallId"];
+  resolve -> journal;
+  journal -> guard;
+  journal -> dice [style=dashed];
+  guard -> hp [style=dashed, label="HP / rest"];
+  guard -> pg;
+  hp -> pg;
+  snap -> pg [dir=back];
+
+  journal -> ft [label="LedgerResolution\nok:true → ledger_update frame\nok:false → constraint (no frame)", color="ember", fontcolor="ember"];
+  snap -> ft [label="[Party ledger: …] turn-start tail", style=dashed];
+}

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html" class="active">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html" class="active">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Character creation</div>
         <article>
@@ -346,15 +346,52 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       <td>
         Ability scores, HP / max HP / AC / proficiency bonus, plus the four sub-tables
         (<code>character_skills</code>, <code>character_features</code>,
-        <code>character_equipment</code>, <code>character_spells</code>). Single transaction: INSERT
-        into <code>characters</code> (narrative + mechanics together) + INSERT into
-        <code>campaign_characters</code> + bulk-INSERT into the four sub-tables.
+        <code>character_equipment</code>, <code>character_spells</code>) and (MYT-70) the live
+        <a href="./character-ledger.html">ledger</a>'s opening state: <code>starting_gold</code>,
+        the hit-dice pool, the caster <code>spellcasting_progression</code>, and the code-derived
+        <code>character_spell_slots</code> rows. Single transaction: INSERT into
+        <code>characters</code> (narrative + mechanics together) + INSERT into
+        <code>campaign_characters</code> + bulk-INSERT into the sub-tables.
         <code>characters.entity_id</code> stays NULL until the MYT-54
         <a href="./character-integration.html">integration pass</a> backfills it.
       </td>
     </tr>
   </tbody>
 </table>
+
+<h3 id="the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</h3>
+
+<p>
+  The character sheet is also the seed for the live
+  <a href="./character-ledger.html">character ledger</a> the Rules Lawyer debits during play, so the
+  <code>character_sheet</code> stage's schema and prompt grew to emit the ledger's structure. The
+  model now produces <code>starting_gold</code>, a <code>hit_die</code> size, a
+  <code>spellcasting_progression</code> archetype (<code>full | half | third | pact | none</code>),
+  and per-row flags: <code>consumable</code> on equipment, <code>ritual</code> on spells, and a
+  <code>max_uses</code> + <code>recharge</code> pair on limited features. Spell slots themselves are
+  <em>not</em> asked of the model — code derives them from <code>(progression, level)</code> against
+  the SRD slot tables and writes the per-level <code>character_spell_slots</code> rows at finalize.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The model emits one structured judgment, code derives the slots (ZFC)</strong> — the
+  free-text class name is never string-matched. The model picks the progression archetype; the
+  deterministic SRD tables turn <code>(progression, level)</code> into the slot grid. The stage also
+  gained a <strong>coherence loop</strong>: a sheet that is Zod-valid but mechanically incoherent
+  against those tables (a level-9 spell on a level-1 caster) triggers a full regeneration, bounded
+  by a max attempt count, then terminal-fails loud rather than persisting a brickable character.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The <code>prepared</code> pin and the dedupe-merge are load-bearing for the tools</strong>
+  — the Rules Lawyer keys casting on <code>prepared</code> ("currently castable," not "uses the
+  prepare mechanic"), so the prompt is explicit that always-castable casters (sorcerers) emit all
+  leveled spells <code>prepared: true</code>. And because the ledger matches items/features/spells
+  by normalized name under a unique index, the stage mechanically dedupe-merges the model's output
+  before insert (equipment sums quantities; features and spells keep-first) so an LLM duplicate
+  can't terminal-fail the insert or corrupt a debit's rowcount math. The detail lives on the
+  <a href="./character-ledger.html">character ledger</a> page.
+</aside>
 
 <p>
   The table's per-stage costs are the lower-bound point estimate (2K input / 1–2K output per Sonnet
@@ -579,7 +616,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-eight-routes">The eight routes</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-eight-routes">The eight routes</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -1783,7 +1783,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="character_equipment" id="schema-table-character_equipment">
   <summary>
     <span class="schema-table-name">character_equipment</span>
-    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 1 FK</span>
+    <span class="schema-table-meta">6 columns · 1 index · 1 CHECK · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1823,13 +1823,28 @@ END)</code></li>
         <td><code>false</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="consumable">
+        <td><code>consumable</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_character_equipment_name</code> — <code>CREATE UNIQUE INDEX idx_character_equipment_name ON character_equipment USING btree (character_id, lower(btrim(item_name)))</code></li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((quantity &gt;= 0))</code></li>
+  </ul>
 </details>
 <details class="schema-table" data-table-name="character_features" id="schema-table-character_features">
   <summary>
     <span class="schema-table-name">character_features</span>
-    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 1 FK</span>
+    <span class="schema-table-meta">8 columns · 1 index · 6 CHECKs · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1869,13 +1884,47 @@ END)</code></li>
         <td>—</td>
         <td>—</td>
       </tr>
+      <tr data-column-name="max_uses">
+        <td><code>max_uses</code></td>
+        <td><code>smallint</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="uses_remaining">
+        <td><code>uses_remaining</code></td>
+        <td><code>smallint</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="recharge">
+        <td><code>recharge</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'none'::text</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_character_features_name</code> — <code>CREATE UNIQUE INDEX idx_character_features_name ON character_features USING btree (character_id, lower(btrim(feature_name)))</code></li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK (((max_uses IS NULL) OR (max_uses &gt;= 1)))</code></li>
+    <li><code>CHECK ((recharge = ANY (ARRAY['short_rest'::text, 'long_rest'::text, 'none'::text])))</code></li>
+    <li><code>CHECK (((max_uses IS NOT NULL) OR (recharge = 'none'::text)))</code></li>
+    <li><code>CHECK (((uses_remaining IS NULL) OR (uses_remaining &lt;= max_uses)))</code></li>
+    <li><code>CHECK (((max_uses IS NULL) = (uses_remaining IS NULL)))</code></li>
+    <li><code>CHECK (((uses_remaining IS NULL) OR (uses_remaining &gt;= 0)))</code></li>
+  </ul>
 </details>
 <details class="schema-table" data-table-name="character_skills" id="schema-table-character_skills">
   <summary>
     <span class="schema-table-name">character_skills</span>
-    <span class="schema-table-meta">4 columns · 0 indexes · 1 CHECK · 1 FK</span>
+    <span class="schema-table-meta">4 columns · 1 index · 1 CHECK · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1910,6 +1959,10 @@ END)</code></li>
       </tr>
     </tbody>
   </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_character_skills_character</code> — (character_id)</li>
+  </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
     <li><code>CHECK ((proficiency_level = ANY (ARRAY['none'::text, 'proficient'::text, 'expertise'::text])))</code></li>
@@ -1918,7 +1971,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="character_spells" id="schema-table-character_spells">
   <summary>
     <span class="schema-table-name">character_spells</span>
-    <span class="schema-table-meta">5 columns · 0 indexes · 0 CHECKs · 1 FK</span>
+    <span class="schema-table-meta">6 columns · 1 index · 0 CHECKs · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1958,13 +2011,24 @@ END)</code></li>
         <td><code>false</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="ritual">
+        <td><code>ritual</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>idx_character_spells_name</code> — <code>CREATE UNIQUE INDEX idx_character_spells_name ON character_spells USING btree (character_id, lower(btrim(spell_name)))</code></li>
+  </ul>
 </details>
 <details class="schema-table" data-table-name="characters" id="schema-table-characters">
   <summary>
     <span class="schema-table-name">characters</span>
-    <span class="schema-table-meta">20 columns · 1 index · 0 CHECKs · 2 FKs</span>
+    <span class="schema-table-meta">24 columns · 1 index · 6 CHECKs · 2 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -2109,11 +2173,48 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="gold">
+        <td><code>gold</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hit_die">
+        <td><code>hit_die</code></td>
+        <td><code>smallint</code></td>
+        <td>NO</td>
+        <td><code>8</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="hit_dice_remaining">
+        <td><code>hit_dice_remaining</code></td>
+        <td><code>smallint</code></td>
+        <td>NO</td>
+        <td><code>1</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="spellcasting_progression">
+        <td><code>spellcasting_progression</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'none'::text</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
     <li><code>idx_characters_user</code> — (user_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((gold &gt;= 0))</code></li>
+    <li><code>CHECK ((hit_dice_remaining &lt;= level))</code></li>
+    <li><code>CHECK ((hit_dice_remaining &gt;= 0))</code></li>
+    <li><code>CHECK ((hit_die = ANY (ARRAY[6, 8, 10, 12])))</code></li>
+    <li><code>CHECK (((hit_points &gt;= 0) AND (hit_points &lt;= max_hit_points)))</code></li>
+    <li><code>CHECK ((spellcasting_progression = ANY (ARRAY['full'::text, 'half'::text, 'third'::text, 'pact'::text, 'none'::text])))</code></li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="session_messages" id="schema-table-session_messages">
@@ -3195,6 +3296,191 @@ END)</code></li>
     </tbody>
   </table>
 </details>
+<h2 class="schema-cluster" id="other">Other</h2>
+<details class="schema-table" data-table-name="character_conditions" id="schema-table-character_conditions">
+  <summary>
+    <span class="schema-table-name">character_conditions</span>
+    <span class="schema-table-meta">5 columns · 1 index · 3 CHECKs · 1 FK</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="condition">
+        <td><code>condition</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="level">
+        <td><code>level</code></td>
+        <td><code>smallint</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="applied_at">
+        <td><code>applied_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>character_conditions_character_id_condition_key</code> — UNIQUE (character_id, condition)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK (((condition = 'exhaustion'::text) = (level IS NOT NULL)))</code></li>
+    <li><code>CHECK ((condition = ANY (ARRAY['blinded'::text, 'charmed'::text, 'deafened'::text, 'exhaustion'::text, 'frightened'::text, 'grappled'::text, 'incapacitated'::text, 'invisible'::text, 'paralyzed'::text, 'petrified'::text, 'poisoned'::text, 'prone'::text, 'restrained'::text, 'stunned'::text, 'unconscious'::text])))</code></li>
+    <li><code>CHECK (((level &gt;= 1) AND (level &lt;= 6)))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="character_spell_slots" id="schema-table-character_spell_slots">
+  <summary>
+    <span class="schema-table-name">character_spell_slots</span>
+    <span class="schema-table-meta">5 columns · 1 index · 4 CHECKs · 1 FK</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="slot_level">
+        <td><code>slot_level</code></td>
+        <td><code>smallint</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="slots_max">
+        <td><code>slots_max</code></td>
+        <td><code>smallint</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="slots_remaining">
+        <td><code>slots_remaining</code></td>
+        <td><code>smallint</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>character_spell_slots_character_id_slot_level_key</code> — UNIQUE (character_id, slot_level)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((slots_remaining &lt;= slots_max))</code></li>
+    <li><code>CHECK (((slot_level &gt;= 1) AND (slot_level &lt;= 9)))</code></li>
+    <li><code>CHECK ((slots_max &gt;= 0))</code></li>
+    <li><code>CHECK ((slots_remaining &gt;= 0))</code></li>
+  </ul>
+</details>
+<details class="schema-table" data-table-name="ledger_events" id="schema-table-ledger_events">
+  <summary>
+    <span class="schema-table-name">ledger_events</span>
+    <span class="schema-table-meta">8 columns · 1 index · 0 CHECKs · 2 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="id">
+        <td><code>id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="character_id">
+        <td><code>character_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>characters(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="session_id">
+        <td><code>session_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td><code>sessions(id)</code> ON DELETE CASCADE</td>
+      </tr>
+      <tr data-column-name="turn_id">
+        <td><code>turn_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="tool_call_id">
+        <td><code>tool_call_id</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="tool">
+        <td><code>tool</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="delta">
+        <td><code>delta</code></td>
+        <td><code>jsonb</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>Indexes</h4>
+  <ul class="schema-list">
+    <li><code>ledger_events_turn_id_tool_call_id_character_id_key</code> — UNIQUE (turn_id, tool_call_id, character_id)</li>
+  </ul>
+</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -3209,7 +3495,7 @@ END)</code></li>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#other">Other</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
