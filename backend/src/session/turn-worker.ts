@@ -519,6 +519,12 @@ export function buildSessionTurnWorker(
   const sessionTurnQueue: TurnQueueLike = { add: (n, d, o) => turnQueue.add(n, d, o) }
   // §2 post-turn st-evaluation producer (one Queue per process, like the others).
   const stEvalBullQueue = new Queue<StEvalPayload>(QUEUE_ST_EVAL, { connection: redisBatch })
+  // The enqueue closure only fires on the FULL FT-success path (enqueueStEval,
+  // gated on a flushed turn) — the buildSessionTurnWorker unit tests drive the §5
+  // CONVERGE path (no fresh FT response → no st-eval), so this passthrough is
+  // exercised by the §10 real-Anthropic E2E smoke, not vitest. (The sibling
+  // sessionTurnQueue/dmTriggerQueue closures DO fire on the converge drain path.)
+  /* c8 ignore next */
   const stEvalQueue: StEvalQueueLike = { add: (n, d, o) => stEvalBullQueue.add(n, d, o) }
 
   const deps: TurnProcessorDeps = {
