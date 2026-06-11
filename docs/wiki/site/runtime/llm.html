@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
         <article>
@@ -41,10 +41,14 @@
   world_and_factions, locations_and_npcs, entity_relationships, entity_consolidation,
   starting_situation, random_tables, coherence_pass), the structured-output repair chain plus its
   companion per-item drop-on-fail gate on the streaming stages, the
-  <a href="#the-session-prep-generation-stage">session-prep generation stage</a>, and — newest — the
-  <a href="./dm-trigger.html">DM-trigger classifier</a>, a cheap Haiku <code>generateObject</code>
-  call that decides whether the AI DM should take a turn. Everything heavier (provider mechanics,
-  retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  <a href="#the-session-prep-generation-stage">session-prep generation stage</a>, the
+  <a href="./dm-trigger.html">DM-trigger classifier</a> (a cheap Haiku <code>generateObject</code>
+  deciding whether the AI DM should take a turn), and — newest — the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s two calls: a Haiku spend gate and an Opus
+  director (both <code>generateObject</code>, the director with the
+  <code>haiku-then-sonnet</code> repair chain and an explicit <code>maxOutputTokens</code>).
+  Everything heavier (provider mechanics, retries, structured-output validation) is delegated to
+  Vercel AI SDK v6.
 </p>
 
 <figure class="wiki-diagram">
@@ -935,9 +939,11 @@
   current consumers of <code>classifyProfanity</code>. The
   <a href="../runtime/index.html">backend runtime</a> page describes
   <code>config/env.ts</code> loading <code>ANTHROPIC_API_KEY</code> alongside the rest of the env
-  contract. The cognitive tiers planned in the Session Runtime milestone (Fast Thinker, Slow
-  Thinker, Scribe, DM Trigger Classifier) will all use this same surface — calling Vercel's
-  <code>generateText</code> / <code>streamText</code> against tier constants, threading
+  contract. The live-play cognitive tiers now use this same surface: the
+  <a href="./fast-thinker.html">Fast Thinker</a> drives its tool loop through
+  <code>streamTextWithTools</code>, and the <a href="./slow-thinker.html">Slow Thinker</a>'s gate
+  and director call <code>generateObject</code> (Scribe extraction lands with MYT-73). All call
+  Vercel's surface against tier constants, threading
   <code>providerOptions.mythrun = { sessionId, userId, worldId, campaignId, stage }</code> for log
   attribution. The streaming half of the middleware lands ahead of those consumers via MYT-49 — the
   <a href="./worker.html">worker</a>'s prep-stage processors will be the first callers to exercise

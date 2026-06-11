@@ -99,13 +99,33 @@ describe('MYT-69 direction slots', () => {
     await redis.set('t:session:c:turns-since-st', 'garbage')
     expect(await s.turnsSinceSt('c')).toBe(0)
   })
-  it('resetSessionKeys clears all ST keys (+ leaves transport keys)', async () => {
+  it('resetSessionKeys clears the ST slots/counter AND the dm-trigger coordination keys', async () => {
+    // §8 session-boundary hygiene: a replayed campaign must not inherit a prior
+    // session's responded-seq watermark / first-unresponded anchor / last-activity
+    // stamp / in-flight + explicit-pending flags. The stale watermark is the
+    // load-bearing one (a stale value → every new turn batch is empty → the DM
+    // never responds — the E2E-smoke "no turn ever fires" symptom).
     const ts = mk()
-    await ts.setOneShotDirection('c', 'x'); await ts.setStandingDirection('c', 'y')
+    await ts.setOneShotDirection('c', 'x')
+    await ts.setStandingDirection('c', 'y')
     await ts.incrTurnsSinceSt('c')
+    await ts.setRespondedSeq('c', 22)
+    await ts.armFirstUnresponded('c', 1000)
+    await ts.stampActivity('c', 2000)
+    await ts.setResponding('c', 'tok')
+    await ts.setExplicitPending('c')
+
     await ts.resetSessionKeys('c')
+
+    // ST slots/counter cleared.
     expect(await ts.takeOneShotDirection('c')).toBeNull()
     expect(await ts.readStandingDirection('c')).toBeNull()
     expect(await ts.turnsSinceSt('c')).toBe(0)
+    // dm-trigger coordination keys cleared (the new hygiene sweep).
+    expect(await ts.respondedSeq('c')).toBe(0) // back to the empty-session default
+    expect(await ts.firstUnrespondedMs('c')).toBeNull()
+    expect(await ts.lastActivityMs('c')).toBeNull()
+    expect(await ts.isResponding('c')).toBe(false)
+    expect(await ts.takeExplicitPending('c')).toBe(false)
   })
 })

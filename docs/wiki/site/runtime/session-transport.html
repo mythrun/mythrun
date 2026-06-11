@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html" class="active">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session transport</div>
         <article>
@@ -422,8 +422,9 @@
 <p>
   A session is a live play room scoped to one campaign — at most one active at a time. Three HTTP
   routes bracket its lifecycle (<code>routes/sessions.ts</code>):
-  <code>POST /api/sessions/:campaignId/start</code> creates the row and debits a credit;
-  <code>GET /api/sessions/:campaignId/active</code> returns the live row or <code>null</code>;
+  <code>POST /api/sessions/:campaignId/start</code> creates the row, debits a credit, and resets the
+  per-session Redis state (below); <code>GET /api/sessions/:campaignId/active</code> returns a
+  <strong>field-allowlisted</strong> view of the live row or <code>null</code>;
   <code>GET /api/sessions/:sessionId/messages</code> replays the persisted transcript for REST
   gap-fill. The live transport itself is a single WebSocket route —
   <code>GET /ws/session/:sessionId</code>, registered by <code>wsSessionRoutes</code> over
@@ -790,7 +791,23 @@
   use of the column. The <code>maxSeq</code> recorded is the <em>durable</em>
   <code>MAX(session_messages.seq)</code> — never the raw <code>:seq</code> counter (which sits one
   ahead between INCR and the row insert) — so a crash-recovery reseed never re-hands-out a number a
-  message already used. A dedicated <code>session_checkpoints</code> row is the long-term home.
+  message already used. A dedicated <code>session_checkpoints</code> row is the long-term home. The
+  envelope's <code>kind</code> bumped to <code>myt69-checkpoint</code> when the turn flush shrank to
+  usage-only, so the recovery reader fails loud on the old shape rather than reading a stale flush
+  contract.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The active-session route returns a response allowlist — the summary must not leak</strong>
+  — the checkpoint folds the running summary into <code>sessions.st_running_summary</code>, and
+  <code>GET /api/sessions/:campaignId/active</code> used to return the full mapped Session row —
+  that column included — to any campaign member. Inert while the summary was an empty stub, but the
+  moment the <a href="./slow-thinker.html">Slow Thinker</a> writes rapport and reveal-ladder state
+  into it (MYT-69), a member could read secret-adjacent narrative state with one REST call after any
+  suspend. So the route now returns an explicit allowlist (id / status / sessionNumber / timestamps
+  — never <code>stRunningSummary</code> or any checkpoint material), pinned by a route test. The
+  persist into the column stays — it is the crash-recovery cold-start input; the fix is at the read
+  boundary, not the write.
 </aside>
 
 <h2 id="the-wire-contract-scope">The wire contract scope</h2>
@@ -920,7 +937,12 @@
   <a href="../data/schema.html">schema</a> for those tables. The
   <a href="./session-turn.html">DM-turn pipeline</a> extends the wire contract with the
   server-streamed turn frames and publishes them through this transport's <code>SessionHub</code>;
-  it also adds the per-turn LLM-tier keys to the session-state module documented here. The
+  it also adds the per-turn LLM-tier keys to the session-state module documented here. As of MYT-69
+  that module's <code>:summary</code> key is owned by the
+  <a href="./slow-thinker.html">Slow Thinker</a> job (the turn flush is usage-only, and
+  <code>setRunningSummary</code> is the summary's only writer), the ST's spend tracks on a dedicated
+  <code>:usage:st</code> counter summed at every read, and the session-start route resets the spend
+  + summary keys (<code>resetSessionSpend</code>). The
   <a href="./dm-trigger.html">DM trigger</a> system hangs off this inbound handler: it observes the
   typing and message frames here, writes its own trigger-state Redis keys, and reschedules the
   quiet-window debounce that decides when a DM turn fires — and adds the <code>dm_invoke</code>
@@ -1069,8 +1091,12 @@
       <td><code>src/redis/session-state.ts</code></td>
       <td>
         <code>makeSessionState</code> — <code>nextSeq</code> / <code>reseedSeq</code> / presence /
-        <code>:state</code> / <code>checkpoint</code>; <code>PRESENCE_TTL</code>,
-        <code>SessionMode</code> / <code>SessionStateBlob</code> /
+        <code>:state</code> / <code>checkpoint</code>; the LLM-tier turn-state surface (<code
+          >flushTurnState</code
+        >
+        usage-only, <code>setRunningSummary</code> / <code>incrUsageSt</code> /
+        <code>totalUsageTokens</code> / <code>resetSessionSpend</code> — MYT-69);
+        <code>PRESENCE_TTL</code>, <code>SessionMode</code> / <code>SessionStateBlob</code> /
         <code>CheckpointStore</code> types.
       </td>
     </tr>

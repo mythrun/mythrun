@@ -129,9 +129,15 @@ export interface TriggerState {
   incrTurnsSinceSt(campaignId: string): Promise<number>
   turnsSinceSt(campaignId: string): Promise<number>
   resetTurnsSinceSt(campaignId: string): Promise<void>
-  /** §8 session-boundary hygiene: clear the ST-owned slots + counter at session
-   *  start. (The :usage / :usage:st / :summary resets are session-state's, called
-   *  alongside this from the route.) */
+  /** §8 session-boundary hygiene: clear the ST-owned slots + counter AND the
+   *  dm-trigger coordination keys at session start. A same-campaign session
+   *  started within the (no-TTL) lifetime of these keys must NOT inherit the
+   *  prior session's responded-seq watermark / first-unresponded anchor /
+   *  last-activity stamp / in-flight + explicit-pending flags — a stale
+   *  `responded-seq` makes every new turn batch `(staleWatermark, max]` empty,
+   *  so the DM never responds (the E2E smoke's "no turn ever fires" symptom).
+   *  The :usage / :usage:st / :summary resets are session-state's, called
+   *  alongside this from the route. */
   resetSessionKeys(campaignId: string): Promise<void>
 }
 
@@ -285,7 +291,14 @@ export function makeTriggerState(redis: Redis, keyPrefix: string): TriggerState 
     },
 
     resetSessionKeys: async (campaignId) => {
-      await redis.del(oneShotKey(campaignId), standingKey(campaignId), turnsSinceStKey(campaignId))
+      // ST slots/counter (§8) + no-TTL dm-trigger keys (MYT-67); stale
+      // responded-seq is load-bearing (see interface doc).
+      const b = base(campaignId)
+      await redis.del(
+        `${b}:direction:oneshot`, `${b}:direction:standing`, `${b}:turns-since-st`,
+        `${b}:responded-seq`, `${b}:first-unresponded`, `${b}:last-activity`,
+        `${b}:dm_responding`, `${b}:dm-trigger-explicit`,
+      )
     },
   }
 }

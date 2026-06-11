@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:eea8ebd5be07142d688bf2b4ca9dd0419da679e629e89fe3d0fc6f9a172f9b4a -->
+<!-- source-hash: sha256:086df370a7f9b68ac28feaa79a285f3b92449000a443b5b539e804e9ed934389 -->
 <!-- last-ticket: MYT-67 -->
 
 <h1>Repository layer</h1>
@@ -229,8 +229,11 @@
   / <code>turnRowsExist</code> / <code>appendDmTurn</code>) and <code>characters</code> gained the
   session-roster resolution the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s skill
   checks read (<code>findSessionParticipantCharacterByName</code> /
-  <code>listSessionParticipantCharacters</code>). The namespaces still unfilled by any consumer are
-  tracked as beads under the <code>repo-deferred</code> label and ship batched with their consumers.
+  <code>listSessionParticipantCharacters</code>) plus the class/background roster the
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a> reads for its world-state block
+  (<code>listSessionParticipantRoster</code>, MYT-69 — a new read, leaving the FT-hot-path sibling
+  untouched). The namespaces still unfilled by any consumer are tracked as beads under the
+  <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">

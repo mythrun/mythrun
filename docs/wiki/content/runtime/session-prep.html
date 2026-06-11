@@ -370,9 +370,10 @@
     <a href="#two-channels-one-stream">prose channel</a> defends</strong
   >
   — <code>sd_playbook</code> never crosses the HTTP boundary at all. The two consumers that
-  legitimately need the playbook read it another way: Session Runtime loads it
-  <em>in-process</em> through <code>repo.sessionPreps.getBy</code> (no HTTP hop), and the dev tool
-  watches it <em>live</em> over the dev-only
+  legitimately need the playbook read it another way: the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s st-evaluation worker loads it
+  <em>in-process</em> through <code>repo.sessionPreps.getBy</code> (no HTTP hop, on its own narrow
+  secret-bearing repo interface), and the dev tool watches it <em>live</em> over the dev-only
   <a href="./dev-tool.html#the-session-prep-prose-pane">prose stream</a>, never via these routes. So
   the playbook reaches exactly the two surfaces entitled to it, by two paths that bypass the public
   HTTP API entirely.

@@ -1,0 +1,87 @@
+digraph slow_thinker {
+  // The post-hoc SlowThinker pipeline (MYT-69), OFF the hot path. A flushed DM
+  // turn enqueues an st-evaluation job (per-campaign dedup, NO ttl). The
+  // st-evaluation worker runs policy → gate → evaluate → write, all background:
+  // the deterministic policy (floor / wind-down) may force an evaluation; else a
+  // Haiku gate decides whether to spend the Opus call; the Opus director (gate
+  // verdict NEVER fed in) emits a STRUCTURAL split — private `reasoning` +
+  // public `direction`/`standingDirective` + a full summary REWRITE. Outputs
+  // land in Redis: the one-shot + standing direction slots (trigger-state) and
+  // the running summary (session-state). The NEXT DM turn's worker takes the
+  // one-shot (GETDEL) and reads the standing directive, threading them into the
+  // FastThinker. Nothing here delays a player-visible turn.
+  rankdir=TB;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.7;
+
+  turn [label="turn worker (post-turn finally)\nflushed-success ONLY · own try/catch\nenqueueStEval({campaignId, sessionId})", color="ember", fontcolor="ember"];
+
+  subgraph cluster_batch {
+    label="redisBatch";
+    style="dotted";
+    q [label="queue: st-evaluation\ndedup id st-eval:{cId} · NO ttl\nsingle-flight per campaign"];
+  }
+
+  subgraph cluster_worker {
+    label="Worker process  —  6th BullMQ Worker (concurrency 2)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    active [label="active-session check\n(queued job for an ended session → no-op)"];
+    policy [label="DETERMINISTIC POLICY (code)\nturns-since-ST ≥ FLOOR → evaluate\nusage ≥ 0.9 × BUDGET → evaluate (wind-down)"];
+    gate  [label="Haiku gate (generateObject)\n{needed, confidence, reason}\nskip IFF !needed && confidence ≥ 0.8", color="ember", fontcolor="ember"];
+    director [label="Opus director (generateObject)\nGATE VERDICT NOT FED IN\nstructural split: reasoning | direction |\nstandingDirective | summaryUpdate\nrepairAttempted → DISCARD whole", color="ember", fontcolor="ember"];
+    rearm [label="self-re-arm\nnewer turns mid-eval →\nremoveDeduplicationKey + re-add"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres (the ST's OWN narrow StEvalRepo — never widens TurnWorkerRepo)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    prep [label="session_preps.sd_playbook\n(secret-bearing prep doc)"];
+    msgs [label="session_messages\nlistFtContextRows (recent slice)"];
+    roster [label="session_participants ⋈ characters\nlistSessionParticipantRoster\n(class / background)"];
+  }
+
+  subgraph cluster_realtime {
+    label="Redis (realtime cluster)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    oneshot [label="direction:oneshot\nlatest-wins SET · GETDEL by the turn worker", color="ember", fontcolor="ember"];
+    standing [label="direction:standing\nSET / clear · READ (not cleared) every turn", color="ember", fontcolor="ember"];
+    summary [label="session:{cId}:summary\nST is the ONLY writer (rewrite)"];
+    usagest [label="session:{cId}:usage:st\ndedicated INCRBY (gate+eval spend)"];
+  }
+
+  nextturn [label="NEXT DM turn → FastThinker\none-shot fused onto last user message\nstanding appended as raw tail (post-breakpoint)", color="ember", fontcolor="ember"];
+
+  turn -> q [label="add (dedup, no ttl)"];
+  q -> active [label="BLPOP-style"];
+  active -> policy;
+  policy -> gate [label="not forced"];
+  policy -> director [label="floor / wind-down forces", style=dashed];
+  gate -> director [label="evaluate"];
+
+  director -> prep [label="read", style=dotted];
+  director -> msgs [label="read", style=dotted];
+  director -> roster [label="read", style=dotted];
+  gate -> prep [label="read", style=dotted];
+
+  director -> oneshot [label="setOneShot (intervene)"];
+  director -> standing [label="set / clear"];
+  director -> summary [label="setRunningSummary"];
+  director -> usagest [label="incrUsageSt"];
+  gate -> usagest [label="incrUsageSt", style=dashed];
+
+  active -> rearm [label="end of run", style=dashed];
+  rearm -> q [label="re-add (own key cleared)", style=dashed];
+
+  oneshot -> nextturn [label="take (GETDEL)", color="ember"];
+  standing -> nextturn [label="read", color="ember"];
+}

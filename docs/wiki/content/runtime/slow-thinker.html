@@ -1,0 +1,564 @@
+<!-- source: backend/src/session/st-evaluation-worker.ts -->
+<!-- source: backend/src/session/st-eval-queue.ts -->
+<!-- source: backend/src/session/st-config.ts -->
+<!-- source: backend/src/llm/st-gate.ts -->
+<!-- source: backend/src/llm/st-director.ts -->
+<!-- source: backend/src/llm/schemas/st-gate.ts -->
+<!-- source: backend/src/llm/schemas/st-director.ts -->
+<!-- source: backend/src/llm/prompts/session/st-gate.txt -->
+<!-- source: backend/src/llm/prompts/session/st-evaluation.txt -->
+<!-- source: backend/src/session/trigger-state.ts -->
+<!-- source: docs/superpowers/specs/2026-06-10-myt-69-slowthinker-design.md -->
+<!-- source-hash: sha256:0c3c40d833ed4e0864bcd9b3781b6bc51e5a3eb97f20b573db49a422931e5f8e -->
+<!-- last-ticket: MYT-69 -->
+
+<h1>Slow Thinker</h1>
+
+<p class="lead">
+  The omniscient narrative director (Opus) — but it runs <em>off the hot path</em>. After each DM
+  turn completes, a background pipeline decides whether the scene needs direction and, if so, writes
+  a leak-safe stage direction the <a href="./fast-thinker.html">Fast Thinker</a> consumes on its
+  next turn. It owns the running summary, gates its own expensive Opus call behind a cheap Haiku
+  classifier, and signals the session wind-down. Player-visible latency is unaffected: every turn's
+  time-to-first-token is purely the FT.
+</p>
+
+<!-- @diagram: runtime/slow-thinker -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The architecture's spec ran the Slow Thinker <em>before</em> the Fast Thinker on evaluated turns,
+  blocking the player-visible stream behind an Opus call. MYT-69 moves it <strong>after</strong> the
+  turn, into a background pipeline. A flushed DM turn enqueues an <code>st-evaluation</code> job; a
+  dedicated worker — the sixth in the <a href="./worker.html">worker process</a> — runs
+  <strong>policy → gate → evaluate → write</strong>, all off the hot path. Its outputs land in Redis
+  slots the <em>next</em> turn's worker reads. The
+  <a href="./session-turn.html">session-turn conductor</a> no longer calls the ST at all; the
+  in-turn tier seam is retired.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Post-hoc beats the spec'd pre-FT flow</strong> — the ST's monitors are retrospective by
+  nature: tonal monotony, pacing stalls, NPC-only revelations, and missing agency all judge what has
+  been happening. Run post-hoc, the ST also sees what the FT <em>actually wrote</em>, which a pre-FT
+  ST never could. Player-visible latency goes to zero permanently. The accepted trade is that
+  interventions land one turn late — fine for narrative nudges, which are session-level and age
+  well. The two cases that need in-turn ST judgment are out of this path by construction (the
+  world-fact lookup relay and the secret tripwire are later issues' resolvers, not this background
+  loop).
+</aside>
+
+<p>
+  This is also the mechanism behind Mythrun's NPC authenticity. The FT cannot plot-dump what it does
+  not know — from its seat a merchant genuinely has nothing to offer a stranger but weather and
+  prices, so it plays small talk in full and trust builds the way it does at a real table. The ST
+  holds the secrets <em>and the social clock</em>: it watches rapport build and decides when a
+  conversation has <strong>earned</strong> a reveal, portioning out exactly what the NPC entrusts.
+  Enforced ignorance is not only the safety boundary here; it is the authenticity engine.
+</p>
+
+<h2>The queue: single-flight per campaign, no TTL</h2>
+
+<p>
+  The producer is the <a href="./session-turn.html">turn worker</a>'s post-turn
+  <code>finally</code> phase, gated on the <strong>flushed-success path only</strong> (a failed /
+  lock-lost / converge run has no fresh FT response to evaluate) and wrapped in its own try/catch,
+  so an enqueue hiccup never masks the turn outcome. <code>enqueueStEval</code> adds one job with
+  the per-campaign dedup id <code>st-eval:{campaignId}</code> and <strong>no TTL</strong>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>No dedup TTL — the key must die with the job</strong> — this is the same BullMQ lesson the
+  <a href="./dm-trigger.html">DM trigger</a> debounce learned: a ttl'd dedup key outlives the job
+  and silently swallows every re-add until it expires. Without a TTL the key clears at job
+  finalization, so the next turn's enqueue schedules fresh. The job carries no delay, so
+  replace-mode is inert — dedup is the only mechanism in play. Adds while the job is
+  <em>waiting</em> collapse losslessly (the job reads current state at run time). Adds while the job
+  is <em>active</em> — the gate plus an Opus call, up to ~2.5 minutes — are swallowed, which is what
+  the self-re-arm below closes.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Single-flight-per-campaign is an explicit invariant, not a dedup accident</strong> — the
+  producer must <em>never</em> remove the dedup key (removing it under a waiting job would
+  double-run). Only the job itself re-arms: at start it snapshots the responded-seq watermark; at
+  end it checks whether newer turns landed and, if so, clears its <em>own</em> dedup key
+  (<code>removeDeduplicationKey</code>) and re-adds — the exact <code>dm-trigger-worker</code>
+  self-re-arm pattern, because a running job cannot be replaced through its own key. The residual
+  honesty: an evaluation can lag the table by up to one job duration; "latest wins" on the slots
+  covers the quality side.
+</aside>
+
+<h2>The deterministic policy and the Haiku gate</h2>
+
+<p>
+  Inside <code>processStEvalJob</code>, the first decision is
+  <strong>mechanical code, not a model</strong>. Two arms force an evaluation outright, skipping the
+  gate: turns-since-the-last-ST- run ≥ <code>ST_EVAL_FLOOR_TURNS</code> (the every-N-turns oversight
+  floor), or total session usage ≥ <code>WIND_DOWN_FRACTION</code> ×
+  <code>SESSION_TOKEN_BUDGET</code> (which also flips wind-down mode on). These are policy arms
+  around the gate — like a rate limit, they are ZFC-exempt mechanical thresholds, never prompt
+  content.
+</p>
+
+<p>
+  When the policy doesn't force the evaluation, one cheap Haiku call decides
+  <strong>whether to spend the Opus call</strong>. It sees the full secret-bearing
+  <code>sd_playbook</code>, the running summary, and the recent exchange window, and returns
+  <code>{ needed, confidence, reason }</code>. The rule, stated in the only direction that matters:
+  <strong
+    >skip the Opus call IFF
+    <code>!needed &amp;&amp; confidence ≥ ST_GATE_CONFIDENCE_FLOOR</code></strong
+  >. Everything else evaluates — fail toward oversight.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The gate holds secrets freely because its output is consumed by code only</strong> — the
+  gate is ST-side infrastructure: its verdict reaches no player and no FT, exactly like the
+  <a href="./dm-trigger.html">DM-trigger classifier</a>. So it reads the whole playbook (a code-side
+  trigger extraction would be ZFC-violating string intelligence). It fires on the bookkeeping case
+  too: "small talk with a playbook-relevant NPC is in progress" is evaluate-worthy even though the
+  ST will likely stay out — a pass-through evaluation still rewrites the summary, which is how
+  rapport built during small talk enters the ST's memory at all. Gate-fires ≠ intervene.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Gate independence is a hard rule</strong> — the gate's verdict and reason are
+  <em>never</em> fed to the director. The gate decides only whether the Opus call happens; the
+  director independently decides whether to intervene, and its prompt keeps "most turns: no" as its
+  own judgment. A wrong gate must not bias the judge. A gate failure skips the cycle and logs; the
+  floor guarantees an evaluation within <code>ST_EVAL_FLOOR_TURNS</code> regardless.
+</aside>
+
+<h2>The Opus evaluation: the structural split</h2>
+
+<p>
+  When the evaluation runs, <code>runStDirector</code> assembles an extensible world-state block —
+  the <code>sd_playbook</code>, the running summary, the current standing directive and any
+  unconsumed one-shot (read, never consumed — the ST manages its own slots informed, not blind), the
+  recent exchange slice, and the PC roster with class and background — and calls Opus through the
+  <a href="./llm.html">LLM client</a>'s <code>generateObject</code>. The output schema is the
+  channel's leak bound:
+</p>
+
+<ul>
+  <li>
+    <code>reasoning</code> — <strong>private</strong>. The ST's secret-aware thinking. Logged
+    server-side only; it never crosses into any FT-facing artifact.
+  </li>
+  <li>
+    <code>direction</code> — <strong>public-facing</strong>. The one-shot stage direction (1–2
+    sentences, what-not-how). It crosses into the FT via the fusion seam.
+  </li>
+  <li>
+    <code>standingDirective</code> — a <strong>discriminated op</strong> (<code
+      >{ action: 'set' | 'clear' | 'keep', text }</code
+    >), not an empty-string/null trichotomy. One composed text the ST rewrites whole each
+    evaluation.
+  </li>
+  <li>
+    <code>summaryUpdate</code> — the <strong>full replacement</strong> running summary (rewrite, not
+    append).
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong
+    >The reasoning/direction split <em>is</em> the leak bound — there is no independent
+    checker</strong
+  >
+  — forcing the secret-aware rationale into its own <code>reasoning</code> field is what keeps
+  ride-along leaks out of the direction text (the dominant leak mode: a secret rationale riding
+  along in the direction). The contract, stated precisely: a direction carries behavior plus
+  <em>ST-sanctioned reveal content</em> — bounded to exactly what the ST decided the NPC may surface
+  — never unsanctioned secret rationale. An earned reveal ("on a successful Persuasion he shares
+  that he saw the bargehand try the lock — nothing more") <em>is</em> information crossing the
+  channel, and that is sanctioned by design: the ST is the single gate, the reveal text is its
+  output, and the <em>why</em> stays private. A blanket classifier over the direction can verify
+  form (behavioral phrasing, no verbatim secret strings) but not sanction, which lives in the
+  unobservable reasoning — so prompt hygiene plus the E2E secret-string grep are the realistic
+  enforcement, permanently.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A repaired result is discarded whole</strong> — <code>generateObject</code>'s repair chain
+  hands the malformed tree, secret-bearing <code>reasoning</code> included, to Haiku/Sonnet with
+  license to fix it — a repaired <code>direction</code> would be text the ST did not author crossing
+  the boundary. So the wrapper surfaces <code>repairAttempted</code> unchanged and the worker
+  discards the entire result when it is true: no direction, no standing change, no summary write.
+  The cycle is simply skipped (the floor will re-evaluate). For the same reason the schema carries
+  no <code>.refine</code> cross-field constraints — the set/text coupling is validated in code, not
+  in a shape the repair chain could "fix" into validity.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The summary is a rewrite, not an append</strong> — rapport, reveal-ladder state, and time
+  are <em>mutable</em> state. An appended-delta summary accumulates contradictions ("Hobb is curt" +
+  "Hobb is warm") with no current-value semantics, and an ever-growing summary would ride every gate
+  call and unbound the Opus cost the slice design keeps bounded. The director returns the full
+  replacement (~150–300 words) each evaluation, with the old summary in context to rewrite from. Its
+  content mandate is the trust machinery: NPC rapport levels, in-progress reveal-ladder state (and
+  the rule that a directed reveal must actually appear in the transcript before a ladder advances),
+  and coarse time progression.
+</aside>
+
+<h2>The seven direction classes</h2>
+
+<p>
+  The prompt's taxonomy spans craft and content. The four classic monitors — tonal monotony, pacing
+  stalls, NPC-only revelations, missing agency — are <strong>craft interventions</strong> (how, not
+  what: "three exchanges of dread — inject something mundane and warm"). On top of those sit the
+  content classes the authenticity thesis makes first-class: <strong>earned reveals</strong> (a
+  graded, behaviorally-bounded reveal once rapport warrants it),
+  <strong>check-gated reveal ladders</strong> (staged across evaluations — direct the tell, let the
+  check ride the FT's <code>roll_skill_check</code>, direct the next rung after the pass lands),
+  <strong>playbook beats</strong> (secret-free behavioral events),
+  <strong>secret-integrity steering</strong> (a boundary phrased <em>without</em> naming the
+  protected content), <strong>grounding step-ins</strong>, and <strong>wind-down</strong>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Bounds are phrased behaviorally, never by naming the withheld content</strong> — a scope
+  bound reads "he's said all he'll say; he deflects further pressing to Vane", never "nothing about
+  the ledger" — the latter itself tells the blind FT that a ledger exists. The craft rule both the
+  ST and the prep prompt carry: <em>never gate critical-path progression behind a check</em> — gate
+  optional or corroborating clues, and let a failure mean the information arrives by another road.
+  And a direction is an opportunity, not an order: it was written one turn ago, so if the scene has
+  moved against it the FT lets it go (the ft-system prompt carries the same conditionality).
+</aside>
+
+<h2>The slots and how the next turn consumes them</h2>
+
+<p>
+  Two direction shapes land in <a href="./dm-trigger.html">trigger-state</a> (campaign-scoped
+  Redis), consumed differently by the next DM turn:
+</p>
+
+<ul>
+  <li>
+    <strong>One-shot</strong> (<code>direction:oneshot</code>) — latest-wins SET (a newer evaluation
+    overwrites an unconsumed direction; the ST saw the pending value, so the overwrite is informed).
+    The turn worker takes it <strong>atomically (GETDEL)</strong> on its fresh-run arm only — after
+    lock acquisition and after the converge/latch early exits — and the conductor fuses it onto the
+    last user message <em>before</em> the FT render, through the unchanged fusion seam.
+  </li>
+  <li>
+    <strong>Standing</strong> (<code>direction:standing</code>) — set/replaced/cleared by the ST,
+    <strong>read (not cleared)</strong> every DM turn and appended as a raw
+    <code>[DM direction: …]</code> tail message at the FT boundary, after
+    <code>buildModelMessages</code> places the cache breakpoints.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Take only on the fresh-run arm; read the standing every turn</strong> — taking the
+  one-shot before the converge/latch exits would burn a sanctioned reveal on a turn that never
+  renders, and a take by a contention loser would starve the lock holder. So the GETDEL sits on the
+  same fresh-run arm that does the render. The standing directive, by contrast, is a persistent
+  constraint, so it is read (not consumed) on every turn. Tail placement is load-bearing: appended
+  after the breakpoints, it rides the always-uncached zone, never perturbing the cached prefix and
+  never shifting the sliding-breakpoint index — see the
+  <a href="./fast-thinker.html">Fast Thinker</a>'s prompt assembly. The fuse-the-one-shot step runs
+  <em>before</em> the standing tail is appended, because the fuser targets the last user message and
+  appending first would fuse onto the ephemeral tail.
+</aside>
+
+<h2>Summary ownership and the dedicated usage key</h2>
+
+<p>
+  The running summary is the ST's artifact: the job writes the <code>:summary</code> key directly
+  after each evaluation (a plain SET carrying the session-state TTL; the job is the only writer).
+  The turn flush shrank to usage-only — the controller's summary code is deleted — which removes the
+  background-write-vs-turn-flush clobber race outright. The summary is the ST's own compression, the
+  Scribe's session-end input, and nothing the FT ever reads.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>ST spend rides a dedicated <code>:usage:st</code> key, summed at read</strong> — the
+  shared <code>:usage</code> blob can't carry the ST's increment safely: the turn worker reads
+  <code>:usage</code> at turn start, accumulates in memory across a minutes-long render, and
+  blind-SETs at flush — an ST increment landing in that window is erased no matter how atomically it
+  was written. So the gate's and director's tokens go to a separate <code>:usage:st</code> counter
+  (atomic <code>INCRBY</code>), and the wind-down policy reads <code>:usage</code> +
+  <code>:usage:st</code>
+  summed. A Lua/WATCH on the shared key can't survive the stale-read-then-SET; only the separate-key
+  design satisfies the bidirectional non-clobber requirement.
+</aside>
+
+<h2>Wind-down and session boundaries</h2>
+
+<p>
+  Wind-down is the budget policy arm: once
+  <code>(usage + usage:st) ≥ WIND_DOWN_FRACTION × SESSION_TOKEN_BUDGET</code>, the evaluation is
+  forced with the wind-down flag and the director sets a <strong>standing</strong> directive
+  steering toward a natural close — resolve the current scene, open no new threads or NPCs — and
+  keeps directing toward closure on subsequent evaluations. This is the ST-side signal only; the
+  actual <code>session_end</code> orchestration and the FT-context hard cap belong to the
+  session-end issue.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Session start must wipe the ST's keys, or a replayed session is born dying</strong> — a
+  same-campaign session started within the keys' lifetime would otherwise inherit the prior
+  session's usage and a standing wind-down directive. So
+  <code>POST /api/sessions/:campaignId/start</code> resets the spend keys (<code>:usage</code>,
+  <code>:usage:st</code>, <code>:summary</code>) and the ST-owned trigger-state (both direction
+  slots + the turns-since-ST counter). The smoke surfaced the sibling hazard too: a stale
+  <code>responded-seq</code> watermark made every new batch
+  <code>(staleWatermark, max]</code> empty, so the DM never fired — the session-start reset now
+  sweeps the no-TTL dm-trigger coordination keys (responded-seq, first-unresponded, last-activity,
+  dm_responding, dm-trigger-explicit) alongside the ST keys. The st-evaluation job also re-checks
+  the session is still active at start, so a job queued for an ended session no-ops.
+</aside>
+
+<h2>Enforced ignorance</h2>
+
+<p>
+  The gate and the director hold the secret-bearing <code>sd_playbook</code> freely — they are
+  server-side infrastructure whose outputs that cross into the FT are exactly two: the
+  <code>direction</code> and the standing text, both behavior-bound by the structural split and the
+  prompt contract. The <code>reasoning</code> field and the gate verdict are logs only; the running
+  summary stays FT-invisible (the FT's context type carries no summary). The st-evaluation worker
+  defines its <strong>own narrow repo interface</strong> — the playbook read, the codec window, the
+  roster read — rather than widening the FT-side <code>TurnWorkerRepo</code>, so the turn worker's
+  dependency surface never gains a secret-bearing read.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The player-facing summary leak the audit nearly shipped</strong> — the running summary has
+  a second exit: the suspend checkpoint folds it into <code>sessions.st_running_summary</code>, and
+  <code>GET /api/sessions/:campaignId/active</code> used to return the full mapped Session row —
+  that column included — to any campaign member. Inert while the summary was an empty stub, but the
+  moment the ST writes rapport and ladder state, a member could read it with one REST call after any
+  suspend. MYT-69 arms the ST, so MYT-69 ships the fix: the active-session route returns an explicit
+  response allowlist (id / status / sessionNumber / timestamps — never
+  <code>stRunningSummary</code> or any checkpoint material), pinned by a route test. See
+  <a href="./session-transport.html">session transport</a>.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="watch-a-direction-land">Watch a direction land on the next turn</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes (<code>pnpm db:up</code>, <code>pnpm dev</code>, and
+    <code>pnpm --filter @mythrun/backend dev:worker</code> — the worker hosts the st-evaluation
+    worker). Start a session and fire DM turns (the <a href="./session-turn.html">fire-turn</a> dev
+    route, or real player chat through the <a href="./dm-trigger.html">trigger</a>).
+  </li>
+  <li>
+    After a turn flushes, watch the worker log for <code>st-eval gate</code> (with
+    <code>needed</code> / <code>confidence</code> / <code>skip</code>) on a gated cycle, or a forced
+    evaluation when the floor or wind-down arm fired.
+  </li>
+  <li>
+    On an intervention, inspect the slots:
+    <code>GET session:{cId}:direction:oneshot</code> holds the pending one-shot until the next turn
+    GETDELs it; <code>session:{cId}:direction:standing</code> holds the standing text across turns.
+    <code>session:{cId}:summary</code> reflects the rewritten running summary;
+    <code>session:{cId}:usage:st</code> reflects the ST's accumulated token spend.
+  </li>
+  <li>
+    Fire the <em>next</em> turn and confirm the prose visibly follows the direction — and grep the
+    streamed text against the playbook's secret strings to confirm zero verbatim leak.
+  </li>
+</ol>
+
+<h3 id="diagnose-an-st-that-never-evaluates">Diagnose an ST that never evaluates</h3>
+<ol>
+  <li>
+    Confirm turns are flushing — the enqueue is gated on the flushed-success path, so a turn that
+    converges or loses its lock never enqueues an evaluation. Check the
+    <code>st-evaluation</code> queue depth.
+  </li>
+  <li>
+    Check <code>session:{cId}:turns-since-st</code>. It INCRs every flushed turn and resets only
+    when an Opus evaluation actually ran; a value ≥ <code>ST_EVAL_FLOOR_TURNS</code> that never
+    resets means evaluations are being forced but failing — look for
+    <code>st-eval: director failed</code>
+    or a repair-discard warn.
+  </li>
+  <li>
+    A job that no-ops with <code>no matching active session</code> means it was queued for a session
+    that ended (or a new one started) before it ran — expected after a suspend. A standing wind-down
+    directive that won't clear after a fresh session means the session-start key reset didn't run;
+    verify <code>resetSessionSpend</code> + <code>resetSessionKeys</code> fired at
+    <code>/start</code>.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The Slow Thinker is the post-turn half of the <a href="./session-turn.html">session-turn</a>
+  pipeline: that worker enqueues the evaluation on its flushed-success path and, on the following
+  turn, takes the one-shot and reads the standing directive into the
+  <a href="./fast-thinker.html">Fast Thinker</a>. Its gate and director call Opus and Haiku through
+  the <a href="./llm.html">LLM client</a>'s <code>generateObject</code>; their schemas and prompts
+  live alongside the client. The direction slots and the turns-since-ST counter are
+  <a href="./dm-trigger.html">trigger-state</a> keys; the running summary and the dedicated
+  <code>:usage:st</code> counter are <a href="./session-transport.html">session-state</a> keys. The
+  worker is the sixth Worker registered in the <a href="./worker.html">worker process</a>. Its
+  secret-bearing reads — the <code>sd_playbook</code> and the PC roster — come from the
+  <a href="../data/repository.html">repository layer</a> through its own narrow interface. The
+  running summary it owns is the <a href="./session-prep.html">session prep</a> pipeline's
+  <code>sd_playbook</code> rendered into play, and the Scribe's session-end input later.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>Tuning constants (st-config.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Default</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ST_MODEL</code> / <code>ST_GATE_MODEL</code></td>
+      <td><code>OPUS</code> / <code>HAIKU</code></td>
+      <td>The director's tier and the gate's tier — the architecture's assignment.</td>
+    </tr>
+    <tr>
+      <td><code>ST_EVAL_FLOOR_TURNS</code></td>
+      <td>5</td>
+      <td>Turns-since-the-last-ST-run that forces an evaluation, skipping the gate.</td>
+    </tr>
+    <tr>
+      <td><code>ST_GATE_CONFIDENCE_FLOOR</code></td>
+      <td>0.8</td>
+      <td>Only a confident "no" skips the Opus call. An empirical knob — the smoke tunes it.</td>
+    </tr>
+    <tr>
+      <td><code>ST_GATE_EXCHANGE_WINDOW</code> / <code>ST_EVAL_EXCHANGE_WINDOW</code></td>
+      <td>6 / 10</td>
+      <td>Recent-slice sizes; the gate sees a tighter window than the evaluation.</td>
+    </tr>
+    <tr>
+      <td><code>SESSION_TOKEN_BUDGET</code> / <code>WIND_DOWN_FRACTION</code></td>
+      <td>400000 / 0.9</td>
+      <td>The session-bound proxy and the fraction at which wind-down trips.</td>
+    </tr>
+    <tr>
+      <td><code>ST_EVAL_TIMEOUT_MS</code> / <code>ST_GATE_TIMEOUT_MS</code></td>
+      <td>120s / 30s</td>
+      <td>Background-tolerant call budgets — nothing player-visible waits on them.</td>
+    </tr>
+    <tr>
+      <td><code>ST_EVAL_MAX_OUTPUT_TOKENS</code></td>
+      <td>4000</td>
+      <td>Reasoning + direction + a full summary rewrite is long; the SDK default truncates.</td>
+    </tr>
+    <tr>
+      <td><code>ST_SUMMARY_TARGET_WORDS</code></td>
+      <td>250</td>
+      <td>The rewrite-semantics target (prompt-instructed; no hard max enforced in code).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Redis slots (trigger-state.ts / session-state.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{cId}:direction:oneshot</code></td>
+      <td>Latest-wins SET; GETDEL-consumed by the turn worker's fresh-run arm. 2h TTL.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:direction:standing</code></td>
+      <td>Set/clear by the ST; read (not cleared) every DM turn. 2h TTL.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:turns-since-st</code></td>
+      <td>INCR per flushed turn; reset when an Opus evaluation runs. The floor counter.</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:summary</code></td>
+      <td>Running summary. The ST job is the only writer (full rewrite each evaluation).</td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:usage:st</code></td>
+      <td>
+        Dedicated INCRBY of the ST's gate + evaluation token spend; summed with <code>:usage</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/st-evaluation-worker.ts</code></td>
+      <td>
+        <code>processStEvalJob</code> (policy → gate → evaluate → write),
+        <code>buildStEvaluationWorker</code>, the narrow <code>StEvalRepo</code> /
+        <code>StEvalSessionState</code> / <code>StEvalTriggerState</code> interfaces.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/st-eval-queue.ts</code></td>
+      <td>
+        <code>enqueueStEval</code>, <code>stEvalDedupId</code>, <code>QUEUE_ST_EVAL</code>,
+        <code>StEvalPayload</code> — the no-TTL single-flight producer surface.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/st-gate.ts</code> + <code>src/llm/schemas/st-gate.ts</code></td>
+      <td>
+        <code>runStGate</code> + <code>StGateResultSchema</code> (<code
+          >{ needed, confidence, reason }</code
+        >) — the cheap Haiku spend gate.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/st-director.ts</code> + <code>src/llm/schemas/st-director.ts</code></td>
+      <td>
+        <code>runStDirector</code> + <code>StDirectorResultSchema</code> — the Opus evaluation and
+        the structural reasoning/direction split; surfaces <code>repairAttempted</code> for the
+        discard rule.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/prompts/session/st-gate.txt</code> +
+        <code>st-evaluation.txt</code>
+      </td>
+      <td>The gate's spend-decision prompt and the director's multiplayer evaluation prompt.</td>
+    </tr>
+    <tr>
+      <td><code>src/session/st-config.ts</code></td>
+      <td>The tuning constants above (models, floor, gate floor, windows, budget, timeouts).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/session/st-evaluation-worker.ts</code>,
+  <code>backend/src/session/st-eval-queue.ts</code>, <code>backend/src/session/st-config.ts</code>,
+  <code>backend/src/llm/st-gate.ts</code>, <code>backend/src/llm/st-director.ts</code>,
+  <code>backend/src/llm/schemas/st-gate.ts</code>,
+  <code>backend/src/llm/schemas/st-director.ts</code>,
+  <code>backend/src/llm/prompts/session/st-gate.txt</code>,
+  <code>backend/src/llm/prompts/session/st-evaluation.txt</code>,
+  <code>backend/src/session/trigger-state.ts</code>. Design spec:
+  <code>docs/superpowers/specs/2026-06-10-myt-69-slowthinker-design.md</code>.
+</p>

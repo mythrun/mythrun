@@ -8,7 +8,7 @@
 <!-- source: backend/src/llm/prompts/session/skill-check.txt -->
 <!-- source: backend/src/llm/schemas/skill-check.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:40de0e83a8ac0725d8e9f3e48920e51a3c97299436ff77214942f49bfcd45c13 -->
+<!-- source-hash: sha256:16854d1a2817622b0095c3cd62c0ee8461b57431aed8c9ab7cbd8a533e3701cf -->
 <!-- last-ticket: MYT-68 -->
 
 <h1>Fast Thinker</h1>
@@ -242,12 +242,35 @@
   without inventing a result.
 </p>
 
+<p>
+  MYT-69 added the <strong>NPC-authenticity</strong> half of the prompt — the FT's side of the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s social clock. NPCs are normal people, not quest
+  dispensers: a stranger gets weather, prices, and wary politeness, not the NPC's troubles or
+  secrets; small talk is the texture of the world, played in full; trust is earned across a
+  conversation, and what an NPC has to share, the story tells the FT when it is time — via a
+  direction. Two craft rules ride alongside: the check-frequency rule carves out genuine no-stakes
+  chat (checks gate attempts to change a mind, deceive, or read what's hidden — never ordinary
+  conversation), and a successful social check against an NPC whose depths the FT doesn't know
+  yields demeanor or plausible public content, <em>never</em> invented hidden plot.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The FT cannot plot-dump what it does not know — that is the authenticity engine</strong> —
+  these prompt rules only hold because enforced ignorance is structural. The FT has no playbook, no
+  secrets, no plot in its context, so it genuinely cannot hand a stranger a quest hook. The
+  <a href="./slow-thinker.html">Slow Thinker</a> holds the secrets and the social clock and decides,
+  post-hoc, when a conversation has earned a reveal — portioning out exactly what an NPC entrusts
+  via a stage direction. Without the split, the carve-out would be a prompting suggestion the model
+  could ignore; with it, the FT's ignorance is the boundary.
+</aside>
+
 <aside class="wiki-rationale">
   <strong>The running summary is the Slow Thinker's tool, not the FT's memory</strong> — the FT
   never reads the running summary. It holds the literal full transcript every turn, so there is no
-  compressed history to hallucinate around. The summary is the Slow Thinker's input and the Scribe's
-  session-end input; it plays no role in FT grounding or recovery. Removing it from the FT's context
-  type is what makes "secrets have nowhere to live" structural rather than a convention.
+  compressed history to hallucinate around. The summary is the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s own compression and the Scribe's session-end
+  input; it plays no role in FT grounding or recovery. Removing it from the FT's context type is
+  what makes "secrets have nowhere to live" structural rather than a convention.
 </aside>
 
 <h2>Prompt caching: the cost lever</h2>
@@ -271,15 +294,32 @@
   otherwise invisible. The smoke asserts cache reads are non-zero on turn ≥ 2.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>The standing directive is a raw tail message <em>after</em> the breakpoints</strong> —
+  when the <a href="./slow-thinker.html">Slow Thinker</a> has a live standing directive, the worker
+  reads it from its Redis slot and threads it onto <code>FtTurnContext.standingDirective</code>;
+  <code>buildModelMessages</code> appends it as one raw <code>[DM direction: …]</code> user message
+  <em>after</em> placing the cache breakpoints. It rides the always-uncached zone past the last
+  breakpoint, so it never perturbs the cached prefix and never shifts the sliding-breakpoint index.
+  It is render-only: never persisted, never pushed into <code>ftHistory</code> (which would render
+  through the codec's attribution as a phantom "Player"). A one-shot direction, by contrast, is
+  fused onto the last user message by the <a href="./session-turn.html">conductor</a> before this
+  assembly runs — fuse-then-append, so the one-shot lands on the real player message, not the
+  ephemeral tail.
+</aside>
+
 <h2>Integration points</h2>
 
 <p>
-  The Fast Thinker is the first real cognitive tier behind the
-  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; the Slow Thinker and Scribe
-  remain stubs until later issues. It runs through the <a href="./llm.html">LLM client</a>'s
-  <code>streamTextWithTools</code> wrapper (Sonnet) and its skill-check resolver makes a nested
-  Haiku call through the same abstraction. Its roller resolution and per-skill proficiency reads
-  come from the <a href="../data/repository.html">repository layer</a>'s
+  The Fast Thinker is the player-facing cognitive tier behind the
+  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; the Scribe remains a stub
+  until MYT-73, and the <a href="./slow-thinker.html">Slow Thinker</a> now runs off the turn path —
+  its stage directions reach the FT as a fused one-shot (on the player's last message) and a
+  standing tail message, both consumed silently. It runs through the
+  <a href="./llm.html">LLM client</a>'s <code>streamTextWithTools</code> wrapper (Sonnet) and its
+  skill-check resolver makes a nested Haiku call through the same abstraction. Its roller resolution
+  and per-skill proficiency reads come from the
+  <a href="../data/repository.html">repository layer</a>'s
   <code>characters.findSessionParticipantCharacterByName</code>. The frames it emits
   (<code>skill_check</code>, <code>dice_roll</code>, plus the streamed <code>text_delta</code>) flow
   through the worker-latched emitter to the
