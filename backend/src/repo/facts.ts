@@ -144,6 +144,21 @@ export function factsNs(c: ClientLike) {
       /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on DELETE. */
       return result.rowCount ?? 0
     },
+    /**
+     * MYT-71 (world-retrieval): set the pgvector embedding + stamp embedded_at.
+     * Mirrors `entities.updateEmbedding` against the facts table. `vecLiteral`
+     * is the `'[f1,…,f512]'` text form; cast to ::vector here. Canonical write
+     * so `embed-write.ts` calls `repo.facts.updateEmbedding` / `tx.facts
+     * .updateEmbedding`. Returns the affected row count (0 = no such id).
+     */
+    updateEmbedding: async (id: string, vecLiteral: string): Promise<number> => {
+      const result = await c.query(
+        `UPDATE facts SET embedding = $1::vector, embedded_at = now() WHERE id = $2`,
+        [vecLiteral, id],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return result.rowCount ?? 0
+    },
     // myth-exac: snapshot-view primary read path. Returns facts for the
     // given entity IDs filtered by access tier. Empty entity ID list
     // short-circuits to [] without a round-trip (covers the snapshot's

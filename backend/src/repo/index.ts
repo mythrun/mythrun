@@ -15,6 +15,7 @@ import { factsNs } from './facts.js'
 import { proseKernelsNs } from './prose-kernels.js'
 import { relationshipsNs } from './relationships.js'
 import { entityHierarchyNs } from './entity-hierarchy.js'
+import { worldRetrievalNs } from './world-retrieval.js'
 import { statBlocksNs } from './stat-blocks.js'
 import { purchasesNs } from './purchases.js'
 import { userSubscriptionsNs } from './user-subscriptions.js'
@@ -65,6 +66,10 @@ function bindTx(c: ClientLike) {
     proseKernels: proseKernelsNs(c),
     relationships: relationshipsNs(c),
     entityHierarchy: entityHierarchyNs(c),
+    // MYT-71 T6: world-store retrieval (pgvector cosine search + recursive-CTE
+    // graph walks). The vector-search methods assume the caller already SET
+    // LOCAL hnsw.iterative_scan in the read tx (the orchestration layer's job).
+    worldRetrieval: worldRetrievalNs(c),
     statBlocks: statBlocksNs(c),
     purchases: purchasesNs(c),
     userSubscriptions: userSubscriptionsNs(c),

@@ -266,6 +266,32 @@ describe('entities repo', () => {
     expect(rows.find((r) => r.entity_type === 'location')?.prose).toBe('A salt-eaten wharf.')
   })
 
+  // MYT-71 T6: updateEmbedding sets the pgvector embedding + embedded_at.
+  it('updateEmbedding sets embedding + stamps embedded_at', async () => {
+    const id = uuidv7()
+    await entities.insert(pool, {
+      id, worldId, entityType: 'npc', name: 'Mara', accessLevel: 'known', createdIn: 'stage:test',
+    })
+    const lit = `[${['1', ...new Array<string>(511).fill('0')].join(',')}]`
+    const affected = await repo.entities.updateEmbedding(id, lit)
+    expect(affected).toBe(1)
+    const row = await pool.query<{ embedding: string | null; embedded_at: Date | null }>(
+      `SELECT embedding, embedded_at FROM entities WHERE id = $1`,
+      [id],
+    )
+    expect(row.rows[0]?.embedding).not.toBeNull()
+    expect(row.rows[0]?.embedded_at).not.toBeNull()
+  })
+
+  it('updateEmbedding returns 0 for an unknown id', async () => {
+    const lit = `[${['1', ...new Array<string>(511).fill('0')].join(',')}]`
+    const affected = await repo.entities.updateEmbedding(
+      '019dccef-0000-7000-8000-000000000099',
+      lit,
+    )
+    expect(affected).toBe(0)
+  })
+
   // data-layer unification: the location-selection drift-defense check
   // absorbed from the inline read in location-selection.ts.
   it('existsInWorld true for a seeded entity, false for a ghost id or wrong world', async () => {

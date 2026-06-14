@@ -188,6 +188,22 @@ export function entitiesNs(c: ClientLike) {
       )
     },
     /**
+     * MYT-71 (world-retrieval): set the pgvector embedding + stamp embedded_at.
+     * Canonical write so `embed-write.ts` calls `repo.entities.updateEmbedding`
+     * (pool) or `tx.entities.updateEmbedding` (in a transaction). `vecLiteral`
+     * is the pgvector text form `'[f1,…,f512]'`; cast to ::vector here (pg has
+     * no native vector param type). Returns the affected row count (0 = no such
+     * id). The read-side cosine search lives in `world-retrieval.ts`.
+     */
+    updateEmbedding: async (id: string, vecLiteral: string): Promise<number> => {
+      const r = await c.query(
+        `UPDATE entities SET embedding = $1::vector, embedded_at = now() WHERE id = $2`,
+        [vecLiteral, id],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return r.rowCount ?? 0
+    },
+    /**
      * starting-situation (stage 6) input read: every location / npc / faction
      * entity for a world with its prose-kernel content, ordered by type then
      * creation. SQL verbatim from the processor's `loadStartingSituationInputs`.

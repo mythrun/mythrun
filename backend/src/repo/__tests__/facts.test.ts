@@ -4,6 +4,7 @@ import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
 import { entities } from '../entities.js'
 import { facts, factsNs } from '../facts.js'
+import { createRepo, type Repo } from '../index.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
 
@@ -11,12 +12,14 @@ const databaseUrl = process.env.DATABASE_URL ?? ''
 
 describe('facts repo', () => {
   let pool: Pool
+  let repo: Repo
   let entityId: string
   let scope: TestScope
 
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
+    repo = createRepo(pool)
     scope = makeTestScope('facts')
   })
   afterAll(async () => {
@@ -136,6 +139,34 @@ describe('facts repo', () => {
       access_level: 'known',
       narrative_status: 'undelivered',
     })
+  })
+
+  // MYT-71 T6: updateEmbedding sets the pgvector embedding + embedded_at.
+  it('updateEmbedding sets embedding + stamps embedded_at', async () => {
+    await facts.insertMany(pool, [
+      { entityId, topic: 'history', accessLevel: 'known', content: 'x' },
+    ])
+    const row = await pool.query<{ id: string }>(
+      `SELECT id FROM facts WHERE entity_id = $1`, [entityId],
+    )
+    const factId = row.rows[0]?.id
+    if (factId === undefined) throw new Error('expected fact row to exist')
+    const lit = `[${['1', ...new Array<string>(511).fill('0')].join(',')}]`
+    const affected = await repo.facts.updateEmbedding(factId, lit)
+    expect(affected).toBe(1)
+    const after = await pool.query<{ embedding: string | null; embedded_at: Date | null }>(
+      `SELECT embedding, embedded_at FROM facts WHERE id = $1`, [factId],
+    )
+    expect(after.rows[0]?.embedding).not.toBeNull()
+    expect(after.rows[0]?.embedded_at).not.toBeNull()
+  })
+
+  it('updateEmbedding returns 0 for an unknown id', async () => {
+    const lit = `[${['1', ...new Array<string>(511).fill('0')].join(',')}]`
+    const affected = await repo.facts.updateEmbedding(
+      '019dccef-0000-7000-8000-000000000099', lit,
+    )
+    expect(affected).toBe(0)
   })
 
   describe('listByEntities (myth-exac)', () => {
