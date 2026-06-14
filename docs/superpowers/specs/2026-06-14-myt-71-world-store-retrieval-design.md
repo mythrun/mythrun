@@ -65,7 +65,7 @@ The `512` dimension is **migration-baked** (column type + index). It is independ
 ## 4. Embeddings — the Voyage write-path
 
 ### 4.1 Provider & model
-**Voyage AI** — Anthropic's recommended embeddings partner — via a **thin first-party wrapper** (`backend/src/llm/embed.ts`), a plain `fetch` to Voyage's REST `/v1/embeddings` through our own abstraction. No third-party embedding SDK. Model **`voyage-3.5-lite` at 512-dim** (the current lite model; `voyage-3-lite` is superseded — "strictly better in all aspects" per Voyage's own docs; verify the current lite model at implementation time per the runbooks-must-be-executed rule). A config constant, never hardcoded at call sites.
+**Voyage AI** — Anthropic's recommended embeddings partner — via a **thin first-party wrapper** (`backend/src/llm/embed.ts`), a plain `fetch` to Voyage's REST `/v1/embeddings` through our own abstraction. No third-party embedding SDK. Model **`voyage-4-lite` with `output_dimension: 512`** (the current lite generation — verified against Voyage's live docs 2026-06-14: the `voyage-3.x-lite` models are now legacy, and the `voyage-4` generation ships **the first 200M tokens free per account**, which comfortably covers Mythrun's embedding volume). **`voyage-4-lite` defaults to 1024-dim**, so the wrapper MUST send `output_dimension: 512` on every request to match the migration-baked column; the length-assert (below) catches any drift. A config constant, never hardcoded at call sites; re-verify the current lite model at implementation time (runbooks-must-be-executed).
 
 **Two independent knobs (the escape hatch, stated correctly):** (a) **model swap at fixed 512-dim** — pure re-embed, no migration (the modern lite models are Matryoshka, so 512 is a native output dim); (b) **dimension change** — a column + HNSW migration. Don't conflate them. The wrapper asserts the returned vector length === `EMBED_DIM` and fails loud on mismatch.
 
@@ -136,8 +136,9 @@ DB access stays in the repo layer: the heavy SQL (cosine rank + the world join, 
 
 | Constant | Value | Why |
 |---|---|---|
-| `VOYAGE_EMBED_MODEL` | `'voyage-3.5-lite'` | current lite model; never hardcoded at call sites; verify-at-build |
+| `VOYAGE_EMBED_MODEL` | `'voyage-4-lite'` | current lite generation (200M free tokens/acct); never hardcoded; verify-at-build |
 | `EMBED_DIM` | `512` | must equal the `vector(N)` column AND the model's output dim (asserted at write) |
+| `VOYAGE_OUTPUT_DIMENSION` | `512` | sent on every request — voyage-4-lite defaults to 1024, so request 512 to match `EMBED_DIM` |
 | `VOYAGE_INPUT_TYPE_DOC` / `_QUERY` | `'document'` / `'query'` | asymmetric retrieval |
 | `VOYAGE_BATCH_MAX_INPUTS` / `_MAX_TOKENS` | `1000` / model token cap | batch by the binding (token) limit, not a fixed count |
 | `VOYAGE_DOC_TIMEOUT_MS` / `_QUERY_TIMEOUT_MS` | generous / tight | write-path vs turn-path |
@@ -183,7 +184,7 @@ DB access stays in the repo layer: the heavy SQL (cosine rank + the world join, 
 ## 13. Resolved decisions (design gate, 2026-06-14)
 
 1. **v1 = pgvector + graph only.** Spatial → MYT-78; text-to-SQL → cut (no bead).
-2. **Voyage AI** via a first-party REST wrapper; **`voyage-3.5-lite` / 512-dim** (verify-current-at-build), document/query asymmetric input types. Model id and dimension are independent knobs (model swap = re-embed only; dim = migration).
+2. **Voyage AI** via a first-party REST wrapper; **`voyage-4-lite` with `output_dimension: 512`** (current lite generation, 200M free tokens/acct; verified 2026-06-14 — `voyage-3.x-lite` is now legacy; re-verify at build), document/query asymmetric input types. Model id and dimension are independent knobs (model swap = re-embed only; dim = migration). voyage-4-lite defaults to 1024-dim → always request 512.
 3. **Recursive CTE, not ltree**, for both graph and hierarchy.
 4. **Graph v1 treats all relationship types as an undirected connection**; typed directionality is a later refinement.
 5. **Embed write-path = backfill + a TOTAL world-gen terminal post-pass + a character-integration post-pass** (new worlds searchable on completion incl. PC-backstory facts); the Scribe reuses it at session end. The embed stage catches Voyage errors internally, reports `costUsd: 0` (Voyage spend off the Anthropic cap), and emits a NULL-embedding summary log. Voyage call outside any tx.
@@ -205,6 +206,6 @@ DB access stays in the repo layer: the heavy SQL (cosine rank + the world join, 
 Four reviewers — data-integrity/SQL (Alexandria), retrieval/embeddings (Pergamon), architecture/interface (Nalanda), ops/infra/cost (Timbuktu). Strict-rubric outcome: **0 showstoppers; ~25 grounded corrections folded; no second round.** Every reviewer affirmed the load-bearing architecture (over-pull-no-tier-filter boundary, the resolver-library cut, ZFC/TAG, HNSW-over-IVFFlat, the deferrals). The round's value was live-code grounding — the spec had drifted from migration 001:
 
 - **Schema drift (×3 convergent):** `access_level` is `known/discoverable/secret` (014), `facts` has no `world_id` (scope via the entities join — else cross-world results), `entities.entity_type` includes `pc` (016). Folded into §1/§3/§5 + saved as `reference_world_schema_drift_since_001`.
-- **Retrieval quality:** `voyage-3-lite` superseded by `voyage-3.5-lite` (same dim, strictly better; model/dim decoupled); `searchLore` must rank entities too (prose_kernel lore); batch by tokens not a 1000-cap; score range `[-1,1]`; split doc/query timeouts + 429 backoff.
+- **Retrieval quality:** `voyage-3-lite` superseded — build-time re-verification (2026-06-14, prompted by the API-key setup) landed on **`voyage-4-lite` at `output_dimension: 512`** (current generation, 200M free tokens/acct; model/dim decoupled); `searchLore` must rank entities too (prose_kernel lore); batch by tokens not a 1000-cap; score range `[-1,1]`; split doc/query timeouts + 429 backoff.
 - **Write-path/contract:** the embed stage must be a TOTAL stage (the `WORLD_GEN_STAGES` loop fails the world on any throw) reporting `costUsd:0`; Voyage call outside any tx (MYT-55); character-integration's later facts need embedding too; `findSimilarEntities` must throw (not `[]`) on embed failure or it mints duplicate canon.
 - **Infra:** `VOYAGE_API_KEY` crashloops both API+worker via `loadEnv` ("API doesn't need it" was wrong → on both task-defs); the TF surfaces are more than three (env/staging `manual_secret_names` + value population, `variables.tf` validation, `.env.development.example`); NULL-embedding observability + launch rate-limit posture. The `CREATE EXTENSION` privilege concern was resolved in-round (the `pgcrypto` precedent proves `rds_superuser`).
