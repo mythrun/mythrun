@@ -35,6 +35,7 @@ process.env.FRONTEND_BASE_URL ??= 'http://localhost:5173'
 process.env.STRIPE_SECRET_KEY ??= 'rk_test_baseline_for_setup_env'
 process.env.STRIPE_WEBHOOK_SECRET ??= 'PLACEHOLDER'
 process.env.ANTHROPIC_API_KEY ??= 'sk-ant-test-baseline-for-setup-env'
+process.env.VOYAGE_API_KEY ??= 'pa-test-baseline-for-setup-env'
 // Pin the bypass sub to the constant the integration suite hardcodes
 // (`bypass:dev-1`). myth-yetw made the bypass plugin derive the sub from
 // os.hostname() per machine; ~10 test files hardcode `bypass:dev-1` and mock

@@ -23,6 +23,7 @@ export interface Env {
   readonly stripeSecretKey: string
   readonly stripeWebhookSecret: string
   readonly anthropicApiKey: string
+  readonly voyageApiKey: string
 }
 
 // Dev (.env.development) sets DATABASE_URL / REDIS_REALTIME_URL /
@@ -174,6 +175,20 @@ function validateAnthropicApiKey(raw: string | undefined): string {
   return raw
 }
 
+// Voyage API key powers the embeddings layer (semantic memory / retrieval).
+// A missing or empty value would surface as a runtime 401 from the Voyage SDK
+// only once the first embed call fires — long after boot. Catching it at
+// env-load makes the failure mode loud and immediate. We assert non-empty
+// only: the live Voyage key prefix could not be confirmed from the docs this
+// session, and a wrong prefix-assert would reject a valid key (worse than no
+// assert). Add a prefix check here once the format is confirmed.
+function validateVoyageApiKey(raw: string | undefined): string {
+  if (!raw || raw.trim() === '') {
+    throw new Error('VOYAGE_API_KEY is required')
+  }
+  return raw
+}
+
 // PLACEHOLDER literal is permitted in the MYT-41 → MYT-42 window. MYT-42's
 // webhook handler verifies via stripe.webhooks.constructEvent unconditionally;
 // any signature mismatch fails closed regardless of whether the secret is
@@ -261,6 +276,7 @@ export function loadEnv(): Env {
   const stripeSecretKey = validateStripeSecretKey(process.env.STRIPE_SECRET_KEY)
   const stripeWebhookSecret = validateStripeWebhookSecret(process.env.STRIPE_WEBHOOK_SECRET)
   const anthropicApiKey = validateAnthropicApiKey(process.env.ANTHROPIC_API_KEY)
+  const voyageApiKey = validateVoyageApiKey(process.env.VOYAGE_API_KEY)
   // MYTHRUN_ENV + REGION_PREFIX feed the Redis key prefix. Staging and prod
   // share one ElastiCache cluster (per the MYT-39 §5.5 design); per-env
   // prefixing keeps their keyspaces disjoint. REGION_PREFIX is wired into
@@ -292,5 +308,6 @@ export function loadEnv(): Env {
     stripeSecretKey,
     stripeWebhookSecret,
     anthropicApiKey,
+    voyageApiKey,
   })
 }

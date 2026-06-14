@@ -101,6 +101,7 @@ function stubEnv(): Env {
     stripeSecretKey: 'rk_test_stub',
     stripeWebhookSecret: 'whsec_test_stub',
     anthropicApiKey: 'sk-ant-stub',
+    voyageApiKey: 'pa-stub',
   })
 }
 

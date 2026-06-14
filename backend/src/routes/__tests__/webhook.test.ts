@@ -49,6 +49,7 @@ function buildStubEnv(webhookSecret: string): Env {
     stripeSecretKey: 'rk_test_unit_test_secret_key',
     stripeWebhookSecret: webhookSecret,
     anthropicApiKey: 'sk-ant-unit-test-key',
+    voyageApiKey: 'pa-unit-test-key',
   })
 }
 

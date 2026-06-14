@@ -442,6 +442,26 @@ describe('loadEnv — ANTHROPIC_API_KEY', () => {
   })
 })
 
+describe('loadEnv — VOYAGE_API_KEY', () => {
+  beforeEach(() => {
+    SAFE_BASE()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('throws when VOYAGE_API_KEY is missing', () => {
+    vi.stubEnv('VOYAGE_API_KEY', '')
+    expect(() => loadEnv()).toThrow(/VOYAGE_API_KEY is required/)
+  })
+
+  it('accepts a non-empty key and exposes voyageApiKey', () => {
+    vi.stubEnv('VOYAGE_API_KEY', 'pa-test-voyage-key')
+    const env = loadEnv()
+    expect(env.voyageApiKey).toBe('pa-test-voyage-key')
+  })
+})
+
 describe('redisKeyPrefix', () => {
   beforeEach(() => {
     SAFE_BASE()

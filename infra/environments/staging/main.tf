@@ -16,6 +16,11 @@ locals {
   # is OK because app never reads these until values are set.
   manual_secret_names = [
     "anthropic-api-key",
+    # voyage-api-key value is populated out-of-band: Terraform creates the
+    # secret shell with a PLACEHOLDER version (app boots, but the first embed
+    # call 401s) — set the real value via
+    # `aws secretsmanager put-secret-value` as a Task-13 / deploy human-action.
+    "voyage-api-key",
     "stripe-secret-key",
     "stripe-webhook-secret",
   ]

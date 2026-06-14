@@ -163,6 +163,7 @@ locals {
   # suffix on valueFrom.
   common_secrets = [
     { name = "ANTHROPIC_API_KEY", valueFrom = var.manual_secret_arns["anthropic-api-key"] },
+    { name = "VOYAGE_API_KEY", valueFrom = var.manual_secret_arns["voyage-api-key"] },
     { name = "STRIPE_SECRET_KEY", valueFrom = var.manual_secret_arns["stripe-secret-key"] },
     { name = "STRIPE_WEBHOOK_SECRET", valueFrom = var.manual_secret_arns["stripe-webhook-secret"] },
     { name = "DB_PASSWORD", valueFrom = var.rds_password_secret_arn },

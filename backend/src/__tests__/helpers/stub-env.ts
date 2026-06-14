@@ -24,6 +24,7 @@ export function makeStubEnv(overrides: Partial<Env> = {}): Env {
     stripeSecretKey: 'rk_test_stub_secret_key',
     stripeWebhookSecret: 'PLACEHOLDER',
     anthropicApiKey: 'sk-ant-stub-test-key',
+    voyageApiKey: 'pa-stub-test-key',
     ...overrides,
   })
 }

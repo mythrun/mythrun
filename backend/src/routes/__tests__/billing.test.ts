@@ -215,6 +215,7 @@ function stubEnv(): Env {
     stripeSecretKey: 'rk_test_stub_for_billing_route_tests',
     stripeWebhookSecret: 'whsec_test_stub',
     anthropicApiKey: 'sk-ant-stub-for-billing-route-tests',
+    voyageApiKey: 'pa-stub-for-billing-route-tests',
   })
 }
 

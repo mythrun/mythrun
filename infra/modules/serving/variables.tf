@@ -112,15 +112,15 @@ variable "shared_redis_auth_secret_arn" {
 }
 
 variable "manual_secret_arns" {
-  description = "Map of per-env manual secrets. Must contain keys: anthropic-api-key, stripe-secret-key, stripe-webhook-secret."
+  description = "Map of per-env manual secrets. Must contain keys: anthropic-api-key, voyage-api-key, stripe-secret-key, stripe-webhook-secret."
   type        = map(string)
 
   validation {
     condition = alltrue([
-      for k in ["anthropic-api-key", "stripe-secret-key", "stripe-webhook-secret"] :
+      for k in ["anthropic-api-key", "voyage-api-key", "stripe-secret-key", "stripe-webhook-secret"] :
       contains(keys(var.manual_secret_arns), k)
     ])
-    error_message = "manual_secret_arns must contain all three expected keys: anthropic-api-key, stripe-secret-key, stripe-webhook-secret."
+    error_message = "manual_secret_arns must contain all four expected keys: anthropic-api-key, voyage-api-key, stripe-secret-key, stripe-webhook-secret."
   }
 }
 
