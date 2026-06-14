@@ -82,9 +82,11 @@ const EXPECTED_IDX_NAMES = [
   'idx_credit_ledger_source_billing_history',
   'idx_credit_ledger_source_purchase',
   'idx_credit_ledger_user_type',
+  'idx_entities_embedding',
   'idx_entities_world',
   'idx_entities_world_access',
   'idx_entities_world_type',
+  'idx_facts_embedding',
   'idx_facts_entity',
   'idx_facts_entity_access_status',
   'idx_pipeline_runs_campaign',
@@ -794,6 +796,7 @@ describe('schema-parity (integration)', () => {
       '023_session_messages_unique_seq.sql',
       '024_session_messages_dm_rows.sql',
       '025_character_ledger.sql',
+      '026_world_retrieval.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
