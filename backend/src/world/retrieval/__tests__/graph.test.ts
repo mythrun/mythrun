@@ -69,13 +69,14 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
   async function seedEntity(
     entityType: 'npc' | 'location' | 'faction' | 'item' | 'pc',
     name: string,
+    accessLevel: 'known' | 'discoverable' | 'secret' = 'known',
   ): Promise<string> {
     const id = uuidv7()
     if (entityType === 'pc') {
       await repo.entities.insertPc({ id, worldId: worldA, name })
     } else {
       await entities.insert(pool, {
-        id, worldId: worldA, entityType, name, accessLevel: 'known', createdIn: 'stage:test',
+        id, worldId: worldA, entityType, name, accessLevel, createdIn: 'stage:test',
       })
     }
     return id
@@ -246,8 +247,20 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
       entityId: root,
       name: 'Crown',
       entityType: 'faction',
+      accessLevel: 'known',
       depth: 0,
     })
+  })
+
+  it('surfaces accessLevel on each KnownCharacter (MYT-72 T1)', async () => {
+    const root = await seedEntity('npc', 'Open NPC', 'known')
+    const secret = await seedEntity('npc', 'Hidden NPC', 'secret')
+    await rel(root, secret)
+
+    const result = await charactersKnownTo(deps, root, {})
+    const byId = new Map(result.map((r) => [r.entityId, r]))
+    expect(byId.get(root)?.accessLevel).toBe('known')
+    expect(byId.get(secret)?.accessLevel).toBe('secret')
   })
 
   // ── factionTree ────────────────────────────────────────────────────────────
@@ -274,6 +287,17 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     expect(byId.get(grandchild)?.entityType).toBe('faction')
     // Subtree is shallow (max depth 2 < GRAPH_MAX_DEPTH=5) — not truncated.
     expect(truncated).toBe(false)
+  })
+
+  it('surfaces accessLevel on each FactionNode (MYT-72 T1)', async () => {
+    const root = await seedEntity('faction', 'Open Council', 'known')
+    const secret = await seedEntity('faction', 'Hidden Cabal', 'secret')
+    await hier(root, secret)
+
+    const { nodes } = await factionTree(deps, root)
+    const byId = new Map(nodes.map((n) => [n.entityId, n]))
+    expect(byId.get(root)?.accessLevel).toBe('known')
+    expect(byId.get(secret)?.accessLevel).toBe('secret')
   })
 
   it('flags truncated:true and drops over-depth nodes when the tree exceeds GRAPH_MAX_DEPTH', async () => {

@@ -287,6 +287,22 @@ describe('world-retrieval repo (MYT-71 T6)', () => {
     expect(byId.get(e)?.entity_type).toBe('npc')
   })
 
+  it('charactersKnownTo returns access_level per node (MYT-72 T1)', async () => {
+    // Over-pull: a `known` root with a `secret` neighbor — both reachable, both
+    // carry their tier (the ST vet downstream is the gate, not this query).
+    const root = await seedEntity(worldA, 'npc', 'Open NPC', 0, 'known')
+    const childSecret = await seedEntity(worldA, 'npc', 'Hidden NPC', 0, 'secret')
+    await pool.query(
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
+       VALUES ($1, $2, $3, 'knows', 'd')`,
+      [uuidv7(), root, childSecret],
+    )
+    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 5)
+    const byName = new Map(rows.map((r) => [r.name, r]))
+    expect(byName.get('Open NPC')?.access_level).toBe('known')
+    expect(byName.get('Hidden NPC')?.access_level).toBe('secret')
+  })
+
   it('charactersKnownTo respects maxDepth (excludes nodes deeper than the bound)', async () => {
     const root = await seedEntity(worldA, 'npc', 'Root', 0)
     const a = await seedEntity(worldA, 'npc', 'A', 0)
@@ -336,6 +352,19 @@ describe('world-retrieval repo (MYT-71 T6)', () => {
     expect(byId.get(grandchild)?.parent_id).toBe(child1)
     expect(byId.get(grandchild)?.name).toBe('Cadet Branch')
     expect(byId.get(grandchild)?.entity_type).toBe('faction')
+  })
+
+  it('factionTree returns access_level per node (MYT-72 T1)', async () => {
+    const root = await seedEntity(worldA, 'faction', 'Open Council', 0, 'known')
+    const childSecret = await seedEntity(worldA, 'faction', 'Hidden Cabal', 0, 'secret')
+    await pool.query(
+      `INSERT INTO entity_hierarchy (id, parent_entity_id, child_entity_id) VALUES ($1, $2, $3)`,
+      [uuidv7(), root, childSecret],
+    )
+    const rows = await worldRetrievalNs(pool).factionTree(root, 5)
+    const byName = new Map(rows.map((r) => [r.name, r]))
+    expect(byName.get('Open Council')?.access_level).toBe('known')
+    expect(byName.get('Hidden Cabal')?.access_level).toBe('secret')
   })
 
   it('factionTree respects maxDepth (returns rows where depth <= maxDepth)', async () => {

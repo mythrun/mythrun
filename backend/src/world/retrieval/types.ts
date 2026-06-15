@@ -39,19 +39,24 @@ export interface EntityCandidate {
 }
 
 /** One node from a character-graph walk (`depth` = hops from the seed). PCs are
- *  included on graph paths, so entityType is the widened GraphEntityType. */
+ *  included on graph paths, so entityType is the widened GraphEntityType.
+ *  `accessLevel` is surfaced (over-pull) so the downstream Slow-Thinker vet can
+ *  tier-gate graph hits. */
 export interface KnownCharacter {
   readonly entityId: string
   readonly name: string
   readonly entityType: GraphEntityType
+  readonly accessLevel: AccessLevel
   readonly depth: number
 }
 
-/** One node from a faction-hierarchy walk (`parentId` null at a root). */
+/** One node from a faction-hierarchy walk (`parentId` null at a root).
+ *  `accessLevel` surfaced for the same downstream tier-gate reason. */
 export interface FactionNode {
   readonly entityId: string
   readonly name: string
   readonly entityType: GraphEntityType
+  readonly accessLevel: AccessLevel
   readonly parentId: string | null
   readonly depth: number
 }

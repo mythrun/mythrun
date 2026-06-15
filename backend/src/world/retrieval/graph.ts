@@ -71,6 +71,7 @@ function toKnownCharacter(row: KnownCharacterDbRow): KnownCharacter {
     entityId: row.entity_id,
     name: row.name,
     entityType: row.entity_type,
+    accessLevel: row.access_level,
     depth: row.depth,
   }
 }
@@ -80,6 +81,7 @@ function toFactionNode(row: FactionNodeDbRow): FactionNode {
     entityId: row.entity_id,
     name: row.name,
     entityType: row.entity_type,
+    accessLevel: row.access_level,
     parentId: row.parent_id,
     depth: row.depth,
   }

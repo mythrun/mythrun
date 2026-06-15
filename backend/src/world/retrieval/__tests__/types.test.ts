@@ -57,8 +57,10 @@ describe('world/retrieval/types', () => {
       entityId: 'ent-4',
       name: 'Captain Oru',
       entityType: 'npc',
+      accessLevel: 'known',
       depth: 1,
     }
+    expect(ch.accessLevel).toBe('known')
     expect(ch.depth).toBe(1)
   })
 
@@ -67,9 +69,11 @@ describe('world/retrieval/types', () => {
       entityId: 'ent-5',
       name: 'The Ashen Covenant',
       entityType: 'faction',
+      accessLevel: 'secret',
       parentId: null,
       depth: 0,
     }
+    expect(node.accessLevel).toBe('secret')
     expect(node.parentId).toBeNull()
     expect(node.depth).toBe(0)
   })

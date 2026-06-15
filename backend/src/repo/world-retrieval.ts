@@ -56,20 +56,25 @@ export interface LoreEntityDbHit {
   readonly score: number
 }
 
-/** One node from `charactersKnownTo` (snake_case DB columns). */
+/** One node from `charactersKnownTo` (snake_case DB columns). Carries
+ *  `access_level` so the downstream Slow-Thinker vet can tier-gate graph hits
+ *  (over-pull: no tier predicate in the walk; the gate is downstream). */
 export interface KnownCharacterDbRow {
   readonly entity_id: string
   readonly name: string
   readonly entity_type: GraphEntityType
+  readonly access_level: AccessLevel
   readonly depth: number
 }
 
 /** One node from `factionTree` (snake_case DB columns; `parent_id` null at the
- *  root). */
+ *  root). Carries `access_level` for the same downstream tier-gate reason as
+ *  KnownCharacterDbRow. */
 export interface FactionNodeDbRow {
   readonly entity_id: string
   readonly name: string
   readonly entity_type: GraphEntityType
+  readonly access_level: AccessLevel
   readonly parent_id: string | null
   readonly depth: number
 }
@@ -180,7 +185,7 @@ export function worldRetrievalNs(c: ClientLike) {
               AND NOT edges.next_id = ANY(w.path)
          )
          SELECT DISTINCT ON (m.entity_id)
-                m.entity_id, e.name, e.entity_type, m.depth
+                m.entity_id, e.name, e.entity_type, e.access_level, m.depth
            FROM walk m
            JOIN entities e ON e.id = m.entity_id
           ORDER BY m.entity_id, m.depth`,
@@ -210,7 +215,7 @@ export function worldRetrievalNs(c: ClientLike) {
              JOIN entity_hierarchy eh ON eh.parent_entity_id = t.entity_id
             WHERE t.depth < $2
          )
-         SELECT t.entity_id, e.name, e.entity_type, t.parent_id, t.depth
+         SELECT t.entity_id, e.name, e.entity_type, e.access_level, t.parent_id, t.depth
            FROM tree t
            JOIN entities e ON e.id = t.entity_id
           ORDER BY t.depth, t.entity_id`,
