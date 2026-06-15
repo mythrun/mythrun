@@ -1,6 +1,6 @@
 // backend/src/llm/__tests__/embed.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createVoyageEmbedder } from '../embed.js'
+import { createVoyageEmbedder, VoyageEmbedError, isVoyageConfigError } from '../embed.js'
 import { EMBED_DIM, VOYAGE_EMBED_MODEL } from '../../world/retrieval/config.js'
 
 const vec = (fill: number): number[] => Array.from({ length: EMBED_DIM }, () => fill)
@@ -73,9 +73,15 @@ describe('embed.ts', () => {
   })
 
   it('THROWS when a returned vector length != EMBED_DIM (dim drift guard)', async () => {
-    fetchMock.mockResolvedValue(okResponse([[0.1, 0.2, 0.3]]))
+    // Fresh Response per call — a Response body can only be .json()'d once, and
+    // this test embeds twice (message assertion + field assertion).
+    fetchMock.mockImplementation(() => Promise.resolve(okResponse([[0.1, 0.2, 0.3]])))
     const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     await expect(e.embedQuery('x')).rejects.toThrow(/dimension|EMBED_DIM|512/i)
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('dim_mismatch')
+    expect(isVoyageConfigError(err)).toBe(true)
   })
 
   it('retries with backoff on HTTP 429 then succeeds', async () => {
@@ -98,6 +104,78 @@ describe('embed.ts', () => {
     await expect(e.embedQuery('x')).rejects.toThrow()
   })
 
+  it('classifies HTTP 401 as a CONFIG error (kind=auth, status=401)', async () => {
+    fetchMock.mockResolvedValue(new Response('unauthorized', { status: 401 }))
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('auth')
+    expect((err as VoyageEmbedError).status).toBe(401)
+    expect(isVoyageConfigError(err)).toBe(true)
+  })
+
+  it('classifies HTTP 403 as a CONFIG error (kind=auth, status=403)', async () => {
+    fetchMock.mockResolvedValue(new Response('forbidden', { status: 403 }))
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('auth')
+    expect((err as VoyageEmbedError).status).toBe(403)
+    expect(isVoyageConfigError(err)).toBe(true)
+  })
+
+  it('classifies HTTP 400 as a CONFIG error (kind=bad_request, status=400)', async () => {
+    fetchMock.mockResolvedValue(new Response('bad request', { status: 400 }))
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('bad_request')
+    expect((err as VoyageEmbedError).status).toBe(400)
+    expect(isVoyageConfigError(err)).toBe(true)
+  })
+
+  it('classifies HTTP 500 as a TRANSIENT error (kind=transient, not config)', async () => {
+    fetchMock.mockResolvedValue(new Response('server error', { status: 500 }))
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('transient')
+    expect((err as VoyageEmbedError).status).toBe(500)
+    expect(isVoyageConfigError(err)).toBe(false)
+  })
+
+  it('classifies an exhausted-429 as TRANSIENT (kind=rate_limited, not config)', async () => {
+    fetchMock.mockResolvedValue(new Response('rate limited', { status: 429 }))
+    const e = createVoyageEmbedder({
+      apiKey: 'k',
+      fetchImpl: fetchMock,
+      sleepImpl: () => Promise.resolve(),
+    })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('rate_limited')
+    expect((err as VoyageEmbedError).status).toBe(429)
+    expect(isVoyageConfigError(err)).toBe(false)
+  })
+
+  it('wraps a fetch-level rejection (network/timeout) as TRANSIENT', async () => {
+    fetchMock.mockRejectedValue(new TypeError('network down'))
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('transient')
+    expect(isVoyageConfigError(err)).toBe(false)
+  })
+
+  it('wraps a non-Error fetch rejection as TRANSIENT (String(err) arm)', async () => {
+    fetchMock.mockRejectedValue('boom') // a bare string, not an Error
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('transient')
+    expect((err as VoyageEmbedError).message).toContain('boom')
+  })
+
   it('gives up after VOYAGE_MAX_RETRIES_429 exhausted 429s and throws', async () => {
     fetchMock.mockResolvedValue(new Response('rate limited', { status: 429 }))
     const e = createVoyageEmbedder({
@@ -106,6 +184,16 @@ describe('embed.ts', () => {
       sleepImpl: () => Promise.resolve(),
     })
     await expect(e.embedQuery('x')).rejects.toThrow(/429/)
+  })
+
+  it('embedQuery classifies an empty-data response as kind=empty', async () => {
+    // Fresh Response per call — embeds twice, and a body is single-use.
+    fetchMock.mockImplementation(() => Promise.resolve(okResponse([])))
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const err = await e.embedQuery('x').catch((x: unknown) => x)
+    expect(err).toBeInstanceOf(VoyageEmbedError)
+    expect((err as VoyageEmbedError).kind).toBe('empty')
+    expect(isVoyageConfigError(err)).toBe(false)
   })
 
   it('embedDocuments([]) makes no request and returns []', async () => {
