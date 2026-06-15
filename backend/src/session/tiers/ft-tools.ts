@@ -38,6 +38,23 @@ import {
   resolveUpdateCondition,
 } from '../rules-lawyer-vitals.js'
 import type { ConditionName } from '../../repo/characters-ledger.js'
+import {
+  runWorldFactLookup,
+  type SubstrateResolver,
+  type WorldFactLookupVet,
+  type WorldFactLookupResult,
+} from '../world-fact-lookup.js'
+import type {
+  WorldLookupGateInput,
+  WorldLookupGateDmAsker,
+  WorldLookupGateNpcAsker,
+  WorldLookupGateDeps,
+} from '../world-lookup-gate.js'
+import { KNOWLEDGE_SKILLS, type KnowledgeSkill } from '../world-lookup-config.js'
+import type { SearchResolvers } from '../../world/retrieval/search.js'
+import { charactersKnownTo, factionTree, type GraphDeps } from '../../world/retrieval/graph.js'
+import type { LoreHit, KnownCharacter, FactionNode } from '../../world/retrieval/types.js'
+import type { SkillCheckFramePayload } from './types.js'
 
 export const ROLL_DICE_INPUT = z.object({
   count: z.number().int().min(1).max(MAX_DICE_COUNT),
@@ -169,6 +186,284 @@ export type FtToolDeps = Omit<SkillCheckDeps, 'abortSignal'> & {
   readonly ledger: LedgerOps
   readonly runInTx: LedgerTxRunner
   readonly turnId: string
+  // ── MYT-72 world-knowledge lookup surface ──
+  /** The campaign's world; scopes every lore search + entity-name resolution. */
+  readonly worldId: string
+  /** searchLore / findSimilarEntities resolvers (the vector-search channel). */
+  readonly search: SearchResolvers
+  /** charactersKnownTo / factionTree graph-walk dep (the structural channel). */
+  readonly graph: GraphDeps
+  /** Resolve a colloquial entity name → its id, world-scoped, `null` on no match
+   *  (a clean "no such NPC/character/faction" relay — never a throw). */
+  readonly resolveEntityId: (name: string) => Promise<string | null>
+  /** The recent player-visible narration the ST-vet reasons over (non-secret). */
+  readonly recentNarrative: () => string
+  /** OPAQUE: the ST-vet closure with the secret `sd_playbook` captured INSIDE.
+   *  NEVER the raw playbook — enforced ignorance is structural, so `ft-tools.ts`
+   *  has no `sdPlaybook` field and never references a playbook string. */
+  readonly vet: WorldFactLookupVet
+  /** Build the PUBLIC asker-standing summary the gate reads. Public-only by
+   *  construction (the implementation never closes over secret state). */
+  readonly askerSummary: (
+    channel: 'dm' | 'npc',
+    detail: { skill?: KnowledgeSkill; npcName?: string; topic: string },
+  ) => Promise<string>
+}
+
+// ---------------------------------------------------------------------------
+// MYT-72 §17 — the three Fast-Thinker world-knowledge lookup tools (search_lore,
+// characters_known_to, faction_tree). Each tool's `execute` is a PURE RESOLVER
+// and TOTAL: it returns DATA ONLY (the §T7 `{ result, skill_gate, roll_hidden }`
+// reserved-keys shape), NEVER throws into the FT, NEVER emits a frame. Every
+// failure arm degrades to a clean in-fiction relay.
+//
+// FLAT SCHEMA (same pattern as spend_resource — see the NOTE above): `channel`
+// is a flat `z.enum` discriminator + optional per-channel fields, NOT a
+// `z.discriminatedUnion` (the Anthropic tool API rejects a root `{oneOf}` with
+// no top-level `type`). `execute` branches on `channel`.
+//
+// ENFORCED IGNORANCE is structural: the secret `sd_playbook` lives ONLY inside
+// the opaque `deps.vet` closure. The tool builds the gate + a per-substrate
+// resolver, hands them to `runWorldFactLookup`, and only ever receives back
+// `{ relayText, skillGateFrame, rollHidden }` — never the over-pulled `results`
+// block, never the playbook.
+// ---------------------------------------------------------------------------
+
+const CHANNEL = z.enum(['dm', 'npc'])
+const DM_SKILL = z.enum(KNOWLEDGE_SKILLS)
+
+// `asker_name` is the CHANNEL-NEUTRAL "who is recalling" field: the recalling
+// player character's name on the DM channel, the speaking NPC's name on the NPC
+// channel. (It is deliberately NOT `npc_name` — the FT model would never put a
+// PC name into a field named for NPCs, so DM-channel recalls would silently
+// fail-soft every time.) Required-per-channel, resolver-enforced fail-soft.
+export const SEARCH_LORE_INPUT = z.object({
+  channel: CHANNEL,
+  topic: z.string().min(1),
+  // dm channel: the recalling PC + the knowledge skill they use.
+  skill: DM_SKILL.optional(),
+  asker_name: z.string().min(1).optional(),
+})
+
+export const CHARACTERS_KNOWN_TO_INPUT = z.object({
+  channel: CHANNEL,
+  // The subject whose acquaintances we walk — resolved to an entity id.
+  character: z.string().min(1),
+  // Optional name post-filter on the walked acquaintances.
+  name: z.string().min(1).optional(),
+  skill: DM_SKILL.optional(),
+  asker_name: z.string().min(1).optional(),
+})
+
+export const FACTION_TREE_INPUT = z.object({
+  channel: CHANNEL,
+  // The faction whose hierarchy we walk — resolved to an entity id.
+  faction: z.string().min(1),
+  skill: DM_SKILL.optional(),
+  asker_name: z.string().min(1).optional(),
+})
+
+/** A TOTAL fail-soft tool result — the channel-appropriate in-fiction blank the
+ *  model narrates from when the call is malformed or the asker can't be resolved
+ *  (vet NOT called). DM and NPC voices differ so the blank reads in-fiction. */
+function failSoftResult(channel: 'dm' | 'npc'): {
+  result: string
+  skill_gate: null
+  roll_hidden: boolean
+} {
+  return {
+    result: channel === 'npc' ? "They don't seem to know." : "You can't quite bring it to mind.",
+    skill_gate: null,
+    roll_hidden: false,
+  }
+}
+
+/** Shape the orchestrator's result into the §T7 reserved-keys tool result. Only
+ *  `result` (the relay) is narrated; `skill_gate`/`roll_hidden` are secret-free
+ *  mechanical metadata (roll numbers + a public constraint, never `sd_playbook`). */
+function toToolResult(out: WorldFactLookupResult): {
+  result: string
+  skill_gate: SkillCheckFramePayload | null
+  roll_hidden: boolean
+} {
+  return { result: out.relayText, skill_gate: out.skillGateFrame ?? null, roll_hidden: out.rollHidden }
+}
+
+/** The reserved-keys tool result every lookup tool returns. */
+interface LookupToolResult {
+  readonly result: string
+  readonly skill_gate: SkillCheckFramePayload | null
+  readonly roll_hidden: boolean
+}
+
+/** The per-channel asker fields shared by all three lookup input schemas. */
+interface LookupChannelInput {
+  readonly channel: 'dm' | 'npc'
+  readonly skill?: KnowledgeSkill
+  readonly askerName?: string
+}
+
+/** A resolved asker: the public gate-input fields (channel + the typed asker)
+ *  plus the `npcFraming` string (NPC asker summary, or '' for the DM channel). */
+interface ResolvedAsker {
+  readonly dm?: WorldLookupGateDmAsker
+  readonly npc?: WorldLookupGateNpcAsker
+  readonly skill?: KnowledgeSkill
+  readonly npcName?: string
+}
+
+/** Resolve the asker (the one RECALLING) for a lookup, branching on `channel`.
+ *  Returns either the resolved asker pieces (success) or a TOTAL fail-soft result
+ *  (vet NOT called: a malformed dm call without a skill, or an unresolvable
+ *  PC/NPC name). The caller never throws on the fail-soft arm — it returns the
+ *  in-fiction relay verbatim.
+ *
+ *  `askerName` is the CHANNEL-NEUTRAL "who is recalling" field: on the NPC
+ *  channel it names the recalling NPC (resolved to an entity id); on the DM
+ *  channel it names the recalling player character (resolved off the session
+ *  roster via the skill-check `mech`). The flat schema (no root union) can't
+ *  mark it required-per-channel, so each arm validates its own presence. */
+async function resolveAsker(
+  deps: FtToolDeps,
+  input: LookupChannelInput,
+): Promise<{ ok: true; asker: ResolvedAsker } | { ok: false; failSoft: LookupToolResult }> {
+  if (input.channel === 'dm') {
+    // dm REQUIRES a knowledge skill AND the recalling PC's name (`askerName`). A
+    // missing skill or name is a malformed call → fail-soft (vet NOT run); a flat
+    // schema can't enforce either as required-per-channel.
+    if (input.skill === undefined || input.askerName === undefined) {
+      return { ok: false, failSoft: failSoftResult('dm') }
+    }
+    const resolved = await deps.mech.findSessionParticipantCharacterByName(
+      deps.sessionId,
+      input.askerName,
+    )
+    if (resolved.outcome !== 'found') {
+      deps.logger?.warn(
+        { characterName: input.askerName, outcome: resolved.outcome },
+        'world-lookup: dm asker resolution failed',
+      )
+      return { ok: false, failSoft: failSoftResult('dm') }
+    }
+    return {
+      ok: true,
+      asker: {
+        dm: { character: resolved.character, skill: input.skill, skills: resolved.skills },
+        skill: input.skill,
+      },
+    }
+  }
+  // npc REQUIRES askerName; resolve it to an entity id (null → no such NPC).
+  if (input.askerName === undefined) return { ok: false, failSoft: failSoftResult('npc') }
+  const entityId = await deps.resolveEntityId(input.askerName)
+  if (entityId === null) {
+    deps.logger?.warn({ npcName: input.askerName }, 'world-lookup: npc asker not found')
+    return { ok: false, failSoft: failSoftResult('npc') }
+  }
+  return {
+    ok: true,
+    asker: { npc: { entityId, npcName: input.askerName }, npcName: input.askerName },
+  }
+}
+
+/** Build the `WorldLookupGateInput` from a resolved asker + the gate's public
+ *  asker summary, narrowing on which asker arm is present. Exactly one of
+ *  `dm`/`npc` is set per `resolveAsker`'s contract. */
+function buildGateInput(
+  worldTone: string,
+  topic: string,
+  askerSummary: string,
+  asker: ResolvedAsker,
+): WorldLookupGateInput {
+  if (asker.dm !== undefined) {
+    return { channel: 'dm', topic, worldTone, askerSummary, dm: asker.dm }
+  }
+  // asker.npc is guaranteed present on the else arm (one-of contract).
+  const npc = asker.npc as WorldLookupGateNpcAsker
+  return { channel: 'npc', topic, worldTone, askerSummary, npc }
+}
+
+/**
+ * Drive one world-knowledge lookup end-to-end: resolve the asker, build the gate
+ * + the public asker summary, and call the orchestrator with the per-substrate
+ * `resolve` closure. TOTAL — every fail-soft arm returns a clean in-fiction
+ * relay; the orchestrator itself never throws. The opaque `deps.vet` (with the
+ * secret `sd_playbook` captured inside) is the only path the playbook reaches.
+ */
+async function runLookup(
+  deps: FtToolDeps,
+  rng: Rng | undefined,
+  abortSignal: AbortSignal | undefined,
+  args: {
+    readonly channel: 'dm' | 'npc'
+    readonly skill?: KnowledgeSkill
+    readonly askerName?: string
+    readonly topic: string
+    readonly question: string
+    readonly resolve: SubstrateResolver
+  },
+): Promise<LookupToolResult> {
+  const resolvedAsker = await resolveAsker(deps, {
+    channel: args.channel,
+    ...(args.skill !== undefined ? { skill: args.skill } : {}),
+    ...(args.askerName !== undefined ? { askerName: args.askerName } : {}),
+  })
+  if (!resolvedAsker.ok) return resolvedAsker.failSoft
+  const { asker } = resolvedAsker
+
+  const askerSummary = await deps.askerSummary(args.channel, {
+    topic: args.topic,
+    ...(asker.skill !== undefined ? { skill: asker.skill } : {}),
+    ...(asker.npcName !== undefined ? { npcName: asker.npcName } : {}),
+  })
+  // npcFraming feeds the vet the NPC's public identity/knowledge bounds; empty
+  // on the DM channel (objective world truth, no NPC voice to bound).
+  const npcFraming = args.channel === 'npc' ? askerSummary : ''
+
+  const gate = buildGateInput(deps.worldTone, args.topic, askerSummary, asker)
+  const gateDeps: WorldLookupGateDeps = {
+    worldTone: deps.worldTone,
+    ...(rng !== undefined ? { rng } : {}),
+    ...(abortSignal !== undefined ? { abortSignal } : {}),
+    ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+  }
+
+  const out = await runWorldFactLookup(
+    {
+      gateDeps,
+      vet: deps.vet,
+      worldTone: deps.worldTone,
+      ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+    },
+    {
+      gate,
+      question: args.question,
+      recentNarrative: deps.recentNarrative(),
+      npcFraming,
+      resolve: args.resolve,
+    },
+  )
+  return toToolResult(out)
+}
+
+/** Render a searchLore hit set as the tier-annotated block the ST-vet reads. */
+function renderLoreHits(hits: readonly LoreHit[]): string {
+  return hits.map((h) => `[tier=${h.accessLevel}] ${h.entityName}: ${h.content}`).join('\n')
+}
+
+/** Render a charactersKnownTo result as the tier-annotated block. */
+function renderKnownCharacters(chars: readonly KnownCharacter[]): string {
+  return chars.map((c) => `[tier=${c.accessLevel}] ${c.name} (depth ${String(c.depth)})`).join('\n')
+}
+
+/** Render a factionTree node set as the tier-annotated block, noting truncation. */
+function renderFactionNodes(nodes: readonly FactionNode[], truncated: boolean): string {
+  const lines = nodes.map(
+    (n) =>
+      `[tier=${n.accessLevel}] ${n.name} (parent ${n.parentId ?? 'root'}, depth ${String(n.depth)})`,
+  )
+  if (truncated) lines.push('[note] hierarchy truncated at the depth cap; deeper nodes omitted.')
+  return lines.join('\n')
 }
 
 /**
@@ -369,6 +664,135 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
           type: input.type,
           ...(input.hit_dice !== undefined ? { hit_dice: input.hit_dice } : {}),
         }),
+    }),
+    // -----------------------------------------------------------------------
+    // MYT-72 §17 — the three world-knowledge lookup tools. Each `execute` is a
+    // TOTAL pure resolver: build the per-substrate `resolve` closure (rendering
+    // the tier-annotated results block) and call `runLookup`, which drives the
+    // gate → resolve → opaque-ST-vet → relay flow. The returned `{ result,
+    // skill_gate, roll_hidden }` is DATA ONLY — `result` (the relay) is the only
+    // field the FT narrates from; `skill_gate`/`roll_hidden` are secret-free
+    // mechanical metadata the consume loop (T7) maps to a skill-check frame.
+    // Pass `channel:'dm'` + `skill` + `asker_name`=the recalling PC when a player
+    // character recalls; `channel:'npc'` + `asker_name`=the NPC when an NPC does.
+    // -----------------------------------------------------------------------
+    search_lore: tool({
+      description:
+        'Recall what is known about a topic, place, person, faction, event, or rumor in the world. ' +
+        'Call this BEFORE narrating any world-knowledge an asker would have to RECALL (lore, history, ' +
+        'who-someone-is). The returned text is what they know — narrate from it, never beyond it. ' +
+        "Set channel='dm' and asker_name=<the recalling player character's name> plus a knowledge skill " +
+        '(history, arcana, religion, nature, investigation, medicine, survival, insight) when a player ' +
+        "character is recalling; set channel='npc' and asker_name=<the speaking NPC's name> when an NPC " +
+        'is conveying what they know.',
+      inputSchema: SEARCH_LORE_INPUT,
+      execute: (input, { abortSignal }) => {
+        const topic = input.topic
+        // searchLore is TOTAL (swallows any embed/query throw to []), so it
+        // CANNOT distinguish an infra-failure empty from a genuine empty: the
+        // search-channel `degraded` is always false in v1 (the spec §7-named
+        // gap). The GRAPH closures (below) carry the real degraded signal; the
+        // ST-vet's `none` arbitration handles a benign empty result.
+        const resolve: SubstrateResolver = async () => {
+          const hits = await deps.search.searchLore(deps.worldId, topic, {})
+          return { results: renderLoreHits(hits), degraded: false, empty: hits.length === 0 }
+        }
+        return runLookup(deps, rng, abortSignal, {
+          channel: input.channel,
+          ...(input.skill !== undefined ? { skill: input.skill } : {}),
+          ...(input.asker_name !== undefined ? { askerName: input.asker_name } : {}),
+          topic,
+          question: topic,
+          resolve,
+        })
+      },
+    }),
+    characters_known_to: tool({
+      description:
+        'Recall who a given character or NPC is connected to — their known associates, contacts, and ' +
+        'relationships. The returned text is who the asker can recall they know — narrate from it, never ' +
+        'beyond it. Pass character=the subject whose acquaintances to recall, and optionally name to ' +
+        "filter for one specific person. Set channel='dm' and asker_name=<the recalling player " +
+        "character's name> plus a knowledge skill when a player character is recalling; set channel='npc' " +
+        "and asker_name=<the speaking NPC's name> when an NPC is conveying what they know.",
+      inputSchema: CHARACTERS_KNOWN_TO_INPUT,
+      execute: async (input, { abortSignal }) => {
+        const topic = input.character
+        // The subject of the walk is resolved to an entity id; null → no such
+        // character (clean relay, vet not called).
+        const entityId = await deps.resolveEntityId(input.character)
+        if (entityId === null) {
+          deps.logger?.warn({ character: input.character }, 'characters_known_to: subject not found')
+          return failSoftResult(input.channel)
+        }
+        const nameFilter = input.name
+        // The GRAPH closure catches its own throws → DEGRADED empty (the real
+        // resolver_degraded signal §7 wires; searchLore can't set it).
+        const resolve: SubstrateResolver = async () => {
+          try {
+            const chars = await charactersKnownTo(
+              deps.graph,
+              entityId,
+              nameFilter !== undefined ? { nameFilter } : {},
+            )
+            return {
+              results: renderKnownCharacters(chars),
+              degraded: false,
+              empty: chars.length === 0,
+            }
+          } catch (err) {
+            deps.logger?.warn({ err, entityId }, 'characters_known_to: graph walk failed; degrading')
+            return { results: '', degraded: true, empty: true }
+          }
+        }
+        return runLookup(deps, rng, abortSignal, {
+          channel: input.channel,
+          ...(input.skill !== undefined ? { skill: input.skill } : {}),
+          ...(input.asker_name !== undefined ? { askerName: input.asker_name } : {}),
+          topic,
+          question: `Who is known to ${input.character}?`,
+          resolve,
+        })
+      },
+    }),
+    faction_tree: tool({
+      description:
+        'Recall the structure of a faction, organization, or household — its hierarchy, leadership, and ' +
+        'membership. The returned text is the structure the asker can recall — narrate from it, never ' +
+        "beyond it. Pass faction=the organization to recall. Set channel='dm' and asker_name=<the " +
+        "recalling player character's name> plus a knowledge skill when a player character is recalling; " +
+        "set channel='npc' and asker_name=<the speaking NPC's name> when an NPC is conveying what they know.",
+      inputSchema: FACTION_TREE_INPUT,
+      execute: async (input, { abortSignal }) => {
+        const topic = input.faction
+        const entityId = await deps.resolveEntityId(input.faction)
+        if (entityId === null) {
+          deps.logger?.warn({ faction: input.faction }, 'faction_tree: subject not found')
+          return failSoftResult(input.channel)
+        }
+        // The GRAPH closure catches its own throws → DEGRADED empty.
+        const resolve: SubstrateResolver = async () => {
+          try {
+            const { nodes, truncated } = await factionTree(deps.graph, entityId)
+            return {
+              results: renderFactionNodes(nodes, truncated),
+              degraded: false,
+              empty: nodes.length === 0,
+            }
+          } catch (err) {
+            deps.logger?.warn({ err, entityId }, 'faction_tree: graph walk failed; degrading')
+            return { results: '', degraded: true, empty: true }
+          }
+        }
+        return runLookup(deps, rng, abortSignal, {
+          channel: input.channel,
+          ...(input.skill !== undefined ? { skill: input.skill } : {}),
+          ...(input.asker_name !== undefined ? { askerName: input.asker_name } : {}),
+          topic,
+          question: `What is the structure of ${input.faction}?`,
+          resolve,
+        })
+      },
     }),
   }
 }

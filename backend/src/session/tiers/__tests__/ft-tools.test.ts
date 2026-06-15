@@ -27,6 +27,9 @@ import {
   ADJUST_HP_INPUT,
   UPDATE_CONDITION_INPUT,
   TAKE_REST_INPUT,
+  SEARCH_LORE_INPUT,
+  CHARACTERS_KNOWN_TO_INPUT,
+  FACTION_TREE_INPUT,
   type FtToolDeps,
 } from '../ft-tools.js'
 import { STANDARD_DICE } from '../../dice/engine.js'
@@ -36,6 +39,14 @@ import type { MechanicalReads } from '../../skill-check.js'
 import type { Rng } from '../../dice/engine.js'
 import type { Character } from '../../../repo/types.js'
 import type { LedgerOps, LedgerTxRunner } from '../../rules-lawyer.js'
+import * as worldFactLookup from '../../world-fact-lookup.js'
+import type {
+  SubstrateResolver,
+  WorldFactLookupVet,
+  WorldFactLookupResult,
+} from '../../world-fact-lookup.js'
+import type { SearchResolvers } from '../../../world/retrieval/search.js'
+import type { GraphDeps } from '../../../world/retrieval/graph.js'
 import type {
   AdjustHpInput,
   TakeRestInput,
@@ -52,7 +63,20 @@ vi.mock('ai', async () => {
   return { ...actual, generateText: vi.fn() }
 })
 
+// MYT-72: stub the orchestrator spine so the lookup-tool tests exercise the
+// TOOL's wiring (asker resolution, gate/closure construction, result shaping)
+// without the gate/resolve/vet flow — that flow is world-fact-lookup.ts's own
+// tested unit. We assert the closure the tool HANDS to runWorldFactLookup and
+// the tool's mapping of the orchestrator's return into the reserved-keys shape.
+vi.mock('../../world-fact-lookup.js', async () => {
+  const actual = await vi.importActual<typeof import('../../world-fact-lookup.js')>(
+    '../../world-fact-lookup.js',
+  )
+  return { ...actual, runWorldFactLookup: vi.fn() }
+})
+
 const mockGenerateText = vi.mocked(ai.generateText)
+const mockRunWorldFactLookup = vi.mocked(worldFactLookup.runWorldFactLookup)
 
 const HAIKU_USAGE = { inputTokens: 400, outputTokens: 50, totalTokens: 450 }
 const DC_TABLE = { dc: 13, outcomes: { fail: 'F', success: 'S', great_success: 'G' } }
@@ -151,15 +175,92 @@ function passthroughTx(ledger: LedgerOps): LedgerTxRunner {
   return (fn) => fn(ledger)
 }
 
+/** A fake SearchResolvers whose searchLore returns a canned hit set (overridable
+ *  per test). findSimilarEntities is unused by the lookup tools. */
+function fakeSearch(overrides: Partial<SearchResolvers> = {}): SearchResolvers {
+  return {
+    searchLore: vi.fn().mockResolvedValue([]),
+    findSimilarEntities: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  }
+}
+
+/** A fake GraphDeps — the lookup tools call charactersKnownTo/factionTree
+ *  (which read graph.repo.worldRetrieval). Methods throw unless a test stubs
+ *  them; the lookup tests mock runWorldFactLookup so the closure is only invoked
+ *  when a test explicitly drives it. */
+function fakeGraph(
+  overrides: Partial<GraphDeps['repo']['worldRetrieval']> = {},
+): GraphDeps {
+  const unimplemented =
+    (name: string) =>
+    (): never => {
+      throw new Error(`fakeGraph.${name} not stubbed`)
+    }
+  return {
+    repo: {
+      worldRetrieval: {
+        charactersKnownTo: vi.fn(unimplemented('charactersKnownTo')),
+        factionTree: vi.fn(unimplemented('factionTree')),
+        searchFacts: vi.fn(unimplemented('searchFacts')),
+        searchEntities: vi.fn(unimplemented('searchEntities')),
+        ...overrides,
+      },
+    },
+  } as GraphDeps
+}
+
+/** A no-op opaque vet closure — the lookup tools never call it directly (the
+ *  orchestrator does), and runWorldFactLookup is mocked, so this is only a
+ *  type-level placeholder proving FtToolDeps carries an OPAQUE vet, never a raw
+ *  sd_playbook string. */
+const fakeVet: WorldFactLookupVet = vi
+  .fn()
+  .mockResolvedValue({ mode: 'relay', text: '', repairAttempted: false })
+
+/** The MYT-72 lookup surface added to FtToolDeps. Overridable per test. */
+interface LookupSurface {
+  worldId: string
+  search: SearchResolvers
+  graph: GraphDeps
+  resolveEntityId: (name: string) => Promise<string | null>
+  recentNarrative: () => string
+  vet: WorldFactLookupVet
+  askerSummary: FtToolDeps['askerSummary']
+}
+
+function makeLookupSurface(overrides: Partial<LookupSurface> = {}): LookupSurface {
+  return {
+    worldId: 'world-1',
+    search: fakeSearch(),
+    graph: fakeGraph(),
+    resolveEntityId: vi.fn().mockResolvedValue('ent-1'),
+    recentNarrative: vi.fn().mockReturnValue('the recent narration'),
+    vet: fakeVet,
+    askerSummary: vi.fn().mockResolvedValue('a public asker summary'),
+    ...overrides,
+  }
+}
+
 /** SkillCheckDeps minus abortSignal — buildFtTools threads the SDK signal in.
  *  The Rules Lawyer ledger surface defaults to an all-throwing fake (tests that
- *  exercise a ledger tool pass their own stubbed ledger + tx). */
+ *  exercise a ledger tool pass their own stubbed ledger + tx). The MYT-72 lookup
+ *  surface defaults to harmless fakes; lookup-tool tests override per case. */
 function makeDeps(
   mech: MechanicalReads,
   ledger: LedgerOps = fakeLedger(),
   runInTx: LedgerTxRunner = passthroughTx(ledger),
+  lookup: LookupSurface = makeLookupSurface(),
 ): FtToolDeps {
-  return { mech, sessionId: 'session-1', worldTone: 'grim and rain-soaked', ledger, runInTx, turnId: 'turn-1' }
+  return {
+    mech,
+    sessionId: 'session-1',
+    worldTone: 'grim and rain-soaked',
+    ledger,
+    runInTx,
+    turnId: 'turn-1',
+    ...lookup,
+  }
 }
 
 /** Minimal SDK ToolExecutionOptions for invoking execute() the way the loop does. */
@@ -502,6 +603,9 @@ describe('every FT tool input schema serializes with root type:object (Anthropic
     ['ADJUST_HP_INPUT', ADJUST_HP_INPUT],
     ['UPDATE_CONDITION_INPUT', UPDATE_CONDITION_INPUT],
     ['TAKE_REST_INPUT', TAKE_REST_INPUT],
+    ['SEARCH_LORE_INPUT', SEARCH_LORE_INPUT],
+    ['CHARACTERS_KNOWN_TO_INPUT', CHARACTERS_KNOWN_TO_INPUT],
+    ['FACTION_TREE_INPUT', FACTION_TREE_INPUT],
   ])('%s has root type:object', (_name, schema) => {
     const json = z.toJSONSchema(schema) as { type?: unknown }
     expect(json.type).toBe('object')
@@ -1171,5 +1275,428 @@ describe('take_rest execute', () => {
 
     expect(result.ok).toBe(false)
     expect(result.constraint).toContain('Ghost')
+  })
+})
+
+// ===========================================================================
+// MYT-72 §17 — the three world-knowledge lookup tools (search_lore /
+// characters_known_to / faction_tree). These tests verify the TOOL's wiring:
+// asker resolution (DM PC / NPC entity), the per-substrate `resolve` closure it
+// hands the orchestrator, the data-only reserved-keys result shape, and the
+// structural enforced-ignorance posture. `runWorldFactLookup` is mocked — the
+// gate/resolve/vet flow is its own tested unit (world-fact-lookup.test.ts).
+// ===========================================================================
+
+const RELAY: WorldFactLookupResult = {
+  relayText: 'You recall the Ashen Compact once held this valley.',
+  skillGateFrame: {
+    characterName: 'Vire',
+    skill: 'History',
+    context: 'the Ashen Compact',
+    roll: 14,
+    roll2: null,
+    rollType: 'normal',
+    modifier: 3,
+    total: 17,
+    dc: 13,
+    outcomeTier: 'success',
+    constraint: 'You recall what you know of it.',
+  },
+  rollHidden: false,
+}
+
+/** Resolve the SubstrateResolver the tool handed to the mocked orchestrator, for
+ *  the Nth (default last) runWorldFactLookup call. */
+function capturedResolve(callIndex = -1): SubstrateResolver {
+  const calls = mockRunWorldFactLookup.mock.calls
+  const call = calls.at(callIndex)
+  if (call === undefined) throw new Error('runWorldFactLookup not called')
+  return call[1].resolve
+}
+
+function capturedInput(callIndex = -1): Parameters<typeof worldFactLookup.runWorldFactLookup>[1] {
+  const call = mockRunWorldFactLookup.mock.calls.at(callIndex)
+  if (call === undefined) throw new Error('runWorldFactLookup not called')
+  return call[1]
+}
+
+function capturedDeps(callIndex = -1): Parameters<typeof worldFactLookup.runWorldFactLookup>[0] {
+  const call = mockRunWorldFactLookup.mock.calls.at(callIndex)
+  if (call === undefined) throw new Error('runWorldFactLookup not called')
+  return call[0]
+}
+
+describe('lookup tool input schemas', () => {
+  it('SEARCH_LORE_INPUT constrains skill to the knowledge enum (rejects an action skill)', () => {
+    expect(
+      SEARCH_LORE_INPUT.safeParse({ channel: 'dm', topic: 'x', skill: 'history' }).success,
+    ).toBe(true)
+    // athletics is a real 5e skill but NOT a knowledge skill — rejected.
+    expect(
+      SEARCH_LORE_INPUT.safeParse({ channel: 'dm', topic: 'x', skill: 'athletics' }).success,
+    ).toBe(false)
+  })
+
+  it('accepts the npc channel with asker_name and rejects an empty topic', () => {
+    expect(
+      SEARCH_LORE_INPUT.safeParse({ channel: 'npc', topic: 'x', asker_name: 'The Steward' }).success,
+    ).toBe(true)
+    expect(SEARCH_LORE_INPUT.safeParse({ channel: 'dm', topic: '' }).success).toBe(false)
+  })
+
+  it('CHARACTERS_KNOWN_TO_INPUT / FACTION_TREE_INPUT require their subject', () => {
+    expect(
+      CHARACTERS_KNOWN_TO_INPUT.safeParse({ channel: 'dm', character: 'Vire' }).success,
+    ).toBe(true)
+    expect(CHARACTERS_KNOWN_TO_INPUT.safeParse({ channel: 'dm' }).success).toBe(false)
+    expect(FACTION_TREE_INPUT.safeParse({ channel: 'dm', faction: 'The Compact' }).success).toBe(
+      true,
+    )
+    expect(FACTION_TREE_INPUT.safeParse({ channel: 'dm' }).success).toBe(false)
+  })
+})
+
+describe('search_lore execute', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('dm channel: resolves the PC, builds a search closure, returns the reserved-keys relay', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const searchLore = vi.fn().mockResolvedValue([
+      { source: 'fact', entityId: 'e1', entityName: 'Ashen Compact', content: 'A pact.', accessLevel: 'known', score: 0.9 },
+    ])
+    const character = makeCharacter()
+    const mech = foundMech(character, [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }) }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'dm', topic: 'the Ashen Compact', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )) as { result: string; skill_gate: unknown; roll_hidden: boolean }
+
+    // Data-only reserved-keys shape; `result` is the relay text VERBATIM (never
+    // the over-pulled results block).
+    expect(result.result).toBe(RELAY.relayText)
+    expect(result.skill_gate).toEqual(RELAY.skillGateFrame)
+    expect(result.roll_hidden).toBe(false)
+
+    // The tool handed the orchestrator a DM gate with the resolved PC + skill.
+    const gate = capturedInput().gate
+    expect(gate.channel).toBe('dm')
+    if (gate.channel !== 'dm') throw new Error('expected dm gate')
+    expect(gate.dm.character.name).toBe('Vire')
+    expect(gate.dm.skill).toBe('history')
+    expect(gate.topic).toBe('the Ashen Compact')
+
+    // Invoke the captured resolve closure → it calls searchLore(worldId, topic, {}).
+    const resolved = await capturedResolve()()
+    expect(searchLore).toHaveBeenCalledWith('world-1', 'the Ashen Compact', {})
+    expect(resolved.results).toContain('[tier=known] Ashen Compact: A pact.')
+    expect(resolved.degraded).toBe(false)
+    expect(resolved.empty).toBe(false)
+  })
+
+  it('npc channel: resolves the NPC entity, sets npcFraming, recentNarrative threaded', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const resolveEntityId = vi.fn().mockResolvedValue('npc-7')
+    const askerSummary = vi.fn().mockResolvedValue('The Steward, a household servant')
+    const deps = makeDeps(
+      foundMech(makeCharacter(), []),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId, askerSummary, recentNarrative: () => 'narration tail' }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'npc', topic: 'the old road', asker_name: 'The Steward' }, callOpts())
+
+    expect(resolveEntityId).toHaveBeenCalledWith('The Steward')
+    const input = capturedInput()
+    expect(input.gate.channel).toBe('npc')
+    // npcFraming === the asker summary on the NPC channel (empty on DM).
+    expect(input.npcFraming).toBe('The Steward, a household servant')
+    expect(input.recentNarrative).toBe('narration tail')
+  })
+
+  it('dm channel without a skill → clean fail-soft relay, orchestrator NOT called', async () => {
+    const deps = makeDeps(foundMech(makeCharacter(), []))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'dm', topic: 'x', asker_name: 'Vire' },
+      callOpts(),
+    )) as { result: string; skill_gate: null; roll_hidden: boolean }
+
+    expect(result.skill_gate).toBeNull()
+    expect(result.roll_hidden).toBe(false)
+    expect(result.result).toBe("You can't quite bring it to mind.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  it('dm channel with an unknown PC → clean fail-soft relay, orchestrator NOT called', async () => {
+    const mech: MechanicalReads = {
+      findSessionParticipantCharacterByName: vi.fn().mockResolvedValue({ outcome: 'not_found' }),
+    }
+    const exec = requireExecute(buildFtTools(makeDeps(mech)), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Ghost' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(result.result).toBe("You can't quite bring it to mind.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  it('npc channel with an unresolvable NPC → clean fail-soft relay, orchestrator NOT called', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue(null)
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'npc', topic: 'x', asker_name: 'Nobody' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(result.result).toBe("They don't seem to know.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  it('search closure surfaces an EMPTY pull with degraded:false (v1 search-channel asymmetry)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const searchLore = vi.fn().mockResolvedValue([]) // total-swallow can't report degraded
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }) }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    expect(resolved.empty).toBe(true)
+    expect(resolved.degraded).toBe(false)
+  })
+})
+
+describe('characters_known_to execute', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('resolves the subject name → id and builds a graph closure rendering tier lines', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const resolveEntityId = vi.fn().mockResolvedValue('subj-1')
+    const charactersKnownTo = vi
+      .fn()
+      .mockResolvedValue([
+        { entity_id: 'k1', name: 'Mara', entity_type: 'npc', access_level: 'discoverable', depth: 1 },
+      ])
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId, graph: fakeGraph({ charactersKnownTo }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    const result = (await exec(
+      { channel: 'dm', character: 'The Spymaster', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(resolveEntityId).toHaveBeenCalledWith('The Spymaster')
+    expect(result.result).toBe(RELAY.relayText)
+    // Question framing names the subject.
+    expect(capturedInput().question).toBe('Who is known to The Spymaster?')
+
+    const resolved = await capturedResolve()()
+    expect(charactersKnownTo).toHaveBeenCalledWith('subj-1', expect.any(Number))
+    expect(resolved.results).toContain('[tier=discoverable] Mara (depth 1)')
+    expect(resolved.degraded).toBe(false)
+  })
+
+  it('a subject that resolves to null → clean "no such character" relay, orchestrator NOT called', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue(null)
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId }))
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    const result = (await exec(
+      { channel: 'dm', character: 'Nobody', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(result.result).toBe("You can't quite bring it to mind.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  it('a graph-walk throw inside the closure → DEGRADED empty (the real resolver_degraded signal)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const charactersKnownTo = vi.fn().mockRejectedValue(new Error('db blip'))
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ graph: fakeGraph({ charactersKnownTo }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    await exec({ channel: 'dm', character: 'X', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    expect(resolved.degraded).toBe(true)
+    expect(resolved.empty).toBe(true)
+    expect(resolved.results).toBe('')
+  })
+
+  it('applies an optional name filter (the post-filter narrows the rendered set)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const resolveEntityId = vi.fn().mockResolvedValue('subj-1')
+    // The real graph.charactersKnownTo applies the nameFilter as a normalized JS
+    // post-filter over the binder rows; we drive the binder with two rows and
+    // assert only the filtered one renders.
+    const charactersKnownTo = vi.fn().mockResolvedValue([
+      { entity_id: 'k1', name: 'Mara', entity_type: 'npc', access_level: 'known', depth: 1 },
+      { entity_id: 'k2', name: 'Doran', entity_type: 'npc', access_level: 'known', depth: 1 },
+    ])
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId, graph: fakeGraph({ charactersKnownTo }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    await exec(
+      { channel: 'dm', character: 'X', name: 'Mara', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )
+    const resolved = await capturedResolve()()
+    expect(charactersKnownTo).toHaveBeenCalledWith('subj-1', expect.any(Number))
+    expect(resolved.results).toContain('Mara')
+    expect(resolved.results).not.toContain('Doran')
+  })
+})
+
+describe('faction_tree execute', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('resolves the faction name → id and builds a factionTree closure', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const resolveEntityId = vi.fn().mockResolvedValue('fac-1')
+    const factionTree = vi.fn().mockResolvedValue([
+      { entity_id: 'fac-1', name: 'The Compact', entity_type: 'faction', access_level: 'known', parent_id: null, depth: 0 },
+      { entity_id: 'fac-2', name: 'Inner Circle', entity_type: 'faction', access_level: 'secret', parent_id: 'fac-1', depth: 1 },
+    ])
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId, graph: fakeGraph({ factionTree }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    const result = (await exec(
+      { channel: 'dm', faction: 'The Compact', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(resolveEntityId).toHaveBeenCalledWith('The Compact')
+    expect(result.result).toBe(RELAY.relayText)
+    expect(capturedInput().question).toBe('What is the structure of The Compact?')
+
+    const resolved = await capturedResolve()()
+    expect(factionTree).toHaveBeenCalledWith('fac-1', expect.any(Number))
+    expect(resolved.results).toContain('[tier=known] The Compact (parent root, depth 0)')
+    expect(resolved.results).toContain('[tier=secret] Inner Circle (parent fac-1, depth 1)')
+  })
+
+  it('a faction that resolves to null → clean fail-soft relay, orchestrator NOT called', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue(null)
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId }))
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    const result = (await exec(
+      { channel: 'npc', faction: 'Nobody', asker_name: 'The Steward' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(result.result).toBe("They don't seem to know.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  it('a factionTree throw inside the closure → DEGRADED empty', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const factionTree = vi.fn().mockRejectedValue(new Error('db blip'))
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ graph: fakeGraph({ factionTree }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    await exec({ channel: 'dm', faction: 'X', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    expect(resolved.degraded).toBe(true)
+    expect(resolved.empty).toBe(true)
+  })
+})
+
+describe('lookup tools — structural enforced ignorance + registration', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('passes the OPAQUE vet closure through to the orchestrator (never a raw sd_playbook)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const vet: WorldFactLookupVet = vi
+      .fn()
+      .mockResolvedValue({ mode: 'relay', text: 't', repairAttempted: false })
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ vet }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    // The deps the tool handed the orchestrator carry the SAME opaque vet — the
+    // tool never holds, renders, or forwards a raw playbook string.
+    expect(capturedDeps().vet).toBe(vet)
+    // FtToolDeps has NO sdPlaybook field (structural: the key cannot exist).
+    expect('sdPlaybook' in deps).toBe(false)
+  })
+
+  it('the tool result equals the relay text — never the over-pulled results block', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    // searchLore returns a SECRET-tier line; if the tool leaked the results block
+    // the assertion below would catch it. The tool only ever returns out.relayText.
+    const searchLore = vi.fn().mockResolvedValue([
+      { source: 'fact', entityId: 'e', entityName: 'X', content: 'A SECRET FACT', accessLevel: 'secret', score: 1 },
+    ])
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }) }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(result.result).toBe(RELAY.relayText)
+    expect(result.result).not.toContain('SECRET FACT')
+  })
+
+  it('registers all three lookup tools as pure resolvers (SDK-shaped surface only)', () => {
+    const tools = buildFtTools(makeDeps(foundMech(makeCharacter(), [])))
+    for (const name of ['search_lore', 'characters_known_to', 'faction_tree']) {
+      const t = tools[name]
+      if (t === undefined) throw new Error(`${name} missing`)
+      for (const k of Object.keys(t)) {
+        expect(['description', 'inputSchema', 'execute', 'type']).toContain(k)
+      }
+      expect(typeof t.execute).toBe('function')
+      // Each description teaches the dm/npc channel + the "narrate from it" rule.
+      expect(t.description).toContain('channel')
+      expect(t.description).toContain('narrate from it')
+    }
   })
 })
