@@ -6,14 +6,16 @@
 // NarrativeStatus from the same module. entityType is the NARROW EntityType
 // from repo/entities.ts ('npc' | 'location' | 'faction' | 'item') — it does NOT
 // include 'pc'. searchLore / findSimilarEntities exclude PCs by construction.
-// The graph result types (KnownCharacter, FactionNode) carry runtime 'pc' rows,
-// but the type-level widening (GraphEntityType = EntityType | 'pc') is owned by
-// the graph task (MYT-71 T8), not here — these stay typed `EntityType` per the
-// sketch; T8 widens if typecheck forces it.
+// The graph result types (KnownCharacter, FactionNode) carry runtime 'pc' rows
+// (graph traversal INCLUDES PCs), so their entityType is the widened
+// GraphEntityType (= EntityType | 'pc', defined in repo/world-retrieval.ts).
+// LoreHit / EntityCandidate stay narrow — searchLore / findSimilarEntities
+// exclude PCs by construction.
 //
 // Score = 1 - cosine_distance, range [-1, 1]. Higher is more similar.
 import type { AccessLevel, NarrativeStatus } from '../../repo/facts.js'
 import type { EntityType } from '../../repo/entities.js'
+import type { GraphEntityType } from '../../repo/world-retrieval.js'
 
 /** One hit from searchLore — either a fact row or an entity (name/kernel) row. */
 export interface LoreHit {
@@ -36,11 +38,12 @@ export interface EntityCandidate {
   readonly score: number
 }
 
-/** One node from a character-graph walk (`depth` = hops from the seed). */
+/** One node from a character-graph walk (`depth` = hops from the seed). PCs are
+ *  included on graph paths, so entityType is the widened GraphEntityType. */
 export interface KnownCharacter {
   readonly entityId: string
   readonly name: string
-  readonly entityType: EntityType
+  readonly entityType: GraphEntityType
   readonly depth: number
 }
 
@@ -48,7 +51,7 @@ export interface KnownCharacter {
 export interface FactionNode {
   readonly entityId: string
   readonly name: string
-  readonly entityType: EntityType
+  readonly entityType: GraphEntityType
   readonly parentId: string | null
   readonly depth: number
 }
