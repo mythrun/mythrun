@@ -790,6 +790,154 @@ describe('SonnetFastThinker.render', () => {
     expect(seenPayload.hp).toBe(11)
   })
 
+  // ── MYT-72 Task 7: lookup-tool skill_gate emission (§4.2) ──────────────────
+
+  // An already-built camelCase SkillCheckFramePayload — the gate's `frame`,
+  // passed straight through the lookup tool result (NOT the snake_case
+  // roll_skill_check output shape `toSkillCheckFrame` parses).
+  const LOOKUP_GATE = {
+    characterName: 'Vire',
+    skill: 'History',
+    context: 'the Council',
+    roll: 12,
+    roll2: null,
+    rollType: 'normal' as const,
+    modifier: 5,
+    total: 17,
+    dc: 14,
+    outcomeTier: 'success' as const,
+    constraint: 'You recall the Council disbanded.',
+  }
+
+  const LOOKUP_TOOL_NAMES = ['search_lore', 'characters_known_to', 'faction_tree'] as const
+
+  for (const toolName of LOOKUP_TOOL_NAMES) {
+    it(`26. lookup ${toolName} (DM path): a skill_gate emits ONE skill_check frame mapped from the camelCase gate, with rollHidden absent`, async () => {
+      mockResult([
+        { type: 'text-delta', id: '1', text: 'before' },
+        {
+          type: 'tool-call',
+          toolCallId: 'l1',
+          toolName,
+          input: { query: 'the Council' },
+        },
+        {
+          type: 'tool-result',
+          toolCallId: 'l1',
+          toolName,
+          input: { query: 'the Council' },
+          output: { result: 'You recall…', skill_gate: LOOKUP_GATE, roll_hidden: false },
+        },
+        { type: 'text-delta', id: '2', text: 'after' },
+      ])
+      const ft = new SonnetFastThinker({ tools: {} })
+      const { emit, seen } = makeEmitter()
+
+      await ft.render(makeCtx(), emit)
+
+      expect(seen.map((e) => e.kind)).toEqual(['text', 'skill_check', 'text'])
+      const payload = seen[1]?.payload as SkillCheckFramePayload
+      // Mapped from the camelCase gate, field-for-field — NOT "undefined".
+      expect(payload).toEqual({
+        characterName: 'Vire',
+        skill: 'History',
+        context: 'the Council',
+        roll: 12,
+        roll2: null,
+        rollType: 'normal',
+        modifier: 5,
+        total: 17,
+        dc: 14,
+        outcomeTier: 'success',
+        constraint: 'You recall the Council disbanded.',
+      })
+      // The DM path leaves rollHidden absent (not present at all).
+      expect('rollHidden' in (payload as unknown as Record<string, unknown>)).toBe(false)
+    })
+
+    it(`27. lookup ${toolName} (NPC roll-hidden path): roll_hidden:true sets rollHidden:true on the emitted frame`, async () => {
+      mockResult([
+        {
+          type: 'tool-call',
+          toolCallId: 'l1',
+          toolName,
+          input: { query: 'the Council' },
+        },
+        {
+          type: 'tool-result',
+          toolCallId: 'l1',
+          toolName,
+          input: { query: 'the Council' },
+          output: { result: 'You recall…', skill_gate: LOOKUP_GATE, roll_hidden: true },
+        },
+      ])
+      const ft = new SonnetFastThinker({ tools: {} })
+      const { emit, seen } = makeEmitter()
+
+      await ft.render(makeCtx(), emit)
+
+      expect(seen.map((e) => e.kind)).toEqual(['skill_check'])
+      const payload = seen[0]?.payload as SkillCheckFramePayload & { rollHidden?: boolean }
+      expect(payload.rollHidden).toBe(true)
+      // The mapped frame is otherwise field-for-field from the gate.
+      expect(payload.characterName).toBe('Vire')
+      expect(payload.outcomeTier).toBe('success')
+    })
+
+    it(`28. lookup ${toolName} (auto-success / no-frame): a null skill_gate emits NO skill_check frame`, async () => {
+      mockResult([
+        {
+          type: 'tool-call',
+          toolCallId: 'l1',
+          toolName,
+          input: { query: 'the Council' },
+        },
+        {
+          type: 'tool-result',
+          toolCallId: 'l1',
+          toolName,
+          input: { query: 'the Council' },
+          output: { result: 'You recall…', skill_gate: null, roll_hidden: false },
+        },
+        { type: 'text-delta', id: '1', text: 'open ending' },
+      ])
+      const ft = new SonnetFastThinker({ tools: {} })
+      const { emit, seen } = makeEmitter()
+
+      await ft.render(makeCtx(), emit)
+
+      expect(seen.some((e) => e.kind === 'skill_check')).toBe(false)
+      expect(seen).toEqual([{ kind: 'text', payload: 'open ending' }])
+    })
+  }
+
+  it('28b. lookup skill_gate with an advantage roll: the second die (roll2) maps through (non-null arm)', async () => {
+    const advantageGate = { ...LOOKUP_GATE, roll: 18, roll2: 7, rollType: 'advantage' as const, total: 23 }
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'l1',
+        toolName: 'search_lore',
+        input: { query: 'the Council' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'l1',
+        toolName: 'search_lore',
+        input: { query: 'the Council' },
+        output: { result: 'You recall…', skill_gate: advantageGate, roll_hidden: false },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    const payload = seen[0]?.payload as SkillCheckFramePayload
+    expect(payload.roll2).toBe(7)
+    expect(payload.rollType).toBe('advantage')
+  })
+
   it('25. ledger_update: a payload carrying gold/item/feature value fields threads them all onto the frame', async () => {
     // A single ok:true payload exercising the remaining optional-field
     // present-arms in toLedgerUpdatePayload (gold, itemName, quantity,

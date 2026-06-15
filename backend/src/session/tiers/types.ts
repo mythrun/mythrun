@@ -166,6 +166,10 @@ export interface SkillCheckFramePayload {
   readonly dc: number
   readonly outcomeTier: 'fail' | 'success' | 'great_success'
   readonly constraint: string
+  /** §4.2 — the NPC world-lookup roll-hidden variant sets this; the publisher
+   *  omits the roll fields when true so a hidden NPC's standing never leaks.
+   *  Absent on every other skill-check frame. */
+  readonly rollHidden?: boolean
 }
 
 export interface DiceRollFramePayload {

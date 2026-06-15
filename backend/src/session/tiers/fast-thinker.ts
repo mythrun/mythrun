@@ -363,6 +363,38 @@ function toDiceRollFrame(
   }
 }
 
+/** The three MYT-72 world-knowledge lookup tools (§4.2). Their `execute`
+ *  returns a data-only result `{ result, skill_gate, roll_hidden }`: `skill_gate`
+ *  is either `null` (auto-success — no check fired) or an ALREADY-BUILT
+ *  camelCase `SkillCheckFramePayload` (the gate's `frame`, passed straight
+ *  through). `roll_hidden` flags the NPC variant the publisher renders as a
+ *  hidden pass so a hidden NPC's standing never leaks. */
+const LOOKUP_TOOL_NAMES: ReadonlySet<string> = new Set(['search_lore', 'characters_known_to', 'faction_tree'])
+
+/** Coerce a lookup tool's `skill_gate` onto a `SkillCheckFramePayload`. UNLIKE
+ *  `toSkillCheckFrame`, the gate is ALREADY a camelCase `SkillCheckFramePayload`
+ *  (the gate's `frame`, passed through the tool result) — NOT the snake_case
+ *  roll_skill_check OUTPUT shape. Read the camelCase keys directly; running the
+ *  gate through `toSkillCheckFrame` would yield `"undefined"` for every field.
+ *  `rollHidden` is conditional-spread (`exactOptionalPropertyTypes`): the DM
+ *  path leaves it absent, the NPC path sets it true. */
+function toLookupCheckFrame(gate: Record<string, unknown>, rollHidden: boolean): SkillCheckFramePayload {
+  return {
+    characterName: String(gate.characterName),
+    skill: String(gate.skill),
+    context: String(gate.context),
+    roll: Number(gate.roll),
+    roll2: gate.roll2 === null || gate.roll2 === undefined ? null : Number(gate.roll2),
+    rollType: gate.rollType as 'normal' | 'advantage' | 'disadvantage',
+    modifier: Number(gate.modifier),
+    total: Number(gate.total),
+    dc: Number(gate.dc),
+    outcomeTier: gate.outcomeTier as 'fail' | 'success' | 'great_success',
+    constraint: String(gate.constraint),
+    ...(rollHidden ? { rollHidden: true } : {}),
+  }
+}
+
 /** The six MYT-70 Rules Lawyer ledger tools (§5). Their `execute` returns a
  *  resolver result AS DATA — `{ ok: true, payload }` (a `LedgerUpdatePayload`,
  *  or an ARRAY of them for `take_rest`, or a `ConditionPayload` carrying
@@ -573,6 +605,17 @@ export class SonnetFastThinker implements FastThinker {
     }
     if (toolName === 'roll_dice') {
       await emit.emitDiceRoll(toDiceRollFrame(out, callInput))
+      return
+    }
+    // §4.2 world-lookup tools: the data-only result carries `skill_gate` (an
+    // already-built camelCase SkillCheckFramePayload, or null on auto-success)
+    // and `roll_hidden`. A null/absent gate means no check fired → emit nothing.
+    // The NPC roll-hidden variant sets rollHidden:true so the publisher renders
+    // it identically to a hidden pass (no metagame tell about the NPC's standing).
+    if (LOOKUP_TOOL_NAMES.has(toolName)) {
+      const gate = out.skill_gate
+      if (gate === null || gate === undefined) return
+      await emit.emitSkillCheck(toLookupCheckFrame(asRecord(gate), out.roll_hidden === true))
       return
     }
     // §8 ledger tools: the resolver result rides the output as `{ ok, payload }`.
