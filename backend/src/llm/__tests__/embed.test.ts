@@ -1,9 +1,17 @@
 // backend/src/llm/__tests__/embed.test.ts
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createVoyageEmbedder } from '../embed.js'
 import { EMBED_DIM, VOYAGE_EMBED_MODEL } from '../../world/retrieval/config.js'
 
 const vec = (fill: number): number[] => Array.from({ length: EMBED_DIM }, () => fill)
+
+/** The Voyage embeddings request-body shape these tests assert against. */
+interface VoyageReqBody {
+  readonly model: string
+  readonly input: string[]
+  readonly input_type: string
+  readonly output_dimension: number
+}
 
 function okResponse(vectors: number[][]): Response {
   return new Response(
@@ -15,49 +23,58 @@ function okResponse(vectors: number[][]): Response {
   )
 }
 
+/** Parse a captured fetch call's request body into the typed Voyage shape. */
+function parseBody(init: RequestInit): VoyageReqBody {
+  return JSON.parse(init.body as string) as VoyageReqBody
+}
+
 describe('embed.ts', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   beforeEach(() => {
     fetchMock = vi.fn()
   })
+  afterEach(() => {
+    // Defensive: the timeout-abort test installs fake timers; ensure no test
+    // leaks them to the next even if it throws mid-assertion.
+    vi.useRealTimers()
+  })
 
   it('embedQuery sends input_type=query, output_dimension=512, Bearer auth, and the model', async () => {
     fetchMock.mockResolvedValue(okResponse([vec(0.1)]))
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     const out = await e.embedQuery('hello')
     expect(out).toHaveLength(EMBED_DIM)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('https://api.voyageai.com/v1/embeddings')
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer k')
-    const body = JSON.parse(init.body as string)
+    const body = parseBody(init)
     expect(body).toMatchObject({ model: VOYAGE_EMBED_MODEL, input_type: 'query', output_dimension: EMBED_DIM })
     expect(body.input).toEqual(['hello'])
   })
 
   it('embedDocuments uses input_type=document and returns one vector per text', async () => {
     fetchMock.mockResolvedValue(okResponse([vec(0.1), vec(0.2)]))
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     const out = await e.embedDocuments(['a', 'b'])
     expect(out).toHaveLength(2)
-    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)
+    const body = parseBody((fetchMock.mock.calls[0] as [string, RequestInit])[1])
     expect(body.input_type).toBe('document')
   })
 
   it('chunks a large document batch by BOTH the input-count cap and the token estimate (>1 request)', async () => {
     fetchMock.mockResolvedValue(okResponse([vec(0.1)]))
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     const many = Array.from({ length: 1500 }, (_, i) => `doc-${String(i)}`)
-    fetchMock.mockImplementation(async (_u, init: RequestInit) => {
-      const b = JSON.parse(init.body as string) as { input: string[] }
-      return okResponse(b.input.map(() => vec(0.1)))
-    })
+    fetchMock.mockImplementation((_u, init: RequestInit) =>
+      Promise.resolve(okResponse(parseBody(init).input.map(() => vec(0.1)))),
+    )
     await e.embedDocuments(many)
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1)
   })
 
   it('THROWS when a returned vector length != EMBED_DIM (dim drift guard)', async () => {
     fetchMock.mockResolvedValue(okResponse([[0.1, 0.2, 0.3]]))
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     await expect(e.embedQuery('x')).rejects.toThrow(/dimension|EMBED_DIM|512/i)
   })
 
@@ -67,8 +84,8 @@ describe('embed.ts', () => {
       .mockResolvedValueOnce(okResponse([vec(0.1)]))
     const e = createVoyageEmbedder({
       apiKey: 'k',
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      sleepImpl: async () => undefined,
+      fetchImpl: fetchMock,
+      sleepImpl: () => Promise.resolve(),
     })
     const out = await e.embedQuery('x')
     expect(out).toHaveLength(EMBED_DIM)
@@ -77,7 +94,7 @@ describe('embed.ts', () => {
 
   it('throws a typed error on a non-429 non-200 (e.g. 401)', async () => {
     fetchMock.mockResolvedValue(new Response('unauthorized', { status: 401 }))
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     await expect(e.embedQuery('x')).rejects.toThrow()
   })
 
@@ -85,14 +102,14 @@ describe('embed.ts', () => {
     fetchMock.mockResolvedValue(new Response('rate limited', { status: 429 }))
     const e = createVoyageEmbedder({
       apiKey: 'k',
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      sleepImpl: async () => undefined,
+      fetchImpl: fetchMock,
+      sleepImpl: () => Promise.resolve(),
     })
     await expect(e.embedQuery('x')).rejects.toThrow(/429/)
   })
 
   it('embedDocuments([]) makes no request and returns []', async () => {
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     const out = await e.embedDocuments([])
     expect(out).toEqual([])
     expect(fetchMock.mock.calls.length).toBe(0)
@@ -102,12 +119,32 @@ describe('embed.ts', () => {
     // Two inputs each estimated > half the token cap → must split into 2 requests
     // even though the count is well under VOYAGE_BATCH_MAX_INPUTS.
     const big = 'x'.repeat(400_000) // ~100k tokens each (char/4)
-    fetchMock.mockImplementation(async (_u, init: RequestInit) => {
-      const b = JSON.parse(init.body as string) as { input: string[] }
-      return okResponse(b.input.map(() => vec(0.1)))
-    })
-    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock as unknown as typeof fetch })
+    fetchMock.mockImplementation((_u, init: RequestInit) =>
+      Promise.resolve(okResponse(parseBody(init).input.map(() => vec(0.1)))),
+    )
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
     await e.embedDocuments([big, big])
     expect(fetchMock.mock.calls.length).toBe(2)
+  })
+
+  it('aborts the in-flight request when it exceeds the per-call timeout', async () => {
+    vi.useFakeTimers()
+    // A fetch that never resolves on its own — it only settles when its
+    // AbortSignal fires (the real fetch contract). The embedder's setTimeout
+    // fires ac.abort() once the query timeout elapses, which rejects this.
+    fetchMock.mockImplementation(
+      (_u, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        }),
+    )
+    const e = createVoyageEmbedder({ apiKey: 'k', fetchImpl: fetchMock })
+    const pending = e.embedQuery('x')
+    const assertion = expect(pending).rejects.toThrow()
+    // Advance past VOYAGE_QUERY_TIMEOUT_MS so the abort timer fires.
+    await vi.advanceTimersByTimeAsync(10_000)
+    await assertion
   })
 })
