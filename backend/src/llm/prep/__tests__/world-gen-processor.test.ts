@@ -36,6 +36,7 @@ import {
   atomicClaimStage,
   createWorldGenProcessor,
   sanitizeError,
+  WORLD_GEN_STAGES,
   type WorldGenJobPayload,
 } from '../world-gen-processor.js'
 import { StageNotImplementedError } from '../stages/stage-not-implemented.js'
@@ -43,6 +44,10 @@ import * as vocabularyIntakeModule from '../stages/vocabulary-intake.js'
 import * as worldAndFactionsModule from '../stages/world-and-factions.js'
 import * as locationsAndNpcsModule from '../stages/locations-and-npcs.js'
 import * as entityRelationshipsModule from '../stages/entity-relationships.js'
+// MYT-71 T10: the terminal embed_world stage calls embedWorld via the retrieval
+// barrel. Mock it at the module boundary so the processor's embed stage runs
+// (claims its pipeline_runs row, returns zero cost) without hitting real Voyage.
+import * as retrievalModule from '../../../world/retrieval/index.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -71,6 +76,12 @@ vi.mock('../stages/locations-and-npcs.js', async (importOriginal) => {
 vi.mock('../stages/entity-relationships.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../stages/entity-relationships.js')>()
   return { ...actual, runEntityRelationshipsStage: vi.fn() }
+})
+// MYT-71 T10: mock the retrieval barrel's embedWorld so the terminal
+// embed_world stage runs through the loop without a real Voyage round-trip.
+vi.mock('../../../world/retrieval/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../world/retrieval/index.js')>()
+  return { ...actual, embedWorld: vi.fn() }
 })
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -220,6 +231,7 @@ function makeDeps(
   redisKeyPrefix: string
   logger: ReturnType<typeof silentLogger>
   costCapUsd: number
+  voyageApiKey: string
   publishSpy: ReturnType<typeof vi.fn>
 } {
   const redisRealtime = new IoredisMock()
@@ -236,6 +248,11 @@ function makeDeps(
     // Matches migration 010's seeded default ($10.00). Tests exercising the
     // cap-exceeded path override with a tight value (e.g. 0.0001).
     costCapUsd: overrides.costCapUsd ?? 10.0,
+    // MYT-71 T10: consumed only by the terminal embed_world stage. The 6 legacy
+    // scenarios halt at stage 2 (stage_not_implemented) so the embedder is
+    // never built; the embed_world completion test mocks embedWorld so the key
+    // is never sent to Voyage.
+    voyageApiKey: 'pa-test-voyage-key',
     publishSpy,
   }
 }
@@ -301,6 +318,14 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     })
     vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mockImplementation(() => {
       throw new StageNotImplementedError('entity_relationships')
+    })
+    // MYT-71 T10: default embedWorld to a clean, all-NULL-left result. The
+    // legacy 6 scenarios halt before embed_world, so this is inert for them;
+    // the embed completion test overrides per-call where it asserts the tally.
+    vi.mocked(retrievalModule.embedWorld).mockResolvedValue({
+      embedded: 0,
+      leftNull: 0,
+      voyageErrors: 0,
     })
   })
 
@@ -838,6 +863,78 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(lnCall?.[1].bypassAccessFilter).toBe(true)
     const erCall = vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mock.calls[0]
     expect(erCall?.[1].bypassAccessFilter).toBe(true)
+  })
+
+  // ------------------------------------------------------------------
+  // MYT-71 T10 — terminal embed_world stage
+  // ------------------------------------------------------------------
+  it('WORLD_GEN_STAGES ends with embed_world immediately after coherence_pass', () => {
+    const last = WORLD_GEN_STAGES[WORLD_GEN_STAGES.length - 1]
+    const penultimate = WORLD_GEN_STAGES[WORLD_GEN_STAGES.length - 2]
+    expect(last).toBe('embed_world')
+    expect(penultimate).toBe('coherence_pass')
+  })
+
+  it('routes embed_world to completion (world complete, $0 row) even when embed leaves rows NULL', async () => {
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    // Pre-stage every content stage (1 → coherence_pass) as completed so the
+    // loop walks straight to the terminal embed_world stage via the claim
+    // path. embed_world is the only stage actually dispatched here.
+    for (const stage of [
+      'concept_intake',
+      'vocabulary_intake',
+      'world_and_factions',
+      'locations_and_npcs',
+      'entity_relationships',
+      'entity_consolidation',
+      'starting_situation',
+      'random_tables',
+      'coherence_pass',
+    ] as const) {
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                    completed_at, cost_usd, input_tokens, output_tokens, user_id)
+         VALUES ($1, $2, $3, 'completed', now(), now(), 0, 0, 0, NULL)`,
+        [uuidv7(), worldId, stage],
+      )
+    }
+    // embedWorld leaves rows NULL (a Voyage failure embedWorld caught
+    // internally — voyageErrors>0, leftNull>0). The TOTAL stage must STILL
+    // drive the world to completion.
+    vi.mocked(retrievalModule.embedWorld).mockResolvedValueOnce({
+      embedded: 0,
+      leftNull: 7,
+      voyageErrors: 2,
+    })
+
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await proc(makeJob(campaignId))
+
+    // embed_world dispatched against the right world (NULL-only, no force).
+    expect(retrievalModule.embedWorld).toHaveBeenCalledTimes(1)
+    const embedCall = vi.mocked(retrievalModule.embedWorld).mock.calls[0]
+    expect(embedCall?.[1]).toBe(worldId)
+    expect(embedCall?.[2]).toBeUndefined()
+
+    // embed_world wrote a completed pipeline_runs row at $0 (Voyage spend is
+    // off the Anthropic cap).
+    const embedRun = await pool.query<{ status: string; cost_usd: string }>(
+      `SELECT status, cost_usd FROM pipeline_runs WHERE world_id = $1 AND stage = 'embed_world'`,
+      [worldId],
+    )
+    expect(embedRun.rows[0]?.status).toBe('completed')
+    expect(Number(embedRun.rows[0]?.cost_usd)).toBe(0)
+
+    // World reached completion.
+    const world = await pool.query<{ status: string }>(
+      `SELECT status FROM worlds WHERE id = $1`,
+      [worldId],
+    )
+    expect(world.rows[0]?.status).toBe('complete')
+
+    const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+    expect(phaseStrings.some((p) => p.includes('"world_ready"'))).toBe(true)
   })
 })
 

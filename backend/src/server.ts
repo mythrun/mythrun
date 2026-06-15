@@ -122,6 +122,7 @@ async function buildWorldGenWorker(
   redisKeyPrefix: string,
   logger: PinoLogger,
   costCapUsd: number,
+  voyageApiKey: string,
   signal: AbortSignal,
 ): Promise<Worker> {
   const connection = createBullmqRedisClient(redisBatchUrl)
@@ -132,7 +133,14 @@ async function buildWorldGenWorker(
   })
   return new Worker(
     QUEUE_WORLD_GEN,
-    createWorldGenProcessor({ pool, redisRealtime, redisKeyPrefix, logger, costCapUsd }),
+    createWorldGenProcessor({
+      pool,
+      redisRealtime,
+      redisKeyPrefix,
+      logger,
+      costCapUsd,
+      voyageApiKey,
+    }),
     { connection, concurrency: CONCURRENCY_WORLD_GEN },
   )
 }
@@ -496,7 +504,8 @@ export async function main(): Promise<void> {
     const caps = await readCostCapsAtBoot(pgRef)
     const worldGenWorker = await buildWorldGenWorker(
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
-      app.log as PinoLogger, caps.worldGenCostCapUsd, abortController.signal,
+      app.log as PinoLogger, caps.worldGenCostCapUsd, env.voyageApiKey,
+      abortController.signal,
     )
     const characterCreationWorker = await buildCharacterCreationWorker(
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,

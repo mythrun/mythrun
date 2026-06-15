@@ -330,6 +330,32 @@ describe('derivePhase', () => {
     expect(result.phase).toBe('world_ready')
   })
 
+  // MYT-71 T10 lockstep: WORLDGEN_STAGES must include 'embed_world' (after
+  // coherence_pass) so derivePhase classifies the terminal embed row as
+  // 'worldgen' rather than dropping it to 'unknown'. With a running embed_world
+  // row and the world still 'generating' (and NO entity_relationships row so
+  // the earlier world_snapshot_ready branch can't shadow this), the phase must
+  // stay 'world_gen' — which fires ONLY because the running embed row lands in
+  // the worldgen bucket. If it were 'unknown' the bucket would have no
+  // running/pending row and the phase would fall through past world_gen.
+  it("classifies embed_world as 'worldgen' (running embed keeps phase world_gen)", () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'generating' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'coherence_pass', status: 'completed' }),
+        run({ stage: 'embed_world', status: 'running', completed_at: null }),
+      ],
+    })
+    expect(result.phase).toBe('world_gen')
+    // The embed_world stage surfaces in the ordered stage list, sorted LAST in
+    // the worldgen taxonomy — not dropped or sorted to the front as 'unknown'.
+    const stageNames = result.stages.map((s) => s.stage)
+    expect(stageNames).toContain('embed_world')
+    expect(stageNames[stageNames.length - 1]).toBe('embed_world')
+  })
+
   it('sort comparator handles null user_id alongside non-null values stably', () => {
     // Same-stage rows where one has user_id=null and one is a real user;
     // exercises the `a.user_id ?? ''` falsy arm in the per-player sort.

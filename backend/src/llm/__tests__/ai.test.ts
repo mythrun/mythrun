@@ -983,6 +983,12 @@ describe('extractStage', () => {
     )
   })
 
+  // MYT-71 T10 lockstep: VALID_STAGES must include 'embed_world' so it
+  // round-trips instead of falling back to the concept_intake sentinel.
+  it('accepts embed_world without falling back', () => {
+    expect(extractStage({ mythrun: { stage: 'embed_world' } })).toBe('embed_world')
+  })
+
   it('falls back to concept_intake on an unrecognized stage', () => {
     expect(extractStage({ mythrun: { stage: 'not_a_stage' } })).toBe('concept_intake')
   })

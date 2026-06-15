@@ -35,6 +35,7 @@ export type WorldGenStage =
   | 'starting_situation'
   | 'random_tables'
   | 'coherence_pass'
+  | 'embed_world'
   | 'session_prep'
 
 export interface ArrayConfig {

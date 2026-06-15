@@ -102,6 +102,7 @@ export async function main(): Promise<void> {
       redisKeyPrefix: env.redisKeyPrefix,
       logger,
       costCapUsd: worldGenCostCapUsd,
+      voyageApiKey: env.voyageApiKey,
     }),
     { connection: redisBatch, concurrency: CONCURRENCY_WORLD_GEN },
   )

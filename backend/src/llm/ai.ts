@@ -89,6 +89,7 @@ const VALID_STAGES = new Set<WorldGenStage>([
   'starting_situation',
   'random_tables',
   'coherence_pass',
+  'embed_world',
   'session_prep',
 ])
 

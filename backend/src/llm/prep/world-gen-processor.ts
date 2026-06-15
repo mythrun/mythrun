@@ -45,6 +45,7 @@ import { runLocationsAndNpcsStage } from './stages/locations-and-npcs.js'
 import { runEntityRelationshipsStage } from './stages/entity-relationships.js'
 import { runEntityConsolidationStage } from './stages/entity-consolidation.js'
 import { runCoherencePassStage } from './stages/coherence-pass.js'
+import { runEmbedWorldStage } from './stages/embed-world.js'
 import { StageNotImplementedError } from './stages/stage-not-implemented.js'
 import { isTerminalError } from '../errors.js'
 import { createRepo, type Repo } from '../../repo/index.js'
@@ -82,6 +83,11 @@ export const WORLD_GEN_STAGES = [
   'starting_situation',
   'random_tables',
   'coherence_pass',
+  // MYT-71 T10: terminal embed stage — runs AFTER all content stages, BEFORE
+  // worlds.status flips to 'complete', so a finished world is semantically
+  // searchable on completion. TOTAL (catches all embed errors, never fails the
+  // world); Voyage spend is OFF the Anthropic cost cap (always reports $0).
+  'embed_world',
 ] as const
 
 export type WorldGenStage = (typeof WORLD_GEN_STAGES)[number]
@@ -99,6 +105,10 @@ export interface WorldGenDeps {
    *  boot and injected here so workers stay stateless re. global config;
    *  operators changing settings need a worker restart to take effect. */
   readonly costCapUsd: number
+  /** MYT-71 T10: Voyage API key, injected at boot from env. Consumed only by
+   *  the terminal embed_world stage (builds a Voyage embedder per job). Voyage
+   *  spend is OFF the Anthropic cost cap. */
+  readonly voyageApiKey: string
 }
 
 interface CampaignContext {
@@ -590,29 +600,40 @@ async function dispatchStage(
     })
     return wrapLegacyStage(cost)
   }
-  // Exhaustive: stage is narrowed to 'coherence_pass' here.
-  //
-  // synthKeyByEntityId is the ENTITY-side wire map; still empty at the
-  // processor boundary pending MYT-52-followup that re-derives it from
-  // prior-stage finalized events. The RELATIONSHIP-side wire map is no
-  // longer empty: stage 7 reads `synthKey` per row from the inventory load
-  // (migration 020 persists the column at insert time in stages 4/4b),
-  // so myth-p4sz's edge-removed events now surface correctly without
-  // needing this entity-side map to be populated.
-  return runCoherencePassStage(repo, {
-    logger: deps.logger,
-    worldId: ctx.world.id,
-    vocabularyRegistry: ctx.world.vocabularyRegistry,
-    synthKeyByEntityId: {},
-    // myth-exac T18: thread the per-world dev-bypass flag through coherence
-    // pass so dev-tool worlds (with dev_bypass_access_filter=true) surface
-    // every patch in the wire feed regardless of entity tier. Production
-    // worlds keep the column at false, preserving the tier-filtered FT
-    // snapshot.
-    bypassAccessFilter: ctx.world.devBypassAccessFilter,
-  })
+  if (stage === 'coherence_pass') {
+    // synthKeyByEntityId is the ENTITY-side wire map; still empty at the
+    // processor boundary pending MYT-52-followup that re-derives it from
+    // prior-stage finalized events. The RELATIONSHIP-side wire map is no
+    // longer empty: stage 7 reads `synthKey` per row from the inventory load
+    // (migration 020 persists the column at insert time in stages 4/4b),
+    // so myth-p4sz's edge-removed events now surface correctly without
+    // needing this entity-side map to be populated.
+    return runCoherencePassStage(repo, {
+      logger: deps.logger,
+      worldId: ctx.world.id,
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
+      synthKeyByEntityId: {},
+      // myth-exac T18: thread the per-world dev-bypass flag through coherence
+      // pass so dev-tool worlds (with dev_bypass_access_filter=true) surface
+      // every patch in the wire feed regardless of entity tier. Production
+      // worlds keep the column at false, preserving the tier-filtered FT
+      // snapshot.
+      bypassAccessFilter: ctx.world.devBypassAccessFilter,
+    })
+  }
+  /* c8 ignore stop */
+  // Exhaustive: stage is narrowed to 'embed_world' here. MYT-71 T10 — the
+  // terminal embed stage. TOTAL (catches all errors → zero cost, never fails
+  // the world); wrapLegacyStage turns its StageCost into the unified
+  // StageDispatchResult (no finalized events, never cap-fires).
+  return wrapLegacyStage(
+    await runEmbedWorldStage(repo, {
+      worldId: ctx.world.id,
+      voyageApiKey: deps.voyageApiKey,
+      logger: deps.logger,
+    }),
+  )
 }
-/* c8 ignore stop */
 
 interface Stage3Inputs {
   readonly worldOverview: string

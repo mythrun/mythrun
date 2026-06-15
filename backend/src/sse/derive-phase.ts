@@ -72,6 +72,12 @@ export const WORLDGEN_STAGES = [
   'starting_situation',
   'random_tables',
   'coherence_pass',
+  // MYT-71 T10: the terminal embed stage writes a pipeline_runs row AFTER
+  // coherence_pass and BEFORE worlds.status flips to 'complete'. Classifying it
+  // 'worldgen' (ordered last) keeps derivePhase from (a) dropping it to
+  // 'unknown' and making it invisible to the dev-tool phase panel, and (b)
+  // reading world-gen as "done" at coherence_pass while embedding still runs.
+  'embed_world',
 ] as const
 
 export const CHARCREATION_STAGES = [
