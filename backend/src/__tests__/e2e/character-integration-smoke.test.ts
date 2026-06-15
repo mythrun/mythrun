@@ -67,6 +67,22 @@ vi.mock('ai', async () => {
   return { ...actual, generateText: vi.fn() }
 })
 
+// MYT-71 T11: the processor's success path now runs an embed post-pass that
+// calls embedWorld through the retrieval barrel. This smoke mocks the `ai` SDK
+// (Anthropic) but must NOT reach real Voyage — mock embedWorld at the module
+// boundary so the post-pass stays deterministic + offline. Its own unit tests
+// (character-integration-processor.test.ts) cover the post-pass behavior.
+vi.mock('../../world/retrieval/index.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../world/retrieval/index.js')>()
+  return {
+    ...actual,
+    embedWorld: vi.fn(() =>
+      Promise.resolve({ embedded: 0, leftNull: 0, voyageErrors: 0 }),
+    ),
+  }
+})
+
 const mockGenerateText = vi.mocked(ai.generateText)
 const databaseUrl = process.env.DATABASE_URL ?? ''
 
@@ -418,6 +434,9 @@ describe('MYT-54 T18: character-integration E2E smoke', () => {
           events.push({ campaignId: cid, ...e })
           return Promise.resolve()
         },
+        // embedWorld is mocked at the module boundary; the key is never used to
+        // build a live embedder against real Voyage.
+        voyageApiKey: 'pa-smoke-test-key',
       },
       // processCharacterIntegrationJob signature only reads `job.data` —
       // pass a minimal `Pick<Job, 'data'>` literal, no full BullMQ Job

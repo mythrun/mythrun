@@ -28,7 +28,9 @@ import { isTerminalError } from '../errors.js'
 import { logger } from '../logger.js'
 import { atomicClaimStage } from './world-gen-processor.js'
 import { runCharacterIntegrationStage } from './stages/character-integration.js'
-import { createRepo } from '../../repo/index.js'
+import { createRepo, type Repo } from '../../repo/index.js'
+import { embedWorld } from '../../world/retrieval/index.js'
+import { createVoyageEmbedder } from '../embed.js'
 
 export interface CharacterIntegrationJobPayload {
   readonly campaignId: string
@@ -41,13 +43,53 @@ export interface CharacterIntegrationProcessorDeps {
     campaignId: string,
     event: Record<string, unknown>,
   ) => Promise<void>
+  // MYT-71 §4.3: the Voyage key for the post-success embed post-pass. The
+  // embedder is built lazily inside the success block, only when there are
+  // NULL-embedded integration facts to embed.
+  readonly voyageApiKey: string
 }
 
 const STAGE = 'character_integration'
 
-// Top-level orchestration: claim → run → mark → publish. Kept linear (no
-// helper extraction) so the per-stage invariant (claim/run/mark/classify-
-// error) is grep-friendly in one read; under the 50-line budget.
+// MYT-71 §4.3: TERMINAL embed post-pass. character-integration inserts new
+// PC-backstory facts on existing world NPCs AFTER world-gen's embed stage ran,
+// so those rows ship NULL-embedded. This re-embeds the world's NULL rows (no
+// force) so the world stays searchable. TOTAL: the integration is ALREADY
+// committed + markStageCompleted'd + stage-completed-published by the time this
+// runs, so a Voyage/DB error here must NOT fail the job — it catches its own
+// errors and logs (never rethrows into the processor's outer catch, which would
+// wrongly flip the completed stage to 'failed').
+async function runIntegrationEmbedPostPass(
+  repo: Repo,
+  campaignId: string,
+  voyageApiKey: string,
+): Promise<void> {
+  try {
+    const worldId = await repo.campaigns.getWorldId(campaignId)
+    if (worldId !== null) {
+      const embedder = createVoyageEmbedder({ apiKey: voyageApiKey })
+      const summary = await embedWorld({ embedder, repo }, worldId)
+      logger.info(
+        { event: 'character_integration.embed', campaignId, worldId, ...summary },
+        'integration embed post-pass',
+      )
+    } else {
+      logger.warn(
+        { event: 'character_integration.embed_skipped', campaignId },
+        'no world_id for campaign; skipping integration embed post-pass',
+      )
+    }
+  } catch (err) {
+    logger.warn(
+      { event: 'character_integration.embed_failed', campaignId, err },
+      'integration embed post-pass failed (non-fatal)',
+    )
+  }
+}
+
+// Top-level orchestration: claim → run → mark → publish → embed. Kept linear
+// (only the embed post-pass is extracted, to stay under the line budget) so the
+// per-stage invariant (claim/run/mark/classify-error) is grep-friendly.
 export async function processCharacterIntegrationJob(
   deps: CharacterIntegrationProcessorDeps,
   job: Pick<Job<CharacterIntegrationJobPayload>, 'data'>,
@@ -111,6 +153,8 @@ export async function processCharacterIntegrationJob(
       },
       'character-integration completed',
     )
+
+    await runIntegrationEmbedPostPass(repo, campaignId, deps.voyageApiKey)
   } catch (err) {
     const terminal = isTerminalError(err)
     // Non-Error throw branch defense; the handler throws Error subclasses

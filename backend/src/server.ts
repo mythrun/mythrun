@@ -157,6 +157,7 @@ async function buildCharacterCreationWorker(
   redisBatchUrl: string,
   redisKeyPrefix: string,
   costCapUsd: number,
+  voyageApiKey: string,
   signal: AbortSignal,
 ): Promise<Worker> {
   const connection = createBullmqRedisClient(redisBatchUrl)
@@ -185,6 +186,7 @@ async function buildCharacterCreationWorker(
   const characterIntegrationProcessor = createCharacterIntegrationProcessor({
     pool,
     publishEvent,
+    voyageApiKey,
   })
   return new Worker(
     QUEUE_CAMPAIGN_SETUP,
@@ -509,7 +511,7 @@ export async function main(): Promise<void> {
     )
     const characterCreationWorker = await buildCharacterCreationWorker(
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
-      caps.characterCreationCostCapUsd, abortController.signal,
+      caps.characterCreationCostCapUsd, env.voyageApiKey, abortController.signal,
     )
     const sessionPrepWorker = await buildSessionPrepWorker(
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,

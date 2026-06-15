@@ -44,10 +44,21 @@ import {
   type CharacterIntegrationProcessorDeps,
 } from '../character-integration-processor.js'
 import * as integrationStage from '../stages/character-integration.js'
+import * as retrievalModule from '../../../world/retrieval/index.js'
+import * as repoModule from '../../../repo/index.js'
 import {
   LlmStructuredOutputError,
   LlmRateLimitedError,
 } from '../../errors.js'
+
+// MYT-71 T11: the embed post-pass calls embedWorld through the retrieval barrel.
+// Mock it at the module boundary so no test hits real Voyage — the post-pass is
+// the unit under test, not the embed write-path (that has its own T9 tests).
+vi.mock('../../../world/retrieval/index.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../world/retrieval/index.js')>()
+  return { ...actual, embedWorld: vi.fn() }
+})
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
 const here = fileURLToPath(import.meta.url)
@@ -91,6 +102,9 @@ function makeDeps(
   return {
     pool,
     publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
+    // The embed post-pass (MYT-71 T11) builds a Voyage embedder from this key,
+    // but embedWorld is mocked at the module boundary so it is never invoked.
+    voyageApiKey: 'pa-test-voyage-key',
   }
 }
 
@@ -118,6 +132,13 @@ describe('processCharacterIntegrationJob (MYT-54 T11)', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks()
+    // Default the mocked embedWorld to a clean, no-op summary so the happy-path
+    // post-pass logs successfully; individual tests override as needed.
+    vi.mocked(retrievalModule.embedWorld).mockResolvedValue({
+      embedded: 0,
+      leftNull: 0,
+      voyageErrors: 0,
+    })
     await cleanupTestScope(pool, scope)
   })
 
@@ -303,5 +324,122 @@ describe('processCharacterIntegrationJob (MYT-54 T11)', () => {
     expect(failed).toBeDefined()
     expect(failed?.terminal).toBe(true)
     expect(failed?.message).toBe('schema repair chain exhausted')
+  })
+
+  // ── MYT-71 T11: embed post-pass ─────────────────────────────────────────
+  // After a SUCCESSFUL integration, the processor embeds the world's NULL rows
+  // (the new PC-backstory facts character-integration inserted ship NULL-
+  // embedded) so the world stays searchable. The post-pass is TOTAL: a Voyage
+  // error must NOT fail the already-committed + already-published integration.
+
+  it('embed post-pass: after success, calls embedWorld(NULL-only) with the resolved worldId', async () => {
+    const { campaignId, ownerUserId, worldId } = await seed()
+    vi.spyOn(integrationStage, 'runCharacterIntegrationStage').mockResolvedValueOnce({
+      llmCostUsd: 0.1,
+      characterIds: ['e1'],
+    })
+
+    await processCharacterIntegrationJob(
+      makeDeps(pool),
+      makeJob({ campaignId, ownerUserId }),
+    )
+
+    // embedWorld called exactly once, against the campaign's real world_id.
+    expect(retrievalModule.embedWorld).toHaveBeenCalledTimes(1)
+    const call = vi.mocked(retrievalModule.embedWorld).mock.calls[0]
+    expect(call?.[1]).toBe(worldId)
+    // opts omitted → NULL-only embed (no force; the post-pass never re-embeds).
+    expect(call?.[2]).toBeUndefined()
+    // deps carry an embedder + the repo (the embedWorld EmbedDeps shape).
+    const depsArg = call?.[0]
+    expect(typeof depsArg?.embedder.embedDocuments).toBe('function')
+    expect(typeof (depsArg?.repo as { transaction?: unknown }).transaction).toBe('function')
+
+    // Stage still marked completed (the post-pass runs AFTER markStageCompleted).
+    const runs = await pool.query<{ status: string }>(
+      `SELECT status FROM pipeline_runs
+        WHERE campaign_id = $1 AND stage = 'character_integration'
+          AND user_id IS NULL`,
+      [campaignId],
+    )
+    expect(runs.rows[0]?.status).toBe('completed')
+  })
+
+  it('embed post-pass is TOTAL: an embedWorld throw does NOT fail the job and the stage stays completed', async () => {
+    const { campaignId, ownerUserId } = await seed()
+    vi.spyOn(integrationStage, 'runCharacterIntegrationStage').mockResolvedValueOnce({
+      llmCostUsd: 0.1,
+      characterIds: ['e1'],
+    })
+    vi.mocked(retrievalModule.embedWorld).mockRejectedValueOnce(
+      new Error('voyage 503'),
+    )
+
+    // The job must resolve cleanly — the integration is already committed +
+    // published; a Voyage failure here is non-fatal.
+    await expect(
+      processCharacterIntegrationJob(
+        makeDeps(pool),
+        makeJob({ campaignId, ownerUserId }),
+      ),
+    ).resolves.toBeUndefined()
+
+    // The stage was marked completed BEFORE the post-pass ran, so the failing
+    // embed must not have flipped it back to 'failed'.
+    const runs = await pool.query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM pipeline_runs
+        WHERE campaign_id = $1 AND stage = 'character_integration'
+          AND user_id IS NULL`,
+      [campaignId],
+    )
+    expect(runs.rows[0]?.status).toBe('completed')
+    expect(runs.rows[0]?.error).toBeNull()
+  })
+
+  it('embed post-pass does NOT run on the terminal-failure path (embedWorld never called)', async () => {
+    const { campaignId, ownerUserId } = await seed()
+    vi.spyOn(integrationStage, 'runCharacterIntegrationStage').mockRejectedValueOnce(
+      new LlmStructuredOutputError('schema repair chain exhausted'),
+    )
+
+    await expect(
+      processCharacterIntegrationJob(
+        makeDeps(pool),
+        makeJob({ campaignId, ownerUserId }),
+      ),
+    ).resolves.toBeUndefined()
+
+    // The post-pass lives inside the success block; a terminal failure short-
+    // circuits before it, so embedWorld is never invoked.
+    expect(retrievalModule.embedWorld).not.toHaveBeenCalled()
+  })
+
+  it('embed post-pass skips (no embedWorld) when getWorldId returns null', async () => {
+    // pipeline_runs FKs campaign_id → campaigns, so a real campaign must exist
+    // for the claim/mark writes. getWorldId only returns null for an absent
+    // campaign — unreachable with a seeded row. Cover the `worldId === null`
+    // arm by wrapping the real repo and overriding campaigns.getWorldId → null;
+    // every other repo method stays real (real claim/mark against Postgres).
+    const { campaignId, ownerUserId } = await seed()
+    vi.spyOn(integrationStage, 'runCharacterIntegrationStage').mockResolvedValueOnce({
+      llmCostUsd: 0.1,
+      characterIds: ['e1'],
+    })
+    // Capture the original factory BEFORE spying so the wrapper can delegate.
+    const realCreateRepo = repoModule.createRepo
+    vi.spyOn(repoModule, 'createRepo').mockImplementation((pgPool) => {
+      const real = realCreateRepo(pgPool)
+      return {
+        ...real,
+        campaigns: { ...real.campaigns, getWorldId: () => Promise.resolve(null) },
+      }
+    })
+
+    await processCharacterIntegrationJob(
+      makeDeps(pool),
+      makeJob({ campaignId, ownerUserId }),
+    )
+
+    expect(retrievalModule.embedWorld).not.toHaveBeenCalled()
   })
 })

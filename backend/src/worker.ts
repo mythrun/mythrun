@@ -117,6 +117,7 @@ export async function main(): Promise<void> {
   const integrationProcessor = createCharacterIntegrationProcessor({
     pool: pg,
     publishEvent,
+    voyageApiKey: env.voyageApiKey,
   })
 
   const campaignSetupRouter = async (job: Job): Promise<void> => {
