@@ -69,10 +69,26 @@ async function runIntegrationEmbedPostPass(
     if (worldId !== null) {
       const embedder = createVoyageEmbedder({ apiKey: voyageApiKey })
       const summary = await embedWorld({ embedder, repo }, worldId)
-      logger.info(
-        { event: 'character_integration.embed', campaignId, worldId, ...summary },
-        'integration embed post-pass',
-      )
+      // Triage exactly as the world-gen embed stage does: a CONFIG-class Voyage
+      // failure (wrong key/model/dim) breaks EVERY world and never self-heals →
+      // escalate LOUDLY at ERROR (alarmable); a transient degrade → WARN; a
+      // clean run → the routine INFO log. Stays non-fatal either way.
+      if (summary.configErrorKind !== undefined) {
+        logger.error(
+          { event: 'character_integration.embed_misconfigured', campaignId, worldId, ...summary },
+          'voyage MISCONFIGURED during integration embed — every world affected until the key/model/dim is fixed',
+        )
+      } else if (summary.voyageErrors > 0) {
+        logger.warn(
+          { event: 'character_integration.embed_degraded', campaignId, worldId, ...summary },
+          'voyage transient failure during integration embed — rows left NULL, backfill will recover',
+        )
+      } else {
+        logger.info(
+          { event: 'character_integration.embed', campaignId, worldId, ...summary },
+          'integration embed post-pass',
+        )
+      }
     } else {
       logger.warn(
         { event: 'character_integration.embed_skipped', campaignId },

@@ -46,6 +46,7 @@ import {
 import * as integrationStage from '../stages/character-integration.js'
 import * as retrievalModule from '../../../world/retrieval/index.js'
 import * as repoModule from '../../../repo/index.js'
+import { logger } from '../../logger.js'
 import {
   LlmStructuredOutputError,
   LlmRateLimitedError,
@@ -394,6 +395,108 @@ describe('processCharacterIntegrationJob (MYT-54 T11)', () => {
     )
     expect(runs.rows[0]?.status).toBe('completed')
     expect(runs.rows[0]?.error).toBeNull()
+  })
+
+  it('embed post-pass escalates a CONFIG-class summary to an ERROR log (misconfigured); job still completes', async () => {
+    const { campaignId, ownerUserId, worldId } = await seed()
+    vi.spyOn(integrationStage, 'runCharacterIntegrationStage').mockResolvedValueOnce({
+      llmCostUsd: 0.1,
+      characterIds: ['e1'],
+    })
+    // The post-pass embed reports a CONFIG-class Voyage failure (a misconfigured
+    // key/model/dim that affects every world) — this must escalate LOUDLY at
+    // ERROR, distinct from a transient degrade, while the job still completes.
+    vi.mocked(retrievalModule.embedWorld).mockResolvedValueOnce({
+      embedded: 0,
+      leftNull: 25,
+      voyageErrors: 1,
+      configErrorKind: 'dim_mismatch',
+    })
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger)
+
+    await expect(
+      processCharacterIntegrationJob(
+        makeDeps(pool),
+        makeJob({ campaignId, ownerUserId }),
+      ),
+    ).resolves.toBeUndefined()
+
+    // Escalated at ERROR with the misconfigured event + the full summary.
+    const misconfigCall = errorSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string }).event === 'character_integration.embed_misconfigured',
+    )
+    expect(misconfigCall).toBeDefined()
+    expect(misconfigCall?.[0]).toMatchObject({
+      event: 'character_integration.embed_misconfigured',
+      campaignId,
+      worldId,
+      embedded: 0,
+      leftNull: 25,
+      voyageErrors: 1,
+      configErrorKind: 'dim_mismatch',
+    })
+
+    // The job still completed (the post-pass escalation is non-fatal).
+    const runs = await pool.query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM pipeline_runs
+        WHERE campaign_id = $1 AND stage = 'character_integration'
+          AND user_id IS NULL`,
+      [campaignId],
+    )
+    expect(runs.rows[0]?.status).toBe('completed')
+    expect(runs.rows[0]?.error).toBeNull()
+  })
+
+  it('embed post-pass logs a transient degrade at WARN (voyageErrors>0, no config); job still completes', async () => {
+    const { campaignId, ownerUserId, worldId } = await seed()
+    vi.spyOn(integrationStage, 'runCharacterIntegrationStage').mockResolvedValueOnce({
+      llmCostUsd: 0.1,
+      characterIds: ['e1'],
+    })
+    // A transient Voyage blip (no config error): rows left NULL, backfill will
+    // recover. This must log at WARN with the degraded event — distinct from the
+    // alarmable misconfigured ERROR.
+    vi.mocked(retrievalModule.embedWorld).mockResolvedValueOnce({
+      embedded: 5,
+      leftNull: 3,
+      voyageErrors: 1,
+    })
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => logger)
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger)
+
+    await expect(
+      processCharacterIntegrationJob(
+        makeDeps(pool),
+        makeJob({ campaignId, ownerUserId }),
+      ),
+    ).resolves.toBeUndefined()
+
+    const degradedCall = warnSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string }).event === 'character_integration.embed_degraded',
+    )
+    expect(degradedCall).toBeDefined()
+    expect(degradedCall?.[0]).toMatchObject({
+      event: 'character_integration.embed_degraded',
+      campaignId,
+      worldId,
+      embedded: 5,
+      leftNull: 3,
+      voyageErrors: 1,
+    })
+    // No ERROR-level misconfigured escalation on a transient degrade.
+    expect(
+      errorSpy.mock.calls.find(
+        (c) => (c[0] as { event?: string }).event === 'character_integration.embed_misconfigured',
+      ),
+    ).toBeUndefined()
+
+    const runs = await pool.query<{ status: string }>(
+      `SELECT status FROM pipeline_runs
+        WHERE campaign_id = $1 AND stage = 'character_integration'
+          AND user_id IS NULL`,
+      [campaignId],
+    )
+    expect(runs.rows[0]?.status).toBe('completed')
   })
 
   it('embed post-pass does NOT run on the terminal-failure path (embedWorld never called)', async () => {

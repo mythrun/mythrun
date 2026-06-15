@@ -19,7 +19,7 @@ import { uuidv7 } from '../../../repo/uuidv7.js'
 import { entities } from '../../../repo/entities.js'
 import { facts } from '../../../repo/facts.js'
 import { createRepo, type Repo } from '../../../repo/index.js'
-import type { VoyageEmbedder } from '../../../llm/embed.js'
+import { VoyageEmbedError, type VoyageEmbedder } from '../../../llm/embed.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -263,6 +263,62 @@ describe('embedWorld (MYT-71 T9)', () => {
     expect(await factEmbedState(fact)).toEqual({ embedNull: false, embeddedAtNull: false })
     expect(await entityEmbedState(ent)).toEqual({ embedNull: true, embeddedAtNull: true })
     expect(summary).toEqual({ embedded: 1, leftNull: 1, voyageErrors: 1 })
+  })
+
+  it('a CONFIG-class Voyage failure surfaces configErrorKind, counts the error, leaves rows NULL', async () => {
+    const ent = await seedEntity(worldA, 'npc', 'Mara', false)
+    const fact = await seedFact(ent, 'history', 'h', false)
+    // The FIRST embed call (facts) rejects with an auth-kind VoyageEmbedError —
+    // a misconfigured key, which never self-heals and affects every world.
+    const calls: number[] = []
+    const embedder: VoyageEmbedder = {
+      embedDocuments: vi.fn((texts: readonly string[]) => {
+        calls.push(texts.length)
+        if (calls.length === 1) return Promise.reject(new VoyageEmbedError('401', 'auth', 401))
+        return Promise.resolve(texts.map(() => fakeVec()))
+      }),
+      embedQuery: vi.fn(),
+    }
+
+    const summary = await embedWorld({ embedder, repo }, worldA)
+
+    // Facts kind failed (config) → its rows stay NULL; entities kind succeeded.
+    expect(await factEmbedState(fact)).toEqual({ embedNull: true, embeddedAtNull: true })
+    expect(await entityEmbedState(ent)).toEqual({ embedNull: false, embeddedAtNull: false })
+    // The config-ness is surfaced; the error is still counted; the fact is NULL.
+    expect(summary).toEqual({
+      embedded: 1,
+      leftNull: 1,
+      voyageErrors: 1,
+      configErrorKind: 'auth',
+    })
+  })
+
+  it('a TRANSIENT Voyage failure counts the error but leaves configErrorKind undefined', async () => {
+    const ent = await seedEntity(worldA, 'npc', 'Mara', false)
+    // Seed a fact so the facts pass has rows to embed (the rejection target).
+    await seedFact(ent, 'history', 'h', false)
+    // The FIRST embed call (facts) rejects with a transient-kind error — a blip
+    // that recovers on its own; NOT a config error, so configErrorKind is absent.
+    const calls: number[] = []
+    const embedder: VoyageEmbedder = {
+      embedDocuments: vi.fn((texts: readonly string[]) => {
+        calls.push(texts.length)
+        if (calls.length === 1) {
+          return Promise.reject(new VoyageEmbedError('503', 'transient', 503))
+        }
+        return Promise.resolve(texts.map(() => fakeVec()))
+      }),
+      embedQuery: vi.fn(),
+    }
+
+    const summary = await embedWorld({ embedder, repo }, worldA)
+
+    // The error is counted, but the summary carries NO configErrorKind (the
+    // property is omitted, not set to undefined — exactOptionalPropertyTypes).
+    expect(summary).toEqual({ embedded: 1, leftNull: 1, voyageErrors: 1 })
+    expect(summary.configErrorKind).toBeUndefined()
+    expect('configErrorKind' in summary).toBe(false)
   })
 
   it('propagates when the embedder returns a vector count != input count', async () => {

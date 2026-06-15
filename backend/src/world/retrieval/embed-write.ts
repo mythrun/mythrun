@@ -24,7 +24,12 @@
 // propagates (T10's stage is the catch site).
 
 import type { Repo } from '../../repo/index.js'
-import type { VoyageEmbedder } from '../../llm/embed.js'
+import {
+  VoyageEmbedError,
+  isVoyageConfigError,
+  type VoyageEmbedder,
+  type VoyageErrorKind,
+} from '../../llm/embed.js'
 
 /** Dependencies for {@link embedWorld}. `embedder` provides the document-path
  *  embedding; `repo` supplies the read binder (`worldRetrieval`) and the short
@@ -43,11 +48,17 @@ export interface EmbedWorldOpts {
 
 /** Outcome of an {@link embedWorld} run. `embedded` rows got a vector; `leftNull`
  *  rows are still un-embedded (skipped after a Voyage failure); `voyageErrors`
- *  counts the kinds whose embed call threw. */
+ *  counts the kinds whose embed call threw. `configErrorKind` — set ONLY when at
+ *  least one kind failed with a CONFIG-class Voyage error (auth/bad_request/
+ *  dim_mismatch: a misconfigured key/model/dim that NEVER self-heals and affects
+ *  EVERY world) — lets callers escalate LOUDLY (alarmable) instead of treating a
+ *  misconfiguration like a transient blip. Omitted (not `undefined`) when every
+ *  failure was transient/rate-limited (degrades gracefully, backfill recovers). */
 export interface EmbedSummary {
   readonly embedded: number
   readonly leftNull: number
   readonly voyageErrors: number
+  readonly configErrorKind?: VoyageErrorKind
 }
 
 /** Convert a Voyage embedding (number[]) to the pgvector `'[f1,…,fN]'` text
@@ -57,11 +68,31 @@ function toVectorLiteral(v: readonly number[]): string {
   return `[${v.join(',')}]`
 }
 
-/** Mutable accumulator threaded through the two kind-passes. */
+/** Mutable accumulator threaded through the two kind-passes. `configErrorKind`
+ *  latches the FIRST config-class failure seen (auth wins over a later
+ *  dim_mismatch — both are "fix the config"; the first one is enough to alarm).*/
 interface EmbedTally {
   embedded: number
   leftNull: number
   voyageErrors: number
+  configErrorKind?: VoyageErrorKind
+}
+
+/** Record a kind's Voyage failure on the tally: count it, leave its rows NULL,
+ *  and — if it's a CONFIG-class error and none was latched yet — capture its
+ *  kind so callers can escalate. The `instanceof` guard narrows `err` to
+ *  `VoyageEmbedError` (so `.kind` is reachable without a cast); a non-Voyage
+ *  throw still counts as a voyage error but carries no config kind. */
+function recordVoyageFailure(tally: EmbedTally, err: unknown, rowCount: number): void {
+  tally.voyageErrors += 1
+  tally.leftNull += rowCount
+  if (
+    tally.configErrorKind === undefined &&
+    err instanceof VoyageEmbedError &&
+    isVoyageConfigError(err)
+  ) {
+    tally.configErrorKind = err.kind
+  }
 }
 
 /**
@@ -85,9 +116,8 @@ export async function embedWorld(
     let factVecs: number[][] | null = null
     try {
       factVecs = await deps.embedder.embedDocuments(factRows.map((r) => r.content))
-    } catch {
-      tally.voyageErrors += 1
-      tally.leftNull += factRows.length
+    } catch (err) {
+      recordVoyageFailure(tally, err, factRows.length)
     }
     if (factVecs !== null) {
       const literals = zipLiterals(factRows, factVecs)
@@ -109,9 +139,8 @@ export async function embedWorld(
     let entityVecs: number[][] | null = null
     try {
       entityVecs = await deps.embedder.embedDocuments(entityRows.map((r) => r.text))
-    } catch {
-      tally.voyageErrors += 1
-      tally.leftNull += entityRows.length
+    } catch (err) {
+      recordVoyageFailure(tally, err, entityRows.length)
     }
     if (entityVecs !== null) {
       const literals = zipLiterals(entityRows, entityVecs)
@@ -125,7 +154,17 @@ export async function embedWorld(
     }
   }
 
-  return { embedded: tally.embedded, leftNull: tally.leftNull, voyageErrors: tally.voyageErrors }
+  // Build the summary so `configErrorKind` is OMITTED (not `: undefined`) when
+  // no config-class failure occurred — exactOptionalPropertyTypes forbids
+  // assigning undefined to an optional field, and `'configErrorKind' in summary`
+  // must be false on the transient/clean paths.
+  const summary: EmbedSummary = {
+    embedded: tally.embedded,
+    leftNull: tally.leftNull,
+    voyageErrors: tally.voyageErrors,
+    ...(tally.configErrorKind !== undefined ? { configErrorKind: tally.configErrorKind } : {}),
+  }
+  return summary
 }
 
 /**

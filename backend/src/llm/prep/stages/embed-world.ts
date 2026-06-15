@@ -40,11 +40,22 @@ const ZERO_COST: StageCost = { costUsd: 0, inputTokens: 0, outputTokens: 0 }
 
 /**
  * Embed the world's un-embedded facts + entities. TOTAL: never throws, never
- * fails the world. On any error (Voyage exhaustion that escapes embedWorld's own
- * guard, or a DB write error mid-embed) it logs `world_gen.embed_world_failed`,
- * leaves the affected rows NULL for the operational backfill to retry, and
- * returns zero cost. On success it logs `world_gen.embed_world` with the
- * per-run tally.
+ * fails the world. The stage stays total either way, but it must NEVER be
+ * SILENT about a misconfiguration — so it triages the summary three ways:
+ *
+ *  - `summary.configErrorKind` set → a CONFIG-class Voyage failure (wrong key /
+ *    model / output dims) that NEVER self-heals and breaks EVERY world. Log at
+ *    ERROR (`world_gen.embed_world_misconfigured`, alarmable) so it gets fixed,
+ *    not buried under a routine "transient blip" warning.
+ *  - else `summary.voyageErrors > 0` → a transient Voyage degrade: rows left
+ *    NULL, the operational backfill will recover. Log at WARN
+ *    (`world_gen.embed_world_degraded`).
+ *  - else → a clean success. Log at INFO (`world_gen.embed_world`).
+ *
+ * On a THROW (Voyage exhaustion that escapes embedWorld's own guard, or a DB
+ * write error mid-embed) the outer catch logs `world_gen.embed_world_failed`
+ * at error, leaves the affected rows NULL for the operational backfill, and —
+ * like every path — returns zero cost.
  */
 export async function runEmbedWorldStage(
   repo: Repo,
@@ -53,12 +64,24 @@ export async function runEmbedWorldStage(
   const embedder = createVoyageEmbedder({ apiKey: deps.voyageApiKey })
   try {
     const summary = await embedWorld({ embedder, repo }, deps.worldId)
-    deps.logger.info(
-      { event: 'world_gen.embed_world', worldId: deps.worldId, ...summary },
-      'world-gen embed stage completed',
-    )
+    if (summary.configErrorKind !== undefined) {
+      deps.logger.error(
+        { event: 'world_gen.embed_world_misconfigured', worldId: deps.worldId, ...summary },
+        'voyage MISCONFIGURED during world-gen embed — every world affected until the key/model/dim is fixed',
+      )
+    } else if (summary.voyageErrors > 0) {
+      deps.logger.warn(
+        { event: 'world_gen.embed_world_degraded', worldId: deps.worldId, ...summary },
+        'voyage transient failure — embeddings left NULL, backfill will recover',
+      )
+    } else {
+      deps.logger.info(
+        { event: 'world_gen.embed_world', worldId: deps.worldId, ...summary },
+        'world-gen embed stage completed',
+      )
+    }
   } catch (err) {
-    deps.logger.warn(
+    deps.logger.error(
       { event: 'world_gen.embed_world_failed', worldId: deps.worldId, err },
       'world-gen embed stage failed; rows left NULL for backfill retry',
     )

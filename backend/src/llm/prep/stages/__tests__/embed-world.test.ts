@@ -44,11 +44,12 @@ describe('runEmbedWorldStage', () => {
     vi.clearAllMocks()
   })
 
-  it('returns zero-cost on success and logs the embed summary', async () => {
+  it('returns zero-cost on a clean success and logs the embed summary at INFO', async () => {
+    // Clean run: no voyage errors, no config error → the quiet success INFO log.
     vi.mocked(embedWriteModule.embedWorld).mockResolvedValueOnce({
       embedded: 12,
-      leftNull: 3,
-      voyageErrors: 1,
+      leftNull: 0,
+      voyageErrors: 0,
     })
 
     const { logger, logs } = makeCapturingLogger()
@@ -71,13 +72,83 @@ describe('runEmbedWorldStage', () => {
 
     const successLog = logs.find((l) => l.event === 'world_gen.embed_world')
     expect(successLog).toBeDefined()
+    expect(successLog?.level).toBe(30) // pino INFO
     expect(successLog).toMatchObject({
       event: 'world_gen.embed_world',
       worldId: 'wld-embed-1',
       embedded: 12,
-      leftNull: 3,
+      leftNull: 0,
+      voyageErrors: 0,
+    })
+  })
+
+  it('escalates a CONFIG-class summary to an ERROR log (misconfigured) and still returns zero-cost', async () => {
+    vi.mocked(embedWriteModule.embedWorld).mockResolvedValueOnce({
+      embedded: 0,
+      leftNull: 40,
+      voyageErrors: 2,
+      configErrorKind: 'auth',
+    })
+
+    const { logger, logs } = makeCapturingLogger()
+    const repo = makeRepo()
+
+    const result = await runEmbedWorldStage(repo, {
+      worldId: 'wld-embed-cfg',
+      voyageApiKey: 'pa-test-key',
+      logger,
+    })
+
+    // Stays TOTAL — zero cost.
+    expect(result).toEqual({ costUsd: 0, inputTokens: 0, outputTokens: 0 })
+
+    const misconfigLog = logs.find((l) => l.event === 'world_gen.embed_world_misconfigured')
+    expect(misconfigLog).toBeDefined()
+    expect(misconfigLog?.level).toBe(50) // pino ERROR
+    expect(misconfigLog).toMatchObject({
+      event: 'world_gen.embed_world_misconfigured',
+      worldId: 'wld-embed-cfg',
+      embedded: 0,
+      leftNull: 40,
+      voyageErrors: 2,
+      configErrorKind: 'auth',
+    })
+    // It must NOT also emit the quiet success/degraded logs.
+    expect(logs.find((l) => l.event === 'world_gen.embed_world')).toBeUndefined()
+    expect(logs.find((l) => l.event === 'world_gen.embed_world_degraded')).toBeUndefined()
+  })
+
+  it('escalates a transient-degrade summary (voyageErrors>0, no config) to a WARN log', async () => {
+    vi.mocked(embedWriteModule.embedWorld).mockResolvedValueOnce({
+      embedded: 30,
+      leftNull: 10,
       voyageErrors: 1,
     })
+
+    const { logger, logs } = makeCapturingLogger()
+    const repo = makeRepo()
+
+    const result = await runEmbedWorldStage(repo, {
+      worldId: 'wld-embed-degraded',
+      voyageApiKey: 'pa-test-key',
+      logger,
+    })
+
+    expect(result).toEqual({ costUsd: 0, inputTokens: 0, outputTokens: 0 })
+
+    const degradedLog = logs.find((l) => l.event === 'world_gen.embed_world_degraded')
+    expect(degradedLog).toBeDefined()
+    expect(degradedLog?.level).toBe(40) // pino WARN
+    expect(degradedLog).toMatchObject({
+      event: 'world_gen.embed_world_degraded',
+      worldId: 'wld-embed-degraded',
+      embedded: 30,
+      leftNull: 10,
+      voyageErrors: 1,
+    })
+    // Neither the misconfigured ERROR nor the clean-success INFO fire.
+    expect(logs.find((l) => l.event === 'world_gen.embed_world_misconfigured')).toBeUndefined()
+    expect(logs.find((l) => l.event === 'world_gen.embed_world')).toBeUndefined()
   })
 
   it('is TOTAL: catches an embedWorld throw, logs the failure, and still returns zero-cost', async () => {
