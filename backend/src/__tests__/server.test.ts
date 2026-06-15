@@ -67,6 +67,14 @@ vi.mock('../boot/migrations-current.js', () => ({
     await mockProbeMigrationsCurrent(pool)
   },
 }))
+// The Voyage boot probe makes a real embed call; mock it to a no-op so the boot
+// gate doesn't hit the network or depend on a valid VOYAGE_API_KEY (it uses the
+// REAL loadEnv). A Voyage config error still fails the boot via the same
+// try/catch the Postgres/Redis/migrations probe-failure tests exercise; the
+// probe's own behavior is covered by src/boot/__tests__/voyage-probe.test.ts.
+vi.mock('../boot/voyage-probe.js', () => ({
+  probeVoyageAtBoot: vi.fn((): Promise<void> => Promise.resolve()),
+}))
 // myth-oehx P2: server.ts reads cost-caps from the settings table at
 // boot. The boot gate happy-path doesn't run real SQL — stub the reads
 // to return sensible defaults so main() doesn't blow on the generic

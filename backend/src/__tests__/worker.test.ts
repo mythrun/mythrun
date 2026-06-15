@@ -5,8 +5,17 @@ vi.mock('../config/env.js', () => ({
     databaseUrl: 'postgresql://test@localhost:5432/test',
     redisBatchUrl: 'redis://localhost:6379',
     redisRealtimeUrl: 'redis://localhost:6380',
+    voyageApiKey: 'test-voyage-key',
     // Other fields not consumed by main()
   }),
+}))
+
+// The Voyage boot probe makes a real embed call; mock it to a no-op so the boot
+// test neither hits the network nor depends on a valid VOYAGE_API_KEY. The
+// probe's own crash-on-config / degrade-on-transient behavior is covered by
+// src/boot/__tests__/voyage-probe.test.ts.
+vi.mock('../boot/voyage-probe.js', () => ({
+  probeVoyageAtBoot: vi.fn((): Promise<void> => Promise.resolve()),
 }))
 
 const batchPingMock = vi.fn((): Promise<string> => Promise.resolve('PONG'))

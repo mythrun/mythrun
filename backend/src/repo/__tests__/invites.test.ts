@@ -647,7 +647,15 @@ describe('invites repo — concurrency (separate pool)', () => {
     const users = createUsersRepo(pool)
     const worldsRepo = createWorldsRepo(pool)
     const campaignsRepo = createCampaignsRepo(pool)
-    const invitesRepo = createInvitesRepo(pool)
+    // Generous lock window: this test races two acceptInvite txs, the 2nd
+    // waiting on the 1st's FOR UPDATE row lock. Under peak 6-fork + coverage-
+    // instrumented load the 1st commits slower than the default lock_timeout,
+    // so the 2nd spuriously hit 55P03 (lock_not_available) and the race assertion
+    // failed. The default is a PRODUCTION protection value; here we only need the
+    // window long enough for the winner to commit, so the one-winner outcome is
+    // deterministic. (The 55P03→InviteTimeout mapping is covered separately, with
+    // its own fastInvites { lockTimeoutMs: 200 } repo, below.)
+    const invitesRepo = createInvitesRepo(pool, { lockTimeoutMs: 30_000 })
 
     for (let i = 0; i < RACE_ITERATIONS; i++) {
       // myth-5jdo: cleanupTestScope is the per-iteration reset for race
