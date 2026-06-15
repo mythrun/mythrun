@@ -3,7 +3,7 @@
 // MYT-72 T3 — tuning constants for the contextual world-lookup skill-gate.
 // Never hardcode model names or budgets at call sites.
 
-import { HAIKU } from '../llm/models.js'
+import { HAIKU, OPUS } from '../llm/models.js'
 
 /** The gate's "would they even know?" judgment is a Haiku DC-table pre-roll
  *  (the established skill-check pattern) — cheap + fast (Principle #2/#3). */
@@ -45,3 +45,14 @@ export const GATE_FALLBACK_OUTCOMES = {
   success: 'You recall what you know of it.',
   great_success: 'You recall it in vivid detail.',
 } as const
+
+/** The ST-vet is a full-sd_playbook Opus call, mid-turn, per lookup (§17.4). */
+export const ST_LOOKUP_VET_MODEL = OPUS
+/** Pinned WELL UNDER the FT turn budget (FT_TURN_TIMEOUT_MS = 180_000) so the
+ *  vet's own timeout → fail-soft fires BEFORE the FT-turn abort would
+ *  terminal-fail the turn. 45s leaves the gate (~30s) + resolver + two Sonnet
+ *  passes room. NOT the 120s async ST_EVAL_TIMEOUT_MS. */
+export const ST_LOOKUP_VET_TIMEOUT_MS = 45_000
+/** A relay/invention is 1–3 sentences; pin modestly so a runaway can't eat the
+ *  turn budget. */
+export const ST_LOOKUP_VET_MAX_OUTPUT_TOKENS = 1_200
