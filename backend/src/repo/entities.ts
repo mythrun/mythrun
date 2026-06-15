@@ -97,6 +97,23 @@ export function entitiesNs(c: ClientLike) {
       return result.rows[0] ? toEntity(result.rows[0]) : null
     },
     /**
+     * MYT-72: resolve a colloquial entity name to its id, world-scoped, matching
+     * on lower(btrim(name)) so "  the spymaster " hits "The Spymaster". Returns
+     * null on no match (a clean "no such character" relay — never throws). Used by
+     * the lookup tools' name→id step before a graph walk. EXACT normalized match,
+     * not fuzzy: a wrong fuzzy id would silently walk the wrong subtree.
+     */
+    findIdByWorldAndNormalizedName: async (
+      worldId: string,
+      name: string,
+    ): Promise<string | null> => {
+      const result = await c.query<{ id: string }>(
+        `SELECT id FROM entities WHERE world_id = $1 AND lower(btrim(name)) = lower(btrim($2)) LIMIT 1`,
+        [worldId, name],
+      )
+      return result.rows[0]?.id ?? null
+    },
+    /**
      * location-selection (character-creation stage 1) drift-defense check: does
      * an entity with `id` exist in `worldId`? Returns true when the row exists.
      * Guards against state drift between owner-pick time and fan-out time. SQL

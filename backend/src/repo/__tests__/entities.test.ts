@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../uuidv7.js'
-import { entities } from '../entities.js'
+import { entities, entitiesNs } from '../entities.js'
 import { createRepo, type Repo } from '../index.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from './_helpers/test-scope.js'
 import { createTestPool } from './_helpers/test-pool.js'
@@ -80,6 +80,39 @@ describe('entities repo', () => {
     })
     const found = await entities.findByWorldAndName(pool, worldId, 'House Eyrin')
     expect(found?.id).toBe(id)
+  })
+
+  // MYT-72 T2: name→id resolver for the lookup tools. EXACT normalized-name
+  // match (case + whitespace insensitive via lower(btrim(...))), world-scoped,
+  // null on miss — never fuzzy, so a wrong id can't silently walk a wrong subtree.
+  it('findIdByWorldAndNormalizedName matches case/whitespace-insensitively, world-scoped (MYT-72 T2)', async () => {
+    // worldId is worldA (the beforeEach fixture world). Seed a second world,
+    // worldB, owned by the same user, for the cross-world isolation assertion.
+    const worldA = worldId
+    const worldB = uuidv7()
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status) VALUES ($1, $2, $3, 'C', 'generating')`,
+      [worldB, userId, scope.worldName(1)],
+    )
+
+    const id = uuidv7()
+    await entities.insert(pool, {
+      id,
+      worldId: worldA,
+      entityType: 'npc',
+      name: 'The Spymaster',
+      accessLevel: 'known',
+      createdIn: 'stage:test',
+    })
+
+    // Case + leading/trailing whitespace normalized away → still resolves.
+    expect(await entitiesNs(pool).findIdByWorldAndNormalizedName(worldA, '  the spymaster ')).toBe(id)
+    // No such name → null (clean "no such character" relay).
+    expect(await entitiesNs(pool).findIdByWorldAndNormalizedName(worldA, 'nobody')).toBeNull()
+    // Right name, wrong world → null (world-scoped).
+    expect(
+      await entitiesNs(pool).findIdByWorldAndNormalizedName(worldB, 'The Spymaster'),
+    ).toBeNull()
   })
 
   it('listByWorld returns all entities for the world', async () => {
