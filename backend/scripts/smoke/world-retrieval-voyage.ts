@@ -24,7 +24,8 @@ import { uuidv7 } from '../../src/repo/uuidv7.js'
 import { entities } from '../../src/repo/entities.js'
 import { proseKernels } from '../../src/repo/prose-kernels.js'
 import { facts } from '../../src/repo/facts.js'
-import { createVoyageEmbedder } from '../../src/llm/embed.js'
+import { createVoyageEmbedder, isVoyageConfigError, VoyageEmbedError } from '../../src/llm/embed.js'
+import { probeVoyageAtBoot } from '../../src/boot/voyage-probe.js'
 import { embedWorld, createSearchResolvers } from '../../src/world/retrieval/index.js'
 
 const logger = pino({ level: 'info' })
@@ -132,11 +133,28 @@ async function main(): Promise<void> {
     }
     // The secret fact must surface too (over-pull across all tiers — no access filter).
     const secretFact = hits.find((h) => h.source === 'fact')
-    log('PASS — near ranks first; far over-pulled below; secret fact present', {
+    log('PASS (positive) — near ranks first; far over-pulled below; secret fact present', {
       topScore: Number(top.score.toFixed(4)),
       farScore: far ? Number(far.score.toFixed(4)) : null,
       secretFactPresent: secretFact !== undefined,
     })
+
+    // NEGATIVE — a misconfigured key must make the boot probe CRASH LOUD against
+    // real Voyage (the "never silently unsearchable" guarantee), not degrade.
+    const badEmbedder = createVoyageEmbedder({ apiKey: 'pa-deliberately-invalid-key' })
+    let probeThrew = false
+    try {
+      await probeVoyageAtBoot(badEmbedder, logger)
+    } catch (err) {
+      probeThrew = true
+      if (!(err instanceof VoyageEmbedError && isVoyageConfigError(err))) {
+        throw new Error(`boot probe threw, but not a classified config error: ${String(err)}`)
+      }
+      log('PASS (negative) — boot probe REFUSES a bad key with a loud config error', { kind: err.kind, status: err.status })
+    }
+    if (!probeThrew) {
+      throw new Error('boot probe did NOT throw on a deliberately-invalid key — the silent-failure guard is BROKEN')
+    }
   } finally {
     if (worldId !== undefined) {
       await pool.query(`DELETE FROM worlds WHERE id = $1`, [worldId])

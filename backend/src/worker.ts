@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url'
 import { Worker as BullmqWorker, type Job } from 'bullmq'
 import { waitFor } from './boot/wait-for.js'
+import { probeVoyageAtBoot } from './boot/voyage-probe.js'
 import { loadEnv } from './config/env.js'
 import { createPgPool } from './db/postgres.js'
 import { createBullmqRedisClient } from './redis/bullmq-client.js'
@@ -15,6 +16,7 @@ import {
 } from './worker/bullmq-config.js'
 import { startHealthServer } from './worker/health-server.js'
 import { logger } from './llm/logger.js'
+import { createVoyageEmbedder } from './llm/embed.js'
 import { readCostCap, readCharacterCreationCostCap } from './llm/prep/cost-cap.js'
 import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
 import {
@@ -68,6 +70,12 @@ export async function main(): Promise<void> {
   await waitFor({ label: 'Redis (realtime)', probe: () => redisRealtime.ping() })
   const pg = createPgPool(env.databaseUrl, { max: WORKER_PG_POOL_SIZE })
   await waitFor({ label: 'Postgres', probe: () => pg.query('SELECT 1') })
+
+  // Voyage (embeddings). A misconfigured key would otherwise make every world
+  // silently un-embedded — so the probe crashloops on a config error (auth/
+  // bad-request/dim) so a bad key can't ship, and boots DEGRADED (loud error
+  // log, not crashloop) on a transient Voyage outage. See boot/voyage-probe.ts.
+  await probeVoyageAtBoot(createVoyageEmbedder({ apiKey: env.voyageApiKey }), logger)
 
   // Cost caps come from the settings table — pulled at boot so the worker
   // operates on the same values the API uses (server.ts:readCostCapsAtBoot).

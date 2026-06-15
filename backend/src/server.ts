@@ -16,6 +16,8 @@ import { installSignalHandlers } from './boot/signal-handlers.js'
 import { installProcessErrorHandlers } from './boot/process-error-handlers.js'
 import { probeMigrationsCurrent } from './boot/migrations-current.js'
 import { waitFor } from './boot/wait-for.js'
+import { probeVoyageAtBoot } from './boot/voyage-probe.js'
+import { createVoyageEmbedder } from './llm/embed.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
 import { createBullmqRedisClient } from './redis/bullmq-client.js'
@@ -455,6 +457,13 @@ export async function main(): Promise<void> {
     const probeLogger = console as unknown as import('pino').Logger
     await probeStripeContract(stripeClient, probeLogger)
     console.log('✓ Stripe contract verified')
+
+    // Voyage (embeddings) contract probe. Same posture as the Stripe probe: a
+    // config error (bad key / wrong dim) throws → non-zero exit → ECS rolls the
+    // deploy back. A transient Voyage outage boots DEGRADED (loud log), not a
+    // crashloop — world-gen content still works; embeddings backfill on recovery.
+    await probeVoyageAtBoot(createVoyageEmbedder({ apiKey: env.voyageApiKey }), probeLogger)
+    console.log('✓ Voyage contract verified')
 
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
