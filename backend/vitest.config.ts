@@ -98,6 +98,18 @@ export default defineConfig({
   test: {
     setupFiles: ['./src/__tests__/setup-env.ts'],
     globalSetup: ['./src/__tests__/global-setup.ts'],
+    // Per-test timeout. The vitest default is 5s, which is tight for this
+    // suite's heaviest real-infra e2e tests (multi-stage PG world-gen, two-WS-
+    // client reconnect/replay) when the FULL `test:coverage` run stacks v8
+    // instrumentation on top of 6-fork parallel contention — each passes in
+    // <1.5s in isolation but occasionally spikes past 5s under that load.
+    // Serializing them (cf. SERIAL_FILES) is the remedy for tests whose
+    // coverage is execution-context-independent, but the WS integration test's
+    // branch coverage of session concurrency paths ("peer present", "socket
+    // closed mid-op") only fires UNDER parallel contention — serializing it
+    // would silently drop those branches. So we give the whole suite headroom
+    // here instead. A genuine hang still surfaces (just at 20s, not 5s).
+    testTimeout: 20_000,
     // The mythrun/eslint-rules RuleTester scripts (.test.cjs) are run directly
     // via `node`, not Vitest — they don't expose describe/it. The wiring smoke
     // test (.test.mjs) IS a Vitest test and stays included.

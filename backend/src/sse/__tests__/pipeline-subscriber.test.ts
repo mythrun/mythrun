@@ -26,6 +26,32 @@ function makeSink(): SseSink & { written: string[]; closed: CloseReason | null }
   }
 }
 
+// Condition-based wait — polls `cond` instead of assuming a fixed propagation
+// window. Replaces the `setTimeout(50)` waits that flake under parallel +
+// coverage-instrumented load (the durable fix the file header used to defer).
+async function waitFor(cond: () => boolean, attempts = 300, stepMs = 10): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if (cond()) return
+    await new Promise<void>((resolve) => setTimeout(resolve, stepMs))
+  }
+}
+
+// Publish until at least one (pattern) subscriber actually receives it. PUBLISH
+// returns the receiver count, so a 0 means the subscriber's PSUBSCRIBE hasn't
+// registered yet — Redis pub/sub is fire-and-forget, so that message is lost.
+// Retrying closes the subscribe-registration race WITHOUT a fixed window and
+// WITHOUT reaching into the subscriber's internal duplicate client. Channels are
+// uniquely PREFIX-scoped per test, so the count reflects only this subscriber;
+// we stop at the first delivered publish, so exactly one message lands.
+async function publishUntilDelivered(pub: Redis, channel: string, message: string): Promise<void> {
+  for (let i = 0; i < 300; i++) {
+    const received = await pub.publish(channel, message)
+    if (received >= 1) return
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`no subscriber received ${channel} after retries`)
+}
+
 describe('pipeline-subscriber', () => {
   let redis: Redis
   let publisher: Redis
@@ -46,13 +72,12 @@ describe('pipeline-subscriber', () => {
     const sub = createPipelineSubscriber(redis, PREFIX, pino({ level: 'silent' }))
     const sink = makeSink()
     sub.attach('cmp-1', sink)
-    // Subscriber's PSUBSCRIBE is async; wait a beat.
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
-    await publisher.publish(
+    await publishUntilDelivered(
+      publisher,
       `${PREFIX}pipeline:campaign:cmp-1`,
       JSON.stringify({ type: 'phase', phase: 'world_gen' }),
     )
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    await waitFor(() => sink.written.some((w) => w.includes('"phase":"world_gen"')))
     expect(sink.written.some((w) => w.includes('"phase":"world_gen"'))).toBe(true)
     await sub.close()
   })
@@ -78,12 +103,12 @@ describe('pipeline-subscriber', () => {
     const sinkB = makeSink()
     sub.attach('cmp-A', sinkA)
     sub.attach('cmp-B', sinkB)
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
-    await publisher.publish(
+    await publishUntilDelivered(
+      publisher,
       `${PREFIX}pipeline:campaign:cmp-A`,
       JSON.stringify({ type: 'phase', phase: 'world_gen' }),
     )
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    await waitFor(() => sinkA.written.length === 1)
     expect(sinkA.written).toHaveLength(1)
     expect(sinkB.written).toHaveLength(0)
     await sub.close()
@@ -100,12 +125,12 @@ describe('pipeline-subscriber', () => {
     const goodSink = makeSink()
     sub.attach('cmp-3', badSink)
     sub.attach('cmp-3', goodSink)
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
-    await publisher.publish(
+    await publishUntilDelivered(
+      publisher,
       `${PREFIX}pipeline:campaign:cmp-3`,
       JSON.stringify({ type: 'phase', phase: 'world_gen' }),
     )
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    await waitFor(() => goodSink.written.length === 1)
     expect(goodSink.written).toHaveLength(1)
     await sub.close()
   })
@@ -134,15 +159,16 @@ describe('pipeline-subscriber', () => {
 
   it('wastedMessageCount increments for PMESSAGEs on a channel with no attached sinks', async () => {
     const sub = createPipelineSubscriber(redis, PREFIX, pino({ level: 'silent' }))
-    // Wait for the subscriber to issue PSUBSCRIBE before publishing.
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
     expect(sub.wastedMessageCount()).toBe(0)
-    // Publish to a channel with no sinks attached — should increment wasted counter.
-    await publisher.publish(
+    // Publish to a channel with no sinks attached — should increment the wasted
+    // counter. publishUntilDelivered closes the PSUBSCRIBE race (the pattern sub
+    // exists from construction even with no attached sink).
+    await publishUntilDelivered(
+      publisher,
       `${PREFIX}pipeline:campaign:cmp-no-listener`,
       JSON.stringify({ type: 'phase', phase: 'world_gen' }),
     )
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    await waitFor(() => sub.wastedMessageCount() === 1)
     expect(sub.wastedMessageCount()).toBe(1)
     await sub.close()
   })
