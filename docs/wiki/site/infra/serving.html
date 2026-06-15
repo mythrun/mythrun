@@ -432,7 +432,7 @@
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>No explicit <code>kms:Decrypt</code> statement</strong> — all six referenced secrets use
+  <strong>No explicit <code>kms:Decrypt</code> statement</strong> — all seven referenced secrets use
   the AWS-managed <code>aws/secretsmanager</code> key, for which
   <code>AmazonECSTaskExecutionRolePolicy</code> already allows decrypt transparently. The day any
   secret moves to a customer-managed CMK, that ResourceInitializationError becomes a readable signal
@@ -521,11 +521,12 @@
 </p>
 
 <p>
-  Both task definitions pull the same six secrets: <code>ANTHROPIC_API_KEY</code>,
-  <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>,
+  Both task definitions pull the same seven secrets: <code>ANTHROPIC_API_KEY</code>,
+  <code>VOYAGE_API_KEY</code>, <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>,
   <code>COGNITO_CLIENT_SECRET</code>, <code>DB_PASSWORD</code>, <code>REDIS_AUTH_TOKEN</code>. The
-  first four are per-env manual shells (values set in the AWS console out-of-band);
-  <code>DB_PASSWORD</code> is the per-env RDS secret that
+  first four are per-env manual shells (values set in the AWS console out-of-band — see the
+  <a href="../data/world-store-retrieval.html#populate-the-voyage-key">Voyage key</a> runbook for
+  the one that ships as a placeholder); <code>DB_PASSWORD</code> is the per-env RDS secret that
   <a href="data.html#bootstrap-databases">bootstrap-databases.sh</a> populates;
   <code>REDIS_AUTH_TOKEN</code> is the cross-env <code>mythrun/shared/redis-auth</code>. Environment
   variables (<code>DB_HOST</code>, <code>REDIS_HOST</code>, <code>NODE_ENV</code>,
@@ -702,10 +703,10 @@
 <h3 id="rotate-the-manual-secret-values">Rotate a manual secret value</h3>
 <ol>
   <li>
-    Manual secrets (<code>anthropic-api-key</code>, <code>stripe-secret-key</code>,
-    <code>stripe-webhook-secret</code>, <code>cognito-client-secret</code>) have
-    <code>ignore_changes = [secret_string]</code> on their Terraform version — safe to update
-    out-of-band.
+    Manual secrets (<code>anthropic-api-key</code>, <code>voyage-api-key</code>,
+    <code>stripe-secret-key</code>, <code>stripe-webhook-secret</code>,
+    <code>cognito-client-secret</code>) have <code>ignore_changes = [secret_string]</code> on their
+    Terraform version — safe to update out-of-band.
   </li>
   <li>
     <code

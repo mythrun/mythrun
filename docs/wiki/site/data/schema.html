@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html" class="active">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html" class="active">Schema</a></li><li><a href="../data/migrations.html">Migrations</a></li><li><a href="../data/repository.html">Repository layer</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html" class="active">Schema</a></li><li><a href="../data/migrations.html">Migrations</a></li><li><a href="../data/repository.html">Repository layer</a></li><li><a href="../data/world-store-retrieval.html">World-store retrieval</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Data › Schema</div>
         <article>
@@ -728,7 +728,11 @@
   <code>random_tables</code> + <code>random_table_entries</code> hold per-world rollables.
   <code>stat_blocks</code> + <code>stat_block_actions</code> are the combat-relevant numbers,
   attached to entities by FK with <code>ON DELETE SET NULL</code> so you can swap a stat block out
-  without losing the entity.
+  without losing the entity. Migration 026 enables the <code>vector</code> extension and adds an
+  <code>embedding vector(512)</code> column (plus <code>embedded_at</code>) to both
+  <code>facts</code> and <code>entities</code>, each backed by an HNSW cosine index — the substrate
+  the <a href="./world-store-retrieval.html">world-store retrieval</a> resolver searches over. The
+  columns are nullable: an un-embedded row is simply unsearchable until backfilled, never a crash.
 </p>
 
 <h3 id="campaigns-and-play">Campaigns and play</h3>

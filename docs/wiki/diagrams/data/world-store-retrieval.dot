@@ -1,0 +1,73 @@
+digraph world_store_retrieval {
+  // Two paths over one substrate. WRITE (top): world-gen / Scribe text → Voyage
+  // document embed → vector(512) columns on facts + entities. READ (bottom): a
+  // turn query → Voyage query embed → pgvector cosine OR a recursive-CTE graph
+  // walk → ranked rows, over-pulling every access tier. The Slow Thinker gate
+  // (downstream, not in this substrate) is the single tier-safety boundary.
+  rankdir=LR;
+  compound=true;
+
+  voyage [label="Voyage\n/v1/embeddings\nvoyage-4-lite · 512-dim", color="ember", fontcolor="ember"];
+
+  subgraph cluster_write {
+    label="write path (embedWorld)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    src       [label="world-gen embed stage\n+ integration post-pass\n+ backfill script"];
+    listrows  [label="listFactsToEmbed /\nlistEntitiesToEmbed\n(NULL-only, or --force)"];
+    docembed  [label="embedDocuments\n(input_type=document)"];
+    writevec  [label="updateEmbedding\n(short write-only tx)"];
+  }
+
+  subgraph cluster_store {
+    label="world store (Postgres + pgvector 0.8)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    facts     [label="facts.embedding\nvector(512)\nHNSW cosine"];
+    entities  [label="entities.embedding\nvector(512)\nHNSW cosine"];
+    rels      [label="relationships\n+ entity_hierarchy\n(graph edges)"];
+  }
+
+  subgraph cluster_read {
+    label="read path (resolver surface)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    query     [label="turn query text\n(MYT-72 / MYT-73)"];
+    qembed    [label="embedQuery\n(input_type=query)"];
+    searchlore [label="searchLore\nfacts ∪ entities · re-rank\n(TOTAL: throw → [])"];
+    findsim    [label="findSimilarEntities\nmatch-vs-mint\n(THROWS on failure)"];
+    graphwalk  [label="charactersKnownTo\nfactionTree"];
+    results    [label="ranked rows\nALL tiers over-pulled"];
+  }
+
+  // write path
+  src      -> listrows [label="read (no tx)"];
+  listrows -> docembed [label="text"];
+  docembed -> voyage   [label="POST"];
+  docembed -> writevec [label="vectors"];
+  writevec -> facts    [label="UPDATE"];
+  writevec -> entities [label="UPDATE"];
+
+  // read path — semantic
+  query      -> qembed    [label="embed (no tx)"];
+  qembed     -> voyage    [label="POST"];
+  qembed     -> searchlore;
+  qembed     -> findsim;
+  searchlore -> facts     [label="cosine <=>", lhead=cluster_store];
+  searchlore -> entities  [label="cosine <=>"];
+  findsim    -> entities  [label="cosine <=> (no PCs)"];
+
+  // read path — structural
+  query     -> graphwalk  [label="entityId"];
+  graphwalk -> rels       [label="recursive CTE"];
+
+  searchlore -> results;
+  findsim    -> results;
+  graphwalk  -> results;
+}

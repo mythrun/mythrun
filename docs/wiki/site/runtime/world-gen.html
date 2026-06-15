@@ -2115,6 +2115,18 @@
 </p>
 
 <p>
+  One post-stage runs in the gap between <code>coherence_pass</code> committing and
+  <code>worlds.status</code> flipping to <code>complete</code>: the
+  <a href="../data/world-store-retrieval.html#where-embedding-gets-triggered">embed stage</a> sends
+  the freshly generated world's facts and entities to Voyage and writes back the
+  <code>vector(512)</code> embeddings, so the world is semantically searchable the moment it lands.
+  It is a <em>total</em> step — it catches its own errors, never fails the world, and reports zero
+  cost (Voyage spend is off the Anthropic cost cap). It is not a
+  <code>WORLD_GEN_STAGES</code> member and not part of the cost-cap loop; the world-store-retrieval
+  page tells its full story.
+</p>
+
+<p>
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
   rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
   check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes —

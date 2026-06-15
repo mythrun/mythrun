@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html" class="active">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html">Schema</a></li><li><a href="../data/migrations.html">Migrations</a></li><li><a href="../data/repository.html" class="active">Repository layer</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html">Schema</a></li><li><a href="../data/migrations.html">Migrations</a></li><li><a href="../data/repository.html" class="active">Repository layer</a></li><li><a href="../data/world-store-retrieval.html">World-store retrieval</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Data › Repository layer</div>
         <article>
@@ -573,10 +573,12 @@
   <code>userSubscriptions</code>, <code>stripeEvents</code>, <code>billingHistory</code>,
   <code>pipelineRuns</code>) and the world-gen support namespaces the prep pipeline added
   (<code>randomTables</code>, <code>settings</code>, and <code>worldInventory</code> — the last a
-  composite multi-table read that replaced the former <code>repo.pool</code> escape hatch) — and a
-  <code>transaction</code> method. The return type is exported as <code>type Repo</code>; the
-  <a href="../runtime/index.html">backend runtime</a>'s <code>AppDeps</code> carries it alongside
-  <code>pg</code>, the two Redis clients, and the derived
+  composite multi-table read that replaced the former <code>repo.pool</code> escape hatch) plus
+  <code>worldRetrieval</code> (the
+  <a href="./world-store-retrieval.html">world-store retrieval</a> binder — pgvector cosine search
+  and recursive-CTE graph walks) — and a <code>transaction</code> method. The return type is
+  exported as <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
+  <code>AppDeps</code> carries it alongside <code>pg</code>, the two Redis clients, and the derived
   <code>redisKeyPrefix</code>
   (<code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>) every Redis-keyed subsystem prepends to its keys;
   <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both

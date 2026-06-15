@@ -1,0 +1,545 @@
+<!-- source: backend/migrations/026_world_retrieval.sql -->
+<!-- source: backend/src/repo/world-retrieval.ts -->
+<!-- source: backend/src/world/retrieval/config.ts -->
+<!-- source: backend/src/world/retrieval/types.ts -->
+<!-- source: backend/src/world/retrieval/search.ts -->
+<!-- source: backend/src/world/retrieval/graph.ts -->
+<!-- source: backend/src/world/retrieval/embed-write.ts -->
+<!-- source: backend/src/world/retrieval/index.ts -->
+<!-- source: backend/src/llm/embed.ts -->
+<!-- source: backend/src/boot/voyage-probe.ts -->
+<!-- source: backend/src/llm/prep/stages/embed-world.ts -->
+<!-- source: backend/src/llm/prep/character-integration-processor.ts -->
+<!-- source: backend/scripts/world-embed-backfill.ts -->
+<!-- source: backend/scripts/smoke/world-retrieval-voyage.ts -->
+<!-- source: backend/src/config/env.ts -->
+<!-- source: infra/environments/staging/main.tf -->
+<!-- source: infra/modules/serving/main.tf -->
+<!-- source: infra/modules/serving/variables.tf -->
+<!-- source-hash: sha256:1f1006fe83bd1435386290eede197460517b55c045d435c72aa07c0d542d05bf -->
+<!-- last-ticket: MYT-71 -->
+
+<h1>World-store retrieval</h1>
+
+<p class="lead">
+  How the world store becomes queryable. Two paths over one substrate: a <strong>write</strong> path
+  that embeds every fact and entity into a 512-dim vector, and a <strong>read</strong> path that
+  answers a turn's question two ways — pgvector cosine search over those vectors (semantic lore) and
+  recursive-CTE walks over the relationship graph (who-knows-whom, faction trees). Both over-pull
+  every access tier; the <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate downstream is
+  the single tier-safety boundary, not this layer.
+</p>
+
+<!-- @diagram: data/world-store-retrieval -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The world store the <a href="../runtime/world-gen.html">prep engine</a> produces — worlds,
+  entities, facts, prose kernels, relationships — is rich but inert. The live-play tiers need to
+  <em>ask it questions</em>: "what does the world know about a volcanic dragon lair?" (the Fast
+  Thinker's in-character lookup, MYT-72), "does this improvised NPC already exist in canon?" (the
+  Scribe's match-vs-mint, MYT-73), "who is this faction's parent organization?" Retrieval is the
+  substrate that turns the store into something queryable, and it is deliberately split from its
+  consumers: this ticket builds and proves the substrate; MYT-72 and MYT-73 import it.
+</p>
+
+<p>
+  Everything funnels through one barrel, <code>backend/src/world/retrieval/index.ts</code> — the
+  only surface a consumer imports. It re-exports the search resolvers (<code
+    >createSearchResolvers</code
+  >
+  → <code>searchLore</code> / <code>findSimilarEntities</code>), the two graph walks
+  (<code>charactersKnownTo</code>, <code>factionTree</code>), the write-path entry
+  (<code>embedWorld</code>), and every camelCase result type. The internal tuning constants and the
+  snake_case DB-row types are deliberately <em>not</em> re-exported: consumers depend on the
+  resolver shape, never the SQL layer underneath it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Over-pull, no tier filter anywhere in this layer</strong> — not the SQL binder, not the
+  search resolvers, not the graph walks apply an <code>access_level</code> predicate. Every query
+  returns <code>known</code>, <code>discoverable</code>, and <code>secret</code> rows alike. That is
+  intentional and load-bearing: the tier-safety boundary is the
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate that sits between retrieval and the
+  player-facing Fast Thinker. A tier filter <em>here</em>
+  would blind the Slow Thinker to the very secrets it needs to reason about — and would be a second,
+  weaker enforcement point competing with the real one. The resolver's job is recall; the gate's job
+  is safety. Putting a filter in this layer would be a bug, and the code comments say so.
+</aside>
+
+<h2>The vector substrate: pgvector on the rows it describes</h2>
+
+<p>
+  Migration <code>026_world_retrieval.sql</code> enables the <code>vector</code> extension and adds
+  two columns to both <code>facts</code> and <code>entities</code>: an
+  <code>embedding vector(512)</code> and an <code>embedded_at timestamptz</code>. The embedding
+  lives on the row it describes — a fact's vector sits on the fact, an entity's on the entity —
+  rather than in a side table. Both columns are nullable: a row with a <code>NULL</code> embedding
+  is simply unsearchable until it gets embedded, never a crash. The
+  <code>embedded_at</code> timestamp lets a future backfill find rows whose content changed
+  <em>after</em> they were embedded (drift), not only the never-embedded ones.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>HNSW, not IVFFlat</strong> — the index is HNSW with cosine ops on each embedding column.
+  IVFFlat needs a populated table to train its centroid lists; the Scribe inserts new facts
+  incrementally at the end of every session, so the table is never "done" being populated. HNSW has
+  no training step, indexes inserts as they land, and gives higher recall — the correct tradeoff for
+  a corpus that grows one session at a time. NULL embeddings aren't indexed.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The image swap that has to land first</strong> — stock
+  <code>postgres:16-alpine</code> bundles <code>pgcrypto</code> but not <code>vector</code>. Local
+  docker-compose and the CI Postgres service both run <code>pgvector/pgvector:pg16</code> so
+  <code>CREATE EXTENSION vector</code> resolves. The migrate role already holds
+  <code>rds_superuser</code> on RDS (it runs <code>CREATE EXTENSION pgcrypto</code> in migration
+  001), so the extension is authorized with no parameter-group change.
+</aside>
+
+<p>
+  The heavy read SQL lives behind the canonical <code>worldRetrievalNs(c)</code> binder in
+  <code>backend/src/repo/world-retrieval.ts</code>, exactly like every other
+  <a href="./repository.html">repository</a> namespace. pgvector's <code>&lt;=&gt;</code> operator
+  is cosine <em>distance</em>; the binder selects <code>1 - (embedding &lt;=&gt; $query)</code> as
+  the <code>score</code>, so the whole codebase speaks one convention: score in
+  <code>[-1, 1]</code>, higher is more similar. Postgres has no native vector parameter type, so the
+  caller passes the <code>'[f1,…,f512]'</code> text form and the SQL casts <code>$2::vector</code>.
+</p>
+
+<p>
+  One schema wrinkle the binder absorbs: <code>facts</code> has no <code>world_id</code> column
+  (schema drift since migration 001), so a fact search scopes through
+  <code>JOIN entities e ON e.id = f.entity_id WHERE e.world_id = $1</code>, mirroring every other
+  world-scoped fact read. Entity searches scope on <code>entities.world_id</code> directly.
+</p>
+
+<h2>The write path: <code>embedWorld</code></h2>
+
+<p>
+  <code>embedWorld(deps, worldId, opts?)</code> in <code>world/retrieval/embed-write.ts</code> reads
+  a world's un-embedded facts and entities, embeds each kind's text through Voyage, and writes the
+  vectors back. It is the core of the operational backfill and the seam both the world-gen embed
+  stage and the character-integration post-pass call. Facts and entities are independent passes —
+  separate read → embed → write — so a facts-success paired with an entities-failure correctly
+  leaves facts embedded and entities <code>NULL</code>. Partial success is the contract.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The Voyage round-trip never sits inside a transaction</strong> — each pass is strictly:
+  read the rows-to-embed via the repo (no tx), embed the whole list (no tx), then write the vectors
+  in a <em>short, write-only</em> <code>repo.transaction</code>. RDS kills idle-in-transaction
+  connections at 60 seconds, and a large document-embed batch can take longer than that. Holding a
+  <code>BEGIN</code> open across the slow network call would risk a 25P03 kill mid-write. So the
+  slow I/O is always outside the transaction; only the <code>UPDATE</code>s are inside it. This is
+  the same discipline the prep pipeline learned in MYT-55.
+</aside>
+
+<p>
+  An entity's embedded text is its <code>name</code> concatenated with its prose-kernel content, so
+  the prose is baked into the entity vector at write time — there is no kernel join at read time.
+  PCs are excluded from the entity embed set (<code>entity_type &lt;&gt; 'pc'</code>): a player
+  character is not world lore. Without <code>--force</code>, both passes select only
+  <code>embedding IS NULL</code> rows — the cheap incremental backfill, safe to re-run. With
+  <code>--force</code>, every fact and entity in scope is re-embedded, which is a real Voyage spend
+  event.
+</p>
+
+<p>
+  Only the embed call is wrapped in try/catch. A Voyage throw increments
+  <code>voyageErrors</code>, leaves that kind's rows <code>NULL</code> (retryable on the next
+  backfill), and skips its writes — the rows stay searchable-once-recovered, never corrupted. The
+  write transaction is <em>not</em> wrapped: a DB write error is not a Voyage error, and mislabeling
+  it would hide a real failure, so it propagates to the caller's catch site. The returned
+  <code>EmbedSummary</code> carries <code>embedded</code> / <code>leftNull</code> /
+  <code>voyageErrors</code> counts plus an optional <code>configErrorKind</code> — set only when a
+  failure was a configuration error (see the resilience section), so callers can escalate a
+  misconfiguration loudly instead of treating it like a transient blip.
+</p>
+
+<h2>The read path, part one: semantic search</h2>
+
+<p>
+  <code>createSearchResolvers(deps)</code> in <code>world/retrieval/search.ts</code> is pure
+  orchestration over the binder. It builds two resolvers with deliberately <em>asymmetric</em> error
+  policies, because they sit on different criticality paths.
+</p>
+
+<p>
+  <code>searchLore(worldId, queryText, opts)</code> embeds the query (outside any transaction), runs
+  the fact-arm and entity-arm cosine searches concurrently inside one short read transaction, merges
+  the two result sets, re-ranks by score descending, and slices to the (clamped) limit. It is
+  <strong>total</strong>: any thrown error — embed failure or query failure — is logged at warn and
+  returns <code>[]</code>. The Fast Thinker's lookup tool narrates a blank rather than crashing the
+  turn; lore retrieval is best-effort context, never a hard dependency. The caller-supplied limit is
+  clamped into <code>[1, 50]</code>, defaulting to 10.
+</p>
+
+<p>
+  <code>findSimilarEntities(worldId, text, opts)</code> embeds the query and over-pulls only the
+  entity arm (PCs excluded by construction; an optional <code>entityType</code> narrows to one
+  kind). It <strong>throws</strong> on any failure — the opposite policy — because it feeds the
+  Scribe's canon <em>write</em> path. Swallowing a transient embed blip and returning an empty
+  candidate list would make the Scribe think no similar entity exists and mint a duplicate canonical
+  entity. The failure must propagate so the write is retried, not silently duplicated.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One <code>SET LOCAL</code> keeps the world filter from starving the top-k</strong> — the
+  read transaction's <code>BEGIN</code> prelude issues
+  <code>SET LOCAL hnsw.iterative_scan = 'relaxed_order'</code> (pgvector ≥ 0.8). Without it, an HNSW
+  probe returns its first <code>ef_search</code> candidates and <em>then</em> applies the
+  world-scope filter — which can drop the result count below the requested limit when a world's rows
+  are sparse in the index. Relaxed iterative scan lets the index keep pulling candidates past the
+  first batch until the filtered limit is satisfied, trading a little ordering precision for
+  filtered-recall completeness. The <code>SET LOCAL</code> is transaction-scoped and lands in the
+  same transaction as the search <code>SELECT</code>, because the prelude is part of that
+  transaction's <code>BEGIN</code>.
+</aside>
+
+<h2>The read path, part two: graph walks</h2>
+
+<p>
+  Not every world question is semantic. "Who does this character know?" and "what is this faction's
+  subtree?" are <em>structural</em> — answered by walking edges, not comparing vectors.
+  <code>world/retrieval/graph.ts</code> is the thin deterministic shell over two recursive-CTE
+  binders; it never opens a transaction and never touches a vector column.
+</p>
+
+<p>
+  <code>charactersKnownTo(deps, entityId, opts)</code> walks the <code>relationships</code> graph
+  outward from a seed entity, in <em>both</em> edge directions (the recursive term unions
+  source→target and target→source expansions), to a clamped depth (default 2, hard cap 5). The walk
+  is cycle-safe via a path array (<code>NOT next_id = ANY(path)</code>) and diamond-deduped to each
+  node's minimum depth with <code>DISTINCT ON</code>. The seed is depth 0. An optional
+  <code>nameFilter</code> is applied as a mechanical, normalized exact-match post-filter in
+  JavaScript — <code>lower(btrim(name))</code> equality, no fuzzy matching. PCs
+  <em>are</em> included on graph paths (unlike the lore searches), so the result type carries the
+  widened <code>GraphEntityType</code> that includes <code>'pc'</code>.
+</p>
+
+<p>
+  <code>factionTree(deps, entityId)</code> walks <code>entity_hierarchy</code> parent→child from a
+  root faction. Because <code>child_entity_id</code> is unique, the hierarchy is a strict tree — no
+  diamonds, no path array needed. The walk is bounded at the max graph depth, and the result carries
+  a <code>truncated</code> flag: true when any returned node sits at exactly that depth, signalling
+  the subtree may continue below the bound. The graph walks deliberately do <em>not</em> catch DB
+  errors — there is no totality contract at this layer; MYT-72's tool-error handling is the catch
+  site.
+</p>
+
+<h2>The Voyage embeddings client</h2>
+
+<p>
+  <code>backend/src/llm/embed.ts</code> is the embeddings wrapper — a plain <code>fetch</code> to
+  Voyage's <code>/v1/embeddings</code>, no third-party SDK. It exposes two methods with asymmetric
+  input types: <code>embedDocuments</code> sends <code>input_type: 'document'</code> for stored
+  rows, <code>embedQuery</code> sends <code>input_type: 'query'</code> for a search. The two halves
+  are also given different timeouts — the write path is generous (60s; indexing runs offline where
+  latency isn't player-visible), the read path is tight (5s; it sits in front of a waiting player,
+  so it fails fast rather than stalling a turn). Every embedding is hard-asserted to be exactly
+  512-dim before it's returned.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Voyage, because Anthropic has no embeddings API</strong> — Mythrun's entire LLM surface is
+  Anthropic, and the <a href="../runtime/llm.html">LLM client</a> page documents that single
+  abstraction. But Anthropic ships no embeddings endpoint, so semantic retrieval needs a second
+  provider. Voyage is the embeddings vendor Anthropic itself recommends. The model is
+  <code>voyage-4-lite</code> at 512 dimensions (a Matryoshka-truncated output — a good recall/size
+  tradeoff at this corpus scale). The model id and output dimension are config constants in
+  <code>world/retrieval/config.ts</code>, re-verified against Voyage's live model list each release
+  because model ids drift and silently 400.
+</aside>
+
+<p>
+  The wrapper classifies every failure into a taxonomy whose one operationally-meaningful split is
+  <strong>config</strong> versus <strong>transient</strong>. A config error never self-heals — wrong
+  key (<code>auth</code>, 401/403), wrong model id or output dimension (<code>bad_request</code>,
+  400), or a returned vector of the wrong width (<code>dim_mismatch</code>). A transient error
+  recovers on its own — a 5xx, a network blip, a timeout, or a rate-limit (429) that survives a
+  bounded exponential backoff. <code>isVoyageConfigError</code> collapses the taxonomy to that
+  binary, and that binary is what the boot probe and the embed callers branch on.
+</p>
+
+<h2>The boot probe: a bad key can't ship silently</h2>
+
+<p>
+  <code>backend/src/boot/voyage-probe.ts</code> validates Voyage at boot with one real
+  <code>embedQuery</code> — asserting the live 512-dim round-trip against a real key. It is wired
+  into both the <a href="../runtime/worker.html">worker</a> and the API
+  <a href="../runtime/index.html">server</a> boot sequences, right after the Postgres wait,
+  alongside the Stripe contract probe.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Crashloop on misconfig, degrade on outage — never silent either way</strong> — the generic
+  <code>waitFor()</code> boot helper crashloops on <em>any</em> persistent failure. That is wrong
+  for Voyage: a transient Voyage outage must not crashloop the worker, because world-gen content
+  still works and embeddings can backfill once Voyage recovers. So the probe splits on
+  <code>isVoyageConfigError</code>. A config error <em>throws</em> — the process crashloops and the
+  ECS deploy goes red, so a misconfigured key can never deploy and leave every world silently
+  un-embedded. A transient failure is retried a couple of times, then logged <em>loud</em> (error
+  level) and the process boots <strong>degraded</strong>. Either way the failure is observable; the
+  one outcome that's forbidden is a quiet one.
+</aside>
+
+<p>
+  The same config-vs-transient split is what makes the embed callers escalate correctly. When
+  <code>embedWorld</code> reports a <code>configErrorKind</code>, the world-gen embed stage and the
+  character-integration post-pass both log at <strong>error</strong> with an alarmable event (<code
+    >embed_world_misconfigured</code
+  >
+  / <code>embed_misconfigured</code>) — every world is affected until the key, model, or dim is
+  fixed. A transient <code>voyageErrors &gt; 0</code> logs at warn
+  (<code>embed_world_degraded</code>): rows left <code>NULL</code>, the backfill recovers. A clean
+  run logs the routine info line.
+</p>
+
+<h2>Where embedding gets triggered</h2>
+
+<p>A world becomes searchable through three triggers, all of which call <code>embedWorld</code>:</p>
+
+<p>
+  <strong>World-gen embed stage.</strong>
+  <code>llm/prep/stages/embed-world.ts</code> runs after <code>coherence_pass</code> (the last
+  content stage) and before <code>worlds.status</code> flips to <code>complete</code>, so a freshly
+  generated world is semantically searchable the moment it lands. It is a
+  <strong>total</strong> stage: it must never fail the world, so it catches its own errors and
+  triages the summary three ways (misconfig→error, transient→warn, clean→info). Voyage spend is off
+  the Anthropic cost cap, so the stage always reports zero cost regardless of how many rows it
+  embedded — the cumulative cost check must never see Voyage spend.
+</p>
+
+<p>
+  <strong>Character-integration post-pass.</strong>
+  <a href="../runtime/character-integration.html">Character integration</a> inserts new PC-backstory
+  facts onto existing world NPCs <em>after</em> the world-gen embed stage already ran — so those
+  rows ship <code>NULL</code>-embedded. The processor runs a terminal embed post-pass (re-embed the
+  world's <code>NULL</code> rows, no force) so the world stays searchable. It is non-fatal by
+  construction: the integration is already committed and stage-completed by the time the post-pass
+  runs, so a Voyage or DB error here must never flip the completed stage to failed — it catches and
+  logs, with the same three-way triage.
+</p>
+
+<p>
+  <strong>Operational backfill.</strong>
+  <code>scripts/world-embed-backfill.ts</code> (<code>pnpm world:embed-backfill</code>) is the
+  out-of-band entry point — embed one world (<code>--world &lt;id&gt;</code>) or every world
+  (<code>--all</code>), incremental by default or a full re-embed under <code>--force</code>. This
+  is what recovers the <code>NULL</code> rows a transient Voyage degrade left behind.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="backfill-embeddings">Backfill world embeddings</h3>
+<ol>
+  <li>
+    To recover rows a transient Voyage degrade left <code>NULL</code> for one world:
+    <code>pnpm --filter @mythrun/backend world:embed-backfill --world &lt;world-id&gt;</code>. The
+    default (no <code>--force</code>) embeds only <code>embedding IS NULL</code> rows — cheap and
+    safe to re-run.
+  </li>
+  <li>
+    To sweep every world after a Voyage outage recovers:
+    <code>pnpm --filter @mythrun/backend world:embed-backfill --all</code>.
+  </li>
+  <li>
+    A full re-embed of the entire corpus (only after a model or dimension change) adds
+    <code>--force</code>: <code>... world:embed-backfill --all --force</code>. This re-embeds every
+    fact and entity — a real Voyage rate and spend event. Run it knowingly, not casually.
+  </li>
+  <li>
+    Each world logs a one-line JSON summary (<code>embedded</code> / <code>leftNull</code> /
+    <code>voyageErrors</code>). A non-zero <code>leftNull</code> after a run means rows are still
+    un-embedded — re-run once Voyage is healthy.
+  </li>
+</ol>
+
+<h3 id="populate-the-voyage-key">Populate the Voyage API key (staging)</h3>
+<ol>
+  <li>
+    Terraform creates the secret <em>shell</em> (<code>mythrun/staging/voyage-api-key</code>) with a
+    placeholder version — the app boots, but the first embed call 401s and the boot probe
+    crashloops. The real value is set out-of-band.
+  </li>
+  <li>
+    Mint a key in the
+    <a href="https://dashboard.voyageai.com/" rel="noopener">Voyage dashboard</a>, then:
+    <code
+      >aws secretsmanager put-secret-value --secret-id mythrun/staging/voyage-api-key
+      --secret-string &lt;key&gt;</code
+    >.
+  </li>
+  <li>
+    Roll the ECS services so tasks pick up the new version:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-staging-api
+      --force-new-deployment</code
+    >
+    (and the <code>-worker</code> service). The Voyage boot probe now passes; a previously-degraded
+    worker boots clean.
+  </li>
+  <li>
+    Backfill any worlds generated during the degraded window (see
+    <a href="#backfill-embeddings">backfill world embeddings</a>).
+  </li>
+</ol>
+
+<h3 id="run-the-voyage-smoke">Run the real-Voyage retrieval smoke</h3>
+<ol>
+  <li>
+    With <code>VOYAGE_API_KEY</code> set,
+    <code>pnpm --filter @mythrun/backend smoke:world-retrieval</code> seeds a scratch world in
+    <code>mythrun_dev</code>, embeds a tiny corpus through real Voyage, and asserts the pgvector
+    round-trip: a semantically-near entity ranks first, a far entity over-pulls below it, and a
+    secret-tier fact surfaces (proving over-pull).
+  </li>
+  <li>
+    The smoke also drives the negative case: a deliberately invalid key must make the boot probe
+    throw a classified config error — the "never silently un-embedded" guarantee. The script gates
+    on the key (skips cleanly when absent) and tears down its scratch world.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The substrate sits on the <a href="./schema.html">world-store schema</a> (the
+  <code>vector(512)</code> columns migration 026 adds to <code>facts</code> and
+  <code>entities</code>) and its read SQL is one more namespace in the
+  <a href="./repository.html">repository layer</a> (<code>repo.worldRetrieval</code>). Embedding is
+  triggered from the <a href="../runtime/world-gen.html">world-gen pipeline</a>'s terminal embed
+  stage and the <a href="../runtime/character-integration.html">character-integration</a> post-pass;
+  the Voyage boot probe runs in both the <a href="../runtime/worker.html">worker</a> and server boot
+  sequences. The resolver barrel is the import surface for the (not-yet-shipped)
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate's lookup tools and the Scribe's
+  match-vs-mint. The Voyage key is a manual secret on the
+  <a href="../infra/serving.html">serving module</a>, distinct from the Anthropic key the
+  <a href="../runtime/llm.html">LLM client</a>
+  uses.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>Resolver barrel (<code>world/retrieval/index.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Export</th>
+      <th>What it does</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>createSearchResolvers(deps)</code></td>
+      <td>
+        Builds <code>searchLore</code> (facts ∪ entities, total → <code>[]</code>) and
+        <code>findSimilarEntities</code> (entity-only, throws).
+      </td>
+    </tr>
+    <tr>
+      <td><code>charactersKnownTo(deps, entityId, opts)</code></td>
+      <td>Both-direction relationship walk to a clamped depth; cycle-safe, min-depth deduped.</td>
+    </tr>
+    <tr>
+      <td><code>factionTree(deps, entityId)</code></td>
+      <td>
+        <code>entity_hierarchy</code> subtree with a <code>truncated</code> flag at the depth bound.
+      </td>
+    </tr>
+    <tr>
+      <td><code>embedWorld(deps, worldId, opts?)</code></td>
+      <td>
+        Read → embed → write the world's facts + entities; returns an <code>EmbedSummary</code>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>LoreHit</code>, <code>EntityCandidate</code>, <code>KnownCharacter</code>,
+        <code>FactionNode</code>
+      </td>
+      <td>camelCase result types (the snake_case DB rows stay internal to the binder).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Tuning constants (<code>world/retrieval/config.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>VOYAGE_EMBED_MODEL</code> / <code>EMBED_DIM</code></td>
+      <td><code>voyage-4-lite</code> / <code>512</code></td>
+      <td>Re-verify the model id against Voyage's live list each release.</td>
+    </tr>
+    <tr>
+      <td><code>VOYAGE_DOC_TIMEOUT_MS</code> / <code>VOYAGE_QUERY_TIMEOUT_MS</code></td>
+      <td><code>60000</code> / <code>5000</code></td>
+      <td>Generous write path (offline) vs tight read path (in front of a player).</td>
+    </tr>
+    <tr>
+      <td><code>HNSW_EF_SEARCH</code> / <code>HNSW_ITERATIVE_SCAN</code></td>
+      <td><code>100</code> / <code>relaxed_order</code></td>
+      <td>Recall midpoint; iterative scan so the world filter doesn't starve the top-k.</td>
+    </tr>
+    <tr>
+      <td><code>SEARCH_LORE_DEFAULT_LIMIT</code> / <code>SEARCH_LORE_MAX_LIMIT</code></td>
+      <td><code>10</code> / <code>50</code></td>
+      <td>Default + hard clamp on lore-hit count.</td>
+    </tr>
+    <tr>
+      <td><code>GRAPH_DEFAULT_DEPTH</code> / <code>GRAPH_MAX_DEPTH</code></td>
+      <td><code>2</code> / <code>5</code></td>
+      <td>Default + hard clamp on graph-walk traversal depth.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Schema additions (migration 026)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Object</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>vector</code> extension</td>
+      <td>
+        pgvector 0.8.x — requires the <code>pgvector/pgvector:pg16</code> image locally + in CI.
+      </td>
+    </tr>
+    <tr>
+      <td><code>facts.embedding</code> / <code>entities.embedding</code></td>
+      <td><code>vector(512)</code>, nullable; <code>embedded_at timestamptz</code> alongside.</td>
+    </tr>
+    <tr>
+      <td><code>idx_facts_embedding</code> / <code>idx_entities_embedding</code></td>
+      <td>HNSW, <code>vector_cosine_ops</code>. NULL embeddings unindexed.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/world/retrieval/</code> (the resolver library + barrel),
+  <code>backend/src/repo/world-retrieval.ts</code> (the SQL binder),
+  <code>backend/src/llm/embed.ts</code> (the Voyage client),
+  <code>backend/src/boot/voyage-probe.ts</code> (the boot probe),
+  <code>backend/src/llm/prep/stages/embed-world.ts</code> (the world-gen embed stage),
+  <code>backend/migrations/026_world_retrieval.sql</code> (pgvector + columns + indexes),
+  <code>backend/scripts/world-embed-backfill.ts</code> +
+  <code>scripts/smoke/world-retrieval-voyage.ts</code> (operational backfill + gated smoke), and the
+  <code>voyage-api-key</code> manual secret on <code>infra/modules/serving/</code> +
+  <code>infra/environments/staging/main.tf</code>.
+</p>

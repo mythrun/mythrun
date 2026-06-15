@@ -582,7 +582,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="entities" id="schema-table-entities">
   <summary>
     <span class="schema-table-name">entities</span>
-    <span class="schema-table-meta">11 columns · 3 indexes · 2 CHECKs · 2 FKs</span>
+    <span class="schema-table-meta">13 columns · 4 indexes · 2 CHECKs · 2 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -664,10 +664,25 @@ END)</code></li>
         <td><code>'stage:legacy'::text</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="embedding">
+        <td><code>embedding</code></td>
+        <td><code>vector</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="embedded_at">
+        <td><code>embedded_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
+    <li><code>idx_entities_embedding</code> — <code>CREATE INDEX idx_entities_embedding ON entities USING hnsw (embedding vector_cosine_ops)</code></li>
     <li><code>idx_entities_world</code> — (world_id)</li>
     <li><code>idx_entities_world_access</code> — (world_id, access_level)</li>
     <li><code>idx_entities_world_type</code> — (world_id, entity_type)</li>
@@ -717,7 +732,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="facts" id="schema-table-facts">
   <summary>
     <span class="schema-table-name">facts</span>
-    <span class="schema-table-meta">9 columns · 2 indexes · 2 CHECKs · 1 FK</span>
+    <span class="schema-table-meta">11 columns · 3 indexes · 2 CHECKs · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -785,10 +800,25 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="embedding">
+        <td><code>embedding</code></td>
+        <td><code>vector</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="embedded_at">
+        <td><code>embedded_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
+    <li><code>idx_facts_embedding</code> — <code>CREATE INDEX idx_facts_embedding ON facts USING hnsw (embedding vector_cosine_ops)</code></li>
     <li><code>idx_facts_entity</code> — (entity_id)</li>
     <li><code>idx_facts_entity_access_status</code> — (entity_id, access_level, narrative_status)</li>
   </ul>

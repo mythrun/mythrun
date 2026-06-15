@@ -6,8 +6,8 @@
 <!-- source: backend/src/routes/campaign-characters.ts -->
 <!-- source: backend/migrations/018_character_integration.sql -->
 <!-- source: docs/superpowers/specs/2026-05-23-myt-54-character-integration-design.md -->
-<!-- source-hash: sha256:795b883042a4bec9d436ddeab3f4cee64be8217943cd529224b98b8be7a46d88 -->
-<!-- last-ticket: MYT-64 -->
+<!-- source-hash: sha256:a6192eac64b1582f1ccd89955d524e67aff20c15e7d52a80622ff0295221420a -->
+<!-- last-ticket: MYT-71 -->
 
 <h1>Character integration</h1>
 
@@ -165,7 +165,15 @@
   <code>characters.entity_id</code>, flips every <code>character_concepts.status</code> to
   <code>'integrated'</code>, and flips <code>campaigns.status</code> to <code>'active'</code>. Only
   after <code>COMMIT</code> does the processor mark <code>pipeline_runs</code> completed and publish
-  the <code>stage-completed</code> SSE event.
+  the <code>stage-completed</code> SSE event. One non-fatal post-pass then runs: because pass 3
+  inserts new PC-backstory facts onto existing world NPCs <em>after</em> world-gen's embed stage
+  already ran, those rows ship un-embedded — so the processor re-embeds the world's
+  <code>NULL</code>-embedding rows (see
+  <a href="../data/world-store-retrieval.html#where-embedding-gets-triggered"
+    >world-store retrieval</a
+  >) to keep it searchable. The integration is already committed and stage-completed by then, so a
+  Voyage or DB error in the post-pass logs and is swallowed — it never flips the completed stage to
+  failed.
 </p>
 
 <aside class="wiki-rationale">

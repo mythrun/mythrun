@@ -7,8 +7,9 @@
 <!-- source: backend/migrations/007_recreate_billing_tables.sql -->
 <!-- source: backend/migrations/008_billing_metering.sql -->
 <!-- source: backend/migrations/009_character_portability.sql -->
-<!-- source-hash: sha256:9c41d7794ab70c3fe8a7b80f23c8547c4734a9c0c6b4c822abdeebf653b5a08e -->
-<!-- last-ticket: MYT-48 -->
+<!-- source: backend/migrations/026_world_retrieval.sql -->
+<!-- source-hash: sha256:7617ed6aba25dd7cf4f40b4f93a6317ce8809d91e5b8e7f29eba0981040e1fb9 -->
+<!-- last-ticket: MYT-71 -->
 
 <h1>Schema</h1>
 
@@ -213,7 +214,11 @@
   <code>random_tables</code> + <code>random_table_entries</code> hold per-world rollables.
   <code>stat_blocks</code> + <code>stat_block_actions</code> are the combat-relevant numbers,
   attached to entities by FK with <code>ON DELETE SET NULL</code> so you can swap a stat block out
-  without losing the entity.
+  without losing the entity. Migration 026 enables the <code>vector</code> extension and adds an
+  <code>embedding vector(512)</code> column (plus <code>embedded_at</code>) to both
+  <code>facts</code> and <code>entities</code>, each backed by an HNSW cosine index — the substrate
+  the <a href="./world-store-retrieval.html">world-store retrieval</a> resolver searches over. The
+  columns are nullable: an un-embedded row is simply unsearchable until backfilled, never a crash.
 </p>
 
 <h3>Campaigns and play</h3>

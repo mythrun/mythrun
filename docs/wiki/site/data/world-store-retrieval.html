@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World-store retrieval · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="data" data-page="world-store-retrieval">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html" class="active">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html">Schema</a></li><li><a href="../data/migrations.html">Migrations</a></li><li><a href="../data/repository.html">Repository layer</a></li><li><a href="../data/world-store-retrieval.html" class="active">World-store retrieval</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Data › World-store retrieval</div>
+        <article>
+<h1>World-store retrieval</h1>
+
+<p class="lead">
+  How the world store becomes queryable. Two paths over one substrate: a <strong>write</strong> path
+  that embeds every fact and entity into a 512-dim vector, and a <strong>read</strong> path that
+  answers a turn's question two ways — pgvector cosine search over those vectors (semantic lore) and
+  recursive-CTE walks over the relationship graph (who-knows-whom, faction trees). Both over-pull
+  every access tier; the <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate downstream is
+  the single tier-safety boundary, not this layer.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1617pt" height="453pt"
+ viewBox="14.00 14.00 1603.00 438.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 434.4)">
+<title>world_store_retrieval</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-420 1584.6,-420 1584.6,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_write</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-36 8,-114 1143.94,-114 1143.94,-36 8,-36"/>
+<text xml:space="preserve" text-anchor="middle" x="575.97" y="-100.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">write path (embedWorld)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_store</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1320.36,-8 1320.36,-236 1580.6,-236 1580.6,-8 1320.36,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1450.48" y="-222.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world store (Postgres + pgvector 0.8)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_read</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="319.32,-236 319.32,-408 1535.14,-408 1535.14,-236 319.32,-236"/>
+<text xml:space="preserve" text-anchor="middle" x="927.23" y="-394.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">read path (resolver surface)</text>
+</g>
+<!-- voyage -->
+<g id="node1" class="node">
+<title>voyage</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1153.84,-170.44 963.74,-170.44 963.74,-113.56 1153.84,-113.56 1153.84,-170.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-151.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Voyage</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-138.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">/v1/embeddings</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-125.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">voyage&#45;4&#45;lite · 512&#45;dim</text>
+</g>
+<!-- src -->
+<g id="node2" class="node">
+<title>src</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="191.5,-92.44 8,-92.44 8,-35.56 191.5,-35.56 191.5,-92.44"/>
+<text xml:space="preserve" text-anchor="middle" x="99.75" y="-73.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;gen embed stage</text>
+<text xml:space="preserve" text-anchor="middle" x="99.75" y="-60.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ integration post&#45;pass</text>
+<text xml:space="preserve" text-anchor="middle" x="99.75" y="-47.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ backfill script</text>
+</g>
+<!-- listrows -->
+<g id="node3" class="node">
+<title>listrows</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="483.02,-92.44 299.52,-92.44 299.52,-35.56 483.02,-35.56 483.02,-92.44"/>
+<text xml:space="preserve" text-anchor="middle" x="391.27" y="-73.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listFactsToEmbed /</text>
+<text xml:space="preserve" text-anchor="middle" x="391.27" y="-60.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listEntitiesToEmbed</text>
+<text xml:space="preserve" text-anchor="middle" x="391.27" y="-47.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(NULL&#45;only, or &#45;&#45;force)</text>
+</g>
+<!-- src&#45;&gt;listrows -->
+<g id="edge1" class="edge">
+<title>src&#45;&gt;listrows</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M191.96,-64C223.3,-64 258.55,-64 290.53,-64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="290.21,-66.45 297.21,-64 290.21,-61.55 290.21,-66.45"/>
+<text xml:space="preserve" text-anchor="middle" x="245.51" y="-67" font-family="Courier,monospace" font-size="10.00">read (no tx)</text>
+</g>
+<!-- docembed -->
+<g id="node4" class="node">
+<title>docembed</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="767.34,-90.84 597.03,-90.84 597.03,-47.16 767.34,-47.16 767.34,-90.84"/>
+<text xml:space="preserve" text-anchor="middle" x="682.19" y="-72.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">embedDocuments</text>
+<text xml:space="preserve" text-anchor="middle" x="682.19" y="-59.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(input_type=document)</text>
+</g>
+<!-- listrows&#45;&gt;docembed -->
+<g id="edge2" class="edge">
+<title>listrows&#45;&gt;docembed</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M483.68,-65.58C517.06,-66.16 554.82,-66.81 588.32,-67.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="587.89,-69.84 594.93,-67.51 587.97,-64.94 587.89,-69.84"/>
+<text xml:space="preserve" text-anchor="middle" x="540.03" y="-70.09" font-family="Courier,monospace" font-size="10.00">text</text>
+</g>
+<!-- docembed&#45;&gt;voyage -->
+<g id="edge3" class="edge">
+<title>docembed&#45;&gt;voyage</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M767.72,-85.47C823.05,-96.26 895.7,-110.41 954.46,-121.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="953.9,-124.25 961.24,-123.18 954.84,-119.44 953.9,-124.25"/>
+<text xml:space="preserve" text-anchor="middle" x="857.29" y="-119.3" font-family="Courier,monospace" font-size="10.00">POST</text>
+</g>
+<!-- writevec -->
+<g id="node5" class="node">
+<title>writevec</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1143.94,-90.84 973.64,-90.84 973.64,-47.16 1143.94,-47.16 1143.94,-90.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-72.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">updateEmbedding</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-59.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(short write&#45;only tx)</text>
+</g>
+<!-- docembed&#45;&gt;writevec -->
+<g id="edge4" class="edge">
+<title>docembed&#45;&gt;writevec</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M767.72,-69C826.13,-69 903.86,-69 964.15,-69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="964.1,-71.45 971.1,-69 964.1,-66.55 964.1,-71.45"/>
+<text xml:space="preserve" text-anchor="middle" x="857.29" y="-72" font-family="Courier,monospace" font-size="10.00">vectors</text>
+</g>
+<!-- facts -->
+<g id="node6" class="node">
+<title>facts</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1515.33,-64.44 1384.64,-64.44 1384.64,-7.56 1515.33,-7.56 1515.33,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">facts.embedding</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">vector(512)</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HNSW cosine</text>
+</g>
+<!-- writevec&#45;&gt;facts -->
+<g id="edge5" class="edge">
+<title>writevec&#45;&gt;facts</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1144.24,-61.84C1213.13,-56 1309.49,-47.83 1375.3,-42.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1375.39,-44.7 1382.16,-41.67 1374.98,-39.82 1375.39,-44.7"/>
+<text xml:space="preserve" text-anchor="middle" x="1245.36" y="-60.38" font-family="Courier,monospace" font-size="10.00">UPDATE</text>
+</g>
+<!-- entities -->
+<g id="node7" class="node">
+<title>entities</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1525.23,-214.44 1374.73,-214.44 1374.73,-157.56 1525.23,-157.56 1525.23,-214.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-195.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities.embedding</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-182.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">vector(512)</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-169.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HNSW cosine</text>
+</g>
+<!-- writevec&#45;&gt;entities -->
+<g id="edge6" class="edge">
+<title>writevec&#45;&gt;entities</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1144.68,-84.25C1192.49,-94.75 1252.45,-111.16 1302.36,-135 1311.27,-139.25 1311.51,-143.65 1320.36,-148 1334.69,-155.03 1350.57,-161.03 1366.14,-166.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1365.1,-168.27 1372.51,-168.02 1366.55,-163.59 1365.1,-168.27"/>
+<text xml:space="preserve" text-anchor="middle" x="1245.36" y="-138" font-family="Courier,monospace" font-size="10.00">UPDATE</text>
+</g>
+<!-- rels -->
+<g id="node8" class="node">
+<title>rels</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1525.23,-139.44 1374.73,-139.44 1374.73,-82.56 1525.23,-82.56 1525.23,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">relationships</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ entity_hierarchy</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(graph edges)</text>
+</g>
+<!-- query -->
+<g id="node9" class="node">
+<title>query</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="463.22,-308.84 319.32,-308.84 319.32,-265.16 463.22,-265.16 463.22,-308.84"/>
+<text xml:space="preserve" text-anchor="middle" x="391.27" y="-290.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">turn query text</text>
+<text xml:space="preserve" text-anchor="middle" x="391.27" y="-277.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(MYT&#45;72 / MYT&#45;73)</text>
+</g>
+<!-- qembed -->
+<g id="node10" class="node">
+<title>qembed</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="757.43,-285.84 606.94,-285.84 606.94,-242.16 757.43,-242.16 757.43,-285.84"/>
+<text xml:space="preserve" text-anchor="middle" x="682.19" y="-267.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">embedQuery</text>
+<text xml:space="preserve" text-anchor="middle" x="682.19" y="-254.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(input_type=query)</text>
+</g>
+<!-- query&#45;&gt;qembed -->
+<g id="edge7" class="edge">
+<title>query&#45;&gt;qembed</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M463.8,-275.36C476.18,-273.67 488.95,-272.12 501.02,-271 532.64,-268.07 567.5,-266.36 598.06,-265.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="597.82,-267.83 604.74,-265.16 597.67,-262.93 597.82,-267.83"/>
+<text xml:space="preserve" text-anchor="middle" x="540.03" y="-274" font-family="Courier,monospace" font-size="10.00">embed (no tx)</text>
+</g>
+<!-- graphwalk -->
+<g id="node13" class="node">
+<title>graphwalk</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="929.23,-326.84 785.34,-326.84 785.34,-283.16 929.23,-283.16 929.23,-326.84"/>
+<text xml:space="preserve" text-anchor="middle" x="857.29" y="-308.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">charactersKnownTo</text>
+<text xml:space="preserve" text-anchor="middle" x="857.29" y="-295.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">factionTree</text>
+</g>
+<!-- query&#45;&gt;graphwalk -->
+<g id="edge14" class="edge">
+<title>query&#45;&gt;graphwalk</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M463.81,-289.8C503.13,-291.34 552.77,-293.28 597.03,-295 657.03,-297.33 724.83,-299.94 776.04,-301.92"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="775.85,-304.36 782.94,-302.18 776.04,-299.46 775.85,-304.36"/>
+<text xml:space="preserve" text-anchor="middle" x="540.03" y="-297.23" font-family="Courier,monospace" font-size="10.00">entityId</text>
+</g>
+<!-- qembed&#45;&gt;voyage -->
+<g id="edge8" class="edge">
+<title>qembed&#45;&gt;voyage</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M752.33,-241.48C810.62,-222.5 894.7,-195.11 959.91,-173.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="960.54,-176.25 966.44,-171.75 959.02,-171.59 960.54,-176.25"/>
+<text xml:space="preserve" text-anchor="middle" x="857.29" y="-230.95" font-family="Courier,monospace" font-size="10.00">POST</text>
+</g>
+<!-- searchlore -->
+<g id="node11" class="node">
+<title>searchlore</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1170.35,-292.44 947.23,-292.44 947.23,-235.56 1170.35,-235.56 1170.35,-292.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-273.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">searchLore</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-260.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">facts ∪ entities · re&#45;rank</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-247.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(TOTAL: throw → [])</text>
+</g>
+<!-- qembed&#45;&gt;searchlore -->
+<g id="edge9" class="edge">
+<title>qembed&#45;&gt;searchlore</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M758.09,-264C809.58,-264 879.05,-264 938.14,-264"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="937.96,-266.45 944.96,-264 937.96,-261.55 937.96,-266.45"/>
+</g>
+<!-- findsim -->
+<g id="node12" class="node">
+<title>findsim</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1137.34,-367.44 980.24,-367.44 980.24,-310.56 1137.34,-310.56 1137.34,-367.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-348.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">findSimilarEntities</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-335.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">match&#45;vs&#45;mint</text>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-322.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(THROWS on failure)</text>
+</g>
+<!-- qembed&#45;&gt;findsim -->
+<g id="edge10" class="edge">
+<title>qembed&#45;&gt;findsim</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M758.1,-267.85C829.07,-271.61 925.4,-277.04 929.23,-279 940.48,-284.76 936.87,-293.78 947.23,-301 954.76,-306.24 963.07,-310.81 971.66,-314.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="970.55,-316.98 977.94,-317.55 972.52,-312.49 970.55,-316.98"/>
+</g>
+<!-- searchlore&#45;&gt;facts -->
+<g id="edge11" class="edge">
+<title>searchlore&#45;&gt;facts</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1147.22,-234.84C1155.27,-230.96 1163.11,-226.68 1170.35,-222 1179.84,-215.85 1179.17,-210.61 1188.35,-204 1234.31,-170.88 1266.98,-191.25 1302.36,-147 1321.28,-123.35 1301.73,-102.45 1315.09,-80.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1316.87,-82.46 1319.25,-75.43 1313.01,-79.44 1316.87,-82.46"/>
+<text xml:space="preserve" text-anchor="middle" x="1245.36" y="-207" font-family="Courier,monospace" font-size="10.00">cosine &lt;=&gt;</text>
+</g>
+<!-- searchlore&#45;&gt;entities -->
+<g id="edge12" class="edge">
+<title>searchlore&#45;&gt;entities</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1170.8,-245.03C1212.18,-237.65 1259.5,-228.85 1302.36,-220 1322.94,-215.75 1345.06,-210.81 1365.72,-206.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1366.14,-208.46 1372.4,-204.5 1365.03,-203.69 1366.14,-208.46"/>
+<text xml:space="preserve" text-anchor="middle" x="1245.36" y="-244.65" font-family="Courier,monospace" font-size="10.00">cosine &lt;=&gt;</text>
+</g>
+<!-- results -->
+<g id="node14" class="node">
+<title>results</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1535.14,-360.84 1364.83,-360.84 1364.83,-317.16 1535.14,-317.16 1535.14,-360.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-342.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ranked rows</text>
+<text xml:space="preserve" text-anchor="middle" x="1449.98" y="-329.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ALL tiers over&#45;pulled</text>
+</g>
+<!-- searchlore&#45;&gt;results -->
+<g id="edge16" class="edge">
+<title>searchlore&#45;&gt;results</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1143.56,-293.09C1158.36,-297.55 1173.71,-301.74 1188.35,-305 1243.19,-317.22 1305.57,-325.55 1355.55,-330.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1355.07,-333.32 1362.29,-331.61 1355.58,-328.45 1355.07,-333.32"/>
+</g>
+<!-- findsim&#45;&gt;entities -->
+<g id="edge13" class="edge">
+<title>findsim&#45;&gt;entities</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1137.89,-326.18C1188.63,-314.84 1254.07,-294.24 1302.36,-258 1313.61,-249.56 1309.21,-240.55 1320.36,-232 1333.95,-221.58 1350.1,-213.38 1366.29,-206.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1366.85,-209.38 1372.53,-204.61 1365.11,-204.8 1366.85,-209.38"/>
+<text xml:space="preserve" text-anchor="middle" x="1245.36" y="-315.11" font-family="Courier,monospace" font-size="10.00">cosine &lt;=&gt; (no PCs)</text>
+</g>
+<!-- findsim&#45;&gt;results -->
+<g id="edge17" class="edge">
+<title>findsim&#45;&gt;results</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1138.08,-339C1200.86,-339 1289.14,-339 1355.6,-339"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1355.59,-341.45 1362.59,-339 1355.59,-336.55 1355.59,-341.45"/>
+</g>
+<!-- graphwalk&#45;&gt;rels -->
+<g id="edge15" class="edge">
+<title>graphwalk&#45;&gt;rels</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M888.44,-282.5C901.8,-271.7 917.19,-258.07 929.23,-244 939.1,-232.48 934.22,-222.8 947.23,-215 1015.07,-174.34 1237.98,-237.92 1302.36,-192 1319.23,-179.97 1304.94,-162.83 1320.36,-149 1333.25,-137.45 1349.5,-129.4 1366.07,-123.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1366.54,-126.22 1372.49,-121.78 1365.07,-121.54 1366.54,-126.22"/>
+<text xml:space="preserve" text-anchor="middle" x="1058.79" y="-218" font-family="Courier,monospace" font-size="10.00">recursive CTE</text>
+</g>
+<!-- graphwalk&#45;&gt;results -->
+<g id="edge18" class="edge">
+<title>graphwalk&#45;&gt;results</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M878.02,-327.43C894.56,-344.41 919.82,-366.4 947.23,-376 1089.96,-425.98 1269.13,-391.43 1370.16,-363.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1370.66,-366.24 1376.75,-362.01 1369.35,-361.52 1370.66,-366.24"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The world store the <a href="../runtime/world-gen.html">prep engine</a> produces — worlds,
+  entities, facts, prose kernels, relationships — is rich but inert. The live-play tiers need to
+  <em>ask it questions</em>: "what does the world know about a volcanic dragon lair?" (the Fast
+  Thinker's in-character lookup, MYT-72), "does this improvised NPC already exist in canon?" (the
+  Scribe's match-vs-mint, MYT-73), "who is this faction's parent organization?" Retrieval is the
+  substrate that turns the store into something queryable, and it is deliberately split from its
+  consumers: this ticket builds and proves the substrate; MYT-72 and MYT-73 import it.
+</p>
+
+<p>
+  Everything funnels through one barrel, <code>backend/src/world/retrieval/index.ts</code> — the
+  only surface a consumer imports. It re-exports the search resolvers (<code
+    >createSearchResolvers</code
+  >
+  → <code>searchLore</code> / <code>findSimilarEntities</code>), the two graph walks
+  (<code>charactersKnownTo</code>, <code>factionTree</code>), the write-path entry
+  (<code>embedWorld</code>), and every camelCase result type. The internal tuning constants and the
+  snake_case DB-row types are deliberately <em>not</em> re-exported: consumers depend on the
+  resolver shape, never the SQL layer underneath it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Over-pull, no tier filter anywhere in this layer</strong> — not the SQL binder, not the
+  search resolvers, not the graph walks apply an <code>access_level</code> predicate. Every query
+  returns <code>known</code>, <code>discoverable</code>, and <code>secret</code> rows alike. That is
+  intentional and load-bearing: the tier-safety boundary is the
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate that sits between retrieval and the
+  player-facing Fast Thinker. A tier filter <em>here</em>
+  would blind the Slow Thinker to the very secrets it needs to reason about — and would be a second,
+  weaker enforcement point competing with the real one. The resolver's job is recall; the gate's job
+  is safety. Putting a filter in this layer would be a bug, and the code comments say so.
+</aside>
+
+<h2 id="the-vector-substrate-pgvector-on-the-rows-it-describes">The vector substrate: pgvector on the rows it describes</h2>
+
+<p>
+  Migration <code>026_world_retrieval.sql</code> enables the <code>vector</code> extension and adds
+  two columns to both <code>facts</code> and <code>entities</code>: an
+  <code>embedding vector(512)</code> and an <code>embedded_at timestamptz</code>. The embedding
+  lives on the row it describes — a fact's vector sits on the fact, an entity's on the entity —
+  rather than in a side table. Both columns are nullable: a row with a <code>NULL</code> embedding
+  is simply unsearchable until it gets embedded, never a crash. The
+  <code>embedded_at</code> timestamp lets a future backfill find rows whose content changed
+  <em>after</em> they were embedded (drift), not only the never-embedded ones.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>HNSW, not IVFFlat</strong> — the index is HNSW with cosine ops on each embedding column.
+  IVFFlat needs a populated table to train its centroid lists; the Scribe inserts new facts
+  incrementally at the end of every session, so the table is never "done" being populated. HNSW has
+  no training step, indexes inserts as they land, and gives higher recall — the correct tradeoff for
+  a corpus that grows one session at a time. NULL embeddings aren't indexed.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The image swap that has to land first</strong> — stock
+  <code>postgres:16-alpine</code> bundles <code>pgcrypto</code> but not <code>vector</code>. Local
+  docker-compose and the CI Postgres service both run <code>pgvector/pgvector:pg16</code> so
+  <code>CREATE EXTENSION vector</code> resolves. The migrate role already holds
+  <code>rds_superuser</code> on RDS (it runs <code>CREATE EXTENSION pgcrypto</code> in migration
+  001), so the extension is authorized with no parameter-group change.
+</aside>
+
+<p>
+  The heavy read SQL lives behind the canonical <code>worldRetrievalNs(c)</code> binder in
+  <code>backend/src/repo/world-retrieval.ts</code>, exactly like every other
+  <a href="./repository.html">repository</a> namespace. pgvector's <code>&lt;=&gt;</code> operator
+  is cosine <em>distance</em>; the binder selects <code>1 - (embedding &lt;=&gt; $query)</code> as
+  the <code>score</code>, so the whole codebase speaks one convention: score in
+  <code>[-1, 1]</code>, higher is more similar. Postgres has no native vector parameter type, so the
+  caller passes the <code>'[f1,…,f512]'</code> text form and the SQL casts <code>$2::vector</code>.
+</p>
+
+<p>
+  One schema wrinkle the binder absorbs: <code>facts</code> has no <code>world_id</code> column
+  (schema drift since migration 001), so a fact search scopes through
+  <code>JOIN entities e ON e.id = f.entity_id WHERE e.world_id = $1</code>, mirroring every other
+  world-scoped fact read. Entity searches scope on <code>entities.world_id</code> directly.
+</p>
+
+<h2 id="the-write-path-embedworld">The write path: <code>embedWorld</code></h2>
+
+<p>
+  <code>embedWorld(deps, worldId, opts?)</code> in <code>world/retrieval/embed-write.ts</code> reads
+  a world's un-embedded facts and entities, embeds each kind's text through Voyage, and writes the
+  vectors back. It is the core of the operational backfill and the seam both the world-gen embed
+  stage and the character-integration post-pass call. Facts and entities are independent passes —
+  separate read → embed → write — so a facts-success paired with an entities-failure correctly
+  leaves facts embedded and entities <code>NULL</code>. Partial success is the contract.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The Voyage round-trip never sits inside a transaction</strong> — each pass is strictly:
+  read the rows-to-embed via the repo (no tx), embed the whole list (no tx), then write the vectors
+  in a <em>short, write-only</em> <code>repo.transaction</code>. RDS kills idle-in-transaction
+  connections at 60 seconds, and a large document-embed batch can take longer than that. Holding a
+  <code>BEGIN</code> open across the slow network call would risk a 25P03 kill mid-write. So the
+  slow I/O is always outside the transaction; only the <code>UPDATE</code>s are inside it. This is
+  the same discipline the prep pipeline learned in MYT-55.
+</aside>
+
+<p>
+  An entity's embedded text is its <code>name</code> concatenated with its prose-kernel content, so
+  the prose is baked into the entity vector at write time — there is no kernel join at read time.
+  PCs are excluded from the entity embed set (<code>entity_type &lt;&gt; 'pc'</code>): a player
+  character is not world lore. Without <code>--force</code>, both passes select only
+  <code>embedding IS NULL</code> rows — the cheap incremental backfill, safe to re-run. With
+  <code>--force</code>, every fact and entity in scope is re-embedded, which is a real Voyage spend
+  event.
+</p>
+
+<p>
+  Only the embed call is wrapped in try/catch. A Voyage throw increments
+  <code>voyageErrors</code>, leaves that kind's rows <code>NULL</code> (retryable on the next
+  backfill), and skips its writes — the rows stay searchable-once-recovered, never corrupted. The
+  write transaction is <em>not</em> wrapped: a DB write error is not a Voyage error, and mislabeling
+  it would hide a real failure, so it propagates to the caller's catch site. The returned
+  <code>EmbedSummary</code> carries <code>embedded</code> / <code>leftNull</code> /
+  <code>voyageErrors</code> counts plus an optional <code>configErrorKind</code> — set only when a
+  failure was a configuration error (see the resilience section), so callers can escalate a
+  misconfiguration loudly instead of treating it like a transient blip.
+</p>
+
+<h2 id="the-read-path-part-one-semantic-search">The read path, part one: semantic search</h2>
+
+<p>
+  <code>createSearchResolvers(deps)</code> in <code>world/retrieval/search.ts</code> is pure
+  orchestration over the binder. It builds two resolvers with deliberately <em>asymmetric</em> error
+  policies, because they sit on different criticality paths.
+</p>
+
+<p>
+  <code>searchLore(worldId, queryText, opts)</code> embeds the query (outside any transaction), runs
+  the fact-arm and entity-arm cosine searches concurrently inside one short read transaction, merges
+  the two result sets, re-ranks by score descending, and slices to the (clamped) limit. It is
+  <strong>total</strong>: any thrown error — embed failure or query failure — is logged at warn and
+  returns <code>[]</code>. The Fast Thinker's lookup tool narrates a blank rather than crashing the
+  turn; lore retrieval is best-effort context, never a hard dependency. The caller-supplied limit is
+  clamped into <code>[1, 50]</code>, defaulting to 10.
+</p>
+
+<p>
+  <code>findSimilarEntities(worldId, text, opts)</code> embeds the query and over-pulls only the
+  entity arm (PCs excluded by construction; an optional <code>entityType</code> narrows to one
+  kind). It <strong>throws</strong> on any failure — the opposite policy — because it feeds the
+  Scribe's canon <em>write</em> path. Swallowing a transient embed blip and returning an empty
+  candidate list would make the Scribe think no similar entity exists and mint a duplicate canonical
+  entity. The failure must propagate so the write is retried, not silently duplicated.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One <code>SET LOCAL</code> keeps the world filter from starving the top-k</strong> — the
+  read transaction's <code>BEGIN</code> prelude issues
+  <code>SET LOCAL hnsw.iterative_scan = 'relaxed_order'</code> (pgvector ≥ 0.8). Without it, an HNSW
+  probe returns its first <code>ef_search</code> candidates and <em>then</em> applies the
+  world-scope filter — which can drop the result count below the requested limit when a world's rows
+  are sparse in the index. Relaxed iterative scan lets the index keep pulling candidates past the
+  first batch until the filtered limit is satisfied, trading a little ordering precision for
+  filtered-recall completeness. The <code>SET LOCAL</code> is transaction-scoped and lands in the
+  same transaction as the search <code>SELECT</code>, because the prelude is part of that
+  transaction's <code>BEGIN</code>.
+</aside>
+
+<h2 id="the-read-path-part-two-graph-walks">The read path, part two: graph walks</h2>
+
+<p>
+  Not every world question is semantic. "Who does this character know?" and "what is this faction's
+  subtree?" are <em>structural</em> — answered by walking edges, not comparing vectors.
+  <code>world/retrieval/graph.ts</code> is the thin deterministic shell over two recursive-CTE
+  binders; it never opens a transaction and never touches a vector column.
+</p>
+
+<p>
+  <code>charactersKnownTo(deps, entityId, opts)</code> walks the <code>relationships</code> graph
+  outward from a seed entity, in <em>both</em> edge directions (the recursive term unions
+  source→target and target→source expansions), to a clamped depth (default 2, hard cap 5). The walk
+  is cycle-safe via a path array (<code>NOT next_id = ANY(path)</code>) and diamond-deduped to each
+  node's minimum depth with <code>DISTINCT ON</code>. The seed is depth 0. An optional
+  <code>nameFilter</code> is applied as a mechanical, normalized exact-match post-filter in
+  JavaScript — <code>lower(btrim(name))</code> equality, no fuzzy matching. PCs
+  <em>are</em> included on graph paths (unlike the lore searches), so the result type carries the
+  widened <code>GraphEntityType</code> that includes <code>'pc'</code>.
+</p>
+
+<p>
+  <code>factionTree(deps, entityId)</code> walks <code>entity_hierarchy</code> parent→child from a
+  root faction. Because <code>child_entity_id</code> is unique, the hierarchy is a strict tree — no
+  diamonds, no path array needed. The walk is bounded at the max graph depth, and the result carries
+  a <code>truncated</code> flag: true when any returned node sits at exactly that depth, signalling
+  the subtree may continue below the bound. The graph walks deliberately do <em>not</em> catch DB
+  errors — there is no totality contract at this layer; MYT-72's tool-error handling is the catch
+  site.
+</p>
+
+<h2 id="the-voyage-embeddings-client">The Voyage embeddings client</h2>
+
+<p>
+  <code>backend/src/llm/embed.ts</code> is the embeddings wrapper — a plain <code>fetch</code> to
+  Voyage's <code>/v1/embeddings</code>, no third-party SDK. It exposes two methods with asymmetric
+  input types: <code>embedDocuments</code> sends <code>input_type: 'document'</code> for stored
+  rows, <code>embedQuery</code> sends <code>input_type: 'query'</code> for a search. The two halves
+  are also given different timeouts — the write path is generous (60s; indexing runs offline where
+  latency isn't player-visible), the read path is tight (5s; it sits in front of a waiting player,
+  so it fails fast rather than stalling a turn). Every embedding is hard-asserted to be exactly
+  512-dim before it's returned.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Voyage, because Anthropic has no embeddings API</strong> — Mythrun's entire LLM surface is
+  Anthropic, and the <a href="../runtime/llm.html">LLM client</a> page documents that single
+  abstraction. But Anthropic ships no embeddings endpoint, so semantic retrieval needs a second
+  provider. Voyage is the embeddings vendor Anthropic itself recommends. The model is
+  <code>voyage-4-lite</code> at 512 dimensions (a Matryoshka-truncated output — a good recall/size
+  tradeoff at this corpus scale). The model id and output dimension are config constants in
+  <code>world/retrieval/config.ts</code>, re-verified against Voyage's live model list each release
+  because model ids drift and silently 400.
+</aside>
+
+<p>
+  The wrapper classifies every failure into a taxonomy whose one operationally-meaningful split is
+  <strong>config</strong> versus <strong>transient</strong>. A config error never self-heals — wrong
+  key (<code>auth</code>, 401/403), wrong model id or output dimension (<code>bad_request</code>,
+  400), or a returned vector of the wrong width (<code>dim_mismatch</code>). A transient error
+  recovers on its own — a 5xx, a network blip, a timeout, or a rate-limit (429) that survives a
+  bounded exponential backoff. <code>isVoyageConfigError</code> collapses the taxonomy to that
+  binary, and that binary is what the boot probe and the embed callers branch on.
+</p>
+
+<h2 id="the-boot-probe-a-bad-key-can-t-ship-silently">The boot probe: a bad key can't ship silently</h2>
+
+<p>
+  <code>backend/src/boot/voyage-probe.ts</code> validates Voyage at boot with one real
+  <code>embedQuery</code> — asserting the live 512-dim round-trip against a real key. It is wired
+  into both the <a href="../runtime/worker.html">worker</a> and the API
+  <a href="../runtime/index.html">server</a> boot sequences, right after the Postgres wait,
+  alongside the Stripe contract probe.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Crashloop on misconfig, degrade on outage — never silent either way</strong> — the generic
+  <code>waitFor()</code> boot helper crashloops on <em>any</em> persistent failure. That is wrong
+  for Voyage: a transient Voyage outage must not crashloop the worker, because world-gen content
+  still works and embeddings can backfill once Voyage recovers. So the probe splits on
+  <code>isVoyageConfigError</code>. A config error <em>throws</em> — the process crashloops and the
+  ECS deploy goes red, so a misconfigured key can never deploy and leave every world silently
+  un-embedded. A transient failure is retried a couple of times, then logged <em>loud</em> (error
+  level) and the process boots <strong>degraded</strong>. Either way the failure is observable; the
+  one outcome that's forbidden is a quiet one.
+</aside>
+
+<p>
+  The same config-vs-transient split is what makes the embed callers escalate correctly. When
+  <code>embedWorld</code> reports a <code>configErrorKind</code>, the world-gen embed stage and the
+  character-integration post-pass both log at <strong>error</strong> with an alarmable event (<code
+    >embed_world_misconfigured</code
+  >
+  / <code>embed_misconfigured</code>) — every world is affected until the key, model, or dim is
+  fixed. A transient <code>voyageErrors &gt; 0</code> logs at warn
+  (<code>embed_world_degraded</code>): rows left <code>NULL</code>, the backfill recovers. A clean
+  run logs the routine info line.
+</p>
+
+<h2 id="where-embedding-gets-triggered">Where embedding gets triggered</h2>
+
+<p>A world becomes searchable through three triggers, all of which call <code>embedWorld</code>:</p>
+
+<p>
+  <strong>World-gen embed stage.</strong>
+  <code>llm/prep/stages/embed-world.ts</code> runs after <code>coherence_pass</code> (the last
+  content stage) and before <code>worlds.status</code> flips to <code>complete</code>, so a freshly
+  generated world is semantically searchable the moment it lands. It is a
+  <strong>total</strong> stage: it must never fail the world, so it catches its own errors and
+  triages the summary three ways (misconfig→error, transient→warn, clean→info). Voyage spend is off
+  the Anthropic cost cap, so the stage always reports zero cost regardless of how many rows it
+  embedded — the cumulative cost check must never see Voyage spend.
+</p>
+
+<p>
+  <strong>Character-integration post-pass.</strong>
+  <a href="../runtime/character-integration.html">Character integration</a> inserts new PC-backstory
+  facts onto existing world NPCs <em>after</em> the world-gen embed stage already ran — so those
+  rows ship <code>NULL</code>-embedded. The processor runs a terminal embed post-pass (re-embed the
+  world's <code>NULL</code> rows, no force) so the world stays searchable. It is non-fatal by
+  construction: the integration is already committed and stage-completed by the time the post-pass
+  runs, so a Voyage or DB error here must never flip the completed stage to failed — it catches and
+  logs, with the same three-way triage.
+</p>
+
+<p>
+  <strong>Operational backfill.</strong>
+  <code>scripts/world-embed-backfill.ts</code> (<code>pnpm world:embed-backfill</code>) is the
+  out-of-band entry point — embed one world (<code>--world &lt;id&gt;</code>) or every world
+  (<code>--all</code>), incremental by default or a full re-embed under <code>--force</code>. This
+  is what recovers the <code>NULL</code> rows a transient Voyage degrade left behind.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="backfill-embeddings">Backfill world embeddings</h3>
+<ol>
+  <li>
+    To recover rows a transient Voyage degrade left <code>NULL</code> for one world:
+    <code>pnpm --filter @mythrun/backend world:embed-backfill --world &lt;world-id&gt;</code>. The
+    default (no <code>--force</code>) embeds only <code>embedding IS NULL</code> rows — cheap and
+    safe to re-run.
+  </li>
+  <li>
+    To sweep every world after a Voyage outage recovers:
+    <code>pnpm --filter @mythrun/backend world:embed-backfill --all</code>.
+  </li>
+  <li>
+    A full re-embed of the entire corpus (only after a model or dimension change) adds
+    <code>--force</code>: <code>... world:embed-backfill --all --force</code>. This re-embeds every
+    fact and entity — a real Voyage rate and spend event. Run it knowingly, not casually.
+  </li>
+  <li>
+    Each world logs a one-line JSON summary (<code>embedded</code> / <code>leftNull</code> /
+    <code>voyageErrors</code>). A non-zero <code>leftNull</code> after a run means rows are still
+    un-embedded — re-run once Voyage is healthy.
+  </li>
+</ol>
+
+<h3 id="populate-the-voyage-key">Populate the Voyage API key (staging)</h3>
+<ol>
+  <li>
+    Terraform creates the secret <em>shell</em> (<code>mythrun/staging/voyage-api-key</code>) with a
+    placeholder version — the app boots, but the first embed call 401s and the boot probe
+    crashloops. The real value is set out-of-band.
+  </li>
+  <li>
+    Mint a key in the
+    <a href="https://dashboard.voyageai.com/" rel="noopener">Voyage dashboard</a>, then:
+    <code
+      >aws secretsmanager put-secret-value --secret-id mythrun/staging/voyage-api-key
+      --secret-string &lt;key&gt;</code
+    >.
+  </li>
+  <li>
+    Roll the ECS services so tasks pick up the new version:
+    <code
+      >aws ecs update-service --cluster mythrun --service mythrun-staging-api
+      --force-new-deployment</code
+    >
+    (and the <code>-worker</code> service). The Voyage boot probe now passes; a previously-degraded
+    worker boots clean.
+  </li>
+  <li>
+    Backfill any worlds generated during the degraded window (see
+    <a href="#backfill-embeddings">backfill world embeddings</a>).
+  </li>
+</ol>
+
+<h3 id="run-the-voyage-smoke">Run the real-Voyage retrieval smoke</h3>
+<ol>
+  <li>
+    With <code>VOYAGE_API_KEY</code> set,
+    <code>pnpm --filter @mythrun/backend smoke:world-retrieval</code> seeds a scratch world in
+    <code>mythrun_dev</code>, embeds a tiny corpus through real Voyage, and asserts the pgvector
+    round-trip: a semantically-near entity ranks first, a far entity over-pulls below it, and a
+    secret-tier fact surfaces (proving over-pull).
+  </li>
+  <li>
+    The smoke also drives the negative case: a deliberately invalid key must make the boot probe
+    throw a classified config error — the "never silently un-embedded" guarantee. The script gates
+    on the key (skips cleanly when absent) and tears down its scratch world.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The substrate sits on the <a href="./schema.html">world-store schema</a> (the
+  <code>vector(512)</code> columns migration 026 adds to <code>facts</code> and
+  <code>entities</code>) and its read SQL is one more namespace in the
+  <a href="./repository.html">repository layer</a> (<code>repo.worldRetrieval</code>). Embedding is
+  triggered from the <a href="../runtime/world-gen.html">world-gen pipeline</a>'s terminal embed
+  stage and the <a href="../runtime/character-integration.html">character-integration</a> post-pass;
+  the Voyage boot probe runs in both the <a href="../runtime/worker.html">worker</a> and server boot
+  sequences. The resolver barrel is the import surface for the (not-yet-shipped)
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate's lookup tools and the Scribe's
+  match-vs-mint. The Voyage key is a manual secret on the
+  <a href="../infra/serving.html">serving module</a>, distinct from the Anthropic key the
+  <a href="../runtime/llm.html">LLM client</a>
+  uses.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="resolver-barrel-world-retrieval-index-ts">Resolver barrel (<code>world/retrieval/index.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Export</th>
+      <th>What it does</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>createSearchResolvers(deps)</code></td>
+      <td>
+        Builds <code>searchLore</code> (facts ∪ entities, total → <code>[]</code>) and
+        <code>findSimilarEntities</code> (entity-only, throws).
+      </td>
+    </tr>
+    <tr>
+      <td><code>charactersKnownTo(deps, entityId, opts)</code></td>
+      <td>Both-direction relationship walk to a clamped depth; cycle-safe, min-depth deduped.</td>
+    </tr>
+    <tr>
+      <td><code>factionTree(deps, entityId)</code></td>
+      <td>
+        <code>entity_hierarchy</code> subtree with a <code>truncated</code> flag at the depth bound.
+      </td>
+    </tr>
+    <tr>
+      <td><code>embedWorld(deps, worldId, opts?)</code></td>
+      <td>
+        Read → embed → write the world's facts + entities; returns an <code>EmbedSummary</code>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>LoreHit</code>, <code>EntityCandidate</code>, <code>KnownCharacter</code>,
+        <code>FactionNode</code>
+      </td>
+      <td>camelCase result types (the snake_case DB rows stay internal to the binder).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="tuning-constants-world-retrieval-config-ts">Tuning constants (<code>world/retrieval/config.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>VOYAGE_EMBED_MODEL</code> / <code>EMBED_DIM</code></td>
+      <td><code>voyage-4-lite</code> / <code>512</code></td>
+      <td>Re-verify the model id against Voyage's live list each release.</td>
+    </tr>
+    <tr>
+      <td><code>VOYAGE_DOC_TIMEOUT_MS</code> / <code>VOYAGE_QUERY_TIMEOUT_MS</code></td>
+      <td><code>60000</code> / <code>5000</code></td>
+      <td>Generous write path (offline) vs tight read path (in front of a player).</td>
+    </tr>
+    <tr>
+      <td><code>HNSW_EF_SEARCH</code> / <code>HNSW_ITERATIVE_SCAN</code></td>
+      <td><code>100</code> / <code>relaxed_order</code></td>
+      <td>Recall midpoint; iterative scan so the world filter doesn't starve the top-k.</td>
+    </tr>
+    <tr>
+      <td><code>SEARCH_LORE_DEFAULT_LIMIT</code> / <code>SEARCH_LORE_MAX_LIMIT</code></td>
+      <td><code>10</code> / <code>50</code></td>
+      <td>Default + hard clamp on lore-hit count.</td>
+    </tr>
+    <tr>
+      <td><code>GRAPH_DEFAULT_DEPTH</code> / <code>GRAPH_MAX_DEPTH</code></td>
+      <td><code>2</code> / <code>5</code></td>
+      <td>Default + hard clamp on graph-walk traversal depth.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="schema-additions-migration-026">Schema additions (migration 026)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Object</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>vector</code> extension</td>
+      <td>
+        pgvector 0.8.x — requires the <code>pgvector/pgvector:pg16</code> image locally + in CI.
+      </td>
+    </tr>
+    <tr>
+      <td><code>facts.embedding</code> / <code>entities.embedding</code></td>
+      <td><code>vector(512)</code>, nullable; <code>embedded_at timestamptz</code> alongside.</td>
+    </tr>
+    <tr>
+      <td><code>idx_facts_embedding</code> / <code>idx_entities_embedding</code></td>
+      <td>HNSW, <code>vector_cosine_ops</code>. NULL embeddings unindexed.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/world/retrieval/</code> (the resolver library + barrel),
+  <code>backend/src/repo/world-retrieval.ts</code> (the SQL binder),
+  <code>backend/src/llm/embed.ts</code> (the Voyage client),
+  <code>backend/src/boot/voyage-probe.ts</code> (the boot probe),
+  <code>backend/src/llm/prep/stages/embed-world.ts</code> (the world-gen embed stage),
+  <code>backend/migrations/026_world_retrieval.sql</code> (pgvector + columns + indexes),
+  <code>backend/scripts/world-embed-backfill.ts</code> +
+  <code>scripts/smoke/world-retrieval-voyage.ts</code> (operational backfill + gated smoke), and the
+  <code>voyage-api-key</code> manual secret on <code>infra/modules/serving/</code> +
+  <code>infra/environments/staging/main.tf</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-vector-substrate-pgvector-on-the-rows-it-describes">The vector substrate: pgvector on the rows it describes</a></li><li style="padding-left:0"><a href="#the-write-path-embedworld">The write path: embedWorld</a></li><li style="padding-left:0"><a href="#the-read-path-part-one-semantic-search">The read path, part one: semantic search</a></li><li style="padding-left:0"><a href="#the-read-path-part-two-graph-walks">The read path, part two: graph walks</a></li><li style="padding-left:0"><a href="#the-voyage-embeddings-client">The Voyage embeddings client</a></li><li style="padding-left:0"><a href="#the-boot-probe-a-bad-key-can-t-ship-silently">The boot probe: a bad key can't ship silently</a></li><li style="padding-left:0"><a href="#where-embedding-gets-triggered">Where embedding gets triggered</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#backfill-embeddings">Backfill world embeddings</a></li><li style="padding-left:12px"><a href="#populate-the-voyage-key">Populate the Voyage API key (staging)</a></li><li style="padding-left:12px"><a href="#run-the-voyage-smoke">Run the real-Voyage retrieval smoke</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#resolver-barrel-world-retrieval-index-ts">Resolver barrel (world/retrieval/index.ts)</a></li><li style="padding-left:12px"><a href="#tuning-constants-world-retrieval-config-ts">Tuning constants (world/retrieval/config.ts)</a></li><li style="padding-left:12px"><a href="#schema-additions-migration-026">Schema additions (migration 026)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

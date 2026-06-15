@@ -951,7 +951,11 @@
   <a href="../auth-billing/billing-metering.html">billing-metering</a> data plane consumes the token
   counts the SDK surfaces — its <code>recordUsage</code> writer turns them into a durable
   per-session <code>estimated_cost_usd</code> using the <code>MODEL_PRICING</code> rate map. The
-  rate map lives there, not here.
+  rate map lives there, not here. One sibling under <code>backend/src/llm/</code> is <em>not</em> an
+  Anthropic call: <code>embed.ts</code> is the Voyage embeddings client that powers
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a> — Anthropic ships no
+  embeddings endpoint, so semantic search uses a second provider with its own key, boot probe, and
+  page.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>

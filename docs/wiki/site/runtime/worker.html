@@ -577,6 +577,18 @@
 </p>
 
 <p>
+  After the Postgres wait and before the workers register, the boot sequence runs the
+  <a href="../data/world-store-retrieval.html#the-boot-probe-a-bad-key-cant-ship-silently"
+    >Voyage boot probe</a
+  >
+  — one real <code>embedQuery</code> that asserts the embeddings provider is reachable and returning
+  512-dim vectors. A configuration error (bad key, wrong model or dimension) crashloops the worker
+  so a misconfigured key can't ship and leave every world silently un-embedded; a transient Voyage
+  outage logs loud and boots <em>degraded</em> (world-gen content still works; embeddings backfill
+  on recovery). The API server runs the same probe.
+</p>
+
+<p>
   The <code>dm-trigger</code> worker is the <a href="./dm-trigger.html">DM trigger</a> system's
   decision half — it runs when a per-campaign quiet-window debounce matures and decides whether the
   AI DM takes a turn. Like the turn worker it builds its own repo over the pg <code>Pool</code> and

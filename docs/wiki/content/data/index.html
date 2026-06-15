@@ -6,7 +6,9 @@
   <a href="../reference/schema.html">schema reference</a>);
   <a href="./migrations.html">Migrations</a> — the runner that applies it;
   <a href="./repository.html">Repository layer</a> — the closure-factory seam every read and write
-  flows through; and <a href="./bootstrap-database.html">Bootstrap database</a> — the one-shot ECS
+  flows through; <a href="./world-store-retrieval.html">World-store retrieval</a> — pgvector
+  semantic search + recursive-CTE graph walks + the Voyage embed write-path that make the world
+  store queryable; and <a href="./bootstrap-database.html">Bootstrap database</a> — the one-shot ECS
   task family that creates per-env databases, rotates app passwords, and (staging only) seeds
   smoke-user credits.
 </p>

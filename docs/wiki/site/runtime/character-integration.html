@@ -652,7 +652,15 @@
   <code>characters.entity_id</code>, flips every <code>character_concepts.status</code> to
   <code>'integrated'</code>, and flips <code>campaigns.status</code> to <code>'active'</code>. Only
   after <code>COMMIT</code> does the processor mark <code>pipeline_runs</code> completed and publish
-  the <code>stage-completed</code> SSE event.
+  the <code>stage-completed</code> SSE event. One non-fatal post-pass then runs: because pass 3
+  inserts new PC-backstory facts onto existing world NPCs <em>after</em> world-gen's embed stage
+  already ran, those rows ship un-embedded — so the processor re-embeds the world's
+  <code>NULL</code>-embedding rows (see
+  <a href="../data/world-store-retrieval.html#where-embedding-gets-triggered"
+    >world-store retrieval</a
+  >) to keep it searchable. The integration is already committed and stage-completed by then, so a
+  Voyage or DB error in the post-pass logs and is swallowed — it never flips the completed stage to
+  failed.
 </p>
 
 <aside class="wiki-rationale">

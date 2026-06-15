@@ -21,6 +21,7 @@
 <!-- source: backend/src/llm/prep/stages/starting-situation.ts -->
 <!-- source: backend/src/llm/prep/stages/random-tables.ts -->
 <!-- source: backend/src/llm/prep/stages/coherence-pass.ts -->
+<!-- source: backend/src/llm/prep/stages/embed-world.ts -->
 <!-- source: backend/src/llm/prep/world-gen-processor.ts -->
 <!-- source: backend/src/worker/job-context.ts -->
 <!-- source: backend/src/boot/process-error-handlers.ts -->
@@ -52,8 +53,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:b796318e8cd4b118b1910a50dc6cb72b571fb652191da41b7eaff7c769a29198 -->
-<!-- last-ticket: MYT-64 -->
+<!-- source-hash: sha256:50cc8682e37a8916683c00329066be7664c8d0978a5ee34891393abac3167ee3 -->
+<!-- last-ticket: MYT-71 -->
 
 <h1>World gen</h1>
 
@@ -1493,6 +1494,18 @@
   <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires the
   world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
   earlier stage).
+</p>
+
+<p>
+  One post-stage runs in the gap between <code>coherence_pass</code> committing and
+  <code>worlds.status</code> flipping to <code>complete</code>: the
+  <a href="../data/world-store-retrieval.html#where-embedding-gets-triggered">embed stage</a> sends
+  the freshly generated world's facts and entities to Voyage and writes back the
+  <code>vector(512)</code> embeddings, so the world is semantically searchable the moment it lands.
+  It is a <em>total</em> step — it catches its own errors, never fails the world, and reports zero
+  cost (Voyage spend is off the Anthropic cost cap). It is not a
+  <code>WORLD_GEN_STAGES</code> member and not part of the cost-cap loop; the world-store-retrieval
+  page tells its full story.
 </p>
 
 <p>

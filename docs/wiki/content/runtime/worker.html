@@ -2,6 +2,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/src/worker/health-server.ts -->
 <!-- source: backend/src/redis/bullmq-client.ts -->
+<!-- source: backend/src/boot/voyage-probe.ts -->
 <!-- source: backend/src/llm/middleware.ts -->
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
@@ -11,8 +12,8 @@
 <!-- source: backend/src/session/turn-worker.ts -->
 <!-- source: backend/src/session/dm-trigger-worker.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
-<!-- source-hash: sha256:56710ff01eee45038fb84aa51cbe0e2248578d3144b66210d3530308ca06014b -->
-<!-- last-ticket: MYT-67 -->
+<!-- source-hash: sha256:8937f8163e6e6824436570fd8cc8337aea2b34300df648549fa503f2003dcd84 -->
+<!-- last-ticket: MYT-71 -->
 
 <h1>Worker</h1>
 
@@ -72,6 +73,18 @@
   alongside their processors in <code>session/turn-worker.ts</code>,
   <code>session/dm-trigger-config.ts</code>, and <code>session/st-eval-queue.ts</code> /
   <code>session/st-config.ts</code>.
+</p>
+
+<p>
+  After the Postgres wait and before the workers register, the boot sequence runs the
+  <a href="../data/world-store-retrieval.html#the-boot-probe-a-bad-key-cant-ship-silently"
+    >Voyage boot probe</a
+  >
+  — one real <code>embedQuery</code> that asserts the embeddings provider is reachable and returning
+  512-dim vectors. A configuration error (bad key, wrong model or dimension) crashloops the worker
+  so a misconfigured key can't ship and leave every world silently un-embedded; a transient Voyage
+  outage logs loud and boots <em>degraded</em> (world-gen content still works; embeddings backfill
+  on recovery). The API server runs the same probe.
 </p>
 
 <p>

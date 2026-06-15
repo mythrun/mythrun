@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:cd53a29cba31a5dd8bdba0bbc37785bddf6ce24ca7fb78037921eb4e62a425b4 -->
-<!-- last-ticket: MYT-67 -->
+<!-- source-hash: sha256:06886631d0e3f581a70bb35b9b6971a7cfdb513f079b978601dc237d07bb6d12 -->
+<!-- last-ticket: MYT-71 -->
 
 <h1>Backend</h1>
 
@@ -682,12 +682,14 @@
   module — a thin shell over Vercel AI SDK v6 with tier-named model constants, logging +
   error-normalization middleware covering both <code>wrapGenerate</code> and
   <code>wrapStream</code>, a typed error taxonomy, and a file-based prompt loader.
-  <code>config/env.ts</code> validates <code>ANTHROPIC_API_KEY</code> at boot alongside the database
-  and Stripe secrets. The <a href="./worker.html">Worker</a> page covers the second runtime process
-  in this repo — the async-execution half — running the same Dockerfile and config contract as the
-  API. The cognitive tiers land as additional modules under <code>backend/src/</code> on top of that
-  foundation, sharing this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile: the
-  <a href="./fast-thinker.html">Fast Thinker</a>, the post-hoc
+  <code>config/env.ts</code> validates <code>ANTHROPIC_API_KEY</code> and the embeddings-provider
+  <code>VOYAGE_API_KEY</code> (see
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a>) at boot alongside the
+  database and Stripe secrets. The <a href="./worker.html">Worker</a> page covers the second runtime
+  process in this repo — the async-execution half — running the same Dockerfile and config contract
+  as the API. The cognitive tiers land as additional modules under <code>backend/src/</code> on top
+  of that foundation, sharing this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile:
+  the <a href="./fast-thinker.html">Fast Thinker</a>, the post-hoc
   <a href="./slow-thinker.html">Slow Thinker</a>, and the <a href="./dm-trigger.html">DM trigger</a>
   classifier are live; the Scribe lands with MYT-73.
 </p>
@@ -806,6 +808,15 @@
       <td>
         Required. Must start with <code>sk-ant-</code>. Read directly by
         <code>@ai-sdk/anthropic</code>; see <a href="./llm.html">LLM client</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>VOYAGE_API_KEY</code></td>
+      <td>—</td>
+      <td>
+        Required, asserted non-empty (the live key prefix is unconfirmed). Powers the embeddings
+        layer; a boot probe crashloops on a misconfigured key. See
+        <a href="../data/world-store-retrieval.html">world-store retrieval</a>.
       </td>
     </tr>
   </tbody>
