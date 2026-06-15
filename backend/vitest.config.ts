@@ -110,6 +110,17 @@ export default defineConfig({
     // would silently drop those branches. So we give the whole suite headroom
     // here instead. A genuine hang still surfaces (just at 20s, not 5s).
     testTimeout: 20_000,
+    // Retry transient real-infra flakes. This suite runs ~2950 tests against
+    // REAL Postgres + Redis under 6-fork + v8-coverage load; under variable
+    // machine pressure (e.g. a slower ~7-min `test:coverage` in the pre-push
+    // hook while the dev server + iCloud sync compete for IO) a handful of
+    // CONCURRENCY tests intermittently hit a Postgres lock_timeout (55P03) or a
+    // load-shifted race interleaving — they pass 100% in isolation. Retry only
+    // re-runs the failed `it`, so a momentary-contention flake gets another
+    // shot while a GENUINE failure (logic bug, real race) still fails all
+    // attempts. Coverage is unaffected (it aggregates across attempts). This is
+    // the systemic backstop the SERIAL_FILES whack-a-mole can't scale to.
+    retry: 2,
     // The mythrun/eslint-rules RuleTester scripts (.test.cjs) are run directly
     // via `node`, not Vitest — they don't expose describe/it. The wiring smoke
     // test (.test.mjs) IS a Vitest test and stays included.
