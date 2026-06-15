@@ -24,6 +24,13 @@ export const DM_MESSAGE_TYPES = [
   'adjust_hp',
   'update_condition',
   'take_rest',
+  // MYT-72 §T8 — ONE kind for the three read-only world_fact_lookup tools
+  // (search_lore, characters_known_to, faction_tree). They share read-only
+  // no-mutation semantics and a single relay-shaped output; the tool name is
+  // preserved in the row JSON (`toolName`) so the reverse direction restores
+  // the exact tool. The persisted relay is secret-free by construction (the
+  // ST-vet sanitizes the output upstream) — this codec only round-trips it.
+  'world_fact_lookup',
 ] as const
 export type DmMessageType = (typeof DM_MESSAGE_TYPES)[number]
 
@@ -49,6 +56,11 @@ const KIND_TO_TOOL: Record<Exclude<DmMessageType, 'dm_text'>, string> = {
   adjust_hp: 'adjust_hp',
   update_condition: 'update_condition',
   take_rest: 'take_rest',
+  // MYT-72 §T8 — three tools share this kind, so the kind→tool direction is
+  // ambiguous here. The reverse fn (appendDmRowParts) reads the real tool name
+  // from the row JSON's `toolName`; this entry is only the fallback used when a
+  // row omits it (legacy/corrupt-guard).
+  world_fact_lookup: 'search_lore',
 }
 
 const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
@@ -61,12 +73,25 @@ const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
   adjust_hp: 'adjust_hp',
   update_condition: 'update_condition',
   take_rest: 'take_rest',
+  // MYT-72 §T8 — all three lookup tools persist as one kind; toolName rides the
+  // row JSON.
+  search_lore: 'world_fact_lookup',
+  characters_known_to: 'world_fact_lookup',
+  faction_tree: 'world_fact_lookup',
 }
 
 const DM_TYPE_SET: ReadonlySet<string> = new Set(DM_MESSAGE_TYPES)
 
+/** The kinds whose tool name is ambiguous from the kind alone (three tools map
+ *  to one kind) and so MUST carry `toolName` in the row JSON. */
+const TOOL_NAME_IN_ROW: ReadonlySet<string> = new Set<DmMessageType>(['world_fact_lookup'])
+
 interface RollRowJson {
   readonly toolCallId: string
+  /** MYT-72 §T8 — present only on world_fact_lookup rows, where three tools
+   *  share one kind so the kind alone can't name the tool. Roll/ledger rows
+   *  resolve their tool via KIND_TO_TOOL and never write this. */
+  readonly toolName?: string
   readonly input: unknown
   readonly output: unknown
 }
@@ -92,11 +117,21 @@ export function assistantToRows(assistant: AssistantMessage): DmTurnRow[] {
       if (!kind) {
         throw new TranscriptCorruptError(`unknown tool name in assistant message: ${part.toolName}`)
       }
-      const json: RollRowJson = {
-        toolCallId: part.toolCallId,
-        input: part.input,
-        output: result.output,
-      }
+      // MYT-72 §T8 — a kind shared by multiple tools (world_fact_lookup) writes
+      // `toolName` into the row JSON so the reverse direction restores the exact
+      // tool; roll/ledger rows resolve their tool from the kind and omit it.
+      const json: RollRowJson = TOOL_NAME_IN_ROW.has(kind)
+        ? {
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: part.input,
+            output: result.output,
+          }
+        : {
+            toolCallId: part.toolCallId,
+            input: part.input,
+            output: result.output,
+          }
       rows.push({ kind, content: JSON.stringify(json) })
     }
     // tool_result parts are consumed alongside their tool_call (above); skip.
@@ -168,8 +203,13 @@ function appendDmRowParts(row: SessionMessage, parts: ContentPart[]): void {
     return
   }
 
-  const toolName = KIND_TO_TOOL[row.messageType as Exclude<DmMessageType, 'dm_text'>]
+  const kind = row.messageType as Exclude<DmMessageType, 'dm_text'>
   const json = parseRollRow(row.content, row.messageType, row.seq)
+  // MYT-72 §T8 — for a multi-tool kind (world_fact_lookup) the exact tool name
+  // lives in the row JSON; for single-tool kinds it resolves from the kind. The
+  // KIND_TO_TOOL[kind] fallback also covers a legacy/corrupt lookup row that
+  // omits `toolName` (it maps world_fact_lookup → 'search_lore').
+  const toolName = json.toolName ?? KIND_TO_TOOL[kind]
   parts.push({ kind: 'tool_call', toolCallId: json.toolCallId, toolName, input: json.input })
   parts.push({ kind: 'tool_result', toolCallId: json.toolCallId, toolName, output: json.output })
 }
@@ -191,6 +231,19 @@ function parseRollRow(content: string, messageType: string, seq: number): RollRo
   ) {
     throw new TranscriptCorruptError(`${messageType} row JSON missing string toolCallId (seq ${String(seq)})`)
   }
-  const obj = parsed as { toolCallId: string; input?: unknown; output?: unknown }
-  return { toolCallId: obj.toolCallId, input: obj.input, output: obj.output }
+  const obj = parsed as { toolCallId: string; toolName?: unknown; input?: unknown; output?: unknown }
+  // MYT-72 §T8 — surface `toolName` only when present and a string; a present
+  // non-string is corruption (crash-loud, §3.7). Absent is fine: roll/ledger
+  // rows omit it and resolve their tool from the kind.
+  if (obj.toolName !== undefined && typeof obj.toolName !== 'string') {
+    throw new TranscriptCorruptError(`${messageType} row JSON has non-string toolName (seq ${String(seq)})`)
+  }
+  // Spread `toolName` only when present (exactOptionalPropertyTypes: an absent
+  // optional must be truly absent, not set to `undefined`).
+  return {
+    toolCallId: obj.toolCallId,
+    ...(obj.toolName !== undefined ? { toolName: obj.toolName } : {}),
+    input: obj.input,
+    output: obj.output,
+  }
 }

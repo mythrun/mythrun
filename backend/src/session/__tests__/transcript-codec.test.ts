@@ -146,6 +146,102 @@ describe('ledger tools (MYT-70 §8)', () => {
   })
 })
 
+// MYT-72 §T8 — the three world_fact_lookup tools (search_lore,
+// characters_known_to, faction_tree) PERSIST + round-trip. Decision: ONE
+// `world_fact_lookup` kind for all three (shared read-only no-mutation
+// semantics + a single relay-shaped output); the tool name rides the row JSON
+// (`toolName`) so the reverse direction restores the exact `toolName`. The
+// persisted relay is secret-free by construction (the ST-vet sanitizes the
+// output upstream); this codec just round-trips whatever JSON is present.
+const LOOKUP_TOOLS = ['search_lore', 'characters_known_to', 'faction_tree'] as const
+
+describe('world_fact_lookup tools (MYT-72 §T8)', () => {
+  for (const tool of LOOKUP_TOOLS) {
+    it(`${tool} persists as a world_fact_lookup row and round-trips byte-stably`, () => {
+      const assistant: AssistantMessage = {
+        role: 'assistant',
+        parts: [
+          { kind: 'text', text: 'You recall what you know.' },
+          {
+            kind: 'tool_call',
+            toolCallId: 'c1',
+            toolName: tool,
+            input: { query: 'the old council' },
+          },
+          {
+            kind: 'tool_result',
+            toolCallId: 'c1',
+            toolName: tool,
+            output: { results: [{ name: 'The Verdant Council', summary: 'A guild of druids.' }] },
+          },
+          { kind: 'text', text: 'And you share it.' },
+        ],
+      }
+      const turnRows = assistantToRows(assistant)
+      // All three tools collapse to ONE `world_fact_lookup` kind; the row JSON
+      // carries `toolName` so the reverse direction restores the exact tool.
+      expect(turnRows).toEqual([
+        { kind: 'dm_text', content: 'You recall what you know.' },
+        {
+          kind: 'world_fact_lookup',
+          content: JSON.stringify({
+            toolCallId: 'c1',
+            toolName: tool,
+            input: { query: 'the old council' },
+            output: { results: [{ name: 'The Verdant Council', summary: 'A guild of druids.' }] },
+          }),
+        },
+        { kind: 'dm_text', content: 'And you share it.' },
+      ])
+
+      const rows = turnRows.map((r, i) =>
+        row({ messageType: r.kind, content: r.content, seq: 10 + i, turnOrdinal: i, turnId: 'tL' }),
+      )
+      const conv = rowsToConversation(rows, names)
+      expect(conv).toHaveLength(1)
+      expect(conv[0]).toEqual({ v: 1, role: 'assistant', parts: assistant.parts })
+      // Byte-stability: a second pass produces an identical serialization.
+      expect(JSON.stringify(rowsToConversation(rows, names))).toBe(JSON.stringify(conv))
+    })
+  }
+
+  it('falls back to search_lore when a world_fact_lookup row omits toolName (legacy/corrupt-guard)', () => {
+    const rows = [
+      row({
+        messageType: 'world_fact_lookup',
+        content: JSON.stringify({ toolCallId: 'cz', input: {}, output: {} }),
+        seq: 5,
+        turnId: 'tF',
+        turnOrdinal: 0,
+      }),
+    ]
+    const conv = rowsToConversation(rows, names)
+    expect(conv).toHaveLength(1)
+    expect(conv[0]).toEqual({
+      v: 1,
+      role: 'assistant',
+      parts: [
+        { kind: 'tool_call', toolCallId: 'cz', toolName: 'search_lore', input: {} },
+        { kind: 'tool_result', toolCallId: 'cz', toolName: 'search_lore', output: {} },
+      ],
+    })
+  })
+
+  it('throws TranscriptCorruptError on a world_fact_lookup row whose toolName is present but not a string (corruption, §3.7)', () => {
+    const rows = [
+      row({
+        messageType: 'world_fact_lookup',
+        content: JSON.stringify({ toolCallId: 'cz', toolName: 42, input: {}, output: {} }),
+        seq: 7,
+        turnId: 'tG',
+        turnOrdinal: 0,
+      }),
+    ]
+    expect(() => rowsToConversation(rows, names)).toThrow(TranscriptCorruptError)
+    expect(() => rowsToConversation(rows, names)).toThrow('non-string toolName')
+  })
+})
+
 describe('rowsToConversation', () => {
   it('round-trips deterministically (the §3.9 byte-stability requirement)', () => {
     const assistant: AssistantMessage = {
@@ -243,5 +339,6 @@ it('DM_MESSAGE_TYPES is the closed kind set', () => {
     'adjust_hp',
     'update_condition',
     'take_rest',
+    'world_fact_lookup',
   ])
 })
