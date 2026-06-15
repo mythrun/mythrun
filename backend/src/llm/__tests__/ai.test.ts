@@ -344,6 +344,84 @@ describe('generateObject', () => {
     })
   })
 
+  // MYT-72 T4a: the ST-vet call reasons over secrets (the sd_playbook) in its
+  // raw model output. `redactRawText: true` must keep that raw text (and any
+  // Zod issue messages that could echo input) out of BOTH the rethrown error's
+  // `.diagnostic.rawTextSnippet` and the WARN log line.
+  it('redactRawText: true — rawTextSnippet is null and the secret never reaches diagnostic or the WARN log', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    // Over-long `name` value survives JSON.parse, fails Zod max(10), and the
+    // value embeds the secret we must never surface.
+    const originalErr = makeStructuredError('{"name":"SECRET-PLOT-the-duke-is-the-traitor"}')
+    mockGenerateText.mockRejectedValueOnce(originalErr)
+    // Sonnet repair: still Zod-invalid → terminal sonnet_failed.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'SECRET-PLOT-still-too-long' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/redact-raw-text',
+        schemaName: 'TestSchema',
+        repairStrategy: 'sonnet',
+        redactRawText: true,
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(originalErr)
+    const diag = (caught as { diagnostic?: LlmCallDiagnostic }).diagnostic
+    expect(diag).toBeDefined()
+    expect(diag?.callSite).toBe('test/redact-raw-text')
+    expect(diag?.repairOutcome).toBe('sonnet_failed')
+    // Raw snippet redacted to null — the secret is not in the diagnostic.
+    expect(diag?.rawTextSnippet).toBeNull()
+    // Belt-and-suspenders: zodIssues redacted too (a future .refine could echo input).
+    expect(diag?.zodIssues).toBeNull()
+    expect(JSON.stringify(diag)).not.toContain('SECRET-PLOT')
+    // The WARN log carries no trace of the secret in any argument.
+    expect(warnSpy).toHaveBeenCalled()
+    for (const call of warnSpy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('SECRET-PLOT')
+    }
+  })
+
+  // CONTROL: without redactRawText, the existing behavior is unchanged — the
+  // snippet (and thus the secret) IS captured into the diagnostic.
+  it('redactRawText absent (default) — rawTextSnippet IS captured (control)', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const originalErr = makeStructuredError('{"name":"SECRET-PLOT-the-duke-is-the-traitor"}')
+    mockGenerateText.mockRejectedValueOnce(originalErr)
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'SECRET-PLOT-still-too-long' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/redact-raw-text-control',
+        schemaName: 'TestSchema',
+        repairStrategy: 'sonnet',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(originalErr)
+    const diag = (caught as { diagnostic?: LlmCallDiagnostic }).diagnostic
+    expect(diag?.repairOutcome).toBe('sonnet_failed')
+    expect(diag?.rawTextSnippet).toBe('{"name":"SECRET-PLOT-the-duke-is-the-traitor"}')
+    expect(diag?.zodIssues).not.toBeNull()
+  })
+
   it('attaches .diagnostic with repairAttempted=false + outcome=parse_failed when rawText is non-JSON', async () => {
     vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
     const originalErr = makeStructuredError('not json at all { broken')

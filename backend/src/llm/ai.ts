@@ -156,6 +156,16 @@ export interface GenerateObjectOpts<T> {
    *  nested skill-check DC call). Combined with the internal timeout via
    *  AbortSignal.any — whichever fires first aborts. */
   readonly abortSignal?: AbortSignal
+  /**
+   * MYT-72: when true, the raw model output is treated as secret-bearing and
+   * is NOT captured into the repair WARN log or the rethrown error's
+   * `.diagnostic`. Both `rawTextSnippet` (set to null) AND `zodIssues`
+   * (set to null — a future `.refine` message could echo input) are redacted.
+   * Set this for any call whose RAW OUTPUT reasons over secrets — e.g. the
+   * Slow-Thinker ST-vet, which sees the `sd_playbook`. Default false keeps the
+   * snippet capture path byte-for-byte unchanged for every existing caller.
+   */
+  readonly redactRawText?: boolean
 }
 
 export interface GenerateObjectResult<T> {
@@ -283,6 +293,9 @@ interface RepairContext<T> {
   readonly model: LanguageModel
   readonly repairStrategy: RepairStrategy
   readonly providerOptions: unknown
+  // MYT-72: when true, redact the raw-text snippet + Zod issues from the WARN
+  // log and the attached diagnostic (the raw output reasons over secrets).
+  readonly redactRawText: boolean
 }
 
 interface RepairAttempt<T> {
@@ -448,8 +461,10 @@ function logRepair<T>(
     schemaName: ctx.schemaName,
     model: modelLabel(ctx.model),
     repairStrategy: ctx.repairStrategy,
-    rawTextSnippet: attempt.rawTextSnippet,
-    zodIssues: attempt.zodIssues,
+    // MYT-72: under redaction, the raw output reasons over secrets — keep both
+    // the snippet and the Zod issue messages out of the log line.
+    rawTextSnippet: ctx.redactRawText ? undefined : attempt.rawTextSnippet,
+    zodIssues: ctx.redactRawText ? undefined : attempt.zodIssues,
     repairAttempted: attempt.result !== undefined || attempt.outcome === 'sonnet_failed',
     repairOutcome: attempt.outcome,
   }
@@ -482,9 +497,11 @@ function buildDiagnostic<T>(
     repairStrategy: ctx.repairStrategy,
     repairAttempted,
     repairOutcome: attempt.outcome,
-    rawTextSnippet: attempt.rawTextSnippet ?? null,
+    // MYT-72: under redaction, surface null for both fields rather than the
+    // secret-bearing raw snippet / Zod issue messages.
+    rawTextSnippet: ctx.redactRawText ? null : attempt.rawTextSnippet ?? null,
     zodIssues:
-      attempt.zodIssues === undefined
+      ctx.redactRawText || attempt.zodIssues === undefined
         ? null
         : attempt.zodIssues.map((issue) => ({
             path: issue.path.map((p) => String(p)).join('.'),
@@ -542,6 +559,7 @@ export async function generateObject<T>(
     model: opts.model,
     repairStrategy,
     providerOptions: opts.providerOptions,
+    redactRawText: opts.redactRawText ?? false,
   }
 
   const timeout = createTimeoutSignal(opts.timeoutMs)
@@ -625,6 +643,9 @@ export function streamObject<T>(
     model: opts.model,
     repairStrategy,
     providerOptions: opts.providerOptions,
+    // streamObject has no redactRawText opt; default false keeps streaming
+    // diagnostics unchanged.
+    redactRawText: false,
   }
 
   // myth-4omh: streaming stages run for several minutes; the timeout
