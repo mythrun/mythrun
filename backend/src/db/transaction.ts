@@ -33,6 +33,11 @@ export async function withTransaction<T>(
   }
 }
 
+/** pgvector `hnsw.iterative_scan` mode — the filtered-ANN recall knob. A
+ *  compile-time union (not a runtime string), so it interpolates injection-safe
+ *  into the SET LOCAL in beginPrelude (same as `isolation`). */
+export type HnswIterativeScan = 'off' | 'strict_order' | 'relaxed_order'
+
 /**
  * Per-call SET LOCAL knobs for `repo.transaction`'s BEGIN prelude. The audit
  * found these varying by site (register, billing webhook, world-create each
@@ -42,6 +47,10 @@ export interface TxOpts {
   isolation?: 'read committed' | 'repeatable read' | 'serializable'
   lockTimeoutMs?: number
   statementTimeoutMs?: number
+  /** pgvector filtered-ANN recall knob for vector-read txs — keeps HNSW pulling
+   *  candidates past the first ef_search batch when a post-filter (world scope)
+   *  would otherwise starve the top-k. See world/retrieval/search.ts. */
+  hnswIterativeScan?: HnswIterativeScan
 }
 
 /**
@@ -63,6 +72,13 @@ export function beginPrelude(opts?: TxOpts): string {
   }
   if (opts?.statementTimeoutMs !== undefined) {
     parts.push(`SET LOCAL statement_timeout = '${String(opts.statementTimeoutMs)}ms'`)
+  }
+  if (opts?.hnswIterativeScan !== undefined) {
+    // Direct interpolation is injection-safe: hnswIterativeScan is a
+    // compile-time union (HnswIterativeScan), never user input — IDENTICAL to
+    // how `isolation` is interpolated above. Do NOT "fix" this into a bind
+    // param: SET is a utility statement and takes no params.
+    parts.push(`SET LOCAL hnsw.iterative_scan = '${opts.hnswIterativeScan}'`)
   }
   return parts.join(';\n') + ';'
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PoolClient } from 'pg'
-import { withTransaction } from '../transaction.js'
+import { beginPrelude, withTransaction } from '../transaction.js'
 
 interface QueryStub {
   readonly client: PoolClient
@@ -46,5 +46,31 @@ describe('withTransaction', () => {
     const boom = new Error('boom')
     await expect(withTransaction(client, () => Promise.reject(boom))).rejects.toBe(boom)
     expect([sqlAt(query, 0), sqlAt(query, 1)]).toEqual(['BEGIN', 'ROLLBACK'])
+  })
+})
+
+describe('beginPrelude', () => {
+  it('defaults to BEGIN + read committed and omits every optional SET LOCAL', () => {
+    const sql = beginPrelude()
+    expect(sql).toContain('BEGIN')
+    expect(sql).toContain(`SET LOCAL transaction_isolation = 'read committed'`)
+    expect(sql).not.toContain('lock_timeout')
+    expect(sql).not.toContain('statement_timeout')
+    expect(sql).not.toContain('hnsw.iterative_scan')
+  })
+
+  it('emits lock_timeout + statement_timeout when those opts are provided', () => {
+    const sql = beginPrelude({ lockTimeoutMs: 1000, statementTimeoutMs: 5000 })
+    expect(sql).toContain(`SET LOCAL lock_timeout = '1000ms'`)
+    expect(sql).toContain(`SET LOCAL statement_timeout = '5000ms'`)
+  })
+
+  it('emits SET LOCAL hnsw.iterative_scan when the opt is provided', () => {
+    const sql = beginPrelude({ hnswIterativeScan: 'relaxed_order' })
+    expect(sql).toContain(`SET LOCAL hnsw.iterative_scan = 'relaxed_order'`)
+  })
+
+  it('omits hnsw.iterative_scan when empty opts are passed', () => {
+    expect(beginPrelude({})).not.toContain('hnsw.iterative_scan')
   })
 })
