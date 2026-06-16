@@ -47,6 +47,7 @@ import type {
 } from '../../world-fact-lookup.js'
 import type { SearchResolvers } from '../../../world/retrieval/search.js'
 import type { GraphDeps } from '../../../world/retrieval/graph.js'
+import { GRAPH_MAX_DEPTH } from '../../../world/retrieval/config.js'
 import type {
   AdjustHpInput,
   TakeRestInput,
@@ -1305,6 +1306,21 @@ const RELAY: WorldFactLookupResult = {
   rollHidden: false,
 }
 
+/** A relay with NO skill-gate frame — drives `toToolResult`'s `?? null` arm
+ *  (the npc-channel relay carries no skill check, so `skillGateFrame` is
+ *  undefined and the tool result's `skill_gate` is null). */
+const RELAY_NO_FRAME: WorldFactLookupResult = {
+  relayText: 'The Steward inclines their head, recalling the old road.',
+  rollHidden: true,
+}
+
+/** A spy logger (warn only — the surface the lookup code touches) plus a deps
+ *  factory that attaches it, so the `deps.logger?.warn(...)` truthy arms and the
+ *  `...(deps.logger !== undefined ? {logger} : {})` present arms are exercised. */
+function spyLogger(): { warn: ReturnType<typeof vi.fn> } {
+  return { warn: vi.fn() }
+}
+
 /** Resolve the SubstrateResolver the tool handed to the mocked orchestrator, for
  *  the Nth (default last) runWorldFactLookup call. */
 function capturedResolve(callIndex = -1): SubstrateResolver {
@@ -1475,6 +1491,105 @@ describe('search_lore execute', () => {
     expect(resolved.empty).toBe(true)
     expect(resolved.degraded).toBe(false)
   })
+
+  // A relay with no skill-gate frame (the npc channel runs no skill check) →
+  // toToolResult's `out.skillGateFrame ?? null` falls to the null arm.
+  it('a frame-less relay maps skill_gate to null and surfaces roll_hidden', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY_NO_FRAME)
+    const resolveEntityId = vi.fn().mockResolvedValue('npc-7')
+    const deps = makeDeps(
+      foundMech(makeCharacter(), []),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'npc', topic: 'the old road', asker_name: 'The Steward' },
+      callOpts(),
+    )) as { result: string; skill_gate: unknown; roll_hidden: boolean }
+
+    expect(result.result).toBe(RELAY_NO_FRAME.relayText)
+    expect(result.skill_gate).toBeNull()
+    expect(result.roll_hidden).toBe(true)
+  })
+
+  // The runLookup gateDeps spreads (rng / abortSignal / logger) + the
+  // runWorldFactLookup logger spread: a call that PROVIDES all three drives the
+  // present arms of every `...(x !== undefined ? {x} : {})` + the logger-bearing
+  // run, complementing the existing logger-less tests (the absent arms).
+  it('threads rng, abortSignal, and logger into the orchestrator deps (present arms)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const logger = spyLogger()
+    const controller = new AbortController()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps: FtToolDeps = { ...makeDeps(mech), logger }
+    const exec = requireExecute(buildFtTools(deps, scriptedRng(1)), 'search_lore')
+
+    await exec(
+      { channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Vire' },
+      callOpts({ abortSignal: controller.signal }),
+    )
+
+    const orchestratorDeps = capturedDeps()
+    expect(orchestratorDeps.logger).toBe(logger)
+    expect(orchestratorDeps.gateDeps.rng).toBeDefined()
+    expect(orchestratorDeps.gateDeps.abortSignal).toBe(controller.signal)
+    expect(orchestratorDeps.gateDeps.logger).toBe(logger)
+  })
+
+  // npc channel WITHOUT asker_name: a flat schema can't mark it required-per-
+  // channel, so resolveAsker fail-softs (vet NOT run). Also drives the askerName-
+  // absent arm of runLookup's resolveAsker spread.
+  it('npc channel without asker_name → clean fail-soft relay, orchestrator NOT called', async () => {
+    const deps = makeDeps(foundMech(makeCharacter(), []))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    const result = (await exec(
+      { channel: 'npc', topic: 'the old road' },
+      callOpts(),
+    )) as { result: string; skill_gate: null }
+
+    expect(result.result).toBe("They don't seem to know.")
+    expect(result.skill_gate).toBeNull()
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  // dm asker resolution failure WITH a logger present → the warn truthy arm fires
+  // (the existing not_found test omits the logger, covering the falsy arm).
+  it('dm asker not_found WITH a logger logs the failed resolution', async () => {
+    const mech: MechanicalReads = {
+      findSessionParticipantCharacterByName: vi.fn().mockResolvedValue({ outcome: 'not_found' }),
+    }
+    const logger = spyLogger()
+    const deps: FtToolDeps = { ...makeDeps(mech), logger }
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Ghost' }, callOpts())
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { characterName: 'Ghost', outcome: 'not_found' },
+      'world-lookup: dm asker resolution failed',
+    )
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  // npc asker unresolvable WITH a logger present → the warn truthy arm fires.
+  it('npc asker not found WITH a logger logs the missing NPC', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue(null)
+    const logger = spyLogger()
+    const deps: FtToolDeps = {
+      ...makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId })),
+      logger,
+    }
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'npc', topic: 'x', asker_name: 'Nobody' }, callOpts())
+
+    expect(logger.warn).toHaveBeenCalledWith({ npcName: 'Nobody' }, 'world-lookup: npc asker not found')
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
 })
 
 describe('characters_known_to execute', () => {
@@ -1572,6 +1687,73 @@ describe('characters_known_to execute', () => {
     expect(resolved.results).toContain('Mara')
     expect(resolved.results).not.toContain('Doran')
   })
+
+  // Subject resolves to null WITH a logger present → the warn truthy arm fires
+  // (the existing null-subject test omits the logger, covering the falsy arm).
+  it('a null subject WITH a logger logs "subject not found"', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue(null)
+    const logger = spyLogger()
+    const deps: FtToolDeps = {
+      ...makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId })),
+      logger,
+    }
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    await exec({ channel: 'dm', character: 'Nobody', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { character: 'Nobody' },
+      'characters_known_to: subject not found',
+    )
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  // A graph-walk throw WITH a logger present → the degrade-warn truthy arm fires
+  // (the existing throw test omits the logger, covering the falsy arm).
+  it('a graph-walk throw WITH a logger logs the degrade', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const charactersKnownTo = vi.fn().mockRejectedValue(new Error('db blip'))
+    const logger = spyLogger()
+    const deps: FtToolDeps = {
+      ...makeDeps(
+        foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+        fakeLedger(),
+        undefined,
+        makeLookupSurface({ resolveEntityId: vi.fn().mockResolvedValue('subj-1'), graph: fakeGraph({ charactersKnownTo }) }),
+      ),
+      logger,
+    }
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    await exec({ channel: 'dm', character: 'X', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    expect(resolved.degraded).toBe(true)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown, entityId: 'subj-1' }),
+      'characters_known_to: graph walk failed; degrading',
+    )
+  })
+
+  // npc channel WITHOUT skill or asker_name: drives both absent-arm spreads in
+  // the runLookup call (the subject still resolves, so runLookup IS reached;
+  // resolveAsker then fail-softs on the missing npc asker_name).
+  it('npc channel without skill/asker_name reaches runLookup then fail-softs', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue('subj-1')
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId }))
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    const result = (await exec(
+      { channel: 'npc', character: 'The Spymaster' },
+      callOpts(),
+    )) as { result: string }
+
+    // Subject resolved (so runLookup ran with skill+asker_name omitted), but the
+    // npc asker_name is missing → resolveAsker fail-softs, vet never runs.
+    expect(resolveEntityId).toHaveBeenCalledWith('The Spymaster')
+    expect(result.result).toBe("They don't seem to know.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
 })
 
 describe('faction_tree execute', () => {
@@ -1637,6 +1819,87 @@ describe('faction_tree execute', () => {
     const resolved = await capturedResolve()()
     expect(resolved.degraded).toBe(true)
     expect(resolved.empty).toBe(true)
+  })
+
+  // A node sitting at exactly GRAPH_MAX_DEPTH makes the real graph.factionTree
+  // set truncated:true → renderFactionNodes appends the truncation note.
+  it('renders the truncation note when the hierarchy hits the depth cap', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const factionTree = vi.fn().mockResolvedValue([
+      { entity_id: 'fac-1', name: 'The Compact', entity_type: 'faction', access_level: 'known', parent_id: null, depth: 0 },
+      { entity_id: 'fac-deep', name: 'Deep Cell', entity_type: 'faction', access_level: 'secret', parent_id: 'fac-1', depth: GRAPH_MAX_DEPTH },
+    ])
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId: vi.fn().mockResolvedValue('fac-1'), graph: fakeGraph({ factionTree }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    await exec({ channel: 'dm', faction: 'The Compact', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    expect(resolved.results).toContain('[note] hierarchy truncated at the depth cap; deeper nodes omitted.')
+  })
+
+  // Faction resolves to null WITH a logger present → the warn truthy arm fires.
+  it('a null faction WITH a logger logs "subject not found"', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue(null)
+    const logger = spyLogger()
+    const deps: FtToolDeps = {
+      ...makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId })),
+      logger,
+    }
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    await exec({ channel: 'dm', faction: 'Nobody', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    expect(logger.warn).toHaveBeenCalledWith({ faction: 'Nobody' }, 'faction_tree: subject not found')
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+  })
+
+  // A factionTree throw WITH a logger present → the degrade-warn truthy arm fires.
+  it('a factionTree throw WITH a logger logs the degrade', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const factionTree = vi.fn().mockRejectedValue(new Error('db blip'))
+    const logger = spyLogger()
+    const deps: FtToolDeps = {
+      ...makeDeps(
+        foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+        fakeLedger(),
+        undefined,
+        makeLookupSurface({ resolveEntityId: vi.fn().mockResolvedValue('fac-1'), graph: fakeGraph({ factionTree }) }),
+      ),
+      logger,
+    }
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    await exec({ channel: 'dm', faction: 'X', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    expect(resolved.degraded).toBe(true)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown, entityId: 'fac-1' }),
+      'faction_tree: graph walk failed; degrading',
+    )
+  })
+
+  // npc channel WITHOUT skill or asker_name: drives both absent-arm spreads in
+  // faction_tree's runLookup call (subject resolves so runLookup IS reached).
+  it('npc channel without skill/asker_name reaches runLookup then fail-softs', async () => {
+    const resolveEntityId = vi.fn().mockResolvedValue('fac-1')
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ resolveEntityId }))
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    const result = (await exec(
+      { channel: 'npc', faction: 'The Compact' },
+      callOpts(),
+    )) as { result: string }
+
+    expect(resolveEntityId).toHaveBeenCalledWith('The Compact')
+    expect(result.result).toBe("They don't seem to know.")
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
   })
 })
 
