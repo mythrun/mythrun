@@ -1856,6 +1856,180 @@ describe('processTurnJob', () => {
       'failed to enqueue st-evaluation',
     )
   })
+
+  // ── MYT-73 §7.2 (D6) — the player-less correction turn ────────────────────
+  /** A `correction`-kind payload: triggerMessages:[] (player-less), the
+   *  secret-free `Z` on `correctionText`, and a maxConsumedSeq equal to the
+   *  CURRENT responded watermark (it must NOT advance past unresponded seqs). */
+  function correctionPayload(
+    correctionText: string,
+    maxConsumedSeq: number,
+  ): { data: TurnJobPayload } {
+    return {
+      data: {
+        campaignId: CAMPAIGN,
+        sessionId: SESSION,
+        turnId: TURN,
+        triggerMessages: [],
+        maxConsumedSeq,
+        trigger: { kind: 'correction' },
+        correctionText,
+      },
+    }
+  }
+
+  it('a correction turn renders WITHOUT hitting the empty-batch guard (player-less is intentional, §7.2/D6)', async () => {
+    // A correction is enqueued directly by the Scribe job, bypassing the
+    // dm-trigger no-monologue guard. With triggerMessages:[] it is intentionally
+    // player-less; the worker must still render it through the full FT path
+    // (dm_thinking → render → persist → flush → turn_end), never short-circuit.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, correctionPayload('It is actually a forgery.', 3))
+
+    expect(result).toEqual({ ran: true })
+    // The full render lifecycle ran — the correction was delivered, not suppressed.
+    expect(calls.order[0]).toBe('dm_thinking')
+    expect(calls.order).toContain('text_delta')
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(calls.order).not.toContain('turn_error')
+  })
+
+  it('a correction turn does NOT advance the responded-seq watermark (it consumed no player message, §7.2/§9)', async () => {
+    // The correction carries maxConsumedSeq = the CURRENT watermark, but unlike a
+    // real turn it must NEVER call setRespondedSeq — otherwise it would strand
+    // genuine pending player messages above the watermark. Spy on setRespondedSeq
+    // to assert it is never invoked, and confirm the watermark stays put.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    // Seed a non-zero watermark so "unchanged" is a meaningful assertion.
+    await triggerState.setRespondedSeq(CAMPAIGN, 2)
+
+    const setRespondedSpy = vi.fn((c: string, seq: number): Promise<void> =>
+      triggerState.setRespondedSeq(c, seq),
+    )
+    const recordingTrigger: TriggerState = {
+      ...triggerState,
+      setRespondedSeq: setRespondedSpy,
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState: recordingTrigger,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    // maxConsumedSeq=2 (the current watermark) — even so, the correction must not
+    // re-assert it via setRespondedSeq.
+    const result = await processTurnJob(deps, correctionPayload('It is actually a forgery.', 2))
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // The watermark advance was SKIPPED for the correction kind.
+    expect(setRespondedSpy).not.toHaveBeenCalled()
+    // …and an unresponded player seq above the watermark is NOT stranded.
+    expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(2)
+  })
+
+  it('a correction turn injects the correctionText as a [[DM CORRECTION: …]] one-shot direction (§7.2/D6)', async () => {
+    // The worker sets the one-shot direction to the distinct `[[DM CORRECTION:
+    // <Z>]]` marker (NOT a normal silent `[DM direction:]`), reusing the
+    // existing direction-injection seam so the FT context carries it. Capture the
+    // controller deps to prove the marker reached `pendingDirection`.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    const captureSpy = vi.spyOn(SessionController.prototype, 'loadFromRedis')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(
+      deps,
+      correctionPayload('the seal is genuine, not the forgery I implied', 4),
+    )
+
+    expect(result).toEqual({ ran: true })
+    const ctorDeps = (captureSpy.mock.instances[0] as unknown as {
+      deps: { pendingDirection?: string }
+    }).deps
+    expect(ctorDeps.pendingDirection).toBe(
+      '[[DM CORRECTION: the seal is genuine, not the forgery I implied]]',
+    )
+
+    captureSpy.mockRestore()
+  })
+
+  it('a correction turn does NOT consume the standing/one-shot direction slots (its direction is the injected Z, §7.2/D6)', async () => {
+    // The correction's direction is the worker-injected `[[DM CORRECTION:]]`
+    // marker, not a slot read. A live one-shot/standing direction is unrelated to
+    // the correction and must NOT be burned by the correction render.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await triggerState.setOneShotDirection(CAMPAIGN, 'D')
+    await triggerState.setStandingDirection(CAMPAIGN, 'S')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, correctionPayload('It is actually a forgery.', 1))
+
+    expect(result).toEqual({ ran: true })
+    // The unrelated one-shot survives — the correction did not burn it.
+    expect(await triggerState.takeOneShotDirection(CAMPAIGN)).toBe('D')
+    expect(await triggerState.readStandingDirection(CAMPAIGN)).toBe('S')
+  })
 })
 
 // ---------------------------------------------------------------------------

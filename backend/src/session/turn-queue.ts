@@ -25,19 +25,29 @@ export interface TurnJobPayload {
    *  producer (dm-trigger worker / explicit path / dev-fire-turn) from the
    *  batch's max seq; redelivery-stable since it rides the payload. */
   readonly maxConsumedSeq: number
-  /** Why this turn fired (MYT-67 §4.6). `kind` is the decision source; the
-   *  optional `classification` is present only for the `auto` path (the Haiku
-   *  DM-trigger classifier's verdict) — `explicit`/`solo`/dead-air turns carry
-   *  no classification. Metadata only: it does NOT cross the tier boundary into
-   *  any Fast Thinker call. */
+  /** Why this turn fired (MYT-67 §4.6 / MYT-73 §7.2 D6). `kind` is the decision
+   *  source; the optional `classification` is present only for the `auto` path
+   *  (the Haiku DM-trigger classifier's verdict) — `explicit`/`solo`/dead-air
+   *  turns carry no classification. The `correction` kind (MYT-73) is a
+   *  player-less retcon turn enqueued by the Scribe job on a core-secret breach;
+   *  it carries no classification either. Metadata only: it does NOT cross the
+   *  tier boundary into any Fast Thinker call. */
   readonly trigger: {
-    readonly kind: 'explicit' | 'solo' | 'auto'
+    readonly kind: 'explicit' | 'solo' | 'auto' | 'correction'
     readonly classification?: {
       readonly intent: 'reactive' | 'proactive'
       readonly complexity: 'low' | 'high'
       readonly confidence: number
     }
   }
+  /** MYT-73 §7.2 (D6) — the secret-preserving correction `Z` the FT delivers
+   *  OPENLY on a `correction`-kind turn. Present ONLY on a correction turn; the
+   *  worker injects it as a distinct `[[DM CORRECTION: <correctionText>]]` marker
+   *  (the explicit FT-prompt exception to silent-consume). A correction turn
+   *  carries `triggerMessages: []` and a `maxConsumedSeq` equal to the CURRENT
+   *  responded watermark — it must NOT advance past unresponded player seqs, so
+   *  the next real turn still picks them up. ST-authored to be secret-free. */
+  readonly correctionText?: string
 }
 
 /** The narrow producer surface the controller needs: just `add`. The raw

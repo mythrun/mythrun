@@ -1235,6 +1235,70 @@ describe('SonnetFastThinker.render', () => {
     }
     expect(msg.worldDelta).toEqual({ facts: [{ subject: 'X', content: 'y', kind: 'fact' }] })
   })
+
+  // ── MYT-73 Task 9: the [[DM CORRECTION: Z]] open-correction affordance (§7.2/D6)
+  it('39. a [[DM CORRECTION: Z]] direction rides VERBATIM into the model context (the marker survives the fusion seam)', async () => {
+    // The correction turn injects `Z` as a distinct `[[DM CORRECTION: <Z>]]`
+    // marker via the existing direction channel. The fusion seam passes the
+    // direction line through verbatim (test 15 proves this for the standing
+    // tail), so the `[[DM CORRECTION:]]` marker reaches the model context
+    // unaltered — the ft-system DM Direction Protocol exception then tells the
+    // model to deliver it openly. Assert the marker survives byte-for-byte into
+    // the streamText messages and is never echoed into the returned transcript.
+    mockResult([{ type: 'text-delta', id: '1', text: 'A moment — let me correct something.' }])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit } = makeEmitter()
+
+    const Z = 'the seal is genuine, not the forgery I implied'
+    const msg = await ft.render(makeCtx({ standingDirective: `[[DM CORRECTION: ${Z}]]` }), emit)
+
+    // The `[[DM CORRECTION:]]` marker (and Z) rode VERBATIM into the model context.
+    // The ft-system prompt itself now mentions the `[[DM CORRECTION:` marker (the
+    // protocol amendment), so match on the unique `Z` content, NOT the marker
+    // substring — and assert the carried message wraps Z in the marker.
+    const callArgs = streamTextMock.mock.calls[0]?.[0] as {
+      messages: import('../../../llm/ai.js').ModelMessage[]
+    }
+    const carried = callArgs.messages.find(
+      (m) => typeof m.content === 'string' && m.content.includes(Z),
+    )
+    expect(carried).toBeDefined()
+    const carriedContent = typeof carried?.content === 'string' ? carried.content : ''
+    expect(carriedContent).toContain(`[[DM CORRECTION: ${Z}]]`)
+
+    // …but the FT never echoes the marker into the transcript it returns.
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'A moment — let me correct something.' }])
+    for (const part of msg.parts) {
+      if (part.kind === 'text') expect(part.text).not.toContain('[[DM CORRECTION:')
+    }
+  })
+
+  it('40. buildModelMessages carries a fused [[DM CORRECTION: Z]] in a user message verbatim (the worker fuses it onto the last user row)', () => {
+    // On a correction turn the worker sets the one-shot direction, which the
+    // controller fuses onto the last user message as
+    // `${text}\n\n[DM direction: [[DM CORRECTION: Z]]]`. buildModelMessages maps
+    // that user row straight through — the inner `[[DM CORRECTION:]]` marker (the
+    // silent-consume EXCEPTION) must survive into the model messages byte-for-byte.
+    const Z = 'it is actually a forgery'
+    const fusedHistory: ConversationMessage[] = [
+      {
+        v: 1,
+        role: 'user',
+        parts: [
+          { kind: 'text', text: `I press the seal.\n\n[DM direction: [[DM CORRECTION: ${Z}]]]` },
+        ],
+        characterName: 'Arin',
+      },
+    ]
+    const messages = buildModelMessages(makeCtx({ ftHistory: fusedHistory }))
+
+    // Match on the unique `Z` (the ft-system prompt itself mentions the marker),
+    // then assert the carried user row holds the full `[[DM CORRECTION: Z]]`.
+    const carried = messages.find((m) => typeof m.content === 'string' && m.content.includes(Z))
+    expect(carried).toBeDefined()
+    const carriedContent = typeof carried?.content === 'string' ? carried.content : ''
+    expect(carriedContent).toContain(`[[DM CORRECTION: ${Z}]]`)
+  })
 })
 
 describe('formatPartyLedger', () => {

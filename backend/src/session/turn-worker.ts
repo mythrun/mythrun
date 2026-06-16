@@ -357,12 +357,28 @@ export async function processTurnJob(
       deps.triggerState.markTurnEmitted(turnId),
     )
 
+    // MYT-73 §7.2 (D6) — a `correction` turn is a player-less retcon: the
+    // Scribe job enqueued it directly (bypassing the dm-trigger no-monologue
+    // guard), and its "direction" is the worker-injected secret-free `Z`, NOT a
+    // slot read. So a correction does NOT consume the one-shot/standing slots
+    // (burning an unrelated sanctioned reveal on the correction render). Instead
+    // the worker sets the one-shot direction to the DISTINCT `[[DM CORRECTION:
+    // <Z>]]` marker — the explicit FT-prompt EXCEPTION to silent-consume
+    // (deliver it OPENLY). It rides the SAME fusion seam as a normal one-shot
+    // (fused onto the last user row, verbatim — the marker survives the fusion).
+    const isCorrection = job.data.trigger.kind === 'correction'
+
     // §6 — take the one-shot (GETDEL, latest-wins) and READ the standing
     // directive. ONLY on the fresh-run arm: a take before the converge/latch
     // exits (above) would burn a sanctioned reveal on a turn that never renders,
-    // and a take by a contention loser would starve the lock holder.
-    const pendingDirection = await deps.triggerState.takeOneShotDirection(campaignId)
-    const standingDirective = await deps.triggerState.readStandingDirection(campaignId)
+    // and a take by a contention loser would starve the lock holder. A correction
+    // turn skips the slot reads entirely (its direction is the injected `Z`).
+    const pendingDirection = isCorrection
+      ? `[[DM CORRECTION: ${job.data.correctionText ?? ''}]]`
+      : await deps.triggerState.takeOneShotDirection(campaignId)
+    const standingDirective = isCorrection
+      ? null
+      : await deps.triggerState.readStandingDirection(campaignId)
 
     // MYT-72 — resolve the world id (blob-cached) scoping the FT's world-knowledge
     // lookup tools, and the recent-narrative the ST-vet reasons over. The vet IS
@@ -417,7 +433,13 @@ export async function processTurnJob(
     // §4.7 — the batch is responded: advance the watermark so the next trigger
     // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
     // a lock-lost abort never flushes, so it must never advance the watermark.
-    await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
+    // MYT-73 §7.2/§9 — a `correction` turn consumed NO player message (it is
+    // player-less), so it must NOT advance the watermark: doing so would strand
+    // genuine pending player seqs above it. The post-turn re-mature (shared
+    // `finally`) then re-arms the quiet window so the next real turn picks them up.
+    if (!isCorrection) {
+      await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
+    }
     // §8 — a flushed turn happened; bump the ST floor counter.
     await deps.triggerState.incrTurnsSinceSt(campaignId)
     // §2 — enqueue the st-evaluation (post-hoc, off the hot path). Gated on the
