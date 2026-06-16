@@ -36,19 +36,23 @@
   <code>LlmContentFilteredError</code>), and a file-based prompt loader. The
   <code>streamObject</code> / <code>generateObject</code> wrappers also accept an optional
   <code>maxOutputTokens</code> ceiling so a long-prose call can lift the SDK default before it
-  truncates. Consumers include the onboarding profanity classifier, the world-gen input gate, the
-  paint-job validator, the eight world-gen stage handlers (concept_intake, vocabulary_intake,
-  world_and_factions, locations_and_npcs, entity_relationships, entity_consolidation,
-  starting_situation, random_tables, coherence_pass), the structured-output repair chain plus its
-  companion per-item drop-on-fail gate on the streaming stages, the
+  truncates, and — MYT-72 — an optional <code>redactRawText</code> flag (<code>generateObject</code>
+  only) for a call whose raw output reasons over secrets. Consumers include the onboarding profanity
+  classifier, the world-gen input gate, the paint-job validator, the eight world-gen stage handlers
+  (concept_intake, vocabulary_intake, world_and_factions, locations_and_npcs, entity_relationships,
+  entity_consolidation, starting_situation, random_tables, coherence_pass), the structured-output
+  repair chain plus its companion per-item drop-on-fail gate on the streaming stages, the
   <a href="#the-session-prep-generation-stage">session-prep generation stage</a>, the
   <a href="./dm-trigger.html">DM-trigger classifier</a> (a cheap Haiku <code>generateObject</code>
-  deciding whether the AI DM should take a turn), and — newest — the
-  <a href="./slow-thinker.html">Slow Thinker</a>'s two calls: a Haiku spend gate and an Opus
-  director (both <code>generateObject</code>, the director with the
-  <code>haiku-then-sonnet</code> repair chain and an explicit <code>maxOutputTokens</code>).
-  Everything heavier (provider mechanics, retries, structured-output validation) is delegated to
-  Vercel AI SDK v6.
+  deciding whether the AI DM should take a turn), the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s two calls (a Haiku spend gate and an Opus
+  director — both <code>generateObject</code>, the director with the
+  <code>haiku-then-sonnet</code> repair chain and an explicit <code>maxOutputTokens</code>), and —
+  newest — the
+  <a href="./fast-thinker.html#world-knowledge-lookups">Fast Thinker's world-knowledge lookups</a>:
+  a Haiku contextual recall-gate and the synchronous Opus ST-vet (the one call that sets
+  <code>redactRawText</code>). Everything heavier (provider mechanics, retries, structured-output
+  validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <figure class="wiki-diagram">
@@ -942,8 +946,11 @@
   contract. The live-play cognitive tiers now use this same surface: the
   <a href="./fast-thinker.html">Fast Thinker</a> drives its tool loop through
   <code>streamTextWithTools</code>, and the <a href="./slow-thinker.html">Slow Thinker</a>'s gate
-  and director call <code>generateObject</code> (Scribe extraction lands with MYT-73). All call
-  Vercel's surface against tier constants, threading
+  and director call <code>generateObject</code> (Scribe extraction lands with MYT-73). The Fast
+  Thinker's <a href="./fast-thinker.html#world-knowledge-lookups">world-knowledge lookups</a> add
+  two more <code>generateObject</code> consumers — a Haiku recall-gate and a synchronous Opus
+  ST-vet, the latter the sole caller of <code>redactRawText</code> because its raw output reasons
+  over the secret playbook. All call Vercel's surface against tier constants, threading
   <code>providerOptions.mythrun = { sessionId, userId, worldId, campaignId, stage }</code> for log
   attribution. The streaming half of the middleware lands ahead of those consumers via MYT-49 — the
   <a href="./worker.html">worker</a>'s prep-stage processors will be the first callers to exercise

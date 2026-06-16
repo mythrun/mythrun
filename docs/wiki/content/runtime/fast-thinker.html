@@ -1,24 +1,41 @@
 <!-- source: backend/src/session/tiers/fast-thinker.ts -->
 <!-- source: backend/src/session/tiers/ft-tools.ts -->
+<!-- source: backend/src/session/tiers/lookup-wiring.ts -->
+<!-- source: backend/src/session/tiers/types.ts -->
 <!-- source: backend/src/session/skill-check.ts -->
 <!-- source: backend/src/session/dice/engine.ts -->
 <!-- source: backend/src/session/ft-config.ts -->
+<!-- source: backend/src/session/world-fact-lookup.ts -->
+<!-- source: backend/src/session/world-lookup-gate.ts -->
+<!-- source: backend/src/session/world-lookup-config.ts -->
+<!-- source: backend/src/session/turn-context.ts -->
 <!-- source: backend/src/session/transcript-codec.ts -->
+<!-- source: backend/src/repo/entities.ts -->
+<!-- source: backend/src/llm/st-lookup-vet.ts -->
 <!-- source: backend/src/llm/prompts/session/ft-system.txt -->
 <!-- source: backend/src/llm/prompts/session/skill-check.txt -->
+<!-- source: backend/src/llm/prompts/session/world-lookup-gate.txt -->
+<!-- source: backend/src/llm/prompts/session/st-lookup-vet.txt -->
 <!-- source: backend/src/llm/schemas/skill-check.ts -->
+<!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
+<!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:173c0735463414036a6aca749f8da5657e4d4122ce62366a7f2aa2ec1a137bba -->
-<!-- last-ticket: MYT-68 -->
+<!-- source-hash: sha256:226bbef02f10dd56ec2a1a37fe220fd0998e9ff4c86cef69759b700d0b590778 -->
+<!-- last-ticket: MYT-72 -->
 
 <h1>Fast Thinker</h1>
 
 <p class="lead">
   The player-facing prose tier — a Sonnet model driving an interleaved agentic tool loop: it streams
   narration, calls deterministic tools (<code>roll_dice</code>, <code>roll_skill_check</code>) when
-  the scene needs mechanical truth, and writes prose <em>informed by</em> each tool's result rather
-  than deciding the outcome itself. It runs under enforced ignorance by construction — its context
-  type carries only public facts, so plot and NPC secrets have nowhere to live. The
+  the scene needs mechanical truth, pulls world knowledge it lacks through three
+  <strong>Slow-Thinker-gated</strong> lookup tools (<code>search_lore</code>,
+  <code>characters_known_to</code>, <code>faction_tree</code>), and writes prose
+  <em>informed by</em>
+  each tool's result rather than deciding the outcome itself. It runs under enforced ignorance by
+  construction — its context type carries only public facts, and the one tool seam that reaches the
+  full, secret-bearing world store hands the result to the Slow Thinker to vet before any text comes
+  back, so plot and NPC secrets have nowhere to live. The
   <a href="./session-turn.html">session-turn conductor</a> calls it once per DM turn; everything the
   player reads is its output.
 </p>
@@ -133,10 +150,11 @@
   <code>roll_skill_check</code>); MYT-70 added the six
   <a href="./character-ledger.html">Rules Lawyer</a> ledger tools (<code>cast_spell</code>,
   <code>spend_resource</code>, <code>acquire_resource</code>, <code>adjust_hp</code>,
-  <code>update_condition</code>, <code>take_rest</code>); <code>world_fact_lookup</code> and combat
-  tools stay deferred. Tools are <strong>pure resolvers</strong>: their <code>execute</code>
-  returns data only, never emits a frame, and the SDK feeds each result back to the model as the
-  next step's input.
+  <code>update_condition</code>, <code>take_rest</code>); MYT-72 added the three world-knowledge
+  lookups (<code>search_lore</code>, <code>characters_known_to</code>, <code>faction_tree</code> —
+  the <a href="#world-knowledge-lookups">section below</a>); combat tools stay deferred. Tools are
+  <strong>pure resolvers</strong>: their <code>execute</code> returns data only, never emits a
+  frame, and the SDK feeds each result back to the model as the next step's input.
 </p>
 
 <aside class="wiki-rationale">
@@ -177,10 +195,13 @@
   the tool loop adds a third inbound channel to the FT (tool results), which has no type-level
   enforced-ignorance bound. The discipline is held by scope: the skill-check resolver receives only
   a narrow mechanical-reads projection (<code>findSessionParticipantCharacterByName</code>), not the
-  full repository, so no future tool can casually return a repo-fetched secret-tier string.
-  <code>world_fact_lookup</code> stays Slow-Thinker-gated for exactly this reason. The MYT-70 ledger
-  tools take the same shape: they receive the scoped <code>LedgerOps</code> surface and a per-turn
-  transaction runner, not the whole repository.
+  full repository, so no tool can casually return a repo-fetched secret-tier string. The MYT-70
+  ledger tools take the same shape: they receive the scoped <code>LedgerOps</code> surface and a
+  per-turn transaction runner, not the whole repository. The one tool family that
+  <em>must</em> reach the full, secret-bearing world store — the three world-knowledge lookups — is
+  held by the same principle taken further: it never gets the store's raw output at all. It is
+  Slow-Thinker-gated (the <a href="#world-knowledge-lookups">section below</a>), so the only string
+  that crosses back to the FT is the Slow Thinker's vetted relay.
 </aside>
 
 <h2>The dice engine (Principle #4)</h2>
@@ -301,6 +322,163 @@
   what makes "secrets have nowhere to live" structural rather than a convention.
 </aside>
 
+<h2 id="world-knowledge-lookups">World-knowledge lookups: the Slow-Thinker-gated read seam</h2>
+
+<p>
+  The FT knows only what its curated <code>ft_context</code> holds. When a scene needs a fact it
+  lacks — a topic an asker would have to <em>recall</em>, who someone is connected to, how a faction
+  is structured — it calls one of three lookup tools: <code>search_lore</code> (semantic recall over
+  the lore vectors), <code>characters_known_to</code> (who a character knows), and
+  <code>faction_tree</code> (an organization's hierarchy). Each is the live-play
+  <em>consumer</em> of the
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a> substrate, but the FT never
+  touches that substrate directly. Every lookup runs the same four-step flow —
+  <strong>gate → resolve → ST-vet → relay</strong> — and the FT only ever receives the final relay
+  string. The orchestrator (<code>runWorldFactLookup</code>) owns the flow; the tool's
+  <code>execute</code> just supplies a per-substrate resolver closure and shapes the result.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The whole flow exists because the world store cannot be tier-filtered at the read layer</strong
+  >
+  — retrieval deliberately <em>over-pulls</em> every access tier (known, discoverable, secret) on
+  purpose, so the only place a secret can be held back is downstream. If the FT could read the
+  over-pulled result, enforced ignorance would be gone. So the lookup is built inside-out: the FT
+  asks a question, deterministic code over-pulls, and the
+  <a href="./slow-thinker.html">Slow Thinker</a> — the one tier holding the secrets — decides what
+  is safe and writes the answer. The relay is the only string that crosses back. The FT never learns
+  a Slow Thinker ran; the relay reads as the asker's own recollection.
+</aside>
+
+<h3>Step 1 — the contextual skill-gate (Haiku)</h3>
+
+<p>
+  Before any store read, <code>world-lookup-gate.ts</code> decides whether the asker can even
+  <em>recall</em> the topic. This is the established Principle&nbsp;#5 pre-roll pattern: a Haiku
+  call judges how plausible the recall is <em>relative to the asker's public standing</em> and
+  returns a flat DC table — an <code>auto_success</code> flag (a foregone conclusion, no roll), or a
+  DC plus three outcome tiers. The roll itself is the same deterministic dice engine the skill check
+  uses; a failed roll short-circuits the flow (the resolver and the Opus vet never run, so a failed
+  recall costs nothing past the gate). The DC is <em>contextual</em>, not topic-absolute: a
+  blacksmith recalling forge-craft is trivial; the same blacksmith recalling a distant mage
+  college's politics is a long shot.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The gate sees PUBLIC standing only — secret-aware overrides are the vet's job</strong> —
+  the gate's "would they even know?" judgment must run on what is publicly true of the asker, never
+  on a hidden role. A covert council member asking about that council looks, to the gate, like an
+  ordinary citizen — so the gate sets a real DC. Letting the gate auto-succeed on a secret would
+  leak the secret through the <em>mechanics</em> (an instant, no-roll recall is a tell). The
+  secret-aware standing override — treating the asker as obviously knowing because a hidden role
+  makes it so — lives downstream in the Slow-Thinker vet, which holds the playbook. The gate's
+  fail-soft keeps the discipline intact: a blown Haiku call returns a moderate fallback DC (never
+  auto-success), and the deterministic roll still runs, so "roll then match" holds on a model
+  outage.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The DM channel rolls a real check; the NPC channel rolls a hidden, fabricated one</strong>
+  — a lookup carries a <code>channel</code>. On the <code>dm</code> channel a player character is
+  recalling, so the gate computes a real modifier off that PC's sheet (the knowledge skill — one of
+  history / arcana / religion / nature / investigation / medicine / survival / insight — its
+  proficiency level, the ability modifier) and the roll is visible to the table. On the
+  <code>npc</code> channel an NPC is conveying what <em>it</em> knows; an NPC has no sheet, so the
+  gate fabricates a stable per-NPC recall modifier — a <code>sha256(entityId)</code>-seeded value in
+  a fixed band, so the same NPC always recalls at the same competence — and the roll is
+  <strong>hidden</strong>. A visible NPC roll, or a visible instant auto-success, would leak how
+  learned (or how secretly placed) that NPC is, so the publisher renders an NPC lookup identically
+  to a hidden pass.
+</aside>
+
+<h3>Step 2 — resolve (over-pull) and Step 3 — the ST-vet (Opus)</h3>
+
+<p>
+  On a pass (or auto-success), the tool's resolver closure runs the matching
+  <a href="../data/world-store-retrieval.html">retrieval</a> resolver and renders the result as a
+  tier-annotated block — each row prefixed with its <code>[tier=…]</code> access level, secrets
+  included. That block never reaches the FT. It goes to <code>st-lookup-vet.ts</code>: a synchronous
+  Opus call that holds the secret <code>sd_playbook</code>, sees the over-pulled tier-annotated
+  results, the recent narration, and the channel, and emits one of three modes —
+  <code>relay</code> (surface a tier-safe answer it found), <code>none</code> (the gap is genuinely
+  empty after gating), or <code>invent</code> (a real gap with a healthy resolver — fabricate a
+  tone- and thread-consistent fact that becomes canon for the session). Its <code>text</code> is the
+  player-facing answer, surfaced verbatim, exactly as the Slow Thinker's stage
+  <a href="./slow-thinker.html">directions</a> are authoritative prose.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >A synchronous Opus vet, per lookup, mid-turn — not the async post-turn Slow Thinker</strong
+  >
+  — the FT needs the answer <em>now</em>, inside the turn, to narrate from it. So unlike the
+  post-hoc Slow Thinker that runs off the turn path, this vet is a blocking call on the hot path. It
+  is pinned to a 45-second timeout — well under the FT's 180-second turn budget — so the vet's own
+  fail-soft fires before a turn-level abort could terminal-fail the turn. It is the
+  <em>same model tier</em> as the narrative director (Opus) because the judgment is the same
+  judgment: what is safe to reveal, given everything the world hides. Paying for an Opus call on
+  every world-knowledge lookup is the cost of making the tier boundary real rather than a prompting
+  suggestion.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The vet's raw output is redacted from logs and diagnostics</strong> — this is the one
+  Mythrun LLM call whose raw model output <em>reasons over secrets</em>. The
+  <a href="./llm.html">LLM client</a>'s <code>generateObject</code> normally captures a snippet of
+  the raw text and the Zod validation issues into the repair WARN log and the rethrown error's
+  diagnostic — invaluable for debugging a malformed response, but here a vehicle for a secret to
+  spill into a log line. The vet sets <code>redactRawText: true</code>, which nulls both the snippet
+  and the issue messages on this call only; every other caller's diagnostics are unchanged. And
+  because the vet's <code>text</code> is authoritative prose, a <em>repaired</em> response is
+  discarded, not surfaced: a repair re-authors the JSON with a different model, which could
+  re-author the safety-critical text, so the orchestrator treats "a repair was attempted" as a
+  fail-soft.
+</aside>
+
+<h3>Step 4 — relay, and fail-soft everywhere</h3>
+
+<p>
+  The orchestrator surfaces the vet's <code>text</code> verbatim — it never re-authors. The tool
+  returns a data-only <code>{ result, skill_gate, roll_hidden }</code> shape: <code>result</code> is
+  the relay the model narrates from, and <code>skill_gate</code> / <code>roll_hidden</code> are
+  secret-free mechanical metadata (the roll numbers and the public outcome constraint, never the
+  playbook) the consume loop maps to a <code>skill_check</code> frame the same way an ordinary check
+  emits one. The orchestrator is <strong>total</strong>: every failure arm degrades to a clean,
+  channel-appropriate in-fiction blank ("You can't quite bring it to mind." / "They don't seem to
+  know."), never a raw error, never an unvetted result. A resolver throw becomes a
+  <em>degraded</em> empty pull the vet is told about (so it won't confidently invent over an infra
+  blip); a vet error, timeout, or repaired response becomes the fail-soft relay. A wrong lookup
+  cannot crash the turn that holds the session lock.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Enforced ignorance is structural here too: the playbook is captured in an opaque
+    closure</strong
+  >
+  — the secret <code>sd_playbook</code> never appears on any object the FT tool layer can reach. The
+  per-turn wiring (<code>lookup-wiring.ts</code>) reads it through a dedicated narrow repo surface —
+  separate from the FT's own <code>{ ftContext }</code>-only prep read — and captures it
+  <em>inside</em> the vet closure. What the tool registry receives is an opaque
+  <code>vet</code> function whose input type is the vet's fields <em>minus</em>
+  <code>sdPlaybook</code>; <code>ft-tools.ts</code> has no playbook field and never references a
+  playbook string. So even a future tool that spreads the lookup deps cannot reach the secret: it
+  isn't there to reach. An enforced-ignorance unit test asserts the wired deps object carries no
+  <code>sdPlaybook</code> key.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The relay is persisted, not stripped — and that is safe by construction</strong> — the
+  three lookup tools collapse to one <code>world_fact_lookup</code> row kind in the
+  <a href="./session-turn.html">transcript codec</a> (the tool name rides the row JSON so the exact
+  tool restores on read-back). The relay is written into the durable transcript like any tool
+  result, because the FT's full-transcript memory is the session's only continuity — a stripped
+  lookup would make the FT forget what it just told the player. This is safe precisely because the
+  ST-vet sanitized the text <em>before</em> it ever reached the orchestrator: the only thing that
+  lands in the transcript is the already-vetted, secret-free relay.
+</aside>
+
 <h2>Prompt caching: the cost lever</h2>
 
 <p>
@@ -356,6 +534,23 @@
   assistant message it returns is persisted to the PG-direct transcript by the conductor.
 </p>
 
+<p>
+  The world-knowledge lookups make the FT the live-play consumer of the
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a> substrate — its
+  <code>searchLore</code> / <code>findSimilarEntities</code> resolvers and the
+  <code>charactersKnownTo</code> / <code>factionTree</code> graph walks — through the boot-probed
+  Voyage embedder the <a href="./worker.html">worker</a> threads in. The asker (a PC, or an NPC by
+  name) is resolved through the <a href="../data/repository.html">repository layer</a>'s
+  <code>characters.findSessionParticipantCharacterByName</code> and a world-scoped
+  <code>entities.findIdByWorldAndNormalizedName</code>. The lookup's Opus vet is the
+  <em>synchronous</em> face of the <a href="./slow-thinker.html">Slow Thinker</a> (the same tier
+  that, post-turn, writes stage directions off the hot path), and the <code>tier</code> it stamps on
+  a relayed or invented fact is consumed by the Scribe (MYT-73). The per-turn lookup wiring
+  (<code>lookup-wiring.ts</code>) and the campaign's <code>worldId</code> resolution live in
+  <code>turn-context.ts</code>, both built by the <a href="./worker.html">turn worker</a> when it
+  constructs the tier seam.
+</p>
+
 <h2>Appendix: surface</h2>
 
 <h3>Config constants (ft-config.ts)</h3>
@@ -401,6 +596,54 @@
   </tbody>
 </table>
 
+<h3>World-lookup config constants (world-lookup-config.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Default</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>WORLD_LOOKUP_GATE_MODEL</code></td>
+      <td><code>HAIKU</code></td>
+      <td>The contextual recall-gate DC tier.</td>
+    </tr>
+    <tr>
+      <td><code>ST_LOOKUP_VET_MODEL</code></td>
+      <td><code>OPUS</code></td>
+      <td>The single tier-safety vet — same tier as the narrative director.</td>
+    </tr>
+    <tr>
+      <td><code>ST_LOOKUP_VET_TIMEOUT_MS</code></td>
+      <td>45000</td>
+      <td>Pinned under the 180s turn budget so the vet fail-softs before a turn abort.</td>
+    </tr>
+    <tr>
+      <td><code>ST_LOOKUP_VET_MAX_OUTPUT_TOKENS</code></td>
+      <td>1200</td>
+      <td>A relay/invention is 1–3 sentences; bounds a runaway.</td>
+    </tr>
+    <tr>
+      <td><code>KNOWLEDGE_SKILLS</code></td>
+      <td>8 INT/WIS skills</td>
+      <td>The recall skills the DM-channel gate maps an asker's check against.</td>
+    </tr>
+    <tr>
+      <td><code>NPC_FAB_MOD_MIN</code> / <code>NPC_FAB_MOD_MAX</code></td>
+      <td>−1 / +4</td>
+      <td>The band for an NPC's stable <code>sha256(entityId)</code>-seeded recall modifier.</td>
+    </tr>
+    <tr>
+      <td><code>GATE_FALLBACK_DC</code> / <code>GATE_FALLBACK_OUTCOMES</code></td>
+      <td>13 / tier-neutral</td>
+      <td>The gate's fail-soft DC (never auto-success) when Haiku fails.</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>Files</h3>
 <table>
   <thead>
@@ -421,8 +664,62 @@
       <td><code>src/session/tiers/ft-tools.ts</code></td>
       <td>
         <code>buildFtTools</code> — the extensible tool registry: <code>roll_dice</code> +
-        <code>roll_skill_check</code> (MYT-68) plus the six
-        <a href="./character-ledger.html">ledger tools</a> (MYT-70).
+        <code>roll_skill_check</code> (MYT-68), the six
+        <a href="./character-ledger.html">ledger tools</a> (MYT-70), and the three world-knowledge
+        lookups <code>search_lore</code> / <code>characters_known_to</code> /
+        <code>faction_tree</code> (MYT-72). Also the <code>FtToolDeps</code> surface — including the
+        opaque <code>vet</code> closure (no <code>sdPlaybook</code> field).
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/session/world-fact-lookup.ts</code> + <code>world-lookup-gate.ts</code> +
+        <code>world-lookup-config.ts</code>
+      </td>
+      <td>
+        <code>runWorldFactLookup</code> — the gate → resolve → ST-vet → relay orchestrator (total,
+        fail-soft); <code>resolveWorldLookupGate</code> — the contextual Haiku recall-gate over
+        public standing; the tuning constants.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/session/tiers/lookup-wiring.ts</code> + <code>src/session/turn-context.ts</code>
+      </td>
+      <td>
+        <code>buildLookupDeps</code> — the per-turn lookup deps (search / graph / resolveEntityId /
+        recentNarrative / the opaque vet capturing <code>sdPlaybook</code>);
+        <code>resolveWorldId</code> / <code>reloadFtContext</code> — the worldId blob-cache +
+        ft_context reload.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/st-lookup-vet.ts</code> +
+        <code>src/llm/prompts/session/st-lookup-vet.txt</code> +
+        <code>src/llm/schemas/st-lookup-vet.ts</code>
+      </td>
+      <td>
+        <code>runStLookupVet</code> — the synchronous Opus vet (<code>redactRawText: true</code>);
+        the prompt + <code>StLookupVetResultSchema</code> (<code>{ mode, text, tier }</code>).
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/prompts/session/world-lookup-gate.txt</code> +
+        <code>src/llm/schemas/world-lookup-gate.ts</code>
+      </td>
+      <td>
+        The contextual recall-gate prompt + <code>WorldLookupGateResultSchema</code> (<code
+          >{ auto_success, dc, outcomes }</code
+        >).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/entities.ts</code></td>
+      <td>
+        <code>findIdByWorldAndNormalizedName</code> — the world-scoped, exact-match name→id resolver
+        the lookup tools call before a graph walk (null on miss, never fuzzy).
       </td>
     </tr>
     <tr>
@@ -473,11 +770,21 @@
 <p>
   <code>backend/src/session/tiers/fast-thinker.ts</code>,
   <code>backend/src/session/tiers/ft-tools.ts</code>,
-  <code>backend/src/session/skill-check.ts</code>, <code>backend/src/session/dice/engine.ts</code>,
-  <code>backend/src/session/ft-config.ts</code>,
-  <code>backend/src/session/transcript-codec.ts</code>,
+  <code>backend/src/session/tiers/lookup-wiring.ts</code>,
+  <code>backend/src/session/tiers/types.ts</code>, <code>backend/src/session/skill-check.ts</code>,
+  <code>backend/src/session/dice/engine.ts</code>, <code>backend/src/session/ft-config.ts</code>,
+  <code>backend/src/session/world-fact-lookup.ts</code>,
+  <code>backend/src/session/world-lookup-gate.ts</code>,
+  <code>backend/src/session/world-lookup-config.ts</code>,
+  <code>backend/src/session/turn-context.ts</code>,
+  <code>backend/src/session/transcript-codec.ts</code>, <code>backend/src/repo/entities.ts</code>,
+  <code>backend/src/llm/st-lookup-vet.ts</code>,
   <code>backend/src/llm/prompts/session/ft-system.txt</code>,
   <code>backend/src/llm/prompts/session/skill-check.txt</code>,
-  <code>backend/src/llm/schemas/skill-check.ts</code>. Design spec:
+  <code>backend/src/llm/prompts/session/world-lookup-gate.txt</code>,
+  <code>backend/src/llm/prompts/session/st-lookup-vet.txt</code>,
+  <code>backend/src/llm/schemas/skill-check.ts</code>,
+  <code>backend/src/llm/schemas/world-lookup-gate.ts</code>,
+  <code>backend/src/llm/schemas/st-lookup-vet.ts</code>. Design spec:
   <code>docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md</code>.
 </p>

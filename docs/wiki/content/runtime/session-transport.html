@@ -10,8 +10,8 @@
 <!-- source: backend/src/repo/session-participants-errors.ts -->
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
-<!-- source-hash: sha256:0de5870af4edee9dc404a0d8768161ddbe8aff68f0380c5b8c6623b3c7b1d301 -->
-<!-- last-ticket: MYT-68 -->
+<!-- source-hash: sha256:2cdaee8890a4778687d5e87557fc393eaa85b36f16c99002bab9ae5e62720b77 -->
+<!-- last-ticket: MYT-72 -->
 
 <h1>Session transport</h1>
 
@@ -677,8 +677,12 @@
     <tr>
       <td><code>session:{campaignId}:state</code></td>
       <td>
-        <code>{ participants, mode, status, ftContext?, worldTone? }</code> JSON. ~2h TTL. The FT
-        prep context + world tone are parked here at session start for the turn worker (MYT-68).
+        <code>{ participants, mode, status, ftContext?, worldTone?, worldId? }</code> JSON. ~2h TTL.
+        The FT prep context + world tone are parked here at session start for the turn worker
+        (MYT-68); MYT-72 caches the campaign's <code>worldId</code> here too, so the turn worker
+        resolves it for the
+        <a href="./fast-thinker.html#world-knowledge-lookups">world-knowledge lookups</a> without a
+        per-turn Postgres round-trip (back-filled on a blob that predates it).
       </td>
     </tr>
     <tr>

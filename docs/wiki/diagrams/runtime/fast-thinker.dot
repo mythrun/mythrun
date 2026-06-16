@@ -4,11 +4,14 @@ digraph fast_thinker {
   // tool loop via streamTextWithTools (the ai.ts wrapper over the Vercel AI
   // SDK). It consumes fullStream in part order — text deltas stream out as
   // text frames; a tool-call resolves through a pure resolver (roll_dice /
-  // roll_skill_check), whose RESULT is fed back to the model as a constraint
-  // and emitted as a skill_check / dice_roll frame from the consume loop (the
-  // single emission point). roll_skill_check runs the Principle #5 flow: a
-  // Haiku DC table → deterministic d20 (crypto.randomInt) → matched outcome
-  // tier as the narrative constraint. The cap stops the loop after N steps.
+  // roll_skill_check / the three world-knowledge lookups), whose RESULT is fed
+  // back to the model as a constraint and emitted as a skill_check / dice_roll
+  // frame from the consume loop (the single emission point). roll_skill_check
+  // runs the Principle #5 flow: a Haiku DC table → deterministic d20
+  // (crypto.randomInt) → matched outcome tier as the constraint. The
+  // world-knowledge lookups run gate → resolve → ST-vet → relay: the secret
+  // sd_playbook is captured INSIDE the opaque vet closure and never crosses
+  // back to the FT. The cap stops the loop after N steps.
   rankdir=TB;
   compound=true;
   nodesep=0.4;
@@ -32,6 +35,18 @@ digraph fast_thinker {
     style="dotted";
     dice  [label="roll_dice\nrollDice(count, sides)\n(crypto.randomInt — Principle #4)"];
     skill [label="roll_skill_check → skill-check.ts\nresolve roller (session_participants)\n→ modifier (per-skill level, expertise)\n→ Haiku DC table → d20 → tier"];
+    lookup [label="search_lore / characters_known_to / faction_tree\n→ runWorldFactLookup (orchestrator)"];
+  }
+
+  subgraph cluster_flow {
+    label="world-fact-lookup  —  gate → resolve → ST-vet → relay (fail-soft)";
+    style="dotted";
+    color="ember";
+    fontcolor="ember";
+
+    gate [label="world-lookup-gate (Haiku)\ncontextual DC over PUBLIC standing only\nauto_success | d20 vs DC → pass/fail"];
+    resolve [label="resolver (world-store retrieval)\nover-pull ALL tiers, tier-annotated"];
+    vet [label="ST-vet (Opus) — the ONE tier-safety gate\nholds sd_playbook · redactRawText\nrelay | none | invent → player-safe text", color="ember", fontcolor="ember"];
   }
 
   emit [label="TurnEmitter\nemitText / emitSkillCheck / emitDiceRoll\n(worker-latched → PUBLISH frames)", color="ember", fontcolor="ember"];
@@ -42,8 +57,15 @@ digraph fast_thinker {
 
   consume -> skill [label="tool-call", style=dashed];
   consume -> dice  [label="tool-call", style=dashed];
+  consume -> lookup [label="tool-call", style=dashed];
   skill -> consume [label="constraint\n(fed back to model)"];
   dice  -> consume [label="result"];
+
+  lookup -> gate [label="pass?"];
+  gate -> resolve [label="pass /\nauto_success"];
+  resolve -> vet [label="over-pulled\n(secrets included)"];
+  vet -> lookup [label="relay text ONLY\n(no playbook, no raw pull)", color="ember", fontcolor="ember"];
+  lookup -> consume [label="{ result, skill_gate, roll_hidden }\n(data only)"];
 
   consume -> emit [label="text_delta /\nskill_check / dice_roll"];
 }

@@ -1380,9 +1380,14 @@
 
 <p>
   <strong><code>entities</code></strong> exposes <code>insert(client, input)</code>,
-  <code>findByWorldAndName</code> (case-sensitive, returns null on miss), and
-  <code>listByWorld(client, worldId, opts?)</code>. The <code>insert</code> caller supplies the
-  <code>id</code> (UUIDv7-generated app-side per the
+  <code>findByWorldAndName</code> (case-sensitive, returns null on miss),
+  <code>listByWorld(client, worldId, opts?)</code>, and — MYT-72 —
+  <code>findIdByWorldAndNormalizedName(worldId, name)</code>, a world-scoped
+  <code>lower(btrim(name))</code> exact-match resolver returning just the entity id (null on miss,
+  never fuzzy) that the
+  <a href="../runtime/fast-thinker.html#world-knowledge-lookups">Fast Thinker's lookup tools</a>
+  call to turn a colloquial name into the id a graph walk seeds from. The <code>insert</code> caller
+  supplies the <code>id</code> (UUIDv7-generated app-side per the
   <a href="./repository.html#uuidv7-in-its-own-seam">uuidv7 seam</a>) so the stage's finalized-event
   payload can reference the row before the INSERT lands. <code>InsertEntityInput</code> also
   requires <code>createdIn: string</code> — a provenance tag the caller stamps to mark which

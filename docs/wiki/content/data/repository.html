@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:620bffaa6e3442fa6e4e743f8f98fc0cad3ecc79d8ddc21e6d03c3732eca49be -->
-<!-- last-ticket: MYT-71 -->
+<!-- source-hash: sha256:3cc20fcfb6c0fa8f8ca76424145df1c9ea485b0b113d0ab5f0fc7002e7cf9342 -->
+<!-- last-ticket: MYT-72 -->
 
 <h1>Repository layer</h1>
 
@@ -835,9 +835,14 @@
 
 <p>
   <strong><code>entities</code></strong> exposes <code>insert(client, input)</code>,
-  <code>findByWorldAndName</code> (case-sensitive, returns null on miss), and
-  <code>listByWorld(client, worldId, opts?)</code>. The <code>insert</code> caller supplies the
-  <code>id</code> (UUIDv7-generated app-side per the
+  <code>findByWorldAndName</code> (case-sensitive, returns null on miss),
+  <code>listByWorld(client, worldId, opts?)</code>, and — MYT-72 —
+  <code>findIdByWorldAndNormalizedName(worldId, name)</code>, a world-scoped
+  <code>lower(btrim(name))</code> exact-match resolver returning just the entity id (null on miss,
+  never fuzzy) that the
+  <a href="../runtime/fast-thinker.html#world-knowledge-lookups">Fast Thinker's lookup tools</a>
+  call to turn a colloquial name into the id a graph walk seeds from. The <code>insert</code> caller
+  supplies the <code>id</code> (UUIDv7-generated app-side per the
   <a href="./repository.html#uuidv7-in-its-own-seam">uuidv7 seam</a>) so the stage's finalized-event
   payload can reference the row before the INSERT lands. <code>InsertEntityInput</code> also
   requires <code>createdIn: string</code> — a provenance tag the caller stamps to mark which

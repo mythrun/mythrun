@@ -303,7 +303,13 @@
   Thinker's in-character lookup, MYT-72), "does this improvised NPC already exist in canon?" (the
   Scribe's match-vs-mint, MYT-73), "who is this faction's parent organization?" Retrieval is the
   substrate that turns the store into something queryable, and it is deliberately split from its
-  consumers: this ticket builds and proves the substrate; MYT-72 and MYT-73 import it.
+  consumers: this ticket builds and proves the substrate; its consumers import it. MYT-72 is the
+  first — the
+  <a href="../runtime/fast-thinker.html#world-knowledge-lookups"
+    >Fast Thinker's world-knowledge lookups</a
+  >
+  now drive all three resolvers in live play, behind the Slow-Thinker vet; the Scribe's
+  match-vs-mint (MYT-73) is next.
 </p>
 
 <p>
@@ -328,6 +334,21 @@
   would blind the Slow Thinker to the very secrets it needs to reason about — and would be a second,
   weaker enforcement point competing with the real one. The resolver's job is recall; the gate's job
   is safety. Putting a filter in this layer would be a bug, and the code comments say so.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >Over-pull means surfacing the tier, not dropping it — all three resolvers now tag every
+    row</strong
+  >
+  — the gate downstream can only do its job if it can <em>see</em> each row's tier. The lore search
+  always carried <code>accessLevel</code> on its hits; MYT-72 surfaced the same
+  <code>access_level</code> on the graph walks' results too (<code>KnownCharacter</code> and
+  <code>FactionNode</code> now project it), since two of the three substrates were otherwise blind
+  to it. The walks still over-pull every tier — the annotation is added to the projection, never
+  used as a filter — so the
+  <a href="../runtime/fast-thinker.html#world-knowledge-lookups">lookup's vet</a> receives a
+  tier-annotated block (<code>[tier=secret] …</code>) it can reason over for all three resolvers.
 </aside>
 
 <h2 id="the-vector-substrate-pgvector-on-the-rows-it-describes">The vector substrate: pgvector on the rows it describes</h2>
@@ -675,9 +696,12 @@
   triggered from the <a href="../runtime/world-gen.html">world-gen pipeline</a>'s terminal embed
   stage and the <a href="../runtime/character-integration.html">character-integration</a> post-pass;
   the Voyage boot probe runs in both the <a href="../runtime/worker.html">worker</a> and server boot
-  sequences. The resolver barrel is the import surface for the (not-yet-shipped)
-  <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate's lookup tools and the Scribe's
-  match-vs-mint. The Voyage key is a manual secret on the
+  sequences. The resolver barrel is the import surface for the
+  <a href="../runtime/fast-thinker.html#world-knowledge-lookups"
+    >Fast Thinker's world-knowledge lookups</a
+  >
+  (live since MYT-72, behind the synchronous Slow-Thinker vet) and, next, the Scribe's match-vs-mint
+  (MYT-73). The Voyage key is a manual secret on the
   <a href="../infra/serving.html">serving module</a>, distinct from the Anthropic key the
   <a href="../runtime/llm.html">LLM client</a>
   uses.

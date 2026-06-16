@@ -372,7 +372,23 @@
   <code>adjust_hp</code> / <code>update_condition</code> / <code>take_rest</code>), and
   <code>listFtContextRows</code> widens its <code>message_type</code> IN-list to carry them, so a
   persisted ledger mutation reconstructs into the FT's history alongside the prose and roll rows.
+  MYT-72 adds one more kind, <code>world_fact_lookup</code> — and unlike the ledger tools, the three
+  <a href="./fast-thinker.html#world-knowledge-lookups">world-knowledge lookups</a>
+  (<code>search_lore</code> / <code>characters_known_to</code> / <code>faction_tree</code>) collapse
+  to that single kind because they share read-only, relay-shaped semantics. The exact tool name
+  rides the row JSON (<code>toolName</code>) so the reverse direction restores it; for the
+  single-tool kinds the name still resolves from the kind alone.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The lookup relay is persisted, not stripped — and that is safe</strong> — a lookup row
+  carries the Slow-Thinker-vetted relay text, written into the durable transcript like any tool
+  result. It is tempting to strip a world-store read from the FT's memory, but the FT's full
+  transcript is the session's only continuity: a stripped lookup would make the FT forget what it
+  just told the player. Persisting it is safe by construction because the
+  <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet sanitized the text upstream</a> — the
+  codec only ever sees the already-vetted, secret-free relay, never the over-pulled store output.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Why retire the Redis hot cache</strong> — the transcript has exactly one reader, the FT
@@ -1100,7 +1116,8 @@
         <code>assistantToRows</code> / <code>rowsToConversation</code> — the one formatter between
         <code>session_messages</code> rows and the multi-part <code>ConversationMessage</code>;
         <code>TranscriptCorruptError</code>. MYT-70 added the six ledger-tool row types to
-        <code>DM_MESSAGE_TYPES</code>.
+        <code>DM_MESSAGE_TYPES</code>; MYT-72 added the single <code>world_fact_lookup</code> kind
+        (three lookup tools collapse to it; <code>toolName</code> rides the row JSON).
       </td>
     </tr>
     <tr>
@@ -1139,7 +1156,9 @@
         <code>StEvaluation</code> interfaces and the <code>&amp; StSecrets</code> widening are gone
         (MYT-69 — the ST runs off the turn path). MYT-70 added <code>LedgerUpdatePayload</code> and
         re-exported <code>PartyLedgerSnapshot</code>, and widened <code>TurnEmitter</code> with
-        <code>emitLedgerUpdate</code>.
+        <code>emitLedgerUpdate</code>. MYT-72 added the optional <code>rollHidden</code> flag to
+        <code>SkillCheckFramePayload</code> (the NPC world-lookup variant; the publisher renders it
+        as a hidden pass so an NPC's standing never leaks).
       </td>
     </tr>
     <tr>
