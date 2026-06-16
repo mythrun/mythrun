@@ -105,8 +105,8 @@ export function makeWorkingSetRepo(redis: Redis, keyPrefix: string): WorkingSetR
         // Non-public items alone exceed the cap; they are never dropped, so the
         // working set stays over-cap by design. Surface it for ops visibility.
         console.warn(
-          `[working-set] campaign ${campaignId}: ${kept.length} items exceed cap ${cap} ` +
-            `after keeping ${nonPublicCount} non-public (st_injection/retcon) items`,
+          `[working-set] campaign ${campaignId}: ${String(kept.length)} items exceed cap ${String(cap)} ` +
+            `after keeping ${String(nonPublicCount)} non-public (st_injection/retcon) items`,
         )
       }
     },
