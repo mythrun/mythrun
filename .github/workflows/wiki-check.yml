@@ -19,7 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector image (matches docker-compose + the backend deploy CI): the
+        # wiki schema-extractor tests apply ALL migrations to a throwaway schema,
+        # and 026_world_retrieval.sql does `CREATE EXTENSION vector`. The plain
+        # postgres image lacks vector.control → "extension vector is not available".
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: mythrun
           POSTGRES_PASSWORD: mythrun_dev
