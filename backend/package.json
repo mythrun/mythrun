@@ -28,6 +28,7 @@
     "smoke:prep-pipeline": "tsx --env-file=.env.smoke --env-file-if-exists=../.env.worktree scripts/smoke/prep-pipeline.ts",
     "smoke:session-prep": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/session-prep.ts",
     "smoke:world-retrieval": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/world-retrieval-voyage.ts",
+    "smoke:world-lookup": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/world-lookup-vet.ts",
     "capture:ready-to-play": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/fixtures/capture.ts ready-to-play-campaign"
   },
   "dependencies": {
