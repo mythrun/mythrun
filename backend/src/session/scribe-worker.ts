@@ -154,12 +154,21 @@ function formatSecrets(sdPlaybook: string): string {
 
 /** Build the retcon working-set item. The breach `secretRef` is stored in
  *  `subjectName` so the double-retcon guard can match a live supersede for the
- *  SAME secret without a dedicated schema field. */
+ *  SAME secret without a dedicated schema field.
+ *
+ *  ENFORCED IGNORANCE (§8c): the item carries ONLY the secret-free `Z`
+ *  (`content`) + the opaque `secretRef` handle. The retcon-author's
+ *  `supersededContent` — the false thing being corrected — names the secret by
+ *  construction (the breach prose stated it openly), so it is DELIBERATELY NOT
+ *  persisted to the working set: storing it would put a raw core secret into
+ *  ephemeral session state (a defense-in-depth leak the real-LLM smoke caught;
+ *  the mocked unit test masked it with a clean spy value). Supersession, when
+ *  MYT-74 needs it, is tracked secret-free via `supersedesId` (an id reference),
+ *  never raw prose. */
 function retconItem(
   turnId: string,
   secretRef: string,
   retconText: string,
-  supersededContent: string,
   tier: WorkingSetItem['tier'],
 ): WorkingSetItem {
   return {
@@ -169,7 +178,6 @@ function retconItem(
     tier,
     provenance: { kind: 'objective' },
     source: 'retcon',
-    supersededContent,
     id: uuidv7(),
     turnId,
     embedding: [],
@@ -219,13 +227,7 @@ async function handleBreach(
   }
   await enqueueTurn(deps.sessionTurnQueue, correctionTurn)
   await deps.workingSet.append(campaignId, [
-    retconItem(
-      payload.turnId,
-      secretRef,
-      retcon.result.retconText,
-      retcon.result.supersededContent,
-      retcon.result.tier,
-    ),
+    retconItem(payload.turnId, secretRef, retcon.result.retconText, retcon.result.tier),
   ])
 }
 

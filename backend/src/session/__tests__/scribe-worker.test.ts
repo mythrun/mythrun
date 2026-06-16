@@ -227,7 +227,9 @@ describe('processScribeJob — breach → retcon + correction turn', () => {
     expect(retconAppend).toBeDefined()
     const retcon = retconAppend?.find((i) => i.source === 'retcon')
     expect(retcon?.subjectName).toBe('[SECRET-1]')
-    expect(retcon?.supersededContent).toBe('the gate was locked')
+    // §8c — the retcon-author's secret-bearing `supersededContent` is NEVER
+    // persisted to the working set (it names the secret by construction).
+    expect(retcon?.supersededContent).toBeUndefined()
     expect(retcon?.content).toBe('Correction: the gate was already open when you arrived.')
     expect(retcon?.embedding).toEqual([])
   })
