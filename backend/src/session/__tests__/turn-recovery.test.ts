@@ -39,7 +39,7 @@ import { makeSessionState, type SessionState } from '../../redis/session-state.j
 import { createSessionLock, type SessionLock } from '../session-lock.js'
 import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import { createTurnPublisher, type TurnPublisher } from '../turn-publisher.js'
-import { StubFastThinker, StubScribe } from '../tiers/stubs.js'
+import { StubFastThinker } from '../tiers/stubs.js'
 import type {
   AssistantMessage,
   FastThinker,
@@ -50,6 +50,7 @@ import type {
 import { processTurnJob, type TurnProcessorDeps, type TurnWorkerRepo } from '../turn-worker.js'
 import type { DmTriggerQueueLike } from '../dm-trigger-queue.js'
 import type { StEvalQueueLike } from '../st-eval-queue.js'
+import type { ScribeQueueLike } from '../scribe-queue.js'
 import type { TurnJobPayload, TurnQueueLike } from '../turn-queue.js'
 
 // A fresh-run in-memory repo: no durable rows (so both A and B take the
@@ -111,6 +112,13 @@ const inertDmTriggerQueue: DmTriggerQueueLike = {
 // worker; this recovery flow never asserts on it, so an inert no-op satisfies
 // the dep without a broker.
 const inertStEvalQueue: StEvalQueueLike = {
+  add: () => Promise.resolve(undefined as never),
+}
+
+// The post-turn Scribe producer (MYT-73) — the recovery flow never asserts on it
+// (and B's flushed-success enqueue is best-effort), so an inert no-op satisfies
+// the dep without a broker.
+const inertScribeQueue: ScribeQueueLike = {
   add: () => Promise.resolve(undefined as never),
 }
 
@@ -244,10 +252,10 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       sessionTurnQueue: inertTurnQueue,
       dmTriggerQueue: inertDmTriggerQueue,
       stEvalQueue: inertStEvalQueue,
+      scribeQueue: inertScribeQueue,
       publisher,
       makeTiers: () => ({
         ft: new LockKillingFastThinker(realtime, lockKeyFor(CAMPAIGN)),
-        scribe: new StubScribe(),
       }),
       // Tiny heartbeat so extend() fires during the 60ms render and flips
       // lockLost before the post-processDmTurn checkpoint.
@@ -281,10 +289,10 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       sessionTurnQueue: inertTurnQueue,
       dmTriggerQueue: inertDmTriggerQueue,
       stEvalQueue: inertStEvalQueue,
+      scribeQueue: inertScribeQueue,
       publisher,
       makeTiers: () => ({
         ft: new StubFastThinker(),
-        scribe: new StubScribe(),
       }),
       heartbeatMs: 15_000,
       logger: silentLogger,

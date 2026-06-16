@@ -155,11 +155,6 @@ export interface FtTurnContext {
  */
 export type TurnContext = FtTurnContext
 
-/** Controller flushes these (H9). */
-export interface ScribeResult {
-  readonly workingSetDeltas: readonly unknown[]
-}
-
 /** Payload of a skill_check frame + transcript row (§3.5 step 6 — carries
  *  characterName: multiplayer clients must see WHOSE check fired). */
 export interface SkillCheckFramePayload {
@@ -219,8 +214,4 @@ export interface AssistantMessage {
 
 export interface FastThinker {
   render(ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage>
-}
-
-export interface Scribe {
-  extract(ctx: FtTurnContext): Promise<ScribeResult>
 }

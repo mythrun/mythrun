@@ -33,6 +33,8 @@ import { QUEUE_SESSION_TURN } from './session/turn-queue.js'
 import { buildDmTriggerWorker } from './session/dm-trigger-worker.js'
 import { buildStEvaluationWorker } from './session/st-evaluation-worker.js'
 import { QUEUE_ST_EVAL } from './session/st-eval-queue.js'
+import { buildScribeWorker } from './session/scribe-worker.js'
+import { QUEUE_SCRIBE } from './session/scribe-queue.js'
 import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
@@ -195,6 +197,22 @@ export async function main(): Promise<void> {
     logger,
   )
 
+  // Scribe (MYT-73) — the post-turn reconciler, OFF the hot path. For each
+  // completed turn it appends the turn's proposed facts to the working set, runs
+  // the secret tripwire (Haiku) over the FT prose, and on a breach authors (Opus)
+  // + delivers a secret-preserving retcon. Wired HERE in the dedicated worker
+  // process. Takes both Redis connections (batch for the BullMQ queues, realtime
+  // for the working-set), the pg Pool (builds its own narrow secret-bearing
+  // repo), and the boot-probed Voyage embedder (the working-set embed-on-append).
+  const scribeWorker = buildScribeWorker(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    pg,
+    embedder,
+    logger,
+  )
+
   // Session-turn QueueEvents subscriber (MYT-67 §4.8) — the broker-side terminal
   // `turn_error` publisher that closes the `maxStalledCount`-exhaustion gap the
   // per-worker `on('failed')` listener can't see. It `duplicate()`s `redisBatch`
@@ -221,6 +239,7 @@ export async function main(): Promise<void> {
       sessionTurnWorker,
       dmTriggerWorker,
       stEvaluationWorker,
+      scribeWorker,
     ],
   })
 
@@ -235,6 +254,7 @@ export async function main(): Promise<void> {
         QUEUE_SESSION_TURN,
         QUEUE_DM_TRIGGER,
         QUEUE_ST_EVAL,
+        QUEUE_SCRIBE,
       ],
     },
     'worker started',
@@ -257,6 +277,7 @@ export async function main(): Promise<void> {
       closeWithDeadline(sessionTurnWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(dmTriggerWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(stEvaluationWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(scribeWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     // Tear down the session-turn QueueEvents subscriber's dedicated blocking

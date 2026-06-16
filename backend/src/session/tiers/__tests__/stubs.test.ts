@@ -1,15 +1,15 @@
 // MYT-66 Task 4 — tier stub tests.
 //
-// Pure in-memory exercise of the placeholder tier implementations that stand in
-// for the real Fast/Slow Thinker + Scribe until MYT-68/69 land. No DB, no Redis,
-// no Anthropic — these stubs are deterministic, so the suite just asserts the
-// seam contract: ST doesn't intervene, FT emits exactly one canned delta and
-// returns a canned assistant line, Scribe is a no-op. The `ctx` is the minimal
-// public-by-construction `FtTurnContext` every tier reads.
+// Pure in-memory exercise of the remaining placeholder tier implementation. No
+// DB, no Redis, no Anthropic — the stub is deterministic, so the suite just
+// asserts the seam contract: the FT emits exactly one canned delta and returns a
+// canned assistant line. (The on-path ST + Scribe seams were retired in
+// MYT-69/MYT-73, so only the FT stub remains.) The `ctx` is the minimal
+// public-by-construction `FtTurnContext` the tier reads.
 
 import { describe, expect, it, vi } from 'vitest'
 import type { FtTurnContext, TurnEmitter } from '../types.js'
-import { StubFastThinker, StubScribe } from '../stubs.js'
+import { StubFastThinker } from '../stubs.js'
 
 const ctx: FtTurnContext = {
   campaignId: 'c',
@@ -36,9 +36,5 @@ describe('tier stubs', () => {
     expect(emitted).toEqual(['(the DM considers the scene…)'])
     expect(msg).toMatchObject({ role: 'assistant' })
     expect(msg.parts).toEqual([{ kind: 'text', text: '(the DM responds.)' }])
-  })
-
-  it('StubScribe is a no-op returning empty deltas', async () => {
-    expect(await new StubScribe().extract(ctx)).toEqual({ workingSetDeltas: [] })
   })
 })

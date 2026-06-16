@@ -33,7 +33,7 @@ import { makeSessionState } from '../../redis/session-state.js'
 import { createSessionLock } from '../session-lock.js'
 import { makeTriggerState } from '../trigger-state.js'
 import { createTurnPublisher } from '../turn-publisher.js'
-import { StubFastThinker, StubScribe } from '../tiers/stubs.js'
+import { StubFastThinker } from '../tiers/stubs.js'
 import { processTurnJob, type TurnWorkerRepo } from '../turn-worker.js'
 import { enqueueTurn, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
 
@@ -144,10 +144,11 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             dmTriggerQueue: { add: () => Promise.resolve(undefined as never) },
             // Post-hoc ST eval producer (MYT-69) — runs off this path; inert here.
             stEvalQueue: { add: () => Promise.resolve(undefined as never) },
+            // Post-turn Scribe producer (MYT-73) — runs off this path; inert here.
+            scribeQueue: { add: () => Promise.resolve(undefined as never) },
             publisher,
             makeTiers: () => ({
               ft: new StubFastThinker(),
-              scribe: new StubScribe(),
             }),
             heartbeatMs: HEARTBEAT_MS,
             logger,

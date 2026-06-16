@@ -57,8 +57,7 @@ import { SessionController, type TranscriptStore } from './session-controller.js
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
 import { buildFtTools } from './tiers/ft-tools.js'
-import { StubScribe } from './tiers/stubs.js'
-import type { FastThinker, PartyLedgerSnapshot, Scribe, TurnEmitter } from './tiers/types.js'
+import type { FastThinker, PartyLedgerSnapshot, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
 import type { LedgerOps } from '../repo/characters-ledger.js'
 import type { LedgerTxRunner } from './rules-lawyer.js'
@@ -80,6 +79,9 @@ import {
   type StEvalPayload,
   type StEvalQueueLike,
 } from './st-eval-queue.js'
+import { QUEUE_SCRIBE, type ScribeJobPayload, type ScribeQueueLike } from './scribe-queue.js'
+import { makeWorkingSetRepo } from '../redis/working-set.js'
+import type { WorkingSetItem, WorkingSetProposal } from './working-set/types.js'
 
 // The per-turn context resolvers moved to turn-context.ts (keeping this module
 // under its length budget). Re-exported so existing consumers + tests keep their
@@ -171,6 +173,11 @@ export interface TierTurnArgs {
    *  ST's running session summary (a cheap, available, thread-consistent source;
    *  a verbatim-prose tail is a documented v1 follow-up). */
   readonly recentNarrative: string
+  /** MYT-73: the per-turn injection sink. A lookup whose ST-vet relays/invents a
+   *  fact records the (secret-free) vetted relay into the working set through
+   *  this — the SAME array the SessionController carries onto the Scribe job
+   *  payload. Threaded into the lookup tools' `recordInjection`. */
+  readonly recordInjection: (p: WorkingSetProposal) => void
 }
 
 export interface TurnProcessorDeps {
@@ -200,13 +207,18 @@ export interface TurnProcessorDeps {
    *  its own worker. The producer NEVER touches the dedup key (the job
    *  self-re-arms). */
   readonly stEvalQueue: StEvalQueueLike
+  /** MYT-73 §2.4 — the post-turn Scribe producer. Threaded into the
+   *  SessionController so `enqueueScribeJob` (called on the flushed-success path)
+   *  can enqueue the turn's prose + delta + injections off the hot path. */
+  readonly scribeQueue: ScribeQueueLike
   readonly publisher: TurnPublisher
   /** Per-turn tier factory. Takes the resolved per-turn args (the latched
    *  emitter is passed IN so tests can fake the tiers while the worker owns the
    *  latch wiring; the controller receives the SAME emitter via its deps). The
    *  SlowThinker seam is retired (MYT-69 — the ST runs off the turn path in its
-   *  own worker), so the factory returns only `{ ft, scribe }`. */
-  readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker; scribe: Scribe }
+   *  own worker) and the on-path Scribe seam is retired (MYT-73 — it is a
+   *  post-turn job), so the factory returns only `{ ft }`. */
+  readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker }
   readonly heartbeatMs: number
   readonly logger: MinimalLogger
 }
@@ -392,6 +404,12 @@ export async function processTurnJob(
     )
     const { summary: recentNarrative } = await deps.sessionState.loadTurnState(campaignId)
 
+    // MYT-73 §2.4 — the per-turn injection sink: ONE array shared between the FT
+    // tools' `recordInjection` (a mid-turn ST-vet relay pushes its secret-free
+    // proposal here) and the SessionController, which carries the accumulated
+    // array onto the post-turn Scribe job payload (`enqueueScribeJob`).
+    const injections: WorkingSetProposal[] = []
+
     const tiers = deps.makeTiers({
       sessionId,
       turnId,
@@ -400,12 +418,16 @@ export async function processTurnJob(
       worldId,
       campaignId,
       recentNarrative,
+      recordInjection: (p) => injections.push(p),
     })
 
     const controller = new SessionController(
       {
         sessionState: deps.sessionState,
         ...tiers,
+        scribeQueue: deps.scribeQueue,
+        worldId,
+        injections,
         emitter,
         transcript: deps.repo.sessionMessages,
         attributionNames,
@@ -450,6 +472,19 @@ export async function processTurnJob(
       await enqueueStEval(deps.stEvalQueue, { campaignId, sessionId })
     } catch (enqErr) {
       deps.logger.error({ err: enqErr, campaignId, turnId }, 'failed to enqueue st-evaluation')
+    }
+    // §2.4 — enqueue the post-turn Scribe job (prose + delta + injections), off
+    // the hot path. Gated like the watermark on `!isCorrection`: a `correction`
+    // turn is player-less and delivers an already-vetted secret-free `Z`, so
+    // running the tripwire over it is wasted spend and risks a retcon loop. Own
+    // try/catch — an enqueue hiccup never masks the turn outcome (mirrors the
+    // st-evaluation enqueue above).
+    if (!isCorrection) {
+      try {
+        await controller.enqueueScribeJob()
+      } catch (scErr) {
+        deps.logger.error({ err: scErr, campaignId, turnId }, 'failed to enqueue scribe')
+      }
     }
     // turn_end is the WORKER's, published only AFTER persist + flush + watermark
     // (so a client never sees turn_end for a turn that did not durably land).
@@ -549,8 +584,9 @@ const TURN_HEARTBEAT_MS = 15_000
  * The FastThinker is now REAL (MYT-68): `makeTiers` constructs a fresh
  * `SonnetFastThinker` per turn with that turn's scoped skill-check `mech`
  * projection + resolved world tone + latched emitter. The SlowThinker is retired
- * off this path (MYT-69 — it runs post-hoc in the st-evaluation worker); Scribe
- * stays a stub.
+ * off this path (MYT-69 — it runs post-hoc in the st-evaluation worker); the
+ * Scribe is retired off this path too (MYT-73 — it is a post-turn job enqueued
+ * via the `scribeQueue` producer on the flushed-success path).
  */
 export function buildSessionTurnWorker(
   redisBatch: Redis,
@@ -563,6 +599,11 @@ export function buildSessionTurnWorker(
   const publisher = createTurnPublisher(redisRealtime, redisKeyPrefix)
   const triggerState = makeTriggerState(redisRealtime, redisKeyPrefix)
   const repo = createRepo(pool)
+  // MYT-73 — the in-session working set (the FT lookup tools' read-after-write
+  // source), on the realtime connection (the working set is hot-path state, not
+  // a job queue). The per-turn read thunk in makeTiers loads it for the lookup
+  // tools' canon-merge.
+  const workingSetRepo = makeWorkingSetRepo(redisRealtime, redisKeyPrefix)
 
   // §4.7 — the explicit-drain producer. Build the BullMQ `Queue` ONCE (on the
   // shared BullMQ connection `redisBatch`, like every other producer) and reuse
@@ -585,6 +626,14 @@ export function buildSessionTurnWorker(
   // sessionTurnQueue/dmTriggerQueue closures DO fire on the converge drain path.)
   /* c8 ignore next */
   const stEvalQueue: StEvalQueueLike = { add: (n, d, o) => stEvalBullQueue.add(n, d, o) }
+  // §2.4 post-turn Scribe producer (one Queue per process, like the others). The
+  // enqueue closure fires only on the FULL FT-success path (`enqueueScribeJob`,
+  // gated on a flushed non-correction turn) — the builder unit tests drive the §5
+  // CONVERGE path (no fresh FT response → no scribe enqueue), so this passthrough
+  // is exercised by the §10 real-Anthropic E2E smoke, not vitest.
+  const scribeBullQueue = new Queue<ScribeJobPayload>(QUEUE_SCRIBE, { connection: redisBatch })
+  /* c8 ignore next */
+  const scribeQueue: ScribeQueueLike = { add: (n, d, o) => scribeBullQueue.add(n, d, o) }
 
   const deps: TurnProcessorDeps = {
     lock: createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS),
@@ -593,17 +642,27 @@ export function buildSessionTurnWorker(
     triggerState,
     sessionTurnQueue,
     stEvalQueue,
+    scribeQueue,
     dmTriggerQueue,
     publisher,
     // The real FastThinker, constructed per turn with the scoped skill-check
     // mechanical projection (§8 — ONLY findSessionParticipantCharacterByName,
     // never the whole repo), the turn's world tone, and the worker-owned latched
-    // emitter. The SlowThinker is retired off this path (MYT-69); Scribe stays a stub.
+    // emitter. The SlowThinker is retired off this path (MYT-69); the Scribe is
+    // a post-turn job (MYT-73 — enqueued via scribeQueue, not a tier here).
     /* c8 ignore start -- real-FT construction: invoking it spends Sonnet tokens;
        wiring is exercised by the §10 real-Anthropic E2E smoke (T19), the
        converge-path builder tests prove the surrounding wiring, and the lookup
        deps' construction is fully covered by lookup-wiring's own unit tests */
-    makeTiers: ({ sessionId, turnId, worldTone, worldId, campaignId, recentNarrative }) => {
+    makeTiers: ({
+      sessionId,
+      turnId,
+      worldTone,
+      worldId,
+      campaignId,
+      recentNarrative,
+      recordInjection,
+    }) => {
       const mech: MechanicalReads = {
         findSessionParticipantCharacterByName: (sid, name) =>
           repo.characters.findSessionParticipantCharacterByName(sid, name),
@@ -620,18 +679,25 @@ export function buildSessionTurnWorker(
       const runInTx: LedgerTxRunner = (fn) =>
         repo.transaction((tx) => fn(tx.characters)).then(expectCommitted)
 
+      // MYT-73 read-after-write — the per-turn working-set thunk the lookup tools'
+      // search_lore closure loads to cosine-merge near-query working-set items
+      // into the canon LoreHit[] (so a fact invented earlier this session is
+      // findable now). Bound to the campaign's working-set list.
+      const workingSet = (): Promise<WorkingSetItem[]> => workingSetRepo.load(campaignId)
+
       // MYT-72 — the world-knowledge lookup surface, built by the dedicated,
       // fully-covered lookup-wiring module (which owns the search/graph/vet/
       // askerSummary construction + the enforced-ignorance sd_playbook-captured-
       // inside-the-vet-closure boundary). Spread into FtToolDeps; the secret
-      // playbook never lands on the returned object.
+      // playbook never lands on the returned object. MYT-73 closes the type gap by
+      // threading the injection sink (`recordInjection`) + the read-after-write
+      // working-set thunk (`workingSet`) the LookupWiringArgs declares.
       const lookup = buildLookupDeps(
         { repo, embedder, logger },
-        { worldId, campaignId, sessionId, recentNarrative },
+        { worldId, campaignId, sessionId, recentNarrative, recordInjection, workingSet },
       )
 
       return {
-        scribe: new StubScribe(),
         ft: new SonnetFastThinker({
           tools: buildFtTools(
             { mech, ledger, runInTx, sessionId, turnId, worldTone, logger, ...lookup },

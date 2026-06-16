@@ -6,9 +6,13 @@
 // a thin orchestration shell (Zero Framework Cognition): it makes no judgment
 // calls — it reconstructs the turn's in-memory FT history from session_messages
 // (§3.7), optionally fuses the worker-resolved one-shot direction onto the last
-// user message, sequences the on-path tiers (Fast Thinker → Scribe), persists
-// the rendered DM turn as ONE atomic PG append, and flushes the small turn
-// state (usage) back to Redis. The SlowThinker is OFF this path under the
+// user message, runs the single on-path reasoning tier (the Fast Thinker),
+// persists the rendered DM turn as ONE atomic PG append, and flushes the small
+// turn state (usage) back to Redis. The Scribe is no longer an on-path tier
+// (MYT-73): it runs as a dedicated POST-TURN job (the secret tripwire + retcon
+// author live off the hot path); the controller only assembles + enqueues that
+// job (§2.4) via `enqueueScribeJob`, which the worker calls on the
+// flushed-success path. The SlowThinker is OFF this path under the
 // MYT-69 post-hoc model — it runs in its own worker; directions reach the turn
 // as worker-resolved deps (`pendingDirection`, `standingDirective`). Every
 // reasoning call lives behind the injected tier seams (`tiers/types.ts`).
@@ -33,13 +37,15 @@
 import type { SessionMessage } from '../repo/types.js'
 import type { SessionState } from '../redis/session-state.js'
 import { assistantToRows, rowsToConversation } from './transcript-codec.js'
+import { enqueueScribe, type ScribeQueueLike } from './scribe-queue.js'
+import type { WorkingSetProposal } from './working-set/types.js'
 import type {
   AssistantMessage,
+  ContentPart,
   ConversationMessage,
   FastThinker,
   FtTurnContext,
   PartyLedgerSnapshot,
-  Scribe,
   TokenUsage,
   TurnEmitter,
 } from './tiers/types.js'
@@ -71,7 +77,19 @@ export interface TranscriptStore {
 export interface SessionControllerDeps {
   readonly sessionState: SessionState
   readonly ft: FastThinker
-  readonly scribe: Scribe
+  /** MYT-73 §2.4 — the narrow post-turn Scribe producer. `enqueueScribeJob`
+   *  assembles + enqueues ONE job per turn carrying the player-facing prose (the
+   *  tripwire input), the parsed FT world-delta, and this turn's ST injections.
+   *  The WORKER (not the controller) gates the call on the flushed-success path. */
+  readonly scribeQueue: ScribeQueueLike
+  /** MYT-73 §2.4 — the campaign's world id, carried on the Scribe job payload for
+   *  the post-turn reconciler's entity resolution. */
+  readonly worldId: string
+  /** MYT-73 §2.4 — the per-turn injection sink: the SAME array the worker wires
+   *  into the FT tools' `recordInjection` (the ST-vet relay, MYT-72). A mid-turn
+   *  lookup that relays/invents a fact pushes a (secret-free) proposal here;
+   *  `enqueueScribeJob` carries the accumulated array onto the job payload. */
+  readonly injections: readonly WorkingSetProposal[]
   /** The latched frame emitter the worker builds (Task 15): the FT streams every
    *  player-visible frame through it. The controller never emits itself. */
   readonly emitter: TurnEmitter
@@ -156,11 +174,12 @@ export class SessionController {
 
   /** Sequence one DM turn (no durable writes): reconstruct the FT history from
    *  session_messages → optionally fuse the worker-resolved one-shot direction
-   *  onto the last user message (in-memory only) → FT render → fire-and-forget
-   *  Scribe. Under the MYT-69 post-hoc model the ST does NOT run on this path
-   *  (it runs in its own worker); directions arrive as worker-resolved deps. The
-   *  `turn_end` frame is the worker's, published only after persist + flush +
-   *  watermark. */
+   *  onto the last user message (in-memory only) → FT render. The Scribe no
+   *  longer runs here (MYT-73): it is a post-turn job the worker enqueues via
+   *  `enqueueScribeJob` on the flushed-success path. Under the MYT-69 post-hoc
+   *  model the ST does NOT run on this path either (it runs in its own worker);
+   *  directions arrive as worker-resolved deps. The `turn_end` frame is the
+   *  worker's, published only after persist + flush + watermark. */
   async processDmTurn(maxConsumedSeq: number): Promise<void> {
     // §3.7: reconstruct the WHOLE FT context from session_messages. The codec
     // THROWS TranscriptCorruptError on an incoherent row — let it propagate
@@ -185,17 +204,28 @@ export class SessionController {
 
     this.assistant = await this.deps.ft.render(this.buildContext(), this.deps.emitter)
     this.usage = addUsage(this.usage, this.assistant.usage)
+  }
 
-    // Fire-and-forget (H12): the Scribe extracts world-state deltas off the
-    // critical path. Its failure must NEVER throw out of the turn — swallow and
-    // log. The `Promise.resolve().then(...)` wrapper also captures a SYNCHRONOUS
-    // throw (a non-async Scribe that throws before returning its promise) into
-    // the same `.catch`, so neither a rejection nor a sync throw escapes. `void`
-    // marks the deliberate non-await so no floating-promise lint.
-    const scribeCtx = this.buildContext()
-    void Promise.resolve()
-      .then(() => this.deps.scribe.extract(scribeCtx))
-      .catch((err: unknown) => this.deps.logger?.warn({ err }, 'scribe.extract failed'))
+  /** §2.4 — enqueue the post-turn Scribe job carrying this turn's player-facing
+   *  prose (the tripwire input), the parsed FT world-delta, and the mid-turn ST
+   *  injections recorded via the FtToolDeps sink. Called by the worker on the
+   *  FLUSHED-SUCCESS path only (a turn that didn't durably land must not enqueue).
+   *  Best-effort: the caller wraps it; this assembles + enqueues. */
+  async enqueueScribeJob(): Promise<void> {
+    if (this.assistant === null) return
+    const prose = this.assistant.parts
+      .filter((p): p is Extract<ContentPart, { kind: 'text' }> => p.kind === 'text')
+      .map((p) => p.text)
+      .join('\n\n')
+    await enqueueScribe(this.deps.scribeQueue, {
+      campaignId: this.campaignId,
+      sessionId: this.sessionId,
+      turnId: this.turnId,
+      worldId: this.deps.worldId,
+      prose,
+      worldDelta: this.assistant.worldDelta ?? null,
+      injections: this.deps.injections,
+    })
   }
 
   /** The single durability point: encode the rendered assistant message to DM

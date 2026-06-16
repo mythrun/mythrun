@@ -33,14 +33,15 @@ import {
 } from '../session-controller.js'
 import type { SessionMessage } from '../../repo/types.js'
 import type { SessionState, TurnState } from '../../redis/session-state.js'
+import type { ScribeJobPayload, ScribeQueueLike } from '../scribe-queue.js'
+import type { WorkingSetProposal } from '../working-set/types.js'
+import type { WorldDelta } from '../../llm/schemas/world-delta.js'
 import type {
   AssistantMessage,
   ConversationMessage,
   FastThinker,
   FtTurnContext,
   PartyLedgerSnapshot,
-  Scribe,
-  ScribeResult,
   TurnEmitter,
 } from '../tiers/types.js'
 
@@ -124,12 +125,17 @@ function fakeFt(message: AssistantMessage, captured: { ctx?: FtTurnContext }): F
   }
 }
 
-function fakeScribe(): Scribe {
-  return { extract: vi.fn((): Promise<ScribeResult> => Promise.resolve({ workingSetDeltas: [] })) }
-}
-
-function rejectingScribe(): Scribe {
-  return { extract: vi.fn((): Promise<ScribeResult> => Promise.reject(new Error('scribe boom'))) }
+/** A scribe-queue spy: records every enqueued payload so a test can assert the
+ *  §2.4 post-turn job carries the prose / worldDelta / injections this turn
+ *  produced. The controller calls `enqueueScribe` (→ `queue.add`) from
+ *  `enqueueScribeJob`; the worker (not the controller) gates that call. */
+function fakeScribeQueue(captured: { payloads: ScribeJobPayload[] }): ScribeQueueLike {
+  return {
+    add: vi.fn((_name: string, data: ScribeJobPayload): Promise<undefined> => {
+      captured.payloads.push(data)
+      return Promise.resolve(undefined)
+    }) as unknown as ScribeQueueLike['add'],
+  }
 }
 
 /** Records every emitText so a test can assert the FT (and ONLY the FT) drove
@@ -207,13 +213,17 @@ interface BuildOpts {
   pendingDirection?: string
   standingDirective?: string
   assistant?: AssistantMessage
-  scribe?: Scribe
   turnState?: TurnState
   participants?: readonly string[]
   ftContext?: string
   partyLedger?: PartyLedgerSnapshot
   allocStart?: number
   logger?: { warn: ReturnType<typeof vi.fn> }
+  /** §2.4 — the shared per-turn injection sink the worker also wires into the FT
+   *  tools' recordInjection. Pushing onto this before enqueueScribeJob() must
+   *  carry the injection into the enqueued payload. */
+  injections?: WorkingSetProposal[]
+  worldId?: string
 }
 
 function build(opts: BuildOpts = {}): {
@@ -224,11 +234,15 @@ function build(opts: BuildOpts = {}): {
   flushed: { value?: FlushedTurnState }
   emitter: TurnEmitter
   deps: SessionControllerDeps
+  scribePayloads: ScribeJobPayload[]
+  injections: WorkingSetProposal[]
 } {
   const capturedFtCtx: { ctx?: FtTurnContext } = {}
   const transcriptCapture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture } = {}
   const emitted: string[] = []
   const flushed: { value?: FlushedTurnState } = {}
+  const scribeCapture: { payloads: ScribeJobPayload[] } = { payloads: [] }
+  const injections = opts.injections ?? []
 
   const emitter = recordingEmitter(emitted)
   const deps: SessionControllerDeps = {
@@ -237,7 +251,9 @@ function build(opts: BuildOpts = {}): {
       flushed,
     }),
     ft: fakeFt(opts.assistant ?? ASSISTANT, capturedFtCtx),
-    scribe: opts.scribe ?? fakeScribe(),
+    scribeQueue: fakeScribeQueue(scribeCapture),
+    worldId: opts.worldId ?? 'world-ctrl-1',
+    injections,
     emitter,
     transcript: fakeTranscript(opts.rows ?? HISTORY_ROWS, transcriptCapture),
     attributionNames: ATTRIBUTION_NAMES,
@@ -256,7 +272,17 @@ function build(opts: BuildOpts = {}): {
   }
 
   const controller = new SessionController(deps, CAMPAIGN, SESSION, TURN)
-  return { controller, capturedFtCtx, transcriptCapture, emitted, flushed, emitter, deps }
+  return {
+    controller,
+    capturedFtCtx,
+    transcriptCapture,
+    emitted,
+    flushed,
+    emitter,
+    deps,
+    scribePayloads: scribeCapture.payloads,
+    injections,
+  }
 }
 
 describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
@@ -311,13 +337,16 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(fusedAnywhere).toBe(false)
   })
 
-  it('has no `st` tier dep: the FT (besides the Scribe) is the only tier invoked', async () => {
+  it('has no `st`/`scribe` tier dep: the FT is the only on-path reasoning tier', async () => {
     const { controller, capturedFtCtx, deps } = build()
     await controller.loadFromRedis()
     await controller.processDmTurn(1)
 
-    // Type-level + runtime: the post-hoc model removed the in-turn ST seam.
+    // Type-level + runtime: the post-hoc model removed the in-turn ST seam, and
+    // MYT-73 retired the fire-and-forget on-path Scribe seam (it is a post-turn
+    // job now — the controller carries only the `scribeQueue` producer).
     expect('st' in deps).toBe(false)
+    expect('scribe' in deps).toBe(false)
     // The FT still ran (it captured the ctx + drove the emitter); that is the
     // only reasoning tier on the turn path now.
     expect(capturedFtCtx.ctx).toBeDefined()
@@ -505,16 +534,82 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(flushed.value).toEqual<FlushedTurnState>({ usage: { input: 11, output: 13 } })
   })
 
-  it('does not throw out of processDmTurn when the Scribe rejects; logger.warn is called', async () => {
-    const warn = vi.fn()
-    const { controller } = build({ scribe: rejectingScribe(), logger: { warn } })
+  // ── MYT-73 §2.4 — the post-turn Scribe job assembly + enqueue ─────────────
+  it('enqueueScribeJob enqueues ONE job whose prose is the joined text parts, worldDelta is null when absent, and injections is the threaded array', async () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'The room is silent.' },
+        { kind: 'tool_call', toolCallId: 'tc1', toolName: 'roll_dice', input: { sides: 20 } },
+        { kind: 'tool_result', toolCallId: 'tc1', toolName: 'roll_dice', output: { total: 14 } },
+        { kind: 'text', text: 'A draft stirs the dust.' },
+      ],
+      usage: { input: 5, output: 7 },
+    }
+    const { controller, scribePayloads, injections } = build({ assistant })
     await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.enqueueScribeJob()
 
-    await expect(controller.processDmTurn(1)).resolves.toBeUndefined()
-    // Let the fire-and-forget rejection settle.
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(warn).toHaveBeenCalled()
+    expect(scribePayloads).toHaveLength(1)
+    const payload = scribePayloads[0]
+    // The tripwire input is the player-facing text parts ONLY (tool_call /
+    // tool_result rows are dropped), joined with a blank line.
+    expect(payload?.prose).toBe('The room is silent.\n\nA draft stirs the dust.')
+    expect(payload?.campaignId).toBe(CAMPAIGN)
+    expect(payload?.sessionId).toBe(SESSION)
+    expect(payload?.turnId).toBe(TURN)
+    expect(payload?.worldId).toBe('world-ctrl-1')
+    // No worldDelta on the render → the payload carries null (not undefined).
+    expect(payload?.worldDelta).toBeNull()
+    // The injections sink is threaded straight through (same array reference).
+    expect(payload?.injections).toBe(injections)
+  })
+
+  it('threads the FT render worldDelta onto the payload when present', async () => {
+    const worldDelta: WorldDelta = {
+      facts: [{ subject: 'the locked door', content: 'It bears a wax seal.', kind: 'fact' }],
+    }
+    const withDelta: AssistantMessage = {
+      role: 'assistant',
+      parts: [{ kind: 'text', text: 'You note the door.' }],
+      usage: { input: 1, output: 1 },
+      worldDelta,
+    }
+    const { controller, scribePayloads } = build({ assistant: withDelta })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.enqueueScribeJob()
+
+    expect(scribePayloads[0]?.worldDelta).toEqual(worldDelta)
+  })
+
+  it('carries an injection pushed onto the threaded array into the enqueued payload (the FtToolDeps sink)', async () => {
+    const injections: WorkingSetProposal[] = []
+    const { controller, scribePayloads } = build({ injections })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    // A mid-turn ST-vet relay recorded into the same sink the FT tools push to.
+    const injected: WorkingSetProposal = {
+      kind: 'fact',
+      content: 'The captain served in the northern wars.',
+      subjectName: 'the captain',
+      tier: 'known',
+      provenance: { kind: 'objective' },
+      source: 'st_injection',
+    }
+    injections.push(injected)
+    await controller.enqueueScribeJob()
+
+    expect(scribePayloads[0]?.injections).toEqual([injected])
+  })
+
+  it('enqueueScribeJob is a no-op before the assistant renders (assistant === null)', async () => {
+    const { controller, scribePayloads } = build()
+    await controller.loadFromRedis()
+    // No processDmTurn → assistant is still null → nothing enqueued.
+    await controller.enqueueScribeJob()
+    expect(scribePayloads).toHaveLength(0)
   })
 
   it('propagates TranscriptCorruptError from the codec out of processDmTurn (crash-loud)', async () => {

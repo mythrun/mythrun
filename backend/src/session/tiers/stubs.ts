@@ -2,41 +2,26 @@
 //
 // MYT-66 Task 4 — placeholder tier implementations.
 //
-// The real Fast Thinker + Scribe (Anthropic-backed) land in MYT-68/69. Until
-// then the turn loop needs SOMETHING implementing each seam interface so the
-// controller, queue, worker, and pub/sub broadcast can be wired and smoked
-// end-to-end without spending tokens. These stubs are deterministic and
-// side-effect-free: the FT emits one canned delta then returns one canned line,
-// the Scribe is a no-op. They read the same public-by-construction
-// `FtTurnContext` the real tiers will (the parameter is underscore-named here
-// only because these placeholders ignore it; fewer params still structurally
-// satisfies the interface signatures in types.ts).
+// The real Fast Thinker (Anthropic-backed) landed in MYT-68. The remaining stub
+// lets the turn loop (controller, queue, worker, pub/sub broadcast) be wired and
+// smoked end-to-end without spending tokens. The stub is deterministic and
+// side-effect-free: the FT emits one canned delta then returns one canned line.
+// It reads the same public-by-construction `FtTurnContext` the real tier does
+// (the parameter is underscore-named here only because this placeholder ignores
+// it; fewer params still structurally satisfies the interface signature in
+// types.ts).
 //
-// MYT-69: the in-turn SlowThinker seam is retired (the ST runs off the turn
-// path in its own worker), so `StubSlowThinker` is gone — there is no FT-path
-// ST tier left to stub.
+// MYT-69: the in-turn SlowThinker seam was retired (the ST runs off the turn
+// path in its own worker), so `StubSlowThinker` is gone. MYT-73: the on-path
+// Scribe seam was retired too (the Scribe is a post-turn job), so `StubScribe`
+// is gone — only the FT tier is left to stub.
 
-import type {
-  AssistantMessage,
-  FastThinker,
-  FtTurnContext,
-  Scribe,
-  ScribeResult,
-  TurnEmitter,
-} from './types.js'
+import type { AssistantMessage, FastThinker, FtTurnContext, TurnEmitter } from './types.js'
 
 /** Emits exactly one canned text delta, then returns one canned assistant line. */
 export class StubFastThinker implements FastThinker {
   async render(_ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> {
     await emit.emitText('(the DM considers the scene…)')
     return { role: 'assistant', parts: [{ kind: 'text', text: '(the DM responds.)' }] }
-  }
-}
-
-/** No-op: produces no working-set deltas for the controller to flush (H9). */
-export class StubScribe implements Scribe {
-  extract(_ctx: FtTurnContext): Promise<ScribeResult> {
-    void _ctx
-    return Promise.resolve({ workingSetDeltas: [] })
   }
 }
