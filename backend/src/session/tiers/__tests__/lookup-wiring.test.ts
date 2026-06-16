@@ -264,7 +264,7 @@ describe('buildLookupDeps — search logger forwarder', () => {
     }
     const result = buildLookupDeps(wiringDeps, args)
 
-    const hits = await result.search.searchLore(WORLD_ID, 'the docks', {})
+    const { hits } = await result.search.searchLore(WORLD_ID, 'the docks', {})
 
     // TOTAL: degraded to [] rather than throwing into the FT…
     expect(hits).toEqual([])

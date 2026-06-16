@@ -118,7 +118,7 @@ async function main(): Promise<void> {
 
     // READ PATH — real Voyage query embedding → cosine search.
     const { searchLore } = createSearchResolvers({ embedder, repo, logger })
-    const hits = await searchLore(worldId, QUERY, { limit: 10 })
+    const { hits } = await searchLore(worldId, QUERY, { limit: 10 })
     log('searchLore returned', { count: hits.length, hits: hits.map((h) => ({ name: h.entityName, source: h.source, score: Number(h.score.toFixed(4)) })) })
 
     if (hits.length === 0) throw new Error('searchLore returned no hits — pgvector round-trip failed')

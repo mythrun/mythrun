@@ -136,7 +136,12 @@ describe('searchLore (MYT-71 T7)', () => {
         entityHit({ entity_id: 'e1', name: 'Mara', entity_type: 'npc', score: 0.9 }),
       ],
     })
-    const hits = await createSearchResolvers(makeDeps({ repo: fake.repo })).searchLore('w', 'q', {})
+    const { hits, queryVec } = await createSearchResolvers(makeDeps({ repo: fake.repo })).searchLore('w', 'q', {})
+
+    // searchLore RETURNS the embedded query vector it computed (T5 widening) so
+    // the MYT-73 working-set merge can cosine-rank against it without a 2nd
+    // Voyage call. Here the stub embedder returns [1,0,0]; the vector echoes it.
+    expect(queryVec).toEqual([1, 0, 0])
 
     // Both a fact AND an entity appear.
     expect(hits.some((h) => h.source === 'fact')).toBe(true)
@@ -180,6 +185,20 @@ describe('searchLore (MYT-71 T7)', () => {
     expect(fake.capturedOpts?.hnswIterativeScan).toBe('relaxed_order')
   })
 
+  it('returns the EMBED_DIM-length (512) query vector it embedded (T5 widening)', async () => {
+    // The real Voyage embedder returns EMBED_DIM (512) numbers; searchLore must
+    // hand that exact vector back so the working-set merge (MYT-73 T8) can
+    // cosine-rank against the SAME query vector with no second Voyage call.
+    const vec512 = Array.from({ length: 512 }, (_v, i) => i / 512)
+    const fake = makeFakeRepo({ facts: [], entities: [] })
+    const resolvers = createSearchResolvers(
+      makeDeps({ repo: fake.repo, embedder: stubEmbedder(() => Promise.resolve(vec512)) }),
+    )
+    const { queryVec } = await resolvers.searchLore('w', 'q', {})
+    expect(queryVec).toHaveLength(512)
+    expect(queryVec).toEqual(vec512)
+  })
+
   it('over-pulls all three access tiers (no access_level filter)', async () => {
     const fake = makeFakeRepo({
       facts: [
@@ -189,7 +208,7 @@ describe('searchLore (MYT-71 T7)', () => {
       ],
       entities: [],
     })
-    const hits = await createSearchResolvers(makeDeps({ repo: fake.repo })).searchLore('w', 'q', {})
+    const { hits } = await createSearchResolvers(makeDeps({ repo: fake.repo })).searchLore('w', 'q', {})
     const tiers = new Set(hits.filter((h) => h.source === 'fact').map((h) => h.accessLevel))
     expect(tiers).toEqual(new Set(['known', 'discoverable', 'secret']))
   })
@@ -204,15 +223,17 @@ describe('searchLore (MYT-71 T7)', () => {
         logger,
       }),
     )
-    expect(await resolvers.searchLore('w', 'q', {})).toEqual([])
+    // On the catch arm the result is { hits: [], queryVec: [] } (no vector was
+    // ever produced — the embed itself rejected).
+    expect(await resolvers.searchLore('w', 'q', {})).toEqual({ hits: [], queryVec: [] })
     expect(logger.warn).toHaveBeenCalledTimes(1)
   })
 
-  it('returns [] and logs warn when the vector query throws (totality)', async () => {
+  it('returns empty hits + empty queryVec and logs warn when the vector query throws (totality)', async () => {
     const fake = makeFakeRepo({ factsError: new Error('cast error'), entities: [] })
     const logger = stubLogger()
     const resolvers = createSearchResolvers(makeDeps({ repo: fake.repo, logger }))
-    expect(await resolvers.searchLore('w', 'q', {})).toEqual([])
+    expect(await resolvers.searchLore('w', 'q', {})).toEqual({ hits: [], queryVec: [] })
     expect(logger.warn).toHaveBeenCalledTimes(1)
   })
 
@@ -224,7 +245,7 @@ describe('searchLore (MYT-71 T7)', () => {
     const fake = makeFakeRepo({ facts, entities: [] })
     const resolvers = createSearchResolvers(makeDeps({ repo: fake.repo }))
 
-    const limited = await resolvers.searchLore('w', 'q', { limit: 3 })
+    const { hits: limited } = await resolvers.searchLore('w', 'q', { limit: 3 })
     expect(limited).toHaveLength(3)
     // The per-arm limit passed to the binder is the requested limit.
     expect(fake.searchFacts).toHaveBeenLastCalledWith('w', expect.any(String), 3)

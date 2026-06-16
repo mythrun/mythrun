@@ -16,10 +16,13 @@
 import type { AccessLevel, NarrativeStatus } from '../../repo/facts.js'
 import type { EntityType } from '../../repo/entities.js'
 import type { GraphEntityType } from '../../repo/world-retrieval.js'
+import type { WorkingSetProvenance } from '../../session/working-set/types.js'
 
-/** One hit from searchLore — either a fact row or an entity (name/kernel) row. */
+/** One hit from searchLore — a fact row, an entity (name/kernel) row, or a
+ *  session working-set item (MYT-73). Working-set hits carry `provenance` (an
+ *  NPC-attributed claim vs an objective in-world fact). */
 export interface LoreHit {
-  readonly source: 'fact' | 'entity'
+  readonly source: 'fact' | 'entity' | 'working_set'
   readonly factId?: string
   readonly entityId: string
   readonly entityName: string
@@ -28,6 +31,9 @@ export interface LoreHit {
   readonly accessLevel: AccessLevel
   readonly narrativeStatus?: NarrativeStatus
   readonly score: number
+  /** Set only on `source:'working_set'` hits — where the invented fact came
+   *  from narratively (objective vs NPC-attributed). MYT-73. */
+  readonly provenance?: WorkingSetProvenance
 }
 
 /** One candidate from findSimilarEntities (match-vs-mint input). */

@@ -232,7 +232,7 @@ async function main(): Promise<void> {
     // ── (1) search_lore, DM channel — real Voyage over-pull (incl. secret fact)
     //        → real Haiku gate → real Opus vet → relay. No secret may leak. ──
     const searchResolve: SubstrateResolver = async () => {
-      const hits = await searchLore(worldId as string, 'the dragon of Mount Caldera and its true name', { limit: 10 })
+      const { hits } = await searchLore(worldId as string, 'the dragon of Mount Caldera and its true name', { limit: 10 })
       return {
         results: hits.map((h) => `[tier=${h.accessLevel}] ${h.entityName}: ${h.content}`).join('\n'),
         degraded: false,

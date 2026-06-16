@@ -689,7 +689,7 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         // gap). The GRAPH closures (below) carry the real degraded signal; the
         // ST-vet's `none` arbitration handles a benign empty result.
         const resolve: SubstrateResolver = async () => {
-          const hits = await deps.search.searchLore(deps.worldId, topic, {})
+          const { hits } = await deps.search.searchLore(deps.worldId, topic, {})
           return { results: renderLoreHits(hits), degraded: false, empty: hits.length === 0 }
         }
         return runLookup(deps, rng, abortSignal, {

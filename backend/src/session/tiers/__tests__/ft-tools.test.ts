@@ -180,7 +180,7 @@ function passthroughTx(ledger: LedgerOps): LedgerTxRunner {
  *  per test). findSimilarEntities is unused by the lookup tools. */
 function fakeSearch(overrides: Partial<SearchResolvers> = {}): SearchResolvers {
   return {
-    searchLore: vi.fn().mockResolvedValue([]),
+    searchLore: vi.fn().mockResolvedValue({ hits: [], queryVec: [] }),
     findSimilarEntities: vi.fn().mockResolvedValue([]),
     ...overrides,
   }
@@ -1377,9 +1377,12 @@ describe('search_lore execute', () => {
 
   it('dm channel: resolves the PC, builds a search closure, returns the reserved-keys relay', async () => {
     mockRunWorldFactLookup.mockResolvedValue(RELAY)
-    const searchLore = vi.fn().mockResolvedValue([
-      { source: 'fact', entityId: 'e1', entityName: 'Ashen Compact', content: 'A pact.', accessLevel: 'known', score: 0.9 },
-    ])
+    const searchLore = vi.fn().mockResolvedValue({
+      hits: [
+        { source: 'fact', entityId: 'e1', entityName: 'Ashen Compact', content: 'A pact.', accessLevel: 'known', score: 0.9 },
+      ],
+      queryVec: [],
+    })
     const character = makeCharacter()
     const mech = foundMech(character, [{ skill_name: 'History', proficiency_level: 'proficient' }])
     const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }) }))
@@ -1480,7 +1483,7 @@ describe('search_lore execute', () => {
 
   it('search closure surfaces an EMPTY pull with degraded:false (v1 search-channel asymmetry)', async () => {
     mockRunWorldFactLookup.mockResolvedValue(RELAY)
-    const searchLore = vi.fn().mockResolvedValue([]) // total-swallow can't report degraded
+    const searchLore = vi.fn().mockResolvedValue({ hits: [], queryVec: [] }) // total-swallow can't report degraded
     const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
     const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }) }))
     const exec = requireExecute(buildFtTools(deps), 'search_lore')
@@ -1932,9 +1935,12 @@ describe('lookup tools — structural enforced ignorance + registration', () => 
     mockRunWorldFactLookup.mockResolvedValue(RELAY)
     // searchLore returns a SECRET-tier line; if the tool leaked the results block
     // the assertion below would catch it. The tool only ever returns out.relayText.
-    const searchLore = vi.fn().mockResolvedValue([
-      { source: 'fact', entityId: 'e', entityName: 'X', content: 'A SECRET FACT', accessLevel: 'secret', score: 1 },
-    ])
+    const searchLore = vi.fn().mockResolvedValue({
+      hits: [
+        { source: 'fact', entityId: 'e', entityName: 'X', content: 'A SECRET FACT', accessLevel: 'secret', score: 1 },
+      ],
+      queryVec: [],
+    })
     const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
     const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }) }))
     const exec = requireExecute(buildFtTools(deps), 'search_lore')

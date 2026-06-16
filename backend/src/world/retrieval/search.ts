@@ -61,12 +61,21 @@ export interface FindSimilarOpts {
   readonly entityType?: EntityType
 }
 
+/** searchLore result: the ranked hits PLUS the query vector it embedded. The
+ *  MYT-73 working-set merge cosine-ranks invented facts against this SAME
+ *  vector, avoiding a second Voyage call. On the swallowed-failure arm both
+ *  fields are empty (`{ hits: [], queryVec: [] }`). */
+export interface SearchLoreResult {
+  readonly hits: LoreHit[]
+  readonly queryVec: readonly number[]
+}
+
 export interface SearchResolvers {
   searchLore: (
     worldId: string,
     queryText: string,
     opts: SearchLoreOpts,
-  ) => Promise<LoreHit[]>
+  ) => Promise<SearchLoreResult>
   findSimilarEntities: (
     worldId: string,
     text: string,
@@ -138,14 +147,17 @@ export function createSearchResolvers(deps: SearchDeps): SearchResolvers {
   /**
    * Cosine-rank facts ∪ entities for a world. Embeds the query (outside the tx),
    * over-pulls both arms at the (clamped) limit, merges + re-ranks by score
-   * DESC, and slices to the limit. TOTAL: any throw → warn + []. PCs excluded
-   * by the binder; all access tiers over-pulled.
+   * DESC, and slices to the limit. RETURNS the embedded query vector alongside
+   * the hits so the MYT-73 working-set merge can cosine-rank invented facts
+   * against the SAME vector (no second Voyage call). TOTAL: any throw → warn +
+   * `{ hits: [], queryVec: [] }`. PCs excluded by the binder; all access tiers
+   * over-pulled.
    */
   async function searchLore(
     worldId: string,
     queryText: string,
     opts: SearchLoreOpts,
-  ): Promise<LoreHit[]> {
+  ): Promise<SearchLoreResult> {
     const limit = resolveLimit(opts.limit)
     try {
       const vec = await embedder.embedQuery(queryText)
@@ -161,10 +173,10 @@ export function createSearchResolvers(deps: SearchDeps): SearchResolvers {
       const [facts, entities] = expectCommitted(result)
       const merged = [...facts.map(factToHit), ...entities.map(entityToHit)]
       merged.sort((a, b) => b.score - a.score)
-      return merged.slice(0, limit)
+      return { hits: merged.slice(0, limit), queryVec: vec }
     } catch (err) {
       logger.warn({ err, worldId }, 'searchLore failed; returning empty')
-      return []
+      return { hits: [], queryVec: [] }
     }
   }
 
