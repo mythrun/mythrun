@@ -60,6 +60,7 @@ import {
 } from '../../llm/ai.js'
 import { LlmTimeoutError } from '../../llm/errors.js'
 import { loadPrompt } from '../../llm/prompts.js'
+import { WorldDeltaSchema, type WorldDelta } from '../../llm/schemas/world-delta.js'
 import { FT_MODEL, FT_MAX_TOOL_STEPS, FT_TURN_TIMEOUT_MS, FT_CLOSE_INSTRUCTION } from '../ft-config.js'
 import type {
   FastThinker,
@@ -463,6 +464,167 @@ async function emitLedgerUpdates(out: Record<string, unknown>, emit: TurnEmitter
   await emit.emitLedgerUpdate(toLedgerUpdatePayload(rec))
 }
 
+// ── §4.2 WORLD_DELTA delimiter-guard ─────────────────────────────────────────
+
+/** The newline-anchored target literal. The leading `\n` is PART of the match,
+ *  so a mid-sentence `[` (not preceded by a newline) can never arm the guard. */
+const WORLD_DELTA_DELIMITER = '\n[[WORLD_DELTA]]'
+
+/** KMP failure function for an arbitrary literal — `fail[i]` is the length of
+ *  the longest proper prefix of `literal[0..i]` that is also a suffix of it.
+ *  The guard uses it to RE-ANCHOR on a diverging char without re-feeding any
+ *  character: when an extension fails at match length `m`, we fall back to
+ *  `fail[m-1]` and retry, so a `[` inside a partial `\n[[` still counts as a
+ *  fresh match start. EXPORTED for tests — the general border-walk is exercised
+ *  with a repeated-prefix literal there (the fixed delimiter's table is all
+ *  zeros, so its construction alone never enters the inner loop). */
+export function buildKmpFailure(literal: string): readonly number[] {
+  const fail: number[] = new Array<number>(literal.length).fill(0)
+  let len = 0
+  for (let i = 1; i < literal.length; i++) {
+    while (len > 0 && literal[i] !== literal[len]) {
+      // `fail[len-1]` is always in-bounds (`len < i < length`); the `?? 0` is
+      // `noUncheckedIndexedAccess` ceremony that is never taken at runtime.
+      /* v8 ignore next */
+      len = fail[len - 1] ?? 0
+    }
+    if (literal[i] === literal[len]) len++
+    fail[i] = len
+  }
+  return fail
+}
+
+const WORLD_DELTA_FAILURE = buildKmpFailure(WORLD_DELTA_DELIMITER)
+
+/**
+ * §4.2 — a stateful char-by-char filter on the FT's text-delta substream. It
+ * sits between the stream and BOTH downstream sinks (the assembler's
+ * `pushTextDelta` AND `emit.emitText`): only the PRE-delimiter prose reaches
+ * either sink; everything from the literal onward is suppressed and the
+ * trailing JSON is captured into `deltaAccumulator` for parsing at finalize.
+ *
+ * STATE (persists across deltas AND across step/tool boundaries within one
+ * render):
+ *   - `matchLen`: how many chars of the literal the current hold buffer matches.
+ *     The hold buffer is therefore `WORLD_DELTA_DELIMITER.slice(0, matchLen)` —
+ *     we never store it separately. While `matchLen > 0` those chars are held
+ *     back (NOT yet flushed) because they might complete the literal.
+ *   - `captured`: once the full literal matched, every subsequent char is routed
+ *     to `deltaAccumulator` and NOTHING reaches the sinks.
+ *
+ * The sink is a single callback fed pre-delimiter prose; the caller wires it to
+ * push to BOTH the assembler and the live emit so the guard can't be defeated
+ * by guarding only one side (the load-bearing requirement).
+ */
+class WorldDeltaGuard {
+  private matchLen = 0
+  private captured = false
+  private accumulator = ''
+  /** Committed prose that immediately PRECEDES an in-progress partial match and
+   *  is therefore withheld so it coalesces with the partial when it resolves
+   *  (diverge / complete / tool-boundary / stream-end). Empty whenever
+   *  `matchLen === 0`. */
+  private heldProse = ''
+
+  /** Feed one text-delta chunk. `sink` receives ONLY the pre-delimiter prose
+   *  that survives the filter — coalesced (we never split a clean delta into
+   *  per-char emissions, and a held prefix flushes WITH the prose it precedes).
+   *  Async because the live emit is async; we await each flush so emission stays
+   *  ordered. */
+  async feed(text: string, sink: (out: string) => Promise<void>): Promise<void> {
+    if (this.captured) {
+      this.accumulator += text
+      return
+    }
+    // Surviving prose carried so far this feed (prepended by any heldProse from
+    // a prior feed that ended mid-match). Flushed as ONE chunk unless a partial
+    // match is still pending at feed end, in which case it becomes heldProse.
+    let survived = this.heldProse
+    this.heldProse = ''
+    // `for...of` over the string yields each char by VALUE (no indexed access);
+    // `consumed` tracks the UTF-16 length walked so the capture-completion arm
+    // can slice the remaining delta body. The literal is pure ASCII, so a
+    // surrogate-pair char can never match it — it always falls to plain prose.
+    let consumed = 0
+    for (const ch of text) {
+      consumed += ch.length
+      // Try to extend the current match; on mismatch, KMP-fall-back through
+      // shorter borders. Prefix chars that fall OUT of every candidate match
+      // are committed prose (they can no longer begin the literal).
+      while (this.matchLen > 0 && ch !== WORLD_DELTA_DELIMITER[this.matchLen]) {
+        // `matchLen-1` is always in-bounds; the `?? 0` is `noUncheckedIndexedAccess`
+        // ceremony that is never taken at runtime.
+        /* v8 ignore next */
+        const fallback = WORLD_DELTA_FAILURE[this.matchLen - 1] ?? 0
+        survived += WORLD_DELTA_DELIMITER.slice(0, this.matchLen - fallback)
+        this.matchLen = fallback
+      }
+      if (ch === WORLD_DELTA_DELIMITER[this.matchLen]) {
+        this.matchLen++
+        if (this.matchLen === WORLD_DELTA_DELIMITER.length) {
+          // Full literal matched: from here on, capture (NOTHING reaches sinks).
+          this.captured = true
+          this.matchLen = 0
+          this.accumulator += text.slice(consumed)
+          if (survived !== '') await sink(survived)
+          return
+        }
+        continue
+      }
+      // `ch` matches no prefix position (matchLen is 0 here) → plain prose.
+      survived += ch
+    }
+    // A partial match is still pending → withhold the surviving prose so it
+    // coalesces with the partial (or with the next feed's prose) when resolved.
+    if (this.matchLen > 0) {
+      this.heldProse = survived
+      return
+    }
+    if (survived !== '') await sink(survived)
+  }
+
+  /** A tool-call / tool-result / step boundary arrived. A delimiter can't
+   *  straddle a tool call, so any held partial (plus the prose it withheld) is
+   *  committed prose — flush it together. No-op once captured (the delta body
+   *  never resumes through a tool). */
+  async flushPending(sink: (out: string) => Promise<void>): Promise<void> {
+    if (this.captured) return
+    if (this.matchLen === 0 && this.heldProse === '') return
+    const out = this.heldProse + WORLD_DELTA_DELIMITER.slice(0, this.matchLen)
+    this.matchLen = 0
+    this.heldProse = ''
+    if (out !== '') await sink(out)
+  }
+
+  /** Stream end: a partial literal that never completed (plus its withheld
+   *  prose) is committed prose. */
+  async finishStream(sink: (out: string) => Promise<void>): Promise<void> {
+    await this.flushPending(sink)
+  }
+
+  /** Parse the captured delta body (if any). Empty/whitespace-only → no delta,
+   *  no warn (the FT armed the section but produced no body). `JSON.parse` +
+   *  `WorldDeltaSchema.safeParse`; either failure → undefined + a warn (fail-
+   *  soft — the prose already shipped). */
+  parse(logger?: { warn: (o: Record<string, unknown>, m: string) => void }): WorldDelta | undefined {
+    const body = this.accumulator.trim()
+    if (body === '') return undefined
+    let json: unknown
+    try {
+      json = JSON.parse(body)
+    } catch (err) {
+      logger?.warn({ err: String(err) }, 'ft: WORLD_DELTA section is not valid JSON; dropping delta')
+      return undefined
+    }
+    const result = WorldDeltaSchema.safeParse(json)
+    if (!result.success) {
+      logger?.warn({ issues: result.error.issues }, 'ft: WORLD_DELTA section failed schema; dropping delta')
+      return undefined
+    }
+    return result.data
+  }
+}
+
 // ── Stream-part assembly helpers ─────────────────────────────────────────────
 
 /** Mutable accumulator for the returned AssistantMessage parts. Text deltas
@@ -547,6 +709,15 @@ export class SonnetFastThinker implements FastThinker {
     })
 
     const assembler = new PartsAssembler()
+    // §4.2 delimiter-guard: a single stateful filter on the text-delta substream
+    // feeding BOTH sinks. Pre-delimiter prose flows to the assembler (→ persisted
+    // dm_text + re-injected FT history) AND the live emit; the `\n[[WORLD_DELTA]]`
+    // section + its JSON body are suppressed from BOTH and captured for parse.
+    const deltaGuard = new WorldDeltaGuard()
+    const sink = async (out: string): Promise<void> => {
+      assembler.pushTextDelta(out)
+      await emit.emitText(out)
+    }
     // Track each pending tool-call's input by id so a roll_dice result can
     // fall back to it for count/sides.
     const pendingInputs = new Map<string, Record<string, unknown>>()
@@ -562,12 +733,17 @@ export class SonnetFastThinker implements FastThinker {
       }
 
       if (part.type === 'text-delta') {
-        assembler.pushTextDelta(part.text)
-        await emit.emitText(part.text)
+        // Route through the guard, NOT directly to the sinks — it strips the
+        // newline-anchored delta section before either the player or the
+        // transcript sees it. Guard state persists across deltas + steps.
+        await deltaGuard.feed(part.text, sink)
         continue
       }
 
       if (part.type === 'tool-call') {
+        // A delimiter can't straddle a tool call — flush any held partial as
+        // prose before the tool boundary closes the text run.
+        await deltaGuard.flushPending(sink)
         const input = asRecord(part.input)
         pendingInputs.set(part.toolCallId, input)
         assembler.pushToolCall(part.toolCallId, part.toolName, part.input)
@@ -575,6 +751,7 @@ export class SonnetFastThinker implements FastThinker {
       }
 
       if (part.type === 'tool-result') {
+        await deltaGuard.flushPending(sink)
         assembler.pushToolResult(part.toolCallId, part.toolName, part.output)
         await this.emitFrameForResult(part.toolName, part.output, pendingInputs.get(part.toolCallId), emit)
         continue
@@ -583,10 +760,16 @@ export class SonnetFastThinker implements FastThinker {
       // reasoning, tool-input-*) carry no player-visible payload — ignore.
     }
 
+    // Stream end: a partial literal that never completed is committed prose.
+    await deltaGuard.finishStream(sink)
+
     const totalUsage = await stream.totalUsage
     const usage = mapUsage(totalUsage)
     const parts = assembler.finalize(this.logger)
-    return { role: 'assistant', parts, usage }
+    const worldDelta = deltaGuard.parse(this.logger)
+    return worldDelta === undefined
+      ? { role: 'assistant', parts, usage }
+      : { role: 'assistant', parts, usage, worldDelta }
   }
 
   private async emitFrameForResult(

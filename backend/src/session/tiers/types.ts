@@ -36,6 +36,14 @@
 export type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
 import type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
 
+/** MYT-73 §4.2 — the per-turn world delta the Fast Thinker appends after its
+ *  player-facing prose on a newline-anchored `\n[[WORLD_DELTA]]\n{json}` section.
+ *  Public-by-construction (the FT has no secrets); the parser stamps
+ *  `tier:'known'` downstream (the schema has no tier field). Re-exported here so
+ *  the tier layer has ONE import point. */
+export type { WorldDelta } from '../../llm/schemas/world-delta.js'
+import type { WorldDelta } from '../../llm/schemas/world-delta.js'
+
 /** The post-mutation values the FT needs to narrate concretely (constraint-
  *  injection: the resolver owns the outcome, the FT owns the telling). One
  *  flat shape — `kind` discriminates which optional values are populated,
@@ -199,6 +207,14 @@ export interface AssistantMessage {
   readonly parts: readonly ContentPart[]
   /** totalUsage of the whole tool loop (all steps). */
   readonly usage?: TokenUsage
+  /** MYT-73 §4.2 — the parsed `[[WORLD_DELTA]]` section the FT appended after its
+   *  prose (the new named entities/facts introduced this turn, for the working
+   *  set). The delimiter-guard strips the raw section from BOTH the live player
+   *  stream AND the persisted transcript / re-injected FT history, so it never
+   *  reaches `parts`; this is where the parsed result rides instead. Absent when
+   *  the FT emitted no section, or when the section was present but unparseable
+   *  (fail-soft — the prose still ships). */
+  readonly worldDelta?: WorldDelta
 }
 
 export interface FastThinker {

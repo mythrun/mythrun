@@ -24,6 +24,7 @@ import type {
   ConversationMessage,
   PartyLedgerSnapshot,
 } from '../types.js'
+import { assistantToRows } from '../../transcript-codec.js'
 
 const streamTextMock = vi.fn()
 
@@ -35,7 +36,9 @@ vi.mock('ai', async (importOriginal) => {
   }
 })
 
-const { SonnetFastThinker, buildModelMessages, formatPartyLedger } = await import('../fast-thinker.js')
+const { SonnetFastThinker, buildModelMessages, formatPartyLedger, buildKmpFailure } = await import(
+  '../fast-thinker.js'
+)
 
 // A §7 party-ledger snapshot fixture carrying the showstopper-fix NOUNS:
 // a named spell, a named equipment item, a slot ledger, conditions, and a
@@ -980,6 +983,258 @@ describe('SonnetFastThinker.render', () => {
     expect(seenPayload.featureName).toBe('Channel Divinity')
     expect(seenPayload.usesRemaining).toBe(0)
   })
+
+  // ── MYT-73 Task 7: the `[[WORLD_DELTA]]` delimiter-guard (§4.2) ─────────────
+
+  // The load-bearing requirement: the guard must strip the newline-anchored
+  // `\n[[WORLD_DELTA]]\n{json}` section from BOTH sinks — the live player stream
+  // (emitText) AND the assembled text part (which becomes the persisted dm_text
+  // transcript row + re-injects into FT history). The delta is parsed onto
+  // `worldDelta` instead.
+
+  /** Join all emitted text payloads in order — the live player stream. */
+  function emittedText(seen: { kind: string; payload: unknown }[]): string {
+    return seen
+      .filter((e) => e.kind === 'text')
+      .map((e) => e.payload as string)
+      .join('')
+  }
+
+  it('30. delimiter section is stripped from BOTH the player stream AND the transcript; worldDelta parses', async () => {
+    const delta = '{"facts":[{"subject":"The Salt Wife","content":"a tavern","kind":"entity"}]}'
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'The door creaks open.\n' },
+      { type: 'text-delta', id: '1', text: `[[WORLD_DELTA]]\n${delta}` },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    // (a) Live player stream: no emitted text contains the delimiter literal.
+    for (const e of seen) {
+      if (e.kind === 'text') expect(e.payload as string).not.toContain('[[')
+    }
+    // The pre-delimiter prose IS emitted (the trailing \n before the delimiter
+    // belongs to the literal match and is held back — see test 33).
+    expect(emittedText(seen)).toBe('The door creaks open.')
+
+    // (b) worldDelta parses to the fact the FT introduced.
+    expect(msg.worldDelta).toEqual({
+      facts: [{ subject: 'The Salt Wife', content: 'a tavern', kind: 'entity' }],
+    })
+
+    // (c) THE TRANSCRIPT-LEVEL ASSERTION (load-bearing): the assembled text part
+    // and the persisted dm_text rows contain NEITHER the delimiter NOR the JSON.
+    const assembledText = msg.parts
+      .filter((p): p is Extract<(typeof msg.parts)[number], { kind: 'text' }> => p.kind === 'text')
+      .map((p) => p.text)
+      .join('')
+    expect(assembledText).toBe('The door creaks open.')
+    expect(assembledText).not.toContain('[[WORLD_DELTA]]')
+    expect(assembledText).not.toContain('The Salt Wife')
+
+    const rows = assistantToRows(msg)
+    for (const row of rows) {
+      expect(row.content).not.toContain('[[WORLD_DELTA]]')
+      expect(row.content).not.toContain('"facts"')
+      expect(row.content).not.toContain('The Salt Wife')
+    }
+  })
+
+  it('31. a literal mid-sentence `[` / `=` that is NOT the delimiter streams normally (no false arm)', async () => {
+    // A `[` mid-sentence (not newline-anchored + not the full literal) must pass
+    // through to both sinks untouched.
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'She wrote [redacted] on the ledger; x = 5 marks.' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('She wrote [redacted] on the ledger; x = 5 marks.')
+    expect(msg.parts).toEqual([
+      { kind: 'text', text: 'She wrote [redacted] on the ledger; x = 5 marks.' },
+    ])
+    expect(msg.worldDelta).toBeUndefined()
+  })
+
+  it('31b. a newline followed by a single `[` that does NOT continue the literal re-anchors and streams (KMP re-anchor)', async () => {
+    // `\n[Note: ...]` shares the `\n[` prefix of `\n[[WORLD_DELTA]]` but diverges
+    // at the SECOND char (`N` ≠ `[`). The whole run must flush as prose.
+    mockResult([{ type: 'text-delta', id: '1', text: 'A list:\n[Note: keep moving]' }])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('A list:\n[Note: keep moving]')
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'A list:\n[Note: keep moving]' }])
+    expect(msg.worldDelta).toBeUndefined()
+  })
+
+  it('32. delimiter split across TWO text-delta chunks is still caught', async () => {
+    const delta = '{"facts":[{"subject":"Maren Osk","content":"the matriarch","kind":"entity"}]}'
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Prose here.\n[[WORLD' },
+      { type: 'text-delta', id: '1', text: `_DELTA]]\n${delta}` },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('Prose here.')
+    for (const e of seen) {
+      if (e.kind === 'text') expect(e.payload as string).not.toContain('[[')
+    }
+    const assembledText = msg.parts
+      .filter((p): p is Extract<(typeof msg.parts)[number], { kind: 'text' }> => p.kind === 'text')
+      .map((p) => p.text)
+      .join('')
+    expect(assembledText).toBe('Prose here.')
+    expect(assembledText).not.toContain('WORLD_DELTA')
+    expect(msg.worldDelta).toEqual({
+      facts: [{ subject: 'Maren Osk', content: 'the matriarch', kind: 'entity' }],
+    })
+  })
+
+  it('33. no delimiter: the WHOLE stream is emitted + assembled, worldDelta undefined', async () => {
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Just prose, ' },
+      { type: 'text-delta', id: '1', text: 'no delta at all.' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('Just prose, no delta at all.')
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'Just prose, no delta at all.' }])
+    expect(msg.worldDelta).toBeUndefined()
+  })
+
+  it('34. malformed JSON after the delimiter: worldDelta undefined + a warn; pre-delimiter prose still ships', async () => {
+    const warn = vi.fn()
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Good prose.\n[[WORLD_DELTA]]\n{not valid json' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {}, logger: { warn } })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    // The prose before the delimiter still streamed + assembled.
+    expect(emittedText(seen)).toBe('Good prose.')
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'Good prose.' }])
+    // Fail-soft: no worldDelta, and a warn was logged.
+    expect(msg.worldDelta).toBeUndefined()
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('34b. delimiter present but EMPTY accumulator (nothing after it): worldDelta undefined, no warn', async () => {
+    // The FT armed the delimiter but produced no JSON body. JSON.parse('') would
+    // throw, but an empty accumulator must be treated as "no delta" — no warn.
+    const warn = vi.fn()
+    mockResult([{ type: 'text-delta', id: '1', text: 'Prose.\n[[WORLD_DELTA]]\n' }])
+    const ft = new SonnetFastThinker({ tools: {}, logger: { warn } })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('Prose.')
+    expect(msg.worldDelta).toBeUndefined()
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('35. JSON valid but failing the schema (wrong shape): worldDelta undefined + a warn', async () => {
+    const warn = vi.fn()
+    // Valid JSON, but `facts` is missing → WorldDeltaSchema.safeParse fails.
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Prose.\n[[WORLD_DELTA]]\n{"notfacts":[]}' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {}, logger: { warn } })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('Prose.')
+    expect(msg.worldDelta).toBeUndefined()
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('36. a partial literal at stream end (delimiter armed but never completed) flushes as prose', async () => {
+    // The stream ends mid-literal: `\n[[WORLD` with no continuation. The held
+    // partial must flush to both sinks as ordinary prose.
+    mockResult([{ type: 'text-delta', id: '1', text: 'Ends abruptly\n[[WORLD' }])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('Ends abruptly\n[[WORLD')
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'Ends abruptly\n[[WORLD' }])
+    expect(msg.worldDelta).toBeUndefined()
+  })
+
+  it('37. a tool-call arriving mid-partial flushes the held prefix to both sinks first (delimiter cannot straddle a tool call)', async () => {
+    // `\n[[WORLD` accumulates in the hold buffer, then a tool-call arrives. The
+    // partial is NOT a delimiter (a delimiter can't straddle a tool boundary) →
+    // flush it as prose before the tool boundary closes the text run.
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Rolling now.\n[[WORLD' },
+      {
+        type: 'tool-call',
+        toolCallId: 'c1',
+        toolName: 'roll_dice',
+        input: { count: 1, sides: 20 },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'c1',
+        toolName: 'roll_dice',
+        input: { count: 1, sides: 20 },
+        output: { count: 1, sides: 20, results: [11], total: 11 },
+      },
+      { type: 'text-delta', id: '2', text: ' The die lands.' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    // The held `\n[[WORLD` flushed as prose before the dice_roll frame.
+    expect(seen.map((e) => e.kind)).toEqual(['text', 'dice_roll', 'text'])
+    expect(seen[0]?.payload).toBe('Rolling now.\n[[WORLD')
+    expect(seen[2]?.payload).toBe(' The die lands.')
+    // Assembled parts: text (with the flushed partial) split at the tool boundary.
+    expect(msg.parts).toEqual([
+      { kind: 'text', text: 'Rolling now.\n[[WORLD' },
+      { kind: 'tool_call', toolCallId: 'c1', toolName: 'roll_dice', input: { count: 1, sides: 20 } },
+      { kind: 'tool_result', toolCallId: 'c1', toolName: 'roll_dice', output: { count: 1, sides: 20, results: [11], total: 11 } },
+      { kind: 'text', text: ' The die lands.' },
+    ])
+    expect(msg.worldDelta).toBeUndefined()
+  })
+
+  it('38. char-by-char (one char per delta) still catches the delimiter and parses the delta', async () => {
+    // Worst-case fragmentation: every character is its own text-delta. The
+    // matcher must hold state across deltas.
+    const full = 'Hi.\n[[WORLD_DELTA]]\n{"facts":[{"subject":"X","content":"y","kind":"fact"}]}'
+    const parts = Array.from(full, (ch, i) => ({ type: 'text-delta', id: '1', text: ch, _i: i }))
+    mockResult(parts)
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(emittedText(seen)).toBe('Hi.')
+    for (const e of seen) {
+      if (e.kind === 'text') expect(e.payload as string).not.toContain('[')
+    }
+    expect(msg.worldDelta).toEqual({ facts: [{ subject: 'X', content: 'y', kind: 'fact' }] })
+  })
 })
 
 describe('formatPartyLedger', () => {
@@ -1279,5 +1534,20 @@ describe('buildModelMessages', () => {
     // An empty roster snapshot renders no tail (no characters to show).
     expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
     expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[Party ledger:'))).toBe(false)
+  })
+})
+
+describe('buildKmpFailure (the §4.2 guard re-anchor table)', () => {
+  it('39. computes the classic border function, exercising the inner fall-back walk', () => {
+    // `ababaca` is the textbook KMP example: at index 4 (`a`) the border extends
+    // to 3, at index 5 (`c`) the inner while-loop walks the border DOWN (3→1→0)
+    // before settling — the exact path the all-zeros delimiter table never takes.
+    expect(buildKmpFailure('ababaca')).toEqual([0, 0, 1, 2, 3, 0, 1])
+  })
+
+  it('40. the fixed delimiter literal has an all-zeros table (no repeated full prefix)', () => {
+    // `\n[[WORLD_DELTA]]` — no character past index 0 equals `\n`, so every
+    // border is 0. This is why the guard re-anchor always falls straight to 0.
+    expect(buildKmpFailure('\n[[WORLD_DELTA]]')).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
   })
 })
