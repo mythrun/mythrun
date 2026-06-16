@@ -20,7 +20,7 @@
 <!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:74b0776766aba7baf0ed86b9229f4de558fb4353032f0661151b22b08ce8fc81 -->
+<!-- source-hash: sha256:b60632b80cf8011c6479d0f7d0d2d5294d7fff16bff68550dc88a8dcf2e85dc1 -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>Fast Thinker</h1>
@@ -35,9 +35,11 @@
   each tool's result rather than deciding the outcome itself. It runs under enforced ignorance by
   construction — its context type carries only public facts, and the one tool seam that reaches the
   full, secret-bearing world store hands the result to the Slow Thinker to vet before any text comes
-  back, so plot and NPC secrets have nowhere to live. The
-  <a href="./session-turn.html">session-turn conductor</a> calls it once per DM turn; everything the
-  player reads is its output.
+  back, so plot and NPC secrets have nowhere to live. After its prose it appends a lightweight,
+  public-by-construction <a href="./scribe.html">fact-delta</a> — the new named things it introduced
+  this turn — stripped from the player stream and the transcript by a delimiter guard and handed to
+  the post-turn Scribe. The <a href="./session-turn.html">session-turn conductor</a> calls it once
+  per DM turn; everything the player reads is its output.
 </p>
 
 <!-- @diagram: runtime/fast-thinker -->
@@ -317,9 +319,40 @@
   <strong>The running summary is the Slow Thinker's tool, not the FT's memory</strong> — the FT
   never reads the running summary. It holds the literal full transcript every turn, so there is no
   compressed history to hallucinate around. The summary is the
-  <a href="./slow-thinker.html">Slow Thinker</a>'s own compression and the Scribe's session-end
-  input; it plays no role in FT grounding or recovery. Removing it from the FT's context type is
-  what makes "secrets have nowhere to live" structural rather than a convention.
+  <a href="./slow-thinker.html">Slow Thinker</a>'s own compression; it plays no role in FT grounding
+  or recovery. Removing it from the FT's context type is what makes "secrets have nowhere to live"
+  structural rather than a convention.
+</aside>
+
+<h2>The world delta: the FT proposes its own facts</h2>
+
+<p>
+  When the FT names a new NPC, invents a tavern, or establishes a relationship, that has to become
+  in-session canon. The FT emits those proposals itself: after its player-facing prose, and only
+  after it, the <code>ft-system.txt</code> prompt lets it append a newline-anchored
+  <code>[[WORLD_DELTA]]</code> marker followed by one line of JSON listing the new entities, facts,
+  and relationships introduced this turn. The section is optional (omit it when nothing new landed),
+  public-only by mandate (the FT has no secrets to list), and parsed against the flat
+  <code>WorldDeltaSchema</code> at turn end. The parsed delta rides the returned
+  <code>AssistantMessage</code> and is carried onto the <a href="./scribe.html">Scribe</a> job; a
+  parse failure fail-softs (the prose already shipped).
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >A dual-sink delimiter guard strips the section from BOTH the player stream and the
+    transcript</strong
+  >
+  — the <code>[[WORLD_DELTA]]</code> section is internal machinery: a player must never see it, and
+  it must never enter the durable transcript, where the FT would re-read its own JSON as if it were
+  prose. So the consume loop routes the text-delta substream through a stateful, char-by-char filter
+  that sits between the stream and <em>both</em> downstream sinks — the live player emit AND the
+  assembler that builds the persisted message. Only the pre-delimiter prose reaches either;
+  everything from the newline-anchored literal onward is suppressed and captured for parsing.
+  Guarding one sink and not the other would defeat the point — the guard feeds a single callback
+  wired to both. The leading newline is part of the matched literal, walked with a KMP re-anchor, so
+  an ordinary mid-sentence bracket can never arm it and a partial match pending at a delta or tool
+  boundary is held back and coalesced when it resolves.
 </aside>
 
 <h2 id="world-knowledge-lookups">World-knowledge lookups: the Slow-Thinker-gated read seam</h2>
@@ -479,6 +512,34 @@
   lands in the transcript is the already-vetted, secret-free relay.
 </aside>
 
+<h3>The working set ∪ canon read-merge (MYT-73)</h3>
+
+<p>
+  The lookups also read what the session itself invented. A fact relayed or invented turn 5 has to
+  be recallable turn 9, so each lookup tool reads the
+  <a href="./scribe.html">working set</a> unioned with canon. <code>search_lore</code> loads the
+  turn's working set and cosine-ranks each item's embedding against the
+  <strong>same query vector</strong> <code>searchLore</code> already embedded — no second Voyage
+  call — and merges the top matches into the canon hit set before rendering the tier-annotated
+  block; the graph walks flat-append the working set's entity and relationship items. Symmetrically,
+  when a vet <em>relays</em> or <em>invents</em> a fact, the tool records that vetted relay (with
+  the vet's <code>tier</code>, now surfaced out of the vet) into a per-turn injection sink the
+  <a href="./scribe.html">Scribe</a> carries onto its job — that is how this turn's invented facts
+  enter the working set in the first place.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The merge funnels through the same gate; an NPC's claim stays attributed</strong> — a
+  working-set hit is merged <em>before</em> the block goes to the ST-vet, so the over-pull/tier-gate
+  boundary applies to it exactly as to a canon row (a secret-tier working-set item is gated by the
+  vet, never filtered out at the merge). And a working-set item carries provenance: a DM-channel
+  relay is objective, an NPC-channel relay is an <em>attributed</em> claim tagged with the NPC's
+  identity. The merge renders an attributed item with a <code>[claim by {npc}]</code> prefix, so
+  neither the vet nor the prose downstream ever elevates an NPC's claim to objective world truth.
+  The FT never reads the working set as a context field — only down this gated path; its
+  <code>FtTurnContext.workingSet</code> stays empty by construction.
+</aside>
+
 <h2>Prompt caching: the cost lever</h2>
 
 <p>
@@ -519,10 +580,12 @@
 
 <p>
   The Fast Thinker is the player-facing cognitive tier behind the
-  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; the Scribe remains a stub
-  until MYT-73, and the <a href="./slow-thinker.html">Slow Thinker</a> now runs off the turn path —
-  its stage directions reach the FT as a fused one-shot (on the player's last message) and a
-  standing tail message, both consumed silently. It runs through the
+  <a href="./session-turn.html">session-turn conductor</a>'s tier seam; its prose, fact-delta, and
+  lookup injections feed the post-turn <a href="./scribe.html">Scribe</a>, and the
+  <a href="./slow-thinker.html">Slow Thinker</a> now runs off the turn path — its stage directions
+  reach the FT as a fused one-shot (on the player's last message) and a standing tail message, both
+  consumed silently. A Scribe-authored retcon reaches the FT the same way, as a fused
+  <code>[[DM CORRECTION: …]]</code> marker it delivers openly. It runs through the
   <a href="./llm.html">LLM client</a>'s <code>streamTextWithTools</code> wrapper (Sonnet) and its
   skill-check resolver makes a nested Haiku call through the same abstraction. Its roller resolution
   and per-skill proficiency reads come from the
@@ -545,10 +608,10 @@
   <code>entities.findIdByWorldAndNormalizedName</code>. The lookup's Opus vet is the
   <em>synchronous</em> face of the <a href="./slow-thinker.html">Slow Thinker</a> (the same tier
   that, post-turn, writes stage directions off the hot path), and the <code>tier</code> it stamps on
-  a relayed or invented fact is consumed by the Scribe (MYT-73). The per-turn lookup wiring
-  (<code>lookup-wiring.ts</code>) and the campaign's <code>worldId</code> resolution live in
-  <code>turn-context.ts</code>, both built by the <a href="./worker.html">turn worker</a> when it
-  constructs the tier seam.
+  a relayed or invented fact rides the injection into the <a href="./scribe.html">Scribe</a>'s
+  working set. The per-turn lookup wiring (<code>lookup-wiring.ts</code>) and the campaign's
+  <code>worldId</code> resolution live in <code>turn-context.ts</code>, both built by the
+  <a href="./worker.html">turn worker</a> when it constructs the tier seam.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -657,7 +720,10 @@
       <td><code>src/session/tiers/fast-thinker.ts</code></td>
       <td>
         <code>SonnetFastThinker</code> (the tier), <code>buildModelMessages</code> (the
-        deterministic prompt assembly with cache breakpoints).
+        deterministic prompt assembly with cache breakpoints), and the MYT-73
+        <code>WorldDeltaGuard</code> — the dual-sink delimiter filter that strips the
+        <code>[[WORLD_DELTA]]</code> <a href="./scribe.html">fact-delta</a> from both the player
+        stream and the transcript (+ <code>buildKmpFailure</code>).
       </td>
     </tr>
     <tr>
@@ -668,7 +734,9 @@
         <a href="./character-ledger.html">ledger tools</a> (MYT-70), and the three world-knowledge
         lookups <code>search_lore</code> / <code>characters_known_to</code> /
         <code>faction_tree</code> (MYT-72). Also the <code>FtToolDeps</code> surface — including the
-        opaque <code>vet</code> closure (no <code>sdPlaybook</code> field).
+        opaque <code>vet</code> closure (no <code>sdPlaybook</code> field) and the MYT-73
+        <a href="./scribe.html">working-set</a> read-merge (<code>workingSet</code> /
+        <code>cosine</code> thunks) + the <code>recordInjection</code> sink.
       </td>
     </tr>
     <tr>
@@ -678,8 +746,10 @@
       </td>
       <td>
         <code>runWorldFactLookup</code> — the gate → resolve → ST-vet → relay orchestrator (total,
-        fail-soft); <code>resolveWorldLookupGate</code> — the contextual Haiku recall-gate over
-        public standing; the tuning constants.
+        fail-soft), now surfacing the vet's <code>vetMode</code> / <code>vetTier</code> out so the
+        tool layer can record a <a href="./scribe.html">working-set</a> injection on relay/invent;
+        <code>resolveWorldLookupGate</code> — the contextual Haiku recall-gate over public standing;
+        the tuning constants.
       </td>
     </tr>
     <tr>
@@ -688,9 +758,10 @@
       </td>
       <td>
         <code>buildLookupDeps</code> — the per-turn lookup deps (search / graph / resolveEntityId /
-        recentNarrative / the opaque vet capturing <code>sdPlaybook</code>);
-        <code>resolveWorldId</code> / <code>reloadFtContext</code> — the worldId blob-cache +
-        ft_context reload.
+        recentNarrative / the opaque vet capturing <code>sdPlaybook</code>, plus the MYT-73
+        <code>recordInjection</code> sink, the <a href="./scribe.html">working-set</a> read thunk,
+        and the pure <code>cosineSimilarity</code> ranker); <code>resolveWorldId</code> /
+        <code>reloadFtContext</code> — the worldId blob-cache + ft_context reload.
       </td>
     </tr>
     <tr>
@@ -748,7 +819,8 @@
       <td><code>src/llm/prompts/session/ft-system.txt</code></td>
       <td>
         The multiplayer FT system prompt (roster, attribution, tool protocol, enforced ignorance,
-        and the MYT-70 Resources &amp; The Ledger guidance).
+        the MYT-70 Resources &amp; The Ledger guidance, and the MYT-73 World Delta section + the
+        <code>[[DM CORRECTION: …]]</code> open-delivery exception to silent-consume).
       </td>
     </tr>
     <tr>

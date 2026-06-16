@@ -11,7 +11,11 @@ digraph fast_thinker {
   // (crypto.randomInt) → matched outcome tier as the constraint. The
   // world-knowledge lookups run gate → resolve → ST-vet → relay: the secret
   // sd_playbook is captured INSIDE the opaque vet closure and never crosses
-  // back to the FT. The cap stops the loop after N steps.
+  // back to the FT. The resolve step also merges the in-session working set
+  // (MYT-73 read-after-write) and a relay/invent records an injection back into
+  // it. After its prose the FT appends a [[WORLD_DELTA]] fact-delta a dual-sink
+  // guard strips from BOTH the player stream AND the transcript. The cap stops
+  // the loop after N steps.
   rankdir=TB;
   compound=true;
   nodesep=0.4;
@@ -28,6 +32,7 @@ digraph fast_thinker {
     build [label="buildModelMessages\nsystem (ft-system.txt) + full transcript\nsliding cache breakpoints (§3.9)\n+ standing directive as raw post-breakpoint tail"];
     loop  [label="streamTextWithTools (Sonnet)\nstopWhen stepCountIs(FT_MAX_TOOL_STEPS)\nprepareStep → final-step prose close"];
     consume [label="consume fullStream IN PART ORDER\n(the SINGLE emission point)\nerror/abort parts → throw", color="ember", fontcolor="ember"];
+    guard [label="WorldDeltaGuard (dual-sink)\nstrip \\n[[WORLD_DELTA]] section from\nBOTH live emit AND transcript;\ncapture JSON → worldDelta", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_tools {
@@ -45,11 +50,12 @@ digraph fast_thinker {
     fontcolor="ember";
 
     gate [label="world-lookup-gate (Haiku)\ncontextual DC over PUBLIC standing only\nauto_success | d20 vs DC → pass/fail"];
-    resolve [label="resolver (world-store retrieval)\nover-pull ALL tiers, tier-annotated"];
+    resolve [label="resolver (world-store retrieval)\nover-pull ALL tiers, tier-annotated\n∪ working set (cosine vs query vec)\n[claim by NPC] keeps attribution"];
     vet [label="ST-vet (Opus) — the ONE tier-safety gate\nholds sd_playbook · redactRawText\nrelay | none | invent → player-safe text", color="ember", fontcolor="ember"];
   }
 
   emit [label="TurnEmitter\nemitText / emitSkillCheck / emitDiceRoll\n(worker-latched → PUBLISH frames)", color="ember", fontcolor="ember"];
+  ws [label="working set (Scribe)\nsession:{cId}:workingset\nread-after-write", color="ember", fontcolor="ember"];
 
   ctx -> build;
   build -> loop;
@@ -63,9 +69,13 @@ digraph fast_thinker {
 
   lookup -> gate [label="pass?"];
   gate -> resolve [label="pass /\nauto_success"];
+  ws -> resolve [label="∪ read-merge", style=dashed, color="ember"];
   resolve -> vet [label="over-pulled\n(secrets included)"];
   vet -> lookup [label="relay text ONLY\n(no playbook, no raw pull)", color="ember", fontcolor="ember"];
+  lookup -> ws [label="record injection\n(vetted relay + tier)", style=dashed, color="ember"];
   lookup -> consume [label="{ result, skill_gate, roll_hidden }\n(data only)"];
 
-  consume -> emit [label="text_delta /\nskill_check / dice_roll"];
+  consume -> guard [label="text-delta"];
+  guard -> emit [label="pre-delimiter prose only"];
+  consume -> emit [label="skill_check / dice_roll"];
 }

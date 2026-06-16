@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
         <article>
@@ -633,13 +633,14 @@
   <a href="./worker.html">Worker</a> page. The short version: it loads the same
   <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
   BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
-  registers six BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
+  registers seven BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
   <code>QUEUE_CAMPAIGN_SETUP</code>, <code>QUEUE_SESSION_PREP</code>, the MYT-66
   <code>QUEUE_SESSION_TURN</code> (the lock-fenced
   <a href="./session-turn.html">DM-turn</a> conductor), the MYT-67
   <code>QUEUE_DM_TRIGGER</code> (the <a href="./dm-trigger.html">DM trigger</a> decision worker),
-  and the MYT-69 <code>QUEUE_ST_EVAL</code> (the post-hoc
-  <a href="./slow-thinker.html">Slow Thinker</a>) — plus a
+  the MYT-69 <code>QUEUE_ST_EVAL</code> (the post-hoc
+  <a href="./slow-thinker.html">Slow Thinker</a>), and the MYT-73 <code>QUEUE_SCRIBE</code> (the
+  post-turn <a href="./scribe.html">Scribe</a> reconciler) — plus a
   <code>QueueEvents('session-turn')</code> subscriber — and binds a Fastify
   <code>/health</code> server on <code>127.0.0.1:3001</code> that the ECS container
   <code>healthCheck</code> probes. Graceful shutdown drains the workers within a
@@ -648,9 +649,10 @@
   stub processors that logged and completed; the real prep-stage processors landed across MYT-51
   (world-gen), MYT-52 (streaming entity / edge events), MYT-53 (per-player character creation),
   MYT-54 (campaign-scoped character integration), MYT-61 (session prep), MYT-66 (the session-turn
-  conductor), MYT-67 (the <a href="./dm-trigger.html">DM trigger</a> decision worker), and MYT-69
-  (the post-hoc <a href="./slow-thinker.html">Slow Thinker</a>). The dedicated worker container
-  caught up to the API container's wiring in MYT-55.
+  conductor), MYT-67 (the <a href="./dm-trigger.html">DM trigger</a> decision worker), MYT-69 (the
+  post-hoc <a href="./slow-thinker.html">Slow Thinker</a>), and MYT-73 (the post-turn
+  <a href="./scribe.html">Scribe</a>). The dedicated worker container caught up to the API
+  container's wiring in MYT-55.
 </p>
 
 <h2 id="the-env-loader-accepts-two-shapes">The env loader accepts two shapes</h2>
@@ -977,8 +979,9 @@
   as the API. The cognitive tiers land as additional modules under <code>backend/src/</code> on top
   of that foundation, sharing this server's lifecycle, <code>AppDeps</code> shape, and Dockerfile:
   the <a href="./fast-thinker.html">Fast Thinker</a>, the post-hoc
-  <a href="./slow-thinker.html">Slow Thinker</a>, and the <a href="./dm-trigger.html">DM trigger</a>
-  classifier are live; the Scribe lands with MYT-73.
+  <a href="./slow-thinker.html">Slow Thinker</a>, the
+  <a href="./dm-trigger.html">DM trigger</a> classifier, and the post-turn
+  <a href="./scribe.html">Scribe</a> are all live.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -1241,11 +1244,12 @@
       <td><code>src/worker.ts</code></td>
       <td>
         <code>main()</code> — entry-point-guarded BullMQ worker boot: opens pg + both Redis clients,
-        registers five <code>Worker</code> instances (world-gen / campaign-setup / session-prep /
-        session-turn / dm-trigger) plus the <code>QueueEvents('session-turn')</code> subscriber on
-        the batch Redis, starts the Fastify <code>/health</code> probe on <code>:3001</code>, and
-        threads bounded shutdown through <code>closeWithDeadline</code>. See
-        <a href="./worker.html">Worker</a>, <a href="./session-turn.html">Session turn</a>, and
+        registers seven <code>Worker</code> instances (world-gen / campaign-setup / session-prep /
+        session-turn / dm-trigger / st-evaluation / scribe) plus the
+        <code>QueueEvents('session-turn')</code> subscriber on the batch Redis, starts the Fastify
+        <code>/health</code> probe on <code>:3001</code>, and threads bounded shutdown through
+        <code>closeWithDeadline</code>. See <a href="./worker.html">Worker</a>,
+        <a href="./session-turn.html">Session turn</a>, and
         <a href="./dm-trigger.html">DM trigger</a>.
       </td>
     </tr>

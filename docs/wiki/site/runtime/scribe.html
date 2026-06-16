@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scribe · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="scribe">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html" class="active">Scribe</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Scribe</div>
+        <article>
+<h1>Scribe</h1>
+
+<p class="lead">
+  The post-turn reconciler — off the hot path. After each DM turn it turns the Fast Thinker's
+  improvisation into durable in-session canon without breaking secrets: it appends the turn's
+  proposed facts to an ephemeral session working set the FT can read next turn, runs a per-turn
+  Haiku <strong>secret tripwire</strong> over the player-facing prose, and on a core-secret breach
+  authors (Opus) a secret-preserving <strong>retcon</strong> the DM delivers openly through a
+  player-less correction turn. The secret <code>sd_playbook</code> is read only on the secret side;
+  the FT sees working-set content only through the Slow-Thinker-vet relay.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="2981pt" height="315pt"
+ viewBox="14.00 14.00 2967.00 300.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 296.4)">
+<title>scribe</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-282 2948.21,-282 2948.21,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_turn</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-88 8,-179 540.43,-179 540.43,-88 8,-88"/>
+<text xml:space="preserve" text-anchor="middle" x="274.21" y="-165.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Turn worker &#160;(the producer)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_batch</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="676.44,-95 676.44,-173 879.75,-173 879.75,-95 676.44,-95"/>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-159.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_scribe</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1003.76,-94 1003.76,-270 2066.34,-270 2066.34,-94 1003.76,-94"/>
+<text xml:space="preserve" text-anchor="middle" x="1535.05" y="-256.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Scribe worker &#160;— &#160;the 7th BullMQ worker (concurrency 2)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_realtime</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="2274.36,-91 2274.36,-182 2517.28,-182 2517.28,-91 2274.36,-91"/>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-168.1" font-family="Courier,monospace" font-size="11.00">Redis (realtime cluster)</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_pg</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="1464.3,-8 1464.3,-86 1733.62,-86 1733.62,-8 1464.3,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-72.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+</g>
+<!-- ctrl -->
+<g id="node1" class="node">
+<title>ctrl</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="184.9,-158.04 8,-158.04 8,-87.96 184.9,-87.96 184.9,-158.04"/>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-139.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SessionController</text>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-126.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueScribeJob()</text>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-113.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(flushed success ·</text>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-99.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> NOT correction turns)</text>
+</g>
+<!-- payload -->
+<g id="node2" class="node">
+<title>payload</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="540.43,-151.44 290.91,-151.44 290.91,-94.56 540.43,-94.56 540.43,-151.44"/>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-132.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ScribeJobPayload</text>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-119.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prose · worldDelta · injections</text>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-106.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldId · turnId</text>
+</g>
+<!-- ctrl&#45;&gt;payload -->
+<g id="edge1" class="edge">
+<title>ctrl&#45;&gt;payload</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M185.39,-123C215.19,-123 249.16,-123 281.66,-123"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="281.52,-125.45 288.52,-123 281.52,-120.55 281.52,-125.45"/>
+<text xml:space="preserve" text-anchor="middle" x="237.91" y="-126" font-family="Courier,monospace" font-size="10.00">assemble</text>
+</g>
+<!-- q_scribe -->
+<g id="node3" class="node">
+<title>q_scribe</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="879.75,-151.44 676.44,-151.44 676.44,-94.56 879.75,-94.56 879.75,-151.44"/>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-132.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: scribe</text>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-119.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">no dedup id</text>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-106.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(each turn = distinct job)</text>
+</g>
+<!-- payload&#45;&gt;q_scribe -->
+<g id="edge2" class="edge">
+<title>payload&#45;&gt;q_scribe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M540.96,-123C582.02,-123 627.37,-123 667.27,-123"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="667.14,-125.45 674.14,-123 667.14,-120.55 667.14,-125.45"/>
+<text xml:space="preserve" text-anchor="middle" x="608.43" y="-126" font-family="Courier,monospace" font-size="10.00">enqueueScribe</text>
+</g>
+<!-- proc -->
+<g id="node4" class="node">
+<title>proc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1286.28,-144.84 1003.76,-144.84 1003.76,-101.16 1286.28,-101.16 1286.28,-144.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1145.02" y="-126.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processScribeJob (TOTAL)</text>
+<text xml:space="preserve" text-anchor="middle" x="1145.02" y="-113.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">embed → tripwire → (breach) retcon</text>
+</g>
+<!-- q_scribe&#45;&gt;proc -->
+<g id="edge3" class="edge">
+<title>q_scribe&#45;&gt;proc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M880.26,-123C915.56,-123 955.96,-123 994.36,-123"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="994.21,-125.45 1001.21,-123 994.21,-120.55 994.21,-125.45"/>
+<text xml:space="preserve" text-anchor="middle" x="941.75" y="-126" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+</g>
+<!-- embed -->
+<g id="node5" class="node">
+<title>embed</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1687.41,-150.44 1510.51,-150.44 1510.51,-93.56 1687.41,-93.56 1687.41,-150.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-131.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">embed&#45;on&#45;append</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-118.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Voyage embedDocuments</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-105.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(boot&#45;probed embedder)</text>
+</g>
+<!-- proc&#45;&gt;embed -->
+<g id="edge4" class="edge">
+<title>proc&#45;&gt;embed</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1286.85,-122.69C1356.49,-122.53 1438.78,-122.35 1501.23,-122.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1501.1,-124.66 1508.09,-122.2 1501.09,-119.76 1501.1,-124.66"/>
+<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-125.62" font-family="Courier,monospace" font-size="10.00">1. embed proposals</text>
+</g>
+<!-- trip -->
+<g id="node6" class="node">
+<title>trip</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1723.72,-249.04 1474.2,-249.04 1474.2,-178.96 1723.72,-178.96 1723.72,-249.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-230.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">secret tripwire (Haiku)</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-217.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prose vs sd_playbook →</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-204.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{breached, confidence, secretRef}</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-190.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">OPAQUE control signal</text>
+</g>
+<!-- proc&#45;&gt;trip -->
+<g id="edge7" class="edge">
+<title>proc&#45;&gt;trip</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1258.02,-145.55C1320.82,-158.2 1399.52,-174.04 1465.38,-187.31"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1464.63,-189.65 1471.98,-188.63 1465.6,-184.85 1464.63,-189.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-182.33" font-family="Courier,monospace" font-size="10.00">3. prose vs secret</text>
+</g>
+<!-- prep -->
+<g id="node9" class="node">
+<title>prep</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1733.62,-64.44 1464.3,-64.44 1464.3,-7.56 1733.62,-7.56 1733.62,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session_preps.sd_playbook</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(the SECRET)</text>
+<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">narrow ScribeRepo.sessionPreps.getBy</text>
+</g>
+<!-- proc&#45;&gt;prep -->
+<g id="edge6" class="edge">
+<title>proc&#45;&gt;prep</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1263.29,-100.43C1321.86,-89.15 1393.23,-75.41 1454.99,-63.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1455.45,-65.93 1461.86,-62.2 1454.52,-61.12 1455.45,-65.93"/>
+<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-104.85" font-family="Courier,monospace" font-size="10.00">2. read secret</text>
+<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-92.85" font-family="Courier,monospace" font-size="10.00">(fail loud if empty)</text>
+</g>
+<!-- ws -->
+<g id="node8" class="node">
+<title>ws</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2517.28,-161.04 2274.36,-161.04 2274.36,-90.96 2517.28,-90.96 2517.28,-161.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-142.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-129.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">RPUSH&#45;append&#45;only list</text>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-116.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ft_delta / st_injection / retcon</text>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-102.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">evictIfOver (cap 200)</text>
+</g>
+<!-- embed&#45;&gt;ws -->
+<g id="edge5" class="edge">
+<title>embed&#45;&gt;ws</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1688.06,-122.44C1828.14,-123.15 2102.38,-124.53 2264.99,-125.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2264.78,-127.8 2271.8,-125.38 2264.81,-122.9 2264.78,-127.8"/>
+<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-127.33" font-family="Courier,monospace" font-size="10.00">RPUSH + evict</text>
+</g>
+<!-- retcon -->
+<g id="node7" class="node">
+<title>retcon</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2066.34,-249.04 1869.63,-249.04 1869.63,-178.96 2066.34,-178.96 2066.34,-249.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-230.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retcon&#45;author (Opus)</text>
+<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-217.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">secret&#45;preserving Z</text>
+<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-204.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(reasons over the secret;</text>
+<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-190.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> redactRawText)</text>
+</g>
+<!-- trip&#45;&gt;retcon -->
+<g id="edge8" class="edge">
+<title>trip&#45;&gt;retcon</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1724.22,-214C1768.38,-214 1817.68,-214 1860.25,-214"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1860.13,-216.45 1867.13,-214 1860.13,-211.55 1860.13,-216.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1801.62" y="-229" font-family="Courier,monospace" font-size="10.00">breached:true</text>
+<text xml:space="preserve" text-anchor="middle" x="1801.62" y="-217" font-family="Courier,monospace" font-size="10.00">→ escalate</text>
+</g>
+<!-- retcon&#45;&gt;ws -->
+<g id="edge10" class="edge">
+<title>retcon&#45;&gt;ws</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2066.95,-193.76C2125.82,-181.59 2201.45,-165.96 2265.23,-152.78"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2265.61,-155.2 2271.96,-151.39 2264.61,-150.41 2265.61,-155.2"/>
+<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-200.54" font-family="Courier,monospace" font-size="10.00">append `retcon` supersede</text>
+<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-188.54" font-family="Courier,monospace" font-size="10.00">(Z + secretRef only)</text>
+</g>
+<!-- q_corr -->
+<g id="node11" class="node">
+<title>q_corr</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2507.37,-264.04 2284.26,-264.04 2284.26,-193.96 2507.37,-193.96 2507.37,-264.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-245.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;turn</text>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-232.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player&#45;less `correction` turn</text>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-219.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trigger.kind:&#39;correction&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-205.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">correctionText: Z</text>
+</g>
+<!-- retcon&#45;&gt;q_corr -->
+<g id="edge9" class="edge">
+<title>retcon&#45;&gt;q_corr</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2066.95,-217.45C2128.88,-219.63 2209.34,-222.47 2275.06,-224.78"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2274.92,-227.23 2282,-225.03 2275.09,-222.33 2274.92,-227.23"/>
+<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-238.72" font-family="Courier,monospace" font-size="10.00">enqueue correction</text>
+<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-226.72" font-family="Courier,monospace" font-size="10.00">(secret&#45;free Z)</text>
+</g>
+<!-- ft -->
+<g id="node10" class="node">
+<title>ft</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2944.21,-161.04 2701.3,-161.04 2701.3,-90.96 2944.21,-90.96 2944.21,-161.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-142.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FT lookup tools</text>
+<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-129.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">search_lore / graph walks</text>
+<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-116.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">working&#45;set ∪ canon read&#45;merge</text>
+<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-102.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(via the ST&#45;vet relay)</text>
+</g>
+<!-- ws&#45;&gt;ft -->
+<g id="edge11" class="edge">
+<title>ws&#45;&gt;ft</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M2518.02,-126C2572.39,-126 2636.61,-126 2691.96,-126"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2691.94,-128.45 2698.94,-126 2691.94,-123.55 2691.94,-128.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2609.29" y="-141" font-family="Courier,monospace" font-size="10.00">read&#45;merge</text>
+<text xml:space="preserve" text-anchor="middle" x="2609.29" y="-129" font-family="Courier,monospace" font-size="10.00">(cosine vs query vec)</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  An AI DM that never remembers what it improvised is a worse DM than a human one. When the Fast
+  Thinker names a new NPC, invents a tavern, or has a character recall a fact, that has to become
+  canon for the rest of the session — findable on a later turn, consistent across players. But the
+  FT runs under <a href="./fast-thinker.html">enforced ignorance</a>: it has no plot, no secrets, no
+  way to know whether what it just said collides with what the world hides. The Scribe is the tier
+  that closes that loop. It runs <em>after</em> the turn, in its own background job, and does two
+  jobs at once: it <strong>captures</strong> the turn's new facts into a working set the FT can
+  recall, and it <strong>guards</strong> the secret boundary the FT can't see.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why post-turn, off the hot path</strong> — both Scribe jobs are retrospective: capture
+  reads what the FT actually wrote, and the tripwire checks the prose that already shipped. Neither
+  needs to block the player's stream. So the Scribe is a seventh BullMQ
+  <a href="./worker.html">worker</a> the <a href="./session-turn.html">turn worker</a> feeds on its
+  flushed-success path — the same post-hoc shape as the
+  <a href="./slow-thinker.html">Slow Thinker</a>. A correction lands one turn late, which is fine:
+  the DM saying "a moment — let me correct something" a beat later reads as natural table talk, not
+  a glitch. Player-visible time-to-first-token is unaffected.
+</aside>
+
+<p>
+  Three inputs ride the job. The <a href="./fast-thinker.html">Fast Thinker</a> appends a
+  lightweight <strong>fact-delta</strong> after its prose (the new named things it introduced this
+  turn). The lookup tools' <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet</a> records
+  each <strong>injection</strong> (a fact it relayed or invented mid-turn) into a per-turn sink. And
+  the FT's whole player-facing prose is the tripwire's input. The
+  <a href="./session-turn.html">SessionController</a> assembles all three into one
+  <code>ScribeJobPayload</code> and the worker enqueues it once per flushed turn.
+</p>
+
+<h2 id="the-fact-delta-the-ft-s-public-by-construction-proposal">The fact-delta: the FT's public-by-construction proposal</h2>
+
+<p>
+  The FT emits its proposed facts itself, as a structured tail after the prose. The
+  <code>ft-system.txt</code> prompt teaches it: after the player-facing narration, and only after
+  it, it may append a newline-anchored <code>[[WORLD_DELTA]]</code> marker followed by one line of
+  JSON listing the new named entities, facts, and relationships it introduced. The
+  <code>WorldDeltaSchema</code> is flat — <code>{ subject, content, kind }</code> per item, prose
+  floors but no length caps — and it carries <strong>no tier field</strong>: the FT has no secrets,
+  so every delta is public-by-construction, and the Scribe stamps <code>tier: 'known'</code>
+  downstream.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The delta is stripped from both sinks by a dual-sink delimiter guard</strong> — the
+  <code>[[WORLD_DELTA]]</code> section is internal machinery; a player must never see it and it must
+  never enter the durable transcript (where the FT would re-read it as if it were prose). The FT's
+  consume loop routes its text-delta substream through a stateful char-by-char filter that sits
+  <em>between</em> the stream and both downstream sinks — the live player emit AND the assembler
+  that builds the persisted message. Only the pre-delimiter prose reaches either; everything from
+  the newline-anchored literal onward is suppressed and captured for parsing at turn end. Guarding
+  only one sink would defeat the point, so the guard feeds a single callback wired to both. A failed
+  parse fail-softs: the prose already shipped, so a malformed delta is dropped with a warn, never a
+  thrown turn.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The newline anchor is load-bearing</strong> — the guard matches the literal
+  <code>\n[[WORLD_DELTA]]</code>, leading newline included, via a KMP walk that re-anchors on a
+  diverging character without re-feeding any. A bare <code>[</code> mid-sentence can never arm it,
+  so ordinary prose that happens to contain a bracket flushes straight through. A partial match
+  pending at a delta boundary or a tool-call boundary is held back and coalesced once it resolves,
+  so the filter never splits a clean run into per-character emissions and never strands a
+  half-matched prefix.
+</aside>
+
+<h2 id="the-working-set-ephemeral-in-session-canon">The working set: ephemeral in-session canon</h2>
+
+<p>
+  The captured facts land in the <strong>working set</strong> — proposed narrative facts produced
+  during a live session that have not yet been reconciled into the durable world store. It is
+  in-session only, keyed by campaign, backed by a single Redis list
+  (<code>session:{campaignId}:workingset</code>) whose TTL matches the rest of the session's Redis
+  state (~2h). Each item is a <code>WorkingSetProposal</code> — kind, content, subject, tier,
+  provenance, and a <code>source</code> tag (<code>ft_delta</code> / <code>st_injection</code> /
+  <code>retcon</code>) — plus an id, the turn id, and a 512-dim Voyage document embedding stamped on
+  append. The Scribe embeds the turn's proposals (the same <code>input_type: 'document'</code> the
+  <a href="../data/world-store-retrieval.html">canon write path</a> uses, for parity) and
+  <code>RPUSH</code>es them.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Append-only on the hot path; eviction only under the lock</strong> — concurrent turns must
+  never lose a fact to a load-blob / mutate / SET race (the failure mode a JSON-blob key would
+  have). So the append is a single atomic <code>RPUSH</code> of all the turn's items — concurrent
+  appends interleave at the command boundary, never clobbering. Eviction is the one rewrite path
+  (<code>DEL</code> + <code>RPUSH</code>) and is deliberately non-atomic; it is safe only because it
+  runs from the post-turn Scribe job under the per-session lock, where no concurrent append can
+  interleave. The cap is 200 items, and eviction drops only the
+  <em>oldest public</em> (<code>ft_delta</code>) items — never an <code>st_injection</code> or a
+  <code>retcon</code>, and always keeping the newest public item so a turn's just-proposed fact
+  survives its own eviction pass.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The working set never holds a raw secret</strong> — this is the invariant the whole tier
+  is built around. The FT deltas are public by construction. The ST injections are the
+  already-vetted relay text the
+  <a href="./fast-thinker.html#world-knowledge-lookups">lookup vet</a> produced — secret-free by the
+  time the orchestrator sees it. And the retcon item carries only the secret-free correction prose
+  plus an opaque secret handle — never the false thing it corrects (which names the secret by
+  construction). So even though the working set is the FT's read-after-write memory, there is
+  nothing in it the FT isn't allowed to know.
+</aside>
+
+<h2 id="the-read-after-write-working-set-canon">The read-after-write: working set ∪ canon</h2>
+
+<p>
+  A fact invented on turn 5 has to be recallable on turn 9. The FT's lookup tools make that work by
+  reading the working set <em>unioned with</em> canon. When <code>search_lore</code> runs, it loads
+  the turn's working set and cosine-ranks each item's embedding against the
+  <strong>same query vector</strong> <code>searchLore</code> already embedded — no second Voyage
+  call — then merges the top matches into the canon <code>LoreHit[]</code> before rendering the
+  tier-annotated block. The graph walks (<code>characters_known_to</code>,
+  <code>faction_tree</code>) flat-append the turn's working-set entity and relationship items the
+  same way. The merged block funnels to the ST-vet exactly as canon does.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The FT reads the working set only through the ST-vet relay — never as a context field</strong
+  >
+  — the read-merge happens inside the lookup tool's resolver closure, whose output goes to the
+  Slow-Thinker vet, not to the FT directly. The FT's context type carries a
+  <code>workingSet</code> field, but the turn worker pins it to <code>[]</code> permanently: the
+  working set reaches the FT <em>only</em> down the gated lookup path, where the over-pull/tier-gate
+  boundary applies to a working-set item exactly as it does to a canon row. A secret-tier
+  working-set item (an ST injection the vet tiered as secret) is gated by the vet, never filtered
+  out at the merge — so the gate stays the single tier-safety boundary and a future tool that reads
+  <code>FtTurnContext.workingSet</code> still sees nothing.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>An NPC's claim never elevates to objective truth</strong> — a working-set item carries
+  provenance. A DM-channel relay is <code>objective</code> (true in-world); an NPC-channel relay is
+  <code>attributed</code> (the NPC said it — it may be a lie, rumor, or mistake), tagged with the
+  NPC's entity id and name. When the merge renders an attributed item it prefixes a
+  <code>[claim by {npc}]</code> annotation alongside the <code>[tier=…]</code> tag, so neither the
+  ST-vet nor the prose downstream ever surfaces an NPC's claim as ground truth.
+</aside>
+
+<h2 id="the-secret-tripwire-the-per-turn-breach-detector">The secret tripwire: the per-turn breach detector</h2>
+
+<p>
+  The other half of the Scribe job is the safety check. <code>secret-tripwire.ts</code> is a cheap
+  Haiku <code>generateObject</code> call that reads the FT's player-facing prose and the session's
+  core secrets (the prep's <code>sd_playbook</code>, formatted under handle annotations) and returns
+  an <strong>opaque control signal</strong> — <code>{ breached, confidence, secretRef }</code>,
+  where <code>secretRef</code> is a handle like <code>[SECRET-1]</code>, never secret-derived prose.
+  It asks one question: did the FT, blind to the playbook, just state something that breaks a core
+  secret?
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Recall-biased: any breach escalates, even a low-confidence one</strong> — the tripwire is
+  tuned to catch leaks, not to be precise. A <code>breached: true</code> verdict escalates to the
+  Opus retcon-author regardless of confidence — a breach under the confidence floor is still a
+  breach, never waved through; the expensive author is the second opinion. A
+  <code>breached: false</code>
+  verdict never escalates. The cost of a false positive is a wasted Opus call and a redundant
+  correction; the cost of a false negative is a leaked secret. The asymmetry is deliberate.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A disarmed tripwire is worse than an error — so an empty playbook fails loud</strong> —
+  the Scribe resolves the <code>sd_playbook</code> for the campaign's active session through a
+  dedicated narrow <code>ScribeRepo</code> surface (it mirrors the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s <code>StEvalRepo</code> and the lookup vet's repo
+  — never a widening of the FT-side turn-worker repo). If the playbook is absent or empty, the job
+  logs a loud <code>scribe_tripwire_misconfigured</code> error and returns rather than silently
+  skipping the check: a session running with the tripwire quietly off is the worst outcome, so it is
+  made loud.
+</aside>
+
+<h2 id="the-retcon-a-secret-preserving-correction-on-a-player-less-turn">The retcon: a secret-preserving correction on a player-less turn</h2>
+
+<p>
+  On a breach, <code>retcon-author.ts</code> writes the fix. It is an Opus call — the same tier as
+  the narrative director — because the judgment is the same: it reasons over the secret to author a
+  correction <code>Z</code> that <em>removes the contradiction without revealing the secret</em>,
+  paraphrased or implied. Its <code>retconText</code> is the player-facing correction prose,
+  surfaced verbatim. The Scribe then delivers it through a
+  <strong>player-less correction turn</strong>: it enqueues a normal <code>session-turn</code> job
+  with <code>trigger.kind: 'correction'</code>, empty trigger messages, and the
+  <code>correctionText</code> set to <code>Z</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the retcon rides a player-less correction turn</strong> — the correction has to be
+  spoken by the DM in the same voice, streamed through the same wire, persisted in the same
+  transcript as any other DM turn. Reusing the turn path gets all of that for free instead of
+  building a parallel delivery channel. The turn worker recognizes the <code>correction</code> kind:
+  it does <em>not</em> consume the one-shot/standing direction slots (burning a sanctioned reveal on
+  a correction would be wrong) and instead sets the worker-injected <code>Z</code> as a distinct
+  <code>[[DM CORRECTION: …]]</code> marker — the one explicit exception to the FT's silent-consume
+  rule. The FT prompt teaches it to deliver that marker openly: "earlier I said X; correction — it's
+  actually …", terse, in-fiction, then hands the floor back. A correction turn also does not advance
+  the responded-seq watermark (it consumed no player message) and does not itself enqueue a Scribe
+  job — running the tripwire over an already-vetted secret-free correction is wasted spend and risks
+  a retcon loop.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The retcon item stores Z and a handle — never the false thing it corrects</strong> — the
+  Scribe appends a <code>retcon</code>-source item to the working set so the correction is durable
+  in-session, but it carries only the secret-free <code>Z</code> and the opaque
+  <code>secretRef</code> handle. The author's <code>supersededContent</code> — the false statement
+  being corrected — names the secret by construction (the breach prose stated it openly), so it is
+  deliberately NOT persisted: storing it would put a raw core secret into ephemeral session state.
+  The real-LLM smoke caught exactly this leak, which the mocked test had masked with a clean spy
+  value. Supersession, when the durable-canon issue needs it, is tracked secret-free by id
+  reference, never by raw prose.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Double-retcon guard</strong> — the tripwire can re-fire on the same secret while the first
+  correction is still live in the working set (the breach prose is still in recent narration). The
+  Scribe matches a live <code>retcon</code> item by its <code>secretRef</code> (stored in the item's
+  subject field) and skips re-authoring — one correction per secret, not a loop.
+</aside>
+
+<h2 id="total-by-construction">Total by construction</h2>
+
+<p>
+  The producer is the turn worker's post-turn <code>finally</code> phase, so the whole job is
+  <strong>total</strong>: <code>processScribeJob</code> never throws out. A working-set append/evict
+  failure logs and continues to the tripwire (the secret check is the load-bearing half). A tripwire
+  call failure skips the breach check this turn and returns. An embed failure degrades to empty
+  embeddings (the fact still appends, just unrankable until re-embedded) rather than dropping the
+  turn's facts. A retcon-author repair attempt fail-softs — a repaired tree was re-authored by a
+  different model and could re-author the safety-critical text, so the correction is skipped and
+  re-fires next turn. Transient failures lean on BullMQ retry; the one loud error is the disarmed
+  tripwire.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="watch-a-fact-survive-the-turn">Watch an invented fact survive to the next turn</h3>
+<ol>
+  <li>
+    Bring up the data plane and both processes (<code>pnpm db:up</code>, <code>pnpm dev</code>, and
+    <code>pnpm --filter @mythrun/backend dev:worker</code> — the worker hosts the Scribe worker).
+    Start a session and fire a turn whose prose names a new NPC or place (the
+    <a href="./session-turn.html">fire-turn</a> dev route).
+  </li>
+  <li>
+    After the turn flushes, confirm the working set grew:
+    <code>LRANGE session:{cId}:workingset 0 -1</code> on the realtime Redis shows the turn's
+    <code>ft_delta</code> items (and any <code>st_injection</code> from a mid-turn lookup), each
+    with a non-empty embedding.
+  </li>
+  <li>
+    Fire a later turn whose narration would reasonably recall that thing and watch the FT's
+    <code>search_lore</code> surface it — the read-merge funnels the working-set hit through the
+    ST-vet alongside canon.
+  </li>
+</ol>
+
+<h3 id="exercise-the-tripwire-and-retcon">Exercise the tripwire and the retcon</h3>
+<ol>
+  <li>
+    Run the gated real-LLM smoke: <code>pnpm --filter @mythrun/backend smoke:scribe</code>. It seeds
+    a session with an <code>sd_playbook</code> core secret, drives a turn whose prose breaks it, and
+    asserts the real Haiku tripwire fires, the real Opus retcon authors a secret-free
+    <code>Z</code>, and a <code>correction</code> turn delivers it.
+  </li>
+  <li>
+    On the worker log, a clean turn logs <code>scribe: tripwire clean; no retcon</code>; a breach
+    logs the escalation and (on a fresh secret) the enqueued correction. Grep the streamed
+    correction prose against the playbook's secret strings to confirm zero verbatim leak.
+  </li>
+  <li>
+    A <code>scribe_tripwire_misconfigured</code> error means the session's <code>sd_playbook</code>
+    was empty or unresolvable — the tripwire ran disarmed-and-loud rather than silent. Verify the
+    <a href="./session-prep.html">session prep</a> produced a playbook.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The Scribe is the post-turn capture-and-guard half of the
+  <a href="./session-turn.html">session-turn</a> pipeline: that worker assembles the job
+  (<code>enqueueScribeJob</code>) on its flushed-success path and the Scribe worker — the seventh
+  BullMQ worker in the <a href="./worker.html">worker process</a> — runs it. Its tripwire and
+  retcon-author call Haiku and Opus through the <a href="./llm.html">LLM client</a>'s
+  <code>generateObject</code>; both set <code>redactRawText</code> because their raw output reasons
+  over secrets, the same posture as the
+  <a href="./fast-thinker.html#world-knowledge-lookups">lookup vet</a>. The working set feeds back
+  into the <a href="./fast-thinker.html">Fast Thinker</a>'s lookup tools as their read-after-write
+  source, and the retcon rides the turn worker's <code>correction</code> turn kind. The FT
+  fact-delta and the lookup vet's injections are the two capture inputs; the boot-probed Voyage
+  embedder it shares with the
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a> substrate stamps the
+  working-set vectors. Durable reconciliation of the working set into the canonical world store is a
+  later issue; this tier holds it in-session.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="tuning-constants-scribe-config-ts">Tuning constants (scribe-config.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Default</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>SCRIBE_TRIPWIRE_MODEL</code> / <code>SCRIBE_RETCON_MODEL</code></td>
+      <td><code>HAIKU</code> / <code>OPUS</code></td>
+      <td>
+        The cheap recall-biased breach detector; the secret-preserving author (director tier).
+      </td>
+    </tr>
+    <tr>
+      <td><code>SCRIBE_TRIPWIRE_TIMEOUT_MS</code> / <code>SCRIBE_RETCON_TIMEOUT_MS</code></td>
+      <td>30s / 45s</td>
+      <td>Background-tolerant call budgets — nothing player-visible waits on them.</td>
+    </tr>
+    <tr>
+      <td><code>SCRIBE_RETCON_MAX_OUTPUT_TOKENS</code></td>
+      <td>1200</td>
+      <td>A short open correction <code>Z</code>; bounds a runaway.</td>
+    </tr>
+    <tr>
+      <td><code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code></td>
+      <td>0.5</td>
+      <td>A breach under this still escalates (recall-biased); only informs the log line.</td>
+    </tr>
+    <tr>
+      <td><code>WORKING_SET_CAP</code></td>
+      <td>200</td>
+      <td>Hard cap; eviction drops oldest public items only, never injections/retcons.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="bullmq-worker-config-scribe-worker-ts">BullMQ worker config (scribe-worker.ts)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>concurrency</td>
+      <td>2</td>
+      <td>Lowest in the process — a retcon job can hold an Opus call open.</td>
+    </tr>
+    <tr>
+      <td>lock / stalled interval</td>
+      <td>90s</td>
+      <td>Sits above the ~45s Opus retcon so a live job is never reclaimed mid-author.</td>
+    </tr>
+    <tr>
+      <td><code>maxStalledCount</code></td>
+      <td>1</td>
+      <td>Bounds retry on a repeatedly-crashing job.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="redis-key-realtime-cluster">Redis key (realtime cluster)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key (under <code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>)</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{campaignId}:workingset</code></td>
+      <td>
+        Append-only list of <code>WorkingSetItem</code> JSON; <code>RPUSH</code> on append, rewrite
+        only under the per-session lock at eviction; ~2h TTL.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="files">Files</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Exports / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>src/session/scribe-worker.ts</code></td>
+      <td>
+        <code>processScribeJob</code> (total: embed → tripwire → retcon),
+        <code>buildScribeWorker</code>, the narrow <code>ScribeRepo</code> /
+        <code>ScribeTriggerState</code> / <code>ScribeWorkingSet</code>
+        interfaces.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/scribe-queue.ts</code></td>
+      <td>
+        <code>enqueueScribe</code>, <code>QUEUE_SCRIBE</code>, <code>ScribeJobPayload</code> (prose
+        + worldDelta + injections + worldId; no dedup id).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/scribe-config.ts</code></td>
+      <td>The tuning constants above (models, timeouts, working-set cap, escalation floor).</td>
+    </tr>
+    <tr>
+      <td><code>src/redis/working-set.ts</code> + <code>src/session/working-set/types.ts</code></td>
+      <td>
+        <code>makeWorkingSetRepo</code> (<code>load</code> / <code>append</code> /
+        <code>evictIfOver</code> / <code>clear</code>); <code>WorkingSetProposal</code> /
+        <code>WorkingSetItem</code> / <code>WorkingSetProvenance</code>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/secret-tripwire.ts</code> + <code>schemas/secret-tripwire.ts</code> +
+        <code>prompts/session/secret-tripwire.txt</code>
+      </td>
+      <td>
+        <code>runSecretTripwire</code> (Haiku, <code>redactRawText</code>) + the
+        <code>{ breached, confidence, secretRef }</code> schema + prompt.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/retcon-author.ts</code> + <code>schemas/retcon-author.ts</code> +
+        <code>prompts/session/retcon-author.txt</code>
+      </td>
+      <td>
+        <code>runRetconAuthor</code> (Opus, <code>redactRawText</code>) + the
+        <code>{ retconText, supersededContent, tier }</code> schema + prompt.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/llm/schemas/world-delta.ts</code></td>
+      <td>
+        <code>WorldDeltaSchema</code> — the FT's <code>[[WORLD_DELTA]]</code> fact-delta (<code
+          >{ subject, content, kind }</code
+        >
+        items; no tier — public by construction).
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/scribe-worker.ts</code>,
+  <code>backend/src/session/scribe-queue.ts</code>,
+  <code>backend/src/session/scribe-config.ts</code>, <code>backend/src/redis/working-set.ts</code>,
+  <code>backend/src/session/working-set/types.ts</code>,
+  <code>backend/src/llm/secret-tripwire.ts</code>, <code>backend/src/llm/retcon-author.ts</code>,
+  <code>backend/src/llm/schemas/world-delta.ts</code> (+ the tripwire / retcon schemas and prompts).
+  Design spec:
+  <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code> (the
+  Scribe-tier sections).
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-fact-delta-the-ft-s-public-by-construction-proposal">The fact-delta: the FT's public-by-construction proposal</a></li><li style="padding-left:0"><a href="#the-working-set-ephemeral-in-session-canon">The working set: ephemeral in-session canon</a></li><li style="padding-left:0"><a href="#the-read-after-write-working-set-canon">The read-after-write: working set ∪ canon</a></li><li style="padding-left:0"><a href="#the-secret-tripwire-the-per-turn-breach-detector">The secret tripwire: the per-turn breach detector</a></li><li style="padding-left:0"><a href="#the-retcon-a-secret-preserving-correction-on-a-player-less-turn">The retcon: a secret-preserving correction on a player-less turn</a></li><li style="padding-left:0"><a href="#total-by-construction">Total by construction</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-fact-survive-the-turn">Watch an invented fact survive to the next turn</a></li><li style="padding-left:12px"><a href="#exercise-the-tripwire-and-retcon">Exercise the tripwire and the retcon</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#tuning-constants-scribe-config-ts">Tuning constants (scribe-config.ts)</a></li><li style="padding-left:12px"><a href="#bullmq-worker-config-scribe-worker-ts">BullMQ worker config (scribe-worker.ts)</a></li><li style="padding-left:12px"><a href="#redis-key-realtime-cluster">Redis key (realtime cluster)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

@@ -1,0 +1,75 @@
+digraph scribe {
+  // The post-turn Scribe (MYT-73). After a turn flushes, the turn worker
+  // enqueues ONE scribe job carrying the FT's player-facing prose, the parsed
+  // FT [[WORLD_DELTA]] fact-delta, and this turn's ST-vet injections. A seventh
+  // BullMQ worker processes it OFF the hot path: it embeds the proposed facts
+  // into the in-session working set (a Redis list), runs the per-turn Haiku
+  // secret tripwire over the prose against the prep's sd_playbook, and — on a
+  // core-secret breach — authors (Opus) a secret-preserving retcon Z and
+  // delivers it through a player-less `correction`-kind turn. ENFORCED
+  // IGNORANCE: the secret sd_playbook is read ONLY on the secret side (the
+  // tripwire + the retcon-author, through the narrow ScribeRepo); the FT reads
+  // the working set only through the ST-vet relay, never directly.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  subgraph cluster_turn {
+    label="Turn worker  (the producer)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    ctrl [label="SessionController\nenqueueScribeJob()\n(flushed success ·\n NOT correction turns)", color="ember", fontcolor="ember"];
+    payload [label="ScribeJobPayload\nprose · worldDelta · injections\nworldId · turnId"];
+  }
+
+  subgraph cluster_batch {
+    label="redisBatch";
+    style="dotted";
+    q_scribe [label="queue: scribe\nno dedup id\n(each turn = distinct job)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_scribe {
+    label="Scribe worker  —  the 7th BullMQ worker (concurrency 2)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    proc [label="processScribeJob (TOTAL)\nembed → tripwire → (breach) retcon", color="ember", fontcolor="ember"];
+    embed [label="embed-on-append\nVoyage embedDocuments\n(boot-probed embedder)"];
+    trip [label="secret tripwire (Haiku)\nprose vs sd_playbook →\n{breached, confidence, secretRef}\nOPAQUE control signal", color="ember", fontcolor="ember"];
+    retcon [label="retcon-author (Opus)\nsecret-preserving Z\n(reasons over the secret;\n redactRawText)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_realtime {
+    label="Redis (realtime cluster)";
+    style="dashed";
+
+    ws [label="session:{cId}:workingset\nRPUSH-append-only list\nft_delta / st_injection / retcon\nevictIfOver (cap 200)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres";
+    style="dashed";
+    prep [label="session_preps.sd_playbook\n(the SECRET)\nnarrow ScribeRepo.sessionPreps.getBy", color="ember", fontcolor="ember"];
+  }
+
+  ft [label="FT lookup tools\nsearch_lore / graph walks\nworking-set ∪ canon read-merge\n(via the ST-vet relay)", color="ember", fontcolor="ember"];
+  q_corr [label="queue: session-turn\nplayer-less `correction` turn\ntrigger.kind:'correction'\ncorrectionText: Z", color="ember", fontcolor="ember"];
+
+  ctrl -> payload [label="assemble"];
+  payload -> q_scribe [label="enqueueScribe"];
+  q_scribe -> proc [label="BLPOP-style"];
+
+  proc -> embed [label="1. embed proposals"];
+  embed -> ws [label="RPUSH + evict"];
+  proc -> prep [label="2. read secret\n(fail loud if empty)"];
+  proc -> trip [label="3. prose vs secret"];
+  trip -> retcon [label="breached:true\n→ escalate", color="ember"];
+  retcon -> q_corr [label="enqueue correction\n(secret-free Z)", color="ember"];
+  retcon -> ws [label="append `retcon` supersede\n(Z + secretRef only)", color="ember"];
+
+  ws -> ft [label="read-merge\n(cosine vs query vec)", style=dashed, color="ember"];
+}

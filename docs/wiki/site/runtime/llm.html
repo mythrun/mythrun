@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
         <article>
@@ -945,12 +945,14 @@
   <code>config/env.ts</code> loading <code>ANTHROPIC_API_KEY</code> alongside the rest of the env
   contract. The live-play cognitive tiers now use this same surface: the
   <a href="./fast-thinker.html">Fast Thinker</a> drives its tool loop through
-  <code>streamTextWithTools</code>, and the <a href="./slow-thinker.html">Slow Thinker</a>'s gate
-  and director call <code>generateObject</code> (Scribe extraction lands with MYT-73). The Fast
-  Thinker's <a href="./fast-thinker.html#world-knowledge-lookups">world-knowledge lookups</a> add
-  two more <code>generateObject</code> consumers — a Haiku recall-gate and a synchronous Opus
-  ST-vet, the latter the sole caller of <code>redactRawText</code> because its raw output reasons
-  over the secret playbook. All call Vercel's surface against tier constants, threading
+  <code>streamTextWithTools</code>, the <a href="./slow-thinker.html">Slow Thinker</a>'s gate and
+  director call <code>generateObject</code>, and the post-turn <a href="./scribe.html">Scribe</a>'s
+  secret tripwire (Haiku) and retcon-author (Opus) do too. The Fast Thinker's
+  <a href="./fast-thinker.html#world-knowledge-lookups">world-knowledge lookups</a> add two more
+  <code>generateObject</code> consumers — a Haiku recall-gate and a synchronous Opus ST-vet. Three
+  of these set <code>redactRawText</code> because their raw output reasons over the secret playbook:
+  the ST-vet, the Scribe's tripwire, and the Scribe's retcon-author. All call Vercel's surface
+  against tier constants, threading
   <code>providerOptions.mythrun = { sessionId, userId, worldId, campaignId, stage }</code> for log
   attribution. The streaming half of the middleware lands ahead of those consumers via MYT-49 — the
   <a href="./worker.html">worker</a>'s prep-stage processors will be the first callers to exercise

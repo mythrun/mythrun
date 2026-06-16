@@ -11,28 +11,31 @@
 <!-- source: docs/specs/2026-04-10-infrastructure-devops.md -->
 <!-- source: backend/src/session/turn-worker.ts -->
 <!-- source: backend/src/session/dm-trigger-worker.ts -->
+<!-- source: backend/src/session/scribe-worker.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
-<!-- source-hash: sha256:233a8025826c2027b48cd9537a5199fff3bac67e79e5314823242ab241db6909 -->
+<!-- source-hash: sha256:83f4139d0282892b85bc1833d9004cae8801745d6fa46078ee48bc957c735b40 -->
 <!-- last-ticket: MYT-71 -->
 
 <h1>Worker</h1>
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with six BullMQ Workers — <code>world-gen</code> (concurrency 3),
-  <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the MYT-66
-  <code>session-turn</code> worker (concurrency 5), the MYT-67 <code>dm-trigger</code> worker
-  (concurrency 5), and the MYT-69 <code>st-evaluation</code> worker (concurrency 2) — all consuming
-  from <code>redisBatch</code>, plus a <code>QueueEvents('session-turn')</code> subscriber on a
-  dedicated blocking connection. Phase 0 shipped stub processors that logged job receipt and marked
-  complete. The real prep-stage processors landed across MYT-51 (world-gen), MYT-52 (streaming
-  entity / edge events), MYT-53 (per-player character creation), MYT-54 (campaign-scoped character
-  integration), and MYT-61 (session prep); the <code>session-turn</code> worker — the lock-fenced
-  DM-turn conductor — joined in MYT-66, the <code>dm-trigger</code> decision worker in MYT-67, and
-  the post-hoc <a href="./slow-thinker.html">Slow Thinker</a>'s <code>st-evaluation</code> worker in
-  MYT-69. The shape locked in at Phase 0 so each later stage was a coverage edit, not a
-  service-topology change. The stub-processor file was retired in MYT-55 once the dedicated worker
-  container caught up to the same wiring the API container already used.
+  <code>node dist/worker.js</code> with seven BullMQ Workers — <code>world-gen</code> (concurrency
+  3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the
+  MYT-66 <code>session-turn</code> worker (concurrency 5), the MYT-67 <code>dm-trigger</code> worker
+  (concurrency 5), the MYT-69 <code>st-evaluation</code> worker (concurrency 2), and the MYT-73
+  <code>scribe</code> worker (concurrency 2) — all consuming from <code>redisBatch</code>, plus a
+  <code>QueueEvents('session-turn')</code> subscriber on a dedicated blocking connection. Phase 0
+  shipped stub processors that logged job receipt and marked complete. The real prep-stage
+  processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
+  (per-player character creation), MYT-54 (campaign-scoped character integration), and MYT-61
+  (session prep); the <code>session-turn</code> worker — the lock-fenced DM-turn conductor — joined
+  in MYT-66, the <code>dm-trigger</code> decision worker in MYT-67, the post-hoc
+  <a href="./slow-thinker.html">Slow Thinker</a>'s <code>st-evaluation</code> worker in MYT-69, and
+  the post-turn <a href="./scribe.html">Scribe</a>'s <code>scribe</code> worker in MYT-73. The shape
+  locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change. The
+  stub-processor file was retired in MYT-55 once the dedicated worker container caught up to the
+  same wiring the API container already used.
 </p>
 
 <!-- @diagram: runtime/worker -->
@@ -59,20 +62,21 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers six BullMQ <code>Worker</code> instances against
+  data plane, and then registers seven BullMQ <code>Worker</code> instances against
   <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
   <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5),
   <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61),
   <code>QUEUE_SESSION_TURN</code> (<code>session-turn</code>, concurrency 5, added in MYT-66),
-  <code>QUEUE_DM_TRIGGER</code> (<code>dm-trigger</code>, concurrency 5, added in MYT-67), and
-  <code>QUEUE_ST_EVAL</code> (<code>st-evaluation</code>, concurrency 2, added in MYT-69). Queue
-  names and concurrency caps for the prep workers live in
-  <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the API-side
-  <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't drift; the
-  session-turn, dm-trigger, and st-evaluation workers' own queue names and tuning constants live
-  alongside their processors in <code>session/turn-worker.ts</code>,
-  <code>session/dm-trigger-config.ts</code>, and <code>session/st-eval-queue.ts</code> /
-  <code>session/st-config.ts</code>.
+  <code>QUEUE_DM_TRIGGER</code> (<code>dm-trigger</code>, concurrency 5, added in MYT-67),
+  <code>QUEUE_ST_EVAL</code> (<code>st-evaluation</code>, concurrency 2, added in MYT-69), and
+  <code>QUEUE_SCRIBE</code> (<code>scribe</code>, concurrency 2, added in MYT-73). Queue names and
+  concurrency caps for the prep workers live in <code>backend/src/worker/bullmq-config.ts</code> —
+  the single source of truth so the API-side <code>Queue</code> producers and the worker-side
+  <code>Worker</code> consumers can't drift; the session-turn, dm-trigger, st-evaluation, and scribe
+  workers' own queue names and tuning constants live alongside their processors in
+  <code>session/turn-worker.ts</code>, <code>session/dm-trigger-config.ts</code>,
+  <code>session/st-eval-queue.ts</code> / <code>session/st-config.ts</code>, and
+  <code>session/scribe-queue.ts</code> / <code>session/scribe-config.ts</code>.
 </p>
 
 <p>
@@ -112,12 +116,28 @@
   reclaimed mid-Opus.
 </p>
 
+<p>
+  The <code>scribe</code> worker (<code>buildScribeWorker</code>) is the post-turn
+  <a href="./scribe.html">Scribe</a> — the reconciler that turns the Fast Thinker's improvisation
+  into in-session canon and guards the secret boundary, off the hot path. The
+  <a href="./session-turn.html">turn worker</a> enqueues one job per flushed turn; this worker
+  embeds the turn's proposed facts into the working set, runs the Haiku secret tripwire over the FT
+  prose, and on a core-secret breach authors (Opus) a secret-preserving retcon and delivers it
+  through a player-less correction turn. Like the turn and st-evaluation workers it takes both Redis
+  connections — <code>redisBatch</code> for its own BullMQ queue plus the
+  <code>session-turn</code> producer it enqueues corrections onto, <code>redisRealtime</code> for
+  the working-set list — and builds its own narrow secret-bearing repo over the pg
+  <code>Pool</code>. It also takes the boot-probed Voyage embedder (the working-set
+  embed-on-append). Its decision logic lives wholly on its own page; its concurrency (2) and
+  90-second lock mirror the st-evaluation worker because a retcon job can hold an Opus call open.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The QueueEvents subscriber needs explicit shutdown; the workers don't leak</strong> — the
   subscriber <code>duplicate()</code>s <code>redisBatch</code> for a dedicated
   <code>BRPOP</code> blocking connection, which <code>redisBatch.quit()</code> does
   <em>not</em> cover. So its <code>close()</code> is added to the SIGTERM teardown explicitly —
-  skipping it would leak one Redis connection per deploy. The six Workers each share or own
+  skipping it would leak one Redis connection per deploy. The seven Workers each share or own
   connections the existing <code>quit()</code> calls already drain.
 </aside>
 
@@ -127,8 +147,9 @@
   once: it reuses the already-probed <code>redisBatch</code> as its BullMQ connection (no new
   client, no second ping-probe) and constructs its per-session lock, session-state I/O, and frame
   publisher on <code>redisRealtime</code>. The full story — the transient
-  <code>SessionController</code>, the deterministic FT → Scribe conductor (the in-turn ST seam was
-  retired in MYT-69), the distributed lock, and the crash-recovery model — lives on the
+  <code>SessionController</code>, the deterministic single-tier (FT) conductor (the in-turn ST seam
+  was retired in MYT-69 and the on-path Scribe seam in MYT-73 — both now run as their own post-turn
+  workers), the distributed lock, and the crash-recovery model — lives on the
   <a href="./session-turn.html">session turn</a> page; this worker is where it is registered to run.
 </p>
 
@@ -183,12 +204,12 @@
   <code>GET http://127.0.0.1:3001/health</code> probes the four moving parts: the pg pool (<code
     >SELECT 1</code
   >), <code>redisBatch.ping()</code>, <code>redisRealtime.ping()</code>, and each registered
-  <code>Worker</code>'s <code>isRunning()</code> state. Each probe is given a 1-second timeout via
-  <code>Promise.race</code>. A 200 response means all probes passed; a 503 response carries a
-  <code>failed[]</code> array of probe names so operators can see at a glance which dependency
-  tripped. The endpoint binds <code>127.0.0.1</code> only — it's task-internal, consumed by the ECS
-  container <code>healthCheck</code> block in <code>infra/modules/serving/main.tf</code>, which
-  curls it every 30 seconds.
+  <code>Worker</code>'s <code>isRunning()</code> state (all seven). Each probe is given a 1-second
+  timeout via <code>Promise.race</code>. A 200 response means all probes passed; a 503 response
+  carries a <code>failed[]</code> array of probe names so operators can see at a glance which
+  dependency tripped. The endpoint binds <code>127.0.0.1</code> only — it's task-internal, consumed
+  by the ECS container <code>healthCheck</code> block in <code>infra/modules/serving/main.tf</code>,
+  which curls it every 30 seconds.
 </p>
 
 <aside class="wiki-rationale">
@@ -203,7 +224,7 @@
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
   <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on all six
+  new probes from going green during teardown), then runs <code>worker.close()</code> on all seven
   BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
   force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
@@ -345,7 +366,7 @@
   </li>
   <li>
     Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
-    pg + both Redises + all six BullMQ workers are healthy.
+    pg + both Redises + all seven BullMQ workers are healthy.
   </li>
 </ol>
 
@@ -397,16 +418,18 @@
   here, on its own queue; the <a href="./session-turn.html">session-turn</a> worker is the fourth,
   the only one whose stalled-job recovery is a load-bearing product behavior rather than a teardown
   safety net; the <a href="./dm-trigger.html">dm-trigger</a> worker is the fifth, the
-  <a href="./dm-trigger.html">DM trigger</a> system's decision half; and the
+  <a href="./dm-trigger.html">DM trigger</a> system's decision half; the
   <a href="./slow-thinker.html">st-evaluation</a> worker is the sixth, the post-hoc narrative
-  director. The session-turn, dm-trigger, and st-evaluation workers all read and write
-  <code>redisRealtime</code> (the per-session lock, turn / trigger / direction state, and DM-turn
-  frame publishing) on top of the shared <code>redisBatch</code> queues — the dm-trigger worker
-  makes the real Haiku classifier call, and the st-evaluation worker the Haiku gate + Opus director
-  calls, through the <a href="./llm.html">LLM client</a>. The
-  <code>QueueEvents('session-turn')</code> subscriber registered alongside them publishes the
-  terminal <code>turn_error</code> the JS listener can't. Streaming-cost attribution joins to the
-  <code>pipeline_runs</code> table introduced in MYT-43.
+  director; and the <a href="./scribe.html">scribe</a> worker is the seventh, the post-turn
+  reconciler. The session-turn, dm-trigger, st-evaluation, and scribe workers all read and write
+  <code>redisRealtime</code> (the per-session lock, turn / trigger / direction state, the working
+  set, and DM-turn frame publishing) on top of the shared <code>redisBatch</code> queues — the
+  dm-trigger worker makes the real Haiku classifier call, the st-evaluation worker the Haiku gate +
+  Opus director calls, and the scribe worker the Haiku tripwire + Opus retcon calls, through the
+  <a href="./llm.html">LLM client</a> (the scribe worker also shares the boot-probed Voyage embedder
+  for the working-set embed-on-append). The <code>QueueEvents('session-turn')</code> subscriber
+  registered alongside them publishes the terminal <code>turn_error</code> the JS listener can't.
+  Streaming-cost attribution joins to the <code>pipeline_runs</code> table introduced in MYT-43.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -453,6 +476,14 @@
       <td>
         <code>buildStEvaluationWorker</code> — the sixth Worker (concurrency 2). The post-hoc
         <a href="./slow-thinker.html">Slow Thinker</a> pipeline; documented on that page.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/session/scribe-worker.ts</code></td>
+      <td>
+        <code>buildScribeWorker</code> — the seventh Worker (concurrency 2). The post-turn
+        <a href="./scribe.html">Scribe</a> reconciler (working set + tripwire + retcon); documented
+        on that page.
       </td>
     </tr>
     <tr>
@@ -533,6 +564,10 @@
     <tr>
       <td>Concurrency: <code>st-evaluation</code></td>
       <td>2 (each job can hold an Opus call open for minutes)</td>
+    </tr>
+    <tr>
+      <td>Concurrency: <code>scribe</code></td>
+      <td>2 (a retcon job can hold an Opus call open; 90s lock)</td>
     </tr>
   </tbody>
 </table>

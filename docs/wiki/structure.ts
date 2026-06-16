@@ -32,6 +32,7 @@ export const structure: Section[] = [
       { slug: 'fast-thinker', title: 'Fast Thinker' },
       { slug: 'character-ledger', title: 'Character ledger' },
       { slug: 'slow-thinker', title: 'Slow Thinker' },
+      { slug: 'scribe', title: 'Scribe' },
       { slug: 'dm-trigger', title: 'DM trigger' },
     ],
   },

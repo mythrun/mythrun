@@ -1,14 +1,17 @@
 digraph worker {
   // The worker. A second ECS Fargate service that runs node dist/worker.js
-  // and pulls jobs from six BullMQ queues on redisBatch. Health server on
+  // and pulls jobs from seven BullMQ queues on redisBatch. Health server on
   // 127.0.0.1:3001 is what ECS probes. Real prep-stage processors land across
   // MYT-51 onward; session-prep (MYT-61) is the third queue/worker; the
   // session-turn worker (MYT-66) is the fourth — the lock-fenced DM-turn
   // conductor; the dm-trigger worker (MYT-67) is the fifth — the DM-trigger
   // decision shell; the st-evaluation worker (MYT-69) is the sixth — the
-  // post-hoc SlowThinker, enqueued by the turn worker on its flushed-success
-  // path. All three also read/write redisRealtime (lock / state / direction /
-  // trigger coordination). A QueueEvents('session-turn') subscriber publishes the
+  // post-hoc SlowThinker; the scribe worker (MYT-73) is the seventh — the
+  // post-turn reconciler (working set + tripwire + retcon). The st-evaluation
+  // and scribe workers are both enqueued by the turn worker on its
+  // flushed-success path. The turn / trigger / st-eval / scribe workers also
+  // read/write redisRealtime (lock / state / direction / working set / trigger
+  // coordination). A QueueEvents('session-turn') subscriber publishes the
   // broker-side terminal turn_error on a dedicated blocking connection.
   rankdir=LR;
   compound=true;
@@ -21,7 +24,7 @@ digraph worker {
     color="ember";
     fontcolor="ember";
 
-    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn' | 'dm-trigger' |\n  'st-evaluation')"];
+    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn' | 'dm-trigger' |\n  'st-evaluation' | 'scribe')"];
   }
 
   subgraph cluster_redis {
@@ -34,6 +37,7 @@ digraph worker {
     q_turn     [label="queue: session-turn", color="ember", fontcolor="ember"];
     q_trig     [label="queue: dm-trigger\n(debounce — see dm-trigger)", color="ember", fontcolor="ember"];
     q_steval   [label="queue: st-evaluation\n(post-hoc SlowThinker)", color="ember", fontcolor="ember"];
+    q_scribe   [label="queue: scribe\n(post-turn reconciler)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_worker {
@@ -50,6 +54,7 @@ digraph worker {
     w_turn     [label="buildSessionTurnWorker\nsession-turn\nconcurrency 5\nlock + state + publish\non redisRealtime", color="ember", fontcolor="ember"];
     w_trig     [label="buildDmTriggerWorker\ndm-trigger\nconcurrency 5\nre-validate → batch → classify\n→ enqueue session-turn", color="ember", fontcolor="ember"];
     w_steval   [label="buildStEvaluationWorker\nst-evaluation\nconcurrency 2\npolicy → Haiku gate → Opus director\n→ write direction slots + summary", color="ember", fontcolor="ember"];
+    w_scribe   [label="buildScribeWorker\nscribe\nconcurrency 2 · 90s lock\nembed → Haiku tripwire → Opus retcon\n→ working set + correction turn", color="ember", fontcolor="ember"];
     qevents    [label="QueueEvents('session-turn')\nbroker failed → turn_error\ndedicated BRPOP connection", color="ember", fontcolor="ember"];
     health     [label="worker/health-server.ts\nGET /health on 127.0.0.1:3001\nprobes: pg + redisBatch +\nredisRealtime + isRunning()"];
     bullmq_redis [label="redis/bullmq-client.ts\nmaxRetriesPerRequest: null\n(BullMQ requirement)"];
@@ -73,8 +78,11 @@ digraph worker {
   q_turn     -> w_turn   [label="BLPOP-style\n+ stalled redelivery", color="ember"];
   q_trig     -> w_trig   [label="matures\n(quiet window)", color="ember"];
   q_steval   -> w_steval [label="BLPOP-style", color="ember"];
+  q_scribe   -> w_scribe [label="BLPOP-style", color="ember"];
   w_trig     -> q_turn   [label="enqueue\nsession-turn", color="ember"];
   w_turn     -> q_steval [label="enqueue st-evaluation\n(post-turn, flushed success)", color="ember"];
+  w_turn     -> q_scribe [label="enqueue scribe\n(post-turn, flushed success)", color="ember"];
+  w_scribe   -> q_turn   [label="enqueue correction turn\n(retcon Z)", style=dotted, color="ember"];
   q_turn     -> qevents  [label="broker failed", style=dotted, color="ember"];
 
   // Worker shape
@@ -87,6 +95,7 @@ digraph worker {
   entry   -> w_turn   [style=dashed];
   entry   -> w_trig   [style=dashed];
   entry   -> w_steval [style=dashed];
+  entry   -> w_scribe [style=dashed];
   entry   -> qevents  [style=dashed, label="register +\nclose on SIGTERM"];
   bullmq_redis -> w_world [style=dashed, label="connection"];
   bullmq_redis -> w_camp  [style=dashed];
@@ -94,11 +103,13 @@ digraph worker {
   bullmq_redis -> w_turn  [style=dashed];
   bullmq_redis -> w_trig  [style=dashed];
   bullmq_redis -> w_steval [style=dashed];
+  bullmq_redis -> w_scribe [style=dashed];
 
   // Turn + trigger + st-eval workers also drive redisRealtime (lock / state / direction / coordination)
   w_turn -> realtime [style=dashed, label="lock + state +\nDM-turn frames", color="ember"];
   w_trig -> realtime [style=dashed, label="trigger state +\nclassifier", color="ember"];
   w_steval -> realtime [style=dashed, label="direction slots +\nsummary + usage:st", color="ember"];
+  w_scribe -> realtime [style=dashed, label="working set\n(embed-on-append)", color="ember"];
 
   // Health + ECS probe
   entry  -> health [style=dashed, label="start last"];
@@ -110,5 +121,6 @@ digraph worker {
   health -> w_turn      [label="isRunning()", style=dotted];
   health -> w_trig      [label="isRunning()", style=dotted];
   health -> w_steval    [label="isRunning()", style=dotted];
+  health -> w_scribe    [label="isRunning()", style=dotted];
   health -> realtime    [label="PING", style=dotted];
 }

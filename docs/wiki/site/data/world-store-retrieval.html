@@ -301,15 +301,18 @@
   entities, facts, prose kernels, relationships — is rich but inert. The live-play tiers need to
   <em>ask it questions</em>: "what does the world know about a volcanic dragon lair?" (the Fast
   Thinker's in-character lookup, MYT-72), "does this improvised NPC already exist in canon?" (the
-  Scribe's match-vs-mint, MYT-73), "who is this faction's parent organization?" Retrieval is the
-  substrate that turns the store into something queryable, and it is deliberately split from its
-  consumers: this ticket builds and proves the substrate; its consumers import it. MYT-72 is the
-  first — the
+  Scribe's match-vs-mint, on the durable-canon path), "who is this faction's parent organization?"
+  Retrieval is the substrate that turns the store into something queryable, and it is deliberately
+  split from its consumers: this ticket builds and proves the substrate; its consumers import it.
+  MYT-72 was the first — the
   <a href="../runtime/fast-thinker.html#world-knowledge-lookups"
     >Fast Thinker's world-knowledge lookups</a
   >
-  now drive all three resolvers in live play, behind the Slow-Thinker vet; the Scribe's
-  match-vs-mint (MYT-73) is next.
+  drive all three resolvers in live play, behind the Slow-Thinker vet. MYT-73 added the in-session
+  <a href="../runtime/scribe.html">working-set</a> read-merge on top: <code>searchLore</code> now
+  returns its query vector so a session's invented facts can be cosine-ranked against it and unioned
+  into the lore hits at the consumer (the <code>LoreHit</code> type gains a third
+  <code>working_set</code> source for those merged hits).
 </p>
 
 <p>
@@ -452,11 +455,14 @@
 <p>
   <code>searchLore(worldId, queryText, opts)</code> embeds the query (outside any transaction), runs
   the fact-arm and entity-arm cosine searches concurrently inside one short read transaction, merges
-  the two result sets, re-ranks by score descending, and slices to the (clamped) limit. It is
+  the two result sets, re-ranks by score descending, and slices to the (clamped) limit. It returns a
+  <code>{ hits, queryVec }</code> pair — the ranked hits plus the query vector it embedded — so the
+  in-session <a href="../runtime/scribe.html">working-set</a> read-merge (MYT-73) can cosine-rank
+  the session's invented facts against the <em>same</em> vector without a second Voyage call. It is
   <strong>total</strong>: any thrown error — embed failure or query failure — is logged at warn and
-  returns <code>[]</code>. The Fast Thinker's lookup tool narrates a blank rather than crashing the
-  turn; lore retrieval is best-effort context, never a hard dependency. The caller-supplied limit is
-  clamped into <code>[1, 50]</code>, defaulting to 10.
+  returns <code>{ hits: [], queryVec: [] }</code>. The Fast Thinker's lookup tool narrates a blank
+  rather than crashing the turn; lore retrieval is best-effort context, never a hard dependency. The
+  caller-supplied limit is clamped into <code>[1, 50]</code>, defaulting to 10.
 </p>
 
 <p>
@@ -700,9 +706,10 @@
   <a href="../runtime/fast-thinker.html#world-knowledge-lookups"
     >Fast Thinker's world-knowledge lookups</a
   >
-  (live since MYT-72, behind the synchronous Slow-Thinker vet) and, next, the Scribe's match-vs-mint
-  (MYT-73). The Voyage key is a manual secret on the
-  <a href="../infra/serving.html">serving module</a>, distinct from the Anthropic key the
+  (live since MYT-72, behind the synchronous Slow-Thinker vet, with the MYT-73
+  <a href="../runtime/scribe.html">working-set</a> read-merge unioned in at the consumer). The
+  Voyage key is a manual secret on the <a href="../infra/serving.html">serving module</a>, distinct
+  from the Anthropic key the
   <a href="../runtime/llm.html">LLM client</a>
   uses.
 </p>
@@ -721,8 +728,8 @@
     <tr>
       <td><code>createSearchResolvers(deps)</code></td>
       <td>
-        Builds <code>searchLore</code> (facts ∪ entities, total → <code>[]</code>) and
-        <code>findSimilarEntities</code> (entity-only, throws).
+        Builds <code>searchLore</code> (facts ∪ entities, total → <code>{ hits, queryVec }</code>;
+        empty on failure) and <code>findSimilarEntities</code> (entity-only, throws).
       </td>
     </tr>
     <tr>
