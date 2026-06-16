@@ -25,6 +25,7 @@ import {
   type WorldLookupGateDeps,
 } from './world-lookup-gate.js'
 import type { StLookupVetInput } from '../llm/st-lookup-vet.js'
+import type { AccessLevel } from '../repo/facts.js'
 import type { SkillCheckFramePayload } from './tiers/types.js'
 
 /** A per-substrate resolver closure: over-pull the store and report whether the
@@ -38,10 +39,17 @@ export interface ResolverResult {
 export type SubstrateResolver = () => Promise<ResolverResult>
 
 /** The vet-bound context the orchestrator needs (the opaque vet closure captures
- *  sdPlaybook; the orchestrator never sees the raw playbook). */
+ *  sdPlaybook; the orchestrator never sees the raw playbook). `tier` is the ST's
+ *  provenance tag for the relayed/invented content — surfaced out so MYT-73's
+ *  recordInjection can stamp the working-set fact with the right access level. */
 export type WorldFactLookupVet = (
   input: Omit<StLookupVetInput, 'sdPlaybook'>,
-) => Promise<{ mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean }>
+) => Promise<{
+  mode: 'relay' | 'none' | 'invent'
+  text: string
+  tier: AccessLevel
+  repairAttempted: boolean
+}>
 
 export interface WorldFactLookupInput {
   readonly gate: WorldLookupGateInput
@@ -62,6 +70,15 @@ export interface WorldFactLookupResult {
   readonly relayText: string
   readonly skillGateFrame?: SkillCheckFramePayload
   readonly rollHidden: boolean
+  /** The ST-vet's verdict mode for this relay (MYT-73): `relay`/`invent` records
+   *  a working-set injection; `none` records nothing. Every fail-soft arm (gate
+   *  fail, vet error/timeout, discard-on-repair) collapses to `fail_soft` →
+   *  nothing is recorded (the surfaced text is the orchestrator's blank, never a
+   *  vetted fact). */
+  readonly vetMode: 'relay' | 'none' | 'invent' | 'fail_soft'
+  /** The ST's access-level tag for the relayed/invented content; `null` on the
+   *  `none`/`fail_soft` arms (no fact to stamp). */
+  readonly vetTier: AccessLevel | null
 }
 
 /** Channel-appropriate fail-soft relay — degrade WITHOUT leaking a raw error,
@@ -79,8 +96,15 @@ export async function runWorldFactLookup(
 
   // A failed gate skips the resolver + vet cost: surface the gate's fail
   // constraint as the relay (it IS the in-fiction "you don't recall" prose).
+  // No vet ran → fail-soft for MYT-73 (nothing recorded).
   if (gate.outcome === 'fail') {
-    return { relayText: gate.failConstraint, skillGateFrame: gate.frame, rollHidden: gate.rollHidden }
+    return {
+      relayText: gate.failConstraint,
+      skillGateFrame: gate.frame,
+      rollHidden: gate.rollHidden,
+      vetMode: 'fail_soft',
+      vetTier: null,
+    }
   }
 
   // auto_success → no roll happened, nothing to hide, no frame.
@@ -100,7 +124,7 @@ export async function runWorldFactLookup(
   }
 
   // ST-vet — the ONE tier-safety gate. A throw degrades to a fail-soft relay.
-  let vetOut: { mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean }
+  let vetOut: { mode: 'relay' | 'none' | 'invent'; text: string; tier: AccessLevel; repairAttempted: boolean }
   try {
     vetOut = await deps.vet({
       question: input.question,
@@ -113,19 +137,27 @@ export async function runWorldFactLookup(
     })
   } catch (err) {
     deps.logger?.warn({ err, channel: input.gate.channel }, 'world-fact-lookup: ST-vet failed; fail-soft relay')
-    return buildResult(failSoftRelay(input.gate.channel), skillGateFrame, rollHidden)
+    return buildResult(failSoftRelay(input.gate.channel), skillGateFrame, rollHidden, 'fail_soft', null)
   }
 
   // Discard-on-repair: a repaired vet tree's prose was re-authored by a different
   // model — never surface it. Degrade to the fail-soft relay.
   if (vetOut.repairAttempted) {
     deps.logger?.warn({ channel: input.gate.channel }, 'world-fact-lookup: ST-vet repairAttempted; fail-soft relay')
-    return buildResult(failSoftRelay(input.gate.channel), skillGateFrame, rollHidden)
+    return buildResult(failSoftRelay(input.gate.channel), skillGateFrame, rollHidden, 'fail_soft', null)
   }
 
   // The vet's text is authoritative for ALL modes (relay/invent/none) — the
-  // orchestrator surfaces it verbatim, never re-authoring.
-  return buildResult(vetOut.text, skillGateFrame, rollHidden)
+  // orchestrator surfaces it verbatim, never re-authoring. vetMode/vetTier carry
+  // the ST's verdict out so the tool layer (MYT-73) can record a working-set
+  // injection on relay/invent. `none` carries no fact → vetTier is null.
+  return buildResult(
+    vetOut.text,
+    skillGateFrame,
+    rollHidden,
+    vetOut.mode,
+    vetOut.mode === 'none' ? null : vetOut.tier,
+  )
 }
 
 /** Build a result, attaching skillGateFrame only when present
@@ -134,6 +166,8 @@ function buildResult(
   relayText: string,
   skillGateFrame: SkillCheckFramePayload | undefined,
   rollHidden: boolean,
+  vetMode: 'relay' | 'none' | 'invent' | 'fail_soft',
+  vetTier: AccessLevel | null,
 ): WorldFactLookupResult {
-  return { relayText, ...(skillGateFrame ? { skillGateFrame } : {}), rollHidden }
+  return { relayText, ...(skillGateFrame ? { skillGateFrame } : {}), rollHidden, vetMode, vetTier }
 }

@@ -51,6 +51,7 @@ import type {
   WorldLookupGateDeps,
 } from '../world-lookup-gate.js'
 import { KNOWLEDGE_SKILLS, type KnowledgeSkill } from '../world-lookup-config.js'
+import type { WorkingSetProposal } from '../working-set/types.js'
 import type { SearchResolvers } from '../../world/retrieval/search.js'
 import { charactersKnownTo, factionTree, type GraphDeps } from '../../world/retrieval/graph.js'
 import type { LoreHit, KnownCharacter, FactionNode } from '../../world/retrieval/types.js'
@@ -208,6 +209,12 @@ export type FtToolDeps = Omit<SkillCheckDeps, 'abortSignal'> & {
     channel: 'dm' | 'npc',
     detail: { skill?: KnowledgeSkill; npcName?: string; topic: string },
   ) => Promise<string>
+  /** Turn-scoped working-set sink (MYT-73). When a lookup's ST-vet RELAYS or
+   *  INVENTS a fact, the tool records the VETTED relay text (already secret-free)
+   *  + its tier + channel-derived provenance into the working set. DM channel →
+   *  objective; NPC channel → attributed (an NPC's answer is a claim, not ground
+   *  truth). NEVER a raw secret — only the orchestrator's vetted relay text. */
+  readonly recordInjection: (p: WorkingSetProposal) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +445,26 @@ async function runLookup(
       resolve: args.resolve,
     },
   )
+
+  // MYT-73 — when the ST-vet RELAYED or INVENTED a fact, record it into the
+  // working set. We record the VETTED relay text (already secret-free, from the
+  // ST-vet) + the ST's tier + channel-derived provenance — NEVER a raw secret.
+  // `none`/fail-soft modes carry no fact → nothing recorded. DM channel is
+  // objective world truth; an NPC's answer is an attributed claim (the resolved
+  // NPC entity id/name come off the asker — the same resolution the gate used).
+  if (out.vetMode === 'relay' || out.vetMode === 'invent') {
+    deps.recordInjection({
+      kind: 'fact',
+      content: out.relayText,
+      subjectName: args.topic,
+      tier: out.vetTier ?? 'known',
+      provenance:
+        asker.channel === 'dm'
+          ? { kind: 'objective' }
+          : { kind: 'attributed', npcEntityId: asker.npc.entityId, npcName: asker.npcName },
+      source: 'st_injection',
+    })
+  }
   return toToolResult(out)
 }
 

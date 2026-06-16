@@ -8,6 +8,7 @@ import {
   type LookupWiringDeps,
   type LookupWiringRepo,
 } from '../lookup-wiring.js'
+import type { WorkingSetProposal } from '../../working-set/types.js'
 
 // Mock the Opus ST-vet (it would otherwise spend Opus tokens + hit the network).
 // The vet closure under test threads the secret sdPlaybook INTO this call — the
@@ -78,11 +79,14 @@ function deps(repo: LookupWiringRepo): LookupWiringDeps {
   return { repo, embedder: fakeEmbedder(), logger: silentLogger }
 }
 
+const recordInjection = vi.fn<(p: WorkingSetProposal) => void>()
+
 const args: LookupWiringArgs = {
   worldId: WORLD_ID,
   campaignId: CAMPAIGN_ID,
   sessionId: SESSION_ID,
   recentNarrative: RECENT,
+  recordInjection,
 }
 
 /** A vet input minus sdPlaybook (the shape the orchestrator hands the closure). */
@@ -167,10 +171,12 @@ describe('buildLookupDeps — vet closure (sdPlaybook boundary)', () => {
     const passed = mockRunStLookupVet.mock.calls[0]?.[0]
     expect(passed?.sdPlaybook).toBe('THE SECRET')
     expect(passed?.question).toBe('Who runs the docks?')
-    // The closure maps result.mode / result.text / repairAttempted (drops tier).
+    // The closure surfaces result.mode / result.text / result.tier (MYT-73) +
+    // repairAttempted — tier flows out so recordInjection can stamp the fact.
     expect(out).toEqual({
       mode: 'relay',
       text: 'You recall the Harbormaster.',
+      tier: 'known',
       repairAttempted: false,
     })
   })
@@ -216,7 +222,16 @@ describe('buildLookupDeps — enforced ignorance (structural)', () => {
     expect('sdPlaybook' in result).toBe(false)
     // Sanity: the public lookup surface IS present (and is exactly these keys).
     expect(Object.keys(result).sort()).toEqual(
-      ['askerSummary', 'graph', 'recentNarrative', 'resolveEntityId', 'search', 'vet', 'worldId'].sort(),
+      [
+        'askerSummary',
+        'graph',
+        'recentNarrative',
+        'recordInjection',
+        'resolveEntityId',
+        'search',
+        'vet',
+        'worldId',
+      ].sort(),
     )
     expect(result.worldId).toBe(WORLD_ID)
     expect(typeof result.vet).toBe('function')
@@ -247,6 +262,25 @@ describe('buildLookupDeps — resolveEntityId & recentNarrative', () => {
   it('recentNarrative is a thunk returning the threaded narration string', () => {
     const result = buildLookupDeps(deps(fakeRepo()), args)
     expect(result.recentNarrative()).toBe(RECENT)
+  })
+
+  it('recordInjection is threaded straight through from the args (MYT-73 sink)', () => {
+    const sink = vi.fn<(p: WorkingSetProposal) => void>()
+    const result = buildLookupDeps(deps(fakeRepo()), { ...args, recordInjection: sink })
+
+    // The wiring forwards the exact sink — no wrapping — so the FT tool layer
+    // calls the real turn-scoped working-set sink.
+    expect(result.recordInjection).toBe(sink)
+    const proposal: WorkingSetProposal = {
+      kind: 'fact',
+      content: 'The docks answer to the Harbormaster.',
+      subjectName: 'the docks',
+      tier: 'known',
+      provenance: { kind: 'objective' },
+      source: 'st_injection',
+    }
+    result.recordInjection(proposal)
+    expect(sink).toHaveBeenCalledWith(proposal)
   })
 })
 

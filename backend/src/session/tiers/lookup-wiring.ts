@@ -21,6 +21,7 @@ import type { GraphDeps } from '../../world/retrieval/graph.js'
 import { runStLookupVet } from '../../llm/st-lookup-vet.js'
 import type { WorldFactLookupVet } from '../world-fact-lookup.js'
 import type { KnowledgeSkill } from '../world-lookup-config.js'
+import type { WorkingSetProposal } from '../working-set/types.js'
 import type { FtToolDeps } from './ft-tools.js'
 
 /** Minimal pino-compatible logger surface this module needs (structured warn). */
@@ -67,6 +68,10 @@ export interface LookupWiringArgs {
   readonly sessionId: string
   /** The recent player-visible narration the ST-vet reasons over. */
   readonly recentNarrative: string
+  /** The turn-scoped working-set sink (MYT-73). A lookup whose ST-vet relays or
+   *  invents a fact records the VETTED relay text (already secret-free) into the
+   *  working set; threaded straight through to `FtToolDeps`. */
+  readonly recordInjection: (p: WorkingSetProposal) => void
 }
 
 /** The lookup portion of `FtToolDeps`. Pinned as a `Pick` so the spread at the
@@ -75,7 +80,14 @@ export interface LookupWiringArgs {
  *  `sdPlaybook` is deliberately ABSENT (captured inside the vet closure). */
 export type LookupDeps = Pick<
   FtToolDeps,
-  'worldId' | 'search' | 'graph' | 'resolveEntityId' | 'recentNarrative' | 'vet' | 'askerSummary'
+  | 'worldId'
+  | 'search'
+  | 'graph'
+  | 'resolveEntityId'
+  | 'recentNarrative'
+  | 'vet'
+  | 'askerSummary'
+  | 'recordInjection'
 >
 
 /**
@@ -85,7 +97,7 @@ export type LookupDeps = Pick<
  */
 export function buildLookupDeps(deps: LookupWiringDeps, args: LookupWiringArgs): LookupDeps {
   const { repo, embedder, logger } = deps
-  const { worldId, campaignId, sessionId, recentNarrative } = args
+  const { worldId, campaignId, sessionId, recentNarrative, recordInjection } = args
 
   // SearchLogger.warn widens its first arg to `unknown`; WiringLogger.warn narrows
   // it to `string | Record<string, unknown>`, so it isn't directly assignable
@@ -123,7 +135,14 @@ export function buildLookupDeps(deps: LookupWiringDeps, args: LookupWiringArgs):
       sessionNumber > 0 ? await lookupVetRepo.sessionPreps.getBy(campaignId, sessionNumber) : null
     const sdPlaybook = prep?.sdPlaybook ?? '' // the secret is captured HERE, never escapes
     const r = await runStLookupVet({ ...vetInput, sdPlaybook })
-    return { mode: r.result.mode, text: r.result.text, repairAttempted: r.repairAttempted }
+    // tier is surfaced out (MYT-73) so recordInjection can stamp the working-set
+    // fact with the ST's access level; text/mode stay the vet's authoritative prose.
+    return {
+      mode: r.result.mode,
+      text: r.result.text,
+      tier: r.result.tier,
+      repairAttempted: r.repairAttempted,
+    }
   }
 
   // The PUBLIC asker-standing summary the gate reads. Public-only by construction
@@ -155,6 +174,7 @@ export function buildLookupDeps(deps: LookupWiringDeps, args: LookupWiringArgs):
     recentNarrative: () => recentNarrative,
     vet,
     askerSummary,
+    recordInjection,
   }
 }
 

@@ -151,7 +151,12 @@ function makeAskerCharacter(): Character {
  *  enforced-ignorance closure shape buildLookupDeps wires in production). */
 const realVet: WorldFactLookupVet = async (vetInput) => {
   const r = await runStLookupVet({ ...vetInput, sdPlaybook: SD_PLAYBOOK })
-  return { mode: r.result.mode, text: r.result.text, repairAttempted: r.repairAttempted }
+  return {
+    mode: r.result.mode,
+    text: r.result.text,
+    tier: r.result.tier,
+    repairAttempted: r.repairAttempted,
+  }
 }
 
 // Force a natural 20 so the gate always PASSES (or auto-succeeds) and the real

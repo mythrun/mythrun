@@ -18,6 +18,7 @@ import {
 import type { WorldLookupGateResolution } from '../world-lookup-gate.js'
 import { resolveWorldLookupGate } from '../world-lookup-gate.js'
 import type { SkillCheckFramePayload } from '../tiers/types.js'
+import type { AccessLevel } from '../../repo/facts.js'
 import type { Character } from '../../repo/types.js'
 
 vi.mock('../world-lookup-gate.js', () => ({
@@ -48,14 +49,22 @@ function mockGateOnce(resolution: WorldLookupGateResolution): void {
   mockGate.mockResolvedValueOnce(resolution)
 }
 
-/** A vet closure that returns a fixed relay/none/invent verdict. */
+/** A vet closure that returns a fixed relay/none/invent verdict. `tier` defaults
+ *  to `'known'` when omitted (the orchestrator surfaces it as vetTier on the
+ *  success path; MYT-73). */
 function makeVet(
-  out: { mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean },
+  out: {
+    mode: 'relay' | 'none' | 'invent'
+    text: string
+    repairAttempted: boolean
+    tier?: AccessLevel
+  },
   spy?: ReturnType<typeof vi.fn>,
 ): WorldFactLookupVet {
+  const { tier = 'known', ...rest } = out
   return (input) => {
     spy?.(input)
-    return Promise.resolve(out)
+    return Promise.resolve({ ...rest, tier })
   }
 }
 
@@ -132,7 +141,13 @@ describe('runWorldFactLookup', () => {
       dmInput({ resolve }),
     )
 
-    expect(result).toEqual({ relayText: 'It eludes you.', skillGateFrame: frame, rollHidden: false })
+    expect(result).toEqual({
+      relayText: 'It eludes you.',
+      skillGateFrame: frame,
+      rollHidden: false,
+      vetMode: 'fail_soft',
+      vetTier: null,
+    })
     expect(resolve).not.toHaveBeenCalled()
     expect(vetSpy).not.toHaveBeenCalled()
   })
@@ -293,6 +308,67 @@ describe('runWorldFactLookup', () => {
       dmInput(),
     )
     expect(result.relayText).toBe('You search your memory and come up empty.')
+  })
+
+  // ── MYT-73: vetMode / vetTier surfacing (the recordInjection signal) ──
+
+  it('vet mode:relay → surfaces vetMode:"relay" + the vet tier', async () => {
+    mockGateOnce({ outcome: 'auto_success' })
+    const result = await runWorldFactLookup(
+      makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false, tier: 'discoverable' }) }),
+      dmInput(),
+    )
+    expect(result.vetMode).toBe('relay')
+    expect(result.vetTier).toBe('discoverable')
+  })
+
+  it('vet mode:invent → surfaces vetMode:"invent" + the vet tier', async () => {
+    mockGateOnce({ outcome: 'auto_success' })
+    const result = await runWorldFactLookup(
+      makeDeps({ vet: makeVet({ mode: 'invent', text: 'A morsel.', repairAttempted: false, tier: 'secret' }) }),
+      dmInput(),
+    )
+    expect(result.vetMode).toBe('invent')
+    expect(result.vetTier).toBe('secret')
+  })
+
+  it('vet mode:none → surfaces vetMode:"none" + vetTier null (no fact to record)', async () => {
+    mockGateOnce({ outcome: 'auto_success' })
+    const result = await runWorldFactLookup(
+      makeDeps({ vet: makeVet({ mode: 'none', text: 'Nothing.', repairAttempted: false, tier: 'known' }) }),
+      dmInput(),
+    )
+    expect(result.vetMode).toBe('none')
+    expect(result.vetTier).toBeNull()
+  })
+
+  it('gate fail → fail-soft vetMode + null vetTier (no vet ran, nothing to record)', async () => {
+    const frame = makeFrame({ outcomeTier: 'fail', constraint: 'It eludes you.' })
+    mockGateOnce({ outcome: 'fail', frame, rollHidden: false, failConstraint: 'It eludes you.' })
+
+    const result = await runWorldFactLookup(makeDeps(), dmInput())
+
+    expect(result.vetMode).toBe('fail_soft')
+    expect(result.vetTier).toBeNull()
+  })
+
+  it('vet throws → fail-soft vetMode + null vetTier (degraded relay, nothing recorded)', async () => {
+    mockGateOnce({ outcome: 'auto_success' })
+    const result = await runWorldFactLookup(makeDeps({ vet: throwingVet() }), dmInput())
+    expect(result.vetMode).toBe('fail_soft')
+    expect(result.vetTier).toBeNull()
+  })
+
+  it('vet repairAttempted:true → fail-soft vetMode + null vetTier (repair-authored text never recorded)', async () => {
+    mockGateOnce({ outcome: 'auto_success' })
+    const result = await runWorldFactLookup(
+      makeDeps({
+        vet: makeVet({ mode: 'relay', text: 'REPAIR-AUTHORED', repairAttempted: true, tier: 'known' }),
+      }),
+      dmInput(),
+    )
+    expect(result.vetMode).toBe('fail_soft')
+    expect(result.vetTier).toBeNull()
   })
 
   it('passes question / recentNarrative / channel / npcFraming / results / worldTone to the vet (no sdPlaybook)', async () => {

@@ -217,9 +217,11 @@ function fakeGraph(
  *  sd_playbook string. */
 const fakeVet: WorldFactLookupVet = vi
   .fn()
-  .mockResolvedValue({ mode: 'relay', text: '', repairAttempted: false })
+  .mockResolvedValue({ mode: 'relay', text: '', tier: 'known', repairAttempted: false })
 
-/** The MYT-72 lookup surface added to FtToolDeps. Overridable per test. */
+/** The MYT-72 lookup surface added to FtToolDeps. Overridable per test. The
+ *  MYT-73 `recordInjection` sink defaults to a fresh spy per surface so tests can
+ *  assert what the tool recorded. */
 interface LookupSurface {
   worldId: string
   search: SearchResolvers
@@ -228,6 +230,7 @@ interface LookupSurface {
   recentNarrative: () => string
   vet: WorldFactLookupVet
   askerSummary: FtToolDeps['askerSummary']
+  recordInjection: FtToolDeps['recordInjection']
 }
 
 function makeLookupSurface(overrides: Partial<LookupSurface> = {}): LookupSurface {
@@ -239,6 +242,7 @@ function makeLookupSurface(overrides: Partial<LookupSurface> = {}): LookupSurfac
     recentNarrative: vi.fn().mockReturnValue('the recent narration'),
     vet: fakeVet,
     askerSummary: vi.fn().mockResolvedValue('a public asker summary'),
+    recordInjection: vi.fn(),
     ...overrides,
   }
 }
@@ -1304,6 +1308,8 @@ const RELAY: WorldFactLookupResult = {
     constraint: 'You recall what you know of it.',
   },
   rollHidden: false,
+  vetMode: 'relay',
+  vetTier: 'known',
 }
 
 /** A relay with NO skill-gate frame — drives `toToolResult`'s `?? null` arm
@@ -1312,6 +1318,8 @@ const RELAY: WorldFactLookupResult = {
 const RELAY_NO_FRAME: WorldFactLookupResult = {
   relayText: 'The Steward inclines their head, recalling the old road.',
   rollHidden: true,
+  vetMode: 'relay',
+  vetTier: 'discoverable',
 }
 
 /** A spy logger (warn only — the surface the lookup code touches) plus a deps
@@ -1913,7 +1921,7 @@ describe('lookup tools — structural enforced ignorance + registration', () => 
     mockRunWorldFactLookup.mockResolvedValue(RELAY)
     const vet: WorldFactLookupVet = vi
       .fn()
-      .mockResolvedValue({ mode: 'relay', text: 't', repairAttempted: false })
+      .mockResolvedValue({ mode: 'relay', text: 't', tier: 'known', repairAttempted: false })
     const deps = makeDeps(
       foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
       fakeLedger(),
@@ -1967,5 +1975,217 @@ describe('lookup tools — structural enforced ignorance + registration', () => 
       expect(t.description).toContain('channel')
       expect(t.description).toContain('narrate from it')
     }
+  })
+})
+
+// ===========================================================================
+// MYT-73 — recordInjection: a lookup whose ST-vet RELAYED or INVENTED a fact
+// records it into the turn-scoped working set. The recorded fact carries the
+// VETTED relay text (secret-free, from the orchestrator), the ST's tier, and
+// channel-derived provenance: DM → objective; NPC → attributed (the resolved
+// NPC entity id/name). `none`/fail-soft modes record NOTHING.
+// ===========================================================================
+
+/** An invent-mode result (DM channel, with a frame) — records an injection. */
+const INVENT: WorldFactLookupResult = {
+  relayText: 'You half-recall a smuggler named Ket who once ran these tunnels.',
+  rollHidden: false,
+  vetMode: 'invent',
+  vetTier: 'discoverable',
+}
+
+/** A none-mode result — the truthful "nothing" relay; records NOTHING. */
+const NONE: WorldFactLookupResult = {
+  relayText: 'You search your memory and come up empty.',
+  rollHidden: false,
+  vetMode: 'none',
+  vetTier: null,
+}
+
+/** A fail-soft result — degraded relay; records NOTHING. */
+const FAIL_SOFT: WorldFactLookupResult = {
+  relayText: "You can't quite bring it to mind.",
+  rollHidden: false,
+  vetMode: 'fail_soft',
+  vetTier: null,
+}
+
+/** A relay with a null tier — defensive: the orchestrator never produces
+ *  relay+null, but the type allows it, so the `vetTier ?? 'known'` fallback
+ *  stamps 'known'. */
+const RELAY_NULL_TIER: WorldFactLookupResult = {
+  relayText: 'A faint recollection surfaces.',
+  rollHidden: false,
+  vetMode: 'relay',
+  vetTier: null,
+}
+
+describe('lookup tools — recordInjection (MYT-73 working-set sink)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('dm relay records an objective fact with the relay text, topic subject, and the ST tier', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const recordInjection = vi.fn()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ recordInjection }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec(
+      { channel: 'dm', topic: 'the Ashen Compact', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )
+
+    expect(recordInjection).toHaveBeenCalledTimes(1)
+    expect(recordInjection).toHaveBeenCalledWith({
+      kind: 'fact',
+      content: RELAY.relayText,
+      subjectName: 'the Ashen Compact',
+      tier: 'known',
+      provenance: { kind: 'objective' },
+      source: 'st_injection',
+    })
+  })
+
+  it('a relay with a null vetTier falls back to the known tier (defensive)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY_NULL_TIER)
+    const recordInjection = vi.fn()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ recordInjection }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'the Ashen Compact', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    expect(recordInjection).toHaveBeenCalledWith(
+      expect.objectContaining({ tier: 'known', source: 'st_injection' }),
+    )
+  })
+
+  it('dm invent records an objective fact (invent is recorded like relay)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(INVENT)
+    const recordInjection = vi.fn()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ recordInjection }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'the tunnels', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    expect(recordInjection).toHaveBeenCalledTimes(1)
+    expect(recordInjection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: INVENT.relayText,
+        subjectName: 'the tunnels',
+        tier: 'discoverable',
+        provenance: { kind: 'objective' },
+        source: 'st_injection',
+      }),
+    )
+  })
+
+  it('npc relay records an ATTRIBUTED fact carrying the resolved NPC entity id + name', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY_NO_FRAME)
+    const recordInjection = vi.fn()
+    const resolveEntityId = vi.fn().mockResolvedValue('npc-7')
+    const deps = makeDeps(
+      foundMech(makeCharacter(), []),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ recordInjection, resolveEntityId }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'npc', topic: 'the old road', asker_name: 'The Steward' }, callOpts())
+
+    expect(recordInjection).toHaveBeenCalledTimes(1)
+    expect(recordInjection).toHaveBeenCalledWith({
+      kind: 'fact',
+      content: RELAY_NO_FRAME.relayText,
+      subjectName: 'the old road',
+      tier: 'discoverable',
+      provenance: { kind: 'attributed', npcEntityId: 'npc-7', npcName: 'The Steward' },
+      source: 'st_injection',
+    })
+  })
+
+  it('characters_known_to records the SUBJECT character as subjectName', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const recordInjection = vi.fn()
+    const resolveEntityId = vi.fn().mockResolvedValue('subj-1')
+    const charactersKnownTo = vi.fn().mockResolvedValue([])
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ recordInjection, resolveEntityId, graph: fakeGraph({ charactersKnownTo }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'characters_known_to')
+
+    await exec(
+      { channel: 'dm', character: 'The Spymaster', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )
+
+    expect(recordInjection).toHaveBeenCalledWith(
+      expect.objectContaining({ subjectName: 'The Spymaster' }),
+    )
+  })
+
+  it('faction_tree records the SUBJECT faction as subjectName', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const recordInjection = vi.fn()
+    const resolveEntityId = vi.fn().mockResolvedValue('fac-1')
+    const factionTree = vi.fn().mockResolvedValue([])
+    const deps = makeDeps(
+      foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ recordInjection, resolveEntityId, graph: fakeGraph({ factionTree }) }),
+    )
+    const exec = requireExecute(buildFtTools(deps), 'faction_tree')
+
+    await exec(
+      { channel: 'dm', faction: 'The Compact', skill: 'history', asker_name: 'Vire' },
+      callOpts(),
+    )
+
+    expect(recordInjection).toHaveBeenCalledWith(
+      expect.objectContaining({ subjectName: 'The Compact' }),
+    )
+  })
+
+  it('a none-mode relay records NOTHING (no fact to inject)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(NONE)
+    const recordInjection = vi.fn()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ recordInjection }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    expect(recordInjection).not.toHaveBeenCalled()
+  })
+
+  it('a fail-soft relay records NOTHING (degraded text is never a vetted fact)', async () => {
+    mockRunWorldFactLookup.mockResolvedValue(FAIL_SOFT)
+    const recordInjection = vi.fn()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ recordInjection }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'x', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    expect(recordInjection).not.toHaveBeenCalled()
+  })
+
+  it('an asker-resolution fail-soft (vet never ran) records NOTHING', async () => {
+    // dm channel without a skill → resolveAsker fail-softs, runWorldFactLookup is
+    // NEVER called, so there is no orchestrator result to record.
+    const recordInjection = vi.fn()
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface({ recordInjection }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+
+    await exec({ channel: 'dm', topic: 'x', asker_name: 'Vire' }, callOpts())
+
+    expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
+    expect(recordInjection).not.toHaveBeenCalled()
   })
 })

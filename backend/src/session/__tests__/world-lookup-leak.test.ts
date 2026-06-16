@@ -48,6 +48,7 @@ import {
   type WorldFactLookupInput,
   type WorldFactLookupVet,
 } from '../world-fact-lookup.js'
+import type { AccessLevel } from '../../repo/facts.js'
 import { assistantToRows, rowsToConversation } from '../transcript-codec.js'
 import type { AssistantMessage, ContentPart } from '../tiers/types.js'
 import type { SessionMessage } from '../../repo/types.js'
@@ -133,12 +134,13 @@ type VetCapture = Omit<Parameters<WorldFactLookupVet>[0], never>
  *  reached it) and returns a controlled verdict (so we can prove the
  *  orchestrator surfaces only the verdict's text, never the input). */
 function spyVet(
-  out: { mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean },
+  out: { mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean; tier?: AccessLevel },
 ): { vet: WorldFactLookupVet; captured: () => VetCapture } {
   let seen: VetCapture | undefined
+  const { tier = 'known', ...rest } = out
   const vet: WorldFactLookupVet = (input) => {
     seen = input
-    return Promise.resolve(out)
+    return Promise.resolve({ ...rest, tier })
   }
   return {
     vet,
