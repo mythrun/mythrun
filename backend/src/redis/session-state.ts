@@ -56,6 +56,11 @@ export interface SessionStateBlob {
   readonly ftContext?: string
   /** MYT-68: the world's tonal register, threaded into FT prompting. */
   readonly worldTone?: string
+  /** MYT-72: the campaign's world id, cached on the state blob so a turn worker
+   *  resolves it (for the world-knowledge lookup tools) without a PG round-trip
+   *  every turn. Optional — absent on sessions whose blob predates this cache;
+   *  the turn worker's `resolveWorldId` back-fills it via repo.campaigns. */
+  readonly worldId?: string
 }
 
 /**
@@ -242,6 +247,7 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
         // entirely rather than set it to undefined).
         ...(typeof blob.ftContext === 'string' ? { ftContext: blob.ftContext } : {}),
         ...(typeof blob.worldTone === 'string' ? { worldTone: blob.worldTone } : {}),
+        ...(typeof blob.worldId === 'string' ? { worldId: blob.worldId } : {}),
       }
     },
 

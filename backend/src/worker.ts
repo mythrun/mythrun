@@ -75,7 +75,8 @@ export async function main(): Promise<void> {
   // silently un-embedded — so the probe crashloops on a config error (auth/
   // bad-request/dim) so a bad key can't ship, and boots DEGRADED (loud error
   // log, not crashloop) on a transient Voyage outage. See boot/voyage-probe.ts.
-  await probeVoyageAtBoot(createVoyageEmbedder({ apiKey: env.voyageApiKey }), logger)
+  const embedder = createVoyageEmbedder({ apiKey: env.voyageApiKey })
+  await probeVoyageAtBoot(embedder, logger)
 
   // Cost caps come from the settings table — pulled at boot so the worker
   // operates on the same values the API uses (server.ts:readCostCapsAtBoot).
@@ -163,6 +164,11 @@ export async function main(): Promise<void> {
     env.redisKeyPrefix,
     logger,
     pg,
+    // The boot-probed Voyage embedder (MYT-72) — the SHARED, validated instance
+    // the FT's world-knowledge lookup tools embed queries through. Passing the
+    // probed instance (not the raw key) avoids per-turn embedder construction,
+    // which would silently degrade on a transient key blip the boot probe caught.
+    embedder,
   )
 
   // DM-trigger (MYT-67 §4.3) — the ordered decision shell that runs when the

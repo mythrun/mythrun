@@ -62,6 +62,9 @@ import type { FastThinker, PartyLedgerSnapshot, Scribe, TurnEmitter } from './ti
 import type { MechanicalReads } from './skill-check.js'
 import type { LedgerOps } from '../repo/characters-ledger.js'
 import type { LedgerTxRunner } from './rules-lawyer.js'
+import type { VoyageEmbedder } from '../llm/embed.js'
+import { buildLookupDeps } from './tiers/lookup-wiring.js'
+import { reloadFtContext, resolveWorldId } from './turn-context.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import {
   rescheduleDebounce,
@@ -77,6 +80,11 @@ import {
   type StEvalPayload,
   type StEvalQueueLike,
 } from './st-eval-queue.js'
+
+// The per-turn context resolvers moved to turn-context.ts (keeping this module
+// under its length budget). Re-exported so existing consumers + tests keep their
+// `from './turn-worker.js'` import surface.
+export { reloadFtContext, resolveWorldId, type ResolveWorldIdDeps } from './turn-context.js'
 
 /** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
  *  meaning a successor re-acquired it). Distinguished from a real failure so the
@@ -115,6 +123,14 @@ export interface TurnWorkerRepo {
   readonly sessionPreps: {
     getBy(campaignId: string, sessionNumber: number): Promise<{ ftContext: string } | null>
   }
+  /** MYT-72: the read-only PUBLIC world-id lookup (campaigns.world_id), used by
+   *  `resolveWorldId` to scope the FT's world-knowledge lookup tools. This is NOT
+   *  the secret sd_playbook surface — that read stays OFF TurnWorkerRepo, on the
+   *  dedicated `LookupVetRepo` in tiers/lookup-wiring.ts (captured inside the vet
+   *  closure, never the FT-side surface). */
+  readonly campaigns: {
+    getWorldId(id: string): Promise<string | null>
+  }
   readonly characters: Pick<MechanicalReads, 'findSessionParticipantCharacterByName'> & {
     /** MYT-68: the FT prompt roster + the per-turn player-attribution map, off
      *  one read — the session's joined PCs as `{userId, name}` in a deterministic
@@ -145,6 +161,16 @@ export interface TierTurnArgs {
   readonly turnId: string
   readonly worldTone: string
   readonly emitter: TurnEmitter
+  /** MYT-72: the campaign's world id, scoping the FT's world-knowledge lookup
+   *  tools (resolved once per turn via `resolveWorldId`, blob-cached). */
+  readonly worldId: string
+  /** MYT-72: the campaign id — the vet closure reads the secret sd_playbook for
+   *  THIS campaign + session (off `LookupVetRepo`, never the FT-side surface). */
+  readonly campaignId: string
+  /** MYT-72: the recent player-visible narration the ST-vet reasons over. The
+   *  ST's running session summary (a cheap, available, thread-consistent source;
+   *  a verbatim-prose tail is a documented v1 follow-up). */
+  readonly recentNarrative: string
 }
 
 export interface TurnProcessorDeps {
@@ -183,36 +209,6 @@ export interface TurnProcessorDeps {
   readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker; scribe: Scribe }
   readonly heartbeatMs: number
   readonly logger: MinimalLogger
-}
-
-/**
- * §3.10 — resolve the enforced-ignorance-safe prep doc (session_preps.ft_context)
- * when the `:state` blob doesn't carry it (a session started before the prep
- * wiring parked it on the blob, or an evicted blob). Reads the session row for
- * its session_number → `sessionPreps.getBy` → `.ftContext`. Absent → '' with a
- * LOUD warn (a turn with no prep context is degraded but must not crash).
- * Exported so the fallback is directly unit-testable.
- */
-export async function reloadFtContext(
-  repo: TurnWorkerRepo,
-  campaignId: string,
-  sessionId: string,
-  logger?: MinimalLogger,
-): Promise<string> {
-  const session = await repo.sessions.getById(sessionId)
-  if (session === null) {
-    logger?.warn({ campaignId, sessionId }, 'reloadFtContext: no session row; ft_context defaults to empty')
-    return ''
-  }
-  const prep = await repo.sessionPreps.getBy(campaignId, session.sessionNumber)
-  if (prep === null) {
-    logger?.warn(
-      { campaignId, sessionId, sessionNumber: session.sessionNumber },
-      'reloadFtContext: no session_prep row; ft_context defaults to empty',
-    )
-    return ''
-  }
-  return prep.ftContext
 }
 
 /**
@@ -368,7 +364,27 @@ export async function processTurnJob(
     const pendingDirection = await deps.triggerState.takeOneShotDirection(campaignId)
     const standingDirective = await deps.triggerState.readStandingDirection(campaignId)
 
-    const tiers = deps.makeTiers({ sessionId, turnId, worldTone, emitter })
+    // MYT-72 — resolve the world id (blob-cached) scoping the FT's world-knowledge
+    // lookup tools, and the recent-narrative the ST-vet reasons over. The vet IS
+    // the ST, so its running session summary is the cheap, available, thread-
+    // consistent context source (a verbatim-prose tail is a documented v1
+    // follow-up). Fresh-run-only, like the roster/ledger reads above.
+    const worldId = await resolveWorldId(
+      { sessionState: deps.sessionState, repo: deps.repo },
+      campaignId,
+      sessionId,
+    )
+    const { summary: recentNarrative } = await deps.sessionState.loadTurnState(campaignId)
+
+    const tiers = deps.makeTiers({
+      sessionId,
+      turnId,
+      worldTone,
+      emitter,
+      worldId,
+      campaignId,
+      recentNarrative,
+    })
 
     const controller = new SessionController(
       {
@@ -520,6 +536,7 @@ export function buildSessionTurnWorker(
   redisKeyPrefix: string,
   logger: MinimalLogger,
   pool: Pool,
+  embedder: VoyageEmbedder,
 ): BullmqWorker<TurnJobPayload> {
   const publisher = createTurnPublisher(redisRealtime, redisKeyPrefix)
   const triggerState = makeTriggerState(redisRealtime, redisKeyPrefix)
@@ -561,9 +578,10 @@ export function buildSessionTurnWorker(
     // never the whole repo), the turn's world tone, and the worker-owned latched
     // emitter. The SlowThinker is retired off this path (MYT-69); Scribe stays a stub.
     /* c8 ignore start -- real-FT construction: invoking it spends Sonnet tokens;
-       wiring is exercised by the §10 real-Anthropic E2E smoke (T19), and the
-       converge-path builder tests prove the surrounding wiring */
-    makeTiers: ({ sessionId, turnId, worldTone }) => {
+       wiring is exercised by the §10 real-Anthropic E2E smoke (T19), the
+       converge-path builder tests prove the surrounding wiring, and the lookup
+       deps' construction is fully covered by lookup-wiring's own unit tests */
+    makeTiers: ({ sessionId, turnId, worldTone, worldId, campaignId, recentNarrative }) => {
       const mech: MechanicalReads = {
         findSessionParticipantCharacterByName: (sid, name) =>
           repo.characters.findSessionParticipantCharacterByName(sid, name),
@@ -579,10 +597,24 @@ export function buildSessionTurnWorker(
       const ledger: LedgerOps = repo.characters
       const runInTx: LedgerTxRunner = (fn) =>
         repo.transaction((tx) => fn(tx.characters)).then(expectCommitted)
+
+      // MYT-72 — the world-knowledge lookup surface, built by the dedicated,
+      // fully-covered lookup-wiring module (which owns the search/graph/vet/
+      // askerSummary construction + the enforced-ignorance sd_playbook-captured-
+      // inside-the-vet-closure boundary). Spread into FtToolDeps; the secret
+      // playbook never lands on the returned object.
+      const lookup = buildLookupDeps(
+        { repo, embedder, logger },
+        { worldId, campaignId, sessionId, recentNarrative },
+      )
+
       return {
         scribe: new StubScribe(),
         ft: new SonnetFastThinker({
-          tools: buildFtTools({ mech, ledger, runInTx, sessionId, turnId, worldTone, logger }, undefined),
+          tools: buildFtTools(
+            { mech, ledger, runInTx, sessionId, turnId, worldTone, logger, ...lookup },
+            undefined,
+          ),
           logger,
         }),
       }

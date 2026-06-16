@@ -2,7 +2,11 @@ import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
 import type { Pool } from 'pg'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { makeSessionState, type SessionState } from '../../redis/session-state.js'
+import {
+  makeSessionState,
+  type SessionState,
+  type SessionStateBlob,
+} from '../../redis/session-state.js'
 import { sessionChannelPattern } from '../../contract/session-channel.js'
 import { SessionController } from '../session-controller.js'
 import { StubFastThinker, StubScribe } from '../tiers/stubs.js'
@@ -32,10 +36,12 @@ import {
   processTurnJob,
   publishTerminalTurnError,
   reloadFtContext,
+  resolveWorldId,
   type TerminalFailureJob,
   type TurnProcessorDeps,
   type TurnWorkerRepo,
 } from '../turn-worker.js'
+import type { VoyageEmbedder } from '../../llm/embed.js'
 
 // `buildSessionTurnWorker` is boot-wiring around `new BullmqWorker(...)`. To
 // exercise its body WITHOUT a broker, mock `bullmq` so the `Worker` constructor
@@ -274,6 +280,11 @@ function fakeRepo(overrides?: {
     },
     sessionPreps: {
       getBy: () => Promise.resolve(prep),
+    },
+    campaigns: {
+      // MYT-72: the world-id lookup `resolveWorldId` reads on the fresh-run arm.
+      // Default a stable world id so the fresh-run tests resolve cleanly.
+      getWorldId: () => Promise.resolve('w-fake'),
     },
     characters: {
       findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
@@ -1980,6 +1991,127 @@ describe('reloadFtContext', () => {
 })
 
 // ---------------------------------------------------------------------------
+// resolveWorldId — the MYT-72 worldId cache seam, unit-tested directly. The blob
+// is the cache; a hit skips the PG read, a miss reads getWorldId + back-fills the
+// blob, and a null blob (session not fully initialized) reads without caching.
+// ---------------------------------------------------------------------------
+
+describe('resolveWorldId', () => {
+  /** A fake SessionState narrowed to getState/setState, backed by a mutable cell
+   *  so a back-fill is observable. `getStateSpy`/`setStateSpy` record the calls. */
+  function fakeWorldIdState(initial: SessionStateBlob | null) {
+    const cell: { blob: SessionStateBlob | null } = { blob: initial }
+    const getStateSpy = vi.fn((): Promise<SessionStateBlob | null> => Promise.resolve(cell.blob))
+    const setStateSpy = vi.fn((_c: string, s: SessionStateBlob): Promise<void> => {
+      cell.blob = s
+      return Promise.resolve()
+    })
+    return {
+      sessionState: { getState: getStateSpy, setState: setStateSpy },
+      cell,
+      getStateSpy,
+      setStateSpy,
+    }
+  }
+
+  function fakeCampaigns(worldId: string | null) {
+    return {
+      campaigns: { getWorldId: vi.fn((): Promise<string | null> => Promise.resolve(worldId)) },
+    }
+  }
+
+  it('returns the cached worldId from the blob without reading PG or re-writing the blob', async () => {
+    const { sessionState, getStateSpy, setStateSpy } = fakeWorldIdState({
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+      worldId: 'w-cached',
+    })
+    const repo = fakeCampaigns('w-pg')
+
+    const result = await resolveWorldId({ sessionState, repo }, CAMPAIGN, SESSION)
+
+    expect(result).toBe('w-cached')
+    expect(getStateSpy).toHaveBeenCalledTimes(1)
+    // A cache hit never touches PG and never re-writes the blob.
+    expect(repo.campaigns.getWorldId).not.toHaveBeenCalled()
+    expect(setStateSpy).not.toHaveBeenCalled()
+  })
+
+  it('on a cache miss reads getWorldId once and back-fills the blob with the merged worldId', async () => {
+    const { sessionState, cell, setStateSpy } = fakeWorldIdState({
+      participants: ['u1', 'u2'],
+      mode: 'exploration',
+      status: 'active',
+      ftContext: 'PREP',
+    })
+    const repo = fakeCampaigns('w-resolved')
+
+    const result = await resolveWorldId({ sessionState, repo }, CAMPAIGN, SESSION)
+
+    expect(result).toBe('w-resolved')
+    expect(repo.campaigns.getWorldId).toHaveBeenCalledTimes(1)
+    expect(repo.campaigns.getWorldId).toHaveBeenCalledWith(CAMPAIGN)
+    // The blob was re-written ONCE, merging the resolved worldId onto the prior fields.
+    expect(setStateSpy).toHaveBeenCalledTimes(1)
+    expect(cell.blob).toEqual({
+      participants: ['u1', 'u2'],
+      mode: 'exploration',
+      status: 'active',
+      ftContext: 'PREP',
+      worldId: 'w-resolved',
+    })
+  })
+
+  it('on a null state blob reads getWorldId, returns the value, and does NOT cache', async () => {
+    // A null blob means the session is not fully initialized (an edge) — resolve
+    // the worldId for this turn but skip the back-fill (nothing to merge onto).
+    const { sessionState, setStateSpy } = fakeWorldIdState(null)
+    const repo = fakeCampaigns('w-edge')
+
+    const result = await resolveWorldId({ sessionState, repo }, CAMPAIGN, SESSION)
+
+    expect(result).toBe('w-edge')
+    expect(repo.campaigns.getWorldId).toHaveBeenCalledTimes(1)
+    // No blob to merge onto → no setState.
+    expect(setStateSpy).not.toHaveBeenCalled()
+  })
+
+  it('returns "" (not null) when the campaign has no world_id, so the lookup deps stay typed', async () => {
+    const { sessionState } = fakeWorldIdState({
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+    })
+    const repo = fakeCampaigns(null)
+
+    const result = await resolveWorldId({ sessionState, repo }, CAMPAIGN, SESSION)
+
+    // getWorldId → null coalesces to '' (worldId is always a string for the tools).
+    expect(result).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FT-side boundary assertion (MYT-69/§9): TurnWorkerRepo.sessionPreps.getBy
+// stays {ftContext}-only — it must NOT have been widened to carry sdPlaybook
+// when T9 added the dedicated LookupVetRepo surface. A fake whose getBy returns
+// ONLY { ftContext } still satisfies TurnWorkerRepo; that it type-checks is the
+// proof the secret-bearing read lives on a SEPARATE surface, not this one.
+// ---------------------------------------------------------------------------
+
+describe('TurnWorkerRepo FT-side boundary', () => {
+  it('a sessionPreps.getBy returning only { ftContext } satisfies TurnWorkerRepo (no sdPlaybook leak)', () => {
+    // A compile-time assertion: this object is typed as TurnWorkerRepo. If the
+    // FT-side surface had been widened to require sdPlaybook, this would fail to
+    // type-check (getBy returns no sdPlaybook). The runtime expectation is a
+    // formality — the binding is the real test.
+    const ftSideRepo: TurnWorkerRepo = fakeRepo({ ftContext: 'PREP DOC' })
+    expect(ftSideRepo.sessionPreps).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // H8 boundary — the terminal-failure gate, unit-tested directly (no broker).
 // `publishTerminalTurnError` publishes a turn_error ONLY when retries are
 // exhausted. Locks the gate so a future edit can't silently start publishing on
@@ -2156,6 +2288,16 @@ describe('publishTerminalTurnError', () => {
  *  the now-REAL SonnetFastThinker, so no real LLM call fires in a unit test. Any
  *  other query resolves empty. Cast to `Pool` (the builder only ever calls
  *  `.query`). */
+/** A fake Voyage embedder for the builder tests. The builder threads it into the
+ *  (c8-ignored, real-LLM) makeTiers closure ONLY; the converge-path builder tests
+ *  never construct the FT, so this is never invoked — a typed stub suffices. */
+function fakeEmbedder(): VoyageEmbedder {
+  return {
+    embedDocuments: () => Promise.resolve([]),
+    embedQuery: () => Promise.resolve([]),
+  }
+}
+
 function convergePool(): Pool {
   const query = (text: string): Promise<{ rows: unknown[]; rowCount: number }> => {
     // turnRowsExist: `SELECT 1 FROM session_messages WHERE turn_id = $1 LIMIT 1`.
@@ -2226,7 +2368,7 @@ describe('buildSessionTurnWorker', () => {
     // triggerState, repo, publisher) and the makeTiers closure is not reached —
     // the real-FT render is covered by the E2E smoke, not here.
     const logger = { warn: vi.fn(), error: vi.fn() }
-    const worker = buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
+    const worker = buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool(), fakeEmbedder())
     expect(worker).not.toBeNull()
 
     const cap = captured.worker
@@ -2245,7 +2387,7 @@ describe('buildSessionTurnWorker', () => {
 
   it('wires triggerState + sessionTurnQueue: an in-flight explicit summon drains on release (§4.7)', async () => {
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool(), fakeEmbedder())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')
@@ -2269,7 +2411,7 @@ describe('buildSessionTurnWorker', () => {
     // unanswered player row above the watermark re-arms the debounce through the
     // REAL `dmTriggerQueue.add` arrow (the mocked Queue records the add).
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePoolWithTrailingPlayer())
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePoolWithTrailingPlayer(), fakeEmbedder())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')
@@ -2285,7 +2427,7 @@ describe('buildSessionTurnWorker', () => {
 
   it("registers a 'failed' handler that delegates to publishTerminalTurnError", async () => {
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool(), fakeEmbedder())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')
@@ -2313,7 +2455,7 @@ describe('buildSessionTurnWorker', () => {
 
   it("the 'failed' handler is a no-op on a non-terminal job (retries remain)", () => {
     const logger = { warn: vi.fn(), error: vi.fn() }
-    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool())
+    buildSessionTurnWorker(redisBatch, redisRealtime, 'bw:', logger, convergePool(), fakeEmbedder())
 
     const cap = captured.worker
     if (cap === null) throw new Error('Worker constructor was not captured')

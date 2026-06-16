@@ -66,6 +66,7 @@ const recoveryRepo: TurnWorkerRepo = {
   },
   sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
   sessionPreps: { getBy: () => Promise.resolve(null) },
+  campaigns: { getWorldId: () => Promise.resolve('w-recovery') },
   characters: {
     findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
     listSessionParticipantCharacters: () => Promise.resolve([]),
