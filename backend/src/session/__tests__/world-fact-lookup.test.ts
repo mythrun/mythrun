@@ -18,6 +18,7 @@ import {
 import type { WorldLookupGateResolution } from '../world-lookup-gate.js'
 import { resolveWorldLookupGate } from '../world-lookup-gate.js'
 import type { SkillCheckFramePayload } from '../tiers/types.js'
+import type { Character } from '../../repo/types.js'
 
 vi.mock('../world-lookup-gate.js', () => ({
   resolveWorldLookupGate: vi.fn(),
@@ -52,17 +53,17 @@ function makeVet(
   out: { mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean },
   spy?: ReturnType<typeof vi.fn>,
 ): WorldFactLookupVet {
-  return async (input) => {
+  return (input) => {
     spy?.(input)
-    return out
+    return Promise.resolve(out)
   }
 }
 
 /** A vet closure that throws. */
 function throwingVet(spy?: ReturnType<typeof vi.fn>): WorldFactLookupVet {
-  return async (input) => {
+  return (input) => {
     spy?.(input)
-    throw new Error('opus 529 overloaded')
+    return Promise.reject(new Error('opus 529 overloaded'))
   }
 }
 
@@ -87,8 +88,8 @@ function dmInput(overrides: Partial<WorldFactLookupInput> = {}): WorldFactLookup
       worldTone: 'grim and rain-soaked',
       askerSummary: 'Vire, a travelling scholar of modest renown',
       dm: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- gate input is passed through opaque to the mocked gate
-        character: { name: 'Vire' } as any,
+        // The mocked gate never reads the character; a minimal stand-in suffices.
+        character: { name: 'Vire' } as unknown as Character,
         skill: 'history',
         skills: [{ skill_name: 'History', proficiency_level: 'proficient' }],
       },
@@ -96,7 +97,7 @@ function dmInput(overrides: Partial<WorldFactLookupInput> = {}): WorldFactLookup
     question: 'What do you know of the Ashen Council?',
     recentNarrative: 'The rain had not let up for three days.',
     npcFraming: '',
-    resolve: async () => makeResolved(),
+    resolve: () => Promise.resolve(makeResolved()),
     ...overrides,
   }
 }
@@ -124,7 +125,7 @@ describe('runWorldFactLookup', () => {
     const frame = makeFrame({ outcomeTier: 'fail', constraint: 'It eludes you.' })
     mockGateOnce({ outcome: 'fail', frame, rollHidden: false, failConstraint: 'It eludes you.' })
 
-    const resolve = vi.fn(async () => makeResolved())
+    const resolve = vi.fn(() => Promise.resolve(makeResolved()))
     const vetSpy = vi.fn()
     const result = await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }, vetSpy) }),
@@ -139,7 +140,7 @@ describe('runWorldFactLookup', () => {
   it('gate auto_success → resolver + vet run; skillGateFrame ABSENT; rollHidden false; relayText = vet relay', async () => {
     mockGateOnce({ outcome: 'auto_success' })
 
-    const resolve = vi.fn(async () => makeResolved())
+    const resolve = vi.fn(() => Promise.resolve(makeResolved()))
     const result = await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }) }),
       dmInput({ resolve }),
@@ -171,9 +172,7 @@ describe('runWorldFactLookup', () => {
     const result = await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }, vetSpy) }),
       dmInput({
-        resolve: async () => {
-          throw new Error('pg pool exhausted')
-        },
+        resolve: () => Promise.reject(new Error('pg pool exhausted')),
       }),
     )
 
@@ -188,9 +187,7 @@ describe('runWorldFactLookup', () => {
     await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }), logger: { warn } }),
       dmInput({
-        resolve: async () => {
-          throw new Error('pg pool exhausted')
-        },
+        resolve: () => Promise.reject(new Error('pg pool exhausted')),
       }),
     )
     expect(warn).toHaveBeenCalled()
@@ -201,7 +198,7 @@ describe('runWorldFactLookup', () => {
     const vetSpy = vi.fn()
     await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }, vetSpy) }),
-      dmInput({ resolve: async () => makeResolved({ degraded: true, empty: true, results: '' }) }),
+      dmInput({ resolve: () => Promise.resolve(makeResolved({ degraded: true, empty: true, results: '' })) }),
     )
 
     expect(vetSpy.mock.calls[0]?.[0]).toMatchObject({ resolverDegraded: true })
@@ -212,7 +209,7 @@ describe('runWorldFactLookup', () => {
     const vetSpy = vi.fn()
     await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }, vetSpy) }),
-      dmInput({ resolve: async () => makeResolved({ degraded: false }) }),
+      dmInput({ resolve: () => Promise.resolve(makeResolved({ degraded: false })) }),
     )
 
     expect(vetSpy.mock.calls[0]?.[0]).toMatchObject({ resolverDegraded: false })
@@ -303,7 +300,7 @@ describe('runWorldFactLookup', () => {
     const vetSpy = vi.fn()
     await runWorldFactLookup(
       makeDeps({ vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }, vetSpy) }),
-      npcInput({ resolve: async () => makeResolved({ results: 'TIER:known — docks gossip' }) }),
+      npcInput({ resolve: () => Promise.resolve(makeResolved({ results: 'TIER:known — docks gossip' })) }),
     )
 
     const vetArg = vetSpy.mock.calls[0]?.[0] as Record<string, unknown>

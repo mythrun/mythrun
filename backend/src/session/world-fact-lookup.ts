@@ -39,13 +39,9 @@ export type SubstrateResolver = () => Promise<ResolverResult>
 
 /** The vet-bound context the orchestrator needs (the opaque vet closure captures
  *  sdPlaybook; the orchestrator never sees the raw playbook). */
-export interface WorldFactLookupVet {
-  (input: Omit<StLookupVetInput, 'sdPlaybook'>): Promise<{
-    mode: 'relay' | 'none' | 'invent'
-    text: string
-    repairAttempted: boolean
-  }>
-}
+export type WorldFactLookupVet = (
+  input: Omit<StLookupVetInput, 'sdPlaybook'>,
+) => Promise<{ mode: 'relay' | 'none' | 'invent'; text: string; repairAttempted: boolean }>
 
 export interface WorldFactLookupInput {
   readonly gate: WorldLookupGateInput

@@ -303,14 +303,11 @@ interface LookupChannelInput {
   readonly askerName?: string
 }
 
-/** A resolved asker: the public gate-input fields (channel + the typed asker)
- *  plus the `npcFraming` string (NPC asker summary, or '' for the DM channel). */
-interface ResolvedAsker {
-  readonly dm?: WorldLookupGateDmAsker
-  readonly npc?: WorldLookupGateNpcAsker
-  readonly skill?: KnowledgeSkill
-  readonly npcName?: string
-}
+/** A resolved asker, discriminated on `channel` so exactly one arm (the typed DM
+ *  or NPC asker) is present and TS narrows it without an assertion. */
+type ResolvedAsker =
+  | { readonly channel: 'dm'; readonly dm: WorldLookupGateDmAsker; readonly skill: KnowledgeSkill }
+  | { readonly channel: 'npc'; readonly npc: WorldLookupGateNpcAsker; readonly npcName: string }
 
 /** Resolve the asker (the one RECALLING) for a lookup, branching on `channel`.
  *  Returns either the resolved asker pieces (success) or a TOTAL fail-soft result
@@ -348,6 +345,7 @@ async function resolveAsker(
     return {
       ok: true,
       asker: {
+        channel: 'dm',
         dm: { character: resolved.character, skill: input.skill, skills: resolved.skills },
         skill: input.skill,
       },
@@ -362,7 +360,7 @@ async function resolveAsker(
   }
   return {
     ok: true,
-    asker: { npc: { entityId, npcName: input.askerName }, npcName: input.askerName },
+    asker: { channel: 'npc', npc: { entityId, npcName: input.askerName }, npcName: input.askerName },
   }
 }
 
@@ -375,12 +373,10 @@ function buildGateInput(
   askerSummary: string,
   asker: ResolvedAsker,
 ): WorldLookupGateInput {
-  if (asker.dm !== undefined) {
+  if (asker.channel === 'dm') {
     return { channel: 'dm', topic, worldTone, askerSummary, dm: asker.dm }
   }
-  // asker.npc is guaranteed present on the else arm (one-of contract).
-  const npc = asker.npc as WorldLookupGateNpcAsker
-  return { channel: 'npc', topic, worldTone, askerSummary, npc }
+  return { channel: 'npc', topic, worldTone, askerSummary, npc: asker.npc }
 }
 
 /**
@@ -411,14 +407,13 @@ async function runLookup(
   if (!resolvedAsker.ok) return resolvedAsker.failSoft
   const { asker } = resolvedAsker
 
-  const askerSummary = await deps.askerSummary(args.channel, {
+  const askerSummary = await deps.askerSummary(asker.channel, {
     topic: args.topic,
-    ...(asker.skill !== undefined ? { skill: asker.skill } : {}),
-    ...(asker.npcName !== undefined ? { npcName: asker.npcName } : {}),
+    ...(asker.channel === 'dm' ? { skill: asker.skill } : { npcName: asker.npcName }),
   })
   // npcFraming feeds the vet the NPC's public identity/knowledge bounds; empty
   // on the DM channel (objective world truth, no NPC voice to bound).
-  const npcFraming = args.channel === 'npc' ? askerSummary : ''
+  const npcFraming = asker.channel === 'npc' ? askerSummary : ''
 
   const gate = buildGateInput(deps.worldTone, args.topic, askerSummary, asker)
   const gateDeps: WorldLookupGateDeps = {
