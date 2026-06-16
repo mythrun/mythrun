@@ -1,169 +1,172 @@
 # MYT-73 — Scribe Reconciler: working set, FT fact-delta, secret tripwire & retcon (design)
 
-> **Status:** approved at brainstorm 2026-06-16. Continuation of MYT-72 (which shipped **relay-only** — the ST-vet's inventions carry forward only in the FT transcript, no durable writes). MYT-73 builds the **in-session** canonization layer. The heavy end-of-session reconcile-to-canon is **MYT-74**.
+> **Status:** approved at brainstorm 2026-06-16; hardened through blind-review round 1 (Ancient cities) — 2 showstoppers (data-flow path; retcon delivery) resolved with the user, NITs folded in. Continuation of MYT-72 (which shipped **relay-only** — ST-vet inventions carry forward only in the FT transcript, no durable writes). MYT-73 builds the **in-session** canonization layer. The heavy end-of-session reconcile-to-canon is **MYT-74**.
 >
-> **Spec basis:** Multiplayer Session Runtime §9 (Scribe), §17.5 (two lookup channels), §17.6 (resolver), §17.7 (the write-authority map — Class 2 = MYT-73), §17.8 (open questions — both resolved here).
+> **Spec basis:** Multiplayer Session Runtime §9, §17.5–17.8 (the write-authority map — Class 2 = MYT-73; §17.8 open Qs resolved here).
 
 ## 1. Goal & scope
 
-**Goal:** turn improvisation into durable-*eligible* canon **without breaking secrets** — close the read-after-write gap MYT-72 left open, and catch the one contradiction that can't wait (a core-secret break) with an in-fiction retcon.
+**Goal:** turn improvisation into durable-*eligible* canon **without breaking secrets** — close the read-after-write gap MYT-72 left open, and catch the one contradiction that can't wait (a core-secret break) with an in-fiction correction.
 
-**In scope (MYT-73):**
-- The ephemeral **session working set** (Redis, session-keyed, rides the 5-min checkpoint).
-- **Read side:** the §17.6 resolver reads **working-set ∪ canon**.
-- **Two write sources:** the FT's emitted **fact-delta** section; MYT-72's **ST injections** (lookup `invent`/`relay`).
-- The per-turn **secret tripwire** (Haiku, secret side).
-- The **retcon** flow (dedicated Opus author → proactive DM turn → append-only supersede in the working set).
+**In scope (MYT-73):** the ephemeral **session working set** (Redis, rides the 5-min checkpoint); the **read side** (resolver reads working-set ∪ canon); the **two write sources** (FT-emitted fact-delta; MYT-72 ST injections); the per-turn **secret tripwire** (Haiku, secret side); the **retcon** flow (dedicated Opus author → a first-class **correction turn** → append-only supersede in the working set).
 
-**Out of scope (→ MYT-74):** the heavy end-of-session **match-vs-mint reconcile-to-canon**, the multi-substrate durable commit (relational row + relationship edges + pgvector embedding + coordinates), **non-secret contradiction handling** (the absorb/reconcile rungs of the Class-3 ladder run at session end with full context), the wiki refresh, transcript search.
+**Out of scope (→ MYT-74):** the heavy end-of-session **match-vs-mint reconcile-to-canon**, the multi-substrate durable commit, **non-secret contradiction handling** (the absorb/reconcile rungs run at session end with full context — D7), the wiki refresh, transcript search.
 
-### 1.1 Decisions (brainstorm 2026-06-16)
+### 1.1 Decisions
 
-- **D1 — Ephemeral-only.** MYT-73 makes **zero durable Postgres canon writes**. The working set (FT fact-delta + ST injections + retcon supersedes) lives entirely in Redis session state and rides the existing 5-min `:state` checkpoint for crash durability. MYT-74's end-of-session reconcile is the **sole** path that commits anything to durable canon. (Matches §17.7 "proposed in-turn, reconciled at session end.")
-- **D2 — Discrete dedicated LLM calls** (not folded into the st-evaluation director; mirrors MYT-72's lookup-gate + ST-vet pattern). The **tripwire** is a new per-turn Haiku call; the **retcon-author** is a new dedicated Opus call fired *only on a tripwire hit*. Each prompt is single-purpose. Retcon **delivery** reuses the existing one-shot-direction channel + the DM-trigger machinery (no new delivery mechanism).
-- **D3 — Embed-on-append + semantic merge.** Each working-set fact gets a real Voyage embedding when it lands (reuse the MYT-71 boot-probed embedder). The §17.6 `search_lore` resolver cosine-merges the small in-memory working set with the pgvector canon results; the graph tools merge working-set entities/relationships structurally. A fact invented turn 5 is semantically findable turn 9.
-- **D4 — NPC write semantics: attributed by channel** (resolves §17.8). A working-set item carries a **provenance/truth-status**: DM-channel relays + FT fact-deltas are `objective`; NPC-channel answers are `attributed` to the conveying NPC ("NPC X conveyed Y", non-objective). The resolver/ST later surfaces attributed items as such ("you recall the smith *told* you…"), preserving that NPCs can be partial/wrong/lying. Carried into MYT-74.
-- **D5 — FT-emitted fact-delta section** (not a post-hoc Haiku extraction; corrects an earlier draft). The FT appends a delimited section at the end of its turn; the FT knows exactly what it introduced, it costs no extra call, and it is **public by construction** (the FT never sees secrets). A **delimiter-guard** in the consume loop keeps the section off the player stream (D5.1).
-- **D6 — Retcon delivery: proactive DM turn.** On a tripwire hit + authored retcon, set the one-shot direction **and** fire a proactive DM turn (reuse the MYT-67 DM-trigger) so the correction lands immediately, not whenever the next player message happens to arrive. A false core-secret fact's blast radius grows every turn it sits.
-- **D7 — In-turn contradiction handling is core-secret breaks ONLY.** Every other contradiction (non-secret, peripheral) defers to MYT-74's full-context reconcile (the absorb/reconcile rungs). MYT-73 implements only the bottom rung — detect-and-retcon a core-secret break — in-turn.
+- **D1 — Ephemeral-only.** Zero durable Postgres canon writes. Working set (FT deltas + ST injections + retcon supersedes) lives in Redis session state, rides the 5-min `:state` checkpoint. MYT-74's reconcile is the sole durable-commit path.
+- **D2 — Discrete dedicated LLM calls** (not folded into the st-evaluation director; mirrors MYT-72). Tripwire = a new per-turn Haiku call; retcon-author = a new dedicated Opus call fired *only on a tripwire hit*. Both via `generateObject` with `redactRawText` (secret side). Delivery via a new correction-turn mode (D6).
+- **D3 — Embed-on-append + semantic merge** (Voyage, reuse MYT-71 embedder). Working-set facts embedded **as documents** (input-type parity with canon); the `search_lore` resolver cosine-merges them with pgvector canon using the **same query vector** `searchLore` already computes; graph tools merge structurally.
+- **D4 — NPC write semantics: attributed by channel.** DM-channel relays + FT deltas → `objective`; NPC-channel answers → `attributed:{npc}` (a claim, not ground truth). Surfaced as recollection-of-a-claim; non-elevation to objective is a first-class tested invariant.
+- **D5 — FT-emitted fact-delta section** (not post-hoc extraction). The FT appends a newline-anchored delimited section; the consume loop's **delimiter-guard** keeps it off the player stream **and** off the persisted transcript (D5.1, §4.2).
+- **D6 — Retcon delivery: a first-class player-less "correction turn."** The silent one-shot-direction channel cannot deliver an *open* correction (the FT prompt hard-rule is "consume directions silently, never acknowledge"), and the DM-trigger no-monologue guard suppresses player-less turns. So MYT-73 adds (a) a **correction-turn kind** — a player-less turn with a watermark that does **not** advance past unresponded player seqs — and (b) a distinct FT prompt affordance: a `[[DM CORRECTION: Z]]` marker that is the explicit **exception** to the silent-consume rule (deliver Z openly in DM voice — "earlier I said X — correction, it's actually Z" — then hand the floor back).
+- **D7 — In-turn contradiction handling is core-secret breaks ONLY.** Non-secret self-contradictions (a renamed NPC, a moved landmark) get **no in-session correction** — they defer to MYT-74's full-context reconcile. **Named accepted v1 limit** (§9): players may see an uncorrected non-secret slip mid-session; MYT-73 deliberately does not add a general in-turn consistency checker (added scope + cost + spurious-correction risk). The tripwire is tuned for the high-stakes break only.
+- **D8 — The turn data-flow path** (resolves the blind-review data-flow gap, §2.4). The FT's `render()` surfaces the parsed delta on its return value; mid-turn ST injections accumulate in a **turn-scoped sink** threaded through `FtToolDeps`; a **dedicated post-turn Scribe job** receives the rendered prose + the delta + the injection sink and does the working-set append + tripwire + (on hit) retcon. The MYT-72 vet surfaces are widened to actually carry `{mode, tier}` out of the tool.
 
 ## 2. The session working set (§17.7 Class 2)
 
-A new ephemeral structure in Redis session state, **session-keyed** (`session:{campaignId}:workingset` — derived from the existing `:state` base key; it is per *live session*, cleared at session end after MYT-74 consumes it). Loaded per-turn into the transient controller, appended to, flushed back on the controller's existing Redis flush + the 5-min checkpoint.
+Ephemeral Redis state keyed by campaignId (`session:{campaignId}:workingset` — one live session per campaign, the existing `:state` keying; cleared at session end after MYT-74 consumes it).
 
 ### 2.1 Item shape
 
-Each working-set item is one proposed narrative datum:
-
 ```ts
 interface WorkingSetItem {
-  readonly id: string                 // uuidv7, working-set-local (NOT a canon entity/fact id)
+  readonly id: string                 // uuidv7, working-set-local (NOT a canon id)
   readonly kind: 'fact' | 'entity' | 'relationship'
-  readonly content: string            // the prose datum (the relay text, the FT-introduced fact, the retcon Z)
-  readonly subjectName: string        // the named thing this is about (entity-resolution handle for MYT-74)
-  readonly tier: AccessLevel          // 'known' | 'discoverable' | 'secret' — from the ST-vet, or 'known' for public FT deltas
-  readonly provenance:                // D4
-    | { kind: 'objective' }                                  // DM-channel relay / FT fact-delta
-    | { kind: 'attributed'; npcEntityId: string; npcName: string }   // NPC-channel — a claim, not ground truth
-  readonly source: 'ft_delta' | 'st_injection' | 'retcon'   // who proposed it
-  readonly embedding: readonly number[]   // 512-dim Voyage vector (D3) — embed-on-append
-  readonly supersedesId: string | null    // set on a retcon item: the working-set item it corrects
-  readonly turnId: string                  // provenance for MYT-74 + crash forensics
+  readonly content: string            // the prose datum
+  readonly subjectName: string        // the named thing (entity-resolution handle for MYT-74)
+  // 'relationship' items additionally carry typed endpoints so the graph merge has something to merge on (Nineveh-I1):
+  readonly edge?: { readonly fromName: string; readonly toName: string; readonly relType: string }
+  readonly parentName?: string        // 'entity' items that are sub-factions: the parent (graph merge)
+  readonly tier: AccessLevel          // 'known' for FT deltas (parser-stamped, never FT-supplied — I3); the ST-vet's tier for injections
+  readonly provenance:
+    | { kind: 'objective' }
+    | { kind: 'attributed'; npcEntityId: string; npcName: string }
+  readonly source: 'ft_delta' | 'st_injection' | 'retcon'
+  readonly embedding: readonly number[]   // 512-dim Voyage DOCUMENT vector (D3); held in the in-memory working set only
+  readonly supersedesId: string | null    // retcon items: the item they correct (or null + supersededContent for an injection that wasn't working-set-resident)
+  readonly turnId: string
 }
 ```
 
-> **Tier on a public FT delta.** FT fact-deltas are public by construction → `tier: 'known'`. ST injections carry the ST-vet's `tier`. (A `secret`-tier item can exist in the working set — e.g. the ST sanctioned a reveal — but only because the ST authored it; the FT never minted a secret.)
+### 2.2 Embed-on-append
 
-### 2.2 Embed-on-append (D3)
+On append, the post-turn Scribe job embeds `content` via the boot-probed `VoyageEmbedder` using the **document** input-type (`embedDocuments` path, dimension/model parity with canon — Nineveh-C2). Embed failure is **fail-soft**: the item is appended with an empty embedding, logged (config error → `*_misconfigured`, transient → `*_degraded`, per MYT-71). **Accepted limit (Nineveh-I4):** an empty-embedding `fact` item is **not** `search_lore`-findable until MYT-74 re-embeds (semantic search has no lexical fallback) — named, not silent; entity/relationship items remain graph-findable by name.
 
-When an item is appended, the controller embeds `content` via the boot-probed `VoyageEmbedder` (the MYT-72/T9 instance, already threaded into the turn worker) and stores the vector on the item. Embedding failure is **fail-soft**: the item is appended with an empty embedding and a `degraded` log; it is still findable by the graph/lexical paths and by MYT-74 (which re-embeds at commit). The embedder is already config-classified (MYT-71): a *config* error at this point logs `*_misconfigured`, a *transient* one logs `*_degraded` — neither blocks the turn.
+### 2.3 Crash durability — embeddings are NOT checkpointed
 
-### 2.3 Crash durability
+The working set rides the existing 5-min `:state` checkpoint, but **only `content` + metadata are serialized — embeddings are stripped** (Nineveh-C3: 512 float64s ≈ 6–7 KB/item JSON × the §9 cap would add ~MB-scale write amplification to the `st_running_summary` TEXT column every 5 min). On crash recovery the working set is re-embedded (the recovery path is rare; MYT-74 re-embeds at commit regardless). This keeps the checkpoint blob bounded and avoids float round-trip concerns.
 
-The working set rides the existing 5-min `:state` checkpoint (raw items incl. embeddings serialized into the checkpoint blob). A mid-session crash loses at most the last <5 min of proposals; on recovery the FT transcript still carries the player-visible narration, and MYT-74's reconcile re-derives from the transcript + the recovered working set. No new durability machinery.
+### 2.4 Turn data-flow (D8) — load-bearing
+
+The blind review established that the parsed FT delta + the mid-turn ST injections + the tripwire's prose input have **no path** to the post-turn work on the current seams (`Scribe.extract(ctx: FtTurnContext)` is fire-and-forget, result-discarded, and `FtTurnContext` carries no rendered prose; the wired MYT-72 orchestrator drops `tier`/`mode`). MYT-73 specifies the path:
+
+1. **ST injections (mid-turn).** `FtToolDeps` gains a **turn-scoped injection sink** — `recordInjection(item: WorkingSetProposal)` — a closure the controller constructs per turn and threads in. Inside `world-fact-lookup.ts`, on the vet returning `mode: 'invent' | 'relay'`, the orchestrator calls `recordInjection({ content: text, tier, provenance: <channel-derived>, source: 'st_injection' })` **synchronously within the tool `execute`**. To do this the MYT-72 surfaces are widened (a real MYT-73 change, not "consume what MYT-72 emitted"): `WorldFactLookupVet` → returns `{ mode, text, tier, repairAttempted }`; `runWorldFactLookup` → surfaces `{ relayText, skillGateFrame, rollHidden, vetMode, vetTier }`; the tool wires `recordInjection`. The sink accumulates into a turn-local array the controller owns.
+2. **FT delta (turn end).** `FastThinker.render()` returns the parsed, Zod-validated delta on its result (`AssistantMessage` gains `readonly worldDelta?: WorldDelta`). The delimiter-guard (§4.2) produces it; it never rides the transcript.
+3. **The post-turn Scribe job.** After `render()`, the controller enqueues a **dedicated Scribe job** (separate queue, modeled on the st-evaluation-worker; NOT the controller's fire-and-forget — the Opus retcon must not block controller teardown) carrying: `campaignId`, `sessionId`, `turnId`, the rendered **player-facing prose** (post-delimiter-split), the parsed `worldDelta`, and the **injection sink array**. The job: (a) embeds + appends all proposals to the working set (atomic append, §9), (b) runs the secret tripwire over the prose, (c) on a hit, runs the retcon-author + emits the correction turn (§7). `Scribe.extract`'s old fire-and-forget seam is **retired** in favor of this enqueued job; `ScribeResult` is superseded by the job payload.
+
+> **Why a separate queue, not st-eval.** Per D2 (user chose discrete over folding into st-eval). The Scribe job and the st-eval job are independent post-turn consumers of the same turn; both read the secret side via the narrow `LookupVetRepo`, neither blocks the turn.
 
 ## 3. The read side — working-set ∪ canon (§17.6)
 
-The MYT-72 resolver closures (`search_lore` / `characters_known_to` / `faction_tree`, built in `lookup-wiring.ts`'s `buildLookupDeps`) gain a working-set merge:
+The merge happens **inside the `search_lore` resolver closure in `ft-tools.ts`, before `renderLoreHits` collapses `LoreHit[]` to a string** (Nineveh-C1 — the ST-vet sees a rendered string, not `LoreHit[]`, so the merge cannot live "after the resolver returns"):
 
-- **`search_lore` (semantic):** after the pgvector canon query returns `LoreHit[]`, cosine-rank the **query embedding** against each working-set item's `embedding` (in-memory; the set is small), and merge the top working-set hits into the result list as `LoreHit`s tagged `source: 'working_set'` with their `accessLevel = tier` and `provenance`. The merged list funnels to the ST-vet exactly as canon hits do — **the over-pull/tier-gate boundary is unchanged** (the ST still vets; a `secret`-tier working-set item is gated the same as a `secret` canon fact).
-- **Graph tools (structural):** working-set `entity`/`relationship` items merge by name/edge into the `charactersKnownTo` / `factionTree` results (small, cheap; no embedding needed). Tier-annotated like the T1 graph results so the ST-vet sees them.
-
-**Provenance flows to the relay.** An attributed (NPC-claim) working-set hit reaches the ST-vet tagged as a claim; the ST-vet's prompt already authors the relay — it surfaces it as recollection of *what was said*, not ground truth. (No ST-vet schema change; the `results` block the orchestrator renders gains a `[claim by {npc}]` annotation alongside the existing `[tier=…]`.)
+- **`search_lore` (semantic):** `searchLore` is widened to also return the **query embedding** it already computes. The closure cosine-ranks that query vector against each working-set item's document embedding (in-memory; the set is small), maps the top working-set hits to `LoreHit` (`source: 'working_set'`, `accessLevel = tier`, plus a `provenance` field — `LoreHit` gains an optional `provenance`, a MYT-71-surface addition listed in §10), merges into `hits`, re-ranks by `score`, and applies the existing limit policy: **canon `limit` preserved; up to K working-set hits appended** (Nineveh-M3 — working-set hits never crowd out canon under a fixed limit). Then `renderLoreHits` renders `[tier=…][claim by {npc}] …` (provenance baked into the string — Nineveh-I2). The merged list funnels to the ST-vet exactly as canon does; **the over-pull/tier-gate boundary is unchanged** (a `secret`-tier working-set item is gated by the ST-vet the same as a `secret` canon fact).
+- **Graph tools (structural):** working-set `entity`/`relationship` items merge into `charactersKnownTo`/`factionTree` by name + the typed `edge`/`parentName` (§2.1); items lacking a structural anchor append as flat nodes with `depth: null` (name-append only). Tier-annotated like the T1 graph results.
 
 ## 4. The FT fact-delta (§17.7 Class-2 source; D5)
 
-### 4.1 Emission
+### 4.1 Emission + schema
 
-The FT system prompt instructs: after the player-facing prose, emit a section
+The FT system prompt instructs: after the player-facing prose, on its **own line**, emit:
 ```
 <player prose>
-===WORLD_DELTA===
+[[WORLD_DELTA]]
 { "facts": [ { "subject": "...", "content": "...", "kind": "fact" }, ... ] }
 ```
-The post-delimiter body is a **Zod-validated JSON** delta (`WorldDeltaSchema`): a list of incidental named things the FT introduced (new NPCs, places, items, lore the FT minted in prose). Empty/absent section ⇒ no delta that turn (the common case). All items are `objective` provenance, `tier: 'known'`.
+`WorldDelta` is a Zod object; the body schema has **no `tier` field** — the parser stamps `tier: 'known'`, `provenance: {kind:'objective'}`, `source: 'ft_delta'` on every item (Ur-I3/Nineveh-M1: the FT never controls a tier label). The delimiter is **newline-anchored** (`\n[[WORLD_DELTA]]\n`) and uses `[[…]]` rather than `===` to slash false-positives (a mid-sentence `=` no longer trips the guard — Carthage-C3). Empty/absent ⇒ no delta. The cap-close instruction (`FT_CLOSE_INSTRUCTION`) is reconciled with the delta instruction so they don't compete (Carthage-C3): the close instruction explicitly permits the trailing `[[WORLD_DELTA]]` line.
 
-### 4.2 The delimiter-guard (D5.1) — load-bearing
+### 4.2 The delimiter-guard (D5.1) — load-bearing, guards BOTH emit AND transcript
 
-The FT consume loop (`fast-thinker.ts` ~`if (part.type === 'text-delta')`) currently does `assembler.pushTextDelta(part.text); await emit.emitText(part.text)`. MYT-73 inserts a **stateful delimiter-guard** between assembly and emit:
+The FT consume loop (`fast-thinker.ts`, the `text-delta` branch: `assembler.pushTextDelta(part.text); await emit.emitText(part.text)`) gains a stateful guard that suppresses the delta section from **both sinks** (Petra-C1: guarding only `emit` lets the raw delimiter+JSON persist into the `dm_text` transcript row and re-inject into FT history forever — the exact MYT-72 §6 permanent-leak). The guard is a filter on the **text-delta substream** feeding *both* `pushTextDelta` and `emitText`:
 
-- Maintain a small **hold buffer** (≤ delimiter length). On each text delta, scan for `=`. From the first `=` onward, route characters into the hold buffer **instead of** `emit.emitText` — the player sees nothing past a potential delimiter prefix.
-- Disambiguate as more text arrives:
-  - **Diverges** from `===WORLD_DELTA===` (a char that can't continue the delimiter — e.g. `2 = 2`) → **flush** the hold buffer to `emit.emitText` (it was a false alarm) and resume normal streaming.
-  - **Completes** the delimiter → **stop player-emit entirely**; route all subsequent text into a **delta accumulator** (never emitted).
-- The guard handles `=` split across token chunks (the buffer spans deltas) and a partial delimiter at stream-end (flush as prose).
-- At `assembler.finalize`, split the full assembled text on the delimiter: the **pre-delimiter prose** is the assistant message (→ transcript, the player-facing part); the **post-delimiter body** is Zod-parsed into `WorkingSetItem`s (`source: 'ft_delta'`) → embedded → working set. A malformed/unparseable delta body is **fail-soft**: dropped with a warn (the prose still ships; MYT-74 re-extracts from the transcript).
+- Maintain a hold buffer (≤ delimiter length, ~14 chars). The matcher targets the **exact literal** `\n[[WORLD_DELTA]]`. The guard arms only at a newline; from a `\n` followed by a `[` (a candidate), route chars into the hold buffer instead of to either sink.
+- **Diverges** (a char that can't continue the literal): flush the hold buffer to **both** sinks, re-test the diverging char as a potential new candidate (KMP-style re-anchor — Petra-I1), resume.
+- **Completes**: stop feeding **both** sinks; route all subsequent text into a delta accumulator (never assembled, never emitted).
+- **Tool-call / step boundary while buffer non-empty** (Petra-I2): flush the pending partial to both sinks (a delimiter can't straddle a tool call); the guard state persists across step boundaries + ignored part types.
+- **Partial delimiter at stream-end:** flush as prose.
+- **Trailing prose after the JSON** (Petra-I3): discarded as malformed-turn output (the spec accepts this; the pre-delimiter prose is unaffected).
+- **`finalize`:** `PartsAssembler.finalize` is delimiter-aware — the assembled text part contains **only** the pre-delimiter prose (it was never fed the tail). The delta accumulator's body is Zod-parsed into `worldDelta` on the `AssistantMessage`; unparseable ⇒ fail-soft (drop with a warn; prose still ships; MYT-74 re-extracts from the transcript).
 
-> **Why the guard, not just a finalize split.** `emit.emitText` streams each delta to the player live; without the guard the player would briefly see `===WORLD_DELTA===` and the JSON before the turn finalized. The guard makes the section invisible *during* streaming, which is the user's hard requirement.
+**Tests (§11) MUST include the transcript-level assertion** (Petra-M3): the persisted `dm_text` row + the FT-history round-trip contain no delimiter and no JSON — the proof the permanent-leak is closed, not just an emit-stream check.
 
 ## 5. ST injections (§17.7 Class-2 source)
 
-MYT-72's lookup flow produces `{mode, text, tier}`. MYT-73 wires the orchestrator (`world-fact-lookup.ts`) so that on `mode: 'invent'` **or** `'relay'`, the relayed text is appended to the working set as a `WorkingSetItem` (`source: 'st_injection'`, `tier` from the vet, `provenance` from the channel per D4). `mode: 'none'` writes nothing. This is the read-after-write close: a turn-5 invention is in the working set for a turn-9 lookup. (MYT-72 deliberately emitted the `tier` "for MYT-73 to consume" — this is that consumption.)
+Wired per §2.4 step 1: on `mode: 'invent' | 'relay'` the relay text is recorded to the turn-scoped sink (`source: 'st_injection'`, `tier` from the widened vet output, `provenance` from the channel per D4); `mode: 'none'` records nothing. This is the read-after-write close — a turn-5 invention is in the working set for a turn-9 lookup.
 
 ## 6. The secret tripwire (§17.7; D2) — secret side
 
-After each FT turn (post-prose, off the hot path), a cheap **Haiku** call checks the turn's assertions against the prep's **core secrets**.
+In the post-turn Scribe job (§2.4 step 3), a `generateObject` **Haiku** call checks the turn's player-facing prose against the prep's core secrets.
 
-- **Inputs (secret side):** the turn's player-facing prose (public) + the **`sd_playbook`'s core secrets** — read via the dedicated narrow `LookupVetRepo.getSdPlaybookBy` surface MYT-72/T9 built (the same secret-side seam; **never** the secret-free `FtTurnContext`, never widening `TurnWorkerRepo.sessionPreps`).
-- **Output (control signal only):** `{ breached: boolean, secretRef: string | null, why: string | null }` — a Zod-flat object. The output is a **control signal**, never content for the FT or the working set. On `breached: false` (the overwhelming common case), the turn is done — cost is one Haiku call.
-- **What "core secret" means:** the playbook's secrets that are currently *in play and breakable* per §17.4 (the revelation-condition'd facts, not every backstory line). The prompt scopes the check to those.
-- **Raw-output suppression:** like the ST-vet, the tripwire's raw output reasons over secrets — it sets `redactRawText: true` (MYT-72/T4a) so a malformed Haiku response can't spill a secret into logs/diagnostics/SSE.
+- **Inputs (secret side):** the rendered **player-facing prose** (from the job payload — the correct artifact, not the lossy running summary — Carthage-C1) + the `sd_playbook` core secrets, read via `LookupVetRepo.sessionPreps.getBy(campaignId, sessionNumber)` (the real method; resolve `sessionNumber` via `repo.sessions.getActiveByCampaign`, as the st-eval worker does — Ur-I1). An **unresolvable/empty playbook FAILS LOUD** (`*_misconfigured`, alarmable) — a tripwire silently checking against zero secrets is worse than an error (Ur-I1; `feedback_fail_loud_on_external_api_misconfig`).
+- **Output (control signal; via `generateObject` so it inherits `redactRawText`):** `{ breached: boolean, confidence: number, secretRef: string | null }`. `secretRef` is an **opaque playbook handle/id, never prose** — and there is **no `why` free-text field**: the tripwire's *valid* output must not carry secret-derived prose, because `redactRawText` covers only the raw/repair channel, not the validated result (Carthage-I2). Nothing in the output is logged as prose; only `{breached, confidence, secretRef}` (handle) is logged.
+- **Confidence + escalation (Principle #3 — Carthage-I3):** the tripwire is the highest-stakes classifier in the runtime; it carries a `confidence` and biases toward recall. A `breached:true` at high confidence → retcon-author. A **low-confidence** verdict (ambiguous) escalates to the Opus retcon-author for a second look rather than silently dropping. The recall/precision posture is stated so the implementer doesn't ship a coin-flip boolean.
+- `redactRawText: true` (a malformed Haiku response reasoning over secrets can't spill into logs/diagnostics/SSE).
 
 ## 7. The retcon flow (§17.7 Class 3, bottom rung; D2, D6) — secret side
 
-On `breached: true`:
+On a breach (or low-confidence escalation):
 
-1. **Author (dedicated Opus call, secret side).** A new `runRetconAuthor` (single-purpose, modeled on the ST-vet's shape) sees: the breached assertion, the `sd_playbook` core secret, and recent narration. It writes `Z` — a **secret-preserving correction** that removes the contradiction **without revealing the secret** (the FT still never learns the secret; an early reveal only if the playbook's revelation conditions already allow). Output: `{ retconText: string, supersededContent: string, tier: AccessLevel }`. `redactRawText: true`. Discard-on-repair (a repaired tree's prose was re-authored — fail-soft to no-retcon-this-cycle; the next turn's tripwire re-fires).
-2. **Deliver (D6).** `retconText` is set as the **one-shot direction** (`setOneShotDirection`) **and** a **proactive DM turn is enqueued** (`enqueueTurn(sessionTurnQueue, …)`, the MYT-67 explicit-summon machinery). The next FT turn — fired immediately by the proactive trigger — consumes the one-shot direction and delivers the retcon in DM voice ("earlier I said X — correction, it's actually Z; from there…"). The FT receives only the **secret-free `Z`**.
-3. **Record (D1, ephemeral).** A `WorkingSetItem` (`source: 'retcon'`, `supersedesId` → the working-set item carrying the false fact, if it originated there; else `supersedesId: null` with the superseded content captured for MYT-74) is appended — an **append-only supersede event** in the working set. History stays intact; MYT-74 commits the supersede to durable canon.
+1. **Author** — `runRetconAuthor` (dedicated Opus `generateObject`, `redactRawText: true`, secret side). **Pinned (Carthage-I1):** schema `RetconResultSchema` (flat); `retconText` `.min(1)` **no `.max()`**; `maxOutputTokens` (~1200, ST-vet parity); a timeout; inputs = `{ breachedAssertion, sdPlaybookSecret, playerFacingProse, recentNarrative }`. It writes `Z` — a secret-preserving correction that removes the contradiction **without revealing the secret, paraphrased or implied** (the retcon-author prompt carries the **identical paraphrase-and-implication hard-rule clause** the ST-vet prompt uses — Carthage-I5). It prefers the **minimal honest correction** and folds the fix into narration where the secret allows (Tikal-M1). It fires the open "earlier I said X" framing **only when X was player-visible** prose (not an internal-only datum — Tikal-M2). Output `{ retconText, supersededContent, tier }`; discard-on-repair → fail-soft (no retcon this cycle; re-fires next turn).
+2. **Deliver (D6 — correction turn).** A **player-less correction turn** is enqueued (a new turn kind; watermark does NOT advance past unresponded player seqs, so genuine pending messages aren't stranded — Carthage-C2/Tikal-C2). The correction turn injects `Z` as a `[[DM CORRECTION: Z]]` marker — the explicit FT-prompt **exception** to silent-consume — so the FT delivers it openly, then hands the floor back. The FT receives only the secret-free `Z`.
+3. **Record (D1, ephemeral).** A `WorkingSetItem` (`source: 'retcon'`, `supersedesId` → the working-set item carrying the false fact, or `null` + `supersededContent` if it wasn't working-set-resident; `tier: 'known'` — it's what the player was told, never gated on read — Ur-M2) is appended. The supersede gates re-authoring (no double-retcon).
 
-> **Tripwire vs retcon-author split (D2).** The tripwire is the cheap per-turn gate (Haiku); the Opus author runs **only** on a hit. Net per-turn Scribe cost vs the old §9 design goes *down*: no per-turn Sonnet extraction, just a Haiku tripwire + (rarely) the Opus author + the working-set append.
+**Worst-case bound (Tikal-I3):** the unhappy chain (tripwire blip → repair-discard → collision) can delay a correction a few turns while the false fact compounds. The spec states a ceiling: if a breach `secretRef` persists **N turns** unresolved, force-escalate (and optionally inject a holding **steer** that stops the FT building further on the flagged fact until the correction lands).
 
 ## 8. Enforced-ignorance boundary (the load-bearing invariant)
 
-```
-SECRET SIDE (see sd_playbook):  tripwire (Haiku)  ·  retcon-author (Opus)
-   their ONLY outputs:          control signal     ·  secret-free Z
-                                       │                    │
-PUBLIC SIDE (FT / working set / resolver): ◄──────────── secret-free Z
-   working set holds ONLY: vetted relays (ST-vet, MYT-72) · public FT deltas · secret-free retcon Z
-```
+Secret side (see `sd_playbook`): tripwire (Haiku) · retcon-author (Opus). Their ONLY outputs: an opaque control signal (`{breached, confidence, secretRef-handle}`) · the secret-free `Z`. Public side (FT / working set / resolver) holds ONLY: MYT-72-vetted relays · public FT deltas (`tier:'known'`, parser-stamped) · secret-preserving `Z`.
 
-- The tripwire/retcon-author read `sd_playbook` via the dedicated `LookupVetRepo` surface; nothing on `FtToolDeps` / `ft-tools.ts` / `fast-thinker.ts` / the working set ever holds a raw secret.
-- The tripwire's output is a control signal (never content). The retcon-author's output `Z` is ST-authored to be secret-free.
-- The working set the FT + resolver read is **secret-free by construction**: every item is either a MYT-72 ST-vetted relay (already secret-free), a public FT delta, or a secret-preserving retcon. (A `secret`-*tier* item can exist — the ST sanctioned it — but "secret-tier, ST-authored, gated by the ST-vet on read" ≠ "a raw playbook secret the FT minted.")
-- **Leak-test matrix (T-level):** (a) a tripwire over prose that breaches a secret → the secret never appears in the tripwire's logged output/diagnostic; (b) the retcon `Z` never contains the secret token; (c) the working set never contains a raw `sd_playbook` secret string; (d) an attributed NPC-claim working-set item, surfaced by a later lookup, never elevates to objective truth in the relay.
+- The FT **never reads the working set as a context field**: `FtTurnContext.workingSet` stays `[]` permanently (it is retired/pinned-empty); the FT sees working-set content **only** through the ST-vet's relay (Ur-C1). The §8 leak matrix proves a secret-tier working-set item never reaches `buildModelMessages`.
+- The working set persisted in the checkpoint is **never surfaced by any member-facing route** (the `GET /api/sessions/:campaignId/active` allowlist strips the whole `st_running_summary` column — Ur-C2); on recovery it re-enters only the resolver-side read, never `FtTurnContext.workingSet`.
+- **Leak-test matrix (real PG + forced LLM, modeled on MYT-72's break-it-to-prove-it):** (a) tripwire over secret-breaching prose → secret absent from the rethrown `.diagnostic.rawTextSnippet`/`zodIssues` AND every warn-log arg (drive the terminal-failure path, structurally identical to `world-lookup-leak.test.ts` case (c)); (b) the retcon `Z` never reveals the secret — **a semantic check (LLM-judge or curated paraphrase set), not a single-token substring** (Carthage-I5); (c) the working set never contains a raw `sd_playbook` secret string; (d) an `attributed` NPC-claim item, surfaced by a later lookup **beside objective hits, with a different asker**, never elevates to objective truth in the relay (Tikal-I2 — tested across the messy merge, not a single assertion); (e) a secret-tier working-set item never appears in `buildModelMessages` / `FtTurnContext.workingSet`.
 
 ## 9. Edge cases & fail-soft
 
-- **No delta / no breach (common path):** FT emits no `===WORLD_DELTA===`; tripwire returns `breached: false`. Cost: one Haiku. Nothing written.
-- **Malformed FT delta JSON:** dropped with a warn; prose ships; MYT-74 re-extracts from transcript. (Never blocks the turn.)
-- **Embed failure on append:** item appended with empty embedding + `degraded` log; still graph/lexical-findable; MYT-74 re-embeds.
-- **Tripwire LLM failure (transient/config):** fail-soft — log, no retcon this cycle; the next turn's tripwire re-fires (the false fact persists one more turn, the accepted cost of a provider blip). A *config* failure escalates loudly (`*_misconfigured`) per the MYT-71 posture.
-- **Retcon-author repair/failure:** discard-on-repair / fail-soft → no retcon this cycle; re-fires next turn.
-- **Proactive turn collides with a real player turn:** the MYT-67 lock + the one-shot direction's latest-wins SET handle it (the direction rides whichever turn runs first; no double-retcon — the supersede item's presence gates re-authoring).
-- **Working-set unbounded growth:** a hard per-session cap (config) on working-set item count; on overflow, oldest **public** items are evicted (they survive in the transcript for MYT-74); ST injections + retcons are never evicted (they're the read-after-write-critical ones). Logged.
+- **No delta / no breach (common):** FT emits no `[[WORLD_DELTA]]`; tripwire `breached:false`. Cost: one Haiku.
+- **Malformed FT delta:** dropped + warn; prose ships; MYT-74 re-extracts.
+- **Embed failure:** item appended w/ empty embedding (§2.2 accepted limit).
+- **Tripwire / retcon-author LLM failure:** fail-soft (transient) → re-fires next turn; **config failure fails loud**.
+- **Empty/unresolvable playbook:** fail loud (§6) — never a silent disarmed tripwire.
+- **Parallel-player turns (Nineveh-I5):** turns are serialized by the per-session lock (MYT-66) — but `WorkingSetRepo.append` is nonetheless an **atomic server-side append** (Redis list `RPUSH` / append-only, never load-blob-mutate-`SET`) so a delta is never lost to a stale-snapshot flush.
+- **Working-set growth / eviction:** a per-session item **cap** (config) set high enough that eviction is a **pathological-overflow safety valve, not a normal-session event**. On overflow, oldest **public** items evict — with the **named caveat** that evicting a public FT delta reopens the read-after-write gap for *that item* in-session (it survives only in the transcript, which the in-session resolver doesn't read — Nineveh-I3/Carthage-M3). ST injections + retcons never evict.
+- **Correction turn collides with a real player turn:** the per-session lock + the supersede-item-gates-re-authoring rule prevent a double-retcon; the correction rides whichever turn the lock admits first.
 
 ## 10. Interface contracts
 
-- **`Scribe.extract(ctx) → ScribeResult`** becomes real: `ScribeResult.workingSetDeltas: readonly WorkingSetItem[]` (typed; was `readonly unknown[]`). The controller flushes the deltas to the Redis working set (it currently discards the stub's `[]`).
-- **`WorkingSetRepo`** (Redis): `load(campaignId) → WorkingSetItem[]`, `append(campaignId, items)`, `evictIfOver(campaignId, cap)`, rides the checkpoint. Session-keyed; cleared at session end (post-MYT-74-consume).
-- **`buildLookupDeps`** (MYT-72/T9 `lookup-wiring.ts`) gains the working-set read merge into the search/graph closures.
-- **`world-fact-lookup.ts`** orchestrator gains the ST-injection append on `invent`/`relay`.
-- **`fast-thinker.ts`** consume loop gains the delimiter-guard + the finalize split; the FT system prompt gains the `===WORLD_DELTA===` instruction; `WorldDeltaSchema` (Zod).
-- **`secret-tripwire.ts`** (new, `llm/`): `runSecretTripwire(input) → {breached, secretRef, why}`. **`retcon-author.ts`** (new, `llm/`): `runRetconAuthor(input) → {retconText, supersededContent, tier}`. Both: dedicated prompts, `redactRawText: true`, secret-side `sd_playbook` via `LookupVetRepo`.
-- **Job topology (D2 — separate from st-eval).** The **cheap working-set append** (parse the FT delta + the ST injections — both already computed during the turn) is synchronous in the turn: `Scribe.extract` returns the deltas, the controller flushes them to the working set. The **tripwire (Haiku) + on-hit retcon-author (Opus)** run in a **dedicated post-turn Scribe job** — enqueued at turn end and modeled on the `st-evaluation-worker`'s job pattern, but a *separate* job (the user chose discrete calls over folding into st-eval). It runs off the hot path so the Opus retcon never blocks the transient controller's teardown, and it holds the secret-side `sd_playbook` read + the direction/trigger surfaces. On a hit it calls `setOneShotDirection` + `enqueueTurn` (existing trigger-state + turn-queue surfaces). The job runs every turn (the tripwire must); the Opus author fires only on a breach.
+- **Retire** `Scribe.extract`'s fire-and-forget seam; the post-turn Scribe job (new queue + worker, modeled on `st-evaluation-worker`) is the consumer. `ScribeResult` → the job payload (prose + `worldDelta` + injection sink + ids).
+- **`FtToolDeps`** gains `recordInjection(proposal)` (the turn-scoped sink). **`FastThinker.render` / `AssistantMessage`** gain `worldDelta?`. **`WorldFactLookupVet` / `runWorldFactLookup` / `LookupToolResult`** widen to surface `{mode, tier}` (§2.4 step 1).
+- **`SearchResolvers.searchLore`** widens to also return the query embedding; the `search_lore` closure in `ft-tools.ts` does the merge (§3). **`LoreHit`** gains optional `provenance`.
+- **`WorkingSetRepo`** (Redis): `load(campaignId) → WorkingSetItem[]` (re-embeds stripped vectors on load if absent), `append(campaignId, items)` (atomic), `evictIfOver(campaignId, cap)`; checkpoint serialization strips embeddings.
+- **New `llm/` modules + prompt template files** (CLAUDE.md: prompts are `.txt`, not inline — Carthage-M4): `secret-tripwire.ts` + `prompts/session/secret-tripwire.txt`; `retcon-author.ts` + `prompts/session/retcon-author.txt`. Both `generateObject` + `redactRawText`, secret-side `sd_playbook` via `LookupVetRepo`.
+- **Correction turn:** a new turn kind + the `[[DM CORRECTION:]]` FT-prompt affordance (the silent-consume exception) + the watermark-safe enqueue.
 
 ## 11. Testing
 
-- **Unit:** the delimiter-guard (the full state machine — false-alarm flush, split-chunk `=`, partial-at-end, clean split); `WorldDeltaSchema`; the working-set read-merge (cosine merge + provenance flow); the tripwire/retcon LLM wrappers (mock `'ai'` `generateText`, like the ST-vet tests); the orchestrator ST-injection append.
-- **Leak matrix (real PG + forced LLM):** §8 (a)–(d), the load-bearing enforced-ignorance proof, modeled on MYT-72's `world-lookup-leak.test.ts` (break-it-to-prove-it).
-- **Gated real-LLM smoke:** seed a world + a `sd_playbook` core secret; drive a turn whose FT prose breaches the secret → assert the real Haiku tripwire fires, the real Opus retcon-author writes a secret-free `Z`, a proactive turn is enqueued, and the supersede lands in the working set — secret never leaks (wire-level: working-set inspection, logs, the delivered prose). Plus the happy path: an FT delta is readable (semantically) by a next-turn lookup.
+- **Unit:** the delimiter-guard state machine (re-anchor, tool-boundary flush, cross-step persistence, partial-at-end, clean split) **incl. the transcript-level "no delimiter/JSON persisted" assertion** (Petra-M3); `WorldDeltaSchema` (stray `tier` ignored → `'known'`); the read-merge (document-embed cosine parity, provenance-to-string, limit policy); the tripwire/retcon wrappers (mock the `'ai'` SDK `generateText` that `generateObject` wraps — like the ST-vet/leak tests — NOT a raw `generateText` call); the widened vet surfaces + `recordInjection`; `resolveWorldId`-style narrow-repo + the loud empty-playbook arm.
+- **Leak matrix (real PG + forced LLM):** §8 (a)–(e), the load-bearing enforced-ignorance proof, break-it-to-prove-it.
+- **Gated real-LLM smoke:** seed a world + `sd_playbook` secret; drive a turn whose FT prose breaches it → assert the real Haiku tripwire fires, the real Opus author writes a secret-free `Z` (semantic check), a **correction turn** is enqueued + the FT delivers `Z` openly, the supersede lands — secret never leaks (wire-level). Plus: an FT delta is semantically readable by a next-turn `search_lore` (read-after-write).
 
 ## 12. Out of scope (→ MYT-74), restated
 
-The end-of-session **match-vs-mint reconcile** of the working set into durable canon (relational + edges + pgvector + coords), non-secret contradiction absorb/reconcile with full context, the wiki refresh, transcript search. MYT-73 hands MYT-74 a fully-populated, tier+provenance-annotated working set.
+The end-of-session match-vs-mint reconcile of the working set into durable canon, **all** non-secret contradiction handling (D7), wiki refresh, transcript search. MYT-73 hands MYT-74 a fully-populated, tier+provenance-annotated working set.
 
-## 13. Blind-review record
+## 13. Blind-review record (round 1 — Ancient cities, 2026-06-16)
 
-_(to be appended after the blind-review round)_
+5 reviewers (Ur=enforced-ignorance, Carthage=LLM-orchestration, Petra=streaming-correctness, Nineveh=data-model/retrieval, Tikal=game-design). **2 showstoppers, resolved with the user:**
+- **Data-flow gap** (Carthage-C1 / Nineveh-C1 / Petra-C2): the FT prose + parsed delta + mid-turn ST injections had no correct path to the post-turn work; the wired MYT-72 code dropped `tier`/`mode`; the merge insertion point was mis-located. → §2.4 (D8) + §3 + widened §10 surfaces.
+- **Retcon delivery** (Carthage-C2 / Tikal-C1 / Tikal-C2): the silent one-shot direction can't deliver an open correction + the no-monologue guard blocks player-less turns. → D6: a first-class player-less **correction turn** + the `[[DM CORRECTION:]]` FT affordance (user-chosen).
+
+**NITs folded in:** assembler-side delimiter-guard + transcript test (Petra-C1/M3); opaque `secretRef`, no `why`, `generateObject`+`redactRawText` (Carthage-I2/Ur-I2); `FtTurnContext.workingSet` pinned empty + checkpoint-route leak cases (Ur-C1/C2); document-embed + query-vector merge (Nineveh-C2/Carthage-I4); embeddings stripped from checkpoint (Nineveh-C3); tripwire confidence/escalation (Carthage-I3); retcon-author schema/budget/paraphrase-clause/minimal-correction/player-visible-X + semantic leak test (Carthage-I1/I5, Tikal-M1/M2); correct `sessionPreps.getBy` + loud empty-playbook (Ur-I1); FT-delta `tier` parser-stamped (Ur-I3/Nineveh-M1); graph-merge edge shape (Nineveh-I1); eviction caveat + atomic append (Nineveh-I3/I5); empty-embed named limit (Nineveh-I4); newline-anchored `[[…]]` delimiter + cap-close reconciliation (Carthage-C3); worst-case retcon bound (Tikal-I3); prompt-template-file deliverables (Carthage-M4). **D7 pushback** (Tikal-I1): user kept secret-only in-turn; the limit is named in D7/§9.
+
+Stopping rule: 2 showstoppers → ship exit (fixed inline, no round 2).
