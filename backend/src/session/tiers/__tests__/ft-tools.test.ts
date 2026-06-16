@@ -47,6 +47,7 @@ import type {
 } from '../../world-fact-lookup.js'
 import type { SearchResolvers } from '../../../world/retrieval/search.js'
 import type { GraphDeps } from '../../../world/retrieval/graph.js'
+import type { WorkingSetItem } from '../../working-set/types.js'
 import { GRAPH_MAX_DEPTH } from '../../../world/retrieval/config.js'
 import type {
   AdjustHpInput,
@@ -231,6 +232,8 @@ interface LookupSurface {
   vet: WorldFactLookupVet
   askerSummary: FtToolDeps['askerSummary']
   recordInjection: FtToolDeps['recordInjection']
+  workingSet: FtToolDeps['workingSet']
+  cosine: FtToolDeps['cosine']
 }
 
 function makeLookupSurface(overrides: Partial<LookupSurface> = {}): LookupSurface {
@@ -243,6 +246,45 @@ function makeLookupSurface(overrides: Partial<LookupSurface> = {}): LookupSurfac
     vet: fakeVet,
     askerSummary: vi.fn().mockResolvedValue('a public asker summary'),
     recordInjection: vi.fn(),
+    // MYT-73: default to an EMPTY working set so the merge is a no-op unless a
+    // test injects items; the real cosine helper is the harmless default.
+    workingSet: vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([]),
+    cosine: realCosine,
+    ...overrides,
+  }
+}
+
+/** A minimal real cosine for the working-set merge tests — same contract as the
+ *  wiring's `cosineSimilarity` (empty/zero/mismatched → 0). Kept local so the
+ *  ft-tools tests don't depend on lookup-wiring's export. */
+function realCosine(a: readonly number[], b: readonly number[]): number {
+  if (a.length === 0 || a.length !== b.length) return 0
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] ?? 0
+    const y = b[i] ?? 0
+    dot += x * y
+    na += x * x
+    nb += y * y
+  }
+  if (na === 0 || nb === 0) return 0
+  return dot / (Math.sqrt(na) * Math.sqrt(nb))
+}
+
+/** Build a WorkingSetItem with sane defaults — overridable per test. */
+function makeWsItem(overrides: Partial<WorkingSetItem> = {}): WorkingSetItem {
+  return {
+    id: 'ws-1',
+    turnId: 'turn-1',
+    kind: 'fact',
+    content: 'A working-set fact invented earlier this session.',
+    subjectName: 'the smuggler Ket',
+    tier: 'known',
+    provenance: { kind: 'objective' },
+    source: 'st_injection',
+    embedding: [1, 0, 0],
     ...overrides,
   }
 }
@@ -2187,5 +2229,341 @@ describe('lookup tools — recordInjection (MYT-73 working-set sink)', () => {
 
     expect(mockRunWorldFactLookup).not.toHaveBeenCalled()
     expect(recordInjection).not.toHaveBeenCalled()
+  })
+})
+
+// ===========================================================================
+// MYT-73 — search_lore working-set merge (read-after-write). The resolve closure
+// the tool hands the orchestrator merges the per-turn working set (cosine-ranked
+// against the SAME queryVec searchLore embedded) INTO the canon LoreHit[] BEFORE
+// renderLoreHits collapses to a string. The merged working-set hits funnel to the
+// ST-vet exactly as canon hits do — the tier-gate boundary is UNCHANGED. NPC-
+// attributed items render as a `[claim by {npc}]` claim, never objective truth.
+// We assert the `results` STRING the captured resolve closure returns (the ST-vet
+// reads this rendered string), invoking it just like world-fact-lookup does.
+// ===========================================================================
+
+/** A canon hit set fixture for the merge (one objective known fact). */
+const CANON_HITS = [
+  {
+    source: 'fact' as const,
+    entityId: 'e1',
+    entityName: 'Ashen Compact',
+    content: 'A pact between three houses.',
+    accessLevel: 'known' as const,
+    score: 0.9,
+  },
+]
+
+/** Drive search_lore on the DM channel with a stubbed searchLore + working set,
+ *  then return the `results` string the captured resolve closure produces. */
+async function resolvedSearchResults(lookup: Partial<LookupSurface>): Promise<string> {
+  mockRunWorldFactLookup.mockResolvedValue(RELAY)
+  const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+  const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface(lookup))
+  const exec = requireExecute(buildFtTools(deps), 'search_lore')
+  await exec({ channel: 'dm', topic: 'the smuggler Ket', skill: 'history', asker_name: 'Vire' }, callOpts())
+  const resolved = await capturedResolve()()
+  return resolved.results
+}
+
+describe('search_lore working-set merge (MYT-73)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('merges a near-query working-set item into the rendered results block', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: CANON_HITS, queryVec: [1, 0, 0] })
+    const wsItem = makeWsItem({ embedding: [1, 0, 0], content: 'Ket runs the river tunnels.' })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([wsItem])
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    // Canon hit is preserved…
+    expect(results).toContain('[tier=known] Ashen Compact: A pact between three houses.')
+    // …and the working-set item is appended as a tier-annotated line.
+    expect(results).toContain('Ket runs the river tunnels.')
+    expect(results).toContain('[tier=known]')
+    expect(workingSet).toHaveBeenCalledTimes(1)
+  })
+
+  it('an attributed working-set item renders a [claim by {npc}] prefix', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: [], queryVec: [1, 0, 0] })
+    const wsItem = makeWsItem({
+      embedding: [1, 0, 0],
+      content: 'The harbor answers to the Steward.',
+      provenance: { kind: 'attributed', npcEntityId: 'npc-7', npcName: 'The Steward' },
+    })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([wsItem])
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    // Attributed items render as a claim — never objective truth.
+    expect(results).toContain('[claim by The Steward]')
+    expect(results).toContain('The harbor answers to the Steward.')
+  })
+
+  it('a secret-tier working-set item is still merged (gated DOWNSTREAM by the ST-vet, not filtered)', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: [], queryVec: [1, 0, 0] })
+    const wsItem = makeWsItem({
+      embedding: [1, 0, 0],
+      tier: 'secret',
+      content: 'The Steward is the lost heir.',
+    })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([wsItem])
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    // Over-pull boundary is UNCHANGED: the secret-tier item appears in the block
+    // the ST-vet reads (the vet tier-gates it; the tool never filters it out).
+    expect(results).toContain('[tier=secret]')
+    expect(results).toContain('The Steward is the lost heir.')
+  })
+
+  it('skips working-set items with an empty embedding (cannot be cosine-ranked)', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: CANON_HITS, queryVec: [1, 0, 0] })
+    const wsItem = makeWsItem({ embedding: [], content: 'An un-embeddable orphan fact.' })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([wsItem])
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    // Canon survives; the empty-embedding ws item is skipped.
+    expect(results).toContain('A pact between three houses.')
+    expect(results).not.toContain('An un-embeddable orphan fact.')
+  })
+
+  it('an empty working set leaves the canon block untouched', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: CANON_HITS, queryVec: [1, 0, 0] })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([])
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    expect(results).toBe('[tier=known] Ashen Compact: A pact between three houses.')
+  })
+
+  it('drops working-set items scoring below the floor (low cosine to the query)', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: [], queryVec: [1, 0, 0] })
+    // Orthogonal embedding → cosine 0 → below the small floor → dropped.
+    const wsItem = makeWsItem({ embedding: [0, 1, 0], content: 'An unrelated working-set fact.' })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([wsItem])
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    expect(results).not.toContain('An unrelated working-set fact.')
+  })
+
+  it('caps the merged working-set hits at the top-K by cosine score', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: [], queryVec: [1, 0, 0] })
+    // 7 items, all above the floor (decreasing similarity); only the top 5 merge.
+    const items = Array.from({ length: 7 }, (_, i) =>
+      makeWsItem({
+        id: `ws-${String(i)}`,
+        // x-component shrinks → cosine to [1,0,0] decreases but stays > floor.
+        embedding: [1, (i + 1) * 0.05, 0],
+        content: `Working-set fact number ${String(i)}.`,
+      }),
+    )
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue(items)
+
+    const results = await resolvedSearchResults({
+      search: fakeSearch({ searchLore }),
+      workingSet,
+    })
+
+    // The 5 highest-cosine (lowest-index) merge; the 2 weakest are dropped.
+    const merged = results.split('\n').filter((l) => l.includes('Working-set fact number'))
+    expect(merged).toHaveLength(5)
+    expect(results).toContain('Working-set fact number 0.')
+    expect(results).not.toContain('Working-set fact number 6.')
+  })
+
+  it('reports a non-empty merge even when canon is empty (working set alone)', async () => {
+    const searchLore = vi.fn().mockResolvedValue({ hits: [], queryVec: [1, 0, 0] })
+    const wsItem = makeWsItem({ embedding: [1, 0, 0], content: 'Only the working set knows this.' })
+    const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([wsItem])
+
+    mockRunWorldFactLookup.mockResolvedValue(RELAY)
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, makeLookupSurface({ search: fakeSearch({ searchLore }), workingSet }))
+    const exec = requireExecute(buildFtTools(deps), 'search_lore')
+    await exec({ channel: 'dm', topic: 'the smuggler Ket', skill: 'history', asker_name: 'Vire' }, callOpts())
+
+    const resolved = await capturedResolve()()
+    // The merged block is non-empty → empty:false even though canon was empty.
+    expect(resolved.empty).toBe(false)
+    expect(resolved.results).toContain('Only the working set knows this.')
+  })
+})
+
+// ===========================================================================
+// MYT-73 — graph-closure working-set merge. characters_known_to / faction_tree
+// flat-append the turn's working-set GRAPH items (entity / relationship) as
+// extra tier-annotated lines. A relationship renders its edge; an entity with a
+// parentName renders a structural anchor; a bare entity renders a flat node. An
+// attributed item gets a `[claim by {npc}]` prefix. Fact-kind items are skipped
+// (they merge into search_lore, not the graph walk).
+// ===========================================================================
+
+/** Drive a graph tool (characters_known_to / faction_tree) on the DM channel
+ *  with a stubbed graph walk + working set, then return the captured resolve
+ *  closure's `results` string. */
+async function resolvedGraphResults(
+  tool: 'characters_known_to' | 'faction_tree',
+  graphOverride: Partial<GraphDeps['repo']['worldRetrieval']>,
+  ws: WorkingSetItem[],
+  subjectArg: Record<string, unknown>,
+): Promise<{ results: string; empty: boolean }> {
+  mockRunWorldFactLookup.mockResolvedValue(RELAY)
+  const resolveEntityId = vi.fn().mockResolvedValue('subj-1')
+  const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue(ws)
+  const deps = makeDeps(
+    foundMech(makeCharacter(), [{ skill_name: 'History', proficiency_level: 'proficient' }]),
+    fakeLedger(),
+    undefined,
+    makeLookupSurface({ resolveEntityId, workingSet, graph: fakeGraph(graphOverride) }),
+  )
+  const exec = requireExecute(buildFtTools(deps), tool)
+  await exec({ channel: 'dm', skill: 'history', asker_name: 'Vire', ...subjectArg }, callOpts())
+  const resolved = await capturedResolve()()
+  return { results: resolved.results, empty: resolved.empty }
+}
+
+describe('characters_known_to working-set merge (MYT-73)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('flat-appends a relationship item rendering its edge after the canon walk', async () => {
+    const charactersKnownTo = vi
+      .fn()
+      .mockResolvedValue([
+        { entity_id: 'k1', name: 'Mara', entity_type: 'npc', access_level: 'known', depth: 1 },
+      ])
+    const relItem = makeWsItem({
+      kind: 'relationship',
+      content: 'They were seen conspiring at the docks.',
+      subjectName: 'The Spymaster',
+      edge: { fromName: 'The Spymaster', toName: 'Doran', relType: 'allied-with' },
+      tier: 'discoverable',
+    })
+
+    const { results } = await resolvedGraphResults(
+      'characters_known_to',
+      { charactersKnownTo },
+      [relItem],
+      { character: 'The Spymaster' },
+    )
+
+    // Canon walk line preserved…
+    expect(results).toContain('[tier=known] Mara (depth 1)')
+    // …and the relationship working-set item renders its edge.
+    expect(results).toContain('The Spymaster —allied-with→ Doran')
+    expect(results).toContain('[tier=discoverable]')
+    expect(results).toContain('They were seen conspiring at the docks.')
+  })
+
+  it('renders an attributed entity item with a [claim by {npc}] prefix and a flat node', async () => {
+    const charactersKnownTo = vi.fn().mockResolvedValue([])
+    const entItem = makeWsItem({
+      kind: 'entity',
+      content: 'A masked courier the Spymaster uses.',
+      subjectName: 'The Courier',
+      provenance: { kind: 'attributed', npcEntityId: 'npc-7', npcName: 'Mara' },
+      tier: 'known',
+    })
+
+    const { results } = await resolvedGraphResults(
+      'characters_known_to',
+      { charactersKnownTo },
+      [entItem],
+      { character: 'The Spymaster' },
+    )
+
+    expect(results).toContain('[claim by Mara]')
+    // A bare entity (no edge/parentName) renders a flat node = subjectName.
+    expect(results).toContain('The Courier: A masked courier the Spymaster uses.')
+  })
+
+  it('skips fact-kind working-set items (graph-irrelevant)', async () => {
+    const charactersKnownTo = vi.fn().mockResolvedValue([])
+    const factItem = makeWsItem({ kind: 'fact', content: 'A fact, not a graph edge.' })
+
+    const { results, empty } = await resolvedGraphResults(
+      'characters_known_to',
+      { charactersKnownTo },
+      [factItem],
+      { character: 'The Spymaster' },
+    )
+
+    expect(results).not.toContain('A fact, not a graph edge.')
+    // No canon rows + only a (skipped) fact item → genuinely empty.
+    expect(empty).toBe(true)
+  })
+})
+
+describe('faction_tree working-set merge (MYT-73)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('flat-appends an entity item with a parentName as a structural anchor', async () => {
+    const factionTree = vi.fn().mockResolvedValue([
+      { entity_id: 'fac-1', name: 'The Compact', entity_type: 'faction', access_level: 'known', parent_id: null, depth: 0 },
+    ])
+    const entItem = makeWsItem({
+      kind: 'entity',
+      content: 'A splinter cell formed this session.',
+      subjectName: 'The Ember Hand',
+      parentName: 'The Compact',
+      tier: 'secret',
+    })
+
+    const { results, empty } = await resolvedGraphResults(
+      'faction_tree',
+      { factionTree },
+      [entItem],
+      { faction: 'The Compact' },
+    )
+
+    // Canon node preserved…
+    expect(results).toContain('[tier=known] The Compact (parent root, depth 0)')
+    // …and the working-set entity renders its parent anchor + tier.
+    expect(results).toContain('The Ember Hand (under The Compact)')
+    expect(results).toContain('[tier=secret]')
+    expect(empty).toBe(false)
+  })
+
+  it('an empty canon walk with a working-set item alone is non-empty (ws-only recall)', async () => {
+    // No canon nodes (nodes.length === 0 true) but a working-set entity present →
+    // the `&& wsLines.length === 0` arm is evaluated false → empty:false.
+    const factionTree = vi.fn().mockResolvedValue([])
+    const entItem = makeWsItem({
+      kind: 'entity',
+      content: 'A cell that exists only in this session so far.',
+      subjectName: 'The Ember Hand',
+      tier: 'discoverable',
+    })
+
+    const { results, empty } = await resolvedGraphResults(
+      'faction_tree',
+      { factionTree },
+      [entItem],
+      { faction: 'The Compact' },
+    )
+
+    expect(empty).toBe(false)
+    expect(results).toContain('The Ember Hand: A cell that exists only in this session so far.')
   })
 })

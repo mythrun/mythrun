@@ -4,11 +4,12 @@ import type { VoyageEmbedder } from '../../../llm/embed.js'
 import type { StLookupVetInput, StLookupVetOutput } from '../../../llm/st-lookup-vet.js'
 import {
   buildLookupDeps,
+  cosineSimilarity,
   type LookupWiringArgs,
   type LookupWiringDeps,
   type LookupWiringRepo,
 } from '../lookup-wiring.js'
-import type { WorkingSetProposal } from '../../working-set/types.js'
+import type { WorkingSetItem, WorkingSetProposal } from '../../working-set/types.js'
 
 // Mock the Opus ST-vet (it would otherwise spend Opus tokens + hit the network).
 // The vet closure under test threads the secret sdPlaybook INTO this call — the
@@ -80,6 +81,7 @@ function deps(repo: LookupWiringRepo): LookupWiringDeps {
 }
 
 const recordInjection = vi.fn<(p: WorkingSetProposal) => void>()
+const workingSet = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([])
 
 const args: LookupWiringArgs = {
   worldId: WORLD_ID,
@@ -87,6 +89,7 @@ const args: LookupWiringArgs = {
   sessionId: SESSION_ID,
   recentNarrative: RECENT,
   recordInjection,
+  workingSet,
 }
 
 /** A vet input minus sdPlaybook (the shape the orchestrator hands the closure). */
@@ -224,12 +227,14 @@ describe('buildLookupDeps — enforced ignorance (structural)', () => {
     expect(Object.keys(result).sort()).toEqual(
       [
         'askerSummary',
+        'cosine',
         'graph',
         'recentNarrative',
         'recordInjection',
         'resolveEntityId',
         'search',
         'vet',
+        'workingSet',
         'worldId',
       ].sort(),
     )
@@ -281,6 +286,57 @@ describe('buildLookupDeps — resolveEntityId & recentNarrative', () => {
     }
     result.recordInjection(proposal)
     expect(sink).toHaveBeenCalledWith(proposal)
+  })
+
+  it('workingSet is threaded straight through from the args (MYT-73 read-after-write)', async () => {
+    const thunk = vi.fn<() => Promise<WorkingSetItem[]>>().mockResolvedValue([])
+    const result = buildLookupDeps(deps(fakeRepo()), { ...args, workingSet: thunk })
+
+    // The wiring forwards the exact per-turn working-set thunk — no wrapping — so
+    // the FT search_lore closure loads the SAME turn-scoped working set.
+    expect(result.workingSet).toBe(thunk)
+    await result.workingSet()
+    expect(thunk).toHaveBeenCalledTimes(1)
+  })
+
+  it('cosine is the pure cosineSimilarity helper (MYT-73 working-set ranking)', () => {
+    const result = buildLookupDeps(deps(fakeRepo()), args)
+    // The wiring provides the pure cosine helper as the FtToolDeps `cosine` dep.
+    expect(result.cosine([1, 0], [1, 0])).toBeCloseTo(1)
+    expect(result.cosine([1, 0], [0, 1])).toBeCloseTo(0)
+  })
+})
+
+describe('cosineSimilarity', () => {
+  it('identical unit vectors → 1', () => {
+    expect(cosineSimilarity([1, 0, 0], [1, 0, 0])).toBeCloseTo(1)
+  })
+
+  it('identical non-unit vectors → 1 (normalized)', () => {
+    expect(cosineSimilarity([2, 4, 1], [2, 4, 1])).toBeCloseTo(1)
+  })
+
+  it('orthogonal vectors → 0', () => {
+    expect(cosineSimilarity([1, 0], [0, 1])).toBeCloseTo(0)
+  })
+
+  it('opposite vectors → -1', () => {
+    expect(cosineSimilarity([1, 2], [-1, -2])).toBeCloseTo(-1)
+  })
+
+  it('an empty vector → 0 (no throw)', () => {
+    expect(cosineSimilarity([], [])).toBe(0)
+    expect(cosineSimilarity([], [1, 2])).toBe(0)
+    expect(cosineSimilarity([1, 2], [])).toBe(0)
+  })
+
+  it('a zero vector → 0 (no divide-by-zero)', () => {
+    expect(cosineSimilarity([0, 0, 0], [1, 2, 3])).toBe(0)
+    expect(cosineSimilarity([1, 2, 3], [0, 0, 0])).toBe(0)
+  })
+
+  it('mismatched lengths → 0 (defensive)', () => {
+    expect(cosineSimilarity([1, 2, 3], [1, 2])).toBe(0)
   })
 })
 

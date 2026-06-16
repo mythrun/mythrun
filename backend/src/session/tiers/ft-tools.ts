@@ -51,7 +51,7 @@ import type {
   WorldLookupGateDeps,
 } from '../world-lookup-gate.js'
 import { KNOWLEDGE_SKILLS, type KnowledgeSkill } from '../world-lookup-config.js'
-import type { WorkingSetProposal } from '../working-set/types.js'
+import type { WorkingSetItem, WorkingSetProposal } from '../working-set/types.js'
 import type { SearchResolvers } from '../../world/retrieval/search.js'
 import { charactersKnownTo, factionTree, type GraphDeps } from '../../world/retrieval/graph.js'
 import type { LoreHit, KnownCharacter, FactionNode } from '../../world/retrieval/types.js'
@@ -215,6 +215,16 @@ export type FtToolDeps = Omit<SkillCheckDeps, 'abortSignal'> & {
    *  objective; NPC channel → attributed (an NPC's answer is a claim, not ground
    *  truth). NEVER a raw secret — only the orchestrator's vetted relay text. */
   readonly recordInjection: (p: WorkingSetProposal) => void
+  /** Per-turn working-set loader (MYT-73 read-after-write). `search_lore`'s
+   *  resolve closure loads the turn's working set and cosine-merges near-query
+   *  items into the canon `LoreHit[]` BEFORE rendering, so a fact invented turn 5
+   *  is findable turn 9. The merged hits funnel to the ST-vet exactly as canon
+   *  hits do — the tier-gate boundary is UNCHANGED. */
+  readonly workingSet: () => Promise<WorkingSetItem[]>
+  /** Cosine similarity of two vectors, in [-1, 1] (0 on empty/zero/mismatched).
+   *  Ranks working-set embeddings against searchLore's query vector — no second
+   *  Voyage call. */
+  readonly cosine: (a: readonly number[], b: readonly number[]) => number
 }
 
 // ---------------------------------------------------------------------------
@@ -468,14 +478,86 @@ async function runLookup(
   return toToolResult(out)
 }
 
-/** Render a searchLore hit set as the tier-annotated block the ST-vet reads. */
+/** Render a searchLore hit set as the tier-annotated block the ST-vet reads.
+ *  A working-set hit attributed to an NPC (MYT-73) gets a `[claim by {npc}]`
+ *  prefix alongside the `[tier=…]` annotation, so the ST-vet (and the prose
+ *  downstream) never surfaces an NPC's claim as objective truth. */
 function renderLoreHits(hits: readonly LoreHit[]): string {
-  return hits.map((h) => `[tier=${h.accessLevel}] ${h.entityName}: ${h.content}`).join('\n')
+  return hits
+    .map((h) => {
+      const claim =
+        h.provenance?.kind === 'attributed' ? `[claim by ${h.provenance.npcName}] ` : ''
+      return `${claim}[tier=${h.accessLevel}] ${h.entityName}: ${h.content}`
+    })
+    .join('\n')
+}
+
+/** Cosine floor for a working-set item to merge into the canon block — a small
+ *  positive threshold so an orthogonal/unrelated item (cosine ≈ 0) is dropped. */
+const WORKING_SET_MERGE_FLOOR = 0.1
+
+/** Max working-set items merged into one search_lore result (top-K by cosine). */
+const WORKING_SET_MERGE_TOP_K = 5
+
+/** Cosine-rank the turn's working-set facts against the searchLore query vector
+ *  and map the top-K (above the floor) to `LoreHit`s for the canon merge. Items
+ *  with an empty embedding (embed failure) can't be ranked → skipped. The mapped
+ *  hit matches `factToHit`'s required fields (source/entityId/entityName/content/
+ *  accessLevel/score) plus the working-set `provenance`. */
+function workingSetHits(
+  items: readonly WorkingSetItem[],
+  queryVec: readonly number[],
+  cosine: (a: readonly number[], b: readonly number[]) => number,
+): LoreHit[] {
+  return items
+    .filter((item) => item.embedding.length > 0)
+    .map((item) => ({ item, score: cosine(queryVec, item.embedding) }))
+    .filter(({ score }) => score >= WORKING_SET_MERGE_FLOOR)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, WORKING_SET_MERGE_TOP_K)
+    .map(({ item, score }) => ({
+      source: 'working_set',
+      entityId: item.id,
+      entityName: item.subjectName,
+      content: item.content,
+      accessLevel: item.tier,
+      score,
+      provenance: item.provenance,
+    }))
 }
 
 /** Render a charactersKnownTo result as the tier-annotated block. */
 function renderKnownCharacters(chars: readonly KnownCharacter[]): string {
   return chars.map((c) => `[tier=${c.accessLevel}] ${c.name} (depth ${String(c.depth)})`).join('\n')
+}
+
+/** Render the turn's working-set GRAPH items (entity / relationship) as extra
+ *  tier-annotated lines for a graph-walk results block (MYT-73 read-after-write).
+ *  The structural anchor is best-effort: a relationship renders its edge, an
+ *  entity a flat node. An attributed item carries a `[claim by {npc}]` prefix so
+ *  it never reads as objective structure. Fact-kind items are graph-irrelevant
+ *  and skipped — they merge into search_lore, not the graph walk. */
+function renderWorkingSetGraphItems(items: readonly WorkingSetItem[]): string[] {
+  return items
+    .filter((item) => item.kind === 'entity' || item.kind === 'relationship')
+    .map((item) => {
+      const claim =
+        item.provenance.kind === 'attributed' ? `[claim by ${item.provenance.npcName}] ` : ''
+      const structure =
+        item.edge !== undefined
+          ? `${item.edge.fromName} —${item.edge.relType}→ ${item.edge.toName}`
+          : item.parentName !== undefined
+            ? `${item.subjectName} (under ${item.parentName})`
+            : item.subjectName
+      return `${claim}[tier=${item.tier}] ${structure}: ${item.content}`
+    })
+}
+
+/** Append the working-set graph lines (if any) to a rendered graph-walk block,
+ *  joining on a newline. Keeps both graph closures DRY. */
+function withWorkingSetGraphLines(rendered: string, wsLines: readonly string[]): string {
+  if (wsLines.length === 0) return rendered
+  return rendered.length > 0 ? [rendered, ...wsLines].join('\n') : wsLines.join('\n')
 }
 
 /** Render a factionTree node set as the tier-annotated block, noting truncation. */
@@ -716,8 +798,17 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         // gap). The GRAPH closures (below) carry the real degraded signal; the
         // ST-vet's `none` arbitration handles a benign empty result.
         const resolve: SubstrateResolver = async () => {
-          const { hits } = await deps.search.searchLore(deps.worldId, topic, {})
-          return { results: renderLoreHits(hits), degraded: false, empty: hits.length === 0 }
+          // MYT-73 read-after-write: merge the turn's working set (cosine-ranked
+          // against the SAME queryVec searchLore embedded — no second Voyage call)
+          // INTO the canon hits BEFORE rendering. Canon hits are kept verbatim
+          // (their limit is already applied); the working-set hits are appended.
+          // The merged block funnels to the ST-vet exactly as canon does — the
+          // over-pull/tier-gate boundary is UNCHANGED (a secret-tier working-set
+          // item is gated by the ST-vet, not filtered out here).
+          const { hits, queryVec } = await deps.search.searchLore(deps.worldId, topic, {})
+          const ws = await deps.workingSet()
+          const merged = [...hits, ...workingSetHits(ws, queryVec, deps.cosine)]
+          return { results: renderLoreHits(merged), degraded: false, empty: merged.length === 0 }
         }
         return runLookup(deps, rng, abortSignal, {
           channel: input.channel,
@@ -757,10 +848,16 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
               entityId,
               nameFilter !== undefined ? { nameFilter } : {},
             )
+            // MYT-73: flat-append the turn's working-set graph items (entity /
+            // relationship) so a relationship invented mid-session is recallable.
+            // The walk's `degraded` signal is the graph's own; working-set lines
+            // are additive (best-effort structural anchor).
+            const wsLines = renderWorkingSetGraphItems(await deps.workingSet())
+            const results = withWorkingSetGraphLines(renderKnownCharacters(chars), wsLines)
             return {
-              results: renderKnownCharacters(chars),
+              results,
               degraded: false,
-              empty: chars.length === 0,
+              empty: chars.length === 0 && wsLines.length === 0,
             }
           } catch (err) {
             deps.logger?.warn({ err, entityId }, 'characters_known_to: graph walk failed; degrading')
@@ -796,10 +893,14 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         const resolve: SubstrateResolver = async () => {
           try {
             const { nodes, truncated } = await factionTree(deps.graph, entityId)
+            // MYT-73: flat-append the turn's working-set graph items (a faction
+            // sub-unit invented mid-session is recallable). Additive to the walk.
+            const wsLines = renderWorkingSetGraphItems(await deps.workingSet())
+            const results = withWorkingSetGraphLines(renderFactionNodes(nodes, truncated), wsLines)
             return {
-              results: renderFactionNodes(nodes, truncated),
+              results,
               degraded: false,
-              empty: nodes.length === 0,
+              empty: nodes.length === 0 && wsLines.length === 0,
             }
           } catch (err) {
             deps.logger?.warn({ err, entityId }, 'faction_tree: graph walk failed; degrading')

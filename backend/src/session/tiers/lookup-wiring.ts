@@ -21,7 +21,7 @@ import type { GraphDeps } from '../../world/retrieval/graph.js'
 import { runStLookupVet } from '../../llm/st-lookup-vet.js'
 import type { WorldFactLookupVet } from '../world-fact-lookup.js'
 import type { KnowledgeSkill } from '../world-lookup-config.js'
-import type { WorkingSetProposal } from '../working-set/types.js'
+import type { WorkingSetItem, WorkingSetProposal } from '../working-set/types.js'
 import type { FtToolDeps } from './ft-tools.js'
 
 /** Minimal pino-compatible logger surface this module needs (structured warn). */
@@ -72,6 +72,11 @@ export interface LookupWiringArgs {
    *  invents a fact records the VETTED relay text (already secret-free) into the
    *  working set; threaded straight through to `FtToolDeps`. */
   readonly recordInjection: (p: WorkingSetProposal) => void
+  /** The per-turn working-set thunk (MYT-73 read-after-write). search_lore loads
+   *  the turn's working set and cosine-merges near-query items into the canon
+   *  LoreHit[] BEFORE the ST-vet reads the rendered block, so a fact invented
+   *  turn 5 is findable turn 9. Threaded straight through to `FtToolDeps`. */
+  readonly workingSet: () => Promise<WorkingSetItem[]>
 }
 
 /** The lookup portion of `FtToolDeps`. Pinned as a `Pick` so the spread at the
@@ -88,6 +93,8 @@ export type LookupDeps = Pick<
   | 'vet'
   | 'askerSummary'
   | 'recordInjection'
+  | 'workingSet'
+  | 'cosine'
 >
 
 /**
@@ -97,7 +104,7 @@ export type LookupDeps = Pick<
  */
 export function buildLookupDeps(deps: LookupWiringDeps, args: LookupWiringArgs): LookupDeps {
   const { repo, embedder, logger } = deps
-  const { worldId, campaignId, sessionId, recentNarrative, recordInjection } = args
+  const { worldId, campaignId, sessionId, recentNarrative, recordInjection, workingSet } = args
 
   // SearchLogger.warn widens its first arg to `unknown`; WiringLogger.warn narrows
   // it to `string | Record<string, unknown>`, so it isn't directly assignable
@@ -175,7 +182,36 @@ export function buildLookupDeps(deps: LookupWiringDeps, args: LookupWiringArgs):
     vet,
     askerSummary,
     recordInjection,
+    // MYT-73 read-after-write: the per-turn working-set thunk + the pure cosine
+    // ranker the search_lore closure uses to merge near-query working-set items
+    // into the canon LoreHit[] (against searchLore's SAME queryVec).
+    workingSet,
+    cosine: cosineSimilarity,
   }
+}
+
+/** Cosine similarity of two equal-length numeric vectors, in [-1, 1]. Defensive:
+ *  an empty vector, a mismatched length, or a zero-magnitude vector → 0 (no
+ *  divide-by-zero, no NaN). MYT-73 ranks working-set embeddings against the
+ *  searchLore query vector with this — no second Voyage call. */
+export function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
+  if (a.length === 0 || a.length !== b.length) return 0
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    // The `?? 0` arms satisfy noUncheckedIndexedAccess only: `i` is always in
+    // bounds (loop bound is a.length, lengths are equal), so the fallback is
+    // unreachable. c8-ignore the dead nullish arms.
+    /* c8 ignore next 2 -- in-bounds index; the ?? 0 fallback is unreachable */
+    const x = a[i] ?? 0
+    const y = b[i] ?? 0
+    dot += x * y
+    normA += x * x
+    normB += y * y
+  }
+  if (normA === 0 || normB === 0) return 0
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
 
 /** Forward a `SearchLogger.warn(obj: unknown, msg?)` onto a worker logger whose
