@@ -139,6 +139,9 @@ export interface Session {
   readonly summary: string | null
   readonly stRunningSummary: string | null
   readonly handoff: string | null
+  /** MYT-74a §4 (migration 027): set once by the reconcile commit's
+   *  conditional-update mutex (`markReconciled`); null until reconciled. */
+  readonly reconciledAt: Date | null
 }
 
 export interface CreateSessionInput {

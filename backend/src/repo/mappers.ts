@@ -78,6 +78,7 @@ export interface SessionDbRow {
   readonly summary: string | null
   readonly st_running_summary: string | null
   readonly handoff: string | null
+  readonly reconciled_at: Date | null
 }
 
 // ─── Narrowing helpers ─────────────────────────────────────────────────────────
@@ -183,6 +184,7 @@ export function toSession(row: SessionDbRow): Session {
     summary: row.summary,
     stRunningSummary: row.st_running_summary,
     handoff: row.handoff,
+    reconciledAt: row.reconciled_at,
   }
 }
 

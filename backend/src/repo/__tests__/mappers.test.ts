@@ -147,6 +147,7 @@ const sessionRow: SessionDbRow = {
   summary: null,
   st_running_summary: null,
   handoff: null,
+  reconciled_at: null,
 }
 
 describe('toSession', () => {
@@ -162,6 +163,7 @@ describe('toSession', () => {
       summary: null,
       stRunningSummary: null,
       handoff: null,
+      reconciledAt: null,
     })
   })
 

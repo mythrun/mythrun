@@ -182,6 +182,22 @@ export function sessionsNs(c: ClientLike) {
       if (!row) throw new Error(`sessions.update: no session with id ${id}`)
       return toSession(row)
     },
+
+    /**
+     * MYT-74a §4 conditional-update mutex. Sets `reconciled_at = now()` only
+     * when it is still NULL, returning the affected rowCount (1 on the first
+     * call, 0 thereafter). The reconcile commit calls this as its LAST in-tx
+     * statement and rolls the transaction back when it returns 0 — meaning a
+     * concurrent execution already reconciled this session. Single-statement
+     * conditional update is the idempotency gate; no SELECT-then-UPDATE race.
+     */
+    markReconciled: async (id: string): Promise<number> => {
+      const result = await c.query(
+        `UPDATE sessions SET reconciled_at = now() WHERE id = $1 AND reconciled_at IS NULL`,
+        [id],
+      )
+      return result.rowCount ?? 0
+    },
   }
 }
 

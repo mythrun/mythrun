@@ -48,6 +48,7 @@ const ACTIVE_SESSION: Session = {
   summary: null,
   stRunningSummary: null,
   handoff: null,
+  reconciledAt: null,
 }
 
 /** A recording TurnQueueLike: captures each `add(name, payload)` call so the

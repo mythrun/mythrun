@@ -62,6 +62,7 @@ const sessionRow: Session = {
   summary: null,
   stRunningSummary: null,
   handoff: null,
+  reconciledAt: null,
 }
 
 function attachDbUserPlugin(user: User | undefined) {
