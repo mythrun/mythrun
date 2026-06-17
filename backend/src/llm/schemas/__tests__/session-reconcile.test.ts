@@ -62,7 +62,8 @@ describe('ReconcilePlanSchema', () => {
   })
 
   it('rejects a fact object missing topic', () => {
-    const { topic: _topic, ...factWithoutTopic } = validFact
+    const { subjectName, content, accessLevel, claimedBy, supersedesFactId } = validFact
+    const factWithoutTopic = { subjectName, content, accessLevel, claimedBy, supersedesFactId }
     expect(
       ReconcilePlanSchema.safeParse({
         entities: [],
