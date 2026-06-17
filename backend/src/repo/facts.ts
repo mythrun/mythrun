@@ -131,6 +131,46 @@ export function factsNs(c: ClientLike) {
         [uuidv7(), input.entityId, input.topic, input.content],
       )
     },
+    /**
+     * MYT-74a §3: append a live, session-improvised canon fact. narrative_status
+     * is baked in as 'delivered' (these facts were shown to players this session)
+     * and source as 'session' (the provenance marker distinguishing session canon
+     * from prep canon). Attribution is folded into `content` upstream — there is
+     * no claimedBy column, so it is not a param. Mints the id (uuidv7) like
+     * `insertIntegrationFact` and returns it so the caller can wire a later
+     * `setSuperseded` against it. Composes on pool or tx.
+     */
+    insertReconciled: async (input: {
+      entityId: string
+      topic: string
+      content: string
+      accessLevel: AccessLevel
+    }): Promise<string> => {
+      const id = uuidv7()
+      await c.query(
+        `INSERT INTO facts (id, entity_id, topic, access_level, content, narrative_status, source)
+         VALUES ($1, $2, $3, $4, $5, 'delivered', 'session')`,
+        [id, input.entityId, input.topic, input.accessLevel, input.content],
+      )
+      return id
+    },
+    /**
+     * MYT-74a §3: mark `oldFactId` as superseded by `newFactId` (append-only
+     * correction — content is never edited). Stamps superseded_at and NULLs the
+     * embedding/embedded_at so the dead row drops out of the HNSW index. The
+     * `AND superseded_by IS NULL` guard makes a double-supersede a no-op (returns
+     * 0); the first call returns 1. Composes on pool or tx.
+     */
+    setSuperseded: async (oldFactId: string, newFactId: string): Promise<number> => {
+      const result = await c.query(
+        `UPDATE facts
+            SET superseded_by = $2, superseded_at = now(), embedding = NULL, embedded_at = NULL
+          WHERE id = $1 AND superseded_by IS NULL`,
+        [oldFactId, newFactId],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return result.rowCount ?? 0
+    },
     updateContentById: async (factId: string, patch: { content: string }): Promise<number> => {
       const result = await c.query(
         `UPDATE facts SET content = $1, updated_at = now() WHERE id = $2`,
@@ -163,16 +203,22 @@ export function factsNs(c: ClientLike) {
     // given entity IDs filtered by access tier. Empty entity ID list
     // short-circuits to [] without a round-trip (covers the snapshot's
     // "world has no entities yet" case).
+    //
+    // MYT-74a §3: `liveOnly` (default true) appends `AND superseded_by IS NULL`
+    // so reads see only live canon — the superseded row is hidden and only its
+    // live replacement surfaces. Pass `liveOnly: false` for the full append-only
+    // log (history/audit reads).
     listByEntities: async (
       entityIds: readonly string[],
-      opts: { readonly accessLevels: readonly AccessLevel[] },
+      opts: { readonly accessLevels: readonly AccessLevel[]; readonly liveOnly?: boolean },
     ): Promise<readonly FactRow[]> => {
       if (entityIds.length === 0) return []
+      const liveFilter = opts.liveOnly === false ? '' : ' AND superseded_by IS NULL'
       const result = await c.query<FactDbRow>(
         `SELECT id, entity_id, topic, access_level, narrative_status, content,
             source, created_at, updated_at
        FROM facts
-      WHERE entity_id = ANY($1) AND access_level = ANY($2)
+      WHERE entity_id = ANY($1) AND access_level = ANY($2)${liveFilter}
       ORDER BY entity_id, id`,
         [entityIds, opts.accessLevels],
       )
@@ -197,6 +243,6 @@ export const facts = {
   listByEntities: (
     client: ClientLike,
     entityIds: readonly string[],
-    opts: { readonly accessLevels: readonly AccessLevel[] },
+    opts: { readonly accessLevels: readonly AccessLevel[]; readonly liveOnly?: boolean },
   ): Promise<readonly FactRow[]> => factsNs(client).listByEntities(entityIds, opts),
 } as const
