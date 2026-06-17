@@ -108,6 +108,20 @@ function recordingLogger(): { warn: ReturnType<typeof vi.fn>; error: ReturnType<
   return { warn: vi.fn(), error: vi.fn() }
 }
 
+// The injected finalize backstop (MYT-74b §1.3). A vi.fn so tests assert the
+// call (or its absence) + the args shape `{ campaignId; sessionId; worldId }`.
+function finalizeSpy(): ReturnType<typeof vi.fn> {
+  return vi.fn().mockResolvedValue(undefined)
+}
+
+// A farewell-kind failed job. Pass `worldId: null` for the no-worldId variant
+// (the backstop's warn-and-skip arm); omit for the default-worldId happy path.
+function makeFarewellJob(worldId: string | null = 'w1', turnId = TURN): FakeFailedJob {
+  const job = makeJob(turnId)
+  job.data = { ...job.data, trigger: { kind: 'farewell' }, ...(worldId == null ? {} : { worldId }) }
+  return job
+}
+
 // A fresh ioredis-mock whose `.duplicate()` + `.quit()` are observable: duplicate()
 // returns the SAME instance (so `close()`'s `connection.quit()` lands on this
 // recorder), and quit() bumps `quitCalls`.
@@ -156,7 +170,7 @@ describe('buildSessionTurnQueueEvents', () => {
   })
 
   it('registers a broker failed handler and exposes queueEvents + close', () => {
-    const sub = buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, recordingLogger())
+    const sub = buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, recordingLogger(), finalizeSpy())
 
     expect(captured.failedHandler).toBeTypeOf('function')
     expect(sub.queueEvents).toBeDefined()
@@ -166,7 +180,7 @@ describe('buildSessionTurnQueueEvents', () => {
   it('publishes a terminal turn_error for a broker failed job', async () => {
     const logger = recordingLogger()
     captured.fromIdResult = makeJob()
-    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger)
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger, finalizeSpy())
 
     const fire = captured.failedHandler
     expect(fire).toBeTypeOf('function')
@@ -181,7 +195,7 @@ describe('buildSessionTurnQueueEvents', () => {
   it('targets the per-campaign channel', async () => {
     captured.fromIdResult = makeJob()
     const realtime = makeRedis()
-    buildSessionTurnQueueEvents(makeRedis(), realtime, KEY_PREFIX, recordingLogger())
+    buildSessionTurnQueueEvents(makeRedis(), realtime, KEY_PREFIX, recordingLogger(), finalizeSpy())
 
     const channels: string[] = []
     subscriber.on('pmessage', (_p: string, channel: string) => {
@@ -201,7 +215,7 @@ describe('buildSessionTurnQueueEvents', () => {
     // turnId publishes exactly once.
     captured.fromIdResult = makeJob()
     const realtime = makeRedis()
-    buildSessionTurnQueueEvents(makeRedis(), realtime, KEY_PREFIX, recordingLogger())
+    buildSessionTurnQueueEvents(makeRedis(), realtime, KEY_PREFIX, recordingLogger(), finalizeSpy())
 
     const fire = captured.failedHandler
     expect(fire).toBeTypeOf('function')
@@ -215,7 +229,7 @@ describe('buildSessionTurnQueueEvents', () => {
   it('warns and skips publish when the failed job was already reaped (fromId null)', async () => {
     const logger = recordingLogger()
     captured.fromIdResult = null
-    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger)
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger, finalizeSpy())
 
     const fire = captured.failedHandler
     expect(fire).toBeTypeOf('function')
@@ -233,7 +247,7 @@ describe('buildSessionTurnQueueEvents', () => {
     // escape the callback.
     const logger = recordingLogger()
     ;(Job.fromId as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('redis read failed'))
-    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger)
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger, finalizeSpy())
 
     const fire = captured.failedHandler
     expect(fire).toBeTypeOf('function')
@@ -252,12 +266,74 @@ describe('buildSessionTurnQueueEvents', () => {
     // duplicate() returns redisBatch itself, so the dedicated connection's quit
     // lands on redisBatch's quit recorder.
     const redisBatch = makeRedis()
-    const sub = buildSessionTurnQueueEvents(redisBatch, makeRedis(), KEY_PREFIX, recordingLogger())
+    const sub = buildSessionTurnQueueEvents(redisBatch, makeRedis(), KEY_PREFIX, recordingLogger(), finalizeSpy())
 
     await sub.close()
 
     expect(captured.queueEventsClosed).toBe(1)
     expect(redisBatch.quitCalls.n).toBe(1)
     expect(captured.queueClosed).toBe(1)
+  })
+
+  // ── MYT-74b §1.3 — the unconditional-finalize backstop ────────────────────
+
+  it('runs the finalize backstop for a terminally-failed farewell turn (after the turn_error)', async () => {
+    // A farewell whose holder crashed terminally fires NO 'failed' JS event, so
+    // this broker subscriber is the only surface that finalizes the session.
+    captured.fromIdResult = makeFarewellJob('w1')
+    const finalize = finalizeSpy()
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, recordingLogger(), finalize)
+
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'jf', failedReason: 'stalled' })
+    await tick()
+
+    // The terminal turn_error still ships for the farewell turn.
+    expect(received).toEqual([{ type: 'turn_error', turnId: TURN, message: 'The turn failed. Please try again.' }])
+    // …and the finalize backstop fires with the payload's worldId.
+    expect(finalize).toHaveBeenCalledTimes(1)
+    expect(finalize).toHaveBeenCalledWith({ campaignId: CAMPAIGN, sessionId: 's-qe-1', worldId: 'w1' })
+  })
+
+  it('does NOT run the finalize backstop for a non-farewell terminal turn', async () => {
+    // The attempts-exhaustion terminal for a normal turn: the turn-worker finally
+    // already finalized (if relevant), so the backstop must stay out of it.
+    captured.fromIdResult = makeJob() // trigger.kind: 'auto'
+    const finalize = finalizeSpy()
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, recordingLogger(), finalize)
+
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'ja', failedReason: 'stalled' })
+    await tick()
+
+    // turn_error still ships for the non-farewell terminal…
+    expect(received).toEqual([{ type: 'turn_error', turnId: TURN, message: 'The turn failed. Please try again.' }])
+    // …but the finalize backstop is farewell-only.
+    expect(finalize).not.toHaveBeenCalled()
+  })
+
+  it('skips the finalize backstop and warns when a failed farewell carries no worldId', async () => {
+    // worldId rides the farewell payload (T3). If it's somehow absent we can't run
+    // the reconcile-needing finalize — log + skip rather than finalize with a bad arg.
+    const logger = recordingLogger()
+    captured.fromIdResult = makeFarewellJob(null)
+    const finalize = finalizeSpy()
+    buildSessionTurnQueueEvents(makeRedis(), makeRedis(), KEY_PREFIX, logger, finalize)
+
+    const fire = captured.failedHandler
+    expect(fire).toBeTypeOf('function')
+    await fire?.({ jobId: 'jfnw', failedReason: 'stalled' })
+    await tick()
+
+    // turn_error still ships; the finalize is the only thing skipped.
+    expect(received).toEqual([{ type: 'turn_error', turnId: TURN, message: 'The turn failed. Please try again.' }])
+    expect(finalize).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'jfnw' }),
+      'farewell turn failed without worldId; cannot finalize via backstop',
+    )
   })
 })

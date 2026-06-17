@@ -67,12 +67,17 @@ export interface SessionTurnQueueEvents {
  * @param redisRealtime The pub/sub + coordination connection — backs both the
  *                      `TurnPublisher` (publishes the `turn_error` frame) and the
  *                      `TriggerState` SET-NX latch.
+ * @param finalize      The unconditional-finalize backstop (MYT-74b §1.3). Called
+ *                      ONLY for a terminally-failed `farewell` turn, after the
+ *                      `turn_error` publish. Idempotent (wraps `finalizeEndedSession`),
+ *                      so a double-fire with the JS `on('failed')` path is safe.
  */
 export function buildSessionTurnQueueEvents(
   redisBatch: Redis,
   redisRealtime: Redis,
   redisKeyPrefix: string,
   logger: MinimalLogger,
+  finalize: (args: { campaignId: string; sessionId: string; worldId: string }) => Promise<void>,
 ): SessionTurnQueueEvents {
   // Dedicated blocking connection: QueueEvents BRPOPs, so it never shares the
   // Worker's connection (blocking-command contention).
@@ -103,6 +108,19 @@ export function buildSessionTurnQueueEvents(
       (turnId) => triggerState.claimTurnErrorPublish(turnId),
       job.failedReason,
     )
+
+    // MYT-74b §1.3 — the unconditional-finalize backstop for the maxStalledCount
+    // terminal: a farewell turn whose holder crashed terminally fires NO 'failed'
+    // JS event (the turn-worker finally never completed), so the session would
+    // never finalize. finalizeEndedSession is idempotent, so a double-fire with the
+    // JS path (attempts-exhaustion) is safe.
+    if (job.data.trigger.kind === 'farewell') {
+      if (typeof job.data.worldId === 'string') {
+        await finalize({ campaignId: job.data.campaignId, sessionId: job.data.sessionId, worldId: job.data.worldId })
+      } else {
+        logger.warn({ jobId }, 'farewell turn failed without worldId; cannot finalize via backstop')
+      }
+    }
   }
 
   queueEvents.on('failed', ({ jobId }) => {
