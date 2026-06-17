@@ -129,6 +129,9 @@ const inertScribeQueue: ScribeQueueLike = {
 // MYT-74a T12 — recoveryRepo reports no usage (budgetSummary → null), so the
 // budget auto-end is never reached in these lock-loss recovery flows; inert.
 const inertEndSession: TurnProcessorDeps['endSession'] = () => Promise.resolve()
+// MYT-74b §1.3 — these lock-loss recovery flows never run a farewell turn, so the
+// unconditional finalize is never reached; inert.
+const inertFinalize: TurnProcessorDeps['finalizeEndedSession'] = () => Promise.resolve()
 
 function payload(): { data: TurnJobPayload } {
   return {
@@ -262,6 +265,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       stEvalQueue: inertStEvalQueue,
       scribeQueue: inertScribeQueue,
       endSession: inertEndSession,
+      finalizeEndedSession: inertFinalize,
       publisher,
       makeTiers: () => ({
         ft: new LockKillingFastThinker(realtime, lockKeyFor(CAMPAIGN)),
@@ -300,6 +304,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       stEvalQueue: inertStEvalQueue,
       scribeQueue: inertScribeQueue,
       endSession: inertEndSession,
+      finalizeEndedSession: inertFinalize,
       publisher,
       makeTiers: () => ({
         ft: new StubFastThinker(),

@@ -72,7 +72,13 @@ import {
 } from './dm-trigger-queue.js'
 import { QUEUE_DM_TRIGGER, QUIET_WINDOW_MS } from './dm-trigger-config.js'
 import { createTurnPublisher, type TurnPublisher } from './turn-publisher.js'
-import { enqueueTurn, QUEUE_SESSION_TURN, type TurnJobPayload, type TurnQueueLike } from './turn-queue.js'
+import {
+  enqueueTurn,
+  FAREWELL_DIRECTION,
+  QUEUE_SESSION_TURN,
+  type TurnJobPayload,
+  type TurnQueueLike,
+} from './turn-queue.js'
 import {
   enqueueStEval,
   QUEUE_ST_EVAL,
@@ -80,7 +86,18 @@ import {
   type StEvalQueueLike,
 } from './st-eval-queue.js'
 import { QUEUE_SCRIBE, type ScribeJobPayload, type ScribeQueueLike } from './scribe-queue.js'
-import { endSession, type EndSessionArgs, type EndSessionDeps } from './session-end.js'
+import {
+  endSession,
+  finalizeEndedSession,
+  type EndSessionArgs,
+  type EndSessionDeps,
+  type FinalizeEndedSessionDeps,
+} from './session-end.js'
+import {
+  QUEUE_SESSION_ANALYSIS,
+  type AnalysisJobPayload,
+  type AnalysisQueueLike,
+} from './post-session-analysis.js'
 import { QUEUE_SESSION_SUSPEND, type SuspendQueueLike } from './session-suspend.js'
 import {
   QUEUE_SESSION_RECONCILE,
@@ -243,6 +260,15 @@ export interface TurnProcessorDeps {
    *  turns via `endSession`'s SET-NX `ending` flag — a second over-budget turn
    *  no-ops at the flag, so the processor needs no dedup of its own. */
   readonly endSession: (args: EndSessionArgs) => Promise<void>
+  /** MYT-74b §1.3 — the UNCONDITIONAL end-of-session finalize. A bound closure (the
+   *  worker binds the real `finalizeEndedSession` orchestration's deps in
+   *  `buildSessionTurnWorker`). Invoked from the FAREWELL turn's `finally` on EVERY
+   *  path (clean render, thrown render, converge) — `finally` always runs — so the
+   *  table sees the DM's send-off prose before the `session_end` frame, and a
+   *  thrown farewell render still finalizes. IDEMPOTENT: the conditional row flip
+   *  fires the broadcast exactly once across this caller + the QueueEvents
+   *  backstop, and reconcile/analysis dedup on per-session jobIds. */
+  readonly finalizeEndedSession: (args: EndSessionArgs) => Promise<void>
   readonly heartbeatMs: number
   readonly logger: MinimalLogger
 }
@@ -295,6 +321,16 @@ export async function processTurnJob(
 ): Promise<{ ran: boolean }> {
   const { campaignId, sessionId, turnId } = job.data
 
+  // MYT-74b §1.3 / MYT-73 §7.2 — the player-less turn predicates, hoisted so the
+  // §5 decision order + the shared `finally` both gate on them. A `correction`
+  // (MYT-73 retcon) and a `farewell` (MYT-74b end-of-session send-off) are both
+  // player-less: they consumed no player message, so neither advances the
+  // watermark / enqueues Scribe / runs the budget auto-end. The farewell ALSO
+  // runs the unconditional finalize in the `finally`.
+  const isCorrection = job.data.trigger.kind === 'correction'
+  const isFarewell = job.data.trigger.kind === 'farewell'
+  const isPlayerless = isCorrection || isFarewell
+
   const handle = await deps.lock.tryAcquire(campaignId)
   if (handle === null) {
     // Contention: another container holds the lock. The debounce re-drives this
@@ -337,7 +373,10 @@ export async function processTurnJob(
     //    we hold it from `tryAcquire` above.
     if (await deps.repo.sessionMessages.turnRowsExist(turnId)) {
       deps.logger.warn({ campaignId, turnId }, 'turn already durable in PG; converging to turn_end')
-      await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
+      // A player-less turn (correction / farewell) consumed no player message, so
+      // even on the converge path it must NOT advance the watermark past
+      // unresponded player seqs (same invariant as the fresh-run arm below).
+      if (!isPlayerless) await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
       await deps.publisher.turnEnd(campaignId, turnId)
       return { ran: true }
     }
@@ -402,17 +441,25 @@ export async function processTurnJob(
     // <Z>]]` marker — the explicit FT-prompt EXCEPTION to silent-consume
     // (deliver it OPENLY). It rides the SAME fusion seam as a normal one-shot
     // (fused onto the last user row, verbatim — the marker survives the fusion).
-    const isCorrection = job.data.trigger.kind === 'correction'
+    //
+    // MYT-74b §1.2 — a `farewell` turn is the player-less end-of-session send-off
+    // (enqueued by `endSession`). Its direction is the RAW farewell text (NOT a
+    // pre-wrapped marker): the controller/FT fuses it via the single-bracket
+    // `[DM direction: …]` silent-consume seam, so the FT authors the closing prose
+    // in its own voice. Like a correction it reads neither direction slot.
 
     // §6 — take the one-shot (GETDEL, latest-wins) and READ the standing
     // directive. ONLY on the fresh-run arm: a take before the converge/latch
     // exits (above) would burn a sanctioned reveal on a turn that never renders,
-    // and a take by a contention loser would starve the lock holder. A correction
-    // turn skips the slot reads entirely (its direction is the injected `Z`).
+    // and a take by a contention loser would starve the lock holder. A player-less
+    // turn (correction / farewell) skips the slot reads entirely (its direction is
+    // the worker-injected text, not a slot).
     const pendingDirection = isCorrection
       ? `[[DM CORRECTION: ${job.data.correctionText ?? ''}]]`
-      : await deps.triggerState.takeOneShotDirection(campaignId)
-    const standingDirective = isCorrection
+      : isFarewell
+        ? (job.data.farewellText ?? FAREWELL_DIRECTION)
+        : await deps.triggerState.takeOneShotDirection(campaignId)
+    const standingDirective = isPlayerless
       ? null
       : await deps.triggerState.readStandingDirection(campaignId)
 
@@ -458,6 +505,7 @@ export async function processTurnJob(
         participants,
         ftContext,
         partyLedger,
+        triggerKind: job.data.trigger.kind,
         ...(pendingDirection !== null ? { pendingDirection } : {}),
         ...(standingDirective !== null ? { standingDirective } : {}),
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
@@ -479,11 +527,12 @@ export async function processTurnJob(
     // §4.7 — the batch is responded: advance the watermark so the next trigger
     // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
     // a lock-lost abort never flushes, so it must never advance the watermark.
-    // MYT-73 §7.2/§9 — a `correction` turn consumed NO player message (it is
-    // player-less), so it must NOT advance the watermark: doing so would strand
-    // genuine pending player seqs above it. The post-turn re-mature (shared
-    // `finally`) then re-arms the quiet window so the next real turn picks them up.
-    if (!isCorrection) {
+    // MYT-73 §7.2/§9 + MYT-74b §1 — a player-less turn (correction / farewell)
+    // consumed NO player message, so it must NOT advance the watermark: doing so
+    // would strand genuine pending player seqs above it. The post-turn re-mature
+    // (shared `finally`) then re-arms the quiet window so the next real turn picks
+    // them up.
+    if (!isPlayerless) {
       await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
     }
     // §8 — a flushed turn happened; bump the ST floor counter.
@@ -504,10 +553,12 @@ export async function processTurnJob(
     // (status flip → reconcile → session_end broadcast). `endSession`'s SET-NX
     // `ending` flag makes this idempotent across turns: a second over-budget turn
     // no-ops at the flag, so no per-turn dedup is needed here. Gated like the
-    // watermark on `!isCorrection` (a player-less correction never opens new
-    // budget-bearing context of its own). OWN try/catch — a failure to enqueue the
-    // end must NEVER mask the turn outcome (mirrors the st-evaluation isolation).
-    if (!isCorrection) {
+    // watermark on `!isPlayerless` (a player-less correction/farewell never opens
+    // new budget-bearing context of its own — and a farewell is itself the end, so
+    // re-triggering the end orchestration off it is meaningless). OWN try/catch — a
+    // failure to enqueue the end must NEVER mask the turn outcome (mirrors the
+    // st-evaluation isolation).
+    if (!isPlayerless) {
       try {
         const usage = await deps.repo.sessions.budgetSummary(sessionId)
         const cumulativeTokens = usage === null ? 0 : usage.inputTokens + usage.outputTokens
@@ -519,12 +570,12 @@ export async function processTurnJob(
       }
     }
     // §2.4 — enqueue the post-turn Scribe job (prose + delta + injections), off
-    // the hot path. Gated like the watermark on `!isCorrection`: a `correction`
-    // turn is player-less and delivers an already-vetted secret-free `Z`, so
-    // running the tripwire over it is wasted spend and risks a retcon loop. Own
-    // try/catch — an enqueue hiccup never masks the turn outcome (mirrors the
+    // the hot path. Gated like the watermark on `!isPlayerless`: a player-less
+    // correction/farewell delivers already-vetted secret-free prose, so running
+    // the tripwire over it is wasted spend (and a correction risks a retcon loop).
+    // Own try/catch — an enqueue hiccup never masks the turn outcome (mirrors the
     // st-evaluation enqueue above).
-    if (!isCorrection) {
+    if (!isPlayerless) {
       try {
         await controller.enqueueScribeJob()
       } catch (scErr) {
@@ -559,29 +610,39 @@ export async function processTurnJob(
     // §4.7 — clear the drain guard so the dm-trigger worker can enqueue the next
     // turn. Done AFTER release so the lock is the binding mutex right up to here.
     await deps.triggerState.clearResponding(campaignId)
+
+    // MYT-74b §1.3 — the ending gate. Once `endSession` has claimed the `ending`
+    // flag, the session is winding down: the post-turn re-engagement work (explicit
+    // drain + quiet-window re-mature) would only re-summon the DM into a session
+    // that is over. Suppress BOTH on an ending session — the unconditional finalize
+    // below is the only thing that should run after a farewell render.
+    const ending = await deps.sessionState.isEnding(campaignId)
+
     // §4.7 — explicit drain: if an `@dm` landed while this turn was in flight,
     // the server set the explicit-pending flag. Take-and-clear it and enqueue
     // ONE explicit follow-up so the summon fires the instant this turn ends.
     // Guarded in its OWN try/catch: a drain hiccup must never mask the turn
     // outcome (it would re-run an already-flushed turn via BullMQ `attempts`).
-    try {
-      if (await deps.triggerState.takeExplicitPending(campaignId)) {
-        await enqueueTurn(deps.sessionTurnQueue, {
-          campaignId,
-          sessionId,
-          turnId: randomUUID(),
-          // The explicit follow-up re-reads its batch on run; an empty seed is
-          // type-correct and keeps the drain minimal.
-          triggerMessages: [],
-          maxConsumedSeq: job.data.maxConsumedSeq,
-          trigger: { kind: 'explicit' },
-        })
+    if (!ending) {
+      try {
+        if (await deps.triggerState.takeExplicitPending(campaignId)) {
+          await enqueueTurn(deps.sessionTurnQueue, {
+            campaignId,
+            sessionId,
+            turnId: randomUUID(),
+            // The explicit follow-up re-reads its batch on run; an empty seed is
+            // type-correct and keeps the drain minimal.
+            triggerMessages: [],
+            maxConsumedSeq: job.data.maxConsumedSeq,
+            trigger: { kind: 'explicit' },
+          })
+        }
+      } catch (drainErr) {
+        deps.logger.error(
+          { err: drainErr, campaignId, turnId },
+          'failed to drain pending explicit summon',
+        )
       }
-    } catch (drainErr) {
-      deps.logger.error(
-        { err: drainErr, campaignId, turnId },
-        'failed to drain pending explicit summon',
-      )
     }
     // §4.7 post-turn re-mature (auto path). The in-flight guard makes the
     // evaluate job exit while a turn runs, so a message that arrived mid-turn
@@ -589,18 +650,40 @@ export async function processTurnJob(
     // until the NEXT message (or forever, at a quiet table). Re-arm only when
     // unanswered player rows actually exist above the watermark; the
     // re-armed evaluation classifies them like any other batch. Own
-    // try/catch: a re-arm hiccup must never mask the turn outcome.
-    try {
-      const watermark = await deps.triggerState.respondedSeq(campaignId)
-      const trailing = await deps.repo.sessionMessages.listAfterSeq(sessionId, watermark)
-      if (trailing.some((r) => r.messageType === 'player_message')) {
-        await rescheduleDebounce(deps.dmTriggerQueue, campaignId, QUIET_WINDOW_MS)
+    // try/catch: a re-arm hiccup must never mask the turn outcome. Suppressed on
+    // an ending session (no point re-summoning the DM into a closing session).
+    if (!ending) {
+      try {
+        const watermark = await deps.triggerState.respondedSeq(campaignId)
+        const trailing = await deps.repo.sessionMessages.listAfterSeq(sessionId, watermark)
+        if (trailing.some((r) => r.messageType === 'player_message')) {
+          await rescheduleDebounce(deps.dmTriggerQueue, campaignId, QUIET_WINDOW_MS)
+        }
+      } catch (rearmErr) {
+        deps.logger.error(
+          { err: rearmErr, campaignId, turnId },
+          'failed to re-arm the quiet window after the turn',
+        )
       }
-    } catch (rearmErr) {
-      deps.logger.error(
-        { err: rearmErr, campaignId, turnId },
-        'failed to re-arm the quiet window after the turn',
-      )
+    }
+
+    // MYT-74b §1.3 — the UNCONDITIONAL finalize. Runs on EVERY farewell path
+    // (clean render, thrown render, converge) because `finally` always runs: the
+    // table sees the DM's send-off prose, then the finalize flips the row to
+    // 'ended', enqueues reconcile + analysis, and broadcasts `session_end` (the
+    // CONDITIONAL flip makes the broadcast fire exactly once across this caller +
+    // the QueueEvents backstop). The worldId rides the farewell payload; a missing
+    // one falls back to `resolveWorldId` (blob-cached). OWN try/catch — a finalize
+    // hiccup must never mask the turn outcome.
+    if (isFarewell) {
+      try {
+        const worldId =
+          job.data.worldId ??
+          (await resolveWorldId({ sessionState: deps.sessionState, repo: deps.repo }, campaignId, sessionId))
+        await deps.finalizeEndedSession({ campaignId, sessionId, worldId })
+      } catch (finErr) {
+        deps.logger.error({ err: finErr, campaignId, turnId }, 'failed to finalize ended session')
+      }
     }
   }
 }
@@ -705,24 +788,51 @@ export function buildSessionTurnWorker(
   })
   /* c8 ignore next */
   const reconcileQueue: ReconcileQueueLike = { add: (n, d, o) => reconcileBullQueue.add(n, d, o) }
+  // MYT-74b §1.3 — the post-session analysis producer (one Queue per process, like
+  // the others). Fired by `finalizeEndedSession` on a real farewell finalize.
+  const analysisBullQueue = new Queue<AnalysisJobPayload>(QUEUE_SESSION_ANALYSIS, {
+    connection: redisBatch,
+  })
+  /* c8 ignore next */
+  const analysisQueue: AnalysisQueueLike = { add: (n, d, o) => analysisBullQueue.add(n, d, o) }
+
+  // MYT-74b T11 — the BEGIN-phase end deps (the budget-100% auto-end path). The
+  // session lock + sessionState are shared with the processor deps (the SAME
+  // instances). `endSession` only claims the `ending` flag, cancels the pending
+  // suspend, reads the watermark, and enqueues ONE farewell turn — it does NOT
+  // finalize. The suspend + turn producers are dedicated Queues on the shared
+  // BullMQ connection (one per process, like every other producer).
   const endDeps: EndSessionDeps = {
     sessionState,
     suspendQueue,
-    reconcileQueue,
-    lock,
+    turnQueue: sessionTurnQueue,
+    // The watermark read fires only inside the real `endSession` orchestration (the
+    // budget-end path / the §smoke), never the converge-path builder unit tests —
+    // c8-ignored like the sibling queue passthroughs.
+    /* c8 ignore next */
+    respondedSeq: (cid) => triggerState.respondedSeq(cid),
+    // `endSession` logs at info; the worker's MinimalLogger types `info` as
+    // optional, so guarantee one (the real pino logger has it; a test fake
+    // without it falls back to warn — the end-flow's info logs aren't load-bearing).
+    logger: { info: logger.info ?? logger.warn, warn: logger.warn, error: logger.error },
+  }
+
+  // MYT-74b §1.3 — the COMPLETE-phase finalize deps (the farewell turn's `finally`).
+  // `finalizeEndedSession` conditionally flips the row to 'ended' (broadcast exactly
+  // once), then enqueues reconcile + analysis (both jobId-deduped). `publish` is a
+  // raw session-channel broadcast on the realtime connection (the `session_end`
+  // server frame is a session-level control frame, not a per-turn TurnPublisher frame).
+  const finalizeDeps: FinalizeEndedSessionDeps = {
     sessions: repo.sessions,
-    // The session_end broadcast fires only when an over-budget turn actually
-    // ends the session — a fresh-run flush the converge-path builder tests don't
-    // drive (same as the c8-ignored makeTiers / stEvalQueue / scribeQueue
-    // passthroughs above). Exercised by the §10 real-Anthropic E2E smoke.
+    reconcileQueue,
+    analysisQueue,
+    // The session_end broadcast fires only on a real farewell finalize (the §smoke),
+    // not the converge-path builder tests (those never enter the farewell `finally`).
     /* c8 ignore start */
     publish: async (campaignId, frame): Promise<void> => {
       await redisRealtime.publish(sessionChannel(redisKeyPrefix, campaignId), JSON.stringify(frame))
     },
     /* c8 ignore stop */
-    // `endSession` logs at info; the worker's MinimalLogger types `info` as
-    // optional, so guarantee one (the real pino logger has it; a test fake
-    // without it falls back to warn — the end-flow's info logs aren't load-bearing).
     logger: { info: logger.info ?? logger.warn, warn: logger.warn, error: logger.error },
   }
 
@@ -809,6 +919,15 @@ export function buildSessionTurnWorker(
     // `endSession` fake in processTurnJob's tests.
     /* c8 ignore next */
     endSession: (args) => endSession(endDeps, args),
+    // MYT-74b §1.3 — bind the UNCONDITIONAL finalize. The closure threads the
+    // worker-constructed finalizeDeps into the shared `finalizeEndedSession`
+    // orchestration; the farewell turn's `finally` invokes it with `{campaignId,
+    // sessionId, worldId}`. This builder-only passthrough fires only on a real
+    // farewell finalize (the §smoke), not the converge-path builder unit tests —
+    // the finalize branch itself is covered via the injected fake in
+    // processTurnJob's tests.
+    /* c8 ignore next */
+    finalizeEndedSession: (args) => finalizeEndedSession(finalizeDeps, args),
     heartbeatMs: TURN_HEARTBEAT_MS,
     logger,
   }

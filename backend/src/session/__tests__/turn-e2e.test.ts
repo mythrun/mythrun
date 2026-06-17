@@ -153,6 +153,9 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             // Budget-100% auto-end (MYT-74a T12) — e2eRepo reports no usage
             // (budgetSummary → null), so this is never reached; inert here.
             endSession: () => Promise.resolve(),
+            // Unconditional farewell finalize (MYT-74b §1.3) — no farewell turn
+            // runs on this path, so it is never reached; inert here.
+            finalizeEndedSession: () => Promise.resolve(),
             publisher,
             makeTiers: () => ({
               ft: new StubFastThinker(),

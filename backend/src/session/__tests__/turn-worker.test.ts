@@ -21,7 +21,7 @@ import type {
 import type { SessionLock, SessionLockHandle } from '../session-lock.js'
 import { makeTriggerState, type TriggerState } from '../trigger-state.js'
 import type { TurnPublisher } from '../turn-publisher.js'
-import { TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
+import { FAREWELL_DIRECTION, TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
 import { type DmTriggerQueueLike } from '../dm-trigger-queue.js'
 import {
   ST_EVAL_JOB_NAME,
@@ -399,6 +399,14 @@ function inertEndSession(): TurnProcessorDeps['endSession'] {
   return (): Promise<void> => Promise.resolve()
 }
 
+/** MYT-74b §1.3 — a no-op farewell finalize for the paths that never run the
+ *  unconditional finalize (every non-farewell turn). The farewell tests inject a
+ *  `vi.fn()` spy in its place to assert the (single) finalize call. Each call
+ *  returns a fresh `vi.fn()` so a test can pass one literal AND keep a handle. */
+function inertFinalize(): TurnProcessorDeps['finalizeEndedSession'] {
+  return vi.fn((): Promise<void> => Promise.resolve())
+}
+
 describe('processTurnJob', () => {
   let redis: Redis
   let sessionState: SessionState
@@ -430,6 +438,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -470,6 +479,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -519,6 +529,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -569,6 +580,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -617,6 +629,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft }),
       heartbeatMs: 10_000,
@@ -655,6 +668,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -711,6 +725,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -741,6 +756,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -777,6 +793,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -819,6 +836,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -864,6 +882,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -901,6 +920,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -935,6 +955,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -971,6 +992,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1001,6 +1023,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1032,6 +1055,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1066,6 +1090,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1108,6 +1133,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1159,6 +1185,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1199,6 +1226,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1279,6 +1307,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -1329,6 +1358,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -1378,6 +1408,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers: (turn) => {
         seenTone = turn.worldTone
@@ -1423,6 +1454,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1502,6 +1534,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft: capturingFt }),
       heartbeatMs: 10_000,
@@ -1560,6 +1593,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1598,6 +1632,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1629,6 +1664,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1653,6 +1689,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1689,6 +1726,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1733,6 +1771,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1767,6 +1806,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1793,6 +1833,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1845,6 +1886,7 @@ describe('processTurnJob', () => {
       stEvalQueue,
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1880,6 +1922,7 @@ describe('processTurnJob', () => {
       stEvalQueue: recordingStEvalQueue(stEvalCalls),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1912,6 +1955,7 @@ describe('processTurnJob', () => {
       stEvalQueue: recordingStEvalQueue(stEvalCalls),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -1950,6 +1994,7 @@ describe('processTurnJob', () => {
       stEvalQueue,
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1984,6 +2029,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2040,6 +2086,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers: recordingTiers,
       heartbeatMs: 10_000,
@@ -2072,6 +2119,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2102,6 +2150,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2138,6 +2187,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue,
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2186,6 +2236,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession,
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2225,6 +2276,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession,
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2260,6 +2312,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession,
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2298,6 +2351,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession,
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2355,6 +2409,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2401,6 +2456,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2440,6 +2496,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2483,6 +2540,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2533,6 +2591,7 @@ describe('processTurnJob', () => {
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2545,6 +2604,490 @@ describe('processTurnJob', () => {
     // The unrelated one-shot survives — the correction did not burn it.
     expect(await triggerState.takeOneShotDirection(CAMPAIGN)).toBe('D')
     expect(await triggerState.readStandingDirection(CAMPAIGN)).toBe('S')
+  })
+
+  // ── MYT-74b §1 — the player-less FAREWELL turn ───────────────────────────
+  /** A `farewell`-kind payload: triggerMessages:[] (player-less), the silent-
+   *  consume `farewellText`, a `worldId` carried on the payload (so the finalize
+   *  needs no PG re-resolve), and a `maxConsumedSeq` equal to the CURRENT
+   *  responded watermark (it must NOT advance past unresponded seqs). */
+  function farewellPayload(opts?: {
+    farewellText?: string
+    worldId?: string
+    maxConsumedSeq?: number
+  }): { data: TurnJobPayload } {
+    return {
+      data: {
+        campaignId: CAMPAIGN,
+        sessionId: SESSION,
+        turnId: TURN,
+        triggerMessages: [],
+        maxConsumedSeq: opts?.maxConsumedSeq ?? 0,
+        trigger: { kind: 'farewell' },
+        farewellText: opts?.farewellText ?? FAREWELL_DIRECTION,
+        worldId: opts?.worldId ?? 'w-farewell',
+      },
+    }
+  }
+
+  it('a farewell turn renders via the silent-consume seam: RAW farewell text as pendingDirection, triggerKind:farewell (§1.2)', async () => {
+    // The farewell is the player-less end-of-session send-off. Its direction is the
+    // RAW farewell text (NOT a `[[DM CORRECTION:]]` marker) — the controller/FT
+    // fuses it via the single-bracket silent-consume seam. Capture the controller
+    // deps to prove BOTH: pendingDirection is the raw text and triggerKind is
+    // 'farewell'.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    const captureSpy = vi.spyOn(SessionController.prototype, 'loadFromRedis')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(
+      deps,
+      farewellPayload({ farewellText: 'Wind down the scene and give everyone a quiet goodbye.' }),
+    )
+
+    expect(result).toEqual({ ran: true })
+    // The full render lifecycle ran (player-less is intentional, like a correction).
+    expect(calls.order[0]).toBe('dm_thinking')
+    expect(calls.order).toContain('text_delta')
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    const ctorDeps = (captureSpy.mock.instances[0] as unknown as {
+      deps: { pendingDirection?: string; triggerKind?: string }
+    }).deps
+    // The RAW farewell text reached pendingDirection — NOT a [[DM CORRECTION:]] marker.
+    expect(ctorDeps.pendingDirection).toBe('Wind down the scene and give everyone a quiet goodbye.')
+    expect(ctorDeps.pendingDirection).not.toContain('[[DM CORRECTION:')
+    // The controller config carried the farewell trigger kind.
+    expect(ctorDeps.triggerKind).toBe('farewell')
+
+    captureSpy.mockRestore()
+  })
+
+  it('a farewell turn with no farewellText falls back to FAREWELL_DIRECTION as pendingDirection (§1.2)', async () => {
+    // Defensive: `farewellText` is optional on the payload; the worker coalesces a
+    // missing value to the fixed FAREWELL_DIRECTION rather than `undefined`.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    const captureSpy = vi.spyOn(SessionController.prototype, 'loadFromRedis')
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    // A farewell payload with NO farewellText (the `?? FAREWELL_DIRECTION` arm).
+    const noTextFarewell: { data: TurnJobPayload } = {
+      data: {
+        campaignId: CAMPAIGN,
+        sessionId: SESSION,
+        turnId: TURN,
+        triggerMessages: [],
+        maxConsumedSeq: 0,
+        trigger: { kind: 'farewell' },
+        worldId: 'w-farewell',
+      },
+    }
+
+    const result = await processTurnJob(deps, noTextFarewell)
+
+    expect(result).toEqual({ ran: true })
+    const ctorDeps = (captureSpy.mock.instances[0] as unknown as {
+      deps: { pendingDirection?: string }
+    }).deps
+    expect(ctorDeps.pendingDirection).toBe(FAREWELL_DIRECTION)
+
+    captureSpy.mockRestore()
+  })
+
+  it('a farewell turn does NOT advance the watermark, enqueue Scribe, or run the budget auto-end (isPlayerless gates, §1)', async () => {
+    // A farewell is player-less (like a correction): it consumed no player message,
+    // so the !isPlayerless gates suppress setRespondedSeq, the Scribe enqueue, and
+    // the budget auto-end. Seed a non-zero watermark + at-budget usage so each
+    // "skipped" assertion is meaningful.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const scribeCalls: ScribeCall[] = []
+    const endSession = vi.fn((): Promise<void> => Promise.resolve())
+
+    await triggerState.setRespondedSeq(CAMPAIGN, 2)
+    const setRespondedSpy = vi.fn((c: string, seq: number): Promise<void> =>
+      triggerState.setRespondedSeq(c, seq),
+    )
+    const recordingTrigger: TriggerState = {
+      ...triggerState,
+      setRespondedSeq: setRespondedSpy,
+    }
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      // At-budget usage — a real turn would auto-end here; a farewell must not.
+      repo: fakeRepo({
+        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET, outputTokens: 5_000 },
+      }),
+      triggerState: recordingTrigger,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: recordingScribeQueue(scribeCalls),
+      endSession,
+      finalizeEndedSession: inertFinalize(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, farewellPayload({ maxConsumedSeq: 2 }))
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // Watermark advance SKIPPED (player-less): never re-asserted, stays at 2.
+    expect(setRespondedSpy).not.toHaveBeenCalled()
+    expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(2)
+    // Scribe enqueue SKIPPED.
+    expect(scribeCalls).toHaveLength(0)
+    // Budget auto-end SKIPPED even at-budget.
+    expect(endSession).not.toHaveBeenCalled()
+  })
+
+  it('a farewell turn that renders cleanly finalizes exactly once with the resolved ids (Eddystone-C1, §1.3)', async () => {
+    // The unconditional finalize runs in the `finally` on the clean-render path:
+    // exactly one finalize call with {campaignId, sessionId, worldId} (worldId off
+    // the farewell payload, no PG re-resolve).
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const finalize = vi.fn((): Promise<void> => Promise.resolve())
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: finalize,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, farewellPayload({ worldId: 'w-fin' }))
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(finalize).toHaveBeenCalledTimes(1)
+    expect(finalize).toHaveBeenCalledWith({
+      campaignId: CAMPAIGN,
+      sessionId: SESSION,
+      worldId: 'w-fin',
+    })
+  })
+
+  it('a farewell turn whose FT render THROWS still finalizes exactly once (Eddystone-C1 guard, §1.3)', async () => {
+    // The load-bearing invariant: a thrown/timed-out farewell render must NEVER
+    // leave a session permanently un-ended. Because the finalize lives in the
+    // shared `finally`, a render that throws still finalizes exactly once. The
+    // turn itself rethrows (real failure → BullMQ owns the retry policy).
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const finalize = vi.fn((): Promise<void> => Promise.resolve())
+
+    const boom = new Error('farewell render exploded')
+    const ft = new StubFastThinker()
+    vi.spyOn(ft, 'render').mockRejectedValue(boom)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: finalize,
+      publisher: recordingPublisher(calls),
+      makeTiers: () => ({ ft }),
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    // The render throw propagates (real failure), but the finally still finalized.
+    await expect(processTurnJob(deps, farewellPayload({ worldId: 'w-fin' }))).rejects.toThrow(
+      'farewell render exploded',
+    )
+
+    expect(finalize).toHaveBeenCalledTimes(1)
+    expect(finalize).toHaveBeenCalledWith({
+      campaignId: CAMPAIGN,
+      sessionId: SESSION,
+      worldId: 'w-fin',
+    })
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('a farewell finalize failure is swallowed and does not mask the turn outcome (§1.3)', async () => {
+    // The finalize is in its own try/catch in the finally: a finalize throw never
+    // masks the turn outcome (the turn already flushed; a rethrow would re-run an
+    // already-flushed farewell via BullMQ attempts). Logged, not rethrown.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    const finalize = vi.fn((): Promise<void> => Promise.reject(new Error('reconcile unreachable')))
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: finalize,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger,
+    }
+
+    const result = await processTurnJob(deps, farewellPayload())
+
+    // The turn itself succeeded; the finalize failure didn't surface.
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(finalize).toHaveBeenCalledTimes(1)
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
+      'failed to finalize ended session',
+    )
+  })
+
+  it('a farewell turn on the converge path STILL finalizes (the finalize lives in the shared finally, §1.3)', async () => {
+    // A farewell whose rows already committed (a re-run after a crash post-commit)
+    // converges before the fresh-run arm — but the finalize is in the shared
+    // `finally`, so it STILL runs. Also: the converge path must NOT advance the
+    // watermark for a player-less farewell.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const finalize = vi.fn((): Promise<void> => Promise.resolve())
+
+    await triggerState.setRespondedSeq(CAMPAIGN, 2)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ turnRowsExist: true }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: finalize,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, farewellPayload({ worldId: 'w-fin', maxConsumedSeq: 9 }))
+
+    expect(result).toEqual({ ran: true })
+    // Converged (no render) — turn_end is the only frame.
+    expect(calls.order).toEqual(['turn_end'])
+    // The finalize STILL ran from the shared finally.
+    expect(finalize).toHaveBeenCalledTimes(1)
+    expect(finalize).toHaveBeenCalledWith({
+      campaignId: CAMPAIGN,
+      sessionId: SESSION,
+      worldId: 'w-fin',
+    })
+    // The player-less converge did NOT advance the watermark past unresponded seqs.
+    expect(await triggerState.respondedSeq(CAMPAIGN)).toBe(2)
+  })
+
+  it('a farewell turn resolves the worldId via resolveWorldId when absent from the payload (§1.3)', async () => {
+    // The finalize prefers `job.data.worldId` but falls back to resolveWorldId
+    // (blob-cached campaign→world) when the payload omits it. Seed the :state blob
+    // so resolveWorldId returns a cached worldId without a PG read.
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+      worldId: 'w-cached',
+    })
+
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const finalize = vi.fn((): Promise<void> => Promise.resolve())
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: finalize,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    // A farewell payload with NO worldId (the resolveWorldId fallback arm).
+    const noWorldIdFarewell: { data: TurnJobPayload } = {
+      data: {
+        campaignId: CAMPAIGN,
+        sessionId: SESSION,
+        turnId: TURN,
+        triggerMessages: [],
+        maxConsumedSeq: 0,
+        trigger: { kind: 'farewell' },
+        farewellText: FAREWELL_DIRECTION,
+      },
+    }
+
+    const result = await processTurnJob(deps, noWorldIdFarewell)
+
+    expect(result).toEqual({ ran: true })
+    expect(finalize).toHaveBeenCalledWith({
+      campaignId: CAMPAIGN,
+      sessionId: SESSION,
+      worldId: 'w-cached',
+    })
+  })
+
+  // ── MYT-74b §1.3 — the ending gate suppresses post-turn re-engagement ─────
+  it('an ending session suppresses the explicit drain AND the post-turn re-mature in the finally (§1.3)', async () => {
+    // Once `endSession` claims the `ending` flag, the post-turn re-engagement work
+    // (explicit drain + quiet-window re-mature) would only re-summon the DM into a
+    // closing session. With isEnding=true, BOTH are suppressed — even though an
+    // explicit summon is pending AND a trailing player row sits above the watermark.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const queueCalls: QueueCall[] = []
+    const triggerCalls: DmTriggerCall[] = []
+
+    // Mark the session ending (as endSession would have) BEFORE the turn runs.
+    await sessionState.tryMarkEnding(CAMPAIGN)
+    // Seed an explicit summon + a trailing player row that WOULD normally re-engage.
+    await triggerState.setExplicitPending(CAMPAIGN)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ trailingRows: [{ messageType: 'player_message' }] }),
+      triggerState,
+      sessionTurnQueue: recordingTurnQueue(queueCalls),
+      dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The ending gate suppressed BOTH the explicit drain and the re-mature.
+    expect(queueCalls).toHaveLength(0)
+    expect(triggerCalls).toHaveLength(0)
+    // The explicit-pending flag was NOT consumed (the drain block never ran).
+    expect(await triggerState.takeExplicitPending(CAMPAIGN)).toBe(true)
+  })
+
+  it('a non-ending session still runs the explicit drain + re-mature (the gate is isEnding-conditional, §1.3)', async () => {
+    // The control: with isEnding=false (the default), the post-turn re-engagement
+    // work runs as before — proving the suppression is gated on the ending flag,
+    // not unconditional.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const queueCalls: QueueCall[] = []
+    const triggerCalls: DmTriggerCall[] = []
+
+    await triggerState.setExplicitPending(CAMPAIGN)
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({ trailingRows: [{ messageType: 'player_message' }] }),
+      triggerState,
+      sessionTurnQueue: recordingTurnQueue(queueCalls),
+      dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // Not ending → the explicit drain enqueued one follow-up AND the re-mature fired.
+    expect(queueCalls).toHaveLength(1)
+    expect(queueCalls[0]?.data.trigger.kind).toBe('explicit')
+    expect(triggerCalls).toHaveLength(1)
+    expect(triggerCalls[0]?.name).toBe('evaluate')
   })
 })
 
