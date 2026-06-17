@@ -278,6 +278,15 @@ async function handleSessionStart(
     return reply.code(409).send({ code: 'reconcile_pending' })
   }
 
+  // Precondition 5 (MYT-74b §1 C3): a session-end is in progress. The status flip
+  // lands at finalize (AFTER the farewell render), so during the render the row is
+  // still 'active' with ended_at NULL — the reconcile_pending interlock can't see
+  // it. The `ending` flag (SET-NX, ~1h TTL) fences this window: a new /start must
+  // wait until the farewell renders + the finalize flips + reconcile clears.
+  if (await sessionState.isEnding(campaignId)) {
+    return reply.code(409).send({ code: 'session_ending' })
+  }
+
   // Resolve the OWNER — the owner pays, not the (possibly non-owner) caller.
   const owner = await repo.campaigns.getOwner(campaignId)
   /* c8 ignore start — every campaign carries exactly one owner membership

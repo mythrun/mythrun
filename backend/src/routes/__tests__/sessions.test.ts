@@ -35,6 +35,10 @@ const setStateMock = vi.fn()
 // when T12 lands).
 const resetSessionSpendMock = vi.fn()
 const resetSessionKeysMock = vi.fn()
+// MYT-74b §1 C3: the /start session_ending interlock reads sessionState.isEnding.
+// Stubbed on the mocked makeSessionState return so the route's call resolves; the
+// prod symbol already exists (session-state.ts isEnding/tryMarkEnding).
+const isEndingMock = vi.fn()
 
 vi.mock('../../repo/index.js', () => ({
   createRepo: () => ({
@@ -65,6 +69,7 @@ vi.mock('../../redis/session-state.js', () => ({
   makeSessionState: () => ({
     setState: setStateMock,
     resetSessionSpend: resetSessionSpendMock,
+    isEnding: isEndingMock,
   }),
 }))
 
@@ -221,12 +226,14 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
       maxSessionNumberMock,
       prepExistsForMock,
       getActiveByCampaignMock,
+      getMostRecentByCampaignMock,
       sessionCreateMock,
       sessionDeleteByIdMock,
       tryDebitForSessionMock,
       setStateMock,
       resetSessionSpendMock,
       resetSessionKeysMock,
+      isEndingMock,
       prepGetByMock,
       getWorldIdMock,
       getToneAndEraMock,
@@ -241,6 +248,8 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
     prepExistsForMock.mockResolvedValue(true)
     getActiveByCampaignMock.mockResolvedValue(null)
     getMostRecentByCampaignMock.mockResolvedValue(null)
+    // No session-end in progress by default; the session_ending arm overrides.
+    isEndingMock.mockResolvedValue(false)
     setStateMock.mockResolvedValue(undefined)
     resetSessionSpendMock.mockResolvedValue(undefined)
     resetSessionKeysMock.mockResolvedValue(undefined)
@@ -365,6 +374,42 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
     expect(res.statusCode).toBe(402)
     expect(resetSessionSpendMock).not.toHaveBeenCalled()
     expect(resetSessionKeysMock).not.toHaveBeenCalled()
+  })
+
+  it('a session-end in progress (:ending flag set) → 409 session_ending, even with no ended row', async () => {
+    // MYT-74b §1 C3: the status flip lands at finalize (AFTER the farewell
+    // render), so during the render the most-recent row is still 'active' with
+    // ended_at NULL — the reconcile_pending interlock (keys on endedAt) can't see
+    // it. The `ending` flag fences this window: a new /start 409s while the
+    // farewell renders + the finalize flips + reconcile clears. Here no session
+    // row is ended (getMostRecentByCampaign default → null), so reconcile_pending
+    // does NOT fire; only the ending flag does.
+    isEndingMock.mockResolvedValueOnce(true)
+    app = await build({ user: fakeUser, redis })
+    const res = await start()
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ code: 'session_ending' })
+    // Short-circuit: no INSERT/debit attempted past the precondition gate.
+    expect(sessionCreateMock).not.toHaveBeenCalled()
+    expect(tryDebitForSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('reconcile_pending still wins (and isEnding is never reached) when the prior session is ended-unreconciled', async () => {
+    // Ordering guard: the session_ending check sits AFTER reconcile_pending, so a
+    // campaign whose prior session is ended-but-unreconciled 409s reconcile_pending
+    // and never consults the ending flag. (The existing reconcile_pending behavior
+    // must not regress under the new interlock.)
+    getMostRecentByCampaignMock.mockResolvedValueOnce({
+      ...sessionRow,
+      endedAt: new Date(),
+      reconciledAt: null,
+    })
+    app = await build({ user: fakeUser, redis })
+    const res = await start()
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ code: 'reconcile_pending' })
+    // The ending check is short-circuited by the earlier reconcile_pending return.
+    expect(isEndingMock).not.toHaveBeenCalled()
   })
 })
 
