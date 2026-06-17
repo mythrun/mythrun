@@ -42,6 +42,13 @@ export const PRESENCE_TTL = 60
  *  from live Redis state rather than the Postgres checkpoint. ~2h. */
 const STATE_TTL = 2 * 60 * 60
 
+/** TTL (seconds) on the `:ending` once-only end flag (MYT-74a T11). Sized to
+ *  comfortably outlive the end orchestration + the reconcile job's retries so a
+ *  late inbound frame after an end is still dropped, while a crash between
+ *  mark-and-reconcile eventually self-heals (the durable interlock is the
+ *  reconcile worker's `reconciled_at` gate, not this flag). ~1h. */
+const ENDING_TTL = 60 * 60
+
 /** Session mode. MYT-65 only exercises `exploration`; `combat` arrives with
  *  the combat engine. Kept as a string union so the state blob is typed. */
 export type SessionMode = 'exploration' | 'combat'
@@ -157,6 +164,20 @@ export interface SessionState {
     sessionId: string,
     store: CheckpointStore,
   ): Promise<CheckpointResult>
+  /** MYT-74a T11 — atomically claim the once-only session-end interlock.
+   *  `SET … NX` on `session:{cId}:ending`: returns `true` for the FIRST caller
+   *  (the flag was unset) and `false` thereafter. The explicit `end_session`
+   *  frame and the budget auto-end (T12) both call `endSession`, which races
+   *  through this gate so the two collapse to a SINGLE end. The key carries a
+   *  TTL so a crash between mark-and-reconcile self-heals (the reconcile worker's
+   *  own §4 `reconciled_at` gate is the durable interlock; this flag only fences
+   *  the in-process end orchestration + the inbound drop-gate). */
+  tryMarkEnding(campaignId: string): Promise<boolean>
+  /** MYT-74a T11 — read the session-end flag. The WS inbound handler checks this
+   *  at the top of every frame and DROPS the frame when set (no new turn after
+   *  an end has begun). A missing key (never ended, or the TTL reaped a stale
+   *  flag) reads `false`. */
+  isEnding(campaignId: string): Promise<boolean>
 }
 
 export function makeSessionState(redis: Redis, keyPrefix: string): SessionState {
@@ -166,6 +187,7 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const summaryKey = (campaignId: string): string => `${base(campaignId)}:summary`
   const usageKey = (campaignId: string): string => `${base(campaignId)}:usage`
   const usageStKey = (campaignId: string): string => `${base(campaignId)}:usage:st`
+  const endingKey = (campaignId: string): string => `${base(campaignId)}:ending`
   const connKey = (campaignId: string, containerId: string, userId: string): string =>
     `${base(campaignId)}:conn:${containerId}:${userId}`
   const connPattern = (campaignId: string): string => `${base(campaignId)}:conn:*`
@@ -335,6 +357,20 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
       await store.writeCheckpoint(sessionId, envelope)
 
       return { maxSeq }
+    },
+
+    tryMarkEnding: async (campaignId) => {
+      // SET NX is atomic: the first end (explicit frame OR budget auto-end) wins
+      // and gets 'OK'; a racing second end gets null and short-circuits. The TTL
+      // self-heals a flag stranded by a crash mid-end (the durable interlock is
+      // the reconcile worker's reconciled_at gate — see the interface doc).
+      const result = await redis.set(endingKey(campaignId), '1', 'EX', ENDING_TTL, 'NX')
+      return result === 'OK'
+    },
+
+    isEnding: async (campaignId) => {
+      // EXISTS is 1 when the flag is set, 0 when unset / TTL-reaped.
+      return (await redis.exists(endingKey(campaignId))) === 1
     },
   }
 }

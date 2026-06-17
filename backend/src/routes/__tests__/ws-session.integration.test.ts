@@ -37,7 +37,7 @@ import { createRepo } from '../../repo/index.js'
 import { createRedisClient } from '../../redis/client.js'
 import { buildApp } from '../../app.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
-import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue, noopWorldGenQueue, noopSessionPrepQueue } from '../../__tests__/helpers/stub-deps.js'
+import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue, noopSessionReconcileQueue, noopWorldGenQueue, noopSessionPrepQueue } from '../../__tests__/helpers/stub-deps.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -332,6 +332,7 @@ describe('MYT-65 WS transport — end-to-end (two clients + reconnect)', () => {
         sessionSuspendQueue: noopSessionSuspendQueue(),
         sessionTurnQueue: noopSessionTurnQueue(),
         dmTriggerQueue: noopDmTriggerQueue(),
+        sessionReconcileQueue: noopSessionReconcileQueue(),
       },
       { mode: 'bypass' },
       { frontendBaseUrl: 'http://localhost:5173', env: makeStubEnv({ redisKeyPrefix: KEY_PREFIX }) },

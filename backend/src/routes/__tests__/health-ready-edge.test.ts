@@ -20,6 +20,7 @@ import {
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
   noopDmTriggerQueue,
+  noopSessionReconcileQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 
 function buildDeps(pgQuery: () => Promise<unknown>): AppDeps {
@@ -40,6 +41,7 @@ function buildDeps(pgQuery: () => Promise<unknown>): AppDeps {
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
     dmTriggerQueue: noopDmTriggerQueue(),
+    sessionReconcileQueue: noopSessionReconcileQueue(),
   }
 }
 

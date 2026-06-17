@@ -58,9 +58,13 @@ import type { TriggerState } from '../session/trigger-state.js'
 import type { TurnPublisher } from '../session/turn-publisher.js'
 import type { DmTriggerQueueLike } from '../session/dm-trigger-queue.js'
 import type { TurnQueueLike } from '../session/turn-queue.js'
+import type { ReconcileQueueLike } from '../session/session-reconcile.js'
+import type { SessionLock } from '../session/session-lock.js'
 import type { LedgerUpdatePayload } from '../session/tiers/types.js'
 import { consumeWsTicket } from '../auth/ws-ticket.js'
 import { scheduleSuspend, cancelSuspend } from '../session/session-suspend.js'
+import { endSession } from '../session/session-end.js'
+import { resolveWorldId } from '../session/turn-context.js'
 import {
   isExplicitText,
   rescheduleQuietWindow,
@@ -135,6 +139,17 @@ export interface WsSessionDeps {
    *  broadcasts `dm_thinking{turnId}` IMMEDIATELY (before any enqueue/lock
    *  latency) so every client greys its input the instant the summon lands. */
   readonly turnPublisher: TurnPublisher
+  /** MYT-74a T11: the end-of-session reconcile producer. The `end_session` frame
+   *  (and T12's budget auto-end) fires the T10 reconcile worker through this —
+   *  `enqueueReconcile` uses a per-session jobId so a double-trigger collapses to
+   *  one job. Typed as the minimal ReconcileQueueLike (add only); the raw BullMQ
+   *  Queue is closed at shutdown in server.ts. */
+  readonly reconcileQueue: ReconcileQueueLike
+  /** MYT-74a T11: the per-session distributed lock. The end flow acquires it to
+   *  QUIESCE the in-flight turn (fence the final render) before flipping the row
+   *  to 'ended'. The SAME lock the turn worker (MYT-66) + the reconcile worker
+   *  (MYT-74a T10) coordinate on, constructed over the realtime Redis. */
+  readonly lock: SessionLock
 }
 
 /** Heartbeat: ping every 30s; a socket that hasn't ponged 10s after a ping is
@@ -838,13 +853,50 @@ export async function handleInbound(
   displayName: string,
   characterName: string,
 ): Promise<void> {
-  const { hub, triggerState } = ctx.deps
+  const { hub, triggerState, sessionState } = ctx.deps
   // One clock read per frame: the typing/activity stamps, the max-wait clamp,
   // and the explicit-path batch boundary must all reason about the same `now`.
   const now = Date.now()
   try {
     const frame = parseClientFrame(raw, ctx.app.log)
     if (!frame) return
+
+    // MYT-74a T11 — the END drop-gate. Once a session is ending, no inbound
+    // frame may start a new turn or mutate state: an in-flight end has already
+    // fenced the turn loop, flipped the row, and fired reconcile. We DROP every
+    // inbound frame EXCEPT a redundant end_session (which is idempotent at the
+    // SET-NX flag, so letting it through costs nothing and keeps the branch
+    // uniform). The flag is the cheap realtime-Redis read the budget auto-end
+    // (T12) and the explicit frame both set. A read failure is swallowed by the
+    // outer catch (fail-open keeps the socket alive on a transient Redis blip;
+    // the reconcile worker's own §4 gate is the durable interlock regardless).
+    if (frame.type !== 'end_session' && (await sessionState.isEnding(campaignId))) {
+      return
+    }
+
+    if (frame.type === 'end_session') {
+      // §11 — end the live session. Resolve the worldId (blob-cached campaign→
+      // world, reusing the turn worker's resolver) and thread it onto the
+      // reconcile job, then run the idempotent end orchestration.
+      const worldId = await resolveWorldId(
+        { sessionState, repo: ctx.deps.repo },
+        campaignId,
+        sessionId,
+      )
+      await endSession(
+        {
+          sessionState,
+          suspendQueue: ctx.deps.suspendQueue,
+          reconcileQueue: ctx.deps.reconcileQueue,
+          lock: ctx.deps.lock,
+          sessions: ctx.deps.repo.sessions,
+          publish: (cId, f) => hub.publish(cId, f as ServerFrame),
+          logger: ctx.app.log,
+        },
+        { campaignId, sessionId, worldId },
+      )
+      return
+    }
 
     if (frame.type === 'typing_start') {
       // §4.1 typing display + §4.2 quiet-window reschedule. The typing key is
@@ -1038,6 +1090,9 @@ export function parseClientFrame(raw: WsRawData, log: FastifyBaseLogger): Client
   // MYT-67: the explicit "@DM button" summon carries no payload fields, so the
   // allowlist pass is the whole validation — accept it as-is.
   if (type === 'dm_invoke') return { type: 'dm_invoke' }
+  // MYT-74a: the explicit session-end summon likewise carries no payload fields
+  // — return a clean bare frame (strip any client-supplied extras).
+  if (type === 'end_session') return { type: 'end_session' }
   if (type === 'player_message') {
     const text = (parsed as { text?: unknown }).text
     // A player_message must carry a string `text`; a malformed one drops.

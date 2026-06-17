@@ -22,6 +22,12 @@ describe('parseClientFrame', () => {
     expect(parseClientFrame(frame('{"type":"dm_invoke"}'), fakeLog)).toEqual({ type: 'dm_invoke' })
   })
 
+  it('parses the MYT-74a end_session summon as a clean bare frame (strips extras)', () => {
+    expect(parseClientFrame(frame('{"type":"end_session","reason":"hax"}'), fakeLog)).toEqual({
+      type: 'end_session',
+    })
+  })
+
   it('drops a player_message with no text', () => {
     expect(parseClientFrame(frame('{"type":"player_message"}'), fakeLog)).toBeNull()
   })

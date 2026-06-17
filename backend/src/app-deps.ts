@@ -6,6 +6,7 @@ import type { CharacterCreationQueueLike } from './routes/campaign-characters.js
 import type { SessionPrepQueueLike } from './routes/session-preps.js'
 import type { SuspendQueueLike } from './session/session-suspend.js'
 import type { TurnQueueLike } from './session/turn-queue.js'
+import type { ReconcileQueueLike } from './session/session-reconcile.js'
 import type { DmTriggerQueueLike } from './session/dm-trigger-queue.js'
 
 export interface AppDeps {
@@ -60,4 +61,12 @@ export interface AppDeps {
    *  closed at shutdown in server.ts. Required — the session transport is a
    *  boot invariant of the gated binary, mirroring sessionTurnQueue. */
   dmTriggerQueue: DmTriggerQueueLike
+  /** MYT-74a T11: BullMQ Queue handle for `session-reconcile` jobs (built on
+   *  redisBatch in server.ts). Threaded into the WS session route so the
+   *  `end_session` frame (and T12's budget auto-end) can `enqueueReconcile` —
+   *  firing the end-of-session reconcile worker. Typed as the minimal
+   *  ReconcileQueueLike contract (add only); the raw BullMQ Queue is closed at
+   *  shutdown in server.ts. Required — the session transport is a boot invariant
+   *  of the gated binary, mirroring sessionTurnQueue. */
+  sessionReconcileQueue: ReconcileQueueLike
 }

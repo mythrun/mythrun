@@ -192,6 +192,10 @@ function fakeSessionState(opts: {
     incrUsageSt: unused('incrUsageSt'),
     totalUsageTokens: unused('totalUsageTokens'),
     resetSessionSpend: unused('resetSessionSpend'),
+    // MYT-74a T11 additions — the end-of-session flow owns these; the controller
+    // never calls them, so they stay as throwing stubs.
+    tryMarkEnding: unused('tryMarkEnding'),
+    isEnding: unused('isEnding'),
   }
 }
 

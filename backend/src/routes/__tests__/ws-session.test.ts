@@ -43,21 +43,27 @@ import { createSessionHub, type SessionHub } from '../../ws/session-hub.js'
 import { makeSessionState } from '../../redis/session-state.js'
 import { makeTriggerState } from '../../session/trigger-state.js'
 import { createTurnPublisher } from '../../session/turn-publisher.js'
+import { createSessionLock } from '../../session/session-lock.js'
 import { mintWsTicket } from '../../auth/ws-ticket.js'
 import type { ServerFrame } from '../../contract/session-events.js'
 import type { SuspendQueueLike } from '../../session/session-suspend.js'
 import type { TurnQueueLike } from '../../session/turn-queue.js'
 import type { DmTriggerQueueLike } from '../../session/dm-trigger-queue.js'
+import type { ReconcileQueueLike } from '../../session/session-reconcile.js'
 import { wsSessionRoutes, type WsSessionDeps } from '../ws-session.js'
 
-/** A no-op session-turn / dm-trigger producer for the integration suite. The
- *  existing connect/persist/disconnect tests don't assert on a turn enqueue;
- *  the explicit-trigger path is unit-covered in ws-session-trigger.test.ts. */
+/** A no-op session-turn / dm-trigger / reconcile producer for the integration
+ *  suite. The existing connect/persist/disconnect tests don't assert on a turn
+ *  or reconcile enqueue; the explicit-trigger path is unit-covered in
+ *  ws-session-trigger.test.ts and the end flow in ws-session-end.test.ts. */
 function noopTurnQueue(): TurnQueueLike {
   return { add: (() => Promise.resolve(undefined)) as unknown as TurnQueueLike['add'] }
 }
 function noopDmTriggerQueueLocal(): DmTriggerQueueLike {
   return { add: (() => Promise.resolve(undefined)) as unknown as DmTriggerQueueLike['add'] }
+}
+function noopReconcileQueue(): ReconcileQueueLike {
+  return { add: (() => Promise.resolve(undefined)) as unknown as ReconcileQueueLike['add'] }
 }
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -313,6 +319,8 @@ describe('ws-session route (integration)', () => {
       sessionTurnQueue: noopTurnQueue(),
       triggerState: makeTriggerState(redis, KEY_PREFIX),
       turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
+      reconcileQueue: noopReconcileQueue(),
+      lock: createSessionLock(redis, KEY_PREFIX, 45_000),
     }
     await app.register(wsSessionRoutes, deps)
     await app.ready()
@@ -391,6 +399,8 @@ describe('ws-session route (integration)', () => {
       sessionTurnQueue: noopTurnQueue(),
       triggerState: makeTriggerState(redis, KEY_PREFIX),
       turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
+      reconcileQueue: noopReconcileQueue(),
+      lock: createSessionLock(redis, KEY_PREFIX, 45_000),
     })
     await throwApp.ready()
     try {
@@ -1352,6 +1362,8 @@ describe('ws-session route (integration)', () => {
       sessionTurnQueue: noopTurnQueue(),
       triggerState: makeTriggerState(redis, KEY_PREFIX),
       turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
+      reconcileQueue: noopReconcileQueue(),
+      lock: createSessionLock(redis, KEY_PREFIX, 45_000),
     })
     await throwApp.ready()
     const ticket = await mint()
@@ -1545,6 +1557,7 @@ function makeStubSessionState(): {
   getState: ReturnType<typeof vi.fn>
   setState: ReturnType<typeof vi.fn>
   refreshTtls: ReturnType<typeof vi.fn>
+  isEnding: ReturnType<typeof vi.fn>
 } {
   return {
     nextSeq: vi.fn().mockResolvedValue(1),
@@ -1555,6 +1568,9 @@ function makeStubSessionState(): {
     getState: vi.fn().mockResolvedValue(null),
     setState: vi.fn().mockResolvedValue(undefined),
     refreshTtls: vi.fn().mockResolvedValue(undefined),
+    // MYT-74a T11: the inbound end drop-gate reads this at the top of
+    // handleInbound; these unit tests run with the session NOT ending.
+    isEnding: vi.fn().mockResolvedValue(false),
   }
 }
 
@@ -1680,6 +1696,8 @@ function makeUnitDeps(parts: {
     sessionTurnQueue: { add: (() => Promise.resolve(undefined)) as unknown as TurnQueueLike['add'] },
     triggerState: makeStubTriggerState(),
     turnPublisher: makeStubTurnPublisher(),
+    reconcileQueue: { add: (() => Promise.resolve(undefined)) as unknown as ReconcileQueueLike['add'] },
+    lock: { tryAcquire: () => Promise.resolve(null) },
   }
 }
 

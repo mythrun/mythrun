@@ -20,6 +20,7 @@ import type { SessionPrepQueueLike } from '../../routes/session-preps.js'
 import type { SuspendQueueLike } from '../../session/session-suspend.js'
 import type { TurnQueueLike } from '../../session/turn-queue.js'
 import type { DmTriggerQueueLike } from '../../session/dm-trigger-queue.js'
+import type { ReconcileQueueLike } from '../../session/session-reconcile.js'
 import { createRepo } from '../../repo/index.js'
 
 export interface StubDepsOverrides {
@@ -118,6 +119,20 @@ export function noopDmTriggerQueue(): DmTriggerQueueLike {
   }
 }
 
+/**
+ * Hand-rolled no-op session-reconcile queue (MYT-74a T11). Mirrors the other
+ * noop queues — suffices for buildApp callers that don't drive the WS
+ * `end_session` flow; tests that exercise the end orchestration build their own
+ * spy. Like the others, `ReconcileQueueLike.add` is BullMQ's real `Queue['add']`
+ * signature (returns a `Promise<Job>`), which a no-op can't honestly construct;
+ * the resolved-undefined stub is cast through `unknown` at the single boundary.
+ */
+export function noopSessionReconcileQueue(): ReconcileQueueLike {
+  return {
+    add: (() => Promise.resolve(undefined)) as unknown as ReconcileQueueLike['add'],
+  }
+}
+
 export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
   // Promise.resolve / Promise.reject form (not `async () =>`) avoids the
   // @typescript-eslint/require-await lint on stubs that don't internally
@@ -137,5 +152,6 @@ export function makeStubDeps(overrides: StubDepsOverrides = {}): AppDeps {
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
     dmTriggerQueue: noopDmTriggerQueue(),
+    sessionReconcileQueue: noopSessionReconcileQueue(),
   }
 }

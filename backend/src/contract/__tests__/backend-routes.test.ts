@@ -37,7 +37,7 @@ import type { AppDeps } from '../../app-deps.js'
 import { createRepo } from '../../repo/index.js'
 import { _resetSkuCacheForTests } from '../../billing/sku-cache.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
-import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue } from '../../__tests__/helpers/stub-deps.js'
+import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue, noopSessionReconcileQueue } from '../../__tests__/helpers/stub-deps.js'
 import { BACKEND_ROUTES } from '../backend-routes.js'
 
 interface PrintedRoute {
@@ -178,6 +178,7 @@ const makeStubDeps = (): AppDeps => {
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
     dmTriggerQueue: noopDmTriggerQueue(),
+    sessionReconcileQueue: noopSessionReconcileQueue(),
   }
 }
 

@@ -25,6 +25,11 @@ import {
   type TurnJobPayload,
   type TurnQueueLike,
 } from './session/turn-queue.js'
+import {
+  QUEUE_SESSION_RECONCILE,
+  type ReconcileJobPayload,
+  type ReconcileQueueLike,
+} from './session/session-reconcile.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import type { DmTriggerPayload, DmTriggerQueueLike } from './session/dm-trigger-queue.js'
 
@@ -223,6 +228,40 @@ export function buildSessionTurnQueue(redisBatch: Redis): {
   return { bullmqQueue, sessionTurnQueue }
 }
 
+/** MYT-74a T11: build the session-reconcile BullMQ Queue (end-of-session →
+ *  fold the working set into canon). Returns the raw `bullmqQueue` (for
+ *  shutdown.close, after its Worker drains — wired in worker.ts) AND the narrow
+ *  `ReconcileQueueLike` adapter the `end_session` flow (and T12's auto-end) use
+ *  to enqueue via `enqueueReconcile`.
+ *
+ *  Job-options policy:
+ *   - `removeOnComplete: true + removeOnFail: true` prunes terminal jobs so the
+ *     per-session jobId (`reconcile-${sessionId}`) is free for a clean re-add —
+ *     mirrors buildSessionSuspendQueue's footgun fix. Nothing reads a reconcile
+ *     job's result (the §4 `reconciled_at` gate is the durable side effect).
+ *   - `attempts: 5 + exponential backoff (30s)`: the reconcile processor is NOT
+ *     total — it THROWS on transient failure so BullMQ retries, and a retry is
+ *     idempotent (the §4 gate). A non-deterministic Opus call gets several shots
+ *     before the attempts cap bounds a persistent failure. */
+export function buildSessionReconcileQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  sessionReconcileQueue: ReconcileQueueLike
+} {
+  const bullmqQueue = new Queue<ReconcileJobPayload>(QUEUE_SESSION_RECONCILE, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 30000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  })
+  const sessionReconcileQueue: ReconcileQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+  }
+  return { bullmqQueue, sessionReconcileQueue }
+}
+
 /** MYT-67 §4.2: build the dm-trigger BullMQ Queue (the quiet-window debounce
  *  decision queue, kept cleanly separate from the session-turn execution
  *  queue). Returns the raw `bullmqQueue` (for shutdown.close, after its Worker
@@ -321,6 +360,17 @@ export function stubSessionTurnQueue(): TurnQueueLike & BullMqQueueShutdown {
 // enqueue. The session transport is unreachable on the fallback binary anyway
 // (no live sessions without a DB), so rejecting on `add` is operator-safe.
 export function stubDmTriggerQueue(): DmTriggerQueueLike & BullMqQueueShutdown {
+  return {
+    add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
+    close: () => Promise.resolve(),
+  }
+}
+
+// MYT-74a T11: session-reconcile stub for the boot-gate-disabled fallback path.
+// Same rationale as the others — no Redis on that path, so reject on enqueue.
+// The session transport is unreachable on the fallback binary anyway (no live
+// sessions without a DB), so rejecting on `add` is operator-safe.
+export function stubSessionReconcileQueue(): ReconcileQueueLike & BullMqQueueShutdown {
   return {
     add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
     close: () => Promise.resolve(),

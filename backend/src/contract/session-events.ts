@@ -26,15 +26,18 @@
 // omitted from this subset.
 
 // Client -> Server frame types. The MYT-65 subset (`player_message`,
-// `typing_start`, `typing_stop`) plus the MYT-67 explicit `dm_invoke` summon —
-// the "@DM button" that asks the DM to take a turn (no payload fields).
-// `roll_complete`, `end_session`, `combat_action`, `auth_response`,
-// `combat_move` are further full-protocol client frames added later.
+// `typing_start`, `typing_stop`), the MYT-67 explicit `dm_invoke` summon — the
+// "@DM button" that asks the DM to take a turn (no payload fields) — and the
+// MYT-74a `end_session` lifecycle frame (a bare summon that ends the live
+// session; no payload fields). `roll_complete`, `combat_action`,
+// `auth_response`, `combat_move` are further full-protocol client frames added
+// later.
 export const CLIENT_FRAME_TYPES = [
   'player_message',
   'typing_start',
   'typing_stop',
   'dm_invoke',
+  'end_session',
 ] as const
 
 // Server -> Client frame types. The MYT-65 subset, the MYT-66 DM-turn
@@ -72,6 +75,12 @@ export const SERVER_FRAME_TYPES = [
   // the mechanical frames above: streamed during a turn (no seq) and replayed
   // from session_messages rows on reconnect (carrying the row's seq).
   'ledger_update',
+  // MYT-74a session-end frame (server -> client only). A one-shot lifecycle
+  // broadcast: the live session is over (the end-of-session reconcile has been
+  // fired). Carries a `reason` (`normal` for an explicit/auto end). Not
+  // persisted, not replayed — a reconnect to an ended session is rejected at the
+  // ws-ticket handshake (status !== 'active'), so there is no replay path here.
+  'session_end',
 ] as const
 
 // Snapshot of a connected participant, used in the reconnect replay payload.
@@ -91,6 +100,10 @@ export type ClientFrame =
   // MYT-67: explicit "@DM button" summon — asks the DM to take a turn. Carries
   // no payload fields (the summon itself is the whole signal).
   | { type: 'dm_invoke' }
+  // MYT-74a: explicit session-end summon — ends the live session (fires the
+  // end-of-session reconcile). Carries no payload fields (the summon is the
+  // whole signal); the server resolves campaign/world/session from the socket.
+  | { type: 'end_session' }
 
 // Server -> Client payloads. Discriminated on `type`.
 //
@@ -193,6 +206,11 @@ export type ServerFrame =
       condition?: string
       diceRolled?: readonly number[]
     }
+  // MYT-74a session-end broadcast. A one-shot lifecycle frame: the live session
+  // is over. `reason` is `normal` for an explicit `end_session` summon or the
+  // budget auto-end (T12 may add further reasons). Carries NO seq (a control
+  // frame, like the presence frames) and is not persisted/replayed.
+  | { type: 'session_end'; reason: 'normal' }
 
 // Tripwire over the client allowlist. Only these client frame types may
 // originate a persisted/broadcast frame; everything else (DM-turn frames,

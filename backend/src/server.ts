@@ -53,12 +53,14 @@ import {
   buildSessionSuspendQueue,
   buildSessionTurnQueue,
   buildDmTriggerQueue,
+  buildSessionReconcileQueue,
   stubWorldGenQueue,
   stubCharacterCreationQueue,
   stubSessionPrepQueue,
   stubSessionSuspendQueue,
   stubSessionTurnQueue,
   stubDmTriggerQueue,
+  stubSessionReconcileQueue,
 } from './server-queues.js'
 import type { Logger as PinoLogger } from 'pino'
 
@@ -288,7 +290,12 @@ async function buildSessionSuspendWorker(
  *
  *  MYT-67 §4.2: the raw dm-trigger queue is closed here too (same principle —
  *  the dm-trigger WORKER is wired in worker.ts, not the API server, so only the
- *  queue's Redis bookkeeping is released here). */
+ *  queue's Redis bookkeeping is released here).
+ *
+ *  MYT-74a T11: the raw session-reconcile queue is closed here too — same
+ *  principle as the turn/dm-trigger queues: the reconcile WORKER is wired in
+ *  worker.ts, not the API server, so only the queue's Redis bookkeeping is
+ *  released here (the WS route is the producer via the `end_session` flow). */
 function withSessionPrepShutdown(
   inner: ShutdownHandler,
   worker: Worker,
@@ -297,6 +304,7 @@ function withSessionPrepShutdown(
   suspendQueue: Queue,
   turnQueue: Queue,
   dmTriggerQueue: Queue,
+  reconcileQueue: Queue,
 ): ShutdownHandler {
   return async (signal) => {
     await worker.close()
@@ -305,6 +313,7 @@ function withSessionPrepShutdown(
     await suspendQueue.close()
     await turnQueue.close()
     await dmTriggerQueue.close()
+    await reconcileQueue.close()
     await inner(signal)
   }
 }
@@ -338,6 +347,7 @@ async function fallbackStart(): Promise<void> {
   const stubSessionSuspend = stubSessionSuspendQueue()
   const stubSessionTurn = stubSessionTurnQueue()
   const stubDmTrigger = stubDmTriggerQueue()
+  const stubSessionReconcile = stubSessionReconcileQueue()
   const stubDeps: AppDeps = {
     pg: stubPool,
     redisRealtime: { quit: () => Promise.resolve('OK') } as unknown as Redis,
@@ -350,6 +360,7 @@ async function fallbackStart(): Promise<void> {
     sessionSuspendQueue: stubSessionSuspend,
     sessionTurnQueue: stubSessionTurn,
     dmTriggerQueue: stubDmTrigger,
+    sessionReconcileQueue: stubSessionReconcile,
   }
   const app = await buildApp(stubDeps, authOpts, {
     frontendBaseUrl: env.frontendBaseUrl,
@@ -494,6 +505,11 @@ export async function main(): Promise<void> {
     // debounce). The dm-trigger WORKER is wired in worker.ts, not here.
     const { bullmqQueue: bullmqDmTriggerQueue, dmTriggerQueue } =
       buildDmTriggerQueue(rTBRef)
+    // MYT-74a T11: session-reconcile queue (raw closed at shutdown; adapter into
+    // AppDeps so the WS `end_session` flow can enqueueReconcile). The reconcile
+    // WORKER is wired in worker.ts, not here.
+    const { bullmqQueue: bullmqSessionReconcileQueue, sessionReconcileQueue } =
+      buildSessionReconcileQueue(rTBRef)
 
     const app = await buildApp(
       {
@@ -508,6 +524,7 @@ export async function main(): Promise<void> {
         sessionSuspendQueue,
         sessionTurnQueue,
         dmTriggerQueue,
+        sessionReconcileQueue,
       },
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
@@ -558,6 +575,7 @@ export async function main(): Promise<void> {
       innerShutdown, sessionPrepWorker, bullmqSessionPrepQueue,
       sessionSuspendWorker, bullmqSessionSuspendQueue,
       bullmqSessionTurnQueue, bullmqDmTriggerQueue,
+      bullmqSessionReconcileQueue,
     )
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.on(signal, () => void handleShutdown(signal))

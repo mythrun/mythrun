@@ -49,6 +49,7 @@ import {
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
   noopDmTriggerQueue,
+  noopSessionReconcileQueue,
 } from '../../__tests__/helpers/stub-deps.js'
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 import {
@@ -96,6 +97,7 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
         sessionSuspendQueue: noopSessionSuspendQueue(),
         sessionTurnQueue: noopSessionTurnQueue(),
         dmTriggerQueue: noopDmTriggerQueue(),
+        sessionReconcileQueue: noopSessionReconcileQueue(),
       }
       app = await buildApp(
         deps,
@@ -300,5 +302,6 @@ function makeStubDepsForRealMode(): AppDeps {
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
     dmTriggerQueue: noopDmTriggerQueue(),
+    sessionReconcileQueue: noopSessionReconcileQueue(),
   }
 }

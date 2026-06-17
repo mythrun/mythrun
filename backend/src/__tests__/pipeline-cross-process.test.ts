@@ -35,6 +35,7 @@ import {
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
   noopDmTriggerQueue,
+  noopSessionReconcileQueue,
 } from './helpers/stub-deps.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
@@ -88,6 +89,7 @@ describe('pipeline status cross-process', () => {
       sessionSuspendQueue: noopSessionSuspendQueue(),
       sessionTurnQueue: noopSessionTurnQueue(),
       dmTriggerQueue: noopDmTriggerQueue(),
+      sessionReconcileQueue: noopSessionReconcileQueue(),
     }
     const depsB: AppDeps = { ...depsA, redisRealtime: redisB, redisBatch: redisB }
 

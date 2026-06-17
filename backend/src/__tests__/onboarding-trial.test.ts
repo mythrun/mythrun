@@ -51,6 +51,7 @@ import {
   noopSessionSuspendQueue,
   noopSessionTurnQueue,
   noopDmTriggerQueue,
+  noopSessionReconcileQueue,
 } from './helpers/stub-deps.js'
 
 const classifyProfanityMock = vi.mocked(classifyProfanity)
@@ -100,6 +101,7 @@ describe('onboarding trial-credit (integration)', () => {
       sessionSuspendQueue: noopSessionSuspendQueue(),
       sessionTurnQueue: noopSessionTurnQueue(),
       dmTriggerQueue: noopDmTriggerQueue(),
+      sessionReconcileQueue: noopSessionReconcileQueue(),
     }
     app = await buildApp(
       deps,

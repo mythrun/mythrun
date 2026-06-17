@@ -32,6 +32,7 @@ import { createSessionHub, type SessionHub } from './ws/session-hub.js'
 import { makeSessionState } from './redis/session-state.js'
 import { makeTriggerState } from './session/trigger-state.js'
 import { createTurnPublisher } from './session/turn-publisher.js'
+import { createSessionLock } from './session/session-lock.js'
 import type { Logger as PinoLogger } from 'pino'
 
 export interface AppConfig {
@@ -71,6 +72,12 @@ declare module 'fastify' {
     mythrunSessionHub: SessionHub
   }
 }
+
+/** MYT-74a T11: TTL (ms) on the per-session lock the `end_session` flow uses to
+ *  QUIESCE the in-flight turn. Mirrors the turn worker's SESSION_LOCK_TTL_MS
+ *  (45s) so the end-flow fence shares the live turn's lock semantics; the end
+ *  only holds it briefly across the row flip, then releases. */
+const WS_END_LOCK_TTL_MS = 45_000
 
 // buildApp is the boot orchestrator: a flat, top-to-bottom registration
 // sequence where the ORDER is load-bearing (allowlist hook before
@@ -331,6 +338,14 @@ export const buildApp = async (
     sessionTurnQueue: deps.sessionTurnQueue,
     triggerState: makeTriggerState(deps.redisRealtime, deps.redisKeyPrefix),
     turnPublisher: createTurnPublisher(deps.redisRealtime, deps.redisKeyPrefix),
+    // MYT-74a T11: the end-of-session reconcile producer + the per-session lock
+    // the `end_session` flow uses to QUIESCE the in-flight turn. The lock is
+    // built over the SAME realtime Redis + key prefix as the turn/reconcile
+    // workers' locks (session:lock:{cId}), so the end-flow fence coordinates
+    // with a live turn. TTL mirrors the turn worker's 45s — the end only holds
+    // the lock briefly across the row flip, then releases.
+    reconcileQueue: deps.sessionReconcileQueue,
+    lock: createSessionLock(deps.redisRealtime, deps.redisKeyPrefix, WS_END_LOCK_TTL_MS),
   })
 
   // MYT-50: pipeline status surface. The subscriber owns a DEDICATED

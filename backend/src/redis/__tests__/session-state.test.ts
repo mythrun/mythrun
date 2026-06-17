@@ -409,3 +409,38 @@ describe('makeSessionState — checkpoint', () => {
     expect(parsed.state).toBeNull()
   })
 })
+
+describe('makeSessionState — ending flag (MYT-74a T11)', () => {
+  let redis: Redis
+
+  beforeEach(async () => {
+    redis = new IoRedisMock()
+    await redis.flushall()
+  })
+  afterEach(async () => {
+    await redis.quit()
+  })
+
+  it('tryMarkEnding is once-only: first call wins (true), subsequent calls lose (false)', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.tryMarkEnding(cId)).toBe(true)
+    expect(await ss.tryMarkEnding(cId)).toBe(false)
+    expect(await ss.tryMarkEnding(cId)).toBe(false)
+  })
+
+  it('isEnding reflects the flag: false before tryMarkEnding, true after', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.isEnding(cId)).toBe(false)
+    await ss.tryMarkEnding(cId)
+    expect(await ss.isEnding(cId)).toBe(true)
+  })
+
+  it('per-campaign isolation: ending one campaign leaves another unended', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.tryMarkEnding('c-A')).toBe(true)
+    expect(await ss.isEnding('c-A')).toBe(true)
+    expect(await ss.isEnding('c-B')).toBe(false)
+    // c-B can still claim its own end independently.
+    expect(await ss.tryMarkEnding('c-B')).toBe(true)
+  })
+})

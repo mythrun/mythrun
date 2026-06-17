@@ -187,9 +187,12 @@ function makeHarness(opts: {
   const { hub, publishes } = makeFakeHub()
   const log = makeAppLog()
 
-  // sessionState only needs nextSeq for the player_message persist path here.
+  // sessionState needs nextSeq for the player_message persist path + isEnding
+  // for the MYT-74a inbound end drop-gate at the top of handleInbound (these
+  // trigger tests run with the session NOT ending, so it resolves false).
   const sessionState = {
     nextSeq: vi.fn().mockResolvedValue(opts.nextSeq ?? 1),
+    isEnding: vi.fn().mockResolvedValue(false),
   } as unknown as WsSessionDeps['sessionState']
 
   const deps: WsSessionDeps = {
@@ -204,6 +207,17 @@ function makeHarness(opts: {
     sessionTurnQueue,
     triggerState: triggerCalls as unknown as WsSessionDeps['triggerState'],
     turnPublisher,
+    // MYT-74a T11: the end-flow deps. These trigger tests don't drive the
+    // `end_session` path (ws-session-end.test.ts owns it), so a no-op reconcile
+    // producer + a lock that always grants suffice for the type contract.
+    reconcileQueue: { add: vi.fn().mockResolvedValue(undefined) },
+    lock: {
+      tryAcquire: vi.fn().mockResolvedValue({
+        token: 'tok',
+        extend: () => Promise.resolve(true),
+        release: () => Promise.resolve(),
+      }),
+    },
   }
   const ctx = { app: { log }, deps }
   return { deps, redis, keyPrefix, triggerCalls, dmTriggerAdds, turnAdds, dmThinkingCalls, publishes, log, ctx }

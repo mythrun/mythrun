@@ -6,7 +6,7 @@ import type { Redis } from 'ioredis'
 import IoredisMock from 'ioredis-mock'
 import { createRepo } from '../repo/index.js'
 import { makeStubEnv } from './helpers/stub-env.js'
-import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue } from './helpers/stub-deps.js'
+import { noopSessionSuspendQueue, noopSessionTurnQueue, noopDmTriggerQueue, noopSessionReconcileQueue } from './helpers/stub-deps.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
 
 // Minimal AppDeps for buildApp registration. Real ioredis-mock instances
@@ -31,6 +31,7 @@ function makeBuildAppDeps(): AppDeps {
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
     dmTriggerQueue: noopDmTriggerQueue(),
+    sessionReconcileQueue: noopSessionReconcileQueue(),
   }
 }
 

@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { CLIENT_FRAME_TYPES, SERVER_FRAME_TYPES, classifyClientFrame } from '../session-events.js'
 
 describe('session-events contract', () => {
-  it('client frames are the MYT-65 subset plus the MYT-67 dm_invoke summon', () => {
+  it('client frames are the MYT-65 subset plus the MYT-67 dm_invoke summon + the MYT-74a end_session', () => {
     expect(CLIENT_FRAME_TYPES).toEqual([
       'player_message',
       'typing_start',
       'typing_stop',
       'dm_invoke',
+      'end_session',
     ])
   })
   it('server frames include join/left/ready/reconnect, and MYT-66 DM-turn types', () => {
@@ -45,6 +46,18 @@ describe('session-events contract', () => {
     it('ledger_update is server-only — never an inbound client frame', () => {
       expect(CLIENT_FRAME_TYPES).not.toContain('ledger_update')
       expect(classifyClientFrame('ledger_update')).toBe(false)
+    })
+  })
+
+  describe('MYT-74a session-end frames', () => {
+    it('end_session is an accepted inbound client frame', () => {
+      expect(CLIENT_FRAME_TYPES).toContain('end_session')
+      expect(classifyClientFrame('end_session')).toBe(true)
+    })
+    it('session_end is server-only — never an inbound client frame', () => {
+      expect(SERVER_FRAME_TYPES).toContain('session_end')
+      expect(CLIENT_FRAME_TYPES).not.toContain('session_end')
+      expect(classifyClientFrame('session_end')).toBe(false)
     })
   })
 })
