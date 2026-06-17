@@ -10,6 +10,7 @@ import {
 import { toSession, toSessionUsage, type SessionDbRow, type SessionUsageDbRow } from './mappers.js'
 import { SessionNotFoundError } from './sessions-errors.js'
 import type { ClientLike } from './_types.js'
+import type { SessionHandoff } from '../llm/schemas/post-session-analysis.js'
 
 // Composable binder — see campaignsNs for the pattern rationale. Each method
 // captures the ClientLike `c` so the body serves `repo.sessions.X` and
@@ -214,6 +215,66 @@ export function sessionsNs(c: ClientLike) {
         [id],
       )
       return result.rowCount ?? 0
+    },
+
+    /** MYT-74b §1 — conditional end flip for the unconditional finalize. Sets
+     *  status='ended' + ended_at=now() only when not already ended, returning the
+     *  rowCount (1 first, 0 thereafter). The turn-worker finally AND the QueueEvents
+     *  backstop both call this; the 0-on-repeat makes the session_end broadcast fire
+     *  exactly once. Separate from the COALESCE `update` so the conditional is a
+     *  single statement (no SELECT-then-UPDATE race). */
+    markEnded: async (id: string): Promise<number> => {
+      const result = await c.query(
+        `UPDATE sessions SET status = 'ended', ended_at = now() WHERE id = $1 AND status <> 'ended'`,
+        [id],
+      )
+      return result.rowCount ?? 0
+    },
+
+    /** MYT-74b §2/§3 — persist the post-session analysis. CONDITIONAL on
+     *  summary IS NULL so a BullMQ retry / concurrent execution is idempotent
+     *  (0 rows ⇒ already written). `summary` stores {summary, emergingThreads}
+     *  (secret-free) as JSON; `handoff` stores the SessionHandoff JSON
+     *  (prep-only / secret-cleared). Returns rowCount (1 on the winning write). */
+    writeAnalysis: async (
+      id: string,
+      input: { summary: string; emergingThreads: readonly string[]; handoff: SessionHandoff },
+    ): Promise<number> => {
+      const result = await c.query(
+        `UPDATE sessions SET summary = $2, handoff = $3 WHERE id = $1 AND summary IS NULL`,
+        [
+          id,
+          JSON.stringify({ summary: input.summary, emergingThreads: input.emergingThreads }),
+          JSON.stringify(input.handoff),
+        ],
+      )
+      return result.rowCount ?? 0
+    },
+
+    /** MYT-74b §4 — the prep's prior-context read. Returns prior ENDED sessions
+     *  with a written analysis (summary IS NOT NULL), NEWEST first, capped to
+     *  `limit`. The caller (the prep processor) safeParses each row's summary
+     *  wrapper + the latest row's handoff (degrading malformed/legacy to nothing).
+     *  NOT reconcile-gated: the handoff is transcript-derived narrative state,
+     *  independent of canon commit. Raw column strings are returned; the processor
+     *  owns parsing. */
+    getPriorContextForPrep: async (
+      campaignId: string,
+      limit: number,
+    ): Promise<readonly { sessionNumber: number; summaryJson: string; handoffJson: string | null }[]> => {
+      const result = await c.query<{ session_number: number; summary: string; handoff: string | null }>(
+        `SELECT session_number, summary, handoff
+           FROM sessions
+          WHERE campaign_id = $1 AND status = 'ended' AND summary IS NOT NULL
+          ORDER BY session_number DESC
+          LIMIT $2`,
+        [campaignId, limit],
+      )
+      return result.rows.map((r) => ({
+        sessionNumber: r.session_number,
+        summaryJson: r.summary,
+        handoffJson: r.handoff,
+      }))
     },
   }
 }
