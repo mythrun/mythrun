@@ -221,6 +221,26 @@ export function entitiesNs(c: ClientLike) {
       return r.rowCount ?? 0
     },
     /**
+     * MYT-74a (Scribe play-marking): flag a set of entities as touched by play —
+     * sets encountered = true + modified_by_play = true and stamps updated_at, so
+     * snapshot/inventory reads can distinguish world-gen-pristine entities from
+     * ones a session has surfaced or mutated. Both columns exist since migration
+     * 001 (DEFAULT false); this is the first setter. Empty input is a no-op:
+     * returns 0 without issuing a query (an `= ANY('{}')` UPDATE would be a
+     * pointless round-trip). Returns the affected row count for callers that want
+     * to assert how many of the requested ids actually existed.
+     */
+    markTouchedByPlay: async (entityIds: readonly string[]): Promise<number> => {
+      if (entityIds.length === 0) return 0
+      const r = await c.query(
+        `UPDATE entities SET encountered = true, modified_by_play = true, updated_at = now()
+         WHERE id = ANY($1)`,
+        [entityIds],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return r.rowCount ?? 0
+    },
+    /**
      * starting-situation (stage 6) input read: every location / npc / faction
      * entity for a world with its prose-kernel content, ordered by type then
      * creation. SQL verbatim from the processor's `loadStartingSituationInputs`.
