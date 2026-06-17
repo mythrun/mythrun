@@ -15,7 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Redis } from 'ioredis'
 import { Queue } from 'bullmq'
 import { createBullmqRedisClient } from '../../redis/bullmq-client.js'
-import { enqueueTurn, TURN_JOB_NAME, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
+import {
+  enqueueFarewellTurn,
+  enqueueTurn,
+  FAREWELL_DIRECTION,
+  TURN_JOB_NAME,
+  type TurnJobPayload,
+  type TurnQueueLike,
+} from '../turn-queue.js'
 
 describe('enqueueTurn — real BullMQ waiting-job producer', () => {
   // Dev batch Redis (6380) is the production queue Redis. Unique queue name
@@ -103,5 +110,52 @@ describe('enqueueTurn — trigger metadata forwarding (MYT-67 T10)', () => {
     expect(add).toHaveBeenCalledWith(TURN_JOB_NAME, triggerPayload)
     // H10: exactly two args — no third options arg (no jobId / dedup).
     expect(add.mock.calls[0]).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MYT-74b §1 / T3 — player-less FAREWELL turn enqueue.
+//
+// `enqueueFarewellTurn` is the end-of-session send-off producer. Unlike
+// `enqueueTurn` (H10: no jobId), the farewell carries a per-session jobId
+// (`farewell-<sessionId>`) as a broker-level dedup backstop beyond the `ending`
+// flag, so an explicit-end / budget-end race that slips the flag still
+// collapses to ONE farewell. A recording fake asserts the exact arg shape.
+// ---------------------------------------------------------------------------
+describe('enqueueFarewellTurn — per-session-deduped send-off (MYT-74b T3)', () => {
+  const farewellPayload: TurnJobPayload = {
+    campaignId: 'c-bye',
+    sessionId: 's-bye',
+    turnId: 't-bye',
+    triggerMessages: [],
+    maxConsumedSeq: 12,
+    trigger: { kind: 'farewell' },
+    farewellText: FAREWELL_DIRECTION,
+    worldId: 'w-bye',
+  }
+
+  it('forwards the payload with a per-session jobId (broker-level dedup backstop)', async () => {
+    const add = vi.fn(() => Promise.resolve({ id: 'farewell-s-bye' }))
+    const fake = { add } as unknown as TurnQueueLike
+
+    await enqueueFarewellTurn(fake, farewellPayload)
+
+    expect(add).toHaveBeenCalledTimes(1)
+    expect(add).toHaveBeenCalledWith(TURN_JOB_NAME, farewellPayload, { jobId: 'farewell-s-bye' })
+    // Three args — the options arg carrying the per-session jobId.
+    expect(add.mock.calls[0]).toHaveLength(3)
+  })
+
+  it('exposes FAREWELL_DIRECTION as a non-empty static cue', () => {
+    expect(typeof FAREWELL_DIRECTION).toBe('string')
+    expect(FAREWELL_DIRECTION.length).toBeGreaterThan(0)
+  })
+
+  it('type-checks a farewell payload carrying farewellText + worldId', () => {
+    // Compile-time assertion: a `kind: 'farewell'` payload with the two optional
+    // fields is assignable to TurnJobPayload (construction is the test).
+    expect(farewellPayload.trigger.kind).toBe('farewell')
+    expect(farewellPayload.farewellText).toBe(FAREWELL_DIRECTION)
+    expect(farewellPayload.worldId).toBe('w-bye')
   })
 })
