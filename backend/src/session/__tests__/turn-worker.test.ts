@@ -31,6 +31,7 @@ import {
 import { SCRIBE_JOB_NAME, type ScribeJobPayload, type ScribeQueueLike } from '../scribe-queue.js'
 import type { WorkingSetProposal } from '../working-set/types.js'
 import { QUIET_WINDOW_MS } from '../dm-trigger-config.js'
+import { SESSION_TOKEN_BUDGET } from '../st-config.js'
 import { UnrecoverableError } from 'bullmq'
 import {
   buildSessionTurnWorker,
@@ -263,10 +264,15 @@ function fakeRepo(overrides?: {
   partyLedgerCalls?: string[]
   /** MYT-70 §7: the party-ledger snapshot the read returns (default []). */
   partyLedger?: PartyLedgerSnapshot
+  /** MYT-74a T12: the durable cumulative usage the budget auto-end reads. Default
+   *  `null` (a fresh session with no recorded usage) → 0 cumulative tokens → under
+   *  budget → no auto-end. */
+  budgetSummary?: { inputTokens: number; outputTokens: number } | null
 }): TurnWorkerRepo {
   const session = overrides?.session === undefined ? { sessionNumber: 1 } : overrides.session
   const prep = overrides?.ftContext == null ? null : { ftContext: overrides.ftContext }
   const trailing = overrides?.trailingRows ?? []
+  const budget = overrides?.budgetSummary ?? null
   return {
     sessionMessages: {
       turnRowsExist: () => Promise.resolve(overrides?.turnRowsExist ?? false),
@@ -279,6 +285,7 @@ function fakeRepo(overrides?: {
     },
     sessions: {
       getById: () => Promise.resolve(session),
+      budgetSummary: () => Promise.resolve(budget),
     },
     sessionPreps: {
       getBy: () => Promise.resolve(prep),
@@ -385,6 +392,13 @@ function inertScribeQueue(): ScribeQueueLike {
   return recordingScribeQueue([])
 }
 
+/** MYT-74a T12 — a no-op budget auto-end for the paths that never reach the
+ *  budget threshold (the default case). The budget-end tests inject a `vi.fn()`
+ *  spy in its place to assert the call. */
+function inertEndSession(): TurnProcessorDeps['endSession'] {
+  return (): Promise<void> => Promise.resolve()
+}
+
 describe('processTurnJob', () => {
   let redis: Redis
   let sessionState: SessionState
@@ -415,6 +429,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -454,6 +469,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -502,6 +518,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -551,6 +568,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -598,6 +616,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft }),
       heartbeatMs: 10_000,
@@ -635,6 +654,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -690,6 +710,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -719,6 +740,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -754,6 +776,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -795,6 +818,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -839,6 +863,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -875,6 +900,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -908,6 +934,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -943,6 +970,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -972,6 +1000,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1002,6 +1031,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: recordingDmTriggerQueue(triggerCalls),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1035,6 +1065,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1076,6 +1107,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1126,6 +1158,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1165,6 +1198,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1244,6 +1278,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -1293,6 +1328,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -1341,6 +1377,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers: (turn) => {
         seenTone = turn.worldTone
@@ -1385,6 +1422,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1463,6 +1501,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft: capturingFt }),
       heartbeatMs: 10_000,
@@ -1520,6 +1559,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1557,6 +1597,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1587,6 +1628,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1610,6 +1652,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1645,6 +1688,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1688,6 +1732,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1721,6 +1766,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1746,6 +1792,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1797,6 +1844,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue,
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1831,6 +1879,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: recordingStEvalQueue(stEvalCalls),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1862,6 +1911,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: recordingStEvalQueue(stEvalCalls),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -1899,6 +1949,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue,
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1932,6 +1983,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1987,6 +2039,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers: recordingTiers,
       heartbeatMs: 10_000,
@@ -2018,6 +2071,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2047,6 +2101,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: recordingScribeQueue(scribeCalls),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2082,6 +2137,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue,
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2095,6 +2151,167 @@ describe('processTurnJob', () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
       'failed to enqueue scribe',
+    )
+  })
+
+  // ── MYT-74a T12 — budget-100% auto-end ───────────────────────────────────
+  it('ends the session when cumulative usage reaches the budget after a flushed turn (T12)', async () => {
+    // The post-flush success phase reads the durable cumulative usage. When
+    // (input + output) >= SESSION_TOKEN_BUDGET, the worker fires the injected
+    // end orchestration with {campaignId, sessionId, worldId} (worldId resolved
+    // on the fresh-run arm). The :state blob carries a worldId so resolveWorldId
+    // returns it without a PG read.
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+      worldId: 'w-budget',
+    })
+
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const endSession = vi.fn((): Promise<void> => Promise.resolve())
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      // At-budget: input + output exactly equals SESSION_TOKEN_BUDGET.
+      repo: fakeRepo({
+        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET - 1_000, outputTokens: 1_000 },
+      }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // The turn still completed normally (the end is fired off the turn outcome).
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // The auto-end fired exactly once with the resolved ids.
+    expect(endSession).toHaveBeenCalledTimes(1)
+    expect(endSession).toHaveBeenCalledWith({
+      campaignId: CAMPAIGN,
+      sessionId: SESSION,
+      worldId: 'w-budget',
+    })
+  })
+
+  it('does NOT end the session when cumulative usage is under the budget (T12)', async () => {
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const endSession = vi.fn((): Promise<void> => Promise.resolve())
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      // Under budget: one token short of the threshold.
+      repo: fakeRepo({
+        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET - 1, outputTokens: 0 },
+      }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // Under budget → the auto-end never fired.
+    expect(endSession).not.toHaveBeenCalled()
+  })
+
+  it('does NOT end the session on a correction turn even at-budget (player-less, T12)', async () => {
+    // A correction is player-less and gated like the watermark/scribe on
+    // !isCorrection, so the budget check is skipped — even with usage at-budget,
+    // a correction turn never auto-ends.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const endSession = vi.fn((): Promise<void> => Promise.resolve())
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({
+        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET, outputTokens: 5_000 },
+      }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    const result = await processTurnJob(deps, correctionPayload('It was a forgery.', 0))
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // A correction never reaches the budget check.
+    expect(endSession).not.toHaveBeenCalled()
+  })
+
+  it('a budget auto-end failure is swallowed and does not mask the turn outcome (T12)', async () => {
+    // The budget auto-end is in its own try/catch — an endSession throw never
+    // rethrows out of the flushed turn (a rethrow would re-run an already-flushed
+    // turn via BullMQ attempts). The turn still resolves {ran:true} and the
+    // failure is logged.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    const boom = new Error('reconcile queue unreachable')
+    const endSession = vi.fn((): Promise<void> => Promise.reject(boom))
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({
+        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET, outputTokens: 0 },
+      }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession,
+      publisher: recordingPublisher(calls),
+      makeTiers,
+      heartbeatMs: 10_000,
+      logger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(endSession).toHaveBeenCalledTimes(1)
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
+      'failed to end session on budget',
     )
   })
 
@@ -2137,6 +2354,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2182,6 +2400,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2220,6 +2439,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2262,6 +2482,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2311,6 +2532,7 @@ describe('processTurnJob', () => {
       dmTriggerQueue: inertDmTriggerQueue(),
       stEvalQueue: inertStEvalQueue(),
       scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,

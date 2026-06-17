@@ -65,7 +65,11 @@ const recoveryRepo: TurnWorkerRepo = {
     // No trailing rows → the post-turn re-mature never re-arms in this flow.
     listAfterSeq: () => Promise.resolve([]),
   },
-  sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
+  sessions: {
+    getById: () => Promise.resolve({ sessionNumber: 1 }),
+    // No usage recorded in this flow → null → under budget → no auto-end.
+    budgetSummary: () => Promise.resolve(null),
+  },
   sessionPreps: { getBy: () => Promise.resolve(null) },
   campaigns: { getWorldId: () => Promise.resolve('w-recovery') },
   characters: {
@@ -121,6 +125,10 @@ const inertStEvalQueue: StEvalQueueLike = {
 const inertScribeQueue: ScribeQueueLike = {
   add: () => Promise.resolve(undefined as never),
 }
+
+// MYT-74a T12 — recoveryRepo reports no usage (budgetSummary → null), so the
+// budget auto-end is never reached in these lock-loss recovery flows; inert.
+const inertEndSession: TurnProcessorDeps['endSession'] = () => Promise.resolve()
 
 function payload(): { data: TurnJobPayload } {
   return {
@@ -253,6 +261,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       dmTriggerQueue: inertDmTriggerQueue,
       stEvalQueue: inertStEvalQueue,
       scribeQueue: inertScribeQueue,
+      endSession: inertEndSession,
       publisher,
       makeTiers: () => ({
         ft: new LockKillingFastThinker(realtime, lockKeyFor(CAMPAIGN)),
@@ -290,6 +299,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       dmTriggerQueue: inertDmTriggerQueue,
       stEvalQueue: inertStEvalQueue,
       scribeQueue: inertScribeQueue,
+      endSession: inertEndSession,
       publisher,
       makeTiers: () => ({
         ft: new StubFastThinker(),

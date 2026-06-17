@@ -48,7 +48,11 @@ const e2eRepo: TurnWorkerRepo = {
     // No trailing rows → the post-turn re-mature never re-arms in this flow.
     listAfterSeq: () => Promise.resolve([]),
   },
-  sessions: { getById: () => Promise.resolve({ sessionNumber: 1 }) },
+  sessions: {
+    getById: () => Promise.resolve({ sessionNumber: 1 }),
+    // No usage recorded in this flow → null → under budget → no auto-end.
+    budgetSummary: () => Promise.resolve(null),
+  },
   sessionPreps: { getBy: () => Promise.resolve(null) },
   campaigns: { getWorldId: () => Promise.resolve('w-e2e') },
   characters: {
@@ -146,6 +150,9 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             stEvalQueue: { add: () => Promise.resolve(undefined as never) },
             // Post-turn Scribe producer (MYT-73) — runs off this path; inert here.
             scribeQueue: { add: () => Promise.resolve(undefined as never) },
+            // Budget-100% auto-end (MYT-74a T12) — e2eRepo reports no usage
+            // (budgetSummary → null), so this is never reached; inert here.
+            endSession: () => Promise.resolve(),
             publisher,
             makeTiers: () => ({
               ft: new StubFastThinker(),

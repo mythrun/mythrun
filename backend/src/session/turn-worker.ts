@@ -80,6 +80,15 @@ import {
   type StEvalQueueLike,
 } from './st-eval-queue.js'
 import { QUEUE_SCRIBE, type ScribeJobPayload, type ScribeQueueLike } from './scribe-queue.js'
+import { endSession, type EndSessionArgs, type EndSessionDeps } from './session-end.js'
+import { QUEUE_SESSION_SUSPEND, type SuspendQueueLike } from './session-suspend.js'
+import {
+  QUEUE_SESSION_RECONCILE,
+  type ReconcileJobPayload,
+  type ReconcileQueueLike,
+} from './session-reconcile.js'
+import { SESSION_TOKEN_BUDGET } from './st-config.js'
+import { sessionChannel } from '../contract/session-channel.js'
 import { makeWorkingSetRepo } from '../redis/working-set.js'
 import type { WorkingSetItem, WorkingSetProposal } from './working-set/types.js'
 
@@ -99,8 +108,12 @@ export class LockLostError extends Error {
   }
 }
 
-/** Minimal pino-compatible logger surface the processor needs. */
+/** Minimal pino-compatible logger surface the processor needs. `info` is optional
+ *  here (the processor itself only ever warns/errors); the real pino logger
+ *  supplies it, and the T12 budget auto-end's `endSession` orchestration (which
+ *  logs at info) gets a guaranteed `info` via the builder's adapter. */
 interface MinimalLogger {
+  info?: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
   warn: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
   error: (objOrMsg: Record<string, unknown> | string, msg?: string) => void
 }
@@ -121,6 +134,10 @@ export interface TurnWorkerRepo {
   }
   readonly sessions: {
     getById(id: string): Promise<{ sessionNumber: number } | null>
+    /** MYT-74a T12 — the durable cumulative session usage row, read on the
+     *  post-flush success phase to decide the budget-100% auto-end. `null` when
+     *  the session has recorded no LLM usage yet (a brand-new session). */
+    budgetSummary(sessionId: string): Promise<{ inputTokens: number; outputTokens: number } | null>
   }
   readonly sessionPreps: {
     getBy(campaignId: string, sessionNumber: number): Promise<{ ftContext: string } | null>
@@ -219,6 +236,13 @@ export interface TurnProcessorDeps {
    *  own worker) and the on-path Scribe seam is retired (MYT-73 — it is a
    *  post-turn job), so the factory returns only `{ ft }`. */
   readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker }
+  /** MYT-74a T12 — the budget-100% auto-end. A bound closure (the worker binds
+   *  the real `endSession` orchestration's deps in `buildSessionTurnWorker`) so
+   *  the processor stays testable. Invoked on the post-flush success phase when
+   *  cumulative session usage reaches `SESSION_TOKEN_BUDGET`. IDEMPOTENT across
+   *  turns via `endSession`'s SET-NX `ending` flag — a second over-budget turn
+   *  no-ops at the flag, so the processor needs no dedup of its own. */
+  readonly endSession: (args: EndSessionArgs) => Promise<void>
   readonly heartbeatMs: number
   readonly logger: MinimalLogger
 }
@@ -473,6 +497,27 @@ export async function processTurnJob(
     } catch (enqErr) {
       deps.logger.error({ err: enqErr, campaignId, turnId }, 'failed to enqueue st-evaluation')
     }
+    // MYT-74a T12 — budget-100% auto-end. The §3.11 FT-context bound is the real
+    // session length cap; when cumulative token usage reaches it, the session has
+    // to end (the FT can hold no more transcript). Read the durable cumulative
+    // usage and, if it has reached SESSION_TOKEN_BUDGET, fire the end orchestration
+    // (status flip → reconcile → session_end broadcast). `endSession`'s SET-NX
+    // `ending` flag makes this idempotent across turns: a second over-budget turn
+    // no-ops at the flag, so no per-turn dedup is needed here. Gated like the
+    // watermark on `!isCorrection` (a player-less correction never opens new
+    // budget-bearing context of its own). OWN try/catch — a failure to enqueue the
+    // end must NEVER mask the turn outcome (mirrors the st-evaluation isolation).
+    if (!isCorrection) {
+      try {
+        const usage = await deps.repo.sessions.budgetSummary(sessionId)
+        const cumulativeTokens = usage === null ? 0 : usage.inputTokens + usage.outputTokens
+        if (cumulativeTokens >= SESSION_TOKEN_BUDGET) {
+          await deps.endSession({ campaignId, sessionId, worldId })
+        }
+      } catch (endErr) {
+        deps.logger.error({ err: endErr, campaignId, turnId }, 'failed to end session on budget')
+      }
+    }
     // §2.4 — enqueue the post-turn Scribe job (prose + delta + injections), off
     // the hot path. Gated like the watermark on `!isCorrection`: a `correction`
     // turn is player-less and delivers an already-vetted secret-free `Z`, so
@@ -635,9 +680,49 @@ export function buildSessionTurnWorker(
   /* c8 ignore next */
   const scribeQueue: ScribeQueueLike = { add: (n, d, o) => scribeBullQueue.add(n, d, o) }
 
+  // MYT-74a T12 — the budget-100% auto-end orchestration deps. The session lock +
+  // sessionState are shared with the processor deps (the SAME instances, so the
+  // end-fence quiesces the very turn loop this worker drives). The suspend +
+  // reconcile producers are dedicated Queues on the shared BullMQ connection (one
+  // per process, like every other producer). `publish` is a raw session-channel
+  // broadcast on the realtime connection (the `session_end` server frame is a
+  // session-level control frame, not a per-turn frame off the TurnPublisher).
+  const lock = createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS)
+  const sessionState = makeSessionState(redisRealtime, redisKeyPrefix)
+  const suspendBullQueue = new Queue(QUEUE_SESSION_SUSPEND, { connection: redisBatch })
+  const suspendQueue: SuspendQueueLike = {
+    add: (n, d, o) => suspendBullQueue.add(n, d, o),
+    getJob: (id) => suspendBullQueue.getJob(id),
+    remove: (id) => suspendBullQueue.remove(id),
+  }
+  const reconcileBullQueue = new Queue<ReconcileJobPayload>(QUEUE_SESSION_RECONCILE, {
+    connection: redisBatch,
+  })
+  const reconcileQueue: ReconcileQueueLike = { add: (n, d, o) => reconcileBullQueue.add(n, d, o) }
+  const endDeps: EndSessionDeps = {
+    sessionState,
+    suspendQueue,
+    reconcileQueue,
+    lock,
+    sessions: repo.sessions,
+    // The session_end broadcast fires only when an over-budget turn actually
+    // ends the session — a fresh-run flush the converge-path builder tests don't
+    // drive (same as the c8-ignored makeTiers / stEvalQueue / scribeQueue
+    // passthroughs above). Exercised by the §10 real-Anthropic E2E smoke.
+    /* c8 ignore start */
+    publish: async (campaignId, frame): Promise<void> => {
+      await redisRealtime.publish(sessionChannel(redisKeyPrefix, campaignId), JSON.stringify(frame))
+    },
+    /* c8 ignore stop */
+    // `endSession` logs at info; the worker's MinimalLogger types `info` as
+    // optional, so guarantee one (the real pino logger has it; a test fake
+    // without it falls back to warn — the end-flow's info logs aren't load-bearing).
+    logger: { info: logger.info ?? logger.warn, warn: logger.warn, error: logger.error },
+  }
+
   const deps: TurnProcessorDeps = {
-    lock: createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS),
-    sessionState: makeSessionState(redisRealtime, redisKeyPrefix),
+    lock,
+    sessionState,
     repo,
     triggerState,
     sessionTurnQueue,
@@ -708,6 +793,11 @@ export function buildSessionTurnWorker(
       }
     },
     /* c8 ignore stop */
+    // MYT-74a T12 — bind the budget-100% auto-end. The closure threads the
+    // worker-constructed endDeps into the shared `endSession` orchestration; the
+    // processor invokes it with `{campaignId, sessionId, worldId}` when cumulative
+    // usage reaches SESSION_TOKEN_BUDGET on the post-flush success phase.
+    endSession: (args) => endSession(endDeps, args),
     heartbeatMs: TURN_HEARTBEAT_MS,
     logger,
   }
