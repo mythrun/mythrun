@@ -17,6 +17,7 @@ const getOwnerMock = vi.fn()
 const maxSessionNumberMock = vi.fn()
 const prepExistsForMock = vi.fn()
 const getActiveByCampaignMock = vi.fn()
+const getMostRecentByCampaignMock = vi.fn()
 const sessionCreateMock = vi.fn()
 const sessionDeleteByIdMock = vi.fn()
 const tryDebitForSessionMock = vi.fn()
@@ -47,6 +48,7 @@ vi.mock('../../repo/index.js', () => ({
       getById: getSessionByIdMock,
       maxSessionNumber: maxSessionNumberMock,
       getActiveByCampaign: getActiveByCampaignMock,
+      getMostRecentByCampaign: getMostRecentByCampaignMock,
       create: sessionCreateMock,
       deleteById: sessionDeleteByIdMock,
     },
@@ -238,6 +240,7 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
     maxSessionNumberMock.mockResolvedValue(0)
     prepExistsForMock.mockResolvedValue(true)
     getActiveByCampaignMock.mockResolvedValue(null)
+    getMostRecentByCampaignMock.mockResolvedValue(null)
     setStateMock.mockResolvedValue(undefined)
     resetSessionSpendMock.mockResolvedValue(undefined)
     resetSessionKeysMock.mockResolvedValue(undefined)

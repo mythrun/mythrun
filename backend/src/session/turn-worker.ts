@@ -690,14 +690,20 @@ export function buildSessionTurnWorker(
   const lock = createSessionLock(redisRealtime, redisKeyPrefix, SESSION_LOCK_TTL_MS)
   const sessionState = makeSessionState(redisRealtime, redisKeyPrefix)
   const suspendBullQueue = new Queue(QUEUE_SESSION_SUSPEND, { connection: redisBatch })
+  // The suspend + reconcile producer passthroughs fire only through `endSession`
+  // (the budget-end path / the §10 smoke), never the converge-path builder unit
+  // tests — c8-ignored like the sibling stEvalQueue/scribeQueue passthroughs.
+  /* c8 ignore start */
   const suspendQueue: SuspendQueueLike = {
     add: (n, d, o) => suspendBullQueue.add(n, d, o),
     getJob: (id) => suspendBullQueue.getJob(id),
     remove: (id) => suspendBullQueue.remove(id),
   }
+  /* c8 ignore stop */
   const reconcileBullQueue = new Queue<ReconcileJobPayload>(QUEUE_SESSION_RECONCILE, {
     connection: redisBatch,
   })
+  /* c8 ignore next */
   const reconcileQueue: ReconcileQueueLike = { add: (n, d, o) => reconcileBullQueue.add(n, d, o) }
   const endDeps: EndSessionDeps = {
     sessionState,
@@ -796,7 +802,12 @@ export function buildSessionTurnWorker(
     // MYT-74a T12 — bind the budget-100% auto-end. The closure threads the
     // worker-constructed endDeps into the shared `endSession` orchestration; the
     // processor invokes it with `{campaignId, sessionId, worldId}` when cumulative
-    // usage reaches SESSION_TOKEN_BUDGET on the post-flush success phase.
+    // usage reaches SESSION_TOKEN_BUDGET on the post-flush success phase. This
+    // builder-only passthrough fires only on a real flushed-then-over-budget turn
+    // (the §10 real-Anthropic E2E / the reconcile smoke), not the converge-path
+    // builder unit tests — the budget branch itself is covered via the injected
+    // `endSession` fake in processTurnJob's tests.
+    /* c8 ignore next */
     endSession: (args) => endSession(endDeps, args),
     heartbeatMs: TURN_HEARTBEAT_MS,
     logger,

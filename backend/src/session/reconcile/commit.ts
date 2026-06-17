@@ -133,17 +133,24 @@ export async function applyReconcileCommit(
     }
 
     // 5. Hierarchy (best-effort substrate). A working-set entity item carrying a
-    //    parentName signals a sub-faction edge. We insert it only when BOTH ends
-    //    resolve in THIS plan and the child isn't already parented (UNIQUE
-    //    child_entity_id). The parent may be canon outside the plan, or the
-    //    child may already have a parent — both are skip-not-fail cases.
+    //    parentName signals a sub-faction edge. The child must resolve in THIS
+    //    plan; the parent resolves either in the plan OR — the common case, a
+    //    sub-faction of an EXISTING faction the reconciler had no new facts about
+    //    so never emitted an op for — against existing canon by normalized name.
+    //    Skip (not fail) when the parent is unknown or the child is already
+    //    parented (UNIQUE child_entity_id). (The real-LLM smoke surfaced that
+    //    resolving only against the plan dropped the typical existing-parent edge.)
     for (const item of workingSet) {
       if (item.kind !== 'entity') continue
       const parentName = item.parentName
       if (parentName === undefined || parentName.length === 0) continue
       const childId = resolvedIds.get(item.subjectName)
-      const parentId = resolvedIds.get(parentName)
-      if (childId === undefined || parentId === undefined) continue
+      if (childId === undefined) continue
+      // Parent resolves in the plan, else against existing canon by name.
+      const parentId =
+        resolvedIds.get(parentName) ??
+        (await tx.entities.findIdByWorldAndNormalizedName(worldId, parentName))
+      if (parentId === null) continue
       const existing = await tx.entityHierarchy.listExistingChildIds([childId], worldId)
       if (existing.length > 0) continue
       await tx.entityHierarchy.insert({ parentEntityId: parentId, childEntityId: childId })

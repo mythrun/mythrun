@@ -392,9 +392,12 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
       wsItem({ kind: 'fact', subjectName: 'Acolyte', parentName: 'Cabal' }),
       // (b) entity item with NO parentName → skipped at the parentName guard.
       wsItem({ subjectName: 'Cabal' }),
-      // (c) entity item whose parentName resolves to nothing in this plan →
-      //     skipped at the resolve guard (best-effort: parent is canon-only).
+      // (c) entity item whose parentName resolves to nothing in this plan AND
+      //     nothing in canon → skipped at the parent-resolve guard.
       wsItem({ subjectName: 'Acolyte', parentName: 'A Parent Not In This Plan' }),
+      // (e) entity item whose SUBJECT the reconciler omitted (not in the plan) →
+      //     childId undefined → skipped at the child-resolve guard.
+      wsItem({ subjectName: 'Orphan Not In Plan', parentName: 'Cabal' }),
     ]
 
     const first = await applyReconcileCommit(repo, {
@@ -489,5 +492,52 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
     )
     expect(hierAfterSecond.rows).toHaveLength(1)
     expect(hierAfterSecond.rows[0]?.parent_entity_id).toBe(cabal.id)
+  })
+
+  it('hierarchy resolves a parent that is EXISTING canon (not in the plan) by normalized name', async () => {
+    // The common case the real-LLM smoke surfaced: a session introduces a
+    // sub-faction of an EXISTING faction the reconciler had no new facts about,
+    // so it never emitted an entity op for the parent. The parent must resolve
+    // against canon (findIdByWorldAndNormalizedName), not just the plan's map.
+    const s = await seed() // seeds canon faction 'The Ashen Court' (canonFactionId)
+    const plan: ReconcilePlan = {
+      entities: [
+        {
+          op: 'mint',
+          subjectName: 'Lantern Chapter',
+          canonEntityId: null,
+          name: 'The Lantern Chapter',
+          entityType: 'faction',
+          accessLevel: 'known',
+        },
+      ],
+      facts: [],
+      relationships: [],
+    }
+    const map = new Map<string, SubjectResolution>([['Lantern Chapter', { kind: 'mint' }]])
+    // parentName matches the existing canon faction — NOT present as an entity op.
+    const workingSet: readonly WorkingSetItem[] = [
+      wsItem({ subjectName: 'Lantern Chapter', parentName: 'The Ashen Court' }),
+    ]
+
+    const result = await applyReconcileCommit(repo, {
+      plan,
+      map,
+      workingSet,
+      worldId: s.worldId,
+      sessionId: s.sessionId,
+      factEmbeddings: [],
+    })
+    expect(result).toEqual({ committed: true })
+
+    const child = await repo.entities.findByWorldAndName(s.worldId, 'The Lantern Chapter')
+    if (!child) throw new Error('expected the minted Lantern Chapter entity')
+    const hier = await pool.query<{ parent_entity_id: string }>(
+      `SELECT parent_entity_id FROM entity_hierarchy WHERE child_entity_id = $1`,
+      [child.id],
+    )
+    expect(hier.rows).toHaveLength(1)
+    // The edge points at the EXISTING canon faction id, resolved by name.
+    expect(hier.rows[0]?.parent_entity_id).toBe(s.canonFactionId)
   })
 })
