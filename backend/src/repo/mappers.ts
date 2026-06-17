@@ -427,6 +427,7 @@ export interface SessionMessageDbRow {
   readonly created_at: Date
   readonly turn_id: string | null
   readonly turn_ordinal: number | null
+  readonly trigger_kind: string | null
 }
 
 export function toSessionMessage(row: SessionMessageDbRow): SessionMessage {
@@ -440,5 +441,6 @@ export function toSessionMessage(row: SessionMessageDbRow): SessionMessage {
     createdAt: row.created_at,
     turnId: row.turn_id,
     turnOrdinal: row.turn_ordinal,
+    triggerKind: row.trigger_kind ?? null,
   }
 }

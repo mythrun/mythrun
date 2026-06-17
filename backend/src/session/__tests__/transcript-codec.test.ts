@@ -18,6 +18,7 @@ const row = (o: Partial<SessionMessage>): SessionMessage => ({
   createdAt: new Date(0),
   turnId: 't1',
   turnOrdinal: 0,
+  triggerKind: null,
   ...o,
 })
 

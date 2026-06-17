@@ -481,6 +481,7 @@ describe('MYT-72 T10a — enforced-ignorance leak matrix', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       turnId,
       turnOrdinal: i,
+      triggerKind: null,
     }))
 
     const conversation = rowsToConversation(sessionRows, new Map())

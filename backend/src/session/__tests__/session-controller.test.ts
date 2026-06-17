@@ -75,6 +75,7 @@ function row(partial: Partial<SessionMessage> & { seq: number; messageType: stri
     userId: partial.userId ?? null,
     turnId: partial.turnId ?? null,
     turnOrdinal: partial.turnOrdinal ?? null,
+    triggerKind: partial.triggerKind ?? null,
     createdAt: new Date(0),
     ...partial,
   }
@@ -97,6 +98,11 @@ interface AppendCapture {
   turnId: string
   rows: readonly { kind: string; content: string }[]
   seqs: readonly number[]
+  /** MYT-74b §5 / T8 — the optional shared trigger kind threaded onto the
+   *  appendDmTurn input. Captured so a test can assert it is present-with-value
+   *  when the dep is set and the KEY IS ABSENT (exactOptionalPropertyTypes) when
+   *  the dep is omitted. */
+  triggerKind?: string
 }
 
 function fakeTranscript(
@@ -228,6 +234,9 @@ interface BuildOpts {
    *  carry the injection into the enqueued payload. */
   injections?: WorkingSetProposal[]
   worldId?: string
+  /** MYT-74b §5 / T8 — the originating turn trigger kind the worker passes
+   *  (`job.data.trigger.kind`); threaded onto every persisted row. */
+  triggerKind?: string
 }
 
 function build(opts: BuildOpts = {}): {
@@ -272,6 +281,8 @@ function build(opts: BuildOpts = {}): {
     ...(opts.standingDirective !== undefined ? { standingDirective: opts.standingDirective } : {}),
     // §7 worker-resolved party-ledger snapshot (same conditional-spread discipline).
     ...(opts.partyLedger !== undefined ? { partyLedger: opts.partyLedger } : {}),
+    // MYT-74b §5 / T8 worker-resolved trigger kind (same conditional-spread discipline).
+    ...(opts.triggerKind !== undefined ? { triggerKind: opts.triggerKind } : {}),
     ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
   }
 
@@ -485,6 +496,26 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(append?.rows.map((r) => r.kind)).toEqual(['dm_text', 'dice_roll', 'dm_text'])
     // Seqs allocated sequentially from the scripted allocator: [100, 101, 102].
     expect(append?.seqs).toEqual([100, 101, 102])
+  })
+
+  it('persistTurn threads the worker-resolved triggerKind onto the appendDmTurn input (MYT-74b §5)', async () => {
+    const { controller, transcriptCapture } = build({ triggerKind: 'farewell' })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.persistTurn()
+
+    expect(transcriptCapture.append?.triggerKind).toBe('farewell')
+  })
+
+  it('persistTurn OMITS the triggerKind key when the dep is absent (exactOptionalPropertyTypes — key ABSENT, not undefined)', async () => {
+    const { controller, transcriptCapture } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.persistTurn()
+
+    // The key must be ABSENT on the appendDmTurn input, not present-with-undefined.
+    expect(transcriptCapture.append).toBeDefined()
+    expect('triggerKind' in (transcriptCapture.append ?? {})).toBe(false)
   })
 
   it('persistTurn is a no-op when the assistant produced no rows (empty parts)', async () => {

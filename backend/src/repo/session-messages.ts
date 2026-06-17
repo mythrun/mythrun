@@ -103,6 +103,10 @@ export function sessionMessagesNs(c: ClientLike) {
       turnId: string
       rows: readonly { kind: string; content: string }[]
       seqs: readonly number[]
+      /** MYT-74b §5 — the originating turn trigger kind, written onto every row of
+       *  this turn (shared, like turn_id) so the post-session analysis can
+       *  structurally exclude correction/farewell rows. Omitted → NULL. */
+      triggerKind?: string
     }): Promise<void> => {
       if (input.rows.length !== input.seqs.length) {
         throw new Error(
@@ -111,24 +115,50 @@ export function sessionMessagesNs(c: ClientLike) {
       }
       if (input.rows.length === 0) return
 
-      // $1 = session_id (shared by every row); per-row params follow. Each
-      // tuple is (id, seq, message_type, content, turn_ordinal); user_id is a
-      // literal NULL and turn_id is shared via $2. turn_ordinal is passed
-      // EXPLICITLY (the row index i) — no window-function tricks.
-      const values: unknown[] = [input.sessionId, input.turnId]
+      // $1 = session_id, $2 = turn_id, $3 = trigger_kind — all shared across rows.
+      // Per-row params follow. Each tuple is (id, seq, message_type, content,
+      // turn_ordinal); user_id is a literal NULL. turn_ordinal is passed
+      // EXPLICITLY (the row index i) — no window-function tricks. `base` =
+      // values.length now starts at 3 (the 3rd shared param), so the per-row
+      // `$${base+1}…` indices remain correct and never collide with $1/$2/$3.
+      const values: unknown[] = [input.sessionId, input.turnId, input.triggerKind ?? null]
       const tuples = input.rows.map((row, i) => {
         const base = values.length
         values.push(uuidv7(), input.seqs[i], row.kind, row.content, i)
-        return `($${String(base + 1)}, $1, $${String(base + 2)}, NULL, $${String(base + 3)}, $${String(base + 4)}, $2, $${String(base + 5)})`
+        return `($${String(base + 1)}, $1, $${String(base + 2)}, NULL, $${String(base + 3)}, $${String(base + 4)}, $2, $${String(base + 5)}, $3)`
       })
 
       await c.query(
         `INSERT INTO session_messages
-           (id, session_id, seq, user_id, message_type, content, turn_id, turn_ordinal)
+           (id, session_id, seq, user_id, message_type, content, turn_id, turn_ordinal, trigger_kind)
          VALUES ${tuples.join(', ')}
          ON CONFLICT (turn_id, turn_ordinal) WHERE turn_id IS NOT NULL DO NOTHING`,
         values,
       )
+    },
+
+    /** MYT-74b §2 — the post-session analysis transcript read: the LAST `limit`
+     *  rows in seq-ASC order, projecting the trigger_kind the containment verifier
+     *  filters on. Bounds the Opus call's input on the largest sessions; the late
+     *  tail is where voice/affect lives. */
+    listForAnalysis: async (
+      sessionId: string,
+      limit: number,
+    ): Promise<readonly { seq: number; messageType: string; content: string; triggerKind: string | null }[]> => {
+      const result = await c.query<{ seq: number; message_type: string; content: string; trigger_kind: string | null }>(
+        `SELECT seq, message_type, content, trigger_kind FROM (
+           SELECT seq, message_type, content, trigger_kind
+             FROM session_messages WHERE session_id = $1
+            ORDER BY seq DESC LIMIT $2
+         ) sub ORDER BY seq ASC`,
+        [sessionId, limit],
+      )
+      return result.rows.map((r) => ({
+        seq: r.seq,
+        messageType: r.message_type,
+        content: r.content,
+        triggerKind: r.trigger_kind,
+      }))
     },
   }
 }

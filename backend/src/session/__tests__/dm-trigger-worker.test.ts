@@ -400,6 +400,7 @@ describe('makeDmTriggerDeps — forwarding closures', () => {
       createdAt: new Date(0),
       turnId: null,
       turnOrdinal: null,
+      triggerKind: null,
     }
   }
 

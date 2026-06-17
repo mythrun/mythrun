@@ -32,6 +32,7 @@ describe('processStEvalJob — formatExchanges rendering (§ step 3 input)', () 
       userId: p.userId ?? null,
       turnId: p.turnId ?? null,
       turnOrdinal: p.turnOrdinal ?? null,
+      triggerKind: p.triggerKind ?? null,
       createdAt: new Date(0),
       ...p,
     })

@@ -219,6 +219,12 @@ export interface SessionMessage {
    *  partial unique index makes the per-turn append idempotent. */
   readonly turnId: string | null
   readonly turnOrdinal: number | null
+  /** MYT-74b §5 (migration 028): the originating turn-trigger kind, written onto
+   *  every DM-authored row of a turn (shared, like turn_id); null for player rows
+   *  + all pre-migration rows. The post-session analysis filters voice-excerpt
+   *  selection on this so correction/farewell rows are structurally excluded
+   *  (enforced ignorance). Closed set: explicit|solo|auto|correction|farewell. */
+  readonly triggerKind: string | null
 }
 
 export interface AppendMessageInput {

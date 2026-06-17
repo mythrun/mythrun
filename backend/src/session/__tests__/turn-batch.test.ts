@@ -37,6 +37,7 @@ function msg(partial: Partial<SessionMessage> & { seq: number }): SessionMessage
     createdAt: new Date(),
     turnId: null,
     turnOrdinal: null,
+    triggerKind: null,
     ...partial,
   }
 }

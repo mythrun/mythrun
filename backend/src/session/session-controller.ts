@@ -71,6 +71,9 @@ export interface TranscriptStore {
     turnId: string
     rows: readonly { kind: string; content: string }[]
     seqs: readonly number[]
+    /** MYT-74b §5 — the originating turn trigger kind, written onto every row of
+     *  the turn (shared, like turn_id). Omitted → NULL. Matches the repo binder. */
+    triggerKind?: string
   }): Promise<void>
 }
 
@@ -127,6 +130,12 @@ export interface SessionControllerDeps {
    *  `[Party ledger: …]` tail after the cache breakpoints. Optional; absent when
    *  no characters are joined. */
   readonly partyLedger?: PartyLedgerSnapshot
+  /** MYT-74b §5 — the originating turn-trigger kind. The turn worker passes
+   *  `job.data.trigger.kind`; the controller threads it onto every persisted row
+   *  via `appendDmTurn` so the post-session analysis can structurally exclude
+   *  correction/farewell rows from voice-excerpt selection (enforced ignorance).
+   *  Optional; absent → the rows' trigger_kind is NULL. */
+  readonly triggerKind?: string
   /** Allocates the next server-ordered seq (bound to `sessionState.nextSeq`). */
   readonly allocSeq: () => Promise<number>
   readonly logger?: MinimalLogger
@@ -254,6 +263,10 @@ export class SessionController {
       turnId: this.turnId,
       rows,
       seqs,
+      // §5 — thread the worker-resolved trigger kind onto every row.
+      // exactOptionalPropertyTypes: conditionally spread so the key is ABSENT
+      // when no trigger kind was resolved, never present-with-undefined.
+      ...(this.deps.triggerKind !== undefined ? { triggerKind: this.deps.triggerKind } : {}),
     })
   }
 
