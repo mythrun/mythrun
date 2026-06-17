@@ -153,6 +153,27 @@ describe('sessions repo (integration)', () => {
     expect(list.map((s) => s.id)).toEqual([b.id, a.id])
   })
 
+  it('getMostRecentByCampaign returns null when the campaign has no sessions', async () => {
+    const sessions = createSessionsRepo(pool)
+    const { campaignId } = await makeCampaign(pool, scope)
+    expect(await sessions.getMostRecentByCampaign(campaignId)).toBeNull()
+  })
+
+  it('getMostRecentByCampaign returns the highest-session_number row (MYT-74a interlock)', async () => {
+    const sessions = createSessionsRepo(pool)
+    const { campaignId } = await makeCampaign(pool, scope)
+    // End session 1 before creating session 2 — idx_sessions_one_active forbids
+    // two active rows on the same campaign. The reconcile interlock reads this
+    // most-recent row's ended_at / reconciled_at tri-state.
+    const a = await sessions.create({ campaignId, sessionNumber: 1 })
+    await sessions.update(a.id, { status: 'ended', endedAt: new Date() })
+    const b = await sessions.create({ campaignId, sessionNumber: 2 })
+    const recent = await sessions.getMostRecentByCampaign(campaignId)
+    expect(recent?.id).toBe(b.id)
+    expect(recent?.sessionNumber).toBe(2)
+    expect(recent?.reconciledAt).toBeNull()
+  })
+
   it('partial-unique idx_sessions_one_active prevents two concurrent active sessions', async () => {
     const sessions = createSessionsRepo(pool)
     const { campaignId } = await makeCampaign(pool, scope)

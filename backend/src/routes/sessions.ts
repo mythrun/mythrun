@@ -265,6 +265,19 @@ async function handleSessionStart(
     return reply.code(409).send({ code: 'session_already_active' })
   }
 
+  // Precondition 4 (MYT-74a §4 start interlock): the prior session must be
+  // fully reconciled. The most-recent session is "ended-but-unreconciled" iff
+  // it ended (endedAt set) but the reconcile worker hasn't yet stamped
+  // reconciledAt. In that window its improvised working set is still uncleared
+  // and its canon uncommitted — starting a new session on the same campaign
+  // would collide with the pending reconcile. The interlock holds until the
+  // reconcile worker sets reconciled_at. (An ACTIVE most-recent session has
+  // endedAt = NULL, so it never trips here — precondition 3 already owns it.)
+  const mostRecent = await repo.sessions.getMostRecentByCampaign(campaignId)
+  if (mostRecent !== null && mostRecent.endedAt !== null && mostRecent.reconciledAt === null) {
+    return reply.code(409).send({ code: 'reconcile_pending' })
+  }
+
   // Resolve the OWNER — the owner pays, not the (possibly non-owner) caller.
   const owner = await repo.campaigns.getOwner(campaignId)
   /* c8 ignore start — every campaign carries exactly one owner membership

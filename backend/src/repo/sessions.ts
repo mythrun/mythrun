@@ -60,6 +60,23 @@ export function sessionsNs(c: ClientLike) {
     },
 
     /**
+     * The campaign's MOST-RECENT session by session_number, or null when none
+     * exist. The MYT-74a §4 start interlock reads this to decide whether the
+     * prior session is "ended-but-unreconciled" (endedAt set, reconciledAt null)
+     * — the state in which a new /start would collide with the still-pending
+     * reconcile. ORDER BY session_number DESC (not started_at) so the highest
+     * number wins deterministically regardless of clock skew on started_at.
+     */
+    getMostRecentByCampaign: async (campaignId: string): Promise<Session | null> => {
+      const result = await c.query<SessionDbRow>(
+        `SELECT * FROM sessions WHERE campaign_id = $1 ORDER BY session_number DESC LIMIT 1`,
+        [campaignId],
+      )
+      const row = result.rows[0]
+      return row ? toSession(row) : null
+    },
+
+    /**
      * Highest `session_number` for the campaign, or 0 when none exist. The
      * lifecycle route (MYT-65) adds 1 to derive the "next" session number a
      * /start serves — matching how the session-prep pipeline numbers preps.

@@ -35,6 +35,7 @@ import { buildStEvaluationWorker } from './session/st-evaluation-worker.js'
 import { QUEUE_ST_EVAL } from './session/st-eval-queue.js'
 import { buildScribeWorker } from './session/scribe-worker.js'
 import { QUEUE_SCRIBE } from './session/scribe-queue.js'
+import { buildReconcileWorker, QUEUE_SESSION_RECONCILE } from './session/session-reconcile.js'
 import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
@@ -213,6 +214,22 @@ export async function main(): Promise<void> {
     logger,
   )
 
+  // Session-reconcile (MYT-74a) — the END-OF-SESSION reconciler that folds a
+  // closed session's improvised working set into durable canon (load working set
+  // → retrieve canon candidates → Opus reconcile → PURE validate → Voyage embed →
+  // one gated commit tx). NOT total: it THROWS on transient failure so BullMQ
+  // retries (the §4 markReconciled gate keeps a retry idempotent). Wired HERE in
+  // the dedicated worker process. Takes both Redis connections, the pg Pool
+  // (builds its own narrow repo), and the boot-probed Voyage embedder.
+  const sessionReconcileWorker = buildReconcileWorker(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    pg,
+    embedder,
+    logger,
+  )
+
   // Session-turn QueueEvents subscriber (MYT-67 §4.8) — the broker-side terminal
   // `turn_error` publisher that closes the `maxStalledCount`-exhaustion gap the
   // per-worker `on('failed')` listener can't see. It `duplicate()`s `redisBatch`
@@ -240,6 +257,7 @@ export async function main(): Promise<void> {
       dmTriggerWorker,
       stEvaluationWorker,
       scribeWorker,
+      sessionReconcileWorker,
     ],
   })
 
@@ -255,6 +273,7 @@ export async function main(): Promise<void> {
         QUEUE_DM_TRIGGER,
         QUEUE_ST_EVAL,
         QUEUE_SCRIBE,
+        QUEUE_SESSION_RECONCILE,
       ],
     },
     'worker started',
@@ -278,6 +297,7 @@ export async function main(): Promise<void> {
       closeWithDeadline(dmTriggerWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(stEvaluationWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(scribeWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(sessionReconcileWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     // Tear down the session-turn QueueEvents subscriber's dedicated blocking

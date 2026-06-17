@@ -143,11 +143,12 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up. Seven workers:
+    // Wait for startup: workers registered, health server up. Eight workers:
     // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66),
-    // dm-trigger (MYT-67 T9), st-evaluation (MYT-69 T15), scribe (MYT-73 T11).
+    // dm-trigger (MYT-67 T9), st-evaluation (MYT-69 T15), scribe (MYT-73 T11),
+    // session-reconcile (MYT-74a T13).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(7)
+      expect(workerInstances).toHaveLength(8)
     })
     // The dm-trigger worker is on QUEUE_DM_TRIGGER ('dm-trigger').
     expect(workerInstances.map((w) => w.name)).toContain('dm-trigger')
@@ -155,6 +156,9 @@ describe('worker.main()', () => {
     expect(workerInstances.map((w) => w.name)).toContain('st-evaluation')
     // The scribe worker (MYT-73) is on QUEUE_SCRIBE ('scribe').
     expect(workerInstances.map((w) => w.name)).toContain('scribe')
+    // The session-reconcile worker (MYT-74a) is on QUEUE_SESSION_RECONCILE
+    // ('session-reconcile').
+    expect(workerInstances.map((w) => w.name)).toContain('session-reconcile')
     // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12) — one
     // QueueEvents on a duplicate()d blocking connection.
     expect(queueEventsInstances).toHaveLength(1)

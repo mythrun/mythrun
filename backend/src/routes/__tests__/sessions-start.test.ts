@@ -106,6 +106,27 @@ async function setCampaignStatus(pool: Pool, campaignId: string, status: string)
   await pool.query(`UPDATE campaigns SET status = $2 WHERE id = $1`, [campaignId, status])
 }
 
+/** Raw-INSERT a prior (non-active) session row for the interlock tests.
+ *  `ended_at` / `reconciled_at` are set verbatim so a test can construct the
+ *  exact tri-state the MYT-74a §4 interlock keys off (ended-but-unreconciled vs
+ *  reconciled). Returns the session id. */
+async function seedPriorSession(
+  pool: Pool,
+  campaignId: string,
+  sessionNumber: number,
+  opts: { status: string; ended: boolean; reconciled: boolean },
+): Promise<string> {
+  const sessionId = uuidv7()
+  await pool.query(
+    `INSERT INTO sessions (id, campaign_id, session_number, status, ended_at, reconciled_at)
+     VALUES ($1, $2, $3, $4,
+             CASE WHEN $5 THEN now() ELSE NULL END,
+             CASE WHEN $6 THEN now() ELSE NULL END)`,
+    [sessionId, campaignId, sessionNumber, opts.status, opts.ended, opts.reconciled],
+  )
+  return sessionId
+}
+
 /** Set the tone on the campaign's world (seeded worlds carry a NULL tone). */
 async function setWorldTone(pool: Pool, campaignId: string, tone: string): Promise<void> {
   await pool.query(
@@ -312,6 +333,71 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(second.statusCode).toBe(409)
       expect(second.json<{ code: string }>().code).toBe('session_already_active')
       // Still exactly one debit.
+      expect(await sessionBalance(pool, owner.userId)).toBe(2)
+    })
+
+    // ── MYT-74a §4 start interlock ────────────────────────────────────────
+    // A new session must NOT begin while the prior one is ended-but-unreconciled
+    // (its canon isn't committed + its working set isn't cleared yet). The
+    // interlock sits right after the session_already_active check and holds until
+    // the reconcile worker stamps reconciled_at.
+    it('most-recent session ended-but-unreconciled → 409 reconcile_pending; NO debit', async () => {
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      // Prior session 1: ended, NOT reconciled. The active-session guard passes
+      // (status='ended', not 'active'); the interlock trips next.
+      await seedPriorSession(pool, campaignId, 1, {
+        status: 'ended',
+        ended: true,
+        reconciled: false,
+      })
+      // /start now mints session 2 — seed its prep so the prep precondition passes.
+      await seedPrep(pool, campaignId, 2)
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('reconcile_pending')
+      // No debit on a precondition failure.
+      expect(await sessionBalance(pool, owner.userId)).toBe(3)
+    })
+
+    it('most-recent session ended AND reconciled → proceeds (200); ONE debit', async () => {
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      // Prior session 1: ended AND reconciled → interlock clear.
+      await seedPriorSession(pool, campaignId, 1, {
+        status: 'ended',
+        ended: true,
+        reconciled: true,
+      })
+      await seedPrep(pool, campaignId, 2)
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(200)
+      expect(res.json<{ sessionId: string }>().sessionId).toMatch(/^[0-9a-f-]{36}$/)
+      // Exactly one debit (3 → 2).
+      expect(await sessionBalance(pool, owner.userId)).toBe(2)
+    })
+
+    it('no prior session at all → proceeds (200) past the interlock', async () => {
+      // The plain happy path already covers this, but assert it explicitly
+      // against the interlock: a campaign with NO prior session row must not
+      // trip reconcile_pending.
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(200)
+      expect(await sessionBalance(pool, owner.userId)).toBe(2)
+    })
+
+    it('most-recent session still ACTIVE → 409 session_already_active, NOT reconcile_pending', async () => {
+      // An active (not-yet-ended) most-recent session has ended_at = NULL, so the
+      // interlock's ended-AND-unreconciled condition is false — the earlier
+      // session_already_active guard owns this case. Don't double-trip.
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      expect((await postStart(app, campaignId, owner.devSub)).statusCode).toBe(200)
+      await seedPrep(pool, campaignId, 2)
+
+      const second = await postStart(app, campaignId, owner.devSub)
+      expect(second.statusCode).toBe(409)
+      expect(second.json<{ code: string }>().code).toBe('session_already_active')
       expect(await sessionBalance(pool, owner.userId)).toBe(2)
     })
 
