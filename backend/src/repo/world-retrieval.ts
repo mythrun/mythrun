@@ -102,8 +102,10 @@ export function worldRetrievalNs(c: ClientLike) {
   return {
     /**
      * Cosine-ranked fact search across a world. Over-pulls all tiers; only
-     * NULL-embedding rows (unsearchable until embedded) are excluded. World
-     * scope is the entities JOIN (facts have no world_id). Score = 1 - distance.
+     * NULL-embedding rows (unsearchable until embedded) and superseded rows
+     * (`superseded_by IS NOT NULL` — corrected/retracted canon, MYT-74a) are
+     * excluded. World scope is the entities JOIN (facts have no world_id).
+     * Score = 1 - distance.
      */
     searchFacts: async (
       worldId: string,
@@ -117,6 +119,7 @@ export function worldRetrievalNs(c: ClientLike) {
            FROM facts f
            JOIN entities e ON e.id = f.entity_id
           WHERE e.world_id = $1 AND f.embedding IS NOT NULL
+            AND f.superseded_by IS NULL
           ORDER BY f.embedding <=> $2::vector
           LIMIT $3`,
         [worldId, queryVecLiteral, limit],
@@ -226,9 +229,11 @@ export function worldRetrievalNs(c: ClientLike) {
     /**
      * Facts that the embedder (T9 `embedWorld`) must embed. World scope is the
      * entities JOIN (facts have no world_id). Over-pull — NO access_level
-     * predicate; every tier's facts get embedded. When `force` is false only
-     * un-embedded rows (`f.embedding IS NULL`) are returned (the incremental
-     * backfill); when true the whole world's facts (a full re-embed).
+     * predicate; every tier's facts get embedded. Superseded facts
+     * (`superseded_by IS NOT NULL`, MYT-74a) are excluded — corrected canon is
+     * never (re-)embedded. When `force` is false only un-embedded rows
+     * (`f.embedding IS NULL`) are returned (the incremental backfill); when true
+     * the whole world's live facts (a full re-embed).
      */
     listFactsToEmbed: async (
       worldId: string,
@@ -239,7 +244,7 @@ export function worldRetrievalNs(c: ClientLike) {
         `SELECT f.id, f.content
            FROM facts f
            JOIN entities e ON e.id = f.entity_id
-          WHERE e.world_id = $1${nullClause}`,
+          WHERE e.world_id = $1 AND f.superseded_by IS NULL${nullClause}`,
         [worldId],
       )
       return result.rows

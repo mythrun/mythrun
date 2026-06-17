@@ -7,12 +7,14 @@
 // world into in-memory maps. It does not fit a single-table namespace, so it
 // gets its own composite-read namespace rather than re-exposing `repo.pool`.
 //
-// The SQL is byte-identical to the prior `loadWorldInventory` body: the two
+// The SQL began byte-identical to the prior `loadWorldInventory` body: the two
 // entity/relationship reads delegate to the `entities` / `relationships`
 // binders (the same call the function made), and the prose + facts reads are
-// the same raw JOIN queries. The returned shape (`WorldInventory`,
-// `entitiesById` Map, etc.) is unchanged — `world-dump.ts` re-exports the
-// type and the renderer consume it.
+// the same raw JOIN queries. ONE divergence (MYT-74a): the facts read now adds
+// `AND f.superseded_by IS NULL` — superseded (corrected/retracted) canon must
+// never resurface to the prep/coherence reader. The returned shape
+// (`WorldInventory`, `entitiesById` Map, etc.) is unchanged — `world-dump.ts`
+// re-exports the type and the renderer consume it.
 //
 // `load` is composable over any ClientLike: `repo.worldInventory.load(...)`
 // (pool-bound, outside-tx — stage 4 entity_relationships) and
@@ -89,7 +91,7 @@ export function worldInventoryNs(c: ClientLike) {
         `SELECT f.id, f.entity_id, f.topic, f.access_level, f.content
            FROM facts f
            JOIN entities e ON e.id = f.entity_id
-          WHERE e.world_id = $1`,
+          WHERE e.world_id = $1 AND f.superseded_by IS NULL`,
         [worldId],
       )
       const factsById = new Map<
