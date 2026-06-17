@@ -93,18 +93,9 @@ import {
   type EndSessionDeps,
   type FinalizeEndedSessionDeps,
 } from './session-end.js'
-import {
-  QUEUE_SESSION_ANALYSIS,
-  type AnalysisJobPayload,
-  type AnalysisQueueLike,
-} from './post-session-analysis.js'
 import { QUEUE_SESSION_SUSPEND, type SuspendQueueLike } from './session-suspend.js'
-import {
-  QUEUE_SESSION_RECONCILE,
-  type ReconcileJobPayload,
-  type ReconcileQueueLike,
-} from './session-reconcile.js'
 import { SESSION_TOKEN_BUDGET } from './st-config.js'
+import { buildSessionReconcileQueue, buildSessionAnalysisQueue } from '../server-queues.js'
 import { sessionChannel } from '../contract/session-channel.js'
 import { makeWorkingSetRepo } from '../redis/working-set.js'
 import type { WorkingSetItem, WorkingSetProposal } from './working-set/types.js'
@@ -783,18 +774,15 @@ export function buildSessionTurnWorker(
     remove: (id) => suspendBullQueue.remove(id),
   }
   /* c8 ignore stop */
-  const reconcileBullQueue = new Queue<ReconcileJobPayload>(QUEUE_SESSION_RECONCILE, {
-    connection: redisBatch,
-  })
-  /* c8 ignore next */
-  const reconcileQueue: ReconcileQueueLike = { add: (n, d, o) => reconcileBullQueue.add(n, d, o) }
-  // MYT-74b §1.3 — the post-session analysis producer (one Queue per process, like
-  // the others). Fired by `finalizeEndedSession` on a real farewell finalize.
-  const analysisBullQueue = new Queue<AnalysisJobPayload>(QUEUE_SESSION_ANALYSIS, {
-    connection: redisBatch,
-  })
-  /* c8 ignore next */
-  const analysisQueue: AnalysisQueueLike = { add: (n, d, o) => analysisBullQueue.add(n, d, o) }
+  // MYT-74b T14 — the finalize-path reconcile + analysis producers go through the
+  // POLICY builders (not plain `new Queue`), so the jobs they enqueue carry the
+  // `attempts: 5 + exponential backoff` retry policy the processors' throw-to-retry
+  // design relies on. 74b moved ALL reconcile + analysis enqueues into the finalize
+  // path, so a plain `attempts: 1` handle here would silently defeat both. No
+  // import cycle: server-queues.ts pulls only queue-name consts + payload/adapter
+  // types from session modules; none of them import back into turn-worker.ts.
+  const { sessionReconcileQueue: reconcileQueue } = buildSessionReconcileQueue(redisBatch)
+  const { sessionAnalysisQueue: analysisQueue } = buildSessionAnalysisQueue(redisBatch)
 
   // MYT-74b T11 — the BEGIN-phase end deps (the budget-100% auto-end path). The
   // session lock + sessionState are shared with the processor deps (the SAME

@@ -36,7 +36,15 @@ import { QUEUE_ST_EVAL } from './session/st-eval-queue.js'
 import { buildScribeWorker } from './session/scribe-worker.js'
 import { QUEUE_SCRIBE } from './session/scribe-queue.js'
 import { buildReconcileWorker, QUEUE_SESSION_RECONCILE } from './session/session-reconcile.js'
+import {
+  buildPostSessionAnalysisWorker,
+  QUEUE_SESSION_ANALYSIS,
+} from './session/post-session-analysis.js'
+import { finalizeEndedSession, type FinalizeEndedSessionDeps } from './session/session-end.js'
 import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
+import { buildSessionReconcileQueue, buildSessionAnalysisQueue } from './server-queues.js'
+import { createRepo } from './repo/index.js'
+import { sessionChannel } from './contract/session-channel.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
 
@@ -230,17 +238,61 @@ export async function main(): Promise<void> {
     logger,
   )
 
+  // Session-analysis (MYT-74b) — the END-OF-SESSION narrative closeout that folds a
+  // closed session's transcript into durable narrative state (transcript tail + prep
+  // sd_playbook + ST running summary + PC roster → ONE Opus call → containment-verify
+  // verbatim excerpts → conditional `writeAnalysis` gate). Like reconcile it is NOT
+  // total: it THROWS on transient failure so BullMQ retries (the `summary IS NULL`
+  // write gate keeps a retry idempotent). Takes NO embedder (analysis doesn't embed).
+  // Wired HERE in the dedicated worker process; builds its own repo from the Pool.
+  const sessionAnalysisWorker = buildPostSessionAnalysisWorker(
+    redisBatch,
+    redisRealtime,
+    env.redisKeyPrefix,
+    pg,
+    logger,
+  )
+
+  // MYT-74b T14 — the QueueEvents BACKSTOP finalize closure. The session-turn
+  // QueueEvents subscriber runs `finalizeEndedSession` from the broker side when the
+  // farewell turn's in-worker `finally` couldn't (e.g. the worker died mid-finalize).
+  // finalizeEndedSession is IDEMPOTENT (the conditional markEnded flip broadcasts
+  // exactly once; the per-session reconcile/analysis jobIds collapse a re-enqueue),
+  // so the backstop firing after a successful in-worker finalize is harmless. The
+  // reconcile + analysis producers go through the POLICY builders so the backstop's
+  // enqueues carry the same `attempts: 5` retry policy as the turn-worker's. The
+  // producer handles are constructed ONCE here and closed at shutdown so they don't
+  // leak (they `add` on redisBatch but are distinct Queue objects).
+  const repoForFinalize = createRepo(pg)
+  const { bullmqQueue: finalizeReconcileBullQueue, sessionReconcileQueue: finalizeReconcileQueue } =
+    buildSessionReconcileQueue(redisBatch)
+  const { bullmqQueue: finalizeAnalysisBullQueue, sessionAnalysisQueue: finalizeAnalysisQueue } =
+    buildSessionAnalysisQueue(redisBatch)
+  const finalizeDeps: FinalizeEndedSessionDeps = {
+    sessions: repoForFinalize.sessions,
+    reconcileQueue: finalizeReconcileQueue,
+    analysisQueue: finalizeAnalysisQueue,
+    publish: async (campaignId, frame): Promise<void> => {
+      await redisRealtime.publish(
+        sessionChannel(env.redisKeyPrefix, campaignId),
+        JSON.stringify(frame),
+      )
+    },
+    logger,
+  }
+
   // Session-turn QueueEvents subscriber (MYT-67 §4.8) — the broker-side terminal
   // `turn_error` publisher that closes the `maxStalledCount`-exhaustion gap the
   // per-worker `on('failed')` listener can't see. It `duplicate()`s `redisBatch`
   // for a dedicated BRPOP blocking connection, so its `close()` MUST run on
   // shutdown (handled below) — that connection is NOT torn down by
-  // `redisBatch.quit()`.
+  // `redisBatch.quit()`. The 5th arg (MYT-74b T13) is the finalize backstop above.
   const sessionTurnEvents = buildSessionTurnQueueEvents(
     redisBatch,
     redisRealtime,
     env.redisKeyPrefix,
     logger,
+    (args) => finalizeEndedSession(finalizeDeps, args),
   )
 
   // Start health server last — only marks healthy once everything else is up.
@@ -258,6 +310,7 @@ export async function main(): Promise<void> {
       stEvaluationWorker,
       scribeWorker,
       sessionReconcileWorker,
+      sessionAnalysisWorker,
     ],
   })
 
@@ -274,6 +327,7 @@ export async function main(): Promise<void> {
         QUEUE_ST_EVAL,
         QUEUE_SCRIBE,
         QUEUE_SESSION_RECONCILE,
+        QUEUE_SESSION_ANALYSIS,
       ],
     },
     'worker started',
@@ -298,6 +352,7 @@ export async function main(): Promise<void> {
       closeWithDeadline(stEvaluationWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(scribeWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionReconcileWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(sessionAnalysisWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     // Tear down the session-turn QueueEvents subscriber's dedicated blocking
@@ -305,6 +360,17 @@ export async function main(): Promise<void> {
     // redisBatch.quit() below, so skipping this leaks a connection per deploy.
     await sessionTurnEvents.close().catch((err: unknown) => {
       logger.error({ err }, 'session-turn queue-events close failed')
+    })
+
+    // Close the QueueEvents-backstop finalize producers (MYT-74b T14). They `add`
+    // on redisBatch but are distinct Queue objects, so redisBatch.quit() below does
+    // NOT close them — skipping this leaks two Queue clients per deploy. Closed after
+    // the workers drain so an in-flight finalize backstop can still enqueue.
+    await finalizeReconcileBullQueue.close().catch((err: unknown) => {
+      logger.error({ err }, 'finalize reconcile queue close failed')
+    })
+    await finalizeAnalysisBullQueue.close().catch((err: unknown) => {
+      logger.error({ err }, 'finalize analysis queue close failed')
     })
 
     await pg.end().catch((err: unknown) => {

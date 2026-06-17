@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as queueEventsModule from '../session/session-turn-queue-events.js'
 
 vi.mock('../config/env.js', () => ({
   loadEnv: () => ({
@@ -115,9 +116,20 @@ vi.mock('bullmq', () => ({
   }),
 }))
 
+// MYT-74b T14: spy on buildSessionTurnQueueEvents to assert the 5th `finalize`
+// arg (the QueueEvents backstop closure) is threaded through from worker.main().
+// The spy calls THROUGH to the real builder (captured before spying) so the
+// existing QueueEvents-instance + duplicate()/quit() teardown assertions hold.
+const realBuildQueueEvents = queueEventsModule.buildSessionTurnQueueEvents
+const buildQueueEventsSpy = vi
+  .spyOn(queueEventsModule, 'buildSessionTurnQueueEvents')
+  .mockImplementation((...args) => realBuildQueueEvents(...args))
+
 describe('worker.main()', () => {
   beforeEach(() => {
     vi.useRealTimers()
+    buildQueueEventsSpy.mockClear()
+    buildQueueEventsSpy.mockImplementation((...args) => realBuildQueueEvents(...args))
     batchPingMock.mockClear()
     batchQuitMock.mockClear()
     realtimePingMock.mockClear()
@@ -143,12 +155,12 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up. Eight workers:
+    // Wait for startup: workers registered, health server up. Nine workers:
     // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66),
     // dm-trigger (MYT-67 T9), st-evaluation (MYT-69 T15), scribe (MYT-73 T11),
-    // session-reconcile (MYT-74a T13).
+    // session-reconcile (MYT-74a T13), session-analysis (MYT-74b T14).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(8)
+      expect(workerInstances).toHaveLength(9)
     })
     // The dm-trigger worker is on QUEUE_DM_TRIGGER ('dm-trigger').
     expect(workerInstances.map((w) => w.name)).toContain('dm-trigger')
@@ -159,10 +171,18 @@ describe('worker.main()', () => {
     // The session-reconcile worker (MYT-74a) is on QUEUE_SESSION_RECONCILE
     // ('session-reconcile').
     expect(workerInstances.map((w) => w.name)).toContain('session-reconcile')
+    // The session-analysis worker (MYT-74b T14) is on QUEUE_SESSION_ANALYSIS
+    // ('session-analysis').
+    expect(workerInstances.map((w) => w.name)).toContain('session-analysis')
     // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12) — one
     // QueueEvents on a duplicate()d blocking connection.
     expect(queueEventsInstances).toHaveLength(1)
     expect(batchDuplicateMock).toHaveBeenCalledTimes(1)
+    // MYT-74b T14: the QueueEvents subscriber is built with a 5th `finalize` arg
+    // (the backstop closure that runs finalizeEndedSession from the broker side).
+    expect(buildQueueEventsSpy).toHaveBeenCalledTimes(1)
+    expect(buildQueueEventsSpy.mock.calls[0]).toHaveLength(5)
+    expect(typeof buildQueueEventsSpy.mock.calls[0]?.[4]).toBe('function')
     expect(batchPingMock).toHaveBeenCalledTimes(1)
     expect(realtimePingMock).toHaveBeenCalledTimes(1)
     expect(pgQueryMock).toHaveBeenCalledWith('SELECT 1')

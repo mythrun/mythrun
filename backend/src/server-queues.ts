@@ -30,6 +30,11 @@ import {
   type ReconcileJobPayload,
   type ReconcileQueueLike,
 } from './session/session-reconcile.js'
+import {
+  QUEUE_SESSION_ANALYSIS,
+  type AnalysisJobPayload,
+  type AnalysisQueueLike,
+} from './session/post-session-analysis.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import type { DmTriggerPayload, DmTriggerQueueLike } from './session/dm-trigger-queue.js'
 
@@ -260,6 +265,29 @@ export function buildSessionReconcileQueue(redisBatch: Redis): {
     add: (name, data, opts) => bullmqQueue.add(name, data, opts),
   }
   return { bullmqQueue, sessionReconcileQueue }
+}
+
+/** MYT-74b T14: build the session-analysis BullMQ Queue (end-of-session → Opus
+ *  analysis). Mirrors buildSessionReconcileQueue: a terminally-failed analysis can
+ *  be re-enqueued (the per-session jobId is freed by removeOnFail); attempts +
+ *  exponential backoff because the processor THROWS on transient failure. */
+export function buildSessionAnalysisQueue(redisBatch: Redis): {
+  bullmqQueue: Queue
+  sessionAnalysisQueue: AnalysisQueueLike
+} {
+  const bullmqQueue = new Queue<AnalysisJobPayload>(QUEUE_SESSION_ANALYSIS, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 30000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  })
+  const sessionAnalysisQueue: AnalysisQueueLike = {
+    add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+  }
+  return { bullmqQueue, sessionAnalysisQueue }
 }
 
 /** MYT-67 §4.2: build the dm-trigger BullMQ Queue (the quiet-window debounce
