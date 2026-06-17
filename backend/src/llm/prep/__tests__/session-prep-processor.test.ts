@@ -50,6 +50,9 @@ import {
   type SessionPrepProcessorDeps,
 } from '../session-prep-processor.js'
 import * as sessionPrepStage from '../stages/session-prep.js'
+import { buildReturningVoicesSection } from '../session-prep-processor.js'
+import { createSessionsRepo } from '../../../repo/sessions.js'
+import type { SessionHandoff } from '../../schemas/post-session-analysis.js'
 import {
   LlmStructuredOutputError,
   LlmRateLimitedError,
@@ -114,6 +117,44 @@ const STAGE_USAGE = {
 // Opus rates from MODEL_PRICING['claude-opus-4-7']: input 5.0, output 25.0
 // per million. (5000*5 + 9000*25) / 1e6 = (25000 + 225000) / 1e6 = 0.25.
 const EXPECTED_COST_USD = (5000 * 5.0 + 9000 * 25.0) / 1_000_000
+
+// §6 — the pure verbatim-injection builder. Exercised end-to-end through the
+// processor below; these direct cases pin the empty/skip arms (an NPC with an
+// empty voice array is skipped; a handoff with nothing to inject returns '').
+describe('buildReturningVoicesSection (MYT-74b §6)', () => {
+  it('returns "" for an undefined handoff', () => {
+    expect(buildReturningVoicesSection(undefined)).toBe('')
+  })
+
+  it('skips NPCs with an empty voice array and renders only voiced ones + places', () => {
+    const handoff: SessionHandoff = {
+      party: [],
+      timeOfDay: 'dusk',
+      unresolvedThreads: [],
+      npcs: [
+        { name: 'Silent', state: 'absent', voice: [] },
+        { name: 'Voss', state: 'hostile', voice: ['You came back.'] },
+      ],
+      keyLocations: [{ name: 'the bilge', atmosphere: 'Salt on the wind.' }],
+    }
+    const out = buildReturningVoicesSection(handoff)
+    expect(out).not.toContain('Silent:')
+    expect(out).toContain('Voss:')
+    expect(out).toContain('- "You came back."')
+    expect(out).toContain('- the bilge: "Salt on the wind."')
+  })
+
+  it('returns "" when the handoff has no voiced NPCs and no key locations', () => {
+    const handoff: SessionHandoff = {
+      party: [{ characterName: 'Kael', location: 'here', condition: 'fine' }],
+      timeOfDay: 'noon',
+      unresolvedThreads: ['a thread'],
+      npcs: [{ name: 'Quiet', state: 'gone', voice: [] }],
+      keyLocations: [],
+    }
+    expect(buildReturningVoicesSection(handoff)).toBe('')
+  })
+})
 
 describe('processSessionPrepJob (MYT-61 T4)', () => {
   let pool: Pool
@@ -395,6 +436,78 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     // CRITICAL: a TERMINAL prep failure must still NOT fail the campaign —
     // unlike character-integration, prep is session-scoped.
     expect(await campaignStatus(campaignId)).toBe('setup')
+  })
+
+  // §6 — a prior ended session's handoff carries verbatim NPC voice +
+  // location atmosphere. The processor must deterministically APPEND those
+  // excerpts to ft_context (NEVER paraphrase them through the prep LLM). We
+  // seed a real ended session with analysis, stub the stage (so `ft_context`
+  // is a known prefix), and assert the persisted ftContext ends with the
+  // verbatim "Returning characters and places" section BYTE-IDENTICAL.
+  it('appends the verbatim returning-voices section (handoff voice + atmosphere) to the persisted ftContext', async () => {
+    const { campaignId } = await seed()
+
+    const handoff: SessionHandoff = {
+      party: [{ characterName: 'Kael', location: 'the bilge', condition: 'bleeding' }],
+      timeOfDay: 'just before dawn',
+      unresolvedThreads: ['the smuggled crate'],
+      npcs: [{ name: 'Voss', state: 'hostile', voice: ['You came back.'] }],
+      keyLocations: [{ name: 'the bilge', atmosphere: 'Salt on the wind.' }],
+    }
+    const sessions = createSessionsRepo(pool)
+    const prior = await sessions.create({ campaignId, sessionNumber: 1 })
+    await sessions.markEnded(prior.id)
+    await sessions.writeAnalysis(prior.id, {
+      summary: 'The party fled the docks.',
+      emergingThreads: ['the missing crate'],
+      handoff,
+    })
+
+    vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValue({
+      ft_context: 'GENERATED FT',
+      sd_playbook: 'SD',
+      usage: { ...STAGE_USAGE },
+    })
+
+    const processor = createSessionPrepProcessor(makeDeps(pool))
+    await processor(makeJob({ campaignId, sessionNumber: 2 }))
+
+    const preps = await pool.query<{ ft_context: string }>(
+      `SELECT ft_context FROM session_preps WHERE campaign_id = $1 AND session_number = 2`,
+      [campaignId],
+    )
+    expect(preps.rowCount).toBe(1)
+    const ftContext = preps.rows[0]?.ft_context ?? ''
+    // The persisted ft_context = the generated prefix + the EXACT section the
+    // pure builder produces for this handoff (byte-identical concatenation).
+    const expectedSection = buildReturningVoicesSection(handoff)
+    expect(ftContext).toBe('GENERATED FT' + expectedSection)
+    // And the section verbatim-carries the voice + atmosphere strings.
+    expect(ftContext.endsWith(expectedSection)).toBe(true)
+    expect(ftContext).toContain('Returning characters and places')
+    expect(ftContext).toContain('- "You came back."')
+    expect(ftContext).toContain('- the bilge: "Salt on the wind."')
+  })
+
+  it('leaves ftContext unchanged (no trailing section) when there are NO prior ended sessions', async () => {
+    const { campaignId } = await seed()
+    // No prior sessions seeded → getPriorContextForPrep returns [] → no handoff
+    // → buildReturningVoicesSection('') → ftContext === the generated value.
+    vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValue({
+      ft_context: 'GENERATED FT',
+      sd_playbook: 'SD',
+      usage: { ...STAGE_USAGE },
+    })
+
+    const processor = createSessionPrepProcessor(makeDeps(pool))
+    await processor(makeJob({ campaignId, sessionNumber: 1 }))
+
+    const preps = await pool.query<{ ft_context: string }>(
+      `SELECT ft_context FROM session_preps WHERE campaign_id = $1 AND session_number = 1`,
+      [campaignId],
+    )
+    expect(preps.rows[0]?.ft_context).toBe('GENERATED FT')
+    expect(preps.rows[0]?.ft_context).not.toContain('Returning characters and places')
   })
 
   it('ON CONFLICT idempotency: running the happy path twice for (campaign,1) leaves exactly one session_preps row', async () => {

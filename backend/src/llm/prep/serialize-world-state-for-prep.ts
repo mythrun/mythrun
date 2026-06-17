@@ -15,10 +15,16 @@
 //   - `priorSessionContext` appends previous-session summaries.
 import type { WorldInventory } from '../../repo/world-inventory.js'
 import type { Repo } from '../../repo/index.js'
+import type { SessionHandoff } from '../schemas/post-session-analysis.js'
 import { renderWorldDump } from './world-dump.js'
 
 export interface PriorSessionContext {
   readonly previousSummaries: readonly string[]
+  /** MYT-74b §4 — the latest ended session's handoff. Renders the opening-scene
+   *  anchor (party positions, time, threads, NPC dispositions) into the prep
+   *  prompt. The verbatim voice/atmosphere are NOT rendered here — the processor
+   *  deterministically appends them to ft_context (§6). */
+  readonly latestHandoff?: SessionHandoff
 }
 
 export interface SerializeArgs {
@@ -92,6 +98,25 @@ export async function serializeWorldStateForPrep(repo: Repo, args: SerializeArgs
   if (args.priorSessionContext && args.priorSessionContext.previousSummaries.length > 0) {
     lines.push('## Prior Sessions')
     for (const s of args.priorSessionContext.previousSummaries) lines.push(`- ${s}`)
+    lines.push('')
+  }
+
+  const handoff = args.priorSessionContext?.latestHandoff
+  if (handoff) {
+    lines.push('## Where We Left Off')
+    lines.push(`Time of day: ${handoff.timeOfDay}`)
+    if (handoff.party.length > 0) {
+      lines.push('Party positions:')
+      for (const m of handoff.party) lines.push(`- ${m.characterName}: ${m.location} (${m.condition})`)
+    }
+    if (handoff.unresolvedThreads.length > 0) {
+      lines.push('Unresolved threads (most urgent first):')
+      for (const t of handoff.unresolvedThreads) lines.push(`- ${t}`)
+    }
+    if (handoff.npcs.length > 0) {
+      lines.push('Returning NPCs — current disposition toward the party:')
+      for (const npc of handoff.npcs) lines.push(`- ${npc.name}: ${npc.state}`)
+    }
     lines.push('')
   }
 

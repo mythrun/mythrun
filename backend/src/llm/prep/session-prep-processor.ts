@@ -41,8 +41,41 @@ import { isTerminalError } from '../errors.js'
 import { logger } from '../logger.js'
 import { atomicClaimStage } from './world-gen-processor.js'
 import { generateSessionPrep } from './stages/session-prep.js'
+import { buildPriorSessionContext } from './prior-session-context.js'
 import { createRepo } from '../../repo/index.js'
 import { computeCostUsd } from '../../billing/model-pricing.js'
+import type { SessionHandoff } from '../schemas/post-session-analysis.js'
+
+// Caps the prep's prior-summary fan-in (and the handoff lookback window). The
+// repo read returns NEWEST-first, so the cap bounds how far back the prep
+// prompt reaches.
+const PRIOR_SUMMARY_CAP = 20
+
+/** §6 deterministic verbatim injection. Builds the fixed "Returning characters /
+ *  places" section from the handoff's voice + atmosphere excerpts. Returns '' when
+ *  nothing to inject. NEVER paraphrased — concatenated verbatim. */
+export function buildReturningVoicesSection(handoff: SessionHandoff | undefined): string {
+  if (!handoff) return ''
+  const lines: string[] = []
+  for (const npc of handoff.npcs) {
+    if (npc.voice.length === 0) continue
+    lines.push(`${npc.name}:`)
+    for (const v of npc.voice) lines.push(`- "${v}"`)
+  }
+  const locLines: string[] = []
+  for (const loc of handoff.keyLocations) locLines.push(`- ${loc.name}: "${loc.atmosphere}"`)
+  if (lines.length === 0 && locLines.length === 0) return ''
+  const out: string[] = [
+    '',
+    '## Returning characters and places — keep these voices and atmospheres consistent',
+    'These are verbatim moments from the previous session. Stay true to how these',
+    'characters speak and how these places feel.',
+    '',
+  ]
+  if (lines.length > 0) out.push('Voices:', ...lines, '')
+  if (locLines.length > 0) out.push('Places:', ...locLines)
+  return out.join('\n')
+}
 
 export interface SessionPrepJobPayload {
   readonly campaignId: string
@@ -116,20 +149,28 @@ export async function processSessionPrepJob(
     if (worldId === null) {
       throw new Error(`session-prep: no world for campaign ${campaignId}`)
     }
+    // §4 — fetch the prior ended-session context (NEWEST-first), parse it into
+    // the prep's PriorSessionContext (chronological summaries + latest handoff).
+    const priorRows = await repo.sessions.getPriorContextForPrep(campaignId, PRIOR_SUMMARY_CAP)
+    const priorSessionContext = buildPriorSessionContext(priorRows)
     const result = await generateSessionPrep(repo, {
       campaignId,
       worldId,
       sessionNumber,
+      priorSessionContext,
       // Progressive prose rides the dev-only `prep:campaign:` channel.
       // Fire-and-forget: a publish failure must never abort generation.
       onProseDelta: (field, text) => {
         void deps.publishProse(campaignId, { type: 'prep-delta', field, text }).catch(() => undefined)
       },
     })
+    // §6 — deterministically append the verbatim voice / atmosphere excerpts to
+    // ft_context AFTER generation. NEVER paraphrased through the prep LLM.
+    const ftContext = result.ft_context + buildReturningVoicesSection(priorSessionContext.latestHandoff)
     await repo.sessionPreps.insert({
       campaignId,
       sessionNumber,
-      ftContext: result.ft_context,
+      ftContext,
       sdPlaybook: result.sd_playbook,
     })
     // The `?? 0` arms are defense-in-depth: the Anthropic SDK always populates

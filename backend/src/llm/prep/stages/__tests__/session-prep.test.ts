@@ -182,6 +182,34 @@ describe('generateSessionPrep', () => {
     expect(r.sd_playbook).toBe('b')
   })
 
+  it('MYT-74b: threads priorSessionContext into the world-state serializer when provided', async () => {
+    streamObjectMock.mockReturnValue(
+      scripted([{ ft_context: 'a' }], { ft_context: 'a', sd_playbook: 'b' }),
+    )
+    const serialize = (
+      (await import('../../serialize-world-state-for-prep.js')) as unknown as {
+        serializeWorldStateForPrep: ReturnType<typeof vi.fn>
+      }
+    ).serializeWorldStateForPrep
+    serialize.mockClear()
+    const priorSessionContext = {
+      previousSummaries: ['Last time, the party fled the docks.'],
+    } as const
+    await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 2,
+      priorSessionContext,
+    })
+    // The conditional spread (exactOptionalPropertyTypes-safe) forwards the
+    // context to the serializer only when it's defined.
+    expect(serialize).toHaveBeenCalledWith({}, {
+      campaignId: 'c',
+      sessionNumber: 2,
+      priorSessionContext,
+    })
+  })
+
   it('skips a partial that has not yet produced a string for a field', async () => {
     const deltas: { field: string; text: string }[] = []
     streamObjectMock.mockReturnValue(

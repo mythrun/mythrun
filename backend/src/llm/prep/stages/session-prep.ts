@@ -12,6 +12,7 @@ import { streamObject, type LanguageModelUsage } from '../../ai.js'
 import { OPUS } from '../../models.js'
 import { loadPrompt } from '../../prompts.js'
 import { serializeWorldStateForPrep } from '../serialize-world-state-for-prep.js'
+import type { PriorSessionContext } from '../serialize-world-state-for-prep.js'
 import type { Repo } from '../../../repo/index.js'
 
 export const sessionPrepSchema = z.object({
@@ -38,6 +39,10 @@ export interface GenerateSessionPrepArgs {
   // cost) and emit the newly-appended substring per field as it streams. When
   // absent we skip the drain entirely and go straight to `await result.object`.
   readonly onProseDelta?: (field: 'ft_context' | 'sd_playbook', text: string) => void
+  // MYT-74b §4 — prior-session context (chronological summaries + latest
+  // handoff anchor). Threaded into the world-state serializer so the prep
+  // prompt opens on where the last session left the party.
+  readonly priorSessionContext?: PriorSessionContext
 }
 
 export interface SessionPrepResult {
@@ -53,6 +58,7 @@ export async function generateSessionPrep(
   const worldState = await serializeWorldStateForPrep(repo, {
     campaignId: args.campaignId,
     sessionNumber: args.sessionNumber,
+    ...(args.priorSessionContext !== undefined ? { priorSessionContext: args.priorSessionContext } : {}),
   })
 
   const prompt = loadPrompt('prep', 'session-prep', {

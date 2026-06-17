@@ -206,4 +206,48 @@ describe('serializeWorldStateForPrep', () => {
     expect(out).toContain('## Prior Sessions')
     expect(out).toContain('Last time, the party torched the docks.')
   })
+
+  it('renders the "Where We Left Off" anchor (time, party positions, threads, NPC dispositions) when latestHandoff is set', async () => {
+    const out = await serializeWorldStateForPrep(stubRepo(), {
+      campaignId: 'camp1',
+      sessionNumber: 2,
+      priorSessionContext: {
+        previousSummaries: [],
+        latestHandoff: {
+          party: [
+            { characterName: 'Kael', location: 'the bilge', condition: 'bleeding' },
+            { characterName: 'Mira', location: 'the deck', condition: 'unharmed' },
+          ],
+          timeOfDay: 'just before dawn',
+          unresolvedThreads: ['the smuggled crate', 'Voss has gone missing'],
+          npcs: [
+            { name: 'Voss', state: 'hostile and cornered', voice: ['"You sold us out."'] },
+            { name: 'Sela', state: 'grateful, owes the party a debt', voice: [] },
+          ],
+          keyLocations: [{ name: 'the bilge', atmosphere: '"Bilgewater laps at your boots."' }],
+        },
+      },
+    })
+    expect(out).toContain('## Where We Left Off')
+    // Time of day.
+    expect(out).toContain('just before dawn')
+    // Each party member's location (and the per-member line shape).
+    expect(out).toContain('- Kael: the bilge (bleeding)')
+    expect(out).toContain('the deck')
+    // Each unresolved thread.
+    expect(out).toContain('the smuggled crate')
+    expect(out).toContain('Voss has gone missing')
+    // Each NPC name + state.
+    expect(out).toContain('- Voss: hostile and cornered')
+    expect(out).toContain('- Sela: grateful, owes the party a debt')
+    // The verbatim voice / atmosphere are NOT rendered into the prompt (§6:
+    // the processor appends them to ft_context deterministically).
+    expect(out).not.toContain('You sold us out.')
+    expect(out).not.toContain('Bilgewater laps at your boots.')
+  })
+
+  it('does NOT render the "Where We Left Off" anchor when no priorSessionContext is provided', async () => {
+    const out = await serializeWorldStateForPrep(stubRepo(), { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).not.toContain('## Where We Left Off')
+  })
 })
