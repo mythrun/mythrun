@@ -8,8 +8,9 @@
 <!-- source: backend/migrations/008_billing_metering.sql -->
 <!-- source: backend/migrations/009_character_portability.sql -->
 <!-- source: backend/migrations/026_world_retrieval.sql -->
-<!-- source-hash: sha256:7617ed6aba25dd7cf4f40b4f93a6317ce8809d91e5b8e7f29eba0981040e1fb9 -->
-<!-- last-ticket: MYT-71 -->
+<!-- source: backend/migrations/027_fact_supersede.sql -->
+<!-- source-hash: sha256:755254cd2eb8ccd79c4a64102c445e22082c21080ae7d1629e5b25faa50f920e -->
+<!-- last-ticket: MYT-74a -->
 
 <h1>Schema</h1>
 
@@ -190,11 +191,32 @@
   political situation, and a tree of <code>entities</code> (NPCs, locations, factions, items). Each
   entity carries a <code>prose_kernel</code> (1:1, the LLM-authored prose chunk that gets re-served
   whenever the entity surfaces in play) and zero or more <code>facts</code> with explicit
-  <code>access_level</code> (<code>public | private | secret</code>) and
-  <code>narrative_status</code> (<code>undelivered | delivered | developed | resolved</code>). The
-  enforced-ignorance boundary in the runtime reads <code>access_level</code> directly from this
-  column — the schema is what makes the boundary checkable.
+  <code>access_level</code> (<code>known | discoverable | secret</code>, renamed from the original
+  <code>public | private | secret</code> in migration 014) and <code>narrative_status</code> (<code
+    >undelivered | delivered | developed | resolved</code
+  >). The enforced-ignorance boundary in the runtime reads <code>access_level</code> directly from
+  this column — the schema is what makes the boundary checkable.
 </p>
+
+<p>
+  <code>facts</code> is append-only for corrections. Migration 027 adds a nullable
+  <code>superseded_by</code> self-FK (plus a <code>superseded_at</code> stamp): a correction never
+  edits a fact's content — it appends a new fact row and points the old fact's
+  <code>superseded_by</code> at it. Live canon is <code>superseded_by IS NULL</code>; the full
+  history is the supersede chain. The
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> is what writes these
+  pointers (folding a finished session's improvisation into canon), and every canon-fact reader
+  defaults to the live-only predicate, backed by the partial index
+  <code>idx_facts_live_by_entity (entity_id, access_level) WHERE superseded_by IS NULL</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>ON DELETE SET NULL</code> on the supersede FK</strong> — the live-fact →
+  superseded-fact pointer is declared <code>ON DELETE SET NULL</code>, not the bare default.
+  <code>entities → facts</code> is <code>ON DELETE CASCADE</code>; a world-regen wipe that deletes
+  an entity whose <em>superseded</em> fact is still pointed-to by a <em>live</em> fact would
+  otherwise FK-abort the cascade. Setting the pointer to NULL lets the wipe proceed.
+</aside>
 
 <p>
   <code>worlds.source_world_id</code> is a self-reference for forks: a copy of someone else's shared
@@ -266,7 +288,14 @@
   <code>session_preps</code> (the FT context + ST playbook the runtime loads at session start).
   <code>session_usage</code> tracks per-session token spend and the running USD cost (the cap signal
   the Slow Thinker uses to ramp toward a graceful close); see the
-  <a href="../auth-billing/billing-metering.html">billing-metering</a> page for the call shape.
+  <a href="../auth-billing/billing-metering.html">billing-metering</a> page for the call shape. The
+  row's lifecycle stamps are <code>started_at</code>, <code>ended_at</code>, and — added in
+  migration 027 — <code>reconciled_at</code>, the marker the
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> sets once a session's
+  working set has been committed to canon. The three form a tri-state: <code>ended_at</code> set
+  with <code>reconciled_at</code> NULL means "ended, reconcile pending or failed," so consumers must
+  not treat such a session's canon as complete. <code>reconciled_at</code>
+  doubles as the reconcile's conditional-update idempotency gate.
 </p>
 
 <aside class="wiki-rationale">

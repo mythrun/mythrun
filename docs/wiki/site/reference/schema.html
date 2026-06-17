@@ -732,7 +732,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="facts" id="schema-table-facts">
   <summary>
     <span class="schema-table-name">facts</span>
-    <span class="schema-table-meta">11 columns · 3 indexes · 2 CHECKs · 1 FK</span>
+    <span class="schema-table-meta">13 columns · 4 indexes · 2 CHECKs · 2 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -814,6 +814,20 @@ END)</code></li>
         <td>—</td>
         <td>—</td>
       </tr>
+      <tr data-column-name="superseded_by">
+        <td><code>superseded_by</code></td>
+        <td><code>uuid</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td><code>facts(id)</code> ON DELETE SET NULL</td>
+      </tr>
+      <tr data-column-name="superseded_at">
+        <td><code>superseded_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
@@ -821,6 +835,7 @@ END)</code></li>
     <li><code>idx_facts_embedding</code> — <code>CREATE INDEX idx_facts_embedding ON facts USING hnsw (embedding vector_cosine_ops)</code></li>
     <li><code>idx_facts_entity</code> — (entity_id)</li>
     <li><code>idx_facts_entity_access_status</code> — (entity_id, access_level, narrative_status)</li>
+    <li><code>idx_facts_live_by_entity</code> — (entity_id, access_level) WHERE superseded_by IS NULL</li>
   </ul>
   <h4>CHECK constraints</h4>
   <ul class="schema-list">
@@ -2714,7 +2729,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="sessions" id="schema-table-sessions">
   <summary>
     <span class="schema-table-name">sessions</span>
-    <span class="schema-table-meta">9 columns · 2 indexes · 1 CHECK · 1 FK</span>
+    <span class="schema-table-meta">10 columns · 2 indexes · 1 CHECK · 1 FK</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -2778,6 +2793,13 @@ END)</code></li>
       <tr data-column-name="handoff">
         <td><code>handoff</code></td>
         <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="reconciled_at">
+        <td><code>reconciled_at</code></td>
+        <td><code>timestamptz</code></td>
         <td>YES</td>
         <td>—</td>
         <td>—</td>

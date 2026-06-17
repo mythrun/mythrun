@@ -31,7 +31,7 @@ digraph schema {
     worlds   [label="worlds\nsource_world_id → worlds\n(forks)"];
     entities [label="entities\nnpc | location |\nfaction | item"];
     kernels  [label="prose_kernels\n(1:1 with entity)"];
-    facts    [label="facts\npublic | private |\nsecret"];
+    facts    [label="facts (append-only)\nknown | discoverable | secret\nsuperseded_by → facts\n(live = superseded_by IS NULL)", color="ember", fontcolor="ember"];
     rels     [label="relationships"];
     hier     [label="entity_hierarchy"];
     rtables  [label="random_tables\n+ entries"];
@@ -49,7 +49,7 @@ digraph schema {
     invites   [label="campaign_invites"];
     chars     [label="characters\n(user-owned)\n+ skills, features,\nequipment, spells"];
     campchars [label="campaign_characters\nUNIQUE (campaign, character)\nUNIQUE (campaign, user)"];
-    sessions  [label="sessions\nstatus: active |\nended | crashed"];
+    sessions  [label="sessions\nstatus: active |\nended | crashed\nstarted/ended/reconciled_at\n(tri-state)"];
     msgs      [label="session_messages\n(seq-ordered)"];
     parts     [label="session_participants"];
     snaps     [label="world_snapshots"];
@@ -93,6 +93,7 @@ digraph schema {
   worlds   -> entities [label="CASCADE"];
   entities -> kernels  [label="CASCADE 1:1"];
   entities -> facts    [label="CASCADE"];
+  facts    -> facts    [label="superseded_by\nSET NULL\n(migration 027)", style=dashed, color="ember"];
   entities -> rels     [label="src/tgt CASCADE"];
   entities -> hier     [label="CASCADE"];
   worlds   -> rtables  [label="CASCADE"];

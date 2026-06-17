@@ -10,8 +10,8 @@
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:55aff3a65267b2b834bee6b8545e8632d85917ded1187b0a1a3c9ab10d413839 -->
-<!-- last-ticket: MYT-72 -->
+<!-- source-hash: sha256:a693207f5f7f39346ba19db8c48aa2d56ae9e60b901644f1b366b978cc46d274 -->
+<!-- last-ticket: MYT-74a -->
 
 <h1>Session turn</h1>
 
@@ -498,6 +498,20 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>The budget-100% auto-end fires here too (MYT-74a)</strong> — this post-flush phase is also
+  where the session can end itself. The Fast-Thinker context bound is the real session-length cap;
+  when cumulative token usage (read from the durable <code>session_usage</code> row via
+  <code>budgetSummary</code>) reaches <code>SESSION_TOKEN_BUDGET</code>, the worker fires the
+  <a href="./session-reconcile.html">end-of-session</a> orchestration (status flip → reconcile →
+  <code>session_end</code> broadcast) — the same flow the explicit <code>end_session</code> WS frame
+  runs. It is gated on <code>!isCorrection</code> like the watermark and the Scribe enqueue (a
+  player-less correction opens no new budget-bearing context), and it sits in its own try/catch so a
+  failure to enqueue the end never masks the turn outcome — mirroring the st-evaluation isolation.
+  Idempotence across turns is free: <code>endSession</code>'s SET-NX <code>ending</code> flag no-ops
+  a second over-budget turn, so the processor needs no dedup of its own.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>A <code>correction</code> turn advances no watermark and enqueues no Scribe</strong> —
   both the responded-seq advance and the Scribe enqueue are gated on the turn <em>not</em> being a
   correction. A correction is player-less: advancing the watermark would strand the genuine pending
@@ -736,7 +750,10 @@
   enqueues these jobs (other than the dev poke); this worker sets the
   <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
   trigger's drain logic depends on, and the trigger system's <code>QueueEvents</code> subscriber
-  closes this worker's terminal-error gap.
+  closes this worker's terminal-error gap. Downstream, this worker's post-flush phase is also the
+  budget-100% trigger for <a href="./session-reconcile.html">end-of-session reconciliation</a>: when
+  cumulative usage reaches the token budget it fires the same end flow the explicit
+  <code>end_session</code> frame runs.
 </p>
 
 <h2>Appendix: surface</h2>

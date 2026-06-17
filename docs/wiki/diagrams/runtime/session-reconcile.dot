@@ -1,0 +1,98 @@
+digraph session_reconcile {
+  // End-of-session reconciliation (MYT-74a). The session-end lifecycle + the
+  // reconcile pass that folds the in-session working set (MYT-73) into durable
+  // canon. Two triggers converge on endSession (idempotent via a SET-NX `ending`
+  // flag): the explicit `end_session` WS frame and the turn worker's budget-100%
+  // auto-end. endSession quiesces (lock fence + cancelSuspend), flips the row to
+  // 'ended', enqueues ONE session-reconcile job (per-session jobId), and
+  // broadcasts a structural session_end. The reconcile worker (the 8th BullMQ
+  // worker) runs off the hot path: load working set → findSimilarEntities
+  // candidates → ONE holistic Opus plan → PURE structural+policy validate →
+  // Voyage embed → one gated commit tx → working-set clear. The conditional
+  // markReconciled is the commit's last in-tx statement (the idempotency mutex).
+  // ENFORCED IGNORANCE: the validator/worker log STRUCTURAL codes + op counts
+  // only — never plan content — so a secret-bearing plan never leaks to logs.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  subgraph cluster_triggers {
+    label="Two end triggers  →  one flow";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    ws_end   [label="end_session WS frame\n(explicit summon,\n no payload)", color="ember", fontcolor="ember"];
+    budget   [label="turn worker\nbudget-100% auto-end\n(post-flush phase)", color="ember", fontcolor="ember"];
+    endfn    [label="endSession (idempotent)\nSET-NX `ending` flag →\ncancelSuspend → lock fence →\nflip status='ended' →\nenqueue reconcile → session_end", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_pg_lifecycle {
+    label="Postgres  (lifecycle)";
+    style="dashed";
+
+    row    [label="sessions row\nstatus='ended', ended_at=now\nreconciled_at = NULL\n(tri-state: ended ≠ reconciled)"];
+    interlock [label="POST /sessions/:id/start\n409 reconcile_pending while\nended_at set + reconciled_at NULL\n(cross-session interlock)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_batch {
+    label="redisBatch";
+    style="dotted";
+    q_recon [label="queue: session-reconcile\njobId reconcile-{sessionId}\n(double-trigger collapses)\nattempts 5 · exp backoff", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_worker {
+    label="Reconcile worker  —  the 8th BullMQ worker (concurrency 1 · 180s lock)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    proc   [label="processReconcileJob (NOT total)\ngate-read → lock → load →\nretrieve → render → reconcile →\nvalidate → embed → commit → clear", color="ember", fontcolor="ember"];
+    retrieve [label="findSimilarEntities\n(per distinct subject, top-K)\n+ live candidate facts\n(superseded_by IS NULL)"];
+    opus   [label="Opus reconciler (ONE call)\nmatch/mint · fact append ±\nsupersede · relationship edges\nredactRawText · pinned cap", color="ember", fontcolor="ember"];
+    validate [label="validate (PURE, security-critical)\nsubjectName→entityId map\ndangling refs · tier floor ·\nattribution arm → reject CODE only", color="ember", fontcolor="ember"];
+    commit [label="commit (ONE tx)\nmint entities · append facts ·\nsupersede + NULL embedding ·\nedges · hierarchy · markTouchedByPlay\nconditional markReconciled (LAST)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_realtime {
+    label="Redis (realtime)";
+    style="dashed";
+    ws_list [label="session:{cId}:workingset\n(MYT-73 — tier+provenance\nannotated improvisation)\nclear() on a winning commit", color="ember", fontcolor="ember"];
+    flag    [label="session:{cId}:ending\n(SET-NX once-only)"];
+  }
+
+  subgraph cluster_canon {
+    label="Durable canon  (Postgres + pgvector)";
+    style="dashed";
+    facts  [label="facts (append-only)\nsuperseded_by / superseded_at\nlive = superseded_by IS NULL\nsource='session'", color="ember", fontcolor="ember"];
+    entities [label="entities\ncreated_in='session:<id>'\nmodified_by_play=true"];
+    edges  [label="relationships +\nentity_hierarchy\n(session edges)"];
+  }
+
+  // Triggers converge
+  ws_end -> endfn [label="WS route"];
+  budget -> endfn [label="post-flush\n(idempotent)", color="ember"];
+  endfn  -> flag  [label="SET-NX claim", style=dotted];
+  endfn  -> row   [label="flip status", color="ember"];
+  endfn  -> q_recon [label="enqueue ONE job", color="ember"];
+
+  // The interlock reads the tri-state
+  row -> interlock [label="reconciled_at NULL\n→ block start", style=dotted, color="ember"];
+
+  // Worker pipeline
+  q_recon -> proc  [label="BLPOP-style\n+ retry (idempotent)", color="ember"];
+  ws_list -> proc  [label="load (durable\ncheckpoint source)", color="ember"];
+  proc -> retrieve [label="1. retrieve"];
+  retrieve -> opus [label="2. candidates + live facts"];
+  opus -> validate [label="3. plan"];
+  validate -> commit [label="4. ok + map", color="ember"];
+  validate -> proc  [label="reject CODE\n→ throw (retry)", style=dotted];
+
+  // Commit writes the four substrates, then clears
+  commit -> facts;
+  commit -> entities;
+  commit -> edges;
+  commit -> row    [label="conditional\nmarkReconciled\n(0 rows → ROLLBACK)", color="ember"];
+  commit -> ws_list [label="clear() on win", style=dashed, color="ember"];
+}

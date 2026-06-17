@@ -326,8 +326,10 @@
   fact-delta and the lookup vet's injections are the two capture inputs; the boot-probed Voyage
   embedder it shares with the
   <a href="../data/world-store-retrieval.html">world-store retrieval</a> substrate stamps the
-  working-set vectors. Durable reconciliation of the working set into the canonical world store is a
-  later issue; this tier holds it in-session.
+  working-set vectors. The working set the Scribe builds is folded into the canonical world store by
+  the <a href="./session-reconcile.html">end-of-session reconciliation</a> when the session ends —
+  this tier holds it in-session, and the tier and provenance it stamps on each item are what the
+  reconciler's tier-floor and attribution policy enforce on commit.
 </p>
 
 <h2>Appendix: surface</h2>

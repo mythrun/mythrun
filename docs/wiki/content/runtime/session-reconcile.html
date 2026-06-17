@@ -1,0 +1,547 @@
+<!-- source: backend/src/session/session-end.ts -->
+<!-- source: backend/src/session/session-reconcile.ts -->
+<!-- source: backend/src/session/reconcile/validate.ts -->
+<!-- source: backend/src/session/reconcile/commit.ts -->
+<!-- source: backend/src/llm/session-reconciler.ts -->
+<!-- source: backend/src/llm/schemas/session-reconcile.ts -->
+<!-- source: backend/src/llm/prompts/session/session-reconciler.txt -->
+<!-- source: backend/src/repo/facts.ts -->
+<!-- source: backend/src/repo/sessions.ts -->
+<!-- source: backend/src/repo/entities.ts -->
+<!-- source: backend/src/server-queues.ts -->
+<!-- source: backend/migrations/027_fact_supersede.sql -->
+<!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
+<!-- source-hash: sha256:0f82329ba00c053bac948b77f27557672ce9f120492710b52f5f2b992b634790 -->
+<!-- last-ticket: MYT-74a -->
+
+<h1>End-of-session reconciliation</h1>
+
+<p class="lead">
+  What happens when a session ends. The in-session working set — every fact the Fast Thinker
+  improvised this session, tier- and provenance-annotated by the
+  <a href="./scribe.html">Scribe</a> — is folded into durable canon: entities, append-only facts,
+  relationship edges, and embeddings. One holistic Opus pass makes every match-vs-mint and
+  contradiction judgment; deterministic code validates it and commits it in a single transaction.
+</p>
+
+<!-- @diagram: runtime/session-reconcile -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Through a live session the <a href="./scribe.html">Scribe</a> accumulates the session's
+  improvisation into a Redis working set — an append-only list of facts the Fast Thinker invented,
+  each stamped with its tier (<code>known</code> / <code>discoverable</code> / <code>secret</code>)
+  and provenance (objective ground truth, or an NPC's attributed claim). That working set is
+  ephemeral: it lives in Redis (ridden onto the durable 5-minute Postgres checkpoint) and it never
+  touches the world store while the session is live. Reconciliation is the closing step that makes
+  the session's discoveries permanent — it turns the working set into canon the next session, the
+  next prep, and the wiki can read.
+</p>
+
+<p>
+  Two pieces make that happen, both new in MYT-74a: a <strong>session-end lifecycle</strong> that
+  detects a session is over and fences off the still-draining turn loop, and a
+  <strong>reconcile pass</strong> — an eighth BullMQ worker — that does the actual fold off the hot
+  path. The diagram traces both: the two end triggers converging on <code>endSession</code> at the
+  left, and the worker's <code>retrieve → reconcile → validate → commit</code> pipeline on the
+  right.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why a holistic Opus plan, not a per-subject loop</strong> — the obvious shape is "for each
+  working-set subject, decide match-or-mint and append its facts." But two working-set items can
+  name the same brand-new entity; a per-subject loop would mint it twice. One Opus call that sees
+  the whole working set at once gives the best cross-subject coherence — it can collapse two
+  mentions into one mint, resolve a contradiction against the live canon it was shown, and omit a
+  restatement that already matches existing canon. This is also the
+  <a href="../runtime/index.html">Zero Framework Cognition</a> line: the match/mint/contradiction
+  <em>judgment</em> is the model's; the application code does mechanical candidate retrieval and
+  deterministic commit, never a similarity-threshold auto-match (that would hardcode a judgment ZFC
+  delegates to the model).
+</aside>
+
+<h2>The session-end lifecycle</h2>
+
+<p>
+  There was no session-end flow before MYT-74a. MYT-65 built <code>suspend</code> (all players
+  disconnect, the session checkpoints but stays <code>status='active'</code>); the
+  <code>sessions.summary</code> / <code>handoff</code> columns sat unpopulated. This piece builds
+  the trigger and the orchestration shell so a session can structurally end and commit its canon.
+</p>
+
+<p>
+  Two triggers converge on one flow, <code>endSession</code> in <code>session/session-end.ts</code>:
+</p>
+
+<ul>
+  <li>
+    <strong>Explicit</strong> — a player sends an <code>end_session</code> WebSocket frame (a bare
+    summon, no payload, like the <code>dm_invoke</code> "@DM button"). The
+    <a href="./session-transport.html">session transport</a> route resolves the world id and runs
+    the orchestration.
+  </li>
+  <li>
+    <strong>Budget auto-end</strong> — the token budget reaches 100%. The
+    <a href="./session-turn.html">turn worker</a> observes the crossing on its post-flush success
+    phase (the same place the ST-evaluation floor is bumped) and fires the same end flow. The
+    Fast-Thinker context bound is the real session-length cap; when cumulative usage reaches it, the
+    session <em>has</em> to end because the FT can hold no more transcript.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
+  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
+  100%). <code>endSession</code>'s first act is to claim a once-only
+  <code>session:{cId}:ending</code> flag; the loser of the race short-circuits there. So the status
+  flip, the reconcile enqueue, and the <code>session_end</code> broadcast each run exactly once no
+  matter how many triggers fire.
+</aside>
+
+<p>The flow is ordered to fence the reconcile against still-draining in-flight work:</p>
+
+<ol>
+  <li>
+    <strong>Quiesce.</strong> Set the <code>ending</code> flag and cancel any pending suspend (an
+    uncancelled suspend would later re-checkpoint an ended session — a lost update on the very
+    checkpoint reconcile reads). The inbound WS handler then drops every frame except a redundant
+    <code>end_session</code>, so no new turn is enqueued after end.
+  </li>
+  <li>
+    <strong>Fence the in-flight turn.</strong> Acquire the per-session lock — the same lock the
+    <a href="./session-turn.html">turn worker</a> holds while rendering. Acquiring it means no turn
+    is mid-render; the working set won't be mutated out from under the reconcile.
+  </li>
+  <li>
+    <strong>Flip + enqueue.</strong> Transition the row to <code>status='ended'</code>,
+    <code>ended_at=now()</code> (<code>reconciled_at</code> stays NULL — only a successful commit
+    sets it). Enqueue one reconcile job, with a per-session <code>jobId</code>
+    (<code>reconcile-{sessionId}</code>) so a double-trigger collapses to a single broker job.
+  </li>
+  <li>
+    <strong>Close.</strong> Broadcast a structural <code>session_end</code> frame to every client.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>A contended lock proceeds anyway — the worker re-fences</strong> — if the lock is held (a
+  turn is genuinely mid-flight), <code>endSession</code> still flips the row and enqueues. It
+  doesn't block. The reconcile worker re-acquires the <em>same</em> lock itself before it reads the
+  working set, so the fence is enforced there regardless. The lock-fence is the load-bearing part;
+  the final turn's trailing post-turn jobs (Scribe, ledger) drain on their own queues.
+</aside>
+
+<h3>The cross-session start interlock</h3>
+
+<p>
+  The working set is keyed by campaign (<code>session:{cId}:workingset</code> — one live session per
+  campaign), and the <code>idx_sessions_one_active</code> index frees the active slot the instant
+  status flips to <code>ended</code>. Without a guard, a new session could start on the same
+  campaign, append onto the <em>same</em> Redis list, and have the prior session's still-pending
+  reconcile load the polluted list and <code>clear()</code> it — silently destroying the new
+  session's working set on a perfectly normal flow (budget auto-end of session 1 → start session 2).
+</p>
+
+<p>
+  The fix is an interlock at <code>POST /api/sessions/:campaignId/start</code>: it returns
+  <code>409 reconcile_pending</code> while the campaign's most-recent session is
+  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code>. No new session starts until the prior
+  one's canon is committed and its working set cleared. Reconcile is fast (async, seconds to tens of
+  seconds), so the block is brief in the happy path.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The tri-state is the reader contract</strong> — <code>ended_at</code> set with
+  <code>reconciled_at</code> NULL means "ended, reconcile pending <em>or</em> failed." Consumers
+  must not treat such a session's canon as complete. <code>reconciled_at</code> set means canon is
+  committed. A <em>terminal</em> reconcile failure therefore surfaces as a stuck campaign plus an
+  alarm — observable-stuck, not silent canon loss. That is the correct failure mode for a canon
+  write path: better to block the next session than to lose what happened in this one.
+</aside>
+
+<h2>The reconcile pass</h2>
+
+<p>
+  The worker body in <code>session/session-reconcile.ts</code> is ZFC-shaped: a deterministic
+  retrieve, one LLM judgment, a deterministic commit. The world id is resolved once (session →
+  campaign → world). The worker is <strong>not total</strong> — unlike the post-turn Scribe job, it
+  <em>throws</em> on transient failure so BullMQ retries, and every retry is idempotent (the commit
+  gate, below, keeps a re-run from double-writing).
+</p>
+
+<h3>1. Retrieve (deterministic)</h3>
+
+<p>
+  Load the working set. For each distinct subject, call
+  <a href="../data/world-store-retrieval.html#the-read-path-part-one-semantic-search"
+    ><code>findSimilarEntities</code></a
+  >
+  to pull the top-K canon entity candidates, then load those candidates'
+  <strong>live</strong> facts (<code>superseded_by IS NULL</code>) so the reconciler sees current
+  canon, never a fact a prior session already corrected away. <code>findSimilarEntities</code>
+  throws on failure (it is on the canon write path — a swallowed embed blip would make the
+  reconciler think no similar entity exists and mint a duplicate), so a retrieval failure propagates
+  and the job retries. This fan-out — the per-subject query embeddings, batched through Voyage, and
+  the candidate reads — is the dominant latency, not the single Opus call.
+</p>
+
+<h3>2. Reconcile (one holistic Opus call)</h3>
+
+<p>
+  <code>llm/session-reconciler.ts</code> is one Opus call through the standard
+  <code>generateObject</code> boundary. Its input is the full working set (each item's subject name,
+  content, kind, tier, provenance, source, optional parent name), the retrieved candidates and their
+  live facts, and the world tone. Its output is a structured <strong>plan</strong>: entity
+  match/mint ops, fact appends (each optionally superseding a live fact), and relationship edges.
+  The model owns every judgment — it decides match vs mint per subject, resolves contradictions by
+  <em>absorb</em> (canonize the improvised version) or <em>supersede</em> (append the canonical
+  version and point the old fact's <code>superseded_by</code> at it), bakes an NPC's attribution
+  into an attributed claim's content, and <em>omits</em> any restatement that already matches live
+  canon so a stable entity doesn't accrete a duplicate fact every session.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The output ceiling is pinned, and <code>redactRawText</code> is on</strong> — the budget
+  auto-end fires on the <em>largest</em> sessions, so the call sizes its
+  <code>maxOutputTokens</code> for the worst case (an unpinned cap risks mid-JSON truncation → a
+  terminal fail). And because the reconciler reasons over secret-tier items, a malformed response
+  must never spill a secret into the repair log or the rethrown error's diagnostic —
+  <code>redactRawText: true</code> nulls the raw snippet, exactly the posture the
+  <a href="./scribe.html">secret-tripwire and retcon-author</a> calls use. A
+  <code>sonnet</code> repair strategy is acceptable only because the validator (next) re-checks
+  every id post-repair — repair fixes JSON shape, never the match/mint judgment.
+</aside>
+
+<h3>3. Validate (deterministic — structural + policy)</h3>
+
+<p>
+  <code>session/reconcile/validate.ts</code> is pure (no I/O) and security-critical. It builds the
+  load-bearing <strong>subject-name → entity-id map</strong> (matched canon ids plus minted ids) and
+  resolves every fact and relationship op through it. The arms: every <code>match</code> points at a
+  live candidate; every minted type is legal (<code>npc | location | faction | item</code>); every
+  fact subject and every relationship endpoint resolves to an entity op (else it is a dangling ref →
+  reject); a supersede target is a live fact. There is no semantic re-judgment here — the validator
+  enforces structure and policy, not meaning.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reject the plan, don't silently fix it</strong> — a dangling reference or a tier downgrade
+  is a model bug worth surfacing. The validator returns the first failure as a structural reason
+  code and the worker throws, so the non-deterministic Opus call is retried (the attempts cap bounds
+  a persistently-failing one). A partial commit never happens — validation runs entirely before the
+  transaction opens.
+</aside>
+
+<h3>4. Commit (deterministic, transactional)</h3>
+
+<p>
+  <code>session/reconcile/commit.ts</code> folds the validated plan into canon in
+  <strong>one transaction</strong>. It mints entities (<code>created_in='session:&lt;id&gt;'</code>,
+  marked touched-by-play), appends facts, sets <code>superseded_by</code> /
+  <code>superseded_at</code> pointers on corrected facts (and NULLs the superseded fact's embedding
+  so it leaves the HNSW index rather than burning recall budget), inserts relationship edges and any
+  sub-faction hierarchy edges, and writes the new facts' embeddings. The Voyage re-embed call runs
+  <em>before</em> the transaction opens — slow I/O never sits inside a <code>BEGIN</code> — and the
+  resulting vectors are written inside the transaction, so embeddings are atomic with the facts and
+  can't desync across a retry. On a clean commit the worker clears the working set.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The conditional <code>reconciled_at</code> update is the idempotency mutex</strong> — the
+  commit's <em>last</em> in-transaction statement is
+  <code>UPDATE sessions SET reconciled_at = now() WHERE id = $1 AND reconciled_at IS NULL</code>.
+  Zero rows updated means another execution already reconciled this session → roll the whole
+  transaction back, so no duplicate canon lands. A plain unconditional write would not be a guard:
+  two executions that both read NULL on entry (the candidate retrieval and the seconds-long Opus
+  call sit between the entry check and <code>BEGIN</code>) would both commit a full duplicate of the
+  working set. The conditional <code>WHERE</code> serializes them; the on-entry check is just a
+  cheap early-out.
+</aside>
+
+<h2>The append-only fact log</h2>
+
+<p>
+  Migration 027 makes <code>facts</code> append-only for corrections. A correction never edits a
+  row's content — it appends a new fact and points the old fact's <code>superseded_by</code> at it
+  (with a <code>superseded_at</code> stamp). Live canon is <code>superseded_by IS NULL</code>; the
+  full history is the supersede chain. The same migration adds <code>sessions.reconciled_at</code> —
+  the completion marker and the idempotency gate. A partial index
+  <code>idx_facts_live_by_entity</code> on
+  <code>(entity_id, access_level) WHERE superseded_by IS NULL</code> matches the live-canon snapshot
+  predicate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>ON DELETE SET NULL</code> on the supersede FK is deliberate</strong> — the FK from a
+  live fact to the superseded fact it replaced is declared <code>ON DELETE SET NULL</code>, not the
+  bare default. <code>entities → facts</code> is <code>ON DELETE CASCADE</code>, so a world-regen
+  wipe that deletes an entity whose <em>superseded</em> fact is pointed-to by a <em>live</em> fact
+  would otherwise FK-abort the cascade. Setting the pointer to NULL on delete lets the wipe proceed.
+</aside>
+
+<p>
+  Reconcile-committed facts carry three code-stamped columns: <code>source='session'</code> (the
+  provenance marker distinguishing session-improvised canon from prep canon),
+  <code>narrative_status='delivered'</code> (these facts <em>were</em> shown to players this
+  session), and a <code>topic</code> the model emits per fact (it drives later grouping and
+  retrieval, so a constant stamp would degrade it). A session-committed <code>secret</code> fact is
+  indistinguishable at read time from a prep <code>secret</code> fact and inherits the same
+  <a href="./slow-thinker.html">Slow-Thinker</a> over-pull gate.
+</p>
+
+<h3>The live-only read filter</h3>
+
+<p>
+  An append-only log means every canon-fact reader must default to live-only, or a corrected-away
+  fact would surface beside its correction. The read defaults to
+  <code>superseded_by IS NULL</code> through a binder flag (so a future history/audit reader can opt
+  into the full chain — a durable shape, not a hardcoded <code>WHERE</code> per call site). The
+  reader set that now filters live-only: the
+  <a href="../data/world-store-retrieval.html">world-retrieval</a> <code>searchFacts</code> (the
+  Fast Thinker's <code>search_lore</code> arm), the member-facing world-snapshot view, the
+  prep/coherence composite read, the embed-write backfill (skip superseded rows — don't re-embed
+  dead canon), and the reconciler's own candidate-fact read (else a superseded secret could re-enter
+  a later reconcile and un-retcon itself).
+</p>
+
+<h2>Enforced ignorance</h2>
+
+<p>
+  The reconciler reasons over secret-tier working-set items <em>and</em> secret-cleared candidate
+  facts, so the validated plan legitimately contains secret prose — a <code>secret</code> fact's
+  content <em>is</em> the secret, and this call is allowed to write it into canon. The boundary here
+  is therefore <strong>not</strong> "no player-facing surface." There are two real surfaces, and
+  both are mechanical, not prompt-trusted.
+</p>
+
+<p>
+  <strong>The log/alert surface is the actual leak vector.</strong> The validated plan object is
+  never logged or broadcast (the <code>session_end</code> frame is structural; the plan is not in
+  it), and every alert payload — a validator reject, a terminal failure — carries
+  <strong>structural facts only</strong>: op counts, a reject reason code, ids,
+  <code>sessionId</code>, never <code>content</code> prose or the working-set snapshot. A reject
+  reason is a structural code (<code>dangling_match</code>, <code>tier_downgrade</code>, …), never a
+  string that echoes a fact.
+</p>
+
+<p>
+  <strong>Tier and attribution are preserved on commit, by mechanical guard.</strong> Tier and
+  attribution preservation is policy enforcement — the explicit ZFC exception — so the validator
+  enforces it structurally, not by trusting the prompt:
+</p>
+
+<ul>
+  <li>
+    <strong>Tier floor.</strong> Each plan fact carries the originating working-set item's subject
+    name (the key the Scribe stamped, not the model-rephrasable entity <code>name</code>). The
+    validator joins each fact to its item by subject name and rejects the plan if a fact's access
+    level is <em>weaker</em> than its item's tier. Per-fact, not per-entity (entity granularity
+    would wrongly bury a secret entity's legitimately-<code>known</code> facts); reject-not-edit (a
+    downgrade is a model bug worth surfacing).
+  </li>
+  <li>
+    <strong>Attribution arm.</strong> Each plan fact carries <code>claimedBy</code> — the NPC name
+    for an attributed claim, else null. The validator rejects a fact whose working-set item is
+    <code>provenance: attributed</code> but whose <code>claimedBy</code> is null (the model dropped
+    the attribution → would canonize a hearsay claim as objective truth). <code>claimedBy</code> is
+    the structural signal the validator checks; the prompt also bakes the attribution into the fact
+    content, but the structural arm is what's tested deterministically.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Why the structural <code>claimedBy</code>, not just prose attribution</strong> — an
+  attributed working-set item ("Marsh the Fishmonger claims the harbor answers to smugglers") must
+  canonize as a <em>claim</em>, never as ground truth, so an NPC's lie or partial knowledge can't
+  silently become canon. Baking the attribution into the prose alone (D6) is invisible to a test;
+  the <code>claimedBy</code> field is the structural signal the validator checks and the leak matrix
+  exercises with a mocked model — restoring the structural-and-tested posture the Scribe
+  established.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3 id="recover-a-stuck-reconcile-pending-campaign">
+  Recover a stuck <code>reconcile_pending</code> campaign
+</h3>
+<ol>
+  <li>
+    Symptom: <code>POST /api/sessions/:campaignId/start</code> returns
+    <code>409 reconcile_pending</code> and stays that way. The campaign's most-recent session is
+    <code>ended_at</code> set, <code>reconciled_at</code> NULL — the reconcile never completed.
+  </li>
+  <li>
+    Confirm the worker exhausted its retries: look for a <code>reconcile_plan_rejected</code> or a
+    transient-failure log line for that <code>sessionId</code> in the
+    <a href="./worker.html">worker</a> service logs (structural fields only — no plan content).
+  </li>
+  <li>
+    The working set is not lost — it survives on the durable 5-minute Postgres checkpoint. The
+    correct recovery is to re-drive the reconcile job for that session (the conditional gate makes a
+    re-run idempotent); a persistent rejection means a real plan bug to fix before re-driving.
+  </li>
+</ol>
+
+<h3 id="end-a-session-by-hand-in-dev">End a session by hand (dev)</h3>
+<ol>
+  <li>
+    With a live session open over the WebSocket, send an <code>end_session</code> frame. The server
+    flips the row to <code>ended</code>, broadcasts <code>session_end</code>, and enqueues the
+    reconcile job.
+  </li>
+  <li>
+    Watch the worker logs for <code>reconcile_committed</code> (carries op counts only). Then
+    inspect <code>sessions.reconciled_at</code> (now set) and the new <code>facts</code> rows
+    (<code>source='session'</code>) for the world.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  This page picks up where the <a href="./scribe.html">Scribe</a> leaves off: the Scribe builds the
+  tier- and provenance-annotated working set during the session; reconciliation commits it at the
+  end. The end lifecycle lives at the <a href="./session-transport.html">session transport</a> seam
+  (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the
+  start interlock) and is also fired by the <a href="./session-turn.html">turn worker</a>'s budget
+  auto-end. The reconcile worker is the eighth <a href="./worker.html">BullMQ worker</a>. It
+  retrieves candidates through the
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a> resolvers and writes
+  through the <a href="../data/repository.html">repository layer</a>'s <code>facts</code>,
+  <code>entities</code>, <code>relationships</code>, and <code>entityHierarchy</code> namespaces;
+  the append-only <code>superseded_by</code> / <code>superseded_at</code> columns and
+  <code>sessions.reconciled_at</code> are on the <a href="../data/schema.html">schema</a>.
+  Downstream gating stays intact — the wiki-data refresh (a later piece) reads only
+  <code>known</code> facts; secret tiers stay behind the
+  <a href="./slow-thinker.html">Slow-Thinker</a> gate.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>The reconcile plan (Zod root)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Op group</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>entities[]</code></td>
+      <td>
+        <code>op</code> (<code>match | mint</code>), <code>subjectName</code>,
+        <code>canonEntityId</code> (set when matching), <code>name</code>, <code>entityType</code>,
+        <code>accessLevel</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>facts[]</code></td>
+      <td>
+        <code>subjectName</code> (the tier-floor join key), <code>topic</code>,
+        <code>content</code> (no <code>.max()</code> — a secret's content is the secret),
+        <code>accessLevel</code>, <code>claimedBy</code> (the structural attribution signal),
+        <code>supersedesFactId</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>relationships[]</code></td>
+      <td>
+        <code>fromSubjectName</code>, <code>toSubjectName</code>, <code>relationshipType</code>,
+        <code>description</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Validator reject reasons (structural codes)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Reason</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>dangling_match</code></td>
+      <td>A match op's <code>canonEntityId</code> is null or not a live candidate.</td>
+    </tr>
+    <tr>
+      <td><code>dangling_fact_subject</code></td>
+      <td>A fact's <code>subjectName</code> resolves to no entity op.</td>
+    </tr>
+    <tr>
+      <td><code>dangling_relationship_endpoint</code></td>
+      <td>A relationship endpoint resolves to no entity op.</td>
+    </tr>
+    <tr>
+      <td><code>supersede_target_not_live</code></td>
+      <td>A <code>supersedesFactId</code> is not a live canon fact.</td>
+    </tr>
+    <tr>
+      <td><code>tier_downgrade</code></td>
+      <td>A fact's access level is weaker than its working-set item's tier.</td>
+    </tr>
+    <tr>
+      <td><code>attribution_dropped</code></td>
+      <td>An attributed item's fact has <code>claimedBy: null</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Worker tuning</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Knob</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Queue / job id</td>
+      <td>
+        <code>session-reconcile</code> / <code>reconcile-{sessionId}</code> (per-session dedup)
+      </td>
+    </tr>
+    <tr>
+      <td>Concurrency · lock</td>
+      <td>1 · 180s (≥ the 120s Opus timeout + embed + commit headroom; never stalled-reclaimed)</td>
+    </tr>
+    <tr>
+      <td>Retries</td>
+      <td>
+        5 attempts, exponential backoff (30s); <code>removeOnComplete</code> +
+        <code>removeOnFail</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Candidates per subject</td>
+      <td>5 (top-K similar canon entities)</td>
+    </tr>
+    <tr>
+      <td>Opus call</td>
+      <td>
+        120s timeout, 8000 max output tokens, <code>redactRawText</code>, <code>sonnet</code> repair
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/session/session-end.ts</code> (the lifecycle orchestration),
+  <code>backend/src/session/session-reconcile.ts</code> (the worker),
+  <code>backend/src/session/reconcile/validate.ts</code> + <code>reconcile/commit.ts</code> (the
+  pure validator + the transactional commit), <code>backend/src/llm/session-reconciler.ts</code> +
+  <code>backend/src/llm/schemas/session-reconcile.ts</code> +
+  <code>backend/src/llm/prompts/session/session-reconciler.txt</code> (the Opus plan),
+  <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> / <code>entities.ts</code> (the
+  append-only fact writes, the conditional gate, play-marking),
+  <code>backend/src/server-queues.ts</code> (the queue build), and
+  <code>backend/migrations/027_fact_supersede.sql</code> (the append-only columns). Design spec:
+  <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code>.
+</p>

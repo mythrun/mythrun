@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>End-of-session reconciliation · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="session-reconcile">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html" class="active">End-of-session reconciliation</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › End-of-session reconciliation</div>
+        <article>
+<h1>End-of-session reconciliation</h1>
+
+<p class="lead">
+  What happens when a session ends. The in-session working set — every fact the Fast Thinker
+  improvised this session, tier- and provenance-annotated by the
+  <a href="./scribe.html">Scribe</a> — is folded into durable canon: entities, append-only facts,
+  relationship edges, and embeddings. One holistic Opus pass makes every match-vs-mint and
+  contradiction judgment; deterministic code validates it and commits it in a single transaction.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="3854pt" height="414pt"
+ viewBox="14.00 14.00 3840.00 399.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 395.4)">
+<title>session_reconcile</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-381 3821.4,-381 3821.4,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_triggers</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-165 8,-329 551.23,-329 551.23,-165 8,-165"/>
+<text xml:space="preserve" text-anchor="middle" x="279.61" y="-315.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Two end triggers &#160;→ &#160;one flow</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_pg_lifecycle</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3141.79,-278 3141.79,-369 3809.4,-369 3809.4,-278 3141.79,-278"/>
+<text xml:space="preserve" text-anchor="middle" x="3475.6" y="-355.1" font-family="Courier,monospace" font-size="11.00">Postgres &#160;(lifecycle)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_batch</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="699.24,-199 699.24,-290 909.15,-290 909.15,-199 699.24,-199"/>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-276.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1087.17,-106 1087.17,-228 2956.21,-228 2956.21,-106 1087.17,-106"/>
+<text xml:space="preserve" text-anchor="middle" x="2021.69" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Reconcile worker &#160;— &#160;the 8th BullMQ worker (concurrency 1 · 180s lock)</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_realtime</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="699.24,-27 699.24,-191 909.15,-191 909.15,-27 699.24,-27"/>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-177.1" font-family="Courier,monospace" font-size="11.00">Redis (realtime)</text>
+</g>
+<g id="clust6" class="cluster">
+<title>cluster_canon</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3140.23,-8 3140.23,-270 3393.87,-270 3393.87,-8 3140.23,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="3267.05" y="-256.1" font-family="Courier,monospace" font-size="11.00">Durable canon &#160;(Postgres + pgvector)</text>
+</g>
+<!-- ws_end -->
+<g id="node1" class="node">
+<title>ws_end</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-221.44 8,-221.44 8,-164.56 171.7,-164.56 171.7,-221.44"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-202.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">end_session WS frame</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-189.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(explicit summon,</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-176.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> no payload)</text>
+</g>
+<!-- endfn -->
+<g id="node3" class="node">
+<title>endfn</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="551.23,-275.64 301.71,-275.64 301.71,-192.36 551.23,-192.36 551.23,-275.64"/>
+<text xml:space="preserve" text-anchor="middle" x="426.47" y="-257.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">endSession (idempotent)</text>
+<text xml:space="preserve" text-anchor="middle" x="426.47" y="-243.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SET&#45;NX `ending` flag →</text>
+<text xml:space="preserve" text-anchor="middle" x="426.47" y="-230.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">cancelSuspend → lock fence →</text>
+<text xml:space="preserve" text-anchor="middle" x="426.47" y="-217.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">flip status=&#39;ended&#39; →</text>
+<text xml:space="preserve" text-anchor="middle" x="426.47" y="-204.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueue reconcile → session_end</text>
+</g>
+<!-- ws_end&#45;&gt;endfn -->
+<g id="edge1" class="edge">
+<title>ws_end&#45;&gt;endfn</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.36,-202.14C203.74,-205.73 239.91,-209.96 272.71,-214 279.25,-214.8 285.93,-215.64 292.69,-216.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="292.22,-218.9 299.47,-217.35 292.83,-214.04 292.22,-218.9"/>
+<text xml:space="preserve" text-anchor="middle" x="236.71" y="-217" font-family="Courier,monospace" font-size="10.00">WS route</text>
+</g>
+<!-- budget -->
+<g id="node2" class="node">
+<title>budget</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-307.44 8,-307.44 8,-250.56 171.7,-250.56 171.7,-307.44"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-288.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">turn worker</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-275.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">budget&#45;100% auto&#45;end</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-262.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;flush phase)</text>
+</g>
+<!-- budget&#45;&gt;endfn -->
+<g id="edge2" class="edge">
+<title>budget&#45;&gt;endfn</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M172.28,-268.05C208.4,-263.19 251.85,-257.35 292.48,-251.88"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="292.69,-254.33 299.3,-250.97 292.04,-249.47 292.69,-254.33"/>
+<text xml:space="preserve" text-anchor="middle" x="236.71" y="-278.16" font-family="Courier,monospace" font-size="10.00">post&#45;flush</text>
+<text xml:space="preserve" text-anchor="middle" x="236.71" y="-266.16" font-family="Courier,monospace" font-size="10.00">(idempotent)</text>
+</g>
+<!-- row -->
+<g id="node4" class="node">
+<title>row</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3391.31,-348.04 3141.79,-348.04 3141.79,-277.96 3391.31,-277.96 3391.31,-348.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-329.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions row</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-316.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status=&#39;ended&#39;, ended_at=now</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-303.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reconciled_at = NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-289.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(tri&#45;state: ended ≠ reconciled)</text>
+</g>
+<!-- endfn&#45;&gt;row -->
+<g id="edge4" class="edge">
+<title>endfn&#45;&gt;row</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M551.77,-273.62C624.31,-293.33 718.04,-313 803.2,-313 803.2,-313 803.2,-313 2812.65,-313 2920.24,-313 3042.21,-313 3132.45,-313"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3132.27,-315.45 3139.27,-313 3132.27,-310.55 3132.27,-315.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-316" font-family="Courier,monospace" font-size="10.00">flip status</text>
+</g>
+<!-- q_recon -->
+<g id="node6" class="node">
+<title>q_recon</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="909.15,-269.04 699.24,-269.04 699.24,-198.96 909.15,-198.96 909.15,-269.04"/>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-250.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;reconcile</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-237.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">jobId reconcile&#45;{sessionId}</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-224.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(double&#45;trigger collapses)</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-210.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attempts 5 · exp backoff</text>
+</g>
+<!-- endfn&#45;&gt;q_recon -->
+<g id="edge5" class="edge">
+<title>endfn&#45;&gt;q_recon</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M551.8,-234C596.37,-234 646.35,-234 689.94,-234"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="689.75,-236.45 696.75,-234 689.75,-231.55 689.75,-236.45"/>
+<text xml:space="preserve" text-anchor="middle" x="625.24" y="-237" font-family="Courier,monospace" font-size="10.00">enqueue ONE job</text>
+</g>
+<!-- flag -->
+<g id="node13" class="node">
+<title>flag</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="886.05,-169.84 722.35,-169.84 722.35,-126.16 886.05,-126.16 886.05,-169.84"/>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-151.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:ending</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-138.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(SET&#45;NX once&#45;only)</text>
+</g>
+<!-- endfn&#45;&gt;flag -->
+<g id="edge3" class="edge">
+<title>endfn&#45;&gt;flag</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M551.8,-205.54C604.51,-193.48 664.79,-179.68 713.11,-168.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="713.63,-171.01 719.91,-167.06 712.54,-166.24 713.63,-171.01"/>
+<text xml:space="preserve" text-anchor="middle" x="625.24" y="-201.7" font-family="Courier,monospace" font-size="10.00">SET&#45;NX claim</text>
+</g>
+<!-- interlock -->
+<g id="node5" class="node">
+<title>interlock</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3809.4,-348.04 3559.89,-348.04 3559.89,-277.96 3809.4,-277.96 3809.4,-348.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-329.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">POST /sessions/:id/start</text>
+<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-316.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">409 reconcile_pending while</text>
+<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-303.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ended_at set + reconciled_at NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-289.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(cross&#45;session interlock)</text>
+</g>
+<!-- row&#45;&gt;interlock -->
+<g id="edge6" class="edge">
+<title>row&#45;&gt;interlock</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M3391.83,-313C3441.86,-313 3499.65,-313 3550.53,-313"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3550.47,-315.45 3557.47,-313 3550.47,-310.55 3550.47,-315.45"/>
+<text xml:space="preserve" text-anchor="middle" x="3476.88" y="-328" font-family="Courier,monospace" font-size="10.00">reconciled_at NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="3476.88" y="-316" font-family="Courier,monospace" font-size="10.00">→ block start</text>
+</g>
+<!-- proc -->
+<g id="node7" class="node">
+<title>proc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1376.29,-192.04 1087.17,-192.04 1087.17,-121.96 1376.29,-121.96 1376.29,-192.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-173.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processReconcileJob (NOT total)</text>
+<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-160.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">gate&#45;read → lock → load →</text>
+<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retrieve → render → reconcile →</text>
+<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-133.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">validate → embed → commit → clear</text>
+</g>
+<!-- q_recon&#45;&gt;proc -->
+<g id="edge7" class="edge">
+<title>q_recon&#45;&gt;proc</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M909.84,-215.07C960.52,-205.9 1022.34,-194.71 1078.14,-184.61"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1078.45,-187.05 1084.9,-183.39 1077.58,-182.22 1078.45,-187.05"/>
+<text xml:space="preserve" text-anchor="middle" x="998.16" y="-224.09" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<text xml:space="preserve" text-anchor="middle" x="998.16" y="-212.09" font-family="Courier,monospace" font-size="10.00">+ retry (idempotent)</text>
+</g>
+<!-- retrieve -->
+<g id="node8" class="node">
+<title>retrieve</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1723.42,-176.04 1500.3,-176.04 1500.3,-105.96 1723.42,-105.96 1723.42,-176.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-157.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">findSimilarEntities</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-144.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(per distinct subject, top&#45;K)</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-131.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ live candidate facts</text>
+<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-117.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(superseded_by IS NULL)</text>
+</g>
+<!-- proc&#45;&gt;retrieve -->
+<g id="edge9" class="edge">
+<title>proc&#45;&gt;retrieve</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1377.04,-150.89C1414.69,-149.3 1454.86,-147.6 1491.1,-146.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1491.03,-148.52 1497.92,-145.78 1490.82,-143.63 1491.03,-148.52"/>
+<text xml:space="preserve" text-anchor="middle" x="1438.3" y="-152.48" font-family="Courier,monospace" font-size="10.00">1. retrieve</text>
+</g>
+<!-- opus -->
+<g id="node9" class="node">
+<title>opus</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2173.75,-176.04 1937.44,-176.04 1937.44,-105.96 2173.75,-105.96 2173.75,-176.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-157.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Opus reconciler (ONE call)</text>
+<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-144.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">match/mint · fact append ±</text>
+<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-131.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">supersede · relationship edges</text>
+<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-117.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">redactRawText · pinned cap</text>
+</g>
+<!-- retrieve&#45;&gt;opus -->
+<g id="edge10" class="edge">
+<title>retrieve&#45;&gt;opus</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1724.06,-135.79C1733.65,-135.47 1743.2,-135.2 1752.42,-135 1821.74,-133.51 1839.11,-133.58 1908.44,-135 1914.96,-135.13 1921.64,-135.3 1928.38,-135.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1928.06,-137.93 1935.13,-135.7 1928.21,-133.04 1928.06,-137.93"/>
+<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-138" font-family="Courier,monospace" font-size="10.00">2. candidates + live facts</text>
+</g>
+<!-- validate -->
+<g id="node10" class="node">
+<title>validate</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2543.08,-183.04 2273.76,-183.04 2273.76,-112.96 2543.08,-112.96 2543.08,-183.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-164.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">validate (PURE, security&#45;critical)</text>
+<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-151.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">subjectName→entityId map</text>
+<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-138.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dangling refs · tier floor ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-124.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attribution arm → reject CODE only</text>
+</g>
+<!-- opus&#45;&gt;validate -->
+<g id="edge11" class="edge">
+<title>opus&#45;&gt;validate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2174.39,-143.35C2203.41,-143.93 2234.8,-144.56 2264.86,-145.16"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2264.43,-147.6 2271.48,-145.29 2264.53,-142.7 2264.43,-147.6"/>
+<text xml:space="preserve" text-anchor="middle" x="2223.76" y="-147.71" font-family="Courier,monospace" font-size="10.00">3. plan</text>
+</g>
+<!-- validate&#45;&gt;proc -->
+<g id="edge13" class="edge">
+<title>validate&#45;&gt;proc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2273.32,-177C2240.88,-182.81 2206.21,-188.04 2173.75,-191 1875.68,-218.2 1799.02,-209.9 1500.3,-191 1462.94,-188.64 1422.81,-184.43 1385.3,-179.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1385.89,-177.37 1378.64,-178.93 1385.27,-182.23 1385.89,-177.37"/>
+<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-223.43" font-family="Courier,monospace" font-size="10.00">reject CODE</text>
+<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-211.43" font-family="Courier,monospace" font-size="10.00">→ throw (retry)</text>
+</g>
+<!-- commit -->
+<g id="node11" class="node">
+<title>commit</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2956.21,-189.64 2667.09,-189.64 2667.09,-106.36 2956.21,-106.36 2956.21,-189.64"/>
+<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-171.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">commit (ONE tx)</text>
+<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-157.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">mint entities · append facts ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-144.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">supersede + NULL embedding ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-131.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">edges · hierarchy · markTouchedByPlay</text>
+<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-118.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">conditional markReconciled (LAST)</text>
+</g>
+<!-- validate&#45;&gt;commit -->
+<g id="edge12" class="edge">
+<title>validate&#45;&gt;commit</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2543.58,-148C2580.33,-148 2620.43,-148 2658.12,-148"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2657.81,-150.45 2664.81,-148 2657.81,-145.55 2657.81,-150.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2605.09" y="-151" font-family="Courier,monospace" font-size="10.00">4. ok + map</text>
+</g>
+<!-- commit&#45;&gt;row -->
+<g id="edge17" class="edge">
+<title>commit&#45;&gt;row</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2940.24,-190.39C3006.5,-213.06 3079.99,-239.44 3111.23,-255 3123.09,-260.9 3125.69,-265.84 3139.62,-273.37"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3138.47,-275.53 3145.83,-276.48 3140.67,-271.15 3138.47,-275.53"/>
+<text xml:space="preserve" text-anchor="middle" x="3048.22" y="-282" font-family="Courier,monospace" font-size="10.00">conditional</text>
+<text xml:space="preserve" text-anchor="middle" x="3048.22" y="-270" font-family="Courier,monospace" font-size="10.00">markReconciled</text>
+<text xml:space="preserve" text-anchor="middle" x="3048.22" y="-258" font-family="Courier,monospace" font-size="10.00">(0 rows → ROLLBACK)</text>
+</g>
+<!-- ws_list -->
+<g id="node12" class="node">
+<title>ws_list</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="909.15,-97.04 699.24,-97.04 699.24,-26.96 909.15,-26.96 909.15,-97.04"/>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-78.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-65.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(MYT&#45;73 — tier+provenance</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-52.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">annotated improvisation)</text>
+<text xml:space="preserve" text-anchor="middle" x="804.2" y="-38.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">clear() on a winning commit</text>
+</g>
+<!-- commit&#45;&gt;ws_list -->
+<g id="edge18" class="edge">
+<title>commit&#45;&gt;ws_list</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M2680.69,-105.63C2602.88,-83.92 2501.5,-62 2409.42,-62 1230.73,-62 1230.73,-62 1230.73,-62 1124.85,-62 1004.14,-62 918.4,-62"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="918.5,-59.55 911.5,-62 918.5,-64.45 918.5,-59.55"/>
+<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-65" font-family="Courier,monospace" font-size="10.00">clear() on win</text>
+</g>
+<!-- facts -->
+<g id="node14" class="node">
+<title>facts</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3378.11,-249.04 3155,-249.04 3155,-178.96 3378.11,-178.96 3378.11,-249.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-230.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">facts (append&#45;only)</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-217.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">superseded_by / superseded_at</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-204.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">live = superseded_by IS NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-190.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">source=&#39;session&#39;</text>
+</g>
+<!-- commit&#45;&gt;facts -->
+<g id="edge14" class="edge">
+<title>commit&#45;&gt;facts</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2956.89,-169.02C3017.85,-177.9 3088.01,-188.13 3146.02,-196.58"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3145.41,-198.97 3152.69,-197.55 3146.11,-194.12 3145.41,-198.97"/>
+</g>
+<!-- entities -->
+<g id="node15" class="node">
+<title>entities</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3364.91,-150.44 3168.2,-150.44 3168.2,-93.56 3364.91,-93.56 3364.91,-150.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-131.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-118.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">created_in=&#39;session:&lt;id&gt;&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-105.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">modified_by_play=true</text>
+</g>
+<!-- commit&#45;&gt;entities -->
+<g id="edge15" class="edge">
+<title>commit&#45;&gt;entities</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2956.89,-139.72C3022.41,-135.96 3098.57,-131.59 3158.84,-128.13"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3158.95,-130.57 3165.8,-127.73 3158.67,-125.68 3158.95,-130.57"/>
+</g>
+<!-- edges -->
+<g id="node16" class="node">
+<title>edges</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3335.2,-64.44 3197.9,-64.44 3197.9,-7.56 3335.2,-7.56 3335.2,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">relationships +</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_hierarchy</text>
+<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(session edges)</text>
+</g>
+<!-- commit&#45;&gt;edges -->
+<g id="edge16" class="edge">
+<title>commit&#45;&gt;edges</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2956.89,-112.33C3033.96,-93.27 3125.73,-70.58 3189.07,-54.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3189.45,-57.34 3195.66,-53.28 3188.28,-52.59 3189.45,-57.34"/>
+</g>
+<!-- ws_list&#45;&gt;proc -->
+<g id="edge8" class="edge">
+<title>ws_list&#45;&gt;proc</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M909.84,-85.36C960.52,-96.67 1022.34,-110.48 1078.14,-122.93"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1077.55,-125.31 1084.91,-124.45 1078.62,-120.53 1077.55,-125.31"/>
+<text xml:space="preserve" text-anchor="middle" x="998.16" y="-133.01" font-family="Courier,monospace" font-size="10.00">load (durable</text>
+<text xml:space="preserve" text-anchor="middle" x="998.16" y="-121.01" font-family="Courier,monospace" font-size="10.00">checkpoint source)</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Through a live session the <a href="./scribe.html">Scribe</a> accumulates the session's
+  improvisation into a Redis working set — an append-only list of facts the Fast Thinker invented,
+  each stamped with its tier (<code>known</code> / <code>discoverable</code> / <code>secret</code>)
+  and provenance (objective ground truth, or an NPC's attributed claim). That working set is
+  ephemeral: it lives in Redis (ridden onto the durable 5-minute Postgres checkpoint) and it never
+  touches the world store while the session is live. Reconciliation is the closing step that makes
+  the session's discoveries permanent — it turns the working set into canon the next session, the
+  next prep, and the wiki can read.
+</p>
+
+<p>
+  Two pieces make that happen, both new in MYT-74a: a <strong>session-end lifecycle</strong> that
+  detects a session is over and fences off the still-draining turn loop, and a
+  <strong>reconcile pass</strong> — an eighth BullMQ worker — that does the actual fold off the hot
+  path. The diagram traces both: the two end triggers converging on <code>endSession</code> at the
+  left, and the worker's <code>retrieve → reconcile → validate → commit</code> pipeline on the
+  right.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why a holistic Opus plan, not a per-subject loop</strong> — the obvious shape is "for each
+  working-set subject, decide match-or-mint and append its facts." But two working-set items can
+  name the same brand-new entity; a per-subject loop would mint it twice. One Opus call that sees
+  the whole working set at once gives the best cross-subject coherence — it can collapse two
+  mentions into one mint, resolve a contradiction against the live canon it was shown, and omit a
+  restatement that already matches existing canon. This is also the
+  <a href="../runtime/index.html">Zero Framework Cognition</a> line: the match/mint/contradiction
+  <em>judgment</em> is the model's; the application code does mechanical candidate retrieval and
+  deterministic commit, never a similarity-threshold auto-match (that would hardcode a judgment ZFC
+  delegates to the model).
+</aside>
+
+<h2 id="the-session-end-lifecycle">The session-end lifecycle</h2>
+
+<p>
+  There was no session-end flow before MYT-74a. MYT-65 built <code>suspend</code> (all players
+  disconnect, the session checkpoints but stays <code>status='active'</code>); the
+  <code>sessions.summary</code> / <code>handoff</code> columns sat unpopulated. This piece builds
+  the trigger and the orchestration shell so a session can structurally end and commit its canon.
+</p>
+
+<p>
+  Two triggers converge on one flow, <code>endSession</code> in <code>session/session-end.ts</code>:
+</p>
+
+<ul>
+  <li>
+    <strong>Explicit</strong> — a player sends an <code>end_session</code> WebSocket frame (a bare
+    summon, no payload, like the <code>dm_invoke</code> "@DM button"). The
+    <a href="./session-transport.html">session transport</a> route resolves the world id and runs
+    the orchestration.
+  </li>
+  <li>
+    <strong>Budget auto-end</strong> — the token budget reaches 100%. The
+    <a href="./session-turn.html">turn worker</a> observes the crossing on its post-flush success
+    phase (the same place the ST-evaluation floor is bumped) and fires the same end flow. The
+    Fast-Thinker context bound is the real session-length cap; when cumulative usage reaches it, the
+    session <em>has</em> to end because the FT can hold no more transcript.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
+  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
+  100%). <code>endSession</code>'s first act is to claim a once-only
+  <code>session:{cId}:ending</code> flag; the loser of the race short-circuits there. So the status
+  flip, the reconcile enqueue, and the <code>session_end</code> broadcast each run exactly once no
+  matter how many triggers fire.
+</aside>
+
+<p>The flow is ordered to fence the reconcile against still-draining in-flight work:</p>
+
+<ol>
+  <li>
+    <strong>Quiesce.</strong> Set the <code>ending</code> flag and cancel any pending suspend (an
+    uncancelled suspend would later re-checkpoint an ended session — a lost update on the very
+    checkpoint reconcile reads). The inbound WS handler then drops every frame except a redundant
+    <code>end_session</code>, so no new turn is enqueued after end.
+  </li>
+  <li>
+    <strong>Fence the in-flight turn.</strong> Acquire the per-session lock — the same lock the
+    <a href="./session-turn.html">turn worker</a> holds while rendering. Acquiring it means no turn
+    is mid-render; the working set won't be mutated out from under the reconcile.
+  </li>
+  <li>
+    <strong>Flip + enqueue.</strong> Transition the row to <code>status='ended'</code>,
+    <code>ended_at=now()</code> (<code>reconciled_at</code> stays NULL — only a successful commit
+    sets it). Enqueue one reconcile job, with a per-session <code>jobId</code>
+    (<code>reconcile-{sessionId}</code>) so a double-trigger collapses to a single broker job.
+  </li>
+  <li>
+    <strong>Close.</strong> Broadcast a structural <code>session_end</code> frame to every client.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>A contended lock proceeds anyway — the worker re-fences</strong> — if the lock is held (a
+  turn is genuinely mid-flight), <code>endSession</code> still flips the row and enqueues. It
+  doesn't block. The reconcile worker re-acquires the <em>same</em> lock itself before it reads the
+  working set, so the fence is enforced there regardless. The lock-fence is the load-bearing part;
+  the final turn's trailing post-turn jobs (Scribe, ledger) drain on their own queues.
+</aside>
+
+<h3 id="the-cross-session-start-interlock">The cross-session start interlock</h3>
+
+<p>
+  The working set is keyed by campaign (<code>session:{cId}:workingset</code> — one live session per
+  campaign), and the <code>idx_sessions_one_active</code> index frees the active slot the instant
+  status flips to <code>ended</code>. Without a guard, a new session could start on the same
+  campaign, append onto the <em>same</em> Redis list, and have the prior session's still-pending
+  reconcile load the polluted list and <code>clear()</code> it — silently destroying the new
+  session's working set on a perfectly normal flow (budget auto-end of session 1 → start session 2).
+</p>
+
+<p>
+  The fix is an interlock at <code>POST /api/sessions/:campaignId/start</code>: it returns
+  <code>409 reconcile_pending</code> while the campaign's most-recent session is
+  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code>. No new session starts until the prior
+  one's canon is committed and its working set cleared. Reconcile is fast (async, seconds to tens of
+  seconds), so the block is brief in the happy path.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The tri-state is the reader contract</strong> — <code>ended_at</code> set with
+  <code>reconciled_at</code> NULL means "ended, reconcile pending <em>or</em> failed." Consumers
+  must not treat such a session's canon as complete. <code>reconciled_at</code> set means canon is
+  committed. A <em>terminal</em> reconcile failure therefore surfaces as a stuck campaign plus an
+  alarm — observable-stuck, not silent canon loss. That is the correct failure mode for a canon
+  write path: better to block the next session than to lose what happened in this one.
+</aside>
+
+<h2 id="the-reconcile-pass">The reconcile pass</h2>
+
+<p>
+  The worker body in <code>session/session-reconcile.ts</code> is ZFC-shaped: a deterministic
+  retrieve, one LLM judgment, a deterministic commit. The world id is resolved once (session →
+  campaign → world). The worker is <strong>not total</strong> — unlike the post-turn Scribe job, it
+  <em>throws</em> on transient failure so BullMQ retries, and every retry is idempotent (the commit
+  gate, below, keeps a re-run from double-writing).
+</p>
+
+<h3 id="1-retrieve-deterministic">1. Retrieve (deterministic)</h3>
+
+<p>
+  Load the working set. For each distinct subject, call
+  <a href="../data/world-store-retrieval.html#the-read-path-part-one-semantic-search"
+    ><code>findSimilarEntities</code></a
+  >
+  to pull the top-K canon entity candidates, then load those candidates'
+  <strong>live</strong> facts (<code>superseded_by IS NULL</code>) so the reconciler sees current
+  canon, never a fact a prior session already corrected away. <code>findSimilarEntities</code>
+  throws on failure (it is on the canon write path — a swallowed embed blip would make the
+  reconciler think no similar entity exists and mint a duplicate), so a retrieval failure propagates
+  and the job retries. This fan-out — the per-subject query embeddings, batched through Voyage, and
+  the candidate reads — is the dominant latency, not the single Opus call.
+</p>
+
+<h3 id="2-reconcile-one-holistic-opus-call">2. Reconcile (one holistic Opus call)</h3>
+
+<p>
+  <code>llm/session-reconciler.ts</code> is one Opus call through the standard
+  <code>generateObject</code> boundary. Its input is the full working set (each item's subject name,
+  content, kind, tier, provenance, source, optional parent name), the retrieved candidates and their
+  live facts, and the world tone. Its output is a structured <strong>plan</strong>: entity
+  match/mint ops, fact appends (each optionally superseding a live fact), and relationship edges.
+  The model owns every judgment — it decides match vs mint per subject, resolves contradictions by
+  <em>absorb</em> (canonize the improvised version) or <em>supersede</em> (append the canonical
+  version and point the old fact's <code>superseded_by</code> at it), bakes an NPC's attribution
+  into an attributed claim's content, and <em>omits</em> any restatement that already matches live
+  canon so a stable entity doesn't accrete a duplicate fact every session.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The output ceiling is pinned, and <code>redactRawText</code> is on</strong> — the budget
+  auto-end fires on the <em>largest</em> sessions, so the call sizes its
+  <code>maxOutputTokens</code> for the worst case (an unpinned cap risks mid-JSON truncation → a
+  terminal fail). And because the reconciler reasons over secret-tier items, a malformed response
+  must never spill a secret into the repair log or the rethrown error's diagnostic —
+  <code>redactRawText: true</code> nulls the raw snippet, exactly the posture the
+  <a href="./scribe.html">secret-tripwire and retcon-author</a> calls use. A
+  <code>sonnet</code> repair strategy is acceptable only because the validator (next) re-checks
+  every id post-repair — repair fixes JSON shape, never the match/mint judgment.
+</aside>
+
+<h3 id="3-validate-deterministic-structural-policy">3. Validate (deterministic — structural + policy)</h3>
+
+<p>
+  <code>session/reconcile/validate.ts</code> is pure (no I/O) and security-critical. It builds the
+  load-bearing <strong>subject-name → entity-id map</strong> (matched canon ids plus minted ids) and
+  resolves every fact and relationship op through it. The arms: every <code>match</code> points at a
+  live candidate; every minted type is legal (<code>npc | location | faction | item</code>); every
+  fact subject and every relationship endpoint resolves to an entity op (else it is a dangling ref →
+  reject); a supersede target is a live fact. There is no semantic re-judgment here — the validator
+  enforces structure and policy, not meaning.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reject the plan, don't silently fix it</strong> — a dangling reference or a tier downgrade
+  is a model bug worth surfacing. The validator returns the first failure as a structural reason
+  code and the worker throws, so the non-deterministic Opus call is retried (the attempts cap bounds
+  a persistently-failing one). A partial commit never happens — validation runs entirely before the
+  transaction opens.
+</aside>
+
+<h3 id="4-commit-deterministic-transactional">4. Commit (deterministic, transactional)</h3>
+
+<p>
+  <code>session/reconcile/commit.ts</code> folds the validated plan into canon in
+  <strong>one transaction</strong>. It mints entities (<code>created_in='session:&lt;id&gt;'</code>,
+  marked touched-by-play), appends facts, sets <code>superseded_by</code> /
+  <code>superseded_at</code> pointers on corrected facts (and NULLs the superseded fact's embedding
+  so it leaves the HNSW index rather than burning recall budget), inserts relationship edges and any
+  sub-faction hierarchy edges, and writes the new facts' embeddings. The Voyage re-embed call runs
+  <em>before</em> the transaction opens — slow I/O never sits inside a <code>BEGIN</code> — and the
+  resulting vectors are written inside the transaction, so embeddings are atomic with the facts and
+  can't desync across a retry. On a clean commit the worker clears the working set.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The conditional <code>reconciled_at</code> update is the idempotency mutex</strong> — the
+  commit's <em>last</em> in-transaction statement is
+  <code>UPDATE sessions SET reconciled_at = now() WHERE id = $1 AND reconciled_at IS NULL</code>.
+  Zero rows updated means another execution already reconciled this session → roll the whole
+  transaction back, so no duplicate canon lands. A plain unconditional write would not be a guard:
+  two executions that both read NULL on entry (the candidate retrieval and the seconds-long Opus
+  call sit between the entry check and <code>BEGIN</code>) would both commit a full duplicate of the
+  working set. The conditional <code>WHERE</code> serializes them; the on-entry check is just a
+  cheap early-out.
+</aside>
+
+<h2 id="the-append-only-fact-log">The append-only fact log</h2>
+
+<p>
+  Migration 027 makes <code>facts</code> append-only for corrections. A correction never edits a
+  row's content — it appends a new fact and points the old fact's <code>superseded_by</code> at it
+  (with a <code>superseded_at</code> stamp). Live canon is <code>superseded_by IS NULL</code>; the
+  full history is the supersede chain. The same migration adds <code>sessions.reconciled_at</code> —
+  the completion marker and the idempotency gate. A partial index
+  <code>idx_facts_live_by_entity</code> on
+  <code>(entity_id, access_level) WHERE superseded_by IS NULL</code> matches the live-canon snapshot
+  predicate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>ON DELETE SET NULL</code> on the supersede FK is deliberate</strong> — the FK from a
+  live fact to the superseded fact it replaced is declared <code>ON DELETE SET NULL</code>, not the
+  bare default. <code>entities → facts</code> is <code>ON DELETE CASCADE</code>, so a world-regen
+  wipe that deletes an entity whose <em>superseded</em> fact is pointed-to by a <em>live</em> fact
+  would otherwise FK-abort the cascade. Setting the pointer to NULL on delete lets the wipe proceed.
+</aside>
+
+<p>
+  Reconcile-committed facts carry three code-stamped columns: <code>source='session'</code> (the
+  provenance marker distinguishing session-improvised canon from prep canon),
+  <code>narrative_status='delivered'</code> (these facts <em>were</em> shown to players this
+  session), and a <code>topic</code> the model emits per fact (it drives later grouping and
+  retrieval, so a constant stamp would degrade it). A session-committed <code>secret</code> fact is
+  indistinguishable at read time from a prep <code>secret</code> fact and inherits the same
+  <a href="./slow-thinker.html">Slow-Thinker</a> over-pull gate.
+</p>
+
+<h3 id="the-live-only-read-filter">The live-only read filter</h3>
+
+<p>
+  An append-only log means every canon-fact reader must default to live-only, or a corrected-away
+  fact would surface beside its correction. The read defaults to
+  <code>superseded_by IS NULL</code> through a binder flag (so a future history/audit reader can opt
+  into the full chain — a durable shape, not a hardcoded <code>WHERE</code> per call site). The
+  reader set that now filters live-only: the
+  <a href="../data/world-store-retrieval.html">world-retrieval</a> <code>searchFacts</code> (the
+  Fast Thinker's <code>search_lore</code> arm), the member-facing world-snapshot view, the
+  prep/coherence composite read, the embed-write backfill (skip superseded rows — don't re-embed
+  dead canon), and the reconciler's own candidate-fact read (else a superseded secret could re-enter
+  a later reconcile and un-retcon itself).
+</p>
+
+<h2 id="enforced-ignorance">Enforced ignorance</h2>
+
+<p>
+  The reconciler reasons over secret-tier working-set items <em>and</em> secret-cleared candidate
+  facts, so the validated plan legitimately contains secret prose — a <code>secret</code> fact's
+  content <em>is</em> the secret, and this call is allowed to write it into canon. The boundary here
+  is therefore <strong>not</strong> "no player-facing surface." There are two real surfaces, and
+  both are mechanical, not prompt-trusted.
+</p>
+
+<p>
+  <strong>The log/alert surface is the actual leak vector.</strong> The validated plan object is
+  never logged or broadcast (the <code>session_end</code> frame is structural; the plan is not in
+  it), and every alert payload — a validator reject, a terminal failure — carries
+  <strong>structural facts only</strong>: op counts, a reject reason code, ids,
+  <code>sessionId</code>, never <code>content</code> prose or the working-set snapshot. A reject
+  reason is a structural code (<code>dangling_match</code>, <code>tier_downgrade</code>, …), never a
+  string that echoes a fact.
+</p>
+
+<p>
+  <strong>Tier and attribution are preserved on commit, by mechanical guard.</strong> Tier and
+  attribution preservation is policy enforcement — the explicit ZFC exception — so the validator
+  enforces it structurally, not by trusting the prompt:
+</p>
+
+<ul>
+  <li>
+    <strong>Tier floor.</strong> Each plan fact carries the originating working-set item's subject
+    name (the key the Scribe stamped, not the model-rephrasable entity <code>name</code>). The
+    validator joins each fact to its item by subject name and rejects the plan if a fact's access
+    level is <em>weaker</em> than its item's tier. Per-fact, not per-entity (entity granularity
+    would wrongly bury a secret entity's legitimately-<code>known</code> facts); reject-not-edit (a
+    downgrade is a model bug worth surfacing).
+  </li>
+  <li>
+    <strong>Attribution arm.</strong> Each plan fact carries <code>claimedBy</code> — the NPC name
+    for an attributed claim, else null. The validator rejects a fact whose working-set item is
+    <code>provenance: attributed</code> but whose <code>claimedBy</code> is null (the model dropped
+    the attribution → would canonize a hearsay claim as objective truth). <code>claimedBy</code> is
+    the structural signal the validator checks; the prompt also bakes the attribution into the fact
+    content, but the structural arm is what's tested deterministically.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Why the structural <code>claimedBy</code>, not just prose attribution</strong> — an
+  attributed working-set item ("Marsh the Fishmonger claims the harbor answers to smugglers") must
+  canonize as a <em>claim</em>, never as ground truth, so an NPC's lie or partial knowledge can't
+  silently become canon. Baking the attribution into the prose alone (D6) is invisible to a test;
+  the <code>claimedBy</code> field is the structural signal the validator checks and the leak matrix
+  exercises with a mocked model — restoring the structural-and-tested posture the Scribe
+  established.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="recover-a-stuck-reconcile-pending-campaign">
+  Recover a stuck <code>reconcile_pending</code> campaign
+</h3>
+<ol>
+  <li>
+    Symptom: <code>POST /api/sessions/:campaignId/start</code> returns
+    <code>409 reconcile_pending</code> and stays that way. The campaign's most-recent session is
+    <code>ended_at</code> set, <code>reconciled_at</code> NULL — the reconcile never completed.
+  </li>
+  <li>
+    Confirm the worker exhausted its retries: look for a <code>reconcile_plan_rejected</code> or a
+    transient-failure log line for that <code>sessionId</code> in the
+    <a href="./worker.html">worker</a> service logs (structural fields only — no plan content).
+  </li>
+  <li>
+    The working set is not lost — it survives on the durable 5-minute Postgres checkpoint. The
+    correct recovery is to re-drive the reconcile job for that session (the conditional gate makes a
+    re-run idempotent); a persistent rejection means a real plan bug to fix before re-driving.
+  </li>
+</ol>
+
+<h3 id="end-a-session-by-hand-in-dev">End a session by hand (dev)</h3>
+<ol>
+  <li>
+    With a live session open over the WebSocket, send an <code>end_session</code> frame. The server
+    flips the row to <code>ended</code>, broadcasts <code>session_end</code>, and enqueues the
+    reconcile job.
+  </li>
+  <li>
+    Watch the worker logs for <code>reconcile_committed</code> (carries op counts only). Then
+    inspect <code>sessions.reconciled_at</code> (now set) and the new <code>facts</code> rows
+    (<code>source='session'</code>) for the world.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  This page picks up where the <a href="./scribe.html">Scribe</a> leaves off: the Scribe builds the
+  tier- and provenance-annotated working set during the session; reconciliation commits it at the
+  end. The end lifecycle lives at the <a href="./session-transport.html">session transport</a> seam
+  (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the
+  start interlock) and is also fired by the <a href="./session-turn.html">turn worker</a>'s budget
+  auto-end. The reconcile worker is the eighth <a href="./worker.html">BullMQ worker</a>. It
+  retrieves candidates through the
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a> resolvers and writes
+  through the <a href="../data/repository.html">repository layer</a>'s <code>facts</code>,
+  <code>entities</code>, <code>relationships</code>, and <code>entityHierarchy</code> namespaces;
+  the append-only <code>superseded_by</code> / <code>superseded_at</code> columns and
+  <code>sessions.reconciled_at</code> are on the <a href="../data/schema.html">schema</a>.
+  Downstream gating stays intact — the wiki-data refresh (a later piece) reads only
+  <code>known</code> facts; secret tiers stay behind the
+  <a href="./slow-thinker.html">Slow-Thinker</a> gate.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="the-reconcile-plan-zod-root">The reconcile plan (Zod root)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Op group</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>entities[]</code></td>
+      <td>
+        <code>op</code> (<code>match | mint</code>), <code>subjectName</code>,
+        <code>canonEntityId</code> (set when matching), <code>name</code>, <code>entityType</code>,
+        <code>accessLevel</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>facts[]</code></td>
+      <td>
+        <code>subjectName</code> (the tier-floor join key), <code>topic</code>,
+        <code>content</code> (no <code>.max()</code> — a secret's content is the secret),
+        <code>accessLevel</code>, <code>claimedBy</code> (the structural attribution signal),
+        <code>supersedesFactId</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>relationships[]</code></td>
+      <td>
+        <code>fromSubjectName</code>, <code>toSubjectName</code>, <code>relationshipType</code>,
+        <code>description</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="validator-reject-reasons-structural-codes">Validator reject reasons (structural codes)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Reason</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>dangling_match</code></td>
+      <td>A match op's <code>canonEntityId</code> is null or not a live candidate.</td>
+    </tr>
+    <tr>
+      <td><code>dangling_fact_subject</code></td>
+      <td>A fact's <code>subjectName</code> resolves to no entity op.</td>
+    </tr>
+    <tr>
+      <td><code>dangling_relationship_endpoint</code></td>
+      <td>A relationship endpoint resolves to no entity op.</td>
+    </tr>
+    <tr>
+      <td><code>supersede_target_not_live</code></td>
+      <td>A <code>supersedesFactId</code> is not a live canon fact.</td>
+    </tr>
+    <tr>
+      <td><code>tier_downgrade</code></td>
+      <td>A fact's access level is weaker than its working-set item's tier.</td>
+    </tr>
+    <tr>
+      <td><code>attribution_dropped</code></td>
+      <td>An attributed item's fact has <code>claimedBy: null</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="worker-tuning">Worker tuning</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Knob</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Queue / job id</td>
+      <td>
+        <code>session-reconcile</code> / <code>reconcile-{sessionId}</code> (per-session dedup)
+      </td>
+    </tr>
+    <tr>
+      <td>Concurrency · lock</td>
+      <td>1 · 180s (≥ the 120s Opus timeout + embed + commit headroom; never stalled-reclaimed)</td>
+    </tr>
+    <tr>
+      <td>Retries</td>
+      <td>
+        5 attempts, exponential backoff (30s); <code>removeOnComplete</code> +
+        <code>removeOnFail</code>
+      </td>
+    </tr>
+    <tr>
+      <td>Candidates per subject</td>
+      <td>5 (top-K similar canon entities)</td>
+    </tr>
+    <tr>
+      <td>Opus call</td>
+      <td>
+        120s timeout, 8000 max output tokens, <code>redactRawText</code>, <code>sonnet</code> repair
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/session-end.ts</code> (the lifecycle orchestration),
+  <code>backend/src/session/session-reconcile.ts</code> (the worker),
+  <code>backend/src/session/reconcile/validate.ts</code> + <code>reconcile/commit.ts</code> (the
+  pure validator + the transactional commit), <code>backend/src/llm/session-reconciler.ts</code> +
+  <code>backend/src/llm/schemas/session-reconcile.ts</code> +
+  <code>backend/src/llm/prompts/session/session-reconciler.txt</code> (the Opus plan),
+  <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> / <code>entities.ts</code> (the
+  append-only fact writes, the conditional gate, play-marking),
+  <code>backend/src/server-queues.ts</code> (the queue build), and
+  <code>backend/migrations/027_fact_supersede.sql</code> (the append-only columns). Design spec:
+  <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-session-end-lifecycle">The session-end lifecycle</a></li><li style="padding-left:12px"><a href="#the-cross-session-start-interlock">The cross-session start interlock</a></li><li style="padding-left:0"><a href="#the-reconcile-pass">The reconcile pass</a></li><li style="padding-left:12px"><a href="#1-retrieve-deterministic">1. Retrieve (deterministic)</a></li><li style="padding-left:12px"><a href="#2-reconcile-one-holistic-opus-call">2. Reconcile (one holistic Opus call)</a></li><li style="padding-left:12px"><a href="#3-validate-deterministic-structural-policy">3. Validate (deterministic — structural + policy)</a></li><li style="padding-left:12px"><a href="#4-commit-deterministic-transactional">4. Commit (deterministic, transactional)</a></li><li style="padding-left:0"><a href="#the-append-only-fact-log">The append-only fact log</a></li><li style="padding-left:12px"><a href="#the-live-only-read-filter">The live-only read filter</a></li><li style="padding-left:0"><a href="#enforced-ignorance">Enforced ignorance</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#recover-a-stuck-reconcile-pending-campaign">Recover a stuck reconcile_pending campaign</a></li><li style="padding-left:12px"><a href="#end-a-session-by-hand-in-dev">End a session by hand (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#the-reconcile-plan-zod-root">The reconcile plan (Zod root)</a></li><li style="padding-left:12px"><a href="#validator-reject-reasons-structural-codes">Validator reject reasons (structural codes)</a></li><li style="padding-left:12px"><a href="#worker-tuning">Worker tuning</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

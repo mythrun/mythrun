@@ -10,8 +10,8 @@
 <!-- source: backend/src/repo/session-participants-errors.ts -->
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
-<!-- source-hash: sha256:2cdaee8890a4778687d5e87557fc393eaa85b36f16c99002bab9ae5e62720b77 -->
-<!-- last-ticket: MYT-72 -->
+<!-- source-hash: sha256:cdb3de27576ae0151b919ac87b3f13e22ad569f9a73263811ca965f35fc1b860 -->
+<!-- last-ticket: MYT-74a -->
 
 <h1>Session transport</h1>
 
@@ -60,10 +60,24 @@
 
 <p>
   <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
-  three preconditions (campaign is active, a session prep exists for the next session number, no
-  session already active), the handler runs a fixed four-step sequence whose ordering is
-  load-bearing:
+  four preconditions (campaign is active, a session prep exists for the next session number, no
+  session already active, and — MYT-74a — the campaign's prior session is fully reconciled), the
+  handler runs a fixed four-step sequence whose ordering is load-bearing:
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The reconcile-pending interlock (MYT-74a)</strong> — the fourth precondition returns
+  <code>409 reconcile_pending</code> while the campaign's most-recent session is
+  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code>. The working set is campaign-keyed and
+  <code>idx_sessions_one_active</code> frees the slot the instant status flips to
+  <code>ended</code>, so without this guard a new session could append onto the <em>same</em> Redis
+  working-set list the prior session's still-pending reconcile is about to load and
+  <code>clear()</code> — silent canon loss on a normal flow. The block holds until the
+  <a href="./session-reconcile.html">end-of-session reconcile</a> commits the prior session's canon
+  and clears its working set; reconcile is fast (seconds), so it is brief in the happy path. An
+  active most-recent session has <code>ended_at = NULL</code> and never trips here — the
+  no-session-already-active precondition owns that case.
+</aside>
 
 <ol>
   <li>
@@ -223,11 +237,23 @@
   >
   + <code>classifyClientFrame</code>): non-JSON, a missing <code>type</code>, or a type not on the
   <code>CLIENT_FRAME_TYPES</code> allowlist (<code>player_message</code>, <code>typing_start</code>,
-  <code>typing_stop</code>, and the MYT-67 <code>dm_invoke</code> summon) is silently dropped. A
-  <code>typing_*</code> frame broadcasts immediately with no sequence and no persistence. A
-  <code>player_message</code> goes through persist-then-broadcast: assign a server-ordered
-  <code>seq</code> via Redis <code>INCR</code>, append it to <code>session_messages</code>, then
-  publish the frame through the hub.
+  <code>typing_stop</code>, the MYT-67 <code>dm_invoke</code> summon, and the MYT-74a
+  <code>end_session</code> summon) is silently dropped. A <code>typing_*</code> frame broadcasts
+  immediately with no sequence and no persistence. A <code>player_message</code> goes through
+  persist-then-broadcast: assign a server-ordered <code>seq</code> via Redis <code>INCR</code>,
+  append it to <code>session_messages</code>, then publish the frame through the hub.
+</p>
+
+<p>
+  Two control frames carry no chat text. <code>dm_invoke</code> is the explicit DM summon (above).
+  <code>end_session</code> (MYT-74a) is the explicit session-end summon: it resolves the world id
+  (blob-cached campaign → world) and runs the idempotent
+  <a href="./session-reconcile.html">end-of-session</a> orchestration — quiesce, flip the row to
+  <code>ended</code>, enqueue the reconcile, broadcast a structural <code>session_end</code>. Once a
+  session is ending, an <code>ending</code> flag (a cheap realtime-Redis read) gates the inbound
+  handler: every frame <em>except</em> a redundant <code>end_session</code> is dropped, so no new
+  turn starts after end. A read failure on the flag fails open (the reconcile worker's own commit
+  gate is the durable interlock regardless).
 </p>
 
 <p>
@@ -455,10 +481,16 @@
   streams as <code>text_delta</code>). MYT-70 adds one more server → client frame,
   <code>ledger_update</code> — the <a href="./character-ledger.html">Rules Lawyer</a>'s
   character-sheet delta, one flat member whose <code>kind</code> discriminates which post-mutation
-  value fields are populated, on the same live-then-replayed lifecycle as the mechanical frames. The
-  rest — <code>combat_*</code>, <code>session_end</code>, <code>st_evaluation</code>,
-  <code>scribe_result</code>, and the rest — is still deliberately absent until its surface is
-  built.
+  value fields are populated, on the same live-then-replayed lifecycle as the mechanical frames.
+  MYT-74a adds the session-end lifecycle pair: the <code>end_session</code> client frame (a bare
+  summon, no payload) and the <code>session_end</code> server frame (a one-shot
+  <code>{ reason: 'normal' }</code> broadcast — the live session is over and its
+  <a href="./session-reconcile.html">end-of-session reconcile</a> has been fired). The
+  <code>session_end</code> frame carries no seq (a control frame, like the presence frames) and is
+  not persisted or replayed — a reconnect to an ended session is rejected at the ws-ticket handshake
+  (<code>status !== 'active'</code>), so there is no replay path. The rest — <code>combat_*</code>,
+  <code>st_evaluation</code>, <code>scribe_result</code>, and the rest — is still deliberately
+  absent until its surface is built.
 </p>
 
 <aside class="wiki-rationale">
@@ -572,8 +604,14 @@
   + summary keys (<code>resetSessionSpend</code>). The
   <a href="./dm-trigger.html">DM trigger</a> system hangs off this inbound handler: it observes the
   typing and message frames here, writes its own trigger-state Redis keys, and reschedules the
-  quiet-window debounce that decides when a DM turn fires — and adds the <code>dm_invoke</code>
-  client frame to the contract.
+  quiet-window debounce that decides when a DM turn fires — and adds the
+  <code>dm_invoke</code> client frame to the contract. The
+  <a href="./session-reconcile.html">end-of-session reconciliation</a> story closes the lifecycle
+  this transport opens: the <code>end_session</code>
+  frame and the budget auto-end both run an orchestration that quiesces this transport (the
+  <code>ending</code> gate, the lock fence, <code>cancelSuspend</code>), flips the session row, and
+  fires the reconcile worker — and the <code>/start</code> route's <code>reconcile_pending</code>
+  interlock blocks the next session until that reconcile commits.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -591,8 +629,10 @@
       <td>Client → server</td>
       <td>
         <code>player_message</code> (carries <code>text</code>), <code>typing_start</code>,
-        <code>typing_stop</code>, and <code>dm_invoke</code> (MYT-67 explicit summon, no payload).
-        Anything else is dropped at the boundary.
+        <code>typing_stop</code>, <code>dm_invoke</code> (MYT-67 explicit summon, no payload), and
+        <code>end_session</code> (MYT-74a explicit session-end summon, no payload). Anything else is
+        dropped at the boundary; once the session is ending, everything except a redundant
+        <code>end_session</code> is dropped too.
       </td>
     </tr>
     <tr>
@@ -601,9 +641,11 @@
         <code>session_ready</code>, <code>session_reconnect</code>, <code>player_joined</code>,
         <code>player_left</code>, <code>player_message</code> (the only frame with a
         <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>,
-        plus the MYT-66 DM-turn frames <code>dm_thinking</code> / <code>text_delta</code> /
+        the MYT-66 DM-turn frames <code>dm_thinking</code> / <code>text_delta</code> /
         <code>turn_end</code> / <code>turn_error</code> (each carries a <code>turnId</code>, no seq;
-        published by the <a href="./session-turn.html">turn worker</a>).
+        published by the <a href="./session-turn.html">turn worker</a>), and the MYT-74a
+        <code>session_end</code> lifecycle frame (<code>{ reason: 'normal' }</code>, no seq, not
+        replayed).
       </td>
     </tr>
   </tbody>
@@ -627,7 +669,7 @@
       <td>
         <code>200 { sessionId }</code> · <code>402</code> (no credits, row rolled back) ·
         <code>409</code> (<code>campaign_not_active</code> / <code>prep_not_ready</code> /
-        <code>session_already_active</code>)
+        <code>session_already_active</code> / <code>reconcile_pending</code>)
       </td>
     </tr>
     <tr>
@@ -683,6 +725,13 @@
         resolves it for the
         <a href="./fast-thinker.html#world-knowledge-lookups">world-knowledge lookups</a> without a
         per-turn Postgres round-trip (back-filled on a blob that predates it).
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:ending</code></td>
+      <td>
+        Once-only end-flag (<code>SET … NX</code>); the <code>end_session</code> flow claims it and
+        the inbound handler reads it as the post-end drop-gate (MYT-74a).
       </td>
     </tr>
     <tr>
@@ -742,10 +791,11 @@
     <tr>
       <td><code>src/contract/session-events.ts</code></td>
       <td>
-        <code>CLIENT_FRAME_TYPES</code> (also <code>dm_invoke</code>;
-        <code>roll_complete</code> deliberately NOT here) / <code>SERVER_FRAME_TYPES</code> (the
-        MYT-66 streaming frames + the MYT-68 <code>skill_check</code> / <code>dice_roll</code> /
-        <code>dm_message</code> frames + the MYT-70 <code>ledger_update</code> frame; no
+        <code>CLIENT_FRAME_TYPES</code> (also <code>dm_invoke</code> + the MYT-74a
+        <code>end_session</code>; <code>roll_complete</code> deliberately NOT here) /
+        <code>SERVER_FRAME_TYPES</code> (the MYT-66 streaming frames + the MYT-68
+        <code>skill_check</code> / <code>dice_roll</code> / <code>dm_message</code> frames + the
+        MYT-70 <code>ledger_update</code> frame + the MYT-74a <code>session_end</code> frame; no
         <code>dm_trigger</code> frame) allowlists, <code>ClientFrame</code> /
         <code>ServerFrame</code> unions, <code>classifyClientFrame</code> tripwire.
       </td>

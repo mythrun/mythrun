@@ -1,7 +1,7 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:3cc20fcfb6c0fa8f8ca76424145df1c9ea485b0b113d0ab5f0fc7002e7cf9342 -->
-<!-- last-ticket: MYT-72 -->
+<!-- source-hash: sha256:6fcefdee418b5f35067ad6035ee71673b6c24f6d65aaafe36eaff636697c1b1c -->
+<!-- last-ticket: MYT-74a -->
 
 <h1>Repository layer</h1>
 
@@ -531,14 +531,22 @@
 
 <p>
   <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
-  <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>,
-  <code>recordUsage</code>, <code>budgetSummary</code>. <code>getActiveByCampaign</code> uses
+  <code>getActiveByCampaign</code>, <code>getMostRecentByCampaign</code>,
+  <code>listByCampaign</code>, <code>update</code>, <code>recordUsage</code>,
+  <code>budgetSummary</code>, <code>markReconciled</code>. <code>getActiveByCampaign</code> uses
   <code>LIMIT 1</code> defensively — the partial-unique index
   <code>idx_sessions_one_active</code> guarantees at most one active row per campaign, but the
   <code>LIMIT 1</code> at the SQL site makes the contract self-documenting.
   <code>recordUsage</code> + <code>budgetSummary</code> are the per-session cost-tracking primitives
   MYT-43 added; the cluster has its own narrative on the
   <a href="../auth-billing/billing-metering.html">billing-metering page</a>.
+  <code>getMostRecentByCampaign</code> + <code>markReconciled</code> are MYT-74a's
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> primitives:
+  <code>getMostRecentByCampaign</code> backs the <code>/start</code> reconcile-pending interlock,
+  and <code>markReconciled</code> is the <em>conditional</em>
+  <code>UPDATE … SET reconciled_at = now() WHERE id = $1 AND reconciled_at IS NULL</code> — it
+  returns the rowCount so the reconcile commit can use it as an idempotency mutex (0 rows → another
+  execution already reconciled → roll back).
 </p>
 
 <aside class="wiki-rationale">
@@ -861,7 +869,10 @@
   <code>'npc' | 'location' | 'faction' | 'item'</code>; regions are persisted as
   <code>type='location'</code> per the pipeline spec's flat enum.
   <code>entities.access_level</code> defaults to <code>'known'</code> at insert time and is
-  CHECK-constrained to the same three-tier vocabulary as <code>facts.access_level</code>.
+  CHECK-constrained to the same three-tier vocabulary as <code>facts.access_level</code>. MYT-74a
+  adds <code>markTouchedByPlay(ids)</code> — the
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> calls it to flag every
+  entity it minted or matched as <code>modified_by_play = true</code> in one statement.
 </p>
 
 <aside class="wiki-rationale">
@@ -890,17 +901,26 @@
 
 <p>
   <strong><code>facts</code></strong> exposes <code>insertMany</code>,
-  <code>updateContentById</code>, and
-  <code>listByEntities(client, ids, { accessLevels })</code> (added under myth-exac for the
-  world-snapshot view). <code>insertMany</code> runs a single parameterized multi-row INSERT with
-  one constant baked in — <code>narrative_status = 'undelivered'</code>. The LLM never emits the
-  narrative_status field; the persister stamps the value as part of the INSERT shape. Play-runtime
-  owns subsequent transitions of that column (<code>delivered</code> → <code>developed</code> →
-  <code>resolved</code>). <code>source</code> uses the column default <code>'prep'</code>; no
-  explicit value passed. <code>updateContentById</code> is the coherence pass's
-  <code>fix_fact</code> path. <code>listByEntities</code> applies a mandatory tier filter — the
-  caller is required to name the access levels it's authorized to see, so a future caller can't
-  accidentally read the full unfiltered set by omitting the option.
+  <code>updateContentById</code>,
+  <code>listByEntities(client, ids, { accessLevels, liveOnly? })</code> (added under myth-exac for
+  the world-snapshot view), and — MYT-74a — <code>insertReconciled</code> +
+  <code>setSuperseded</code>. <code>insertMany</code> runs a single parameterized multi-row INSERT
+  with one constant baked in — <code>narrative_status = 'undelivered'</code>. The LLM never emits
+  the narrative_status field; the persister stamps the value as part of the INSERT shape.
+  Play-runtime owns subsequent transitions of that column (<code>delivered</code> →
+  <code>developed</code> → <code>resolved</code>). <code>source</code> uses the column default
+  <code>'prep'</code>; no explicit value passed. <code>updateContentById</code> is the coherence
+  pass's <code>fix_fact</code> path. <code>listByEntities</code> applies a mandatory tier filter —
+  the caller is required to name the access levels it's authorized to see, so a future caller can't
+  accidentally read the full unfiltered set by omitting the option — and now also a
+  <code>liveOnly</code> flag (default true) that appends <code>AND superseded_by IS NULL</code> so a
+  reader sees only live canon, never a corrected-away fact; pass <code>liveOnly: false</code> for
+  the full append-only log. <code>insertReconciled</code> appends a session-improvised canon fact
+  (stamping <code>source = 'session'</code> and <code>narrative_status = 'delivered'</code>,
+  returning the new id), and <code>setSuperseded(oldId, newId)</code> points a corrected fact's
+  <code>superseded_by</code> at its replacement and NULLs its embedding — the
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a>'s append-only correction
+  primitives, retiring <code>updateContentById</code> from the canon-correction path.
   <code>facts.access_level</code> was renamed under migration 014 from
   <code>(public, private, secret)</code> to <code>(known, discoverable, secret)</code>; the new
   vocabulary mirrors D&amp;D-mechanic semantics.

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html" class="active">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html" class="active">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Worker</div>
         <article>
@@ -30,19 +30,21 @@
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with seven BullMQ Workers — <code>world-gen</code> (concurrency
+  <code>node dist/worker.js</code> with eight BullMQ Workers — <code>world-gen</code> (concurrency
   3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the
   MYT-66 <code>session-turn</code> worker (concurrency 5), the MYT-67 <code>dm-trigger</code> worker
-  (concurrency 5), the MYT-69 <code>st-evaluation</code> worker (concurrency 2), and the MYT-73
-  <code>scribe</code> worker (concurrency 2) — all consuming from <code>redisBatch</code>, plus a
+  (concurrency 5), the MYT-69 <code>st-evaluation</code> worker (concurrency 2), the MYT-73
+  <code>scribe</code> worker (concurrency 2), and the MYT-74a <code>session-reconcile</code> worker
+  (concurrency 1) — all consuming from <code>redisBatch</code>, plus a
   <code>QueueEvents('session-turn')</code> subscriber on a dedicated blocking connection. Phase 0
   shipped stub processors that logged job receipt and marked complete. The real prep-stage
   processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
   (per-player character creation), MYT-54 (campaign-scoped character integration), and MYT-61
   (session prep); the <code>session-turn</code> worker — the lock-fenced DM-turn conductor — joined
   in MYT-66, the <code>dm-trigger</code> decision worker in MYT-67, the post-hoc
-  <a href="./slow-thinker.html">Slow Thinker</a>'s <code>st-evaluation</code> worker in MYT-69, and
-  the post-turn <a href="./scribe.html">Scribe</a>'s <code>scribe</code> worker in MYT-73. The shape
+  <a href="./slow-thinker.html">Slow Thinker</a>'s <code>st-evaluation</code> worker in MYT-69, the
+  post-turn <a href="./scribe.html">Scribe</a>'s <code>scribe</code> worker in MYT-73, and the
+  <a href="./session-reconcile.html">end-of-session reconcile</a> worker in MYT-74a. The shape
   locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change. The
   stub-processor file was retired in MYT-55 once the dedicated worker container caught up to the
   same wiring the API container already used.
@@ -50,554 +52,615 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1591pt" height="1333pt"
- viewBox="14.00 14.00 1576.00 1318.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1314.13)">
+<svg width="1591pt" height="1513pt"
+ viewBox="14.00 14.00 1576.00 1498.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1494.27)">
 <title>worker</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1299.73 1557.93,-1299.73 1557.93,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1479.87 1557.93,-1479.87 1557.93,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_api</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-910.38 8,-1027.38 257.52,-1027.38 257.52,-910.38 8,-910.38"/>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1013.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API service &#160;(Fargate)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-1016.87 8,-1147.87 257.52,-1147.87 257.52,-1016.87 8,-1016.87"/>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1133.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API service &#160;(Fargate)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_redis</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="409.53,-810.38 409.53,-1281.38 632.64,-1281.38 632.64,-810.38 409.53,-810.38"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1267.48" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="409.53,-923.87 409.53,-1467.87 632.64,-1467.87 632.64,-923.87 409.53,-923.87"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1453.97" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="14.6,-112.38 14.6,-810.38 1146.39,-810.38 1146.39,-112.38 14.6,-112.38"/>
-<text xml:space="preserve" text-anchor="middle" x="580.5" y="-796.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker service &#160;(Fargate) &#160;— &#160;node dist/worker.js</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="14.6,-113.87 14.6,-923.87 1146.39,-923.87 1146.39,-113.87 14.6,-113.87"/>
+<text xml:space="preserve" text-anchor="middle" x="580.5" y="-909.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker service &#160;(Fargate) &#160;— &#160;node dist/worker.js</text>
 </g>
 <!-- queue_producer -->
 <g id="node1" class="node">
 <title>queue_producer</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="257.52,-1006.62 8,-1006.62 8,-910.14 257.52,-910.14 257.52,-1006.62"/>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-988.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Queue producer</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-974.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">add(&#39;world&#45;gen&#39; |</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-961.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;campaign&#45;setup&#39; |</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-948.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;session&#45;prep&#39; |</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-935.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;session&#45;turn&#39; | &#39;dm&#45;trigger&#39; |</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-922.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;st&#45;evaluation&#39; | &#39;scribe&#39;)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="257.52,-1126.71 8,-1126.71 8,-1017.03 257.52,-1017.03 257.52,-1126.71"/>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1108.17" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Queue producer</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1094.97" font-family="Courier,monospace" font-size="11.00" fill="#231b12">add(&#39;world&#45;gen&#39; |</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1081.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;campaign&#45;setup&#39; |</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1068.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;session&#45;prep&#39; |</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1055.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;session&#45;turn&#39; | &#39;dm&#45;trigger&#39; |</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1042.17" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;st&#45;evaluation&#39; | &#39;scribe&#39; |</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-1028.97" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;&#39;session&#45;reconcile&#39;)</text>
 </g>
 <!-- q_world -->
 <g id="node2" class="node">
 <title>q_world</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="589.74,-846.38 452.44,-846.38 452.44,-810.38 589.74,-810.38 589.74,-846.38"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-825.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: world&#45;gen</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="589.74,-1024.87 452.44,-1024.87 452.44,-988.87 589.74,-988.87 589.74,-1024.87"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1003.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: world&#45;gen</text>
 </g>
 <!-- queue_producer&#45;&gt;q_world -->
 <g id="edge1" class="edge">
 <title>queue_producer&#45;&gt;q_world</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.25,-913.16C305.46,-896.39 359.81,-877.53 409.53,-861.38 421.72,-857.42 434.72,-853.38 447.37,-849.54"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="447.89,-851.94 453.88,-847.58 446.47,-847.25 447.89,-851.94"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.12,-1050.94C319.03,-1040.69 390.44,-1028.68 443.3,-1019.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="443.66,-1022.21 450.16,-1018.63 442.85,-1017.38 443.66,-1022.21"/>
 </g>
 <!-- q_campaign -->
 <g id="node3" class="node">
 <title>q_campaign</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="606.24,-911.38 435.94,-911.38 435.94,-875.38 606.24,-875.38 606.24,-911.38"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-890.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: campaign&#45;setup</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="606.24,-959.87 435.94,-959.87 435.94,-923.87 606.24,-923.87 606.24,-959.87"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-938.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: campaign&#45;setup</text>
 </g>
 <!-- queue_producer&#45;&gt;q_campaign -->
 <g id="edge2" class="edge">
 <title>queue_producer&#45;&gt;q_campaign</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.12,-937.45C312.86,-928.24 376.07,-917.61 426.69,-909.09"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="427.05,-911.52 433.55,-907.94 426.24,-906.68 427.05,-911.52"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.25,-1026.65C305.46,-1009.88 359.81,-991.02 409.53,-974.87 421.72,-970.91 434.72,-966.86 447.37,-963.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="447.89,-965.43 453.88,-961.06 446.47,-960.74 447.89,-965.43"/>
 </g>
 <!-- q_prep -->
 <g id="node4" class="node">
 <title>q_prep</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="599.64,-976.38 442.54,-976.38 442.54,-940.38 599.64,-940.38 599.64,-976.38"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-955.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: session&#45;prep</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="599.64,-1089.87 442.54,-1089.87 442.54,-1053.87 599.64,-1053.87 599.64,-1089.87"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1068.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: session&#45;prep</text>
 </g>
 <!-- queue_producer&#45;&gt;q_prep -->
 <g id="edge3" class="edge">
 <title>queue_producer&#45;&gt;q_prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.12,-958.38C315.25,-958.38 381.63,-958.38 433.27,-958.38"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="433.26,-960.83 440.26,-958.38 433.26,-955.93 433.26,-960.83"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M258.12,-1071.87C315.25,-1071.87 381.63,-1071.87 433.27,-1071.87"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="433.26,-1074.32 440.26,-1071.87 433.26,-1069.42 433.26,-1074.32"/>
 </g>
 <!-- q_turn -->
 <g id="node5" class="node">
 <title>q_turn</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="599.64,-1114.38 442.54,-1114.38 442.54,-1078.38 599.64,-1078.38 599.64,-1114.38"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1093.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;turn</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="599.64,-1300.87 442.54,-1300.87 442.54,-1264.87 599.64,-1264.87 599.64,-1300.87"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1279.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;turn</text>
 </g>
 <!-- queue_producer&#45;&gt;q_turn -->
 <g id="edge4" class="edge">
 <title>queue_producer&#45;&gt;q_turn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M256.26,-1007.24C303.84,-1025.63 358.95,-1046.23 409.53,-1063.38 421.44,-1067.41 434.15,-1071.46 446.55,-1075.26"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="445.5,-1077.5 452.91,-1077.19 446.93,-1072.81 445.5,-1077.5"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M207.1,-1127.42C260.85,-1166.03 336.81,-1216.37 409.53,-1249.87 418.7,-1254.09 428.54,-1257.93 438.44,-1261.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="437.61,-1263.68 445.03,-1263.59 439.18,-1259.03 437.61,-1263.68"/>
 </g>
 <!-- q_trig -->
 <g id="node6" class="node">
 <title>q_trig</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="632.64,-1187.22 409.53,-1187.22 409.53,-1143.54 632.64,-1143.54 632.64,-1187.22"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1168.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: dm&#45;trigger</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1155.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(debounce — see dm&#45;trigger)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="632.64,-1446.71 409.53,-1446.71 409.53,-1403.03 632.64,-1403.03 632.64,-1446.71"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1428.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: dm&#45;trigger</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1414.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(debounce — see dm&#45;trigger)</text>
 </g>
 <!-- queue_producer&#45;&gt;q_trig -->
 <g id="edge5" class="edge">
 <title>queue_producer&#45;&gt;q_trig</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M200.46,-1007.32C254.53,-1045.09 333.92,-1096.31 409.53,-1129.38 417.96,-1133.06 426.88,-1136.58 435.87,-1139.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="435,-1142.15 442.41,-1142.2 436.65,-1137.54 435,-1142.15"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M168.47,-1127.33C215.12,-1197.55 304.42,-1317.78 409.53,-1387.87 415.52,-1391.86 421.98,-1395.46 428.67,-1398.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="427.57,-1400.89 434.95,-1401.57 429.61,-1396.43 427.57,-1400.89"/>
 </g>
 <!-- w_world -->
-<g id="node11" class="node">
+<g id="node12" class="node">
 <title>w_world</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1057.28,-168.82 939.79,-168.82 939.79,-111.94 1057.28,-111.94 1057.28,-168.82"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-150.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullmqWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-137.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;gen</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-123.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concurrency 3</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1057.28,-256.31 939.79,-256.31 939.79,-199.43 1057.28,-199.43 1057.28,-256.31"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-237.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullmqWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-224.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;gen</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-211.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concurrency 3</text>
 </g>
 <!-- q_world&#45;&gt;w_world -->
 <g id="edge6" class="edge">
 <title>q_world&#45;&gt;w_world</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M590.36,-825.37C605.53,-821.97 620.65,-816.14 632.64,-806.38 654.73,-788.4 642.03,-771.2 657.64,-747.38 717.1,-656.65 782.24,-669.77 825.67,-570.38 860.18,-491.41 796.8,-250.65 850.67,-183.38 869.87,-159.41 901.67,-148.32 930.78,-143.36"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.96,-145.81 937.51,-142.34 930.22,-140.97 930.96,-145.81"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-750.38" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M590.24,-999.78C606.15,-995 621.64,-987.27 632.64,-974.87 678.36,-923.32 609.42,-871.08 657.64,-821.87 710.79,-767.62 775.7,-848.05 825.67,-790.87 863.73,-747.31 814.89,-316.31 850.67,-270.87 869.67,-246.74 901.45,-235.63 930.6,-230.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.79,-233.16 937.34,-229.69 930.06,-228.31 930.79,-233.16"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-824.87" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
 </g>
 <!-- w_camp -->
-<g id="node12" class="node">
+<g id="node13" class="node">
 <title>w_camp</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1060.58,-254.82 936.48,-254.82 936.48,-197.94 1060.58,-197.94 1060.58,-254.82"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-236.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullmqWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-223.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaign&#45;setup</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-209.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concurrency 5</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1060.58,-170.31 936.48,-170.31 936.48,-113.43 1060.58,-113.43 1060.58,-170.31"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-151.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BullmqWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-138.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaign&#45;setup</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-125.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concurrency 5</text>
 </g>
 <!-- q_campaign&#45;&gt;w_camp -->
 <g id="edge7" class="edge">
 <title>q_campaign&#45;&gt;w_camp</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M606.89,-878.05C616.31,-873.77 625.19,-868.33 632.64,-861.38 656.2,-839.43 633.02,-814.13 657.64,-793.38 715.7,-744.43 775.63,-819.49 825.67,-762.38 897.96,-679.87 782.7,-355.48 850.67,-269.38 868.95,-246.23 898.99,-235.07 927.16,-229.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.53,-232.28 934.03,-228.72 926.73,-227.45 927.53,-232.28"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-796.38" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M606.72,-936.31C616.42,-932.58 625.4,-927.29 632.64,-919.87 678.01,-873.37 613.29,-823.32 657.64,-775.87 710.14,-719.71 776.83,-794.23 825.67,-734.87 864.54,-687.62 812.89,-232.98 850.67,-184.87 868.89,-161.67 898.92,-150.5 927.1,-145.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.47,-147.72 933.98,-144.16 926.67,-142.89 927.47,-147.72"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-778.87" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
 </g>
 <!-- w_prep -->
-<g id="node13" class="node">
+<g id="node14" class="node">
 <title>w_prep</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1057.28,-340.82 939.79,-340.82 939.79,-283.94 1057.28,-283.94 1057.28,-340.82"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-322.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullmqWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-309.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-295.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 3</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1057.28,-342.31 939.79,-342.31 939.79,-285.43 1057.28,-285.43 1057.28,-342.31"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-323.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BullmqWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-310.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;prep</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-297.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 3</text>
 </g>
 <!-- q_prep&#45;&gt;w_prep -->
 <g id="edge8" class="edge">
 <title>q_prep&#45;&gt;w_prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M600.12,-946.65C612.18,-941.96 623.61,-935.43 632.64,-926.38 661.06,-897.9 627.84,-866.41 657.64,-839.38 713.89,-788.36 775.5,-865.38 825.67,-808.38 892.28,-732.7 788.02,-434.37 850.67,-355.38 869.75,-331.32 901.54,-320.22 930.68,-315.28"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.86,-317.73 937.42,-314.26 930.13,-312.89 930.86,-317.73"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-842.38" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M600.35,-1061.47C612.61,-1056.65 624.05,-1049.73 632.64,-1039.87 683.39,-981.62 604.07,-923.52 657.64,-867.87 710.31,-813.16 775.59,-893.95 825.67,-836.87 896.12,-756.58 784.43,-440.65 850.67,-356.87 869.72,-332.78 901.5,-321.67 930.64,-316.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.83,-319.19 937.39,-315.73 930.1,-314.35 930.83,-319.19"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-870.87" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
 </g>
 <!-- w_turn -->
-<g id="node14" class="node">
+<g id="node15" class="node">
 <title>w_turn</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1086.98,-789.02 910.08,-789.02 910.08,-705.74 1086.98,-705.74 1086.98,-789.02"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-770.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildSessionTurnWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-757.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;turn</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-744.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 5</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-730.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lock + state + publish</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-717.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">on redisRealtime</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1086.98,-902.51 910.08,-902.51 910.08,-819.23 1086.98,-819.23 1086.98,-902.51"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-883.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildSessionTurnWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-870.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;turn</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-857.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 5</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-844.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lock + state + publish</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-831.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">on redisRealtime</text>
 </g>
 <!-- q_turn&#45;&gt;w_turn -->
 <g id="edge9" class="edge">
 <title>q_turn&#45;&gt;w_turn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M600.34,-1099.14C677.8,-1100.4 789.86,-1097.82 825.67,-1074.38 923.19,-1010.54 968.87,-872.53 987.16,-797.84"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="989.49,-798.64 988.73,-791.26 984.72,-797.5 989.49,-798.64"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1114.14" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1102.14" font-family="Courier,monospace" font-size="10.00">+ stalled redelivery</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M579.14,-1301.54C603.11,-1308.46 631.45,-1315.45 657.64,-1318.87 731.69,-1328.53 764.29,-1361.4 825.67,-1318.87 961.2,-1224.97 990.01,-1010.08 996.02,-911.72"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="998.45,-912.08 996.4,-904.95 993.56,-911.8 998.45,-912.08"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1355.1" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1343.1" font-family="Courier,monospace" font-size="10.00">+ stalled redelivery</text>
 </g>
 <!-- qevents -->
-<g id="node18" class="node">
+<g id="node20" class="node">
 <title>qevents</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="629.34,-750.82 412.83,-750.82 412.83,-693.94 629.34,-693.94 629.34,-750.82"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-732.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">QueueEvents(&#39;session&#45;turn&#39;)</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-719.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">broker failed → turn_error</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-705.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dedicated BRPOP connection</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="629.34,-682.31 412.83,-682.31 412.83,-625.43 629.34,-625.43 629.34,-682.31"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-663.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">QueueEvents(&#39;session&#45;turn&#39;)</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-650.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">broker failed → turn_error</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-637.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dedicated BRPOP connection</text>
 </g>
 <!-- q_turn&#45;&gt;qevents -->
-<g id="edge17" class="edge">
+<g id="edge19" class="edge">
 <title>q_turn&#45;&gt;qevents</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M442,-1083.55C430.02,-1078.78 418.64,-1072.27 409.53,-1063.38 319.02,-975.02 252.74,-894.65 325.78,-791.38 344.32,-765.17 373.68,-748.85 404.06,-738.71"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="404.55,-741.12 410.49,-736.68 403.07,-736.45 404.55,-741.12"/>
-<text xml:space="preserve" text-anchor="middle" x="333.52" y="-794.38" font-family="Courier,monospace" font-size="10.00">broker failed</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M442,-1271.2C429.8,-1266.31 418.35,-1259.46 409.53,-1249.87 345.29,-1179.94 298.49,-921.81 325.78,-830.87 345.21,-766.1 358.02,-747.66 409.53,-703.87 416.79,-697.7 424.92,-692.16 433.41,-687.21"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="434.43,-689.45 439.36,-683.9 432.05,-685.17 434.43,-689.45"/>
+<text xml:space="preserve" text-anchor="middle" x="333.52" y="-833.87" font-family="Courier,monospace" font-size="10.00">broker failed</text>
 </g>
 <!-- w_trig -->
-<g id="node15" class="node">
+<g id="node16" class="node">
 <title>w_trig</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1126.59,-677.02 870.47,-677.02 870.47,-593.74 1126.59,-593.74 1126.59,-677.02"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-658.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildDmTriggerWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-645.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dm&#45;trigger</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-632.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 5</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-618.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">re&#45;validate → batch → classify</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-605.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ enqueue session&#45;turn</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1126.59,-790.51 870.47,-790.51 870.47,-707.23 1126.59,-707.23 1126.59,-790.51"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-771.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildDmTriggerWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-758.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dm&#45;trigger</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-745.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 5</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-732.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">re&#45;validate → batch → classify</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-719.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ enqueue session&#45;turn</text>
 </g>
 <!-- q_trig&#45;&gt;w_trig -->
 <g id="edge10" class="edge">
 <title>q_trig&#45;&gt;w_trig</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M633.05,-1159.46C714.18,-1153.99 812.29,-1144.56 825.67,-1130.38 892.74,-1059.31 792.97,-770.24 850.67,-691.38 854.38,-686.31 858.61,-681.69 863.24,-677.5"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="864.59,-679.56 868.4,-673.2 861.45,-675.8 864.59,-679.56"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1172.14" font-family="Courier,monospace" font-size="10.00">matures</text>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1160.14" font-family="Courier,monospace" font-size="10.00">(quiet window)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M616.52,-1402.38C622.56,-1398.31 628.05,-1393.52 632.64,-1387.87 692.49,-1314.25 591.98,-1244.34 657.64,-1175.87 709.99,-1121.27 774.56,-1204.62 825.67,-1148.87 877.47,-1092.37 804.93,-866.37 850.67,-804.87 854.42,-799.82 858.69,-795.23 863.34,-791.06"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="864.69,-793.12 868.52,-786.78 861.57,-789.35 864.69,-793.12"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1190.87" font-family="Courier,monospace" font-size="10.00">matures</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1178.87" font-family="Courier,monospace" font-size="10.00">(quiet window)</text>
 </g>
 <!-- q_steval -->
 <g id="node7" class="node">
 <title>q_steval</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="609.54,-1260.22 432.64,-1260.22 432.64,-1216.54 609.54,-1216.54 609.54,-1260.22"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1241.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: st&#45;evaluation</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1228.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;hoc SlowThinker)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="609.54,-1235.71 432.64,-1235.71 432.64,-1192.03 609.54,-1192.03 609.54,-1235.71"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1217.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: st&#45;evaluation</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1203.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;hoc SlowThinker)</text>
 </g>
 <!-- w_steval -->
-<g id="node16" class="node">
+<g id="node17" class="node">
 <title>w_steval</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1143.09,-565.02 853.97,-565.02 853.97,-481.74 1143.09,-481.74 1143.09,-565.02"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-546.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildStEvaluationWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-533.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">st&#45;evaluation</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-520.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 2</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-506.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">policy → Haiku gate → Opus director</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-493.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ write direction slots + summary</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1143.09,-566.51 853.97,-566.51 853.97,-483.23 1143.09,-483.23 1143.09,-566.51"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-547.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildStEvaluationWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-534.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">st&#45;evaluation</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-521.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 2</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-508.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">policy → Haiku gate → Opus director</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-495.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ write direction slots + summary</text>
 </g>
 <!-- q_steval&#45;&gt;w_steval -->
 <g id="edge11" class="edge">
 <title>q_steval&#45;&gt;w_steval</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M609.92,-1226.66C696.98,-1214.63 818.45,-1196.54 825.67,-1188.38 870.54,-1137.66 811.11,-634.35 850.67,-579.38 852.58,-576.73 854.62,-574.21 856.8,-571.81"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="858.36,-573.71 861.55,-567.01 854.88,-570.26 858.36,-573.71"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1222.48" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M610.27,-1195.19C618.77,-1190.4 626.5,-1184.39 632.64,-1176.87 690.69,-1105.76 594.75,-1038.72 657.64,-971.87 709.68,-916.55 775.09,-997.51 825.67,-940.87 879.08,-881.05 802.91,-645.29 850.67,-580.87 852.66,-578.19 854.79,-575.64 857.04,-573.21"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="858.73,-574.99 862.01,-568.33 855.3,-571.49 858.73,-574.99"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-974.87" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
 </g>
 <!-- q_scribe -->
 <g id="node8" class="node">
 <title>q_scribe</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="609.54,-1049.22 432.64,-1049.22 432.64,-1005.54 609.54,-1005.54 609.54,-1049.22"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1030.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: scribe</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1017.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;turn reconciler)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="609.54,-1373.71 432.64,-1373.71 432.64,-1330.03 609.54,-1330.03 609.54,-1373.71"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1355.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: scribe</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1341.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;turn reconciler)</text>
 </g>
 <!-- w_scribe -->
-<g id="node17" class="node">
+<g id="node18" class="node">
 <title>w_scribe</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1146.39,-453.02 850.67,-453.02 850.67,-369.74 1146.39,-369.74 1146.39,-453.02"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-434.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildScribeWorker</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-421.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">scribe</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-408.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 2 · 90s lock</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-394.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">embed → Haiku tripwire → Opus retcon</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-381.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ working set + correction turn</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1146.39,-678.51 850.67,-678.51 850.67,-595.23 1146.39,-595.23 1146.39,-678.51"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-659.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildScribeWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-646.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">scribe</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-633.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 2 · 90s lock</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-620.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">embed → Haiku tripwire → Opus retcon</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-607.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ working set + correction turn</text>
 </g>
 <!-- q_scribe&#45;&gt;w_scribe -->
 <g id="edge12" class="edge">
 <title>q_scribe&#45;&gt;w_scribe</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M610.26,-1008.39C618.59,-1003.87 626.29,-998.29 632.64,-991.38 665.42,-955.76 622.59,-918.75 657.64,-885.38 712.64,-833.02 775.23,-911.15 825.67,-854.38 882.91,-789.96 799.52,-536.73 850.67,-467.38 852.65,-464.69 854.77,-462.14 857.03,-459.71"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="858.71,-461.49 861.98,-454.83 855.27,-458 858.71,-461.49"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-888.38" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M610.11,-1334.26C618.7,-1329.5 626.49,-1323.48 632.64,-1315.87 666.36,-1274.17 621.25,-1115.24 657.64,-1075.87 709.19,-1020.1 775.05,-1101.47 825.67,-1044.87 877.94,-986.41 803.92,-755.83 850.67,-692.87 852.66,-690.19 854.79,-687.64 857.05,-685.21"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="858.73,-686.99 862.02,-680.34 855.3,-683.49 858.73,-686.99"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1078.87" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+</g>
+<!-- q_recon -->
+<g id="node9" class="node">
+<title>q_recon</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="622.74,-1162.71 419.43,-1162.71 419.43,-1119.03 622.74,-1119.03 622.74,-1162.71"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1144.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;reconcile</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-1130.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(end&#45;of&#45;session → canon)</text>
+</g>
+<!-- w_recon -->
+<g id="node19" class="node">
+<title>w_recon</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1146.39,-454.51 850.67,-454.51 850.67,-371.23 1146.39,-371.23 1146.39,-454.51"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-435.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">buildReconcileWorker</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-422.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;reconcile</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-409.57" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">concurrency 1 · 180s lock · NOT total</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-396.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retrieve → Opus reconcile → validate</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-383.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ commit (gated) → clear working set</text>
+</g>
+<!-- q_recon&#45;&gt;w_recon -->
+<g id="edge13" class="edge">
+<title>q_recon&#45;&gt;w_recon</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M617.43,-1118.53C623.1,-1114.67 628.27,-1110.15 632.64,-1104.87 688.38,-1037.58 596.85,-972.63 657.64,-909.87 710.27,-855.54 774.9,-938.93 825.67,-882.87 887.54,-814.55 796.12,-543.15 850.67,-468.87 852.64,-466.18 854.76,-463.62 857.01,-461.18"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="858.7,-462.96 861.95,-456.3 855.25,-459.48 858.7,-462.96"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-924.87" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-912.87" font-family="Courier,monospace" font-size="10.00">+ retry (idempotent)</text>
 </g>
 <!-- entry -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>entry</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="250.91,-552.42 14.6,-552.42 14.6,-482.34 250.91,-482.34 250.91,-552.42"/>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-533.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/src/worker.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-520.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">loadEnv() → ping pg + redises</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-507.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ register Workers</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-494.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ start health last</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="250.91,-541.91 14.6,-541.91 14.6,-471.83 250.91,-471.83 250.91,-541.91"/>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-523.37" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/src/worker.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-510.17" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">loadEnv() → ping pg + redises</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-496.97" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ register Workers</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-483.77" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ start health last</text>
 </g>
 <!-- entry&#45;&gt;w_world -->
-<g id="edge21" class="edge">
+<g id="edge23" class="edge">
 <title>entry&#45;&gt;w_world</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M148.5,-481.82C182.01,-406.14 271.82,-230 409.53,-155.38 491.08,-111.19 733.03,-118.81 825.67,-123.38 860.3,-125.09 898.71,-128.72 930.41,-132.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.14,-134.63 937.37,-132.96 930.68,-129.76 930.14,-134.63"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-158.38" font-family="Courier,monospace" font-size="10.00">register</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M151.53,-471.09C188.39,-401.53 280.58,-249.8 409.53,-191.87 500.93,-150.8 796.9,-193.69 930.73,-216.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.21,-218.47 937.52,-217.22 931.02,-213.64 930.21,-218.47"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-194.87" font-family="Courier,monospace" font-size="10.00">register</text>
 </g>
 <!-- entry&#45;&gt;w_camp -->
-<g id="edge22" class="edge">
+<g id="edge24" class="edge">
 <title>entry&#45;&gt;w_camp</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M165.83,-481.75C213.52,-431.34 308.42,-340.55 409.53,-297.38 501.55,-258.09 556.05,-331.76 632.64,-267.38 660.83,-243.68 627.93,-210.14 657.64,-188.38 687.77,-166.31 788.55,-184.32 825.67,-188.38 859.55,-192.08 896.52,-199.77 927.46,-207.26"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="926.88,-209.64 934.26,-208.94 928.05,-204.89 926.88,-209.64"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M140.6,-471.18C154.93,-406.54 194.33,-270.19 282.52,-198.87 377.35,-122.16 703.95,-112.11 825.67,-119.87 859.28,-122.01 896.37,-126.49 927.47,-130.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="926.99,-133.25 934.27,-131.81 927.68,-128.4 926.99,-133.25"/>
 </g>
 <!-- entry&#45;&gt;w_prep -->
-<g id="edge23" class="edge">
+<g id="edge25" class="edge">
 <title>entry&#45;&gt;w_prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M251.49,-514.04C261.98,-513.79 272.44,-513.57 282.52,-513.38 290.06,-513.24 819.95,-512.29 825.67,-507.38 877.62,-462.78 805.3,-406.65 850.67,-355.38 870.78,-332.65 902.19,-321.65 930.8,-316.43"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.88,-318.9 937.39,-315.34 930.08,-314.06 930.88,-318.9"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M171.95,-471.32C221.95,-427.71 314.47,-356.75 409.53,-333.87 432.01,-328.45 802.58,-330.01 825.67,-328.87 860.26,-327.15 898.66,-323.93 930.38,-320.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.6,-323.34 937.33,-320.23 930.13,-318.47 930.6,-323.34"/>
 </g>
 <!-- entry&#45;&gt;w_turn -->
-<g id="edge24" class="edge">
+<g id="edge26" class="edge">
 <title>entry&#45;&gt;w_turn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M147.41,-552.76C168.51,-602.46 213.9,-692.05 282.52,-738.38 330.35,-770.67 352.14,-759.35 409.53,-765.38 508.15,-775.74 547.41,-816.06 632.64,-765.38 652.64,-753.49 637.64,-731.27 657.64,-719.38 721.83,-681.21 751.24,-713.35 825.67,-719.38 850.2,-721.36 876.5,-724.92 900.98,-728.84"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="900.46,-731.24 907.76,-729.95 901.25,-726.4 900.46,-731.24"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M152.66,-542.57C176.86,-584.52 222.89,-652.85 282.52,-687.87 326.34,-713.6 591.74,-732.32 657.64,-737.87 676.28,-739.43 810.32,-737.18 825.67,-747.87 848.37,-763.68 830.64,-785.79 850.67,-804.87 865.02,-818.53 883.05,-828.95 901.52,-836.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="900.36,-839.04 907.76,-839.42 902.21,-834.5 900.36,-839.04"/>
 </g>
 <!-- entry&#45;&gt;w_trig -->
-<g id="edge25" class="edge">
+<g id="edge27" class="edge">
 <title>entry&#45;&gt;w_trig</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M185.61,-553.14C213.39,-571.05 248.76,-591.94 282.52,-606.38 336.36,-629.4 351.5,-633.53 409.53,-641.38 563.28,-662.17 741.71,-656.16 861.33,-647.85"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="861.22,-650.31 868.03,-647.37 860.88,-645.42 861.22,-650.31"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M157.91,-542.62C184.3,-578.89 229.89,-633.95 282.52,-664.87 332.71,-694.35 351.76,-689.7 409.53,-696.87 507.94,-709.07 534.96,-713.91 632.64,-696.87 644.28,-694.84 646.01,-689.9 657.64,-687.87 731.21,-675.03 752.07,-675.19 825.67,-687.87 846.33,-691.42 867.8,-697.22 888.28,-703.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="887.24,-706.1 894.65,-705.98 888.78,-701.45 887.24,-706.1"/>
 </g>
 <!-- entry&#45;&gt;w_steval -->
-<g id="edge26" class="edge">
+<g id="edge28" class="edge">
 <title>entry&#45;&gt;w_steval</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M209.02,-553.12C263.36,-576.87 339.25,-605.91 409.53,-618.38 591.81,-650.71 654.86,-671.76 825.67,-600.38 839.06,-594.78 838.16,-586.73 850.67,-579.38 856.46,-575.97 862.49,-572.71 868.67,-569.58"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.73,-571.79 874.93,-566.5 867.57,-567.39 869.73,-571.79"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M251.38,-529.31C300.12,-537.54 357.36,-545.82 409.53,-549.87 508.4,-557.53 534.17,-561.52 632.64,-549.87 643.99,-548.52 646.34,-545.52 657.64,-543.87 693.33,-538.63 772.24,-534.07 845.05,-530.73"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="844.74,-533.19 851.62,-530.43 844.52,-528.3 844.74,-533.19"/>
 </g>
 <!-- entry&#45;&gt;w_scribe -->
-<g id="edge27" class="edge">
+<g id="edge29" class="edge">
 <title>entry&#45;&gt;w_scribe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M251.45,-519.99C442.56,-523.79 801.6,-528.91 825.67,-514.38 845.93,-502.15 832.93,-483.03 850.67,-467.38 854.19,-464.27 857.89,-461.34 861.75,-458.55"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="862.94,-460.71 867.34,-454.73 860.18,-456.66 862.94,-460.71"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M251.49,-541.92C261.94,-544.47 272.38,-546.84 282.52,-548.87 447.18,-581.78 490.4,-578.87 657.64,-593.87 732.16,-600.55 751.44,-594.57 825.67,-603.87 830.91,-604.52 836.24,-605.24 841.61,-606.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="841,-608.4 848.28,-607 841.71,-603.55 841,-608.4"/>
+</g>
+<!-- entry&#45;&gt;w_recon -->
+<g id="edge30" class="edge">
+<title>entry&#45;&gt;w_recon</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M251.61,-486.68C300.38,-478.8 357.58,-470.16 409.53,-463.87 555.68,-446.15 723,-432.26 841.68,-423.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="841.53,-425.94 848.33,-422.99 841.17,-421.06 841.53,-425.94"/>
 </g>
 <!-- entry&#45;&gt;qevents -->
-<g id="edge28" class="edge">
+<g id="edge31" class="edge">
 <title>entry&#45;&gt;qevents</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M157.83,-552.87C184.15,-588.77 229.68,-643.06 282.52,-672.38 319.24,-692.76 363.38,-704.85 403.59,-712.02"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="403.01,-714.4 410.32,-713.17 403.83,-709.57 403.01,-714.4"/>
-<text xml:space="preserve" text-anchor="middle" x="333.52" y="-722.71" font-family="Courier,monospace" font-size="10.00">register +</text>
-<text xml:space="preserve" text-anchor="middle" x="333.52" y="-710.71" font-family="Courier,monospace" font-size="10.00">close on SIGTERM</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M178.83,-542.61C207.12,-563.37 245.2,-588.41 282.52,-603.87 320.69,-619.67 364.46,-630.71 403.95,-638.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="403.19,-640.65 410.52,-639.54 404.09,-635.84 403.19,-640.65"/>
+<text xml:space="preserve" text-anchor="middle" x="333.52" y="-649.28" font-family="Courier,monospace" font-size="10.00">register +</text>
+<text xml:space="preserve" text-anchor="middle" x="333.52" y="-637.28" font-family="Courier,monospace" font-size="10.00">close on SIGTERM</text>
 </g>
 <!-- health -->
-<g id="node19" class="node">
+<g id="node21" class="node">
 <title>health</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="632.64,-382.42 409.53,-382.42 409.53,-312.34 632.64,-312.34 632.64,-382.42"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-363.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worker/health&#45;server.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-350.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /health on 127.0.0.1:3001</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-337.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probes: pg + redisBatch +</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-324.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redisRealtime + isRunning()</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="632.64,-418.91 409.53,-418.91 409.53,-348.83 632.64,-348.83 632.64,-418.91"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-400.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worker/health&#45;server.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-387.17" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /health on 127.0.0.1:3001</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-373.97" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probes: pg + redisBatch +</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-360.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redisRealtime + isRunning()</text>
 </g>
 <!-- entry&#45;&gt;health -->
-<g id="edge40" class="edge">
+<g id="edge45" class="edge">
 <title>entry&#45;&gt;health</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M214.75,-481.74C278,-453.91 365.81,-415.27 431.04,-386.56"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="431.79,-388.91 437.21,-383.85 429.82,-384.42 431.79,-388.91"/>
-<text xml:space="preserve" text-anchor="middle" x="333.52" y="-450.6" font-family="Courier,monospace" font-size="10.00">start last</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M192.02,-471.18C218.77,-456.17 251.4,-439.7 282.52,-428.87 319.92,-415.84 362.03,-406.3 400.3,-399.45"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="400.65,-401.88 407.12,-398.26 399.8,-397.05 400.65,-401.88"/>
+<text xml:space="preserve" text-anchor="middle" x="333.52" y="-431.87" font-family="Courier,monospace" font-size="10.00">start last</text>
 </g>
 <!-- cfg -->
-<g id="node10" class="node">
+<g id="node11" class="node">
 <title>cfg</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="622.74,-252.42 419.43,-252.42 419.43,-182.34 622.74,-182.34 622.74,-252.42"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-233.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worker/bullmq&#45;config.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-220.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">QUEUE_WORLD_GEN &#160;(c=3)</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-207.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">QUEUE_CAMPAIGN_SETUP (c=5)</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-194.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">QUEUE_SESSION_PREP (c=3)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="622.74,-288.91 419.43,-288.91 419.43,-218.83 622.74,-218.83 622.74,-288.91"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-270.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worker/bullmq&#45;config.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-257.17" font-family="Courier,monospace" font-size="11.00" fill="#231b12">QUEUE_WORLD_GEN &#160;(c=3)</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-243.97" font-family="Courier,monospace" font-size="11.00" fill="#231b12">QUEUE_CAMPAIGN_SETUP (c=5)</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-230.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">QUEUE_SESSION_PREP (c=3)</text>
 </g>
 <!-- cfg&#45;&gt;w_world -->
-<g id="edge18" class="edge">
+<g id="edge20" class="edge">
 <title>cfg&#45;&gt;w_world</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M591.81,-181.6C623.03,-165.72 653.76,-150.35 657.64,-149.38 750.03,-126.21 860.97,-128.67 930.39,-133.66"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.09,-136.09 937.25,-134.17 930.45,-131.21 930.09,-136.09"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-152.38" font-family="Courier,monospace" font-size="10.00">queue name + concurrency</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.2,-221.45C634.72,-218.75 646.37,-216.46 657.64,-214.87 751.71,-201.6 861.77,-210.14 930.58,-218.32"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.13,-220.73 937.37,-219.15 930.72,-215.87 930.13,-220.73"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-217.87" font-family="Courier,monospace" font-size="10.00">queue name + concurrency</text>
 </g>
 <!-- cfg&#45;&gt;w_camp -->
-<g id="edge19" class="edge">
+<g id="edge21" class="edge">
 <title>cfg&#45;&gt;w_camp</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.06,-181.65C634.6,-178.67 646.3,-176.13 657.64,-174.38 731.44,-162.95 752.1,-161.54 825.67,-174.38 837.3,-176.41 839.44,-179.72 850.67,-183.38 875.63,-191.52 903.21,-199.78 927.66,-206.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="926.68,-209.13 934.08,-208.71 928.03,-204.42 926.68,-209.13"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M608.1,-218.14C617.15,-211.97 625.6,-204.91 632.64,-196.87 654.4,-172.01 630.64,-145.9 657.64,-126.87 679.06,-111.77 834.11,-124.81 927.23,-134.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="926.75,-136.65 933.96,-134.92 927.25,-131.77 926.75,-136.65"/>
 </g>
 <!-- cfg&#45;&gt;w_prep -->
-<g id="edge20" class="edge">
+<g id="edge22" class="edge">
 <title>cfg&#45;&gt;w_prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.32,-188.28C634.82,-185.86 646.43,-183.8 657.64,-182.38 676.16,-180.03 810.76,-171.15 825.67,-182.38 857.81,-206.58 822.29,-240.86 850.67,-269.38 871.73,-290.54 902.6,-301.41 930.61,-306.95"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.08,-309.34 937.41,-308.17 930.95,-304.52 930.08,-309.34"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M591.42,-289.49C622.77,-305.45 653.74,-320.94 657.64,-321.87 707.57,-333.69 846.43,-325.76 930.41,-319.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.51,-321.91 937.31,-318.94 930.14,-317.02 930.51,-321.91"/>
 </g>
 <!-- w_turn&#45;&gt;q_steval -->
-<g id="edge14" class="edge">
+<g id="edge15" class="edge">
 <title>w_turn&#45;&gt;q_steval</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M997.56,-789.74C995.05,-887.98 973.46,-1130.94 825.67,-1236.38 763.44,-1280.78 674.27,-1275.51 608.67,-1262.6"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="609.51,-1260.27 602.16,-1261.27 608.53,-1265.07 609.51,-1260.27"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1286.73" font-family="Courier,monospace" font-size="10.00">enqueue st&#45;evaluation</text>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1274.73" font-family="Courier,monospace" font-size="10.00">(post&#45;turn, flushed success)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M994.21,-903.13C984.91,-988.93 950.44,-1182.35 825.67,-1264.87 763.38,-1306.06 729.9,-1283.72 657.64,-1264.87 645.32,-1261.65 644.29,-1256.02 632.64,-1250.87 623.53,-1246.83 613.84,-1242.98 604.12,-1239.4"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="605.09,-1237.14 597.68,-1237.06 603.43,-1241.75 605.09,-1237.14"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1303.11" font-family="Courier,monospace" font-size="10.00">enqueue st&#45;evaluation</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1291.11" font-family="Courier,monospace" font-size="10.00">(post&#45;turn, flushed success)</text>
 </g>
 <!-- w_turn&#45;&gt;q_scribe -->
-<g id="edge15" class="edge">
+<g id="edge16" class="edge">
 <title>w_turn&#45;&gt;q_scribe</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M962.18,-789.75C930.24,-825.08 880.04,-873.79 825.67,-900.38 757.45,-933.75 716.73,-883.67 657.64,-931.38 635.17,-949.53 653.87,-971.78 632.64,-991.38 628.11,-995.57 623.07,-999.27 617.73,-1002.54"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="616.75,-1000.28 611.85,-1005.85 619.15,-1004.55 616.75,-1000.28"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-946.38" font-family="Courier,monospace" font-size="10.00">enqueue scribe</text>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-934.38" font-family="Courier,monospace" font-size="10.00">(post&#45;turn, flushed success)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M998.29,-903.17C997.52,-1004.36 979.72,-1260.22 825.67,-1370.87 793.44,-1394.01 694.44,-1383.44 618.17,-1370.76"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="619.03,-1368.42 611.71,-1369.66 618.21,-1373.25 619.03,-1368.42"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1399.52" font-family="Courier,monospace" font-size="10.00">enqueue scribe</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1387.52" font-family="Courier,monospace" font-size="10.00">(post&#45;turn, flushed success)</text>
+</g>
+<!-- w_turn&#45;&gt;q_recon -->
+<g id="edge17" class="edge">
+<title>w_turn&#45;&gt;q_recon</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M991.03,-903.1C976.74,-979.57 934.7,-1139.28 825.67,-1206.87 762.2,-1246.21 725.53,-1237.97 657.64,-1206.87 642.17,-1199.78 646.77,-1187.35 632.64,-1177.87 626.66,-1173.85 620.21,-1170.24 613.53,-1166.99"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="614.64,-1164.81 607.25,-1164.11 612.59,-1169.26 614.64,-1164.81"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1248.37" font-family="Courier,monospace" font-size="10.00">enqueue reconcile</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1236.37" font-family="Courier,monospace" font-size="10.00">(budget&#45;100% auto&#45;end)</text>
 </g>
 <!-- realtime -->
-<g id="node23" class="node">
+<g id="node25" class="node">
 <title>realtime</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1553.93,-558.42 1304.41,-558.42 1304.41,-488.34 1553.93,-488.34 1553.93,-558.42"/>
-<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-539.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redisRealtime</text>
-<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-526.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PUBLISH stage&#45;* / per&#45;fact events</text>
-<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-513.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session lock + turn state +</text>
-<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-500.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DM&#45;turn frames (MYT&#45;66)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1553.93,-601.91 1304.41,-601.91 1304.41,-531.83 1553.93,-531.83 1553.93,-601.91"/>
+<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-583.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redisRealtime</text>
+<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-570.17" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PUBLISH stage&#45;* / per&#45;fact events</text>
+<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-556.97" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session lock + turn state +</text>
+<text xml:space="preserve" text-anchor="middle" x="1429.17" y="-543.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DM&#45;turn frames (MYT&#45;66)</text>
 </g>
 <!-- w_turn&#45;&gt;realtime -->
-<g id="edge36" class="edge">
+<g id="edge40" class="edge">
 <title>w_turn&#45;&gt;realtime</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1087.64,-715.85C1107.18,-708.29 1127.64,-699.92 1146.39,-691.38 1226.88,-654.73 1313.4,-600.73 1369.01,-563.91"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1370.33,-565.98 1374.8,-560.07 1367.62,-561.9 1370.33,-565.98"/>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-691.05" font-family="Courier,monospace" font-size="10.00">lock + state +</text>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-679.05" font-family="Courier,monospace" font-size="10.00">DM&#45;turn frames</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1087.61,-831.16C1107.34,-823.44 1127.9,-814.55 1146.39,-804.87 1209.86,-771.65 1224.15,-759.45 1279.41,-713.87 1319.16,-681.08 1360.55,-639.47 1389.55,-608.9"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1391.27,-610.64 1394.3,-603.87 1387.71,-607.28 1391.27,-610.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-805.31" font-family="Courier,monospace" font-size="10.00">lock + state +</text>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-793.31" font-family="Courier,monospace" font-size="10.00">DM&#45;turn frames</text>
 </g>
 <!-- w_trig&#45;&gt;q_turn -->
-<g id="edge13" class="edge">
+<g id="edge14" class="edge">
 <title>w_trig&#45;&gt;q_turn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M869.96,-672.16C862.7,-677.69 856.14,-684.05 850.67,-691.38 807.32,-749.41 874.73,-963.09 825.67,-1016.38 774.44,-1072.02 726.8,-1012.74 657.64,-1043.38 644.63,-1049.14 645.25,-1056.78 632.64,-1063.38 624.56,-1067.61 615.85,-1071.38 607,-1074.72"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="606.3,-1072.37 600.55,-1077.05 607.97,-1076.98 606.3,-1072.37"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1058.38" font-family="Courier,monospace" font-size="10.00">enqueue</text>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1046.38" font-family="Courier,monospace" font-size="10.00">session&#45;turn</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M870.04,-785.71C862.76,-791.23 856.18,-797.57 850.67,-804.87 812.22,-855.78 868.58,-1043.66 825.67,-1090.87 774.59,-1147.06 711.62,-1068.45 657.64,-1121.87 616.44,-1162.64 671.59,-1206.94 632.64,-1249.87 625.81,-1257.4 617.34,-1263.24 608.14,-1267.77"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="607.33,-1265.45 601.93,-1270.53 609.32,-1269.93 607.33,-1265.45"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1136.87" font-family="Courier,monospace" font-size="10.00">enqueue</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1124.87" font-family="Courier,monospace" font-size="10.00">session&#45;turn</text>
 </g>
 <!-- w_trig&#45;&gt;realtime -->
-<g id="edge37" class="edge">
+<g id="edge41" class="edge">
 <title>w_trig&#45;&gt;realtime</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1127.27,-602C1180.31,-588.14 1241.87,-572.06 1295.43,-558.06"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1296.05,-560.43 1302.2,-556.29 1294.81,-555.69 1296.05,-560.43"/>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-604.41" font-family="Courier,monospace" font-size="10.00">trigger state +</text>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-592.41" font-family="Courier,monospace" font-size="10.00">classifier</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1111.09,-706.61C1123.02,-702.01 1134.97,-697.36 1146.39,-692.87 1205.77,-669.5 1221.11,-664.78 1279.41,-638.87 1302.16,-628.76 1326.58,-617.23 1348.92,-606.4"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1349.87,-608.67 1355.1,-603.4 1347.73,-604.26 1349.87,-608.67"/>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-697.92" font-family="Courier,monospace" font-size="10.00">trigger state +</text>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-685.92" font-family="Courier,monospace" font-size="10.00">classifier</text>
 </g>
 <!-- w_steval&#45;&gt;realtime -->
-<g id="edge38" class="edge">
+<g id="edge42" class="edge">
 <title>w_steval&#45;&gt;realtime</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1143.75,-523.38C1192.72,-523.38 1247.17,-523.38 1295.22,-523.38"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1294.99,-525.83 1301.99,-523.38 1294.99,-520.93 1294.99,-525.83"/>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-538.38" font-family="Courier,monospace" font-size="10.00">direction slots +</text>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-526.38" font-family="Courier,monospace" font-size="10.00">summary + usage:st</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1143.75,-539C1192.72,-543.8 1247.17,-549.13 1295.22,-553.84"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1294.79,-556.26 1302,-554.5 1295.27,-551.38 1294.79,-556.26"/>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-567.08" font-family="Courier,monospace" font-size="10.00">direction slots +</text>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-555.08" font-family="Courier,monospace" font-size="10.00">summary + usage:st</text>
 </g>
 <!-- w_scribe&#45;&gt;q_turn -->
-<g id="edge16" class="edge">
+<g id="edge18" class="edge">
 <title>w_scribe&#45;&gt;q_turn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M862.89,-453.76C858.39,-457.89 854.28,-462.41 850.67,-467.38 818.55,-511.56 862.15,-917.71 825.67,-958.38 775.16,-1014.68 715,-936.08 657.64,-985.38 630.04,-1009.11 658.64,-1037.9 632.64,-1063.38 625.62,-1070.26 617.22,-1075.72 608.23,-1080.05"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="607.29,-1077.78 601.87,-1082.84 609.26,-1082.27 607.29,-1077.78"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1000.38" font-family="Courier,monospace" font-size="10.00">enqueue correction turn</text>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-988.38" font-family="Courier,monospace" font-size="10.00">(retcon Z)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M863.4,-679.13C858.73,-683.29 854.45,-687.85 850.67,-692.87 811.22,-745.24 869.72,-938.29 825.67,-986.87 774.66,-1043.12 709.29,-962.19 657.64,-1017.87 587.12,-1093.9 698.98,-1170.15 632.64,-1249.87 625.99,-1257.87 617.48,-1263.98 608.14,-1268.64"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="607.18,-1266.38 601.79,-1271.48 609.18,-1270.86 607.18,-1266.38"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1032.87" font-family="Courier,monospace" font-size="10.00">enqueue correction turn</text>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-1020.87" font-family="Courier,monospace" font-size="10.00">(retcon Z)</text>
 </g>
 <!-- w_scribe&#45;&gt;realtime -->
-<g id="edge39" class="edge">
+<g id="edge43" class="edge">
 <title>w_scribe&#45;&gt;realtime</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1147.04,-449.92C1195.25,-462.52 1248.46,-476.42 1295.5,-488.71"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1294.76,-491.05 1302.15,-490.45 1296,-486.31 1294.76,-491.05"/>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-498.95" font-family="Courier,monospace" font-size="10.00">working set</text>
-<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-486.95" font-family="Courier,monospace" font-size="10.00">(embed&#45;on&#45;append)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1147.04,-612.78C1195.15,-604.92 1248.24,-596.25 1295.21,-588.58"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1295.6,-591 1302.11,-587.45 1294.81,-586.16 1295.6,-591"/>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-623.14" font-family="Courier,monospace" font-size="10.00">working set</text>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-611.14" font-family="Courier,monospace" font-size="10.00">(embed&#45;on&#45;append)</text>
+</g>
+<!-- w_recon&#45;&gt;realtime -->
+<g id="edge44" class="edge">
+<title>w_recon&#45;&gt;realtime</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1122.36,-455.18C1171.32,-472.23 1228.12,-492.23 1279.41,-510.87 1294.54,-516.36 1310.5,-522.26 1326.12,-528.09"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1325.14,-530.34 1332.56,-530.5 1326.86,-525.75 1325.14,-530.34"/>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-525.87" font-family="Courier,monospace" font-size="10.00">lock + working set</text>
+<text xml:space="preserve" text-anchor="middle" x="1225.4" y="-513.87" font-family="Courier,monospace" font-size="10.00">(load + clear)</text>
 </g>
 <!-- health&#45;&gt;w_world -->
-<g id="edge43" class="edge">
+<g id="edge48" class="edge">
 <title>health&#45;&gt;w_world</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M580.53,-311.76C598.52,-299.13 617.54,-283.9 632.64,-267.38 647.3,-251.35 640.21,-238.34 657.64,-225.38 700.47,-193.53 844.27,-165.41 930.51,-150.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.89,-153.28 937.39,-149.71 930.08,-148.45 930.89,-153.28"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-228.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M580.92,-348.14C598.83,-335.55 617.7,-320.38 632.64,-303.87 647.48,-287.47 639.04,-272.8 657.64,-260.87 701.36,-232.81 844.48,-227.7 930.44,-227.27"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.28,-229.72 937.27,-227.25 930.26,-224.82 930.28,-229.72"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-263.87" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- health&#45;&gt;w_camp -->
-<g id="edge44" class="edge">
+<g id="edge49" class="edge">
 <title>health&#45;&gt;w_camp</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M590.68,-311.71C616.96,-298.52 643.92,-285.73 657.64,-281.38 748.22,-252.69 857.35,-238.42 927.08,-231.73"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.26,-234.17 934,-231.08 926.8,-229.29 927.26,-234.17"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-284.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M588.81,-348.2C605.53,-336.23 621.78,-321.38 632.64,-303.87 668.04,-246.81 607.22,-199.21 657.64,-154.87 696.26,-120.9 839.7,-127.14 927.43,-134.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.01,-137.02 934.19,-135.18 927.43,-132.14 927.01,-137.02"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-157.87" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- health&#45;&gt;w_prep -->
-<g id="edge45" class="edge">
+<g id="edge50" class="edge">
 <title>health&#45;&gt;w_prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M633.25,-312.72C641.45,-310.99 649.64,-309.51 657.64,-308.38 751.65,-295.12 861.72,-300.11 930.55,-305.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.16,-308.07 937.34,-306.2 930.57,-303.18 930.16,-308.07"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-311.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M633.26,-367.5C725.35,-353.94 853.2,-335.12 930.38,-323.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.71,-326.18 937.28,-322.74 930,-321.33 930.71,-326.18"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-366.18" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- health&#45;&gt;w_turn -->
-<g id="edge46" class="edge">
+<g id="edge51" class="edge">
 <title>health&#45;&gt;w_turn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M555.75,-383.06C581.45,-408.33 618.92,-441.2 657.64,-461.38 726.2,-497.11 774.59,-448.34 825.67,-506.38 880.49,-568.66 799.12,-626.37 850.67,-691.38 863.71,-707.82 882.17,-719.44 901.61,-727.65"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="900.6,-729.88 908.01,-730.18 902.4,-725.32 900.6,-729.88"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-509.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M589.53,-419.47C606.15,-431.41 622.17,-446.25 632.64,-463.87 676.86,-538.2 603.19,-589.66 657.64,-656.87 707.47,-718.36 771.52,-658.14 825.67,-715.87 853.78,-745.83 822.96,-774.53 850.67,-804.87 864.36,-819.85 882.49,-830.86 901.32,-838.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="900.34,-841.17 907.75,-841.53 902.18,-836.63 900.34,-841.17"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-718.87" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- health&#45;&gt;w_trig -->
-<g id="edge47" class="edge">
+<g id="edge52" class="edge">
 <title>health&#45;&gt;w_trig</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M583.94,-383.03C606.54,-394.8 632.68,-407 657.64,-415.38 729.64,-439.53 771.88,-392.77 825.67,-446.38 868.27,-488.84 812.1,-533.23 850.67,-579.38 854.43,-583.88 858.6,-588.02 863.07,-591.83"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="861.41,-593.63 868.42,-596.05 864.44,-589.79 861.41,-593.63"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-449.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M588.15,-419.56C604.96,-431.57 621.43,-446.43 632.64,-463.87 663.06,-511.15 619.72,-546.36 657.64,-587.87 710.2,-645.39 766.92,-586.68 825.67,-637.87 845.92,-655.5 831.1,-674.48 850.67,-692.87 854.43,-696.4 858.43,-699.71 862.63,-702.82"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="861.22,-704.83 868.36,-706.83 864.02,-700.81 861.22,-704.83"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-640.87" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- health&#45;&gt;w_steval -->
-<g id="edge48" class="edge">
+<g id="edge53" class="edge">
 <title>health&#45;&gt;w_steval</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M633.15,-365.46C718.25,-379.53 821.81,-397.17 825.67,-400.38 850.12,-420.69 828.28,-444.82 850.67,-467.38 853.64,-470.37 856.78,-473.2 860.07,-475.88"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="858.52,-477.78 865.57,-480.08 861.49,-473.89 858.52,-477.78"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-403.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M633.26,-416.84C696.81,-435.68 777.4,-459.58 846.61,-480.11"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="845.84,-482.44 853.25,-482.08 847.24,-477.74 845.84,-482.44"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-474.14" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- health&#45;&gt;w_scribe -->
-<g id="edge49" class="edge">
+<g id="edge54" class="edge">
 <title>health&#45;&gt;w_scribe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M633.17,-342.08C690.97,-341.3 762.56,-343.44 825.67,-354.38 842.71,-357.33 860.35,-361.65 877.57,-366.6"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="876.83,-368.94 884.23,-368.57 878.21,-364.24 876.83,-368.94"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-357.38" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M575.3,-419.46C593.98,-432.71 614.76,-448.32 632.64,-463.87 644.74,-474.38 644.62,-480.52 657.64,-489.87 734.68,-545.19 763.4,-543.72 850.67,-580.87 858.94,-584.38 867.51,-587.92 876.16,-591.42"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="875.04,-593.61 882.45,-593.94 876.86,-589.06 875.04,-593.61"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-572" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
+</g>
+<!-- health&#45;&gt;w_recon -->
+<g id="edge55" class="edge">
+<title>health&#45;&gt;w_recon</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M633.26,-390.65C695.24,-394.43 773.41,-399.2 841.44,-403.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="841.16,-405.78 848.3,-403.76 841.46,-400.89 841.16,-405.78"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-404.82" font-family="Courier,monospace" font-size="10.00">isRunning()</text>
 </g>
 <!-- pg -->
-<g id="node22" class="node">
+<g id="node24" class="node">
 <title>pg</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1047.38,-83.22 949.69,-83.22 949.69,-39.54 1047.38,-39.54 1047.38,-83.22"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-64.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Postgres</text>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-51.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pool max=4</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1047.38,-84.71 949.69,-84.71 949.69,-41.03 1047.38,-41.03 1047.38,-84.71"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-66.17" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Postgres</text>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-52.97" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pool max=4</text>
 </g>
 <!-- health&#45;&gt;pg -->
-<g id="edge42" class="edge">
+<g id="edge47" class="edge">
 <title>health&#45;&gt;pg</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M588.89,-311.77C605.61,-299.79 621.84,-284.93 632.64,-267.38 669.44,-207.58 607.67,-160.71 657.64,-111.38 732.33,-37.64 864.93,-41.65 940.54,-51.36"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="939.96,-53.76 947.23,-52.27 940.62,-48.9 939.96,-53.76"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-114.38" font-family="Courier,monospace" font-size="10.00">SELECT 1</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M589.54,-348.26C606.16,-336.33 622.17,-321.48 632.64,-303.87 677.06,-229.13 596.46,-171.62 657.64,-109.87 731.52,-35.3 864.73,-41.12 940.59,-51.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="940.02,-54.38 947.3,-52.99 940.74,-49.53 940.02,-54.38"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-112.87" font-family="Courier,monospace" font-size="10.00">SELECT 1</text>
 </g>
 <!-- health&#45;&gt;realtime -->
-<g id="edge50" class="edge">
+<g id="edge56" class="edge">
 <title>health&#45;&gt;realtime</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M590.04,-311.69C606.56,-299.79 622.4,-284.99 632.64,-267.38 658.17,-223.52 622.29,-76.79 657.64,-40.38 716.81,20.55 1129.1,-3.18 1146.39,-13.38 1322.66,-117.37 1396.31,-375.51 1419.45,-479.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1417,-479.5 1420.89,-485.81 1421.79,-478.45 1417,-479.5"/>
-<text xml:space="preserve" text-anchor="middle" x="998.53" y="-16.38" font-family="Courier,monospace" font-size="10.00">PING</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M590.5,-348.08C606.92,-336.21 622.59,-321.45 632.64,-303.87 661.89,-252.71 616.7,-82.25 657.64,-39.87 714.61,19.1 1124.69,-1.57 1146.39,-14.87 1334.01,-129.74 1401.68,-413.24 1421.32,-522.73"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1418.87,-522.97 1422.5,-529.44 1423.7,-522.12 1418.87,-522.97"/>
+<text xml:space="preserve" text-anchor="middle" x="998.53" y="-17.87" font-family="Courier,monospace" font-size="10.00">PING</text>
 </g>
 <!-- bullmq_redis -->
-<g id="node20" class="node">
+<g id="node22" class="node">
 <title>bullmq_redis</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="622.74,-603.82 419.43,-603.82 419.43,-546.94 622.74,-546.94 622.74,-603.82"/>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-585.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redis/bullmq&#45;client.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-572.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">maxRetriesPerRequest: null</text>
-<text xml:space="preserve" text-anchor="middle" x="521.09" y="-558.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(BullMQ requirement)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="622.74,-535.31 419.43,-535.31 419.43,-478.43 622.74,-478.43 622.74,-535.31"/>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-516.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redis/bullmq&#45;client.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-503.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">maxRetriesPerRequest: null</text>
+<text xml:space="preserve" text-anchor="middle" x="521.09" y="-490.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(BullMQ requirement)</text>
 </g>
 <!-- bullmq_redis&#45;&gt;w_world -->
-<g id="edge29" class="edge">
+<g id="edge32" class="edge">
 <title>bullmq_redis&#45;&gt;w_world</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.23,-558.13C710.85,-543.07 823.92,-523.32 825.67,-521.38 876.14,-465.47 803.32,-241.95 850.67,-183.38 869.98,-159.5 901.79,-148.42 930.88,-143.44"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="931.05,-145.9 937.6,-142.42 930.32,-141.05 931.05,-145.9"/>
-<text xml:space="preserve" text-anchor="middle" x="741.66" y="-554.14" font-family="Courier,monospace" font-size="10.00">connection</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M583.84,-477.73C602.02,-466.39 620.31,-451.76 632.64,-433.87 661.59,-391.87 622.45,-358.78 657.64,-321.87 711.07,-265.83 751.04,-296.5 825.67,-275.87 860.34,-266.28 898.92,-255.51 930.73,-246.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="931.26,-249.01 937.34,-244.76 929.94,-244.29 931.26,-249.01"/>
+<text xml:space="preserve" text-anchor="middle" x="741.66" y="-324.87" font-family="Courier,monospace" font-size="10.00">connection</text>
 </g>
 <!-- bullmq_redis&#45;&gt;w_camp -->
-<g id="edge30" class="edge">
+<g id="edge33" class="edge">
 <title>bullmq_redis&#45;&gt;w_camp</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.1,-575.9C708.52,-575.84 818.24,-574.39 825.67,-567.38 873.99,-521.75 808.64,-320.85 850.67,-269.38 869.25,-246.63 899.17,-235.51 927.18,-230.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.51,-232.64 934,-229.06 926.69,-227.81 927.51,-232.64"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M586.23,-477.81C604.07,-466.61 621.58,-452.04 632.64,-433.87 659.73,-389.39 622.04,-238.87 657.64,-200.87 659.96,-198.39 828.86,-169.93 927.66,-153.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.82,-155.92 934.33,-152.35 927.02,-151.08 927.82,-155.92"/>
 </g>
 <!-- bullmq_redis&#45;&gt;w_prep -->
-<g id="edge31" class="edge">
+<g id="edge34" class="edge">
 <title>bullmq_redis&#45;&gt;w_prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.42,-578.22C708.73,-580.12 818.07,-581.18 825.67,-574.38 862.16,-541.71 819.12,-392.85 850.67,-355.38 870.29,-332.07 901.81,-321.02 930.62,-315.92"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.74,-318.38 937.27,-314.86 929.97,-313.54 930.74,-318.38"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M576.39,-477.82C595.6,-465.87 616.45,-450.84 632.64,-433.87 647.64,-418.15 639.09,-403.16 657.64,-391.87 689.6,-372.42 791.55,-397.2 825.67,-381.87 840,-375.42 837.15,-364.88 850.67,-356.87 875.11,-342.38 904.75,-332.49 930.99,-325.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="931.39,-328.32 937.61,-324.29 930.23,-323.55 931.39,-328.32"/>
 </g>
 <!-- bullmq_redis&#45;&gt;w_turn -->
-<g id="edge32" class="edge">
+<g id="edge35" class="edge">
 <title>bullmq_redis&#45;&gt;w_turn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M602.74,-604.56C685.34,-634.44 813.73,-680.88 901.52,-712.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="900.49,-714.88 907.91,-714.96 902.16,-710.27 900.49,-714.88"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M563.9,-535.93C587.65,-554.63 615.9,-580.98 632.64,-610.87 659.27,-658.39 616.41,-695.25 657.64,-730.87 685.95,-755.32 795.42,-718.86 825.67,-740.87 850.37,-758.83 828.99,-783.36 850.67,-804.87 864.83,-818.91 882.86,-829.49 901.41,-837.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="900.3,-839.65 907.7,-840.02 902.15,-835.11 900.3,-839.65"/>
 </g>
 <!-- bullmq_redis&#45;&gt;w_trig -->
-<g id="edge33" class="edge">
+<g id="edge36" class="edge">
 <title>bullmq_redis&#45;&gt;w_trig</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.31,-595.25C634.86,-597.16 646.49,-598.92 657.64,-600.38 731.92,-610.07 751.16,-605.73 825.67,-613.38 837.23,-614.56 849.21,-615.89 861.23,-617.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="860.93,-619.73 868.17,-618.11 861.51,-614.86 860.93,-619.73"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M558.53,-535.94C581.58,-555.52 611,-582.8 632.64,-610.87 646.85,-629.29 638.31,-643.92 657.64,-656.87 720.06,-698.64 755.52,-648.03 825.67,-674.87 838.46,-679.76 838.62,-686.37 850.67,-692.87 857.2,-696.38 863.99,-699.78 870.93,-703.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.47,-705.08 876.85,-705.79 871.52,-700.63 869.47,-705.08"/>
 </g>
 <!-- bullmq_redis&#45;&gt;w_steval -->
-<g id="edge34" class="edge">
+<g id="edge37" class="edge">
 <title>bullmq_redis&#45;&gt;w_steval</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.37,-590.91C682.76,-597.24 758.99,-600.57 825.67,-588.38 827.48,-588.05 850.34,-579.5 878.82,-568.71"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="879.62,-571.03 885.3,-566.25 877.88,-566.45 879.62,-571.03"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.45,-515.76C634.98,-516.58 646.56,-517.3 657.64,-517.87 718.88,-520.98 786.39,-522.72 845,-523.69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="844.73,-526.13 851.77,-523.79 844.81,-521.23 844.73,-526.13"/>
 </g>
 <!-- bullmq_redis&#45;&gt;w_scribe -->
-<g id="edge35" class="edge">
+<g id="edge38" class="edge">
 <title>bullmq_redis&#45;&gt;w_scribe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M623.15,-583.7C705.28,-589.44 810.01,-593.98 825.67,-581.38 866.09,-548.86 816.81,-506.67 850.67,-467.38 853.13,-464.53 855.74,-461.82 858.49,-459.26"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="860.08,-461.13 863.78,-454.7 856.88,-457.42 860.08,-461.13"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M560.09,-535.97C586.06,-554.11 622.1,-576.01 657.64,-586.87 729.19,-608.71 751.63,-586.13 825.67,-596.87 830.94,-597.63 836.29,-598.48 841.68,-599.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="841.08,-601.77 848.4,-600.56 841.92,-596.94 841.08,-601.77"/>
+</g>
+<!-- bullmq_redis&#45;&gt;w_recon -->
+<g id="edge39" class="edge">
+<title>bullmq_redis&#45;&gt;w_recon</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M616.7,-477.73C630.34,-474.29 644.28,-471.19 657.64,-468.87 731.4,-456.03 751.77,-468.87 825.67,-456.87 830.96,-456.01 836.32,-455.06 841.72,-454.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="842.05,-456.48 848.46,-452.74 841.12,-451.67 842.05,-456.48"/>
 </g>
 <!-- ecs -->
-<g id="node21" class="node">
+<g id="node23" class="node">
 <title>ecs</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="237.71,-112.82 27.8,-112.82 27.8,-55.94 237.71,-55.94 237.71,-112.82"/>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-94.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS healthCheck</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-81.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">curl :3001/health every 30s</text>
-<text xml:space="preserve" text-anchor="middle" x="132.76" y="-67.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stopTimeout=120s</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="237.71,-114.31 27.8,-114.31 27.8,-57.43 237.71,-57.43 237.71,-114.31"/>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-95.77" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS healthCheck</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-82.57" font-family="Courier,monospace" font-size="11.00" fill="#231b12">curl :3001/health every 30s</text>
+<text xml:space="preserve" text-anchor="middle" x="132.76" y="-69.37" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stopTimeout=120s</text>
 </g>
 <!-- ecs&#45;&gt;health -->
-<g id="edge41" class="edge">
+<g id="edge46" class="edge">
 <title>ecs&#45;&gt;health</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M238.34,-107.06C244.99,-109.83 251.44,-112.92 257.52,-116.38 340.27,-163.49 336.96,-205.72 409.53,-267.38 425.41,-280.87 443.42,-294.53 460.23,-306.65"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="458.76,-308.61 465.88,-310.69 461.61,-304.63 458.76,-308.61"/>
-<text xml:space="preserve" text-anchor="middle" x="333.52" y="-245.56" font-family="Courier,monospace" font-size="10.00">curl :3001/health</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M238.46,-107.7C245.11,-110.67 251.53,-114.04 257.52,-117.87 347.44,-175.42 331.85,-230.62 409.53,-303.87 424.31,-317.8 441.6,-331.38 458.05,-343.27"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="456.44,-345.13 463.56,-347.21 459.29,-341.15 456.44,-345.13"/>
+<text xml:space="preserve" text-anchor="middle" x="333.52" y="-277.11" font-family="Courier,monospace" font-size="10.00">curl :3001/health</text>
 </g>
 </g>
 </svg>
@@ -629,21 +692,23 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers seven BullMQ <code>Worker</code> instances against
+  data plane, and then registers eight BullMQ <code>Worker</code> instances against
   <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
   <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5),
   <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61),
   <code>QUEUE_SESSION_TURN</code> (<code>session-turn</code>, concurrency 5, added in MYT-66),
   <code>QUEUE_DM_TRIGGER</code> (<code>dm-trigger</code>, concurrency 5, added in MYT-67),
-  <code>QUEUE_ST_EVAL</code> (<code>st-evaluation</code>, concurrency 2, added in MYT-69), and
-  <code>QUEUE_SCRIBE</code> (<code>scribe</code>, concurrency 2, added in MYT-73). Queue names and
-  concurrency caps for the prep workers live in <code>backend/src/worker/bullmq-config.ts</code> —
-  the single source of truth so the API-side <code>Queue</code> producers and the worker-side
-  <code>Worker</code> consumers can't drift; the session-turn, dm-trigger, st-evaluation, and scribe
-  workers' own queue names and tuning constants live alongside their processors in
-  <code>session/turn-worker.ts</code>, <code>session/dm-trigger-config.ts</code>,
-  <code>session/st-eval-queue.ts</code> / <code>session/st-config.ts</code>, and
-  <code>session/scribe-queue.ts</code> / <code>session/scribe-config.ts</code>.
+  <code>QUEUE_ST_EVAL</code> (<code>st-evaluation</code>, concurrency 2, added in MYT-69),
+  <code>QUEUE_SCRIBE</code> (<code>scribe</code>, concurrency 2, added in MYT-73), and
+  <code>QUEUE_SESSION_RECONCILE</code> (<code>session-reconcile</code>, concurrency 1, added in
+  MYT-74a). Queue names and concurrency caps for the prep workers live in
+  <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the API-side
+  <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't drift; the
+  session-turn, dm-trigger, st-evaluation, scribe, and session-reconcile workers' own queue names
+  and tuning constants live alongside their processors in <code>session/turn-worker.ts</code>,
+  <code>session/dm-trigger-config.ts</code>, <code>session/st-eval-queue.ts</code> /
+  <code>session/st-config.ts</code>, <code>session/scribe-queue.ts</code> /
+  <code>session/scribe-config.ts</code>, and <code>session/session-reconcile.ts</code>.
 </p>
 
 <p>
@@ -699,12 +764,33 @@
   90-second lock mirror the st-evaluation worker because a retcon job can hold an Opus call open.
 </p>
 
+<p>
+  The <code>session-reconcile</code> worker (<code>buildReconcileWorker</code>) is the
+  <a href="./session-reconcile.html">end-of-session reconciler</a> — it folds a closed session's
+  improvised working set into durable canon (load the working set → retrieve canon candidates → one
+  holistic Opus reconcile → a pure structural-and-policy validate → Voyage embed → one gated commit
+  transaction → clear the working set), off the hot path. It is fired by the
+  <code>end_session</code> WS frame or the turn worker's budget-100% auto-end, not by a per-turn
+  enqueue, so unlike the other session workers it has no producer inside the worker process — the
+  API server and the turn worker are the producers. It takes both Redis connections (<code
+    >redisBatch</code
+  >
+  for its queue, <code>redisRealtime</code> for the per-session lock and the working-set list),
+  builds its own narrow secret-bearing repo over the pg <code>Pool</code>, and shares the
+  boot-probed Voyage embedder for the candidate-similarity search and the fact embeds. Its decision
+  logic lives wholly on its own page. It is the only worker that is <em>not total</em>: it throws on
+  transient failure so BullMQ retries, and its idempotency rests on the commit's conditional
+  <code>reconciled_at</code> gate, not on raw concurrency — which is why its concurrency is the
+  lowest in the process (1) and its lock (180s) sits above the worst-case Opus + Voyage + commit
+  wall-clock so a live reconcile is never stalled-reclaimed into a second run.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The QueueEvents subscriber needs explicit shutdown; the workers don't leak</strong> — the
   subscriber <code>duplicate()</code>s <code>redisBatch</code> for a dedicated
   <code>BRPOP</code> blocking connection, which <code>redisBatch.quit()</code> does
   <em>not</em> cover. So its <code>close()</code> is added to the SIGTERM teardown explicitly —
-  skipping it would leak one Redis connection per deploy. The seven Workers each share or own
+  skipping it would leak one Redis connection per deploy. The eight Workers each share or own
   connections the existing <code>quit()</code> calls already drain.
 </aside>
 
@@ -771,7 +857,7 @@
   <code>GET http://127.0.0.1:3001/health</code> probes the four moving parts: the pg pool (<code
     >SELECT 1</code
   >), <code>redisBatch.ping()</code>, <code>redisRealtime.ping()</code>, and each registered
-  <code>Worker</code>'s <code>isRunning()</code> state (all seven). Each probe is given a 1-second
+  <code>Worker</code>'s <code>isRunning()</code> state (all eight). Each probe is given a 1-second
   timeout via <code>Promise.race</code>. A 200 response means all probes passed; a 503 response
   carries a <code>failed[]</code> array of probe names so operators can see at a glance which
   dependency tripped. The endpoint binds <code>127.0.0.1</code> only — it's task-internal, consumed
@@ -791,7 +877,7 @@
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
   <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on all seven
+  new probes from going green during teardown), then runs <code>worker.close()</code> on all eight
   BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
   force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
@@ -933,7 +1019,7 @@
   </li>
   <li>
     Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
-    pg + both Redises + all seven BullMQ workers are healthy.
+    pg + both Redises + all eight BullMQ workers are healthy.
   </li>
 </ol>
 
@@ -987,16 +1073,21 @@
   safety net; the <a href="./dm-trigger.html">dm-trigger</a> worker is the fifth, the
   <a href="./dm-trigger.html">DM trigger</a> system's decision half; the
   <a href="./slow-thinker.html">st-evaluation</a> worker is the sixth, the post-hoc narrative
-  director; and the <a href="./scribe.html">scribe</a> worker is the seventh, the post-turn
-  reconciler. The session-turn, dm-trigger, st-evaluation, and scribe workers all read and write
+  director; the <a href="./scribe.html">scribe</a> worker is the seventh, the post-turn in-session
+  reconciler; and the <a href="./session-reconcile.html">session-reconcile</a> worker is the eighth,
+  the end-of-session reconciler that folds the working set into durable canon. The session-turn,
+  dm-trigger, st-evaluation, scribe, and session-reconcile workers all read and write
   <code>redisRealtime</code> (the per-session lock, turn / trigger / direction state, the working
   set, and DM-turn frame publishing) on top of the shared <code>redisBatch</code> queues — the
   dm-trigger worker makes the real Haiku classifier call, the st-evaluation worker the Haiku gate +
-  Opus director calls, and the scribe worker the Haiku tripwire + Opus retcon calls, through the
-  <a href="./llm.html">LLM client</a> (the scribe worker also shares the boot-probed Voyage embedder
-  for the working-set embed-on-append). The <code>QueueEvents('session-turn')</code> subscriber
-  registered alongside them publishes the terminal <code>turn_error</code> the JS listener can't.
-  Streaming-cost attribution joins to the <code>pipeline_runs</code> table introduced in MYT-43.
+  Opus director calls, the scribe worker the Haiku tripwire + Opus retcon calls, and the
+  session-reconcile worker the single Opus reconcile call, through the
+  <a href="./llm.html">LLM client</a> (the scribe and session-reconcile workers also share the
+  boot-probed Voyage embedder — the scribe for the working-set embed-on-append, the reconciler for
+  candidate similarity search and fact embeds). The
+  <code>QueueEvents('session-turn')</code> subscriber registered alongside them publishes the
+  terminal <code>turn_error</code> the JS listener can't. Streaming-cost attribution joins to the
+  <code>pipeline_runs</code> table introduced in MYT-43.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -1051,6 +1142,14 @@
         <code>buildScribeWorker</code> — the seventh Worker (concurrency 2). The post-turn
         <a href="./scribe.html">Scribe</a> reconciler (working set + tripwire + retcon); documented
         on that page.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/session/session-reconcile.ts</code></td>
+      <td>
+        <code>buildReconcileWorker</code> — the eighth Worker (concurrency 1, 180s lock). The
+        <a href="./session-reconcile.html">end-of-session reconciler</a> (working set → durable
+        canon); documented on that page.
       </td>
     </tr>
     <tr>
@@ -1135,6 +1234,13 @@
     <tr>
       <td>Concurrency: <code>scribe</code></td>
       <td>2 (a retcon job can hold an Opus call open; 90s lock)</td>
+    </tr>
+    <tr>
+      <td>Concurrency: <code>session-reconcile</code></td>
+      <td>
+        1 (180s lock ≥ Opus + Voyage + commit; idempotency rests on the commit gate, not
+        concurrency)
+      </td>
     </tr>
   </tbody>
 </table>

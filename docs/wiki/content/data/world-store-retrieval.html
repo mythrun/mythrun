@@ -16,8 +16,8 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: infra/modules/serving/variables.tf -->
-<!-- source-hash: sha256:4b3aaaac2e9e93bc19bf88270edfcbaab926daaa6776f07869de96fad21f5362 -->
-<!-- last-ticket: MYT-72 -->
+<!-- source-hash: sha256:94f08c76e1911c6a25a7defb1bc61f56f727841d4fdfea22de3239181e52cb93 -->
+<!-- last-ticket: MYT-74a -->
 
 <h1>World-store retrieval</h1>
 
@@ -107,10 +107,12 @@
 
 <aside class="wiki-rationale">
   <strong>HNSW, not IVFFlat</strong> — the index is HNSW with cosine ops on each embedding column.
-  IVFFlat needs a populated table to train its centroid lists; the Scribe inserts new facts
+  IVFFlat needs a populated table to train its centroid lists; the
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> inserts new facts
   incrementally at the end of every session, so the table is never "done" being populated. HNSW has
   no training step, indexes inserts as they land, and gives higher recall — the correct tradeoff for
-  a corpus that grows one session at a time. NULL embeddings aren't indexed.
+  a corpus that grows one session at a time. NULL embeddings aren't indexed (which is also why a
+  superseded fact, whose embedding is NULLed on supersede, drops out of the index).
 </aside>
 
 <aside class="wiki-rationale">
@@ -138,6 +140,21 @@
   <code>JOIN entities e ON e.id = f.entity_id WHERE e.world_id = $1</code>, mirroring every other
   world-scoped fact read. Entity searches scope on <code>entities.world_id</code> directly.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Canon-fact reads default to live-only (MYT-74a)</strong> — once
+  <a href="../runtime/session-reconcile.html">end-of-session reconciliation</a> made
+  <code>facts</code> append-only (a correction appends a new row and points the old fact's
+  <code>superseded_by</code> at it), every canon-fact reader must filter
+  <code>superseded_by IS NULL</code> or a corrected-away fact would surface beside its correction.
+  The fact-search arm of <code>searchLore</code>, the snapshot view's <code>listByEntities</code>,
+  the prep/coherence composite read, and the reconciler's own candidate-fact read all default to
+  live-only (through a binder flag, so a future history/audit reader can opt into the full chain);
+  the embed-write backfill skips superseded rows. The partial index
+  <code>idx_facts_live_by_entity</code> matches that predicate. A superseded fact also has its
+  embedding NULLed on supersede, so it leaves the HNSW index entirely rather than burning recall
+  budget on a search that would filter it out anyway.
+</aside>
 
 <h2>The write path: <code>embedWorld</code></h2>
 
@@ -206,10 +223,12 @@
 <p>
   <code>findSimilarEntities(worldId, text, opts)</code> embeds the query and over-pulls only the
   entity arm (PCs excluded by construction; an optional <code>entityType</code> narrows to one
-  kind). It <strong>throws</strong> on any failure — the opposite policy — because it feeds the
-  Scribe's canon <em>write</em> path. Swallowing a transient embed blip and returning an empty
-  candidate list would make the Scribe think no similar entity exists and mint a duplicate canonical
-  entity. The failure must propagate so the write is retried, not silently duplicated.
+  kind). It <strong>throws</strong> on any failure — the opposite policy — because it feeds a canon
+  <em>write</em> path: the
+  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a>'s match-vs-mint candidate
+  retrieval. Swallowing a transient embed blip and returning an empty candidate list would make the
+  reconciler think no similar entity exists and mint a duplicate canonical entity. The failure must
+  propagate so the write is retried, not silently duplicated.
 </p>
 
 <aside class="wiki-rationale">

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session turn</div>
         <article>
@@ -778,6 +778,20 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>The budget-100% auto-end fires here too (MYT-74a)</strong> — this post-flush phase is also
+  where the session can end itself. The Fast-Thinker context bound is the real session-length cap;
+  when cumulative token usage (read from the durable <code>session_usage</code> row via
+  <code>budgetSummary</code>) reaches <code>SESSION_TOKEN_BUDGET</code>, the worker fires the
+  <a href="./session-reconcile.html">end-of-session</a> orchestration (status flip → reconcile →
+  <code>session_end</code> broadcast) — the same flow the explicit <code>end_session</code> WS frame
+  runs. It is gated on <code>!isCorrection</code> like the watermark and the Scribe enqueue (a
+  player-less correction opens no new budget-bearing context), and it sits in its own try/catch so a
+  failure to enqueue the end never masks the turn outcome — mirroring the st-evaluation isolation.
+  Idempotence across turns is free: <code>endSession</code>'s SET-NX <code>ending</code> flag no-ops
+  a second over-budget turn, so the processor needs no dedup of its own.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>A <code>correction</code> turn advances no watermark and enqueues no Scribe</strong> —
   both the responded-seq advance and the Scribe enqueue are gated on the turn <em>not</em> being a
   correction. A correction is player-less: advancing the watermark would strand the genuine pending
@@ -1016,7 +1030,10 @@
   enqueues these jobs (other than the dev poke); this worker sets the
   <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
   trigger's drain logic depends on, and the trigger system's <code>QueueEvents</code> subscriber
-  closes this worker's terminal-error gap.
+  closes this worker's terminal-error gap. Downstream, this worker's post-flush phase is also the
+  budget-100% trigger for <a href="./session-reconcile.html">end-of-session reconciliation</a>: when
+  cumulative usage reaches the token budget it fires the same end flow the explicit
+  <code>end_session</code> frame runs.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
