@@ -875,9 +875,11 @@ export async function handleInbound(
     }
 
     if (frame.type === 'end_session') {
-      // §11 — end the live session. Resolve the worldId (blob-cached campaign→
-      // world, reusing the turn worker's resolver) and thread it onto the
-      // reconcile job, then run the idempotent end orchestration.
+      // MYT-74b §1 — BEGIN the end. Resolve the worldId (blob-cached campaign→
+      // world, reusing the turn worker's resolver) and thread it onto the farewell
+      // payload, then enqueue the player-less send-off turn. The turn worker runs
+      // the unconditional finalize (flip + reconcile + analysis + session_end)
+      // AFTER the farewell renders, so the live send-off precedes session_end.
       const worldId = await resolveWorldId(
         { sessionState, repo: ctx.deps.repo },
         campaignId,
@@ -887,10 +889,8 @@ export async function handleInbound(
         {
           sessionState,
           suspendQueue: ctx.deps.suspendQueue,
-          reconcileQueue: ctx.deps.reconcileQueue,
-          lock: ctx.deps.lock,
-          sessions: ctx.deps.repo.sessions,
-          publish: (cId, f) => hub.publish(cId, f as ServerFrame),
+          turnQueue: ctx.deps.sessionTurnQueue,
+          respondedSeq: (cId) => ctx.deps.triggerState.respondedSeq(cId),
           logger: ctx.app.log,
         },
         { campaignId, sessionId, worldId },

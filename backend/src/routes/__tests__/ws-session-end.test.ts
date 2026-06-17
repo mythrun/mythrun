@@ -1,12 +1,15 @@
 // backend/src/routes/__tests__/ws-session-end.test.ts
 //
-// MYT-74a T11 — the WS inbound session-end routing + the ending-flag drop-gate,
+// MYT-74b T11 — the WS inbound session-end routing + the ending-flag drop-gate,
 // driven at the `handleInbound` seam with FAKE deps. Two behaviors:
 //
-//   - an `end_session` frame routes to `endSession`: it marks the ending flag,
-//     flips the session row to 'ended', enqueues ONE reconcile job, and
-//     broadcasts `session_end`. The worldId is resolved via the blob cache /
-//     campaigns.getWorldId (resolveWorldId) and threaded onto the reconcile job.
+//   - an `end_session` frame routes to `endSession` (the BEGIN phase): it marks
+//     the ending flag, cancels the pending suspend, reads the responded watermark,
+//     and enqueues ONE player-less FAREWELL turn on the session-turn queue. It
+//     does NOT flip the row / enqueue reconcile / broadcast — the turn worker runs
+//     the finalize AFTER the farewell renders. The worldId is resolved via the
+//     blob cache / campaigns.getWorldId (resolveWorldId) and threaded onto the
+//     farewell payload.
 //   - a `player_message` arriving while the ending flag is ALREADY set is
 //     DROPPED at the top of handleInbound — no persist, no broadcast, no
 //     trigger reschedule (no new turn after an end has begun).
@@ -18,6 +21,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { handleInbound } from '../ws-session.js'
 import type { WsSessionDeps } from '../ws-session.js'
+import { FAREWELL_DIRECTION } from '../../session/turn-queue.js'
 
 const CAMPAIGN_ID = 'camp-end-1'
 const SESSION_ID = 'sess-end-1'
@@ -66,6 +70,20 @@ function makeFakeReconcileQueue(): {
     return Promise.resolve(undefined)
   }) as unknown as WsSessionDeps['reconcileQueue']['add']
   return { reconcileQueue: { add }, adds }
+}
+
+/** A recording session-turn queue: records each add(name, payload, opts) — the
+ *  farewell-turn enqueue surface the BEGIN phase fires. */
+function makeFakeTurnQueue(): {
+  sessionTurnQueue: WsSessionDeps['sessionTurnQueue']
+  adds: { name: string; payload: Record<string, unknown>; opts: { jobId?: string } }[]
+} {
+  const adds: { name: string; payload: Record<string, unknown>; opts: { jobId?: string } }[] = []
+  const add = ((name: string, payload: Record<string, unknown>, opts: { jobId?: string }) => {
+    adds.push({ name, payload, opts })
+    return Promise.resolve(undefined)
+  }) as unknown as WsSessionDeps['sessionTurnQueue']['add']
+  return { sessionTurnQueue: { add }, adds }
 }
 
 /** A recording lock: tryAcquire returns a releasable handle. */
@@ -149,40 +167,48 @@ function makeAppLog(): { error: ReturnType<typeof vi.fn>; warn: ReturnType<typeo
 interface Harness {
   ctx: { app: { log: ReturnType<typeof makeAppLog> }; deps: WsSessionDeps }
   reconcileAdds: { name: string; payload: unknown; opts: unknown }[]
+  turnAdds: { name: string; payload: Record<string, unknown>; opts: { jobId?: string } }[]
   publishes: { campaignId: string; frame: { type: string } }[]
   sessionUpdates: { id: string; patch: { status?: string; endedAt?: Date | null } }[]
   endingCalls: { tryMarkEnding: ReturnType<typeof vi.fn>; isEnding: ReturnType<typeof vi.fn> }
-  lockReleases: { n: number }
+  respondedSeq: ReturnType<typeof vi.fn>
+  suspendRemove: ReturnType<typeof vi.fn>
   getAppends: () => number
 }
+
+const WATERMARK = 7
 
 function makeHarness(opts: { ending?: boolean; worldId?: string } = {}): Harness {
   const { sessionState, calls: endingCalls } = makeFakeSessionState(opts)
   const { reconcileQueue, adds: reconcileAdds } = makeFakeReconcileQueue()
-  const { lock, releases: lockReleases } = makeFakeLock()
+  const { sessionTurnQueue, adds: turnAdds } = makeFakeTurnQueue()
+  const { lock } = makeFakeLock()
   const { hub, publishes } = makeFakeHub()
   const { repo, updates: sessionUpdates, ...repoRest } = makeFakeRepo()
 
+  const respondedSeq = vi.fn().mockResolvedValue(WATERMARK)
   const triggerState = {
     markTyping: vi.fn().mockResolvedValue(undefined),
     clearTyping: vi.fn().mockResolvedValue(undefined),
     stampActivity: vi.fn().mockResolvedValue(undefined),
     armFirstUnresponded: vi.fn().mockResolvedValue(undefined),
     firstUnrespondedMs: vi.fn().mockResolvedValue(null),
+    respondedSeq,
   } as unknown as WsSessionDeps['triggerState']
 
+  const suspendRemove = vi.fn().mockResolvedValue(0)
   const deps = {
     repo,
     sessionState,
     hub,
-    suspendQueue: { add: vi.fn(), getJob: vi.fn(), remove: vi.fn().mockResolvedValue(0) },
+    suspendQueue: { add: vi.fn(), getJob: vi.fn(), remove: suspendRemove },
     reconcileQueue,
     lock,
     containerId: 'test-container',
     redisRealtime: {} as WsSessionDeps['redisRealtime'],
     redisKeyPrefix: 'test:end:',
     dmTriggerQueue: { add: vi.fn().mockResolvedValue(undefined) },
-    sessionTurnQueue: { add: vi.fn().mockResolvedValue(undefined) },
+    sessionTurnQueue,
     triggerState,
     turnPublisher: { dmThinking: vi.fn().mockResolvedValue(undefined) },
   } as unknown as WsSessionDeps
@@ -192,10 +218,12 @@ function makeHarness(opts: { ending?: boolean; worldId?: string } = {}): Harness
   return {
     ctx,
     reconcileAdds,
+    turnAdds,
     publishes,
     sessionUpdates,
     endingCalls,
-    lockReleases,
+    respondedSeq,
+    suspendRemove,
     getAppends: () => repoRest.appends,
   }
 }
@@ -213,30 +241,35 @@ describe('ws-session inbound session-end (handleInbound seam)', () => {
     vi.restoreAllMocks()
   })
 
-  it('end_session frame: routes to endSession — marks ending, flips to ended, enqueues ONE reconcile (with worldId), broadcasts session_end', async () => {
+  it('end_session frame: routes to endSession (BEGIN) — marks ending, cancels suspend, reads the watermark, enqueues ONE farewell turn (with worldId); does NOT flip / reconcile / broadcast', async () => {
     const h = makeHarness({ worldId: WORLD_ID })
     await inbound(h, { type: 'end_session' })
 
     // The ending flag was claimed.
     expect(h.endingCalls.tryMarkEnding).toHaveBeenCalledWith(CAMPAIGN_ID)
 
-    // The session row flipped to 'ended'.
-    expect(h.sessionUpdates).toHaveLength(1)
-    expect(h.sessionUpdates[0]?.id).toBe(SESSION_ID)
-    expect(h.sessionUpdates[0]?.patch.status).toBe('ended')
+    // The pending suspend was cancelled (by the stable per-session jobId).
+    expect(h.suspendRemove).toHaveBeenCalledWith(`suspend-${SESSION_ID}`)
 
-    // ONE reconcile job carrying the resolved worldId.
-    expect(h.reconcileAdds).toHaveLength(1)
-    expect(h.reconcileAdds[0]?.payload).toEqual({
-      campaignId: CAMPAIGN_ID,
-      sessionId: SESSION_ID,
-      worldId: WORLD_ID,
-    })
+    // The responded watermark was read for the farewell payload.
+    expect(h.respondedSeq).toHaveBeenCalledWith(CAMPAIGN_ID)
 
-    // A session_end broadcast went out.
-    expect(h.publishes.map((p) => p.frame.type)).toContain('session_end')
-    // The quiesce lock was released.
-    expect(h.lockReleases.n).toBe(1)
+    // ONE player-less farewell turn enqueued on the session-turn queue, jobId
+    // per-session, carrying the resolved worldId + the watermark.
+    expect(h.turnAdds).toHaveLength(1)
+    const enq = h.turnAdds[0]
+    expect(enq?.opts.jobId).toBe(`farewell-${SESSION_ID}`)
+    expect(enq?.payload.trigger).toEqual({ kind: 'farewell' })
+    expect(enq?.payload.triggerMessages).toEqual([])
+    expect(enq?.payload.maxConsumedSeq).toBe(WATERMARK)
+    expect(enq?.payload.farewellText).toBe(FAREWELL_DIRECTION)
+    expect(enq?.payload.worldId).toBe(WORLD_ID)
+
+    // The BEGIN phase does NOT finalize: no row flip, no reconcile, no broadcast
+    // (those run in the turn worker's finalize after the farewell renders).
+    expect(h.sessionUpdates).toHaveLength(0)
+    expect(h.reconcileAdds).toHaveLength(0)
+    expect(h.publishes).toHaveLength(0)
   })
 
   it('player_message dropped when the ending flag is set: no persist, no broadcast', async () => {
