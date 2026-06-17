@@ -303,6 +303,10 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
     check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))`,
   },
   {
+    table_name: 'session_messages',
+    check_clause: `CHECK (((trigger_kind IS NULL) OR (trigger_kind = ANY (ARRAY['explicit'::text, 'solo'::text, 'auto'::text, 'correction'::text, 'farewell'::text]))))`,
+  },
+  {
     table_name: 'sessions',
     check_clause: `CHECK ((status = ANY (ARRAY['active'::text, 'ended'::text, 'crashed'::text])))`,
   },
@@ -808,6 +812,7 @@ describe('schema-parity (integration)', () => {
       '025_character_ledger.sql',
       '026_world_retrieval.sql',
       '027_fact_supersede.sql',
+      '028_session_messages_trigger_kind.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
