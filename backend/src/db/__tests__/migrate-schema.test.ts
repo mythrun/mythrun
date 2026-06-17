@@ -89,6 +89,7 @@ const EXPECTED_IDX_NAMES = [
   'idx_facts_embedding',
   'idx_facts_entity',
   'idx_facts_entity_access_status',
+  'idx_facts_live_by_entity',
   'idx_pipeline_runs_campaign',
   'idx_pipeline_runs_unique',
   'idx_pipeline_runs_world',
@@ -552,6 +553,15 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     foreign_table_name: 'entities',
     delete_rule: 'CASCADE',
   },
+  // MYT-74a (027): append-only fact log self-FK. ON DELETE SET NULL so a
+  // world-regen cascade that deletes a superseded fact still pointed-to by a
+  // live fact nulls the pointer instead of FK-aborting the cascade.
+  {
+    table_name: 'facts',
+    column_name: 'superseded_by',
+    foreign_table_name: 'facts',
+    delete_rule: 'SET NULL',
+  },
   {
     table_name: 'ledger_events',
     column_name: 'character_id',
@@ -797,6 +807,7 @@ describe('schema-parity (integration)', () => {
       '024_session_messages_dm_rows.sql',
       '025_character_ledger.sql',
       '026_world_retrieval.sql',
+      '027_fact_supersede.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
