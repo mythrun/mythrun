@@ -1078,20 +1078,26 @@
   <strong><code>sessions</code></strong> — <code>create</code>, <code>getById</code>,
   <code>getActiveByCampaign</code>, <code>getMostRecentByCampaign</code>,
   <code>listByCampaign</code>, <code>update</code>, <code>recordUsage</code>,
-  <code>budgetSummary</code>, <code>markReconciled</code>. <code>getActiveByCampaign</code> uses
-  <code>LIMIT 1</code> defensively — the partial-unique index
+  <code>budgetSummary</code>, <code>markReconciled</code>, plus MYT-74b's <code>markEnded</code>,
+  <code>writeAnalysis</code>, and <code>getPriorContextForPrep</code>.
+  <code>getActiveByCampaign</code> uses <code>LIMIT 1</code> defensively — the partial-unique index
   <code>idx_sessions_one_active</code> guarantees at most one active row per campaign, but the
   <code>LIMIT 1</code> at the SQL site makes the contract self-documenting.
   <code>recordUsage</code> + <code>budgetSummary</code> are the per-session cost-tracking primitives
   MYT-43 added; the cluster has its own narrative on the
-  <a href="../auth-billing/billing-metering.html">billing-metering page</a>.
-  <code>getMostRecentByCampaign</code> + <code>markReconciled</code> are MYT-74a's
-  <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> primitives:
+  <a href="../auth-billing/billing-metering.html">billing-metering page</a>. The remaining methods
+  are the <a href="../runtime/session-reconcile.html">end-of-session</a> primitives.
+  <code>getMostRecentByCampaign</code> + <code>markReconciled</code> are MYT-74a's:
   <code>getMostRecentByCampaign</code> backs the <code>/start</code> reconcile-pending interlock,
   and <code>markReconciled</code> is the <em>conditional</em>
   <code>UPDATE … SET reconciled_at = now() WHERE id = $1 AND reconciled_at IS NULL</code> — it
   returns the rowCount so the reconcile commit can use it as an idempotency mutex (0 rows → another
-  execution already reconciled → roll back).
+  execution already reconciled → roll back). MYT-74b adds three more in the same conditional shape:
+  <code>markEnded</code> (the finalize's <em>flip to ended only when not already ended</em>,
+  returning the rowCount so <code>session_end</code> broadcasts exactly once),
+  <code>writeAnalysis</code> (the recap + handoff write, gated on <code>summary IS NULL</code> so a
+  retry is idempotent), and <code>getPriorContextForPrep</code> (the prep's newest-first read of
+  prior ended sessions with a written analysis).
 </p>
 
 <aside class="wiki-rationale">
@@ -1767,9 +1773,11 @@
       <td><code>src/repo/sessions.ts</code></td>
       <td>
         <code>sessionsNs(c)</code> binder — <code>create</code>, <code>getById</code>,
-        <code>getActiveByCampaign</code>, <code>listByCampaign</code>, <code>update</code>,
-        <code>recordUsage</code>, <code>budgetSummary</code>; <code>createSessionsRepo(pool)</code>
-        back-compat factory.
+        <code>getActiveByCampaign</code>, <code>getMostRecentByCampaign</code>,
+        <code>listByCampaign</code>, <code>update</code>, <code>recordUsage</code>,
+        <code>budgetSummary</code>, <code>markReconciled</code>, and MYT-74b's
+        <code>markEnded</code> / <code>writeAnalysis</code> / <code>getPriorContextForPrep</code>;
+        <code>createSessionsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>

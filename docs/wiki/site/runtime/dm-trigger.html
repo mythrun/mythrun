@@ -653,6 +653,18 @@
   torn down on SIGTERM, so no connection leaks per deploy.
 </aside>
 
+<p>
+  MYT-74b gives the same subscriber a second job. When the terminally-stalled turn is the
+  player-less <a href="./session-reconcile.html">farewell</a> turn (the end-of-session send-off),
+  the in-worker <code>finally</code> that would normally finalize the session never ran — the holder
+  crashed before it. So the subscriber, after publishing <code>turn_error</code>, also runs the
+  idempotent <code>finalizeEndedSession</code> for that session (flip to <code>ended</code>, enqueue
+  reconcile + analysis, broadcast <code>session_end</code>). Without it a crashed farewell would
+  leave a session that never ends. A double-fire with the in-worker finalize is harmless — the
+  conditional flip broadcasts exactly once. The <a href="./worker.html">worker process</a> wires the
+  finalize closure into the subscriber.
+</p>
+
 <h2 id="observability-a-dev-signal-never-the-player-transport">Observability: a dev signal, never the player transport</h2>
 
 <p>

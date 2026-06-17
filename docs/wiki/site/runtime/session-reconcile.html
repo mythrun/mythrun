@@ -29,319 +29,478 @@
 <h1>End-of-session reconciliation</h1>
 
 <p class="lead">
-  What happens when a session ends. The in-session working set — every fact the Fast Thinker
-  improvised this session, tier- and provenance-annotated by the
-  <a href="./scribe.html">Scribe</a> — is folded into durable canon: entities, append-only facts,
-  relationship edges, and embeddings. One holistic Opus pass makes every match-vs-mint and
-  contradiction judgment; deterministic code validates it and commits it in a single transaction.
+  What happens when a session ends. First the table gets a live send-off — a player-less
+  <strong>farewell turn</strong> the Fast Thinker renders in its own voice. Then two
+  off-the-hot-path jobs fire. <strong>Reconcile</strong> folds the in-session working set — every
+  fact the Fast Thinker improvised this session, tier- and provenance-annotated by the
+  <a href="./scribe.html">Scribe</a> — into durable canon: entities, append-only facts, relationship
+  edges, and embeddings, via one holistic Opus match-vs-mint pass.
+  <strong>Post-session analysis</strong> reads the transcript and writes the next session's
+  narrative state — a player-facing recap plus a secret-aware <strong>handoff</strong> that primes
+  the prep engine (including verbatim NPC voice lines that keep characterization consistent across
+  sessions).
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="3854pt" height="414pt"
- viewBox="14.00 14.00 3840.00 399.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 395.4)">
+<svg width="5208pt" height="685pt"
+ viewBox="14.00 14.00 5194.00 670.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 666.4)">
 <title>session_reconcile</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-381 3821.4,-381 3821.4,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-652 5175.42,-652 5175.42,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_triggers</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-165 8,-329 551.23,-329 551.23,-165 8,-165"/>
-<text xml:space="preserve" text-anchor="middle" x="279.61" y="-315.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Two end triggers &#160;→ &#160;one flow</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-95 8,-259 571.03,-259 571.03,-95 8,-95"/>
+<text xml:space="preserve" text-anchor="middle" x="289.52" y="-245.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Two end triggers &#160;→ &#160;begin ending</text>
 </g>
 <g id="clust2" class="cluster">
-<title>cluster_pg_lifecycle</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3141.79,-278 3141.79,-369 3809.4,-369 3809.4,-278 3141.79,-278"/>
-<text xml:space="preserve" text-anchor="middle" x="3475.6" y="-355.1" font-family="Courier,monospace" font-size="11.00">Postgres &#160;(lifecycle)</text>
+<title>cluster_farewell</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="707.04,-274 707.04,-434 1709.01,-434 1709.01,-274 707.04,-274"/>
+<text xml:space="preserve" text-anchor="middle" x="1208.03" y="-420.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">The farewell turn &#160;→ &#160;finalize</text>
 </g>
 <g id="clust3" class="cluster">
-<title>cluster_batch</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="699.24,-199 699.24,-290 909.15,-290 909.15,-199 699.24,-199"/>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-276.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+<title>cluster_pg_lifecycle</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="4466.71,-549 4466.71,-640 5163.42,-640 5163.42,-549 4466.71,-549"/>
+<text xml:space="preserve" text-anchor="middle" x="4815.06" y="-626.1" font-family="Courier,monospace" font-size="11.00">Postgres &#160;(lifecycle)</text>
 </g>
 <g id="clust4" class="cluster">
-<title>cluster_worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1087.17,-106 1087.17,-228 2956.21,-228 2956.21,-106 1087.17,-106"/>
-<text xml:space="preserve" text-anchor="middle" x="2021.69" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Reconcile worker &#160;— &#160;the 8th BullMQ worker (concurrency 1 · 180s lock)</text>
+<title>cluster_batch</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1809.02,-290 1809.02,-454 2018.93,-454 2018.93,-290 1809.02,-290"/>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-440.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
 </g>
 <g id="clust5" class="cluster">
-<title>cluster_realtime</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="699.24,-27 699.24,-191 909.15,-191 909.15,-27 699.24,-27"/>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-177.1" font-family="Courier,monospace" font-size="11.00">Redis (realtime)</text>
+<title>cluster_worker</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="2196.95,-249 2196.95,-371 4252.02,-371 4252.02,-249 2196.95,-249"/>
+<text xml:space="preserve" text-anchor="middle" x="3224.48" y="-357.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Reconcile worker &#160;(concurrency 1 · 180s lock)</text>
 </g>
 <g id="clust6" class="cluster">
+<title>cluster_analysis</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="3101.23,-383 3101.23,-488 4232.22,-488 4232.22,-383 3101.23,-383"/>
+<text xml:space="preserve" text-anchor="middle" x="3666.72" y="-474.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Analysis worker &#160;(concurrency 1 · 180s lock)</text>
+</g>
+<g id="clust7" class="cluster">
+<title>cluster_realtime</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="4496.41,-8 4496.41,-172 4706.32,-172 4706.32,-8 4496.41,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-158.1" font-family="Courier,monospace" font-size="11.00">Redis (realtime)</text>
+</g>
+<g id="clust8" class="cluster">
 <title>cluster_canon</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3140.23,-8 3140.23,-270 3393.87,-270 3393.87,-8 3140.23,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="3267.05" y="-256.1" font-family="Courier,monospace" font-size="11.00">Durable canon &#160;(Postgres + pgvector)</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="4442.04,-180 4442.04,-541 4761.69,-541 4761.69,-180 4442.04,-180"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.87" y="-527.1" font-family="Courier,monospace" font-size="11.00">Durable narrative state &#160;(Postgres + pgvector)</text>
 </g>
 <!-- ws_end -->
 <g id="node1" class="node">
 <title>ws_end</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-221.44 8,-221.44 8,-164.56 171.7,-164.56 171.7,-221.44"/>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-202.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">end_session WS frame</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-189.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(explicit summon,</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-176.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> no payload)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-151.44 8,-151.44 8,-94.56 171.7,-94.56 171.7,-151.44"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-132.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">end_session WS frame</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-119.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(explicit summon,</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-106.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> no payload)</text>
 </g>
 <!-- endfn -->
 <g id="node3" class="node">
 <title>endfn</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="551.23,-275.64 301.71,-275.64 301.71,-192.36 551.23,-192.36 551.23,-275.64"/>
-<text xml:space="preserve" text-anchor="middle" x="426.47" y="-257.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">endSession (idempotent)</text>
-<text xml:space="preserve" text-anchor="middle" x="426.47" y="-243.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SET&#45;NX `ending` flag →</text>
-<text xml:space="preserve" text-anchor="middle" x="426.47" y="-230.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">cancelSuspend → lock fence →</text>
-<text xml:space="preserve" text-anchor="middle" x="426.47" y="-217.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">flip status=&#39;ended&#39; →</text>
-<text xml:space="preserve" text-anchor="middle" x="426.47" y="-204.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueue reconcile → session_end</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="571.03,-205.64 301.71,-205.64 301.71,-122.36 571.03,-122.36 571.03,-205.64"/>
+<text xml:space="preserve" text-anchor="middle" x="436.37" y="-187.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">endSession — BEGIN only</text>
+<text xml:space="preserve" text-anchor="middle" x="436.37" y="-173.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SET&#45;NX `ending` flag →</text>
+<text xml:space="preserve" text-anchor="middle" x="436.37" y="-160.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">cancelSuspend → read watermark →</text>
+<text xml:space="preserve" text-anchor="middle" x="436.37" y="-147.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueue ONE farewell turn</text>
+<text xml:space="preserve" text-anchor="middle" x="436.37" y="-134.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(does NOT finalize)</text>
 </g>
 <!-- ws_end&#45;&gt;endfn -->
 <g id="edge1" class="edge">
 <title>ws_end&#45;&gt;endfn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.36,-202.14C203.74,-205.73 239.91,-209.96 272.71,-214 279.25,-214.8 285.93,-215.64 292.69,-216.49"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="292.22,-218.9 299.47,-217.35 292.83,-214.04 292.22,-218.9"/>
-<text xml:space="preserve" text-anchor="middle" x="236.71" y="-217" font-family="Courier,monospace" font-size="10.00">WS route</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.34,-132.28C203.72,-135.89 239.89,-140.09 272.71,-144 279.27,-144.78 285.97,-145.59 292.74,-146.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="292.3,-148.82 299.55,-147.22 292.89,-143.95 292.3,-148.82"/>
+<text xml:space="preserve" text-anchor="middle" x="236.71" y="-147" font-family="Courier,monospace" font-size="10.00">WS route</text>
 </g>
 <!-- budget -->
 <g id="node2" class="node">
 <title>budget</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-307.44 8,-307.44 8,-250.56 171.7,-250.56 171.7,-307.44"/>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-288.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">turn worker</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-275.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">budget&#45;100% auto&#45;end</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-262.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;flush phase)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-237.44 8,-237.44 8,-180.56 171.7,-180.56 171.7,-237.44"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-218.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">turn worker</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-205.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">budget&#45;100% auto&#45;end</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-192.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;flush phase)</text>
 </g>
 <!-- budget&#45;&gt;endfn -->
 <g id="edge2" class="edge">
 <title>budget&#45;&gt;endfn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M172.28,-268.05C208.4,-263.19 251.85,-257.35 292.48,-251.88"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="292.69,-254.33 299.3,-250.97 292.04,-249.47 292.69,-254.33"/>
-<text xml:space="preserve" text-anchor="middle" x="236.71" y="-278.16" font-family="Courier,monospace" font-size="10.00">post&#45;flush</text>
-<text xml:space="preserve" text-anchor="middle" x="236.71" y="-266.16" font-family="Courier,monospace" font-size="10.00">(idempotent)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M172.06,-198.39C208,-193.7 251.36,-188.04 292.42,-182.67"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="292.73,-185.1 299.35,-181.77 292.09,-180.24 292.73,-185.1"/>
+<text xml:space="preserve" text-anchor="middle" x="236.71" y="-209.44" font-family="Courier,monospace" font-size="10.00">post&#45;flush</text>
+<text xml:space="preserve" text-anchor="middle" x="236.71" y="-197.44" font-family="Courier,monospace" font-size="10.00">(idempotent)</text>
 </g>
-<!-- row -->
+<!-- farewell -->
 <g id="node4" class="node">
-<title>row</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3391.31,-348.04 3141.79,-348.04 3141.79,-277.96 3391.31,-277.96 3391.31,-348.04"/>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-329.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions row</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-316.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status=&#39;ended&#39;, ended_at=now</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-303.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reconciled_at = NULL</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-289.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(tri&#45;state: ended ≠ reconciled)</text>
+<title>farewell</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="976.36,-344.04 707.04,-344.04 707.04,-273.96 976.36,-273.96 976.36,-344.04"/>
+<text xml:space="preserve" text-anchor="middle" x="841.7" y="-325.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">farewell turn (player&#45;less)</text>
+<text xml:space="preserve" text-anchor="middle" x="841.7" y="-312.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">[DM direction:] silent&#45;consume seam</text>
+<text xml:space="preserve" text-anchor="middle" x="841.7" y="-299.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FT renders the send&#45;off prose</text>
+<text xml:space="preserve" text-anchor="middle" x="841.7" y="-285.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">no watermark / no Scribe / no budget</text>
 </g>
-<!-- endfn&#45;&gt;row -->
+<!-- endfn&#45;&gt;farewell -->
 <g id="edge4" class="edge">
-<title>endfn&#45;&gt;row</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M551.77,-273.62C624.31,-293.33 718.04,-313 803.2,-313 803.2,-313 803.2,-313 2812.65,-313 2920.24,-313 3042.21,-313 3132.45,-313"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3132.27,-315.45 3139.27,-313 3132.27,-310.55 3132.27,-315.45"/>
-<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-316" font-family="Courier,monospace" font-size="10.00">flip status</text>
-</g>
-<!-- q_recon -->
-<g id="node6" class="node">
-<title>q_recon</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="909.15,-269.04 699.24,-269.04 699.24,-198.96 909.15,-198.96 909.15,-269.04"/>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-250.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;reconcile</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-237.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">jobId reconcile&#45;{sessionId}</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-224.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(double&#45;trigger collapses)</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-210.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attempts 5 · exp backoff</text>
-</g>
-<!-- endfn&#45;&gt;q_recon -->
-<g id="edge5" class="edge">
-<title>endfn&#45;&gt;q_recon</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M551.8,-234C596.37,-234 646.35,-234 689.94,-234"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="689.75,-236.45 696.75,-234 689.75,-231.55 689.75,-236.45"/>
-<text xml:space="preserve" text-anchor="middle" x="625.24" y="-237" font-family="Courier,monospace" font-size="10.00">enqueue ONE job</text>
+<title>endfn&#45;&gt;farewell</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M555.12,-206.33C611.41,-226.57 678.32,-250.62 733.22,-270.36"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="732.1,-272.56 739.52,-272.62 733.76,-267.95 732.1,-272.56"/>
+<text xml:space="preserve" text-anchor="middle" x="639.04" y="-264.49" font-family="Courier,monospace" font-size="10.00">enqueue ONE</text>
+<text xml:space="preserve" text-anchor="middle" x="639.04" y="-252.49" font-family="Courier,monospace" font-size="10.00">farewell turn</text>
 </g>
 <!-- flag -->
-<g id="node13" class="node">
+<g id="node20" class="node">
 <title>flag</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="886.05,-169.84 722.35,-169.84 722.35,-126.16 886.05,-126.16 886.05,-169.84"/>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-151.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:ending</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-138.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(SET&#45;NX once&#45;only)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="4683.22,-51.84 4519.52,-51.84 4519.52,-8.16 4683.22,-8.16 4683.22,-51.84"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-33.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:ending</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-20.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(SET&#45;NX once&#45;only)</text>
 </g>
 <!-- endfn&#45;&gt;flag -->
 <g id="edge3" class="edge">
 <title>endfn&#45;&gt;flag</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M551.8,-205.54C604.51,-193.48 664.79,-179.68 713.11,-168.62"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="713.63,-171.01 719.91,-167.06 712.54,-166.24 713.63,-171.01"/>
-<text xml:space="preserve" text-anchor="middle" x="625.24" y="-201.7" font-family="Courier,monospace" font-size="10.00">SET&#45;NX claim</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M571.78,-122.14C649.55,-101.51 749.73,-81 840.7,-81 840.7,-81 840.7,-81 4108.46,-81 4249.45,-81 4411.97,-60.01 4510.38,-44.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="4510.48,-47.43 4517.02,-43.94 4509.73,-42.59 4510.48,-47.43"/>
+<text xml:space="preserve" text-anchor="middle" x="2341.51" y="-84" font-family="Courier,monospace" font-size="10.00">SET&#45;NX claim</text>
+</g>
+<!-- finalize -->
+<g id="node5" class="node">
+<title>finalize</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1709.01,-412.64 1439.69,-412.64 1439.69,-329.36 1709.01,-329.36 1709.01,-412.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1574.35" y="-394.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">finalizeEndedSession</text>
+<text xml:space="preserve" text-anchor="middle" x="1574.35" y="-380.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(turn `finally`, unconditional)</text>
+<text xml:space="preserve" text-anchor="middle" x="1574.35" y="-367.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">conditional markEnded (flip &#39;ended&#39;)</text>
+<text xml:space="preserve" text-anchor="middle" x="1574.35" y="-354.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ broadcast session_end ONCE</text>
+<text xml:space="preserve" text-anchor="middle" x="1574.35" y="-341.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ enqueue reconcile + analysis</text>
+</g>
+<!-- farewell&#45;&gt;finalize -->
+<g id="edge5" class="edge">
+<title>farewell&#45;&gt;finalize</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M977.1,-304.28C1073.36,-302.6 1205.9,-303.74 1321.68,-317 1357.24,-321.07 1395.17,-327.88 1430.52,-335.31"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1429.84,-337.67 1437.2,-336.74 1430.86,-332.88 1429.84,-337.67"/>
+<text xml:space="preserve" text-anchor="middle" x="1220.03" y="-332" font-family="Courier,monospace" font-size="10.00">render done →</text>
+<text xml:space="preserve" text-anchor="middle" x="1220.03" y="-320" font-family="Courier,monospace" font-size="10.00">`finally`</text>
+</g>
+<!-- backstop -->
+<g id="node6" class="node">
+<title>backstop</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1321.68,-412.44 1118.38,-412.44 1118.38,-355.56 1321.68,-355.56 1321.68,-412.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1220.03" y="-393.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">QueueEvents backstop</text>
+<text xml:space="preserve" text-anchor="middle" x="1220.03" y="-380.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(maxStalledCount terminal)</text>
+<text xml:space="preserve" text-anchor="middle" x="1220.03" y="-367.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">idempotent finalize</text>
+</g>
+<!-- farewell&#45;&gt;backstop -->
+<g id="edge6" class="edge">
+<title>farewell&#45;&gt;backstop</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M976.97,-335.76C1020.32,-344.4 1067.83,-353.87 1109.2,-362.11"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1108.53,-364.48 1115.88,-363.44 1109.49,-359.67 1108.53,-364.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1047.37" y="-360.6" font-family="Courier,monospace" font-size="10.00">terminal stall</text>
+</g>
+<!-- row -->
+<g id="node7" class="node">
+<title>row</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="4736.03,-619.04 4466.71,-619.04 4466.71,-548.96 4736.03,-548.96 4736.03,-619.04"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-600.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions row</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-587.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status=&#39;ended&#39;, ended_at=now</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-574.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reconciled_at = NULL, summary = NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-560.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(tri&#45;state: ended ≠ reconciled)</text>
+</g>
+<!-- finalize&#45;&gt;row -->
+<g id="edge8" class="edge">
+<title>finalize&#45;&gt;row</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1634.04,-413.23C1698.97,-455.72 1808.31,-515 1912.97,-515 1912.97,-515 1912.97,-515 4108.46,-515 4226.92,-515 4359.89,-534.87 4457.69,-553.28"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="4457.03,-555.65 4464.36,-554.55 4457.94,-550.84 4457.03,-555.65"/>
+<text xml:space="preserve" text-anchor="middle" x="2994.21" y="-530" font-family="Courier,monospace" font-size="10.00">conditional flip</text>
+<text xml:space="preserve" text-anchor="middle" x="2994.21" y="-518" font-family="Courier,monospace" font-size="10.00">→ session_end once</text>
+</g>
+<!-- q_recon -->
+<g id="node9" class="node">
+<title>q_recon</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2018.93,-346.44 1809.02,-346.44 1809.02,-289.56 2018.93,-289.56 2018.93,-346.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-327.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;reconcile</text>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-314.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">jobId reconcile&#45;{sessionId}</text>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-301.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attempts 5 · exp backoff</text>
+</g>
+<!-- finalize&#45;&gt;q_recon -->
+<g id="edge9" class="edge">
+<title>finalize&#45;&gt;q_recon</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1709.76,-349.9C1739.64,-345.21 1771.01,-340.29 1799.93,-335.75"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1800.09,-338.2 1806.62,-334.7 1799.33,-333.36 1800.09,-338.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1759.02" y="-347.5" font-family="Courier,monospace" font-size="10.00">enqueue</text>
+</g>
+<!-- q_anal -->
+<g id="node10" class="node">
+<title>q_anal</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2015.63,-432.44 1812.32,-432.44 1812.32,-375.56 2015.63,-375.56 2015.63,-432.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-413.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;analysis</text>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-400.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">jobId analysis&#45;{sessionId}</text>
+<text xml:space="preserve" text-anchor="middle" x="1913.97" y="-387.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attempts 5 · exp backoff</text>
+</g>
+<!-- finalize&#45;&gt;q_anal -->
+<g id="edge10" class="edge">
+<title>finalize&#45;&gt;q_anal</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1709.76,-384.14C1740.72,-387.16 1773.3,-390.35 1803.08,-393.26"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1802.8,-395.69 1810,-393.94 1803.28,-390.82 1802.8,-395.69"/>
+<text xml:space="preserve" text-anchor="middle" x="1759.02" y="-393.46" font-family="Courier,monospace" font-size="10.00">enqueue</text>
+</g>
+<!-- backstop&#45;&gt;finalize -->
+<g id="edge7" class="edge">
+<title>backstop&#45;&gt;finalize</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M1321.99,-380.27C1355.78,-379.03 1394.12,-377.61 1430.49,-376.27"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1430.47,-378.72 1437.38,-376.02 1430.29,-373.83 1430.47,-378.72"/>
+<text xml:space="preserve" text-anchor="middle" x="1380.69" y="-382.05" font-family="Courier,monospace" font-size="10.00">idempotent</text>
 </g>
 <!-- interlock -->
-<g id="node5" class="node">
+<g id="node8" class="node">
 <title>interlock</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3809.4,-348.04 3559.89,-348.04 3559.89,-277.96 3809.4,-277.96 3809.4,-348.04"/>
-<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-329.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">POST /sessions/:id/start</text>
-<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-316.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">409 reconcile_pending while</text>
-<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-303.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ended_at set + reconciled_at NULL</text>
-<text xml:space="preserve" text-anchor="middle" x="3684.65" y="-289.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(cross&#45;session interlock)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="5163.42,-619.04 4933.71,-619.04 4933.71,-548.96 5163.42,-548.96 5163.42,-619.04"/>
+<text xml:space="preserve" text-anchor="middle" x="5048.57" y="-600.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">POST /sessions/:id/start</text>
+<text xml:space="preserve" text-anchor="middle" x="5048.57" y="-587.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">409 reconcile_pending (ended +</text>
+<text xml:space="preserve" text-anchor="middle" x="5048.57" y="-574.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reconciled_at NULL)</text>
+<text xml:space="preserve" text-anchor="middle" x="5048.57" y="-560.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">409 session_ending (flag set)</text>
 </g>
 <!-- row&#45;&gt;interlock -->
-<g id="edge6" class="edge">
+<g id="edge11" class="edge">
 <title>row&#45;&gt;interlock</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M3391.83,-313C3441.86,-313 3499.65,-313 3550.53,-313"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3550.47,-315.45 3557.47,-313 3550.47,-310.55 3550.47,-315.45"/>
-<text xml:space="preserve" text-anchor="middle" x="3476.88" y="-328" font-family="Courier,monospace" font-size="10.00">reconciled_at NULL</text>
-<text xml:space="preserve" text-anchor="middle" x="3476.88" y="-316" font-family="Courier,monospace" font-size="10.00">→ block start</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M4736.54,-584C4796.33,-584 4866.28,-584 4924.68,-584"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="4924.4,-586.45 4931.4,-584 4924.4,-581.55 4924.4,-586.45"/>
+<text xml:space="preserve" text-anchor="middle" x="4847.7" y="-599" font-family="Courier,monospace" font-size="10.00">reconciled_at NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="4847.7" y="-587" font-family="Courier,monospace" font-size="10.00">→ block start</text>
 </g>
 <!-- proc -->
-<g id="node7" class="node">
+<g id="node11" class="node">
 <title>proc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1376.29,-192.04 1087.17,-192.04 1087.17,-121.96 1376.29,-121.96 1376.29,-192.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-173.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processReconcileJob (NOT total)</text>
-<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-160.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">gate&#45;read → lock → load →</text>
-<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retrieve → render → reconcile →</text>
-<text xml:space="preserve" text-anchor="middle" x="1231.73" y="-133.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">validate → embed → commit → clear</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2486.07,-335.04 2196.95,-335.04 2196.95,-264.96 2486.07,-264.96 2486.07,-335.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2341.51" y="-316.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processReconcileJob (NOT total)</text>
+<text xml:space="preserve" text-anchor="middle" x="2341.51" y="-303.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">gate&#45;read → lock → load →</text>
+<text xml:space="preserve" text-anchor="middle" x="2341.51" y="-290.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retrieve → render → reconcile →</text>
+<text xml:space="preserve" text-anchor="middle" x="2341.51" y="-276.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">validate → embed → commit → clear</text>
 </g>
 <!-- q_recon&#45;&gt;proc -->
-<g id="edge7" class="edge">
+<g id="edge13" class="edge">
 <title>q_recon&#45;&gt;proc</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M909.84,-215.07C960.52,-205.9 1022.34,-194.71 1078.14,-184.61"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1078.45,-187.05 1084.9,-183.39 1077.58,-182.22 1078.45,-187.05"/>
-<text xml:space="preserve" text-anchor="middle" x="998.16" y="-224.09" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
-<text xml:space="preserve" text-anchor="middle" x="998.16" y="-212.09" font-family="Courier,monospace" font-size="10.00">+ retry (idempotent)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2019.62,-313.57C2070.29,-311.43 2132.12,-308.81 2187.92,-306.45"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2187.76,-308.91 2194.65,-306.17 2187.55,-304.02 2187.76,-308.91"/>
+<text xml:space="preserve" text-anchor="middle" x="2107.94" y="-315.18" font-family="Courier,monospace" font-size="10.00">+ retry (idempotent)</text>
+</g>
+<!-- aproc -->
+<g id="node16" class="node">
+<title>aproc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3403.55,-457.04 3101.23,-457.04 3101.23,-386.96 3403.55,-386.96 3403.55,-457.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-438.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processPostSessionAnalysisJob (NOT total)</text>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-425.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">summary IS NULL gate → load</text>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-412.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">durable inputs → analyze →</text>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-398.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">verify → writeAnalysis (gated)</text>
+</g>
+<!-- q_anal&#45;&gt;aproc -->
+<g id="edge25" class="edge">
+<title>q_anal&#45;&gt;aproc</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2016.25,-405.36C2247.1,-408.47 2813.83,-416.11 3092.05,-419.85"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3091.76,-422.3 3098.79,-419.94 3091.82,-417.4 3091.76,-422.3"/>
+<text xml:space="preserve" text-anchor="middle" x="2575.08" y="-416.62" font-family="Courier,monospace" font-size="10.00">+ retry (idempotent)</text>
 </g>
 <!-- retrieve -->
-<g id="node8" class="node">
+<g id="node12" class="node">
 <title>retrieve</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1723.42,-176.04 1500.3,-176.04 1500.3,-105.96 1723.42,-105.96 1723.42,-176.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-157.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">findSimilarEntities</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-144.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(per distinct subject, top&#45;K)</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-131.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ live candidate facts</text>
-<text xml:space="preserve" text-anchor="middle" x="1611.86" y="-117.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(superseded_by IS NULL)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2887.2,-319.04 2664.09,-319.04 2664.09,-248.96 2887.2,-248.96 2887.2,-319.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2775.65" y="-300.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">findSimilarEntities</text>
+<text xml:space="preserve" text-anchor="middle" x="2775.65" y="-287.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(per distinct subject, top&#45;K)</text>
+<text xml:space="preserve" text-anchor="middle" x="2775.65" y="-274.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ live candidate facts</text>
+<text xml:space="preserve" text-anchor="middle" x="2775.65" y="-260.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(superseded_by IS NULL)</text>
 </g>
 <!-- proc&#45;&gt;retrieve -->
-<g id="edge9" class="edge">
+<g id="edge15" class="edge">
 <title>proc&#45;&gt;retrieve</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1377.04,-150.89C1414.69,-149.3 1454.86,-147.6 1491.1,-146.07"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1491.03,-148.52 1497.92,-145.78 1490.82,-143.63 1491.03,-148.52"/>
-<text xml:space="preserve" text-anchor="middle" x="1438.3" y="-152.48" font-family="Courier,monospace" font-size="10.00">1. retrieve</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2486.7,-294.66C2541.34,-292.64 2602.9,-290.36 2655.03,-288.43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2654.93,-290.88 2661.83,-288.18 2654.75,-285.99 2654.93,-290.88"/>
+<text xml:space="preserve" text-anchor="middle" x="2575.08" y="-296.43" font-family="Courier,monospace" font-size="10.00">1. retrieve</text>
 </g>
 <!-- opus -->
-<g id="node9" class="node">
+<g id="node13" class="node">
 <title>opus</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2173.75,-176.04 1937.44,-176.04 1937.44,-105.96 2173.75,-105.96 2173.75,-176.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-157.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Opus reconciler (ONE call)</text>
-<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-144.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">match/mint · fact append ±</text>
-<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-131.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">supersede · relationship edges</text>
-<text xml:space="preserve" text-anchor="middle" x="2055.6" y="-117.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">redactRawText · pinned cap</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3370.55,-319.04 3134.23,-319.04 3134.23,-248.96 3370.55,-248.96 3370.55,-319.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-300.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Opus reconciler (ONE call)</text>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-287.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">match/mint · fact append ±</text>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-274.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">supersede · relationship edges</text>
+<text xml:space="preserve" text-anchor="middle" x="3252.39" y="-260.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">redactRawText · pinned cap</text>
 </g>
 <!-- retrieve&#45;&gt;opus -->
-<g id="edge10" class="edge">
+<g id="edge16" class="edge">
 <title>retrieve&#45;&gt;opus</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1724.06,-135.79C1733.65,-135.47 1743.2,-135.2 1752.42,-135 1821.74,-133.51 1839.11,-133.58 1908.44,-135 1914.96,-135.13 1921.64,-135.3 1928.38,-135.49"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1928.06,-137.93 1935.13,-135.7 1928.21,-133.04 1928.06,-137.93"/>
-<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-138" font-family="Courier,monospace" font-size="10.00">2. candidates + live facts</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2887.85,-278.79C2897.44,-278.47 2906.99,-278.2 2916.2,-278 2985.53,-276.51 3002.89,-276.84 3072.23,-278 3089.34,-278.29 3107.37,-278.73 3125.13,-279.24"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3124.94,-281.69 3132.01,-279.45 3125.09,-276.79 3124.94,-281.69"/>
+<text xml:space="preserve" text-anchor="middle" x="2994.21" y="-281" font-family="Courier,monospace" font-size="10.00">2. candidates + live facts</text>
 </g>
 <!-- validate -->
-<g id="node10" class="node">
+<g id="node14" class="node">
 <title>validate</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2543.08,-183.04 2273.76,-183.04 2273.76,-112.96 2543.08,-112.96 2543.08,-183.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-164.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">validate (PURE, security&#45;critical)</text>
-<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-151.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">subjectName→entityId map</text>
-<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-138.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dangling refs · tier floor ·</text>
-<text xml:space="preserve" text-anchor="middle" x="2408.42" y="-124.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attribution arm → reject CODE only</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3838.89,-342.04 3569.57,-342.04 3569.57,-271.96 3838.89,-271.96 3838.89,-342.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-323.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">validate (PURE, security&#45;critical)</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-310.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">subjectName→entityId map</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-297.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dangling refs · tier floor ·</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-283.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">attribution arm → reject CODE only</text>
 </g>
 <!-- opus&#45;&gt;validate -->
-<g id="edge11" class="edge">
+<g id="edge17" class="edge">
 <title>opus&#45;&gt;validate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2174.39,-143.35C2203.41,-143.93 2234.8,-144.56 2264.86,-145.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2264.43,-147.6 2271.48,-145.29 2264.53,-142.7 2264.43,-147.6"/>
-<text xml:space="preserve" text-anchor="middle" x="2223.76" y="-147.71" font-family="Courier,monospace" font-size="10.00">3. plan</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3371.28,-290.03C3429.21,-292.99 3499.49,-296.58 3560.44,-299.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3560.05,-302.13 3567.17,-300.04 3560.3,-297.24 3560.05,-302.13"/>
+<text xml:space="preserve" text-anchor="middle" x="3486.56" y="-301.24" font-family="Courier,monospace" font-size="10.00">3. plan</text>
 </g>
 <!-- validate&#45;&gt;proc -->
-<g id="edge13" class="edge">
+<g id="edge19" class="edge">
 <title>validate&#45;&gt;proc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2273.32,-177C2240.88,-182.81 2206.21,-188.04 2173.75,-191 1875.68,-218.2 1799.02,-209.9 1500.3,-191 1462.94,-188.64 1422.81,-184.43 1385.3,-179.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1385.89,-177.37 1378.64,-178.93 1385.27,-182.23 1385.89,-177.37"/>
-<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-223.43" font-family="Courier,monospace" font-size="10.00">reject CODE</text>
-<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-211.43" font-family="Courier,monospace" font-size="10.00">→ throw (retry)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M3569.14,-321.67C3517.46,-326.65 3457.82,-331.56 3403.55,-334 3075.23,-348.76 2992.28,-351.3 2664.09,-334 2608.88,-331.09 2548.56,-325.39 2495.22,-319.47"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2495.76,-317.07 2488.53,-318.72 2495.22,-321.93 2495.76,-317.07"/>
+<text xml:space="preserve" text-anchor="middle" x="2994.21" y="-361.04" font-family="Courier,monospace" font-size="10.00">reject CODE</text>
+<text xml:space="preserve" text-anchor="middle" x="2994.21" y="-349.04" font-family="Courier,monospace" font-size="10.00">→ throw (retry)</text>
 </g>
 <!-- commit -->
-<g id="node11" class="node">
+<g id="node15" class="node">
 <title>commit</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2956.21,-189.64 2667.09,-189.64 2667.09,-106.36 2956.21,-106.36 2956.21,-189.64"/>
-<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-171.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">commit (ONE tx)</text>
-<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-157.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">mint entities · append facts ·</text>
-<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-144.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">supersede + NULL embedding ·</text>
-<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-131.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">edges · hierarchy · markTouchedByPlay</text>
-<text xml:space="preserve" text-anchor="middle" x="2811.65" y="-118.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">conditional markReconciled (LAST)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4252.02,-348.64 3962.9,-348.64 3962.9,-265.36 4252.02,-265.36 4252.02,-348.64"/>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-330.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">commit (ONE tx)</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-316.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">mint entities · append facts ·</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-303.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">supersede + NULL embedding ·</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-290.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">edges · hierarchy · markTouchedByPlay</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-277.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">conditional markReconciled (LAST)</text>
 </g>
 <!-- validate&#45;&gt;commit -->
-<g id="edge12" class="edge">
+<g id="edge18" class="edge">
 <title>validate&#45;&gt;commit</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2543.58,-148C2580.33,-148 2620.43,-148 2658.12,-148"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2657.81,-150.45 2664.81,-148 2657.81,-145.55 2657.81,-150.45"/>
-<text xml:space="preserve" text-anchor="middle" x="2605.09" y="-151" font-family="Courier,monospace" font-size="10.00">4. ok + map</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M3839.39,-307C3876.14,-307 3916.24,-307 3953.93,-307"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3953.62,-309.45 3960.62,-307 3953.62,-304.55 3953.62,-309.45"/>
+<text xml:space="preserve" text-anchor="middle" x="3900.89" y="-310" font-family="Courier,monospace" font-size="10.00">4. ok + map</text>
 </g>
 <!-- commit&#45;&gt;row -->
-<g id="edge17" class="edge">
+<g id="edge23" class="edge">
 <title>commit&#45;&gt;row</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2940.24,-190.39C3006.5,-213.06 3079.99,-239.44 3111.23,-255 3123.09,-260.9 3125.69,-265.84 3139.62,-273.37"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3138.47,-275.53 3145.83,-276.48 3140.67,-271.15 3138.47,-275.53"/>
-<text xml:space="preserve" text-anchor="middle" x="3048.22" y="-282" font-family="Courier,monospace" font-size="10.00">conditional</text>
-<text xml:space="preserve" text-anchor="middle" x="3048.22" y="-270" font-family="Courier,monospace" font-size="10.00">markReconciled</text>
-<text xml:space="preserve" text-anchor="middle" x="3048.22" y="-258" font-family="Courier,monospace" font-size="10.00">(0 rows → ROLLBACK)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M4230.36,-349.28C4247.34,-354.99 4264.6,-360.71 4281.02,-366 4339.37,-384.81 4371.65,-360.77 4413.04,-406 4455.65,-452.55 4398.22,-499.58 4442.04,-545 4447.13,-550.27 4452.8,-554.88 4458.9,-558.89"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="4457.42,-560.87 4464.68,-562.4 4459.97,-556.68 4457.42,-560.87"/>
+<text xml:space="preserve" text-anchor="middle" x="4347.03" y="-433" font-family="Courier,monospace" font-size="10.00">conditional</text>
+<text xml:space="preserve" text-anchor="middle" x="4347.03" y="-421" font-family="Courier,monospace" font-size="10.00">markReconciled</text>
+<text xml:space="preserve" text-anchor="middle" x="4347.03" y="-409" font-family="Courier,monospace" font-size="10.00">(0 rows → ROLLBACK)</text>
 </g>
 <!-- ws_list -->
-<g id="node12" class="node">
+<g id="node19" class="node">
 <title>ws_list</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="909.15,-97.04 699.24,-97.04 699.24,-26.96 909.15,-26.96 909.15,-97.04"/>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-78.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-65.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(MYT&#45;73 — tier+provenance</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-52.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">annotated improvisation)</text>
-<text xml:space="preserve" text-anchor="middle" x="804.2" y="-38.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">clear() on a winning commit</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4706.32,-151.04 4496.41,-151.04 4496.41,-80.96 4706.32,-80.96 4706.32,-151.04"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-132.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-119.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(MYT&#45;73 — tier+provenance</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-106.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">annotated improvisation)</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-92.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">clear() on a winning commit</text>
 </g>
 <!-- commit&#45;&gt;ws_list -->
-<g id="edge18" class="edge">
+<g id="edge24" class="edge">
 <title>commit&#45;&gt;ws_list</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M2680.69,-105.63C2602.88,-83.92 2501.5,-62 2409.42,-62 1230.73,-62 1230.73,-62 1230.73,-62 1124.85,-62 1004.14,-62 918.4,-62"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="918.5,-59.55 911.5,-62 918.5,-64.45 918.5,-59.55"/>
-<text xml:space="preserve" text-anchor="middle" x="1830.43" y="-65" font-family="Courier,monospace" font-size="10.00">clear() on win</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M4199.5,-264.73C4225.59,-253.21 4254.23,-241.13 4281.02,-231 4338.62,-209.23 4356.47,-213.32 4413.04,-189 4426.56,-183.19 4428.63,-179.07 4442.04,-173 4456.66,-166.39 4472.29,-159.99 4487.84,-154.01"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="4488.58,-156.35 4494.25,-151.57 4486.84,-151.77 4488.58,-156.35"/>
+<text xml:space="preserve" text-anchor="middle" x="4347.03" y="-234" font-family="Courier,monospace" font-size="10.00">clear() on win</text>
 </g>
 <!-- facts -->
-<g id="node14" class="node">
+<g id="node21" class="node">
 <title>facts</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3378.11,-249.04 3155,-249.04 3155,-178.96 3378.11,-178.96 3378.11,-249.04"/>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-230.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">facts (append&#45;only)</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-217.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">superseded_by / superseded_at</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-204.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">live = superseded_by IS NULL</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-190.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">source=&#39;session&#39;</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4712.92,-250.04 4489.81,-250.04 4489.81,-179.96 4712.92,-179.96 4712.92,-250.04"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-231.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">facts (append&#45;only)</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-218.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">superseded_by / superseded_at</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-205.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">live = superseded_by IS NULL</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-191.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">source=&#39;session&#39;</text>
 </g>
 <!-- commit&#45;&gt;facts -->
-<g id="edge14" class="edge">
+<g id="edge20" class="edge">
 <title>commit&#45;&gt;facts</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2956.89,-169.02C3017.85,-177.9 3088.01,-188.13 3146.02,-196.58"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3145.41,-198.97 3152.69,-197.55 3146.11,-194.12 3145.41,-198.97"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M4252.72,-280.02C4325.32,-266.44 4412.27,-250.18 4481.05,-237.32"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="4481.13,-239.79 4487.56,-236.1 4480.23,-234.98 4481.13,-239.79"/>
 </g>
 <!-- entities -->
-<g id="node15" class="node">
+<g id="node22" class="node">
 <title>entities</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3364.91,-150.44 3168.2,-150.44 3168.2,-93.56 3364.91,-93.56 3364.91,-150.44"/>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-131.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-118.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">created_in=&#39;session:&lt;id&gt;&#39;</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-105.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">modified_by_play=true</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="4699.72,-421.44 4503.01,-421.44 4503.01,-364.56 4699.72,-364.56 4699.72,-421.44"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-402.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entities</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-389.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">created_in=&#39;session:&lt;id&gt;&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-376.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">modified_by_play=true</text>
 </g>
 <!-- commit&#45;&gt;entities -->
-<g id="edge15" class="edge">
+<g id="edge21" class="edge">
 <title>commit&#45;&gt;entities</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2956.89,-139.72C3022.41,-135.96 3098.57,-131.59 3158.84,-128.13"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3158.95,-130.57 3165.8,-127.73 3158.67,-125.68 3158.95,-130.57"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M4252.72,-332.22C4329.95,-345.72 4423.42,-362.06 4493.98,-374.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="4493.36,-376.78 4500.68,-375.57 4494.21,-371.95 4493.36,-376.78"/>
 </g>
 <!-- edges -->
-<g id="node16" class="node">
+<g id="node23" class="node">
 <title>edges</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3335.2,-64.44 3197.9,-64.44 3197.9,-7.56 3335.2,-7.56 3335.2,-64.44"/>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">relationships +</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_hierarchy</text>
-<text xml:space="preserve" text-anchor="middle" x="3266.55" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(session edges)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="4670.01,-335.44 4532.72,-335.44 4532.72,-278.56 4670.01,-278.56 4670.01,-335.44"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-316.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">relationships +</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-303.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">entity_hierarchy</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-290.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(session edges)</text>
 </g>
 <!-- commit&#45;&gt;edges -->
-<g id="edge16" class="edge">
+<g id="edge22" class="edge">
 <title>commit&#45;&gt;edges</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2956.89,-112.33C3033.96,-93.27 3125.73,-70.58 3189.07,-54.91"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3189.45,-57.34 3195.66,-53.28 3188.28,-52.59 3189.45,-57.34"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M4252.72,-307C4341.26,-307 4451.13,-307 4523.37,-307"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="4523.17,-309.45 4530.17,-307 4523.17,-304.55 4523.17,-309.45"/>
+</g>
+<!-- aopus -->
+<g id="node17" class="node">
+<title>aopus</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3835.59,-466.64 3572.87,-466.64 3572.87,-383.36 3835.59,-383.36 3835.59,-466.64"/>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-448.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Opus analyst (ONE call)</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-434.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">transcript tail + sd_playbook +</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-421.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">running summary + roster →</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-408.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{summary, emergingThreads, handoff}</text>
+<text xml:space="preserve" text-anchor="middle" x="3704.23" y="-395.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">redactRawText · pinned cap</text>
+</g>
+<!-- aproc&#45;&gt;aopus -->
+<g id="edge26" class="edge">
+<title>aproc&#45;&gt;aopus</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3404.12,-423.01C3455.65,-423.35 3513.03,-423.73 3563.64,-424.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3563.53,-426.52 3570.54,-424.12 3563.56,-421.62 3563.53,-426.52"/>
+<text xml:space="preserve" text-anchor="middle" x="3486.56" y="-426.86" font-family="Courier,monospace" font-size="10.00">analyze</text>
+</g>
+<!-- contain -->
+<g id="node18" class="node">
+<title>contain</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4232.22,-465.04 3982.7,-465.04 3982.7,-394.96 4232.22,-394.96 4232.22,-465.04"/>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-446.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">containment verifier (PURE)</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-433.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">drop any voice/atmosphere excerpt</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-420.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">NOT verbatim in a non&#45;correction/</text>
+<text xml:space="preserve" text-anchor="middle" x="4107.46" y="-406.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">farewell transcript row</text>
+</g>
+<!-- aopus&#45;&gt;contain -->
+<g id="edge27" class="edge">
+<title>aopus&#45;&gt;contain</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3836.33,-426.63C3880.27,-427.18 3929.28,-427.79 3973.37,-428.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3973.27,-430.79 3980.3,-428.43 3973.33,-425.89 3973.27,-430.79"/>
+<text xml:space="preserve" text-anchor="middle" x="3900.89" y="-430.8" font-family="Courier,monospace" font-size="10.00">handoff</text>
+</g>
+<!-- narr -->
+<g id="node24" class="node">
+<title>narr</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4726.12,-520.04 4476.61,-520.04 4476.61,-449.96 4726.12,-449.96 4726.12,-520.04"/>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-501.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">sessions.summary</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-488.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{summary, emergingThreads}</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-475.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">sessions.handoff (SessionHandoff)</text>
+<text xml:space="preserve" text-anchor="middle" x="4601.37" y="-461.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ next session&#39;s prep</text>
+</g>
+<!-- contain&#45;&gt;narr -->
+<g id="edge28" class="edge">
+<title>contain&#45;&gt;narr</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M4232.91,-443.91C4304.57,-451.93 4394.62,-462 4467.64,-470.16"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="4466.97,-472.55 4474.2,-470.89 4467.52,-467.68 4466.97,-472.55"/>
+<text xml:space="preserve" text-anchor="middle" x="4347.03" y="-479.04" font-family="Courier,monospace" font-size="10.00">writeAnalysis</text>
+<text xml:space="preserve" text-anchor="middle" x="4347.03" y="-467.04" font-family="Courier,monospace" font-size="10.00">(summary IS NULL gate)</text>
 </g>
 <!-- ws_list&#45;&gt;proc -->
-<g id="edge8" class="edge">
+<g id="edge14" class="edge">
 <title>ws_list&#45;&gt;proc</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M909.84,-85.36C960.52,-96.67 1022.34,-110.48 1078.14,-122.93"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1077.55,-125.31 1084.91,-124.45 1078.62,-120.53 1077.55,-125.31"/>
-<text xml:space="preserve" text-anchor="middle" x="998.16" y="-133.01" font-family="Courier,monospace" font-size="10.00">load (durable</text>
-<text xml:space="preserve" text-anchor="middle" x="998.16" y="-121.01" font-family="Courier,monospace" font-size="10.00">checkpoint source)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M4496.09,-133.12C4396.75,-147.94 4242.83,-167 4108.46,-167 2774.65,-167 2774.65,-167 2774.65,-167 2646,-167 2504.97,-221.51 2420.13,-260.73"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2419.31,-258.41 2414,-263.59 2421.38,-262.85 2419.31,-258.41"/>
+<text xml:space="preserve" text-anchor="middle" x="3486.56" y="-182" font-family="Courier,monospace" font-size="10.00">load (durable</text>
+<text xml:space="preserve" text-anchor="middle" x="3486.56" y="-170" font-family="Courier,monospace" font-size="10.00">checkpoint source)</text>
+</g>
+<!-- flag&#45;&gt;interlock -->
+<g id="edge12" class="edge">
+<title>flag&#45;&gt;interlock</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M4683.72,-35.06C4710.63,-40.02 4739.36,-49.22 4761.69,-66 4926.86,-190.1 5008.96,-438.96 5036.56,-539.93"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="5034.18,-540.49 5038.37,-546.62 5038.91,-539.22 5034.18,-540.49"/>
+<text xml:space="preserve" text-anchor="middle" x="4847.7" y="-223.31" font-family="Courier,monospace" font-size="10.00">set → block start</text>
 </g>
 </g>
 </svg>
@@ -365,12 +524,13 @@
 </p>
 
 <p>
-  Two pieces make that happen, both new in MYT-74a: a <strong>session-end lifecycle</strong> that
-  detects a session is over and fences off the still-draining turn loop, and a
-  <strong>reconcile pass</strong> — an eighth BullMQ worker — that does the actual fold off the hot
-  path. The diagram traces both: the two end triggers converging on <code>endSession</code> at the
-  left, and the worker's <code>retrieve → reconcile → validate → commit</code> pipeline on the
-  right.
+  The pieces, layered across MYT-74a and MYT-74b: a <strong>session-end lifecycle</strong> that
+  detects a session is over, gives the table a live farewell, and fences off the still-draining turn
+  loop; a <strong>reconcile pass</strong> that folds the working set into canon off the hot path
+  (MYT-74a); and a <strong>post-session analysis pass</strong> that reads the transcript and writes
+  the next session's narrative state — recap plus handoff (MYT-74b). The diagram traces all of it:
+  the two end triggers beginning the end at the left, the farewell turn and the finalize that fires
+  the two closeout jobs in the middle, and each worker's pipeline on the right.
 </p>
 
 <aside class="wiki-rationale">
@@ -396,7 +556,8 @@
 </p>
 
 <p>
-  Two triggers converge on one flow, <code>endSession</code> in <code>session/session-end.ts</code>:
+  Two triggers converge on the begin phase, <code>endSession</code> in
+  <code>session/session-end.ts</code>:
 </p>
 
 <ul>
@@ -409,52 +570,120 @@
   <li>
     <strong>Budget auto-end</strong> — the token budget reaches 100%. The
     <a href="./session-turn.html">turn worker</a> observes the crossing on its post-flush success
-    phase (the same place the ST-evaluation floor is bumped) and fires the same end flow. The
+    phase (the same place the ST-evaluation floor is bumped) and fires the same begin flow. The
     Fast-Thinker context bound is the real session-length cap; when cumulative usage reaches it, the
     session <em>has</em> to end because the FT can hold no more transcript.
   </li>
 </ul>
 
-<aside class="wiki-rationale">
-  <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
-  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
-  100%). <code>endSession</code>'s first act is to claim a once-only
-  <code>session:{cId}:ending</code> flag; the loser of the race short-circuits there. So the status
-  flip, the reconcile enqueue, and the <code>session_end</code> broadcast each run exactly once no
-  matter how many triggers fire.
-</aside>
+<h3 id="begin-a-farewell-not-an-inline-finalize">Begin: a farewell, not an inline finalize</h3>
 
-<p>The flow is ordered to fence the reconcile against still-draining in-flight work:</p>
+<p>
+  MYT-74b split the end into a <strong>begin</strong> phase and a <strong>complete</strong> phase so
+  the table gets a live send-off <em>before</em> the session is structurally over.
+  <code>endSession</code> only begins it. It does four things and stops:
+</p>
 
 <ol>
   <li>
-    <strong>Quiesce.</strong> Set the <code>ending</code> flag and cancel any pending suspend (an
-    uncancelled suspend would later re-checkpoint an ended session — a lost update on the very
-    checkpoint reconcile reads). The inbound WS handler then drops every frame except a redundant
-    <code>end_session</code>, so no new turn is enqueued after end.
+    <strong>Claim the flag.</strong> Set the once-only <code>session:{cId}:ending</code> flag
+    (SET-NX). The loser of an explicit-frame-vs-auto-end race short-circuits here.
   </li>
   <li>
-    <strong>Fence the in-flight turn.</strong> Acquire the per-session lock — the same lock the
-    <a href="./session-turn.html">turn worker</a> holds while rendering. Acquiring it means no turn
-    is mid-render; the working set won't be mutated out from under the reconcile.
+    <strong>Cancel the pending suspend.</strong> An uncancelled all-disconnected suspend would later
+    re-checkpoint an ending session — a lost update keeping <code>status='active'</code>, undoing
+    the end. <code>cancelSuspend</code> is a no-op when nothing is pending.
   </li>
   <li>
-    <strong>Flip + enqueue.</strong> Transition the row to <code>status='ended'</code>,
-    <code>ended_at=now()</code> (<code>reconciled_at</code> stays NULL — only a successful commit
-    sets it). Enqueue one reconcile job, with a per-session <code>jobId</code>
-    (<code>reconcile-{sessionId}</code>) so a double-trigger collapses to a single broker job.
+    <strong>Read the watermark.</strong> Read the responded-seq watermark and thread it onto the
+    farewell payload as <code>maxConsumedSeq</code> — a player-less turn must not advance past
+    unresponded player seqs.
   </li>
   <li>
-    <strong>Close.</strong> Broadcast a structural <code>session_end</code> frame to every client.
+    <strong>Enqueue ONE farewell turn.</strong> A player-less
+    <code>trigger.kind: 'farewell'</code> turn, jobId <code>farewell-{sessionId}</code>, carrying
+    the resolved <code>worldId</code> so the finalize needs no campaign→world read of its own.
   </li>
 </ol>
 
 <aside class="wiki-rationale">
-  <strong>A contended lock proceeds anyway — the worker re-fences</strong> — if the lock is held (a
-  turn is genuinely mid-flight), <code>endSession</code> still flips the row and enqueues. It
-  doesn't block. The reconcile worker re-acquires the <em>same</em> lock itself before it reads the
-  working set, so the fence is enforced there regardless. The lock-fence is the load-bearing part;
-  the final turn's trailing post-turn jobs (Scribe, ledger) drain on their own queues.
+  <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
+  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
+  100%). <code>endSession</code>'s first act is to claim the flag; the loser short-circuits there.
+  So exactly one farewell turn is enqueued no matter how many triggers fire — and the
+  <code>farewell-{sessionId}</code> jobId is a broker-level dedup backstop beyond the flag.
+</aside>
+
+<p>
+  The <strong>farewell turn</strong> is rendered by the
+  <a href="./session-turn.html">turn worker</a> like any other turn, but player-less. Its direction
+  (a fixed "bring the scene to a natural close" cue) rides the single-bracket
+  <code>[DM direction:]</code> silent-consume seam — the same seam the MYT-73 correction turn
+  established — so the Fast Thinker writes the send-off in its own voice rather than quoting a
+  marker. It joins the correction turn under a shared <code>isPlayerless</code> predicate in the
+  turn worker: neither advances the watermark, enqueues the Scribe, nor runs the budget auto-end.
+  The <a href="./session-turn.html#player-less-turns-correction-and-farewell">turn page</a> covers
+  the render seam and the gates.
+</p>
+
+<h3 id="complete-the-unconditional-finalize">Complete: the unconditional finalize</h3>
+
+<p>
+  <code>finalizeEndedSession</code> is the complete phase, run from the farewell turn's
+  <code>finally</code> <em>after</em> the render — so the table sees the DM's send-off, then the
+  <code>session_end</code> frame. <code>finally</code> always runs, so a thrown farewell render
+  still finalizes: a session always ends. It does three things:
+</p>
+
+<ol>
+  <li>
+    <strong>Flip, conditionally.</strong> <code>markEnded</code> sets <code>status='ended'</code>,
+    <code>ended_at=now()</code> only when the row isn't already ended, returning the rowCount (<code
+      >reconciled_at</code
+    >
+    and <code>summary</code> both stay NULL — those are the reconcile and analysis completion
+    markers).
+  </li>
+  <li>
+    <strong>Enqueue the two closeout jobs.</strong> One reconcile job
+    (<code>reconcile-{sessionId}</code>) and one analysis job (<code>analysis-{sessionId}</code>),
+    both per-session jobIds so a re-enqueue collapses to the existing broker job.
+  </li>
+  <li>
+    <strong>Broadcast, once.</strong> Only the finalize that won the flip (rowCount 1) broadcasts
+    the structural <code>session_end</code> frame; a later finalize (rowCount 0) skips it.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>The conditional flip is what makes <code>session_end</code> fire exactly once</strong> —
+  the finalize is callable from two places: the farewell turn's <code>finally</code> (the normal
+  path) and a <code>QueueEvents</code> backstop (the terminal-stall path, below). Both call the same
+  idempotent function. The reconcile and analysis enqueues collapse on their jobIds, but the
+  broadcast would double-fire without a gate — so <code>markEnded</code> returns the rowCount and
+  only the winner broadcasts. A second finalize is otherwise harmless.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why a farewell turn, not an inline flip-and-broadcast</strong> — MYT-74a's
+  <code>endSession</code> flipped the row and broadcast <code>session_end</code> inline. That ended
+  the session abruptly: the client saw "session over" with no narrative close. Routing the end
+  through a real (player-less) turn lets the Fast Thinker render a send-off first, and the finalize
+  rides the turn's existing lock + <code>finally</code> — so the turn loop is already quiesced when
+  the row flips, no separate lock-fence needed. The reconcile worker still re-acquires the
+  per-session lock itself before reading the working set, so the fence is enforced there regardless.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A <code>QueueEvents</code> backstop covers the terminal stall</strong> — the in-worker
+  <code>finally</code> covers a clean render and a thrown render, but not a worker that
+  <em>crashes</em> mid-flight: BullMQ retries the job <code>maxStalledCount</code> times, then fails
+  it inside a Lua script that emits only a broker-side event — never the per-worker
+  <code>finally</code>. The <code>session-turn</code> <code>QueueEvents</code> subscriber listens
+  for that broker <code>failed</code> event and, for a <code>farewell</code> turn, runs
+  <code>finalizeEndedSession</code>
+  itself. Idempotent, so a double-fire with the in-worker path is safe. Without it a crashed
+  farewell would leave a session that never finalizes — the table waiting forever.
 </aside>
 
 <h3 id="the-cross-session-start-interlock">The cross-session start interlock</h3>
@@ -469,12 +698,22 @@
 </p>
 
 <p>
-  The fix is an interlock at <code>POST /api/sessions/:campaignId/start</code>: it returns
+  The fix is a two-part interlock at <code>POST /api/sessions/:campaignId/start</code>. It returns
   <code>409 reconcile_pending</code> while the campaign's most-recent session is
-  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code>. No new session starts until the prior
-  one's canon is committed and its working set cleared. Reconcile is fast (async, seconds to tens of
-  seconds), so the block is brief in the happy path.
+  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code> — no new session starts until the
+  prior one's canon is committed and its working set cleared. And it returns
+  <code>409 session_ending</code> while the <code>ending</code> flag is set.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>session_ending</code> needs its own guard</strong> — MYT-74b moved the status
+  flip to the finalize, which runs <em>after</em> the farewell renders. During that render the row
+  is still <code>status='active'</code> with <code>ended_at</code> NULL, so the
+  <code>reconcile_pending</code> interlock (which reads <code>ended_at</code>) can't see the end
+  yet. The <code>ending</code> flag is set at the very start of the begin phase, so the second guard
+  fences the whole window from begin-of-end through finalize. Reconcile is fast (seconds to tens of
+  seconds), so the combined block is brief in the happy path.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The tri-state is the reader contract</strong> — <code>ended_at</code> set with
@@ -582,6 +821,112 @@
   call sit between the entry check and <code>BEGIN</code>) would both commit a full duplicate of the
   working set. The conditional <code>WHERE</code> serializes them; the on-entry check is just a
   cheap early-out.
+</aside>
+
+<h2 id="post-session-analysis-and-the-handoff">Post-session analysis and the handoff</h2>
+
+<p>
+  Reconcile commits <em>facts</em>. The second closeout job, in
+  <code>session/post-session-analysis.ts</code>, writes <em>narrative state</em> — what the session
+  was about and where it left things. It is the same ZFC shape as reconcile: a deterministic read,
+  one Opus judgment, a deterministic verify-and-write. It is <strong>not total</strong> — it throws
+  on transient failure so BullMQ retries, gated idempotent on <code>summary IS NULL</code>. It runs
+  on its own worker (concurrency 1, 180s lock) and takes no embedder — analysis doesn't embed.
+</p>
+
+<p>
+  The job reads four durable inputs, all safe to read after the WebSocket closes: the bounded
+  transcript tail (the latest 160 rows — the late tail is where evolved relationships and voice
+  live), the prep <code>sd_playbook</code>, the Slow-Thinker running summary from Redis, and the PC
+  roster. <code>llm/post-session-analysis.ts</code> feeds them to one Opus call that emits a
+  <code>{ summary, emergingThreads, handoff }</code> object.
+</p>
+
+<ul>
+  <li>
+    <strong><code>summary</code> / <code>emergingThreads</code></strong> — the player-facing recap.
+    Secret-free by construction: the prompt's hard rule is that these describe only what the players
+    witnessed at the table. They land in <code>sessions.summary</code> as a JSON wrapper.
+  </li>
+  <li>
+    <strong><code>handoff</code></strong> — the <code>SessionHandoff</code>, which <em>may</em> be
+    secret-aware (it feeds the next session's prep pipeline, not any player surface). It carries the
+    party's end-of-session positions and conditions, the in-world time, the unresolved threads
+    (most-urgent first), per-NPC <code>state</code> (a paraphrasable disposition) and
+    <code>voice</code> (verbatim late-session lines), and per-location <code>atmosphere</code>. It
+    lands in <code>sessions.handoff</code>.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Verbatim NPC voice is the point of the handoff</strong> — the recurring failure across
+  sessions is an NPC whose voice resets: the smuggler who was wry and conspiratorial by the end of
+  session 3 greets the party in session 4 with a generic "coin first, stories after." The handoff
+  carries a few of each major NPC's <em>actual late-session lines</em>, quoted exactly, and the prep
+  engine concatenates them into the next <code>ft_context</code> verbatim (never paraphrased). The
+  array length is bounded (it's a static budget the FT carries every turn), but the individual
+  strings carry no length cap — a real line must survive at its real length.
+</aside>
+
+<h3 id="the-containment-verifier">The containment verifier</h3>
+
+<p>
+  Between the Opus call and the write sits a pure mechanical gate,
+  <code>session/analysis/containment.ts</code>. It drops any handoff voice excerpt or location
+  atmosphere snippet that is <strong>not a verbatim substring</strong> of a non-correction,
+  non-farewell transcript row. Normalization is forgiving on whitespace and case (JSON re-emission
+  drifts those) but not on meaning: a semantic, non-substring difference is dropped.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The containment verifier is an enforced-ignorance boundary, not a quality filter</strong>
+  — a verbatim excerpt that the next session's <code>ft_context</code> will carry must never be
+  sourced from a <a href="../runtime/scribe.html">correction turn</a> (a MYT-73 retcon line points
+  <em>at</em> the buried secret it spent an Opus call to bury) or a farewell line (meta-closure, not
+  characterization). The
+  <a href="../data/schema.html">migration-028 <code>trigger_kind</code> column</a> records each DM
+  row's originating turn trigger, so the verifier can structurally exclude those rows from the
+  source set. The <code>[[DM CORRECTION:]]</code> marker doesn't survive into persisted content and
+  <code>message_type</code> is the row kind, not the trigger — so the trigger had to be recorded
+  explicitly. A drop is logged by <em>count only</em>, never the dropped prose, so the alert surface
+  can't echo the secret the verifier exists to gate.
+</aside>
+
+<p>
+  The verified handoff and the recap then go through <code>repo.sessions.writeAnalysis</code>, a
+  conditional write gated on <code>summary IS NULL</code> — the same idempotency-mutex shape as the
+  reconcile commit. A retry or a concurrent execution that finds <code>summary</code> already set
+  no-ops. The worker logs structural counts only (drop counts, NPC and location counts, the write
+  rowCount), never summary, handoff, or excerpt content — the analysis reasons over secrets, so the
+  log surface is the leak vector, and it carries none.
+</p>
+
+<h3 id="how-prep-consumes-the-handoff">How prep consumes the handoff</h3>
+
+<p>
+  The handoff is written for one reader: the next session's <a href="./session-prep.html">prep</a>.
+  When prep runs, it reads the campaign's prior ended sessions (newest-first, capped) via
+  <code>getPriorContextForPrep</code> and splits them two ways. The <code>summary</code> strings
+  become a chronological recap fed to the prep prompt, and the latest session's handoff renders a
+  <strong>"Where We Left Off"</strong> anchor — party positions, time of day, unresolved threads,
+  returning-NPC dispositions — so the prep opens on where the table actually is. That part is a
+  paraphrasable prompt input.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Verbatim voice is concatenated onto <code>ft_context</code>, not run through the prep
+    LLM</strong
+  >
+  — the disposition lines (<code>state</code>) are fine to paraphrase, so they go into the prompt.
+  But the whole value of the verbatim voice lines is that they're <em>exact</em>; routing them
+  through the prep LLM would let it reword them, defeating the cross-session consistency they exist
+  for. So the prep processor builds a fixed "Returning characters and places" section from the
+  handoff's voice and atmosphere excerpts and appends it to
+  <code>ft_context</code> deterministically <em>after</em> generation. All parsing of the prior rows
+  is tolerant (a malformed or legacy row degrades to omission, never a throw mid-prep) — the
+  analysis is transcript-derived narrative state, independent of canon commit, so it is not
+  reconcile-gated.
 </aside>
 
 <h2 id="the-append-only-fact-log">The append-only fact log</h2>
@@ -712,13 +1057,38 @@
 <ol>
   <li>
     With a live session open over the WebSocket, send an <code>end_session</code> frame. The server
-    flips the row to <code>ended</code>, broadcasts <code>session_end</code>, and enqueues the
-    reconcile job.
+    claims the <code>ending</code> flag and enqueues a player-less farewell turn.
   </li>
   <li>
-    Watch the worker logs for <code>reconcile_committed</code> (carries op counts only). Then
-    inspect <code>sessions.reconciled_at</code> (now set) and the new <code>facts</code> rows
+    Watch the session channel for the farewell turn's prose, <em>then</em> the structural
+    <code>session_end</code> frame (in that order — the live send-off precedes the close).
+  </li>
+  <li>
+    Watch the worker logs for <code>session_finalized</code>, then
+    <code>reconcile_committed</code> and <code>analysis_written</code> (all carry counts only). Then
+    inspect <code>sessions.reconciled_at</code> (now set), <code>sessions.summary</code> /
+    <code>sessions.handoff</code> (now populated), and the new <code>facts</code> rows
     (<code>source='session'</code>) for the world.
+  </li>
+</ol>
+
+<h3 id="re-run-a-stuck-post-session-analysis">Re-run a stuck post-session analysis</h3>
+<ol>
+  <li>
+    Symptom: a session has <code>ended_at</code> set but <code>summary</code> stays NULL. The
+    analysis job exhausted its retries (a persistently-failing Opus call) or never landed.
+  </li>
+  <li>
+    Confirm in the <a href="./worker.html">worker</a> logs for that <code>sessionId</code>: a
+    transient-failure line, or an <code>analysis_excerpts_dropped_not_in_transcript</code> warn
+    (count only — expected, not a failure). The session's canon is unaffected — analysis and
+    reconcile are independent jobs.
+  </li>
+  <li>
+    Re-enqueue the analysis job for the session. The <code>summary IS NULL</code> gate makes a
+    re-run idempotent; a persistent failure means a real prompt/schema bug to fix before re-driving.
+    Until <code>summary</code> lands, the next session's prep simply opens without a "Where We Left
+    Off" anchor — it never blocks.
   </li>
 </ol>
 
@@ -728,18 +1098,22 @@
   This page picks up where the <a href="./scribe.html">Scribe</a> leaves off: the Scribe builds the
   tier- and provenance-annotated working set during the session; reconciliation commits it at the
   end. The end lifecycle lives at the <a href="./session-transport.html">session transport</a> seam
-  (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the
-  start interlock) and is also fired by the <a href="./session-turn.html">turn worker</a>'s budget
-  auto-end. The reconcile worker is the eighth <a href="./worker.html">BullMQ worker</a>. It
-  retrieves candidates through the
+  (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the two
+  start-interlock 409s) and is also fired by the <a href="./session-turn.html">turn worker</a>'s
+  budget auto-end; the farewell turn itself is rendered by that turn worker, and the
+  <code>QueueEvents</code> backstop is its terminal-stall net. The reconcile and analysis workers
+  are the eighth and ninth <a href="./worker.html">BullMQ workers</a>. Reconcile retrieves
+  candidates through the
   <a href="../data/world-store-retrieval.html">world-store retrieval</a> resolvers and writes
   through the <a href="../data/repository.html">repository layer</a>'s <code>facts</code>,
   <code>entities</code>, <code>relationships</code>, and <code>entityHierarchy</code> namespaces;
-  the append-only <code>superseded_by</code> / <code>superseded_at</code> columns and
-  <code>sessions.reconciled_at</code> are on the <a href="../data/schema.html">schema</a>.
-  Downstream gating stays intact — the wiki-data refresh (a later piece) reads only
-  <code>known</code> facts; secret tiers stay behind the
-  <a href="./slow-thinker.html">Slow-Thinker</a> gate.
+  analysis writes <code>sessions.summary</code> / <code>sessions.handoff</code> via
+  <code>writeAnalysis</code>. The append-only <code>superseded_by</code> /
+  <code>superseded_at</code> columns, <code>sessions.reconciled_at</code>, and the migration-028
+  <code>session_messages.trigger_kind</code> column are on the
+  <a href="../data/schema.html">schema</a>. Downstream, the next session's
+  <a href="./session-prep.html">prep</a> reads the handoff and the prior summaries; secret tiers
+  stay behind the <a href="./slow-thinker.html">Slow-Thinker</a> gate.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -821,36 +1195,77 @@
   <thead>
     <tr>
       <th>Knob</th>
-      <th>Value</th>
+      <th>Reconcile</th>
+      <th>Analysis</th>
     </tr>
   </thead>
   <tbody>
     <tr>
       <td>Queue / job id</td>
-      <td>
-        <code>session-reconcile</code> / <code>reconcile-{sessionId}</code> (per-session dedup)
-      </td>
+      <td><code>session-reconcile</code> / <code>reconcile-{sessionId}</code></td>
+      <td><code>session-analysis</code> / <code>analysis-{sessionId}</code></td>
     </tr>
     <tr>
       <td>Concurrency · lock</td>
-      <td>1 · 180s (≥ the 120s Opus timeout + embed + commit headroom; never stalled-reclaimed)</td>
+      <td>1 · 180s</td>
+      <td>1 · 180s</td>
     </tr>
     <tr>
       <td>Retries</td>
-      <td>
-        5 attempts, exponential backoff (30s); <code>removeOnComplete</code> +
-        <code>removeOnFail</code>
-      </td>
-    </tr>
-    <tr>
-      <td>Candidates per subject</td>
-      <td>5 (top-K similar canon entities)</td>
+      <td>5 attempts, exp backoff 30s; <code>removeOnComplete</code>/<code>removeOnFail</code></td>
+      <td>5 attempts, exp backoff 30s; <code>removeOnComplete</code>/<code>removeOnFail</code></td>
     </tr>
     <tr>
       <td>Opus call</td>
+      <td>120s, 8000 max out, <code>redactRawText</code>, <code>sonnet</code> repair</td>
+      <td>120s, 8000 max out, <code>redactRawText</code>, <code>sonnet</code> repair</td>
+    </tr>
+    <tr>
+      <td>Embedder</td>
+      <td>Yes (Voyage re-embed before commit)</td>
+      <td>None (analysis doesn't embed)</td>
+    </tr>
+    <tr>
+      <td>Idempotency gate</td>
+      <td>conditional <code>reconciled_at IS NULL</code></td>
+      <td>conditional <code>summary IS NULL</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="the-sessionhandoff-analysis-output-prep-input">The <code>SessionHandoff</code> (analysis output → prep input)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>party[]</code></td>
       <td>
-        120s timeout, 8000 max output tokens, <code>redactRawText</code>, <code>sonnet</code> repair
+        <code>characterName</code>, <code>location</code>, <code>condition</code> at session end.
       </td>
+    </tr>
+    <tr>
+      <td><code>timeOfDay</code></td>
+      <td>In-world time at session end.</td>
+    </tr>
+    <tr>
+      <td><code>unresolvedThreads[]</code></td>
+      <td>Open threads carried forward, most-urgent first.</td>
+    </tr>
+    <tr>
+      <td><code>npcs[]</code> (max 8)</td>
+      <td>
+        <code>name</code>, <code>state</code> (paraphrasable disposition), <code>voice</code> (max 4
+        verbatim lines, no string <code>.max()</code> — concatenated onto <code>ft_context</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>keyLocations[]</code> (max 8)</td>
+      <td><code>name</code>, <code>atmosphere</code> (verbatim sensory snippet).</td>
     </tr>
   </tbody>
 </table>
@@ -858,15 +1273,23 @@
 <h2 id="source">Source</h2>
 
 <p>
-  <code>backend/src/session/session-end.ts</code> (the lifecycle orchestration),
-  <code>backend/src/session/session-reconcile.ts</code> (the worker),
+  <code>backend/src/session/session-end.ts</code> (the begin/complete lifecycle —
+  <code>endSession</code> + <code>finalizeEndedSession</code>),
+  <code>backend/src/session/session-reconcile.ts</code> (the reconcile worker),
   <code>backend/src/session/reconcile/validate.ts</code> + <code>reconcile/commit.ts</code> (the
   pure validator + the transactional commit), <code>backend/src/llm/session-reconciler.ts</code> +
   <code>backend/src/llm/schemas/session-reconcile.ts</code> +
-  <code>backend/src/llm/prompts/session/session-reconciler.txt</code> (the Opus plan),
-  <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> / <code>entities.ts</code> (the
-  append-only fact writes, the conditional gate, play-marking),
-  <code>backend/src/server-queues.ts</code> (the queue build), and
+  <code>backend/src/llm/prompts/session/session-reconciler.txt</code> (the Opus reconcile plan),
+  <code>backend/src/session/post-session-analysis.ts</code> (the analysis worker),
+  <code>backend/src/session/analysis/containment.ts</code> (the verbatim-containment verifier),
+  <code>backend/src/llm/post-session-analysis.ts</code> +
+  <code>backend/src/llm/schemas/post-session-analysis.ts</code> +
+  <code>backend/src/llm/prompts/session/post-session-analysis.txt</code> (the Opus analysis call,
+  schema, and prompt), <code>backend/src/session/session-turn-queue-events.ts</code> (the terminal-
+  stall finalize backstop), <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> /
+  <code>entities.ts</code> (the append-only fact writes, the <code>markEnded</code> /
+  <code>writeAnalysis</code> / <code>getPriorContextForPrep</code> binders, play-marking),
+  <code>backend/src/server-queues.ts</code> (the reconcile + analysis queue builds), and
   <code>backend/migrations/027_fact_supersede.sql</code> (the append-only columns). Design spec:
   <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code>.
 </p>
@@ -875,7 +1298,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-session-end-lifecycle">The session-end lifecycle</a></li><li style="padding-left:12px"><a href="#the-cross-session-start-interlock">The cross-session start interlock</a></li><li style="padding-left:0"><a href="#the-reconcile-pass">The reconcile pass</a></li><li style="padding-left:12px"><a href="#1-retrieve-deterministic">1. Retrieve (deterministic)</a></li><li style="padding-left:12px"><a href="#2-reconcile-one-holistic-opus-call">2. Reconcile (one holistic Opus call)</a></li><li style="padding-left:12px"><a href="#3-validate-deterministic-structural-policy">3. Validate (deterministic — structural + policy)</a></li><li style="padding-left:12px"><a href="#4-commit-deterministic-transactional">4. Commit (deterministic, transactional)</a></li><li style="padding-left:0"><a href="#the-append-only-fact-log">The append-only fact log</a></li><li style="padding-left:12px"><a href="#the-live-only-read-filter">The live-only read filter</a></li><li style="padding-left:0"><a href="#enforced-ignorance">Enforced ignorance</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#recover-a-stuck-reconcile-pending-campaign">Recover a stuck reconcile_pending campaign</a></li><li style="padding-left:12px"><a href="#end-a-session-by-hand-in-dev">End a session by hand (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#the-reconcile-plan-zod-root">The reconcile plan (Zod root)</a></li><li style="padding-left:12px"><a href="#validator-reject-reasons-structural-codes">Validator reject reasons (structural codes)</a></li><li style="padding-left:12px"><a href="#worker-tuning">Worker tuning</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-session-end-lifecycle">The session-end lifecycle</a></li><li style="padding-left:12px"><a href="#begin-a-farewell-not-an-inline-finalize">Begin: a farewell, not an inline finalize</a></li><li style="padding-left:12px"><a href="#complete-the-unconditional-finalize">Complete: the unconditional finalize</a></li><li style="padding-left:12px"><a href="#the-cross-session-start-interlock">The cross-session start interlock</a></li><li style="padding-left:0"><a href="#the-reconcile-pass">The reconcile pass</a></li><li style="padding-left:12px"><a href="#1-retrieve-deterministic">1. Retrieve (deterministic)</a></li><li style="padding-left:12px"><a href="#2-reconcile-one-holistic-opus-call">2. Reconcile (one holistic Opus call)</a></li><li style="padding-left:12px"><a href="#3-validate-deterministic-structural-policy">3. Validate (deterministic — structural + policy)</a></li><li style="padding-left:12px"><a href="#4-commit-deterministic-transactional">4. Commit (deterministic, transactional)</a></li><li style="padding-left:0"><a href="#post-session-analysis-and-the-handoff">Post-session analysis and the handoff</a></li><li style="padding-left:12px"><a href="#the-containment-verifier">The containment verifier</a></li><li style="padding-left:12px"><a href="#how-prep-consumes-the-handoff">How prep consumes the handoff</a></li><li style="padding-left:0"><a href="#the-append-only-fact-log">The append-only fact log</a></li><li style="padding-left:12px"><a href="#the-live-only-read-filter">The live-only read filter</a></li><li style="padding-left:0"><a href="#enforced-ignorance">Enforced ignorance</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#recover-a-stuck-reconcile-pending-campaign">Recover a stuck reconcile_pending campaign</a></li><li style="padding-left:12px"><a href="#end-a-session-by-hand-in-dev">End a session by hand (dev)</a></li><li style="padding-left:12px"><a href="#re-run-a-stuck-post-session-analysis">Re-run a stuck post-session analysis</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#the-reconcile-plan-zod-root">The reconcile plan (Zod root)</a></li><li style="padding-left:12px"><a href="#validator-reject-reasons-structural-codes">Validator reject reasons (structural codes)</a></li><li style="padding-left:12px"><a href="#worker-tuning">Worker tuning</a></li><li style="padding-left:12px"><a href="#the-sessionhandoff-analysis-output-prep-input">The SessionHandoff (analysis output → prep input)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

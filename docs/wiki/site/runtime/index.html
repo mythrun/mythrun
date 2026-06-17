@@ -633,15 +633,19 @@
   <a href="./worker.html">Worker</a> page. The short version: it loads the same
   <code>loadEnv</code> contract the API uses, opens its own pg pool and both Redis clients (with a
   BullMQ-compatible ioredis factory at <code>redis/bullmq-client.ts</code> for the batch side),
-  registers seven BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
+  registers nine BullMQ <code>Worker</code> instances against <code>QUEUE_WORLD_GEN</code>,
   <code>QUEUE_CAMPAIGN_SETUP</code>, <code>QUEUE_SESSION_PREP</code>, the MYT-66
   <code>QUEUE_SESSION_TURN</code> (the lock-fenced
   <a href="./session-turn.html">DM-turn</a> conductor), the MYT-67
   <code>QUEUE_DM_TRIGGER</code> (the <a href="./dm-trigger.html">DM trigger</a> decision worker),
   the MYT-69 <code>QUEUE_ST_EVAL</code> (the post-hoc
-  <a href="./slow-thinker.html">Slow Thinker</a>), and the MYT-73 <code>QUEUE_SCRIBE</code> (the
-  post-turn <a href="./scribe.html">Scribe</a> reconciler) — plus a
-  <code>QueueEvents('session-turn')</code> subscriber — and binds a Fastify
+  <a href="./slow-thinker.html">Slow Thinker</a>), the MYT-73 <code>QUEUE_SCRIBE</code> (the
+  post-turn <a href="./scribe.html">Scribe</a> reconciler), the MYT-74a
+  <code>QUEUE_SESSION_RECONCILE</code> (the
+  <a href="./session-reconcile.html">end-of-session reconciler</a>), and the MYT-74b
+  <code>QUEUE_SESSION_ANALYSIS</code> (the
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a
+  >) — plus a <code>QueueEvents('session-turn')</code> subscriber — and binds a Fastify
   <code>/health</code> server on <code>127.0.0.1:3001</code> that the ECS container
   <code>healthCheck</code> probes. Graceful shutdown drains the workers within a
   <code>100s</code> deadline (under the task's 120s <code>stopTimeout</code>) and falls back to a
@@ -650,9 +654,11 @@
   (world-gen), MYT-52 (streaming entity / edge events), MYT-53 (per-player character creation),
   MYT-54 (campaign-scoped character integration), MYT-61 (session prep), MYT-66 (the session-turn
   conductor), MYT-67 (the <a href="./dm-trigger.html">DM trigger</a> decision worker), MYT-69 (the
-  post-hoc <a href="./slow-thinker.html">Slow Thinker</a>), and MYT-73 (the post-turn
-  <a href="./scribe.html">Scribe</a>). The dedicated worker container caught up to the API
-  container's wiring in MYT-55.
+  post-hoc <a href="./slow-thinker.html">Slow Thinker</a>), MYT-73 (the post-turn
+  <a href="./scribe.html">Scribe</a>), MYT-74a (the
+  <a href="./session-reconcile.html">end-of-session reconciler</a>), and MYT-74b (the
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a
+  >). The dedicated worker container caught up to the API container's wiring in MYT-55.
 </p>
 
 <h2 id="the-env-loader-accepts-two-shapes">The env loader accepts two shapes</h2>

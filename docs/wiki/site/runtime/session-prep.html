@@ -514,27 +514,33 @@
 
 <p>
   With the claim held, the processor publishes a <code>prep-started</code> phase event, resolves the
-  campaign's <code>world_id</code>, and calls <code>generateSessionPrep</code> — one Opus
-  <code>streamObject</code> producing the two prose documents. That call runs against the raw pool,
-  outside any open transaction: it is the slowest single call in the system (a 9-minute timeout, two
-  long markdown documents), and holding a pooled connection for its full duration would starve the
-  rest of the worker. The <a href="./llm.html#the-session-prep-generation-stage">LLM client page</a>
-  covers the generation primitive — the omniscient serializer, the
-  <code>maxOutputTokens</code> ceiling, the enforced-ignorance split that lives inside the prompt,
-  and the optional <code>onProseDelta</code> callback the processor threads in to capture the stream
-  as it lands.
+  campaign's <code>world_id</code>, reads the
+  <a href="#consuming-the-prior-session-handoff">prior-session context</a> (the summaries and the
+  latest handoff from the previous session's <a href="./session-reconcile.html">analysis</a>), and
+  calls <code>generateSessionPrep</code> — one Opus <code>streamObject</code> producing the two
+  prose documents. That call runs against the raw pool, outside any open transaction: it is the
+  slowest single call in the system (a 9-minute timeout, two long markdown documents), and holding a
+  pooled connection for its full duration would starve the rest of the worker. The
+  <a href="./llm.html#the-session-prep-generation-stage">LLM client page</a> covers the generation
+  primitive — the omniscient serializer, the <code>maxOutputTokens</code> ceiling, the
+  enforced-ignorance split that lives inside the prompt, and the optional
+  <code>onProseDelta</code> callback the processor threads in to capture the stream as it lands.
 </p>
 
 <p>
-  On success the processor persists the two artifacts to <code>session_preps</code> through
-  <code>repo.sessionPreps.insert</code> (<code
+  On success the processor
+  <a href="#consuming-the-prior-session-handoff"
+    >deterministically appends the prior handoff's verbatim voice and atmosphere excerpts</a
+  >
+  to the generated <code>ft_context</code>, then persists the two artifacts to
+  <code>session_preps</code> through <code>repo.sessionPreps.insert</code> (<code
     >ON CONFLICT (campaign_id, session_number) DO NOTHING</code
   >
-  — the first persisted row wins), then marks the <code>pipeline_runs</code> row
-  <code>completed</code> with the call's cost and publishes a <code>prep-ready</code> event carrying
-  the recorded <code>costUsd</code>. On any error it publishes <code>prep-failed</code> with the
-  terminal flag instead. These three <code>prep-*</code> arms are the entire player-visible signal —
-  they ride the campaign's pipeline channel, never the prose.
+  — the first persisted row wins), marks the <code>pipeline_runs</code> row
+  <code>completed</code> with the call's cost, and publishes a <code>prep-ready</code> event
+  carrying the recorded <code>costUsd</code>. On any error it publishes
+  <code>prep-failed</code> with the terminal flag instead. These three <code>prep-*</code> arms are
+  the entire player-visible signal — they ride the campaign's pipeline channel, never the prose.
 </p>
 
 <p>
@@ -548,6 +554,57 @@
   to a complete object, so an interrupted stream leaves no half-written prep. It is a manual,
   not-in-CI run (real Opus, ~$0.50 measured); the runbook is below.
 </p>
+
+<h3 id="consuming-the-prior-session-handoff">Consuming the prior-session handoff</h3>
+
+<p>
+  From session 2 onward, prep no longer generates in a vacuum — it opens on where the last session
+  left the party. The
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">
+    post-session analysis</a
+  >
+  wrote two things to the prior <code>sessions</code> row: a <code>summary</code> (a player-facing
+  recap) and a <code>handoff</code> (the secret-aware <code>SessionHandoff</code>). The prep
+  processor reads them through <code>repo.sessions.getPriorContextForPrep</code> — the campaign's
+  prior ended sessions that have a written analysis, newest-first, capped — and routes them into
+  prep two different ways.
+</p>
+
+<p>
+  The <strong>paraphrasable inputs</strong> go into the prep prompt.
+  <code>buildPriorSessionContext</code> unwraps each row's chronological <code>summary</code> and
+  takes the latest row's handoff; <code>serializeWorldStateForPrep</code> renders a
+  <strong>"Where We Left Off"</strong> block from the handoff — time of day, party positions and
+  conditions, unresolved threads (most-urgent first), and each returning NPC's current disposition.
+  The prep LLM is free to reword all of that.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Verbatim NPC voice is concatenated onto <code>ft_context</code>, never run through the prep
+    LLM</strong
+  >
+  — the handoff also carries a few of each major NPC's <em>exact</em> late-session lines and each
+  location's <em>exact</em> atmosphere snippet. Their whole value is that they're verbatim: routing
+  them through the prep LLM would let it reword them, defeating the cross-session voice consistency
+  they exist for (the recurring failure is an NPC whose hard-won late-session voice resets to a
+  generic first-impression next session). So the processor builds a fixed
+  <strong>"Returning characters and places"</strong> section with
+  <code>buildReturningVoicesSection</code> and concatenates it onto the generated
+  <code>ft_context</code> <em>after</em> the Opus call returns — a deterministic string append,
+  never a paraphrase. The disposition lines are prompt input; the voice lines are a post-generation
+  graft.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Tolerant parsing; not reconcile-gated</strong> — every prior row is parsed with
+  <code>safeParse</code> / try-catch, so a malformed or legacy row degrades to omission rather than
+  throwing mid-prep. And the read filters on <code>summary IS NOT NULL</code>, not on
+  <code>reconciled_at</code>: the handoff is transcript-derived narrative state, independent of the
+  canon-fold, so a prior session whose <a href="./session-reconcile.html">reconcile</a> is still
+  pending (or failed) still contributes its recap and anchor. A session with no written analysis
+  simply contributes nothing — prep opens without an anchor, never blocked.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Dedicated <code>prep-*</code> arms, not the generic <code>stage-*</code> events</strong> —
@@ -984,11 +1041,15 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
   <a href="./llm.html#the-session-prep-generation-stage">LLM client</a> page — the omniscient
   serializer, the two-field schema, the <code>maxOutputTokens</code> ceiling, the
   <code>onProseDelta</code> streaming seam, and the in-prompt enforced-ignorance split that keeps
-  <code>discoverable</code> / <code>secret</code> material out of <code>ft_context</code>. Sideways:
-  the <a href="./worker.html">worker</a> registers this queue's <code>Worker</code> as a third peer
-  and is one of the two entrypoints that wire <code>publishProse</code> (the other is the API
-  container's in-process worker); the <a href="../data/repository.html">repository layer</a> holds
-  the <code>sessionPreps</code> binder; the <code>session-prep</code> job name lives in
+  <code>discoverable</code> / <code>secret</code> material out of <code>ft_context</code>; and the
+  prior session's
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff"> post-session analysis</a
+  >, whose <code>summary</code> + <code>handoff</code> this prep reads to open on where the table
+  left off. Sideways: the <a href="./worker.html">worker</a> registers this queue's
+  <code>Worker</code> as a third peer and is one of the two entrypoints that wire
+  <code>publishProse</code> (the other is the API container's in-process worker); the
+  <a href="../data/repository.html">repository layer</a> holds the <code>sessionPreps</code> binder;
+  the <code>session-prep</code> job name lives in
   <code>backend/src/contract/pipeline-jobs.ts</code> and is now a fully
   <a href="./dev-tool.html#the-ship-gate">dev-tool-covered</a> job (the prose pane is its driver).
   The two SSE consumption surfaces live elsewhere: the player-facing
@@ -1196,7 +1257,7 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:12px"><a href="#the-http-surface">The HTTP surface: four routes, one safe projection</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:12px"><a href="#run-the-session-prep-smoke">Run the session-prep smoke</a></li><li style="padding-left:12px"><a href="#regenerate-the-ready-to-play-fixture">Regenerate the ready-to-play fixture</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:12px"><a href="#http-routes">HTTP routes</a></li><li style="padding-left:12px"><a href="#safesessionprep-fields-the-http-projection">SafeSessionPrep fields (the HTTP projection)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#consuming-the-prior-session-handoff">Consuming the prior-session handoff</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:12px"><a href="#the-http-surface">The HTTP surface: four routes, one safe projection</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:12px"><a href="#run-the-session-prep-smoke">Run the session-prep smoke</a></li><li style="padding-left:12px"><a href="#regenerate-the-ready-to-play-fixture">Regenerate the ready-to-play fixture</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:12px"><a href="#http-routes">HTTP routes</a></li><li style="padding-left:12px"><a href="#safesessionprep-fields-the-http-projection">SafeSessionPrep fields (the HTTP projection)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

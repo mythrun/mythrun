@@ -1,49 +1,62 @@
 digraph session_reconcile {
-  // End-of-session reconciliation (MYT-74a). The session-end lifecycle + the
-  // reconcile pass that folds the in-session working set (MYT-73) into durable
-  // canon. Two triggers converge on endSession (idempotent via a SET-NX `ending`
-  // flag): the explicit `end_session` WS frame and the turn worker's budget-100%
-  // auto-end. endSession quiesces (lock fence + cancelSuspend), flips the row to
-  // 'ended', enqueues ONE session-reconcile job (per-session jobId), and
-  // broadcasts a structural session_end. The reconcile worker (the 8th BullMQ
-  // worker) runs off the hot path: load working set → findSimilarEntities
-  // candidates → ONE holistic Opus plan → PURE structural+policy validate →
-  // Voyage embed → one gated commit tx → working-set clear. The conditional
-  // markReconciled is the commit's last in-tx statement (the idempotency mutex).
-  // ENFORCED IGNORANCE: the validator/worker log STRUCTURAL codes + op counts
-  // only — never plan content — so a secret-bearing plan never leaks to logs.
+  // End-of-session lifecycle (MYT-74a + MYT-74b). Two triggers converge on
+  // endSession (idempotent via a SET-NX `ending` flag): the explicit `end_session`
+  // WS frame and the turn worker's budget-100% auto-end. MYT-74b SPLIT the end:
+  // endSession only BEGINS it — claim flag, cancelSuspend, read watermark, enqueue
+  // ONE player-less FAREWELL turn (jobId per-session). The turn worker renders the
+  // send-off, then its `finally` runs finalizeEndedSession — the CONDITIONAL flip
+  // to 'ended' (broadcast session_end exactly once) + enqueue reconcile + analysis
+  // — so the live send-off precedes session_end. A QueueEvents backstop finalizes
+  // the maxStalledCount terminal. Two off-hot-path jobs then run: RECONCILE folds
+  // the working set into canon (the holistic Opus match/mint pass); ANALYSIS reads
+  // the transcript → {summary, emergingThreads, handoff}, mechanically verifies the
+  // handoff's verbatim excerpts (containment), and persists. ENFORCED IGNORANCE:
+  // every log/alert carries STRUCTURAL codes + counts only, never plan/excerpt
+  // content.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
   ranksep=0.8;
 
   subgraph cluster_triggers {
-    label="Two end triggers  →  one flow";
+    label="Two end triggers  →  begin ending";
     style="dashed";
     color="ember";
     fontcolor="ember";
 
     ws_end   [label="end_session WS frame\n(explicit summon,\n no payload)", color="ember", fontcolor="ember"];
     budget   [label="turn worker\nbudget-100% auto-end\n(post-flush phase)", color="ember", fontcolor="ember"];
-    endfn    [label="endSession (idempotent)\nSET-NX `ending` flag →\ncancelSuspend → lock fence →\nflip status='ended' →\nenqueue reconcile → session_end", color="ember", fontcolor="ember"];
+    endfn    [label="endSession — BEGIN only\nSET-NX `ending` flag →\ncancelSuspend → read watermark →\nenqueue ONE farewell turn\n(does NOT finalize)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_farewell {
+    label="The farewell turn  →  finalize";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    farewell [label="farewell turn (player-less)\n[DM direction:] silent-consume seam\nFT renders the send-off prose\nno watermark / no Scribe / no budget", color="ember", fontcolor="ember"];
+    finalize [label="finalizeEndedSession\n(turn `finally`, unconditional)\nconditional markEnded (flip 'ended')\n→ broadcast session_end ONCE\n→ enqueue reconcile + analysis", color="ember", fontcolor="ember"];
+    backstop [label="QueueEvents backstop\n(maxStalledCount terminal)\nidempotent finalize", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_pg_lifecycle {
     label="Postgres  (lifecycle)";
     style="dashed";
 
-    row    [label="sessions row\nstatus='ended', ended_at=now\nreconciled_at = NULL\n(tri-state: ended ≠ reconciled)"];
-    interlock [label="POST /sessions/:id/start\n409 reconcile_pending while\nended_at set + reconciled_at NULL\n(cross-session interlock)", color="ember", fontcolor="ember"];
+    row    [label="sessions row\nstatus='ended', ended_at=now\nreconciled_at = NULL, summary = NULL\n(tri-state: ended ≠ reconciled)"];
+    interlock [label="POST /sessions/:id/start\n409 reconcile_pending (ended +\nreconciled_at NULL)\n409 session_ending (flag set)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_batch {
     label="redisBatch";
     style="dotted";
-    q_recon [label="queue: session-reconcile\njobId reconcile-{sessionId}\n(double-trigger collapses)\nattempts 5 · exp backoff", color="ember", fontcolor="ember"];
+    q_recon [label="queue: session-reconcile\njobId reconcile-{sessionId}\nattempts 5 · exp backoff", color="ember", fontcolor="ember"];
+    q_anal  [label="queue: session-analysis\njobId analysis-{sessionId}\nattempts 5 · exp backoff", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_worker {
-    label="Reconcile worker  —  the 8th BullMQ worker (concurrency 1 · 180s lock)";
+    label="Reconcile worker  (concurrency 1 · 180s lock)";
     style="dashed";
     color="ember";
     fontcolor="ember";
@@ -55,6 +68,17 @@ digraph session_reconcile {
     commit [label="commit (ONE tx)\nmint entities · append facts ·\nsupersede + NULL embedding ·\nedges · hierarchy · markTouchedByPlay\nconditional markReconciled (LAST)", color="ember", fontcolor="ember"];
   }
 
+  subgraph cluster_analysis {
+    label="Analysis worker  (concurrency 1 · 180s lock)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    aproc  [label="processPostSessionAnalysisJob (NOT total)\nsummary IS NULL gate → load\ndurable inputs → analyze →\nverify → writeAnalysis (gated)", color="ember", fontcolor="ember"];
+    aopus  [label="Opus analyst (ONE call)\ntranscript tail + sd_playbook +\nrunning summary + roster →\n{summary, emergingThreads, handoff}\nredactRawText · pinned cap", color="ember", fontcolor="ember"];
+    contain [label="containment verifier (PURE)\ndrop any voice/atmosphere excerpt\nNOT verbatim in a non-correction/\nfarewell transcript row", color="ember", fontcolor="ember"];
+  }
+
   subgraph cluster_realtime {
     label="Redis (realtime)";
     style="dashed";
@@ -63,25 +87,34 @@ digraph session_reconcile {
   }
 
   subgraph cluster_canon {
-    label="Durable canon  (Postgres + pgvector)";
+    label="Durable narrative state  (Postgres + pgvector)";
     style="dashed";
     facts  [label="facts (append-only)\nsuperseded_by / superseded_at\nlive = superseded_by IS NULL\nsource='session'", color="ember", fontcolor="ember"];
     entities [label="entities\ncreated_in='session:<id>'\nmodified_by_play=true"];
     edges  [label="relationships +\nentity_hierarchy\n(session edges)"];
+    narr   [label="sessions.summary\n{summary, emergingThreads}\nsessions.handoff (SessionHandoff)\n→ next session's prep", color="ember", fontcolor="ember"];
   }
 
-  // Triggers converge
+  // Triggers begin the end
   ws_end -> endfn [label="WS route"];
   budget -> endfn [label="post-flush\n(idempotent)", color="ember"];
   endfn  -> flag  [label="SET-NX claim", style=dotted];
-  endfn  -> row   [label="flip status", color="ember"];
-  endfn  -> q_recon [label="enqueue ONE job", color="ember"];
+  endfn  -> farewell [label="enqueue ONE\nfarewell turn", color="ember"];
 
-  // The interlock reads the tri-state
+  // The farewell renders, then finalizes
+  farewell -> finalize [label="render done →\n`finally`", color="ember"];
+  farewell -> backstop [label="terminal stall", style=dotted, color="ember"];
+  backstop -> finalize [label="idempotent", style=dotted, color="ember"];
+  finalize -> row   [label="conditional flip\n→ session_end once", color="ember"];
+  finalize -> q_recon [label="enqueue", color="ember"];
+  finalize -> q_anal  [label="enqueue", color="ember"];
+
+  // The interlock reads the tri-state + the flag
   row -> interlock [label="reconciled_at NULL\n→ block start", style=dotted, color="ember"];
+  flag -> interlock [label="set → block start", style=dotted, color="ember"];
 
-  // Worker pipeline
-  q_recon -> proc  [label="BLPOP-style\n+ retry (idempotent)", color="ember"];
+  // Reconcile pipeline
+  q_recon -> proc  [label="+ retry (idempotent)", color="ember"];
   ws_list -> proc  [label="load (durable\ncheckpoint source)", color="ember"];
   proc -> retrieve [label="1. retrieve"];
   retrieve -> opus [label="2. candidates + live facts"];
@@ -89,10 +122,15 @@ digraph session_reconcile {
   validate -> commit [label="4. ok + map", color="ember"];
   validate -> proc  [label="reject CODE\n→ throw (retry)", style=dotted];
 
-  // Commit writes the four substrates, then clears
   commit -> facts;
   commit -> entities;
   commit -> edges;
   commit -> row    [label="conditional\nmarkReconciled\n(0 rows → ROLLBACK)", color="ember"];
   commit -> ws_list [label="clear() on win", style=dashed, color="ember"];
+
+  // Analysis pipeline
+  q_anal -> aproc [label="+ retry (idempotent)", color="ember"];
+  aproc -> aopus  [label="analyze"];
+  aopus -> contain [label="handoff"];
+  contain -> narr  [label="writeAnalysis\n(summary IS NULL gate)", color="ember"];
 }

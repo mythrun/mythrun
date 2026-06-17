@@ -41,7 +41,13 @@
   slots, not an in-turn tier call. As of MYT-73 the <a href="./scribe.html">Scribe</a> is off this
   path too: it runs as a dedicated post-turn job the worker enqueues on the flushed-success path,
   and one new turn kind — a player-less <code>correction</code> turn — is how the Scribe's
-  secret-preserving retcon gets delivered.
+  secret-preserving retcon gets delivered. MYT-74b adds a second player-less kind, the
+  <code>farewell</code> turn — the end-of-session send-off — which shares the correction turn's
+  gates and additionally runs the
+  <a href="./session-reconcile.html#begin-a-farewell-not-an-inline-finalize"
+    >unconditional finalize</a
+  >
+  in its <code>finally</code>.
 </p>
 
 <figure class="wiki-diagram">
@@ -382,6 +388,19 @@
   client-side by <code>turnId</code>.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>Each DM row records its originating <code>trigger_kind</code> (MYT-74b)</strong> — the
+  turn worker passes <code>job.data.trigger.kind</code> to the controller, which threads it onto
+  every persisted DM row via the migration-028 <code>session_messages.trigger_kind</code> column
+  (NULL for player rows). The
+  <a href="./session-reconcile.html#the-containment-verifier">post-session analysis</a> reads it to
+  structurally exclude <code>correction</code> and <code>farewell</code> rows when it selects
+  verbatim NPC voice excerpts — an enforced-ignorance boundary, since a retcon line points at a
+  buried secret. The <code>[[DM CORRECTION:]]</code> marker doesn't survive into persisted content
+  and <code>message_type</code> is the row kind, not the trigger, so the trigger had to be recorded
+  explicitly.
+</aside>
+
 <h2 id="the-pg-direct-transcript-one-store-reconstructed-each-turn">The PG-direct transcript: one store, reconstructed each turn</h2>
 
 <p>
@@ -710,18 +729,35 @@
   is a persistent constraint that holds across turns until the ST replaces or clears it.
 </aside>
 
-<aside class="wiki-rationale">
-  <strong>The <code>correction</code> turn kind is a player-less retcon delivery</strong> — the
-  <a href="./scribe.html">Scribe</a> enqueues a normal <code>session-turn</code> job with
-  <code>trigger.kind: 'correction'</code>, empty trigger messages, and the secret-preserving
-  correction <code>Z</code> in <code>correctionText</code>. A correction turn skips the
-  one-shot/standing slot reads entirely (it must not burn an unrelated sanctioned reveal) and
-  instead the worker sets its "direction" to the distinct <code>[[DM CORRECTION: Z]]</code> marker —
-  the one explicit exception to the FT's silent-consume rule, delivered openly. It rides the same
-  fusion seam as any one-shot. Two more correction-specific gates fall out below: it does not
-  advance the responded-seq watermark (it consumed no player message), and it does not itself
-  enqueue a Scribe job (re-running the tripwire over an already-vetted correction is wasted spend
-  and risks a loop).
+<aside class="wiki-rationale" id="player-less-turns-correction-and-farewell">
+  <strong>Two player-less turn kinds: <code>correction</code> and <code>farewell</code></strong> — a
+  player-less turn consumed no player message. The worker hoists a shared
+  <code>isPlayerless = isCorrection || isFarewell</code> predicate and gates the watermark advance,
+  the Scribe enqueue, and the budget auto-end on it. The two differ only in how their direction is
+  delivered:
+  <ul>
+    <li>
+      A <strong>correction</strong> turn (MYT-73) is the <a href="./scribe.html">Scribe</a>'s retcon
+      delivery: a normal <code>session-turn</code> job with <code>trigger.kind: 'correction'</code>,
+      empty trigger messages, and the secret-preserving correction <code>Z</code> in
+      <code>correctionText</code>. The worker sets its "direction" to the distinct
+      <code>[[DM CORRECTION: Z]]</code> marker — the one explicit exception to the FT's
+      silent-consume rule, delivered <em>openly</em>.
+    </li>
+    <li>
+      A <strong>farewell</strong> turn (MYT-74b) is the end-of-session send-off, enqueued by
+      <a href="./session-reconcile.html">endSession</a> with <code>trigger.kind: 'farewell'</code>,
+      the fixed farewell cue in <code>farewellText</code>, and the campaign's
+      <code>worldId</code> on the payload. Unlike a correction it rides the <em>single-bracket</em>
+      <code>[DM direction:]</code> silent-consume seam — the FT renders the closing prose in its own
+      voice rather than quoting a marker.
+    </li>
+  </ul>
+  Both skip the one-shot/standing slot reads entirely (a player-less turn must not burn an unrelated
+  sanctioned reveal). The shared gates fall out below: neither advances the responded-seq watermark
+  (no player message consumed), and neither enqueues a Scribe job (re-running the tripwire over
+  already-vetted prose is wasted spend and a correction risks a loop). The farewell additionally
+  runs the unconditional finalize in the shared <code>finally</code>.
 </aside>
 
 <aside class="wiki-rationale">
@@ -777,29 +813,47 @@
   queue hiccup never masks the turn outcome.
 </p>
 
+<p>
+  Two MYT-74b additions live in this <code>finally</code>. First, an <strong>ending gate</strong>:
+  once <code>endSession</code> has claimed the <code>ending</code> flag, both the explicit drain and
+  the quiet-window re-mature are suppressed — re-summoning the DM into a session that is winding
+  down is pointless. Second, the <strong>unconditional finalize</strong>: on a
+  <code>farewell</code> turn the <code>finally</code> calls <code>finalizeEndedSession</code> (in
+  its own try/catch, with the payload's <code>worldId</code> or a
+  <code>resolveWorldId</code> fallback). Because <code>finally</code> always runs, the finalize
+  fires on every farewell path — clean render, thrown render, converge — so a session always ends.
+  The table sees the send-off prose first, then the finalize flips the row to <code>ended</code>,
+  enqueues the <a href="./session-reconcile.html">reconcile and analysis</a> jobs, and broadcasts
+  <code>session_end</code>.
+</p>
+
 <aside class="wiki-rationale">
-  <strong>The budget-100% auto-end fires here too (MYT-74a)</strong> — this post-flush phase is also
-  where the session can end itself. The Fast-Thinker context bound is the real session-length cap;
-  when cumulative token usage (read from the durable <code>session_usage</code> row via
-  <code>budgetSummary</code>) reaches <code>SESSION_TOKEN_BUDGET</code>, the worker fires the
-  <a href="./session-reconcile.html">end-of-session</a> orchestration (status flip → reconcile →
-  <code>session_end</code> broadcast) — the same flow the explicit <code>end_session</code> WS frame
-  runs. It is gated on <code>!isCorrection</code> like the watermark and the Scribe enqueue (a
-  player-less correction opens no new budget-bearing context), and it sits in its own try/catch so a
-  failure to enqueue the end never masks the turn outcome — mirroring the st-evaluation isolation.
-  Idempotence across turns is free: <code>endSession</code>'s SET-NX <code>ending</code> flag no-ops
-  a second over-budget turn, so the processor needs no dedup of its own.
+  <strong>The budget-100% auto-end fires here too (MYT-74a / MYT-74b)</strong> — this post-flush
+  phase is also where the session can end itself. The Fast-Thinker context bound is the real
+  session-length cap; when cumulative token usage (read from the durable
+  <code>session_usage</code> row via <code>budgetSummary</code>) reaches
+  <code>SESSION_TOKEN_BUDGET</code>, the worker fires <code>endSession</code> — which, as of
+  MYT-74b, only <em>begins</em> the end (claim the <code>ending</code> flag → enqueue a player-less
+  farewell turn); the <a href="./session-reconcile.html">finalize</a> that flips the row and
+  broadcasts <code>session_end</code> runs after the farewell renders. It's the same flow the
+  explicit <code>end_session</code> WS frame runs. It is gated on <code>!isPlayerless</code> like
+  the watermark and the Scribe enqueue (a player-less correction opens no new budget-bearing
+  context, and a farewell <em>is</em> the end — re-triggering it would be meaningless), and it sits
+  in its own try/catch so a failure to enqueue the end never masks the turn outcome — mirroring the
+  st-evaluation isolation. Idempotence across turns is free: the SET-NX <code>ending</code> flag
+  no-ops a second over-budget turn, so the processor needs no dedup of its own.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>A <code>correction</code> turn advances no watermark and enqueues no Scribe</strong> —
-  both the responded-seq advance and the Scribe enqueue are gated on the turn <em>not</em> being a
-  correction. A correction is player-less: advancing the watermark would strand the genuine pending
-  player seqs above it, and the post-turn re-mature instead re-arms the quiet window so the next
-  real turn picks them up. And the correction already delivers an ST-authored secret-free
-  <code>Z</code> — running the tripwire over it again would be wasted Opus/Haiku spend and could
-  loop a retcon onto a retcon. The st-evaluation enqueue is unaffected (a correction is still a
-  flushed turn worth evaluating).
+  <strong>A player-less turn advances no watermark and enqueues no Scribe</strong> — both the
+  responded-seq advance and the Scribe enqueue are gated on <code>!isPlayerless</code> (correction
+  or farewell). A player-less turn consumed no player message: advancing the watermark would strand
+  the genuine pending player seqs above it, and the post-turn re-mature instead re-arms the quiet
+  window so the next real turn picks them up (suppressed on an ending session — see the finalize
+  below). And both deliver already-vetted secret-free prose — running the tripwire again would be
+  wasted Opus/Haiku spend and a correction could loop a retcon onto a retcon. The st-evaluation
+  enqueue is unaffected (a correction is still a flushed turn worth evaluating); a farewell, being
+  the end, is past the point of evaluation.
 </aside>
 
 <aside class="wiki-rationale">
@@ -903,13 +957,17 @@
   never replays stale messages); <code>trigger.kind</code> is the decision source (<code
     >explicit</code
   >
-  / <code>solo</code> / <code>auto</code> / the MYT-73 <code>correction</code>) and the optional
-  <code>trigger.classification</code> is the Haiku verdict for the <code>auto</code> path. A
-  <code>correction</code> turn additionally carries <code>correctionText</code> (the
-  <a href="./scribe.html">Scribe</a>'s secret-free retcon <code>Z</code>). Both kind and
+  / <code>solo</code> / <code>auto</code> / the MYT-73 <code>correction</code> / the MYT-74b
+  <code>farewell</code>) and the optional <code>trigger.classification</code> is the Haiku verdict
+  for the <code>auto</code> path. A <code>correction</code> turn additionally carries
+  <code>correctionText</code> (the <a href="./scribe.html">Scribe</a>'s secret-free retcon
+  <code>Z</code>); a <code>farewell</code> turn carries <code>farewellText</code> (the fixed
+  send-off cue) and the campaign's <code>worldId</code> (so the
+  <a href="./session-reconcile.html">finalize</a> needs no campaign→world read). Both kind and
   classification are metadata only — they never cross the tier boundary into a Fast Thinker call,
-  and the FT never sees them; only the <code>correctionText</code> reaches the FT, as the fused
-  <code>[[DM CORRECTION: …]]</code> marker. (The post-hoc
+  and the FT never sees them; only the <code>correctionText</code> /
+  <code>farewellText</code> reaches the FT, as the fused <code>[[DM CORRECTION: …]]</code> marker or
+  the single-bracket <code>[DM direction:]</code> seam respectively. (The post-hoc
   <a href="./slow-thinker.html">Slow Thinker</a> does <em>not</em> consume the classification: it
   rides only this turn payload, is persisted nowhere the st-evaluation job can read, and is
   ill-defined under that job's collapse — the ST's own Haiku gate makes the spend decision instead.)
@@ -990,16 +1048,19 @@
     <code>QueueEvents('session-turn')</code> subscriber (on a dedicated blocking connection) that
     publishes the terminal <code>turn_error</code> too; both publishers guard on a shared
     <code>SET NX</code> latch (<code>turn-error-published:{turnId}</code>) so exactly one frame
-    ships per terminal turn regardless of path or container. See the
-    <a href="./dm-trigger.html">DM trigger</a> page.
+    ships per terminal turn regardless of path or container. MYT-74b extends that same subscriber:
+    for a terminally-stalled <code>farewell</code> turn it also runs the idempotent
+    <a href="./session-reconcile.html">finalize</a>, so a crashed farewell still ends its session.
+    See the <a href="./dm-trigger.html">DM trigger</a> page.
   </li>
   <li>
     If a job re-ran but <code>session_messages</code> already holds rows for its
-    <code>turnId</code>, the worker <em>converged</em> — it published <code>turn_end</code> and
-    advanced the watermark without re-rendering (look for the
-    <code>"turn already durable in PG; converging to turn_end"</code> warn). That is the correct
-    outcome for a crash after the commit; a turn that streamed frames but never committed instead
-    terminates with <code>turn_error</code>.
+    <code>turnId</code>, the worker <em>converged</em> — it published <code>turn_end</code> without
+    re-rendering (look for the
+    <code>"turn already durable in PG; converging to turn_end"</code> warn). It advances the
+    watermark on converge only for a player-bearing turn; a player-less correction or farewell skips
+    that advance on the converge path too. That is the correct outcome for a crash after the commit;
+    a turn that streamed frames but never committed instead terminates with <code>turn_error</code>.
   </li>
 </ol>
 
@@ -1030,10 +1091,13 @@
   enqueues these jobs (other than the dev poke); this worker sets the
   <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
   trigger's drain logic depends on, and the trigger system's <code>QueueEvents</code> subscriber
-  closes this worker's terminal-error gap. Downstream, this worker's post-flush phase is also the
-  budget-100% trigger for <a href="./session-reconcile.html">end-of-session reconciliation</a>: when
-  cumulative usage reaches the token budget it fires the same end flow the explicit
-  <code>end_session</code> frame runs.
+  closes this worker's terminal-error gap (and, MYT-74b, runs the finalize for a terminally-stalled
+  farewell). Downstream, this worker's post-flush phase is also the budget-100% trigger for
+  <a href="./session-reconcile.html">end of session</a>: when cumulative usage reaches the token
+  budget it begins the same end flow the explicit <code>end_session</code> frame runs. And the
+  worker itself renders the player-less <code>farewell</code> turn and runs the
+  <a href="./session-reconcile.html">unconditional finalize</a> in its <code>finally</code> — so the
+  table's live send-off precedes the <code>session_end</code> frame.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -1239,8 +1303,11 @@
       <td>
         <code>enqueueTurn</code>, <code>QUEUE_SESSION_TURN</code>, <code>TURN_JOB_NAME</code>,
         <code>TurnJobPayload</code> (<code>maxConsumedSeq</code> + <code>trigger</code> metadata,
-        the MYT-73 <code>trigger.kind: 'correction'</code> + <code>correctionText</code>; still no
-        jobId — H10) / <code>TurnQueueLike</code>.
+        the MYT-73 <code>trigger.kind: 'correction'</code> + <code>correctionText</code>, the
+        MYT-74b <code>trigger.kind: 'farewell'</code> + <code>farewellText</code> +
+        <code>worldId</code>; no jobId on <code>enqueueTurn</code> — H10) /
+        <code>enqueueFarewellTurn</code> (per-session jobId) / <code>FAREWELL_DIRECTION</code> /
+        <code>TurnQueueLike</code>.
       </td>
     </tr>
     <tr>

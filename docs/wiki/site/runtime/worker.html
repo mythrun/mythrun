@@ -30,24 +30,26 @@
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with eight BullMQ Workers — <code>world-gen</code> (concurrency
+  <code>node dist/worker.js</code> with nine BullMQ Workers — <code>world-gen</code> (concurrency
   3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the
   MYT-66 <code>session-turn</code> worker (concurrency 5), the MYT-67 <code>dm-trigger</code> worker
   (concurrency 5), the MYT-69 <code>st-evaluation</code> worker (concurrency 2), the MYT-73
-  <code>scribe</code> worker (concurrency 2), and the MYT-74a <code>session-reconcile</code> worker
-  (concurrency 1) — all consuming from <code>redisBatch</code>, plus a
-  <code>QueueEvents('session-turn')</code> subscriber on a dedicated blocking connection. Phase 0
-  shipped stub processors that logged job receipt and marked complete. The real prep-stage
-  processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
-  (per-player character creation), MYT-54 (campaign-scoped character integration), and MYT-61
-  (session prep); the <code>session-turn</code> worker — the lock-fenced DM-turn conductor — joined
-  in MYT-66, the <code>dm-trigger</code> decision worker in MYT-67, the post-hoc
-  <a href="./slow-thinker.html">Slow Thinker</a>'s <code>st-evaluation</code> worker in MYT-69, the
-  post-turn <a href="./scribe.html">Scribe</a>'s <code>scribe</code> worker in MYT-73, and the
-  <a href="./session-reconcile.html">end-of-session reconcile</a> worker in MYT-74a. The shape
-  locked in at Phase 0 so each later stage was a coverage edit, not a service-topology change. The
-  stub-processor file was retired in MYT-55 once the dedicated worker container caught up to the
-  same wiring the API container already used.
+  <code>scribe</code> worker (concurrency 2), the MYT-74a <code>session-reconcile</code> worker
+  (concurrency 1), and the MYT-74b <code>session-analysis</code> worker (concurrency 1) — all
+  consuming from <code>redisBatch</code>, plus a <code>QueueEvents('session-turn')</code> subscriber
+  on a dedicated blocking connection. Phase 0 shipped stub processors that logged job receipt and
+  marked complete. The real prep-stage processors landed across MYT-51 (world-gen), MYT-52
+  (streaming entity / edge events), MYT-53 (per-player character creation), MYT-54 (campaign-scoped
+  character integration), and MYT-61 (session prep); the <code>session-turn</code> worker — the
+  lock-fenced DM-turn conductor — joined in MYT-66, the <code>dm-trigger</code> decision worker in
+  MYT-67, the post-hoc <a href="./slow-thinker.html">Slow Thinker</a>'s
+  <code>st-evaluation</code> worker in MYT-69, the post-turn <a href="./scribe.html">Scribe</a>'s
+  <code>scribe</code> worker in MYT-73, the
+  <a href="./session-reconcile.html">end-of-session reconcile</a> worker in MYT-74a, and the
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a>
+  worker in MYT-74b. The shape locked in at Phase 0 so each later stage was a coverage edit, not a
+  service-topology change. The stub-processor file was retired in MYT-55 once the dedicated worker
+  container caught up to the same wiring the API container already used.
 </p>
 
 <figure class="wiki-diagram">
@@ -692,23 +694,25 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers eight BullMQ <code>Worker</code> instances against
+  data plane, and then registers nine BullMQ <code>Worker</code> instances against
   <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
   <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5),
   <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61),
   <code>QUEUE_SESSION_TURN</code> (<code>session-turn</code>, concurrency 5, added in MYT-66),
   <code>QUEUE_DM_TRIGGER</code> (<code>dm-trigger</code>, concurrency 5, added in MYT-67),
   <code>QUEUE_ST_EVAL</code> (<code>st-evaluation</code>, concurrency 2, added in MYT-69),
-  <code>QUEUE_SCRIBE</code> (<code>scribe</code>, concurrency 2, added in MYT-73), and
+  <code>QUEUE_SCRIBE</code> (<code>scribe</code>, concurrency 2, added in MYT-73),
   <code>QUEUE_SESSION_RECONCILE</code> (<code>session-reconcile</code>, concurrency 1, added in
-  MYT-74a). Queue names and concurrency caps for the prep workers live in
+  MYT-74a), and <code>QUEUE_SESSION_ANALYSIS</code> (<code>session-analysis</code>, concurrency 1,
+  added in MYT-74b). Queue names and concurrency caps for the prep workers live in
   <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the API-side
   <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't drift; the
-  session-turn, dm-trigger, st-evaluation, scribe, and session-reconcile workers' own queue names
-  and tuning constants live alongside their processors in <code>session/turn-worker.ts</code>,
-  <code>session/dm-trigger-config.ts</code>, <code>session/st-eval-queue.ts</code> /
-  <code>session/st-config.ts</code>, <code>session/scribe-queue.ts</code> /
-  <code>session/scribe-config.ts</code>, and <code>session/session-reconcile.ts</code>.
+  session-turn, dm-trigger, st-evaluation, scribe, session-reconcile, and session-analysis workers'
+  own queue names and tuning constants live alongside their processors in
+  <code>session/turn-worker.ts</code>, <code>session/dm-trigger-config.ts</code>,
+  <code>session/st-eval-queue.ts</code> / <code>session/st-config.ts</code>,
+  <code>session/scribe-queue.ts</code> / <code>session/scribe-config.ts</code>,
+  <code>session/session-reconcile.ts</code>, and <code>session/post-session-analysis.ts</code>.
 </p>
 
 <p>
@@ -785,12 +789,38 @@
   wall-clock so a live reconcile is never stalled-reclaimed into a second run.
 </p>
 
+<p>
+  The <code>session-analysis</code> worker (<code>buildPostSessionAnalysisWorker</code>) is the
+  second end-of-session closeout — the
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a>
+  that reads a closed session's transcript tail, prep <code>sd_playbook</code>, and running summary
+  through one Opus call, mechanically verifies the handoff's verbatim excerpts, and writes the recap
+  + handoff. Like reconcile it is fired at finalize (not a per-turn enqueue), is
+  <em>not total</em> (it throws on transient failure so BullMQ retries, idempotent on the
+  <code>summary IS NULL</code> write gate), and runs at concurrency 1 with a 180s lock. Unlike
+  reconcile it takes <em>no</em> embedder — analysis doesn't embed. It builds its own repo over the
+  pg <code>Pool</code> and reads the running summary on <code>redisRealtime</code>.
+</p>
+
+<p>
+  <code>worker.ts</code> also wires the MYT-74b <strong>finalize backstop</strong>: it constructs a
+  <code>finalizeEndedSession</code> closure (over its own repo + reconcile/analysis producers built
+  through the policy queue builders, so the backstop's enqueues carry the same retry policy) and
+  passes it into the <code>QueueEvents('session-turn')</code> subscriber. That subscriber runs the
+  finalize from the broker side when a <code>farewell</code> turn fails terminally
+  (<code>maxStalledCount</code>-exhaustion) — the path the in-worker <code>finally</code> can't
+  cover. Those two backstop producer handles are distinct <code>Queue</code> objects, so they're
+  closed explicitly at shutdown (after the workers drain) — <code>redisBatch.quit()</code> doesn't
+  reach them, and skipping the close would leak two Redis clients per deploy.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The QueueEvents subscriber needs explicit shutdown; the workers don't leak</strong> — the
   subscriber <code>duplicate()</code>s <code>redisBatch</code> for a dedicated
   <code>BRPOP</code> blocking connection, which <code>redisBatch.quit()</code> does
   <em>not</em> cover. So its <code>close()</code> is added to the SIGTERM teardown explicitly —
-  skipping it would leak one Redis connection per deploy. The eight Workers each share or own
+  skipping it would leak one Redis connection per deploy. (MYT-74b adds two more explicit closes for
+  the same reason — the finalize-backstop producer handles.) The nine Workers each share or own
   connections the existing <code>quit()</code> calls already drain.
 </aside>
 
@@ -857,7 +887,7 @@
   <code>GET http://127.0.0.1:3001/health</code> probes the four moving parts: the pg pool (<code
     >SELECT 1</code
   >), <code>redisBatch.ping()</code>, <code>redisRealtime.ping()</code>, and each registered
-  <code>Worker</code>'s <code>isRunning()</code> state (all eight). Each probe is given a 1-second
+  <code>Worker</code>'s <code>isRunning()</code> state (all nine). Each probe is given a 1-second
   timeout via <code>Promise.race</code>. A 200 response means all probes passed; a 503 response
   carries a <code>failed[]</code> array of probe names so operators can see at a glance which
   dependency tripped. The endpoint binds <code>127.0.0.1</code> only — it's task-internal, consumed
@@ -877,16 +907,19 @@
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
   <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on all eight
+  new probes from going green during teardown), then runs <code>worker.close()</code> on all nine
   BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
   force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
   For the session-turn worker that stall recovery is not just a shutdown nicety but the load-bearing
   crash-recovery path (a force-closed turn re-runs on another worker from clean state). The
   <code>QueueEvents('session-turn')</code> subscriber is then closed explicitly (its dedicated
-  blocking connection isn't covered by the <code>redisBatch.quit()</code> below). After the workers
-  and the subscriber close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish
-  out, then <code>process.exit(0)</code>.
+  blocking connection isn't covered by the <code>redisBatch.quit()</code> below), followed by the
+  two MYT-74b finalize-backstop producer handles (distinct <code>Queue</code> objects on
+  <code>redisBatch</code>, closed after the workers drain so an in-flight backstop finalize can
+  still enqueue). After the workers, the subscriber, and the backstop producers close,
+  <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out, then
+  <code>process.exit(0)</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -1019,7 +1052,7 @@
   </li>
   <li>
     Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
-    pg + both Redises + all eight BullMQ workers are healthy.
+    pg + both Redises + all nine BullMQ workers are healthy.
   </li>
 </ol>
 
@@ -1074,17 +1107,20 @@
   <a href="./dm-trigger.html">DM trigger</a> system's decision half; the
   <a href="./slow-thinker.html">st-evaluation</a> worker is the sixth, the post-hoc narrative
   director; the <a href="./scribe.html">scribe</a> worker is the seventh, the post-turn in-session
-  reconciler; and the <a href="./session-reconcile.html">session-reconcile</a> worker is the eighth,
-  the end-of-session reconciler that folds the working set into durable canon. The session-turn,
-  dm-trigger, st-evaluation, scribe, and session-reconcile workers all read and write
-  <code>redisRealtime</code> (the per-session lock, turn / trigger / direction state, the working
-  set, and DM-turn frame publishing) on top of the shared <code>redisBatch</code> queues — the
-  dm-trigger worker makes the real Haiku classifier call, the st-evaluation worker the Haiku gate +
-  Opus director calls, the scribe worker the Haiku tripwire + Opus retcon calls, and the
-  session-reconcile worker the single Opus reconcile call, through the
+  reconciler; the <a href="./session-reconcile.html">session-reconcile</a> worker is the eighth, the
+  end-of-session reconciler that folds the working set into durable canon; and the
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">session-analysis</a>
+  worker is the ninth, the end-of-session narrative closeout that writes the recap + handoff. The
+  session-turn, dm-trigger, st-evaluation, scribe, session-reconcile, and session-analysis workers
+  all read and write <code>redisRealtime</code> (the per-session lock, turn / trigger / direction
+  state, the working set, the running summary, and DM-turn frame publishing) on top of the shared
+  <code>redisBatch</code> queues — the dm-trigger worker makes the real Haiku classifier call, the
+  st-evaluation worker the Haiku gate + Opus director calls, the scribe worker the Haiku tripwire +
+  Opus retcon calls, the session-reconcile worker the single Opus reconcile call, and the
+  session-analysis worker the single Opus analysis call, through the
   <a href="./llm.html">LLM client</a> (the scribe and session-reconcile workers also share the
   boot-probed Voyage embedder — the scribe for the working-set embed-on-append, the reconciler for
-  candidate similarity search and fact embeds). The
+  candidate similarity search and fact embeds; the analysis worker takes no embedder). The
   <code>QueueEvents('session-turn')</code> subscriber registered alongside them publishes the
   terminal <code>turn_error</code> the JS listener can't. Streaming-cost attribution joins to the
   <code>pipeline_runs</code> table introduced in MYT-43.
@@ -1150,6 +1186,17 @@
         <code>buildReconcileWorker</code> — the eighth Worker (concurrency 1, 180s lock). The
         <a href="./session-reconcile.html">end-of-session reconciler</a> (working set → durable
         canon); documented on that page.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/session/post-session-analysis.ts</code></td>
+      <td>
+        <code>buildPostSessionAnalysisWorker</code> — the ninth Worker (concurrency 1, 180s lock, no
+        embedder). The
+        <a href="./session-reconcile.html#post-session-analysis-and-the-handoff"
+          >post-session analysis</a
+        >
+        (transcript → recap + handoff); documented on that page.
       </td>
     </tr>
     <tr>

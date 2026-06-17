@@ -2,26 +2,37 @@
 <!-- source: backend/src/session/session-reconcile.ts -->
 <!-- source: backend/src/session/reconcile/validate.ts -->
 <!-- source: backend/src/session/reconcile/commit.ts -->
+<!-- source: backend/src/session/post-session-analysis.ts -->
+<!-- source: backend/src/session/analysis/containment.ts -->
+<!-- source: backend/src/session/session-turn-queue-events.ts -->
 <!-- source: backend/src/llm/session-reconciler.ts -->
 <!-- source: backend/src/llm/schemas/session-reconcile.ts -->
 <!-- source: backend/src/llm/prompts/session/session-reconciler.txt -->
+<!-- source: backend/src/llm/post-session-analysis.ts -->
+<!-- source: backend/src/llm/schemas/post-session-analysis.ts -->
+<!-- source: backend/src/llm/prompts/session/post-session-analysis.txt -->
 <!-- source: backend/src/repo/facts.ts -->
 <!-- source: backend/src/repo/sessions.ts -->
 <!-- source: backend/src/repo/entities.ts -->
 <!-- source: backend/src/server-queues.ts -->
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
-<!-- source-hash: sha256:0f82329ba00c053bac948b77f27557672ce9f120492710b52f5f2b992b634790 -->
-<!-- last-ticket: MYT-74a -->
+<!-- source-hash: sha256:b94a42a9ba01f877b8f8c09a43d242c1c035273db09560746c0f8fa381287601 -->
+<!-- last-ticket: MYT-74b -->
 
 <h1>End-of-session reconciliation</h1>
 
 <p class="lead">
-  What happens when a session ends. The in-session working set — every fact the Fast Thinker
-  improvised this session, tier- and provenance-annotated by the
-  <a href="./scribe.html">Scribe</a> — is folded into durable canon: entities, append-only facts,
-  relationship edges, and embeddings. One holistic Opus pass makes every match-vs-mint and
-  contradiction judgment; deterministic code validates it and commits it in a single transaction.
+  What happens when a session ends. First the table gets a live send-off — a player-less
+  <strong>farewell turn</strong> the Fast Thinker renders in its own voice. Then two
+  off-the-hot-path jobs fire. <strong>Reconcile</strong> folds the in-session working set — every
+  fact the Fast Thinker improvised this session, tier- and provenance-annotated by the
+  <a href="./scribe.html">Scribe</a> — into durable canon: entities, append-only facts, relationship
+  edges, and embeddings, via one holistic Opus match-vs-mint pass.
+  <strong>Post-session analysis</strong> reads the transcript and writes the next session's
+  narrative state — a player-facing recap plus a secret-aware <strong>handoff</strong> that primes
+  the prep engine (including verbatim NPC voice lines that keep characterization consistent across
+  sessions).
 </p>
 
 <!-- @diagram: runtime/session-reconcile -->
@@ -40,12 +51,13 @@
 </p>
 
 <p>
-  Two pieces make that happen, both new in MYT-74a: a <strong>session-end lifecycle</strong> that
-  detects a session is over and fences off the still-draining turn loop, and a
-  <strong>reconcile pass</strong> — an eighth BullMQ worker — that does the actual fold off the hot
-  path. The diagram traces both: the two end triggers converging on <code>endSession</code> at the
-  left, and the worker's <code>retrieve → reconcile → validate → commit</code> pipeline on the
-  right.
+  The pieces, layered across MYT-74a and MYT-74b: a <strong>session-end lifecycle</strong> that
+  detects a session is over, gives the table a live farewell, and fences off the still-draining turn
+  loop; a <strong>reconcile pass</strong> that folds the working set into canon off the hot path
+  (MYT-74a); and a <strong>post-session analysis pass</strong> that reads the transcript and writes
+  the next session's narrative state — recap plus handoff (MYT-74b). The diagram traces all of it:
+  the two end triggers beginning the end at the left, the farewell turn and the finalize that fires
+  the two closeout jobs in the middle, and each worker's pipeline on the right.
 </p>
 
 <aside class="wiki-rationale">
@@ -71,7 +83,8 @@
 </p>
 
 <p>
-  Two triggers converge on one flow, <code>endSession</code> in <code>session/session-end.ts</code>:
+  Two triggers converge on the begin phase, <code>endSession</code> in
+  <code>session/session-end.ts</code>:
 </p>
 
 <ul>
@@ -84,52 +97,120 @@
   <li>
     <strong>Budget auto-end</strong> — the token budget reaches 100%. The
     <a href="./session-turn.html">turn worker</a> observes the crossing on its post-flush success
-    phase (the same place the ST-evaluation floor is bumped) and fires the same end flow. The
+    phase (the same place the ST-evaluation floor is bumped) and fires the same begin flow. The
     Fast-Thinker context bound is the real session-length cap; when cumulative usage reaches it, the
     session <em>has</em> to end because the FT can hold no more transcript.
   </li>
 </ul>
 
-<aside class="wiki-rationale">
-  <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
-  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
-  100%). <code>endSession</code>'s first act is to claim a once-only
-  <code>session:{cId}:ending</code> flag; the loser of the race short-circuits there. So the status
-  flip, the reconcile enqueue, and the <code>session_end</code> broadcast each run exactly once no
-  matter how many triggers fire.
-</aside>
+<h3>Begin: a farewell, not an inline finalize</h3>
 
-<p>The flow is ordered to fence the reconcile against still-draining in-flight work:</p>
+<p>
+  MYT-74b split the end into a <strong>begin</strong> phase and a <strong>complete</strong> phase so
+  the table gets a live send-off <em>before</em> the session is structurally over.
+  <code>endSession</code> only begins it. It does four things and stops:
+</p>
 
 <ol>
   <li>
-    <strong>Quiesce.</strong> Set the <code>ending</code> flag and cancel any pending suspend (an
-    uncancelled suspend would later re-checkpoint an ended session — a lost update on the very
-    checkpoint reconcile reads). The inbound WS handler then drops every frame except a redundant
-    <code>end_session</code>, so no new turn is enqueued after end.
+    <strong>Claim the flag.</strong> Set the once-only <code>session:{cId}:ending</code> flag
+    (SET-NX). The loser of an explicit-frame-vs-auto-end race short-circuits here.
   </li>
   <li>
-    <strong>Fence the in-flight turn.</strong> Acquire the per-session lock — the same lock the
-    <a href="./session-turn.html">turn worker</a> holds while rendering. Acquiring it means no turn
-    is mid-render; the working set won't be mutated out from under the reconcile.
+    <strong>Cancel the pending suspend.</strong> An uncancelled all-disconnected suspend would later
+    re-checkpoint an ending session — a lost update keeping <code>status='active'</code>, undoing
+    the end. <code>cancelSuspend</code> is a no-op when nothing is pending.
   </li>
   <li>
-    <strong>Flip + enqueue.</strong> Transition the row to <code>status='ended'</code>,
-    <code>ended_at=now()</code> (<code>reconciled_at</code> stays NULL — only a successful commit
-    sets it). Enqueue one reconcile job, with a per-session <code>jobId</code>
-    (<code>reconcile-{sessionId}</code>) so a double-trigger collapses to a single broker job.
+    <strong>Read the watermark.</strong> Read the responded-seq watermark and thread it onto the
+    farewell payload as <code>maxConsumedSeq</code> — a player-less turn must not advance past
+    unresponded player seqs.
   </li>
   <li>
-    <strong>Close.</strong> Broadcast a structural <code>session_end</code> frame to every client.
+    <strong>Enqueue ONE farewell turn.</strong> A player-less
+    <code>trigger.kind: 'farewell'</code> turn, jobId <code>farewell-{sessionId}</code>, carrying
+    the resolved <code>worldId</code> so the finalize needs no campaign→world read of its own.
   </li>
 </ol>
 
 <aside class="wiki-rationale">
-  <strong>A contended lock proceeds anyway — the worker re-fences</strong> — if the lock is held (a
-  turn is genuinely mid-flight), <code>endSession</code> still flips the row and enqueues. It
-  doesn't block. The reconcile worker re-acquires the <em>same</em> lock itself before it reads the
-  working set, so the fence is enforced there regardless. The lock-fence is the load-bearing part;
-  the final turn's trailing post-turn jobs (Scribe, ledger) drain on their own queues.
+  <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
+  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
+  100%). <code>endSession</code>'s first act is to claim the flag; the loser short-circuits there.
+  So exactly one farewell turn is enqueued no matter how many triggers fire — and the
+  <code>farewell-{sessionId}</code> jobId is a broker-level dedup backstop beyond the flag.
+</aside>
+
+<p>
+  The <strong>farewell turn</strong> is rendered by the
+  <a href="./session-turn.html">turn worker</a> like any other turn, but player-less. Its direction
+  (a fixed "bring the scene to a natural close" cue) rides the single-bracket
+  <code>[DM direction:]</code> silent-consume seam — the same seam the MYT-73 correction turn
+  established — so the Fast Thinker writes the send-off in its own voice rather than quoting a
+  marker. It joins the correction turn under a shared <code>isPlayerless</code> predicate in the
+  turn worker: neither advances the watermark, enqueues the Scribe, nor runs the budget auto-end.
+  The <a href="./session-turn.html#player-less-turns-correction-and-farewell">turn page</a> covers
+  the render seam and the gates.
+</p>
+
+<h3>Complete: the unconditional finalize</h3>
+
+<p>
+  <code>finalizeEndedSession</code> is the complete phase, run from the farewell turn's
+  <code>finally</code> <em>after</em> the render — so the table sees the DM's send-off, then the
+  <code>session_end</code> frame. <code>finally</code> always runs, so a thrown farewell render
+  still finalizes: a session always ends. It does three things:
+</p>
+
+<ol>
+  <li>
+    <strong>Flip, conditionally.</strong> <code>markEnded</code> sets <code>status='ended'</code>,
+    <code>ended_at=now()</code> only when the row isn't already ended, returning the rowCount (<code
+      >reconciled_at</code
+    >
+    and <code>summary</code> both stay NULL — those are the reconcile and analysis completion
+    markers).
+  </li>
+  <li>
+    <strong>Enqueue the two closeout jobs.</strong> One reconcile job
+    (<code>reconcile-{sessionId}</code>) and one analysis job (<code>analysis-{sessionId}</code>),
+    both per-session jobIds so a re-enqueue collapses to the existing broker job.
+  </li>
+  <li>
+    <strong>Broadcast, once.</strong> Only the finalize that won the flip (rowCount 1) broadcasts
+    the structural <code>session_end</code> frame; a later finalize (rowCount 0) skips it.
+  </li>
+</ol>
+
+<aside class="wiki-rationale">
+  <strong>The conditional flip is what makes <code>session_end</code> fire exactly once</strong> —
+  the finalize is callable from two places: the farewell turn's <code>finally</code> (the normal
+  path) and a <code>QueueEvents</code> backstop (the terminal-stall path, below). Both call the same
+  idempotent function. The reconcile and analysis enqueues collapse on their jobIds, but the
+  broadcast would double-fire without a gate — so <code>markEnded</code> returns the rowCount and
+  only the winner broadcasts. A second finalize is otherwise harmless.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why a farewell turn, not an inline flip-and-broadcast</strong> — MYT-74a's
+  <code>endSession</code> flipped the row and broadcast <code>session_end</code> inline. That ended
+  the session abruptly: the client saw "session over" with no narrative close. Routing the end
+  through a real (player-less) turn lets the Fast Thinker render a send-off first, and the finalize
+  rides the turn's existing lock + <code>finally</code> — so the turn loop is already quiesced when
+  the row flips, no separate lock-fence needed. The reconcile worker still re-acquires the
+  per-session lock itself before reading the working set, so the fence is enforced there regardless.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A <code>QueueEvents</code> backstop covers the terminal stall</strong> — the in-worker
+  <code>finally</code> covers a clean render and a thrown render, but not a worker that
+  <em>crashes</em> mid-flight: BullMQ retries the job <code>maxStalledCount</code> times, then fails
+  it inside a Lua script that emits only a broker-side event — never the per-worker
+  <code>finally</code>. The <code>session-turn</code> <code>QueueEvents</code> subscriber listens
+  for that broker <code>failed</code> event and, for a <code>farewell</code> turn, runs
+  <code>finalizeEndedSession</code>
+  itself. Idempotent, so a double-fire with the in-worker path is safe. Without it a crashed
+  farewell would leave a session that never finalizes — the table waiting forever.
 </aside>
 
 <h3>The cross-session start interlock</h3>
@@ -144,12 +225,22 @@
 </p>
 
 <p>
-  The fix is an interlock at <code>POST /api/sessions/:campaignId/start</code>: it returns
+  The fix is a two-part interlock at <code>POST /api/sessions/:campaignId/start</code>. It returns
   <code>409 reconcile_pending</code> while the campaign's most-recent session is
-  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code>. No new session starts until the prior
-  one's canon is committed and its working set cleared. Reconcile is fast (async, seconds to tens of
-  seconds), so the block is brief in the happy path.
+  <code>ended_at IS NOT NULL AND reconciled_at IS NULL</code> — no new session starts until the
+  prior one's canon is committed and its working set cleared. And it returns
+  <code>409 session_ending</code> while the <code>ending</code> flag is set.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>session_ending</code> needs its own guard</strong> — MYT-74b moved the status
+  flip to the finalize, which runs <em>after</em> the farewell renders. During that render the row
+  is still <code>status='active'</code> with <code>ended_at</code> NULL, so the
+  <code>reconcile_pending</code> interlock (which reads <code>ended_at</code>) can't see the end
+  yet. The <code>ending</code> flag is set at the very start of the begin phase, so the second guard
+  fences the whole window from begin-of-end through finalize. Reconcile is fast (seconds to tens of
+  seconds), so the combined block is brief in the happy path.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The tri-state is the reader contract</strong> — <code>ended_at</code> set with
@@ -257,6 +348,112 @@
   call sit between the entry check and <code>BEGIN</code>) would both commit a full duplicate of the
   working set. The conditional <code>WHERE</code> serializes them; the on-entry check is just a
   cheap early-out.
+</aside>
+
+<h2>Post-session analysis and the handoff</h2>
+
+<p>
+  Reconcile commits <em>facts</em>. The second closeout job, in
+  <code>session/post-session-analysis.ts</code>, writes <em>narrative state</em> — what the session
+  was about and where it left things. It is the same ZFC shape as reconcile: a deterministic read,
+  one Opus judgment, a deterministic verify-and-write. It is <strong>not total</strong> — it throws
+  on transient failure so BullMQ retries, gated idempotent on <code>summary IS NULL</code>. It runs
+  on its own worker (concurrency 1, 180s lock) and takes no embedder — analysis doesn't embed.
+</p>
+
+<p>
+  The job reads four durable inputs, all safe to read after the WebSocket closes: the bounded
+  transcript tail (the latest 160 rows — the late tail is where evolved relationships and voice
+  live), the prep <code>sd_playbook</code>, the Slow-Thinker running summary from Redis, and the PC
+  roster. <code>llm/post-session-analysis.ts</code> feeds them to one Opus call that emits a
+  <code>{ summary, emergingThreads, handoff }</code> object.
+</p>
+
+<ul>
+  <li>
+    <strong><code>summary</code> / <code>emergingThreads</code></strong> — the player-facing recap.
+    Secret-free by construction: the prompt's hard rule is that these describe only what the players
+    witnessed at the table. They land in <code>sessions.summary</code> as a JSON wrapper.
+  </li>
+  <li>
+    <strong><code>handoff</code></strong> — the <code>SessionHandoff</code>, which <em>may</em> be
+    secret-aware (it feeds the next session's prep pipeline, not any player surface). It carries the
+    party's end-of-session positions and conditions, the in-world time, the unresolved threads
+    (most-urgent first), per-NPC <code>state</code> (a paraphrasable disposition) and
+    <code>voice</code> (verbatim late-session lines), and per-location <code>atmosphere</code>. It
+    lands in <code>sessions.handoff</code>.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Verbatim NPC voice is the point of the handoff</strong> — the recurring failure across
+  sessions is an NPC whose voice resets: the smuggler who was wry and conspiratorial by the end of
+  session 3 greets the party in session 4 with a generic "coin first, stories after." The handoff
+  carries a few of each major NPC's <em>actual late-session lines</em>, quoted exactly, and the prep
+  engine concatenates them into the next <code>ft_context</code> verbatim (never paraphrased). The
+  array length is bounded (it's a static budget the FT carries every turn), but the individual
+  strings carry no length cap — a real line must survive at its real length.
+</aside>
+
+<h3>The containment verifier</h3>
+
+<p>
+  Between the Opus call and the write sits a pure mechanical gate,
+  <code>session/analysis/containment.ts</code>. It drops any handoff voice excerpt or location
+  atmosphere snippet that is <strong>not a verbatim substring</strong> of a non-correction,
+  non-farewell transcript row. Normalization is forgiving on whitespace and case (JSON re-emission
+  drifts those) but not on meaning: a semantic, non-substring difference is dropped.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The containment verifier is an enforced-ignorance boundary, not a quality filter</strong>
+  — a verbatim excerpt that the next session's <code>ft_context</code> will carry must never be
+  sourced from a <a href="../runtime/scribe.html">correction turn</a> (a MYT-73 retcon line points
+  <em>at</em> the buried secret it spent an Opus call to bury) or a farewell line (meta-closure, not
+  characterization). The
+  <a href="../data/schema.html">migration-028 <code>trigger_kind</code> column</a> records each DM
+  row's originating turn trigger, so the verifier can structurally exclude those rows from the
+  source set. The <code>[[DM CORRECTION:]]</code> marker doesn't survive into persisted content and
+  <code>message_type</code> is the row kind, not the trigger — so the trigger had to be recorded
+  explicitly. A drop is logged by <em>count only</em>, never the dropped prose, so the alert surface
+  can't echo the secret the verifier exists to gate.
+</aside>
+
+<p>
+  The verified handoff and the recap then go through <code>repo.sessions.writeAnalysis</code>, a
+  conditional write gated on <code>summary IS NULL</code> — the same idempotency-mutex shape as the
+  reconcile commit. A retry or a concurrent execution that finds <code>summary</code> already set
+  no-ops. The worker logs structural counts only (drop counts, NPC and location counts, the write
+  rowCount), never summary, handoff, or excerpt content — the analysis reasons over secrets, so the
+  log surface is the leak vector, and it carries none.
+</p>
+
+<h3>How prep consumes the handoff</h3>
+
+<p>
+  The handoff is written for one reader: the next session's <a href="./session-prep.html">prep</a>.
+  When prep runs, it reads the campaign's prior ended sessions (newest-first, capped) via
+  <code>getPriorContextForPrep</code> and splits them two ways. The <code>summary</code> strings
+  become a chronological recap fed to the prep prompt, and the latest session's handoff renders a
+  <strong>"Where We Left Off"</strong> anchor — party positions, time of day, unresolved threads,
+  returning-NPC dispositions — so the prep opens on where the table actually is. That part is a
+  paraphrasable prompt input.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Verbatim voice is concatenated onto <code>ft_context</code>, not run through the prep
+    LLM</strong
+  >
+  — the disposition lines (<code>state</code>) are fine to paraphrase, so they go into the prompt.
+  But the whole value of the verbatim voice lines is that they're <em>exact</em>; routing them
+  through the prep LLM would let it reword them, defeating the cross-session consistency they exist
+  for. So the prep processor builds a fixed "Returning characters and places" section from the
+  handoff's voice and atmosphere excerpts and appends it to
+  <code>ft_context</code> deterministically <em>after</em> generation. All parsing of the prior rows
+  is tolerant (a malformed or legacy row degrades to omission, never a throw mid-prep) — the
+  analysis is transcript-derived narrative state, independent of canon commit, so it is not
+  reconcile-gated.
 </aside>
 
 <h2>The append-only fact log</h2>
@@ -387,13 +584,38 @@
 <ol>
   <li>
     With a live session open over the WebSocket, send an <code>end_session</code> frame. The server
-    flips the row to <code>ended</code>, broadcasts <code>session_end</code>, and enqueues the
-    reconcile job.
+    claims the <code>ending</code> flag and enqueues a player-less farewell turn.
   </li>
   <li>
-    Watch the worker logs for <code>reconcile_committed</code> (carries op counts only). Then
-    inspect <code>sessions.reconciled_at</code> (now set) and the new <code>facts</code> rows
+    Watch the session channel for the farewell turn's prose, <em>then</em> the structural
+    <code>session_end</code> frame (in that order — the live send-off precedes the close).
+  </li>
+  <li>
+    Watch the worker logs for <code>session_finalized</code>, then
+    <code>reconcile_committed</code> and <code>analysis_written</code> (all carry counts only). Then
+    inspect <code>sessions.reconciled_at</code> (now set), <code>sessions.summary</code> /
+    <code>sessions.handoff</code> (now populated), and the new <code>facts</code> rows
     (<code>source='session'</code>) for the world.
+  </li>
+</ol>
+
+<h3 id="re-run-a-stuck-post-session-analysis">Re-run a stuck post-session analysis</h3>
+<ol>
+  <li>
+    Symptom: a session has <code>ended_at</code> set but <code>summary</code> stays NULL. The
+    analysis job exhausted its retries (a persistently-failing Opus call) or never landed.
+  </li>
+  <li>
+    Confirm in the <a href="./worker.html">worker</a> logs for that <code>sessionId</code>: a
+    transient-failure line, or an <code>analysis_excerpts_dropped_not_in_transcript</code> warn
+    (count only — expected, not a failure). The session's canon is unaffected — analysis and
+    reconcile are independent jobs.
+  </li>
+  <li>
+    Re-enqueue the analysis job for the session. The <code>summary IS NULL</code> gate makes a
+    re-run idempotent; a persistent failure means a real prompt/schema bug to fix before re-driving.
+    Until <code>summary</code> lands, the next session's prep simply opens without a "Where We Left
+    Off" anchor — it never blocks.
   </li>
 </ol>
 
@@ -403,18 +625,22 @@
   This page picks up where the <a href="./scribe.html">Scribe</a> leaves off: the Scribe builds the
   tier- and provenance-annotated working set during the session; reconciliation commits it at the
   end. The end lifecycle lives at the <a href="./session-transport.html">session transport</a> seam
-  (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the
-  start interlock) and is also fired by the <a href="./session-turn.html">turn worker</a>'s budget
-  auto-end. The reconcile worker is the eighth <a href="./worker.html">BullMQ worker</a>. It
-  retrieves candidates through the
+  (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the two
+  start-interlock 409s) and is also fired by the <a href="./session-turn.html">turn worker</a>'s
+  budget auto-end; the farewell turn itself is rendered by that turn worker, and the
+  <code>QueueEvents</code> backstop is its terminal-stall net. The reconcile and analysis workers
+  are the eighth and ninth <a href="./worker.html">BullMQ workers</a>. Reconcile retrieves
+  candidates through the
   <a href="../data/world-store-retrieval.html">world-store retrieval</a> resolvers and writes
   through the <a href="../data/repository.html">repository layer</a>'s <code>facts</code>,
   <code>entities</code>, <code>relationships</code>, and <code>entityHierarchy</code> namespaces;
-  the append-only <code>superseded_by</code> / <code>superseded_at</code> columns and
-  <code>sessions.reconciled_at</code> are on the <a href="../data/schema.html">schema</a>.
-  Downstream gating stays intact — the wiki-data refresh (a later piece) reads only
-  <code>known</code> facts; secret tiers stay behind the
-  <a href="./slow-thinker.html">Slow-Thinker</a> gate.
+  analysis writes <code>sessions.summary</code> / <code>sessions.handoff</code> via
+  <code>writeAnalysis</code>. The append-only <code>superseded_by</code> /
+  <code>superseded_at</code> columns, <code>sessions.reconciled_at</code>, and the migration-028
+  <code>session_messages.trigger_kind</code> column are on the
+  <a href="../data/schema.html">schema</a>. Downstream, the next session's
+  <a href="./session-prep.html">prep</a> reads the handoff and the prior summaries; secret tiers
+  stay behind the <a href="./slow-thinker.html">Slow-Thinker</a> gate.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -496,36 +722,77 @@
   <thead>
     <tr>
       <th>Knob</th>
-      <th>Value</th>
+      <th>Reconcile</th>
+      <th>Analysis</th>
     </tr>
   </thead>
   <tbody>
     <tr>
       <td>Queue / job id</td>
-      <td>
-        <code>session-reconcile</code> / <code>reconcile-{sessionId}</code> (per-session dedup)
-      </td>
+      <td><code>session-reconcile</code> / <code>reconcile-{sessionId}</code></td>
+      <td><code>session-analysis</code> / <code>analysis-{sessionId}</code></td>
     </tr>
     <tr>
       <td>Concurrency · lock</td>
-      <td>1 · 180s (≥ the 120s Opus timeout + embed + commit headroom; never stalled-reclaimed)</td>
+      <td>1 · 180s</td>
+      <td>1 · 180s</td>
     </tr>
     <tr>
       <td>Retries</td>
-      <td>
-        5 attempts, exponential backoff (30s); <code>removeOnComplete</code> +
-        <code>removeOnFail</code>
-      </td>
-    </tr>
-    <tr>
-      <td>Candidates per subject</td>
-      <td>5 (top-K similar canon entities)</td>
+      <td>5 attempts, exp backoff 30s; <code>removeOnComplete</code>/<code>removeOnFail</code></td>
+      <td>5 attempts, exp backoff 30s; <code>removeOnComplete</code>/<code>removeOnFail</code></td>
     </tr>
     <tr>
       <td>Opus call</td>
+      <td>120s, 8000 max out, <code>redactRawText</code>, <code>sonnet</code> repair</td>
+      <td>120s, 8000 max out, <code>redactRawText</code>, <code>sonnet</code> repair</td>
+    </tr>
+    <tr>
+      <td>Embedder</td>
+      <td>Yes (Voyage re-embed before commit)</td>
+      <td>None (analysis doesn't embed)</td>
+    </tr>
+    <tr>
+      <td>Idempotency gate</td>
+      <td>conditional <code>reconciled_at IS NULL</code></td>
+      <td>conditional <code>summary IS NULL</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>The <code>SessionHandoff</code> (analysis output → prep input)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>party[]</code></td>
       <td>
-        120s timeout, 8000 max output tokens, <code>redactRawText</code>, <code>sonnet</code> repair
+        <code>characterName</code>, <code>location</code>, <code>condition</code> at session end.
       </td>
+    </tr>
+    <tr>
+      <td><code>timeOfDay</code></td>
+      <td>In-world time at session end.</td>
+    </tr>
+    <tr>
+      <td><code>unresolvedThreads[]</code></td>
+      <td>Open threads carried forward, most-urgent first.</td>
+    </tr>
+    <tr>
+      <td><code>npcs[]</code> (max 8)</td>
+      <td>
+        <code>name</code>, <code>state</code> (paraphrasable disposition), <code>voice</code> (max 4
+        verbatim lines, no string <code>.max()</code> — concatenated onto <code>ft_context</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>keyLocations[]</code> (max 8)</td>
+      <td><code>name</code>, <code>atmosphere</code> (verbatim sensory snippet).</td>
     </tr>
   </tbody>
 </table>
@@ -533,15 +800,23 @@
 <h2>Source</h2>
 
 <p>
-  <code>backend/src/session/session-end.ts</code> (the lifecycle orchestration),
-  <code>backend/src/session/session-reconcile.ts</code> (the worker),
+  <code>backend/src/session/session-end.ts</code> (the begin/complete lifecycle —
+  <code>endSession</code> + <code>finalizeEndedSession</code>),
+  <code>backend/src/session/session-reconcile.ts</code> (the reconcile worker),
   <code>backend/src/session/reconcile/validate.ts</code> + <code>reconcile/commit.ts</code> (the
   pure validator + the transactional commit), <code>backend/src/llm/session-reconciler.ts</code> +
   <code>backend/src/llm/schemas/session-reconcile.ts</code> +
-  <code>backend/src/llm/prompts/session/session-reconciler.txt</code> (the Opus plan),
-  <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> / <code>entities.ts</code> (the
-  append-only fact writes, the conditional gate, play-marking),
-  <code>backend/src/server-queues.ts</code> (the queue build), and
+  <code>backend/src/llm/prompts/session/session-reconciler.txt</code> (the Opus reconcile plan),
+  <code>backend/src/session/post-session-analysis.ts</code> (the analysis worker),
+  <code>backend/src/session/analysis/containment.ts</code> (the verbatim-containment verifier),
+  <code>backend/src/llm/post-session-analysis.ts</code> +
+  <code>backend/src/llm/schemas/post-session-analysis.ts</code> +
+  <code>backend/src/llm/prompts/session/post-session-analysis.txt</code> (the Opus analysis call,
+  schema, and prompt), <code>backend/src/session/session-turn-queue-events.ts</code> (the terminal-
+  stall finalize backstop), <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> /
+  <code>entities.ts</code> (the append-only fact writes, the <code>markEnded</code> /
+  <code>writeAnalysis</code> / <code>getPriorContextForPrep</code> binders, play-marking),
+  <code>backend/src/server-queues.ts</code> (the reconcile + analysis queue builds), and
   <code>backend/migrations/027_fact_supersede.sql</code> (the append-only columns). Design spec:
   <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code>.
 </p>
