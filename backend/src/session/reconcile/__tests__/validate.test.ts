@@ -282,6 +282,25 @@ describe('validateReconcilePlan', () => {
     expect(JSON.stringify(result)).not.toContain(SECRET)
   })
 
+  // -------------------------------------------------------------------------
+  // MYT-74c — promotions: existing candidate fact ids flipped to `known`. A
+  // distinct op, NOT subject to the tier_downgrade fact-floor. The only check:
+  // each promoted id must be a live candidate fact.
+  // -------------------------------------------------------------------------
+
+  it('rejects a promotion id not among live candidate facts', () => {
+    const r = validateReconcilePlan(
+      plan({ promotions: ['ghost'] }),
+      ctx({ liveFactIds: new Set(['real']) }),
+    )
+    expect(r).toEqual({ ok: false, reason: 'dangling_promotion' })
+  })
+
+  it('accepts a promotion of a live candidate fact (not a tier_downgrade)', () => {
+    const r = validateReconcilePlan(plan({ promotions: ['real'] }), ctx({ liveFactIds: new Set(['real']) }))
+    expect(r.ok).toBe(true)
+  })
+
   it('returns the first failure in entities -> facts -> relationships order', () => {
     // a dangling match (entities) co-occurs with a dangling fact subject (facts);
     // the entity failure must win.

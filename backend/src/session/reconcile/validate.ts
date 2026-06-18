@@ -45,6 +45,7 @@ export type ValidateRejectReason =
   | 'supersede_target_not_live' // a supersedesFactId not in liveFactIds
   | 'tier_downgrade' // a fact.accessLevel weaker than its working-set item's tier
   | 'attribution_dropped' // an attributed item's fact has claimedBy:null
+  | 'dangling_promotion' // a promotions[] id not in liveFactIds
 
 const TIER_RANK: Record<AccessLevel, number> = { known: 0, discoverable: 1, secret: 2 }
 
@@ -94,6 +95,11 @@ export function validateReconcilePlan(plan: ReconcilePlan, ctx: ValidateCtx): Va
     if (!map.has(r.fromSubjectName) || !map.has(r.toSubjectName)) {
       return { ok: false, reason: 'dangling_relationship_endpoint' }
     }
+  }
+
+  // 6. Promotions: every promoted id must be a live candidate fact.
+  for (const id of plan.promotions) {
+    if (!ctx.liveFactIds.has(id)) return { ok: false, reason: 'dangling_promotion' }
   }
 
   return { ok: true, map }
