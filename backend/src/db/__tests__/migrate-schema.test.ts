@@ -97,6 +97,7 @@ const EXPECTED_IDX_NAMES = [
   'idx_random_tables_world',
   'idx_relationships_source',
   'idx_relationships_target',
+  'idx_session_messages_content_tsv',
   'idx_session_messages_session_seq',
   'idx_session_messages_session_seq_unique',
   'idx_session_messages_turn_ordinal_unique',
@@ -813,6 +814,7 @@ describe('schema-parity (integration)', () => {
       '026_world_retrieval.sql',
       '027_fact_supersede.sql',
       '028_session_messages_trigger_kind.sql',
+      '029_session_messages_fts.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
