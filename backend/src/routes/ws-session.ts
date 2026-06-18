@@ -65,6 +65,7 @@ import { consumeWsTicket } from '../auth/ws-ticket.js'
 import { scheduleSuspend, cancelSuspend } from '../session/session-suspend.js'
 import { endSession } from '../session/session-end.js'
 import { resolveWorldId } from '../session/turn-context.js'
+import { DEPARTED_AUTHOR_NAME } from '../session/attribution.js'
 import {
   isExplicitText,
   rescheduleQuietWindow,
@@ -178,13 +179,6 @@ const MAX_MESSAGE_TEXT_LEN = 4_000
  *  regardless of how the WS plugin was registered. Sized above
  *  MAX_MESSAGE_TEXT_LEN to leave room for the JSON envelope + multibyte UTF-8. */
 export const WS_MAX_PAYLOAD_BYTES = 16 * 1024
-
-/** Placeholder display name for a reconnect-replay author who is no longer a
- *  current campaign member (left/removed since the message was written). Their
- *  prose still replays; only the byline degrades gracefully. A neutral
- *  user-facing label, NOT an internal sentinel, since it's rendered as a chat
- *  byline. Brand register: plain, no gamerspeak. */
-const DEPARTED_AUTHOR_NAME = 'Former player'
 
 declare module 'fastify' {
   interface FastifyRequest {
