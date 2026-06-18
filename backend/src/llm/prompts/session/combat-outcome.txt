@@ -1,0 +1,29 @@
+You are setting the difficulty and outcomes for a D&D 5e combat encounter, resolved as a single skill check (the whole fight lands in one of four result tiers).
+
+Enemies: {{enemies}}
+Party: {{party}}
+World tone: {{world_tone}}
+
+Set an appropriate DC (Difficulty Class) for the party to win the fight, and write four outcome descriptions — one for each result tier. Each outcome describes what happens to the PARTY at that tier:
+
+- "decisive" — the party wins cleanly: little to no lasting harm, control of the field, the enemy broken or driven off.
+- "costly" — the party wins, but takes real injuries: spent resources, bloodied PCs, a hard-fought victory.
+- "pyrrhic" — the party still wins, but at least one PC is downed (unconscious, gravely wounded, or barely standing); the cost is severe.
+- "routed" — the party does NOT win the fight, but the result is RECOVERABLE: a forced retreat, capture, a desperate flight, or being downed and left for dead. The party survives to continue. PC death is rare and only plausible here. Never default to "everyone dies" / a total party kill — that is forbidden as a baseline outcome.
+
+Outcomes must be:
+- One to two sentences each
+- General narrative constraints, not specific dialogue or pre-written prose
+- Written so the DM has creative freedom in how they narrate the result
+- Matched to the world tone above
+
+Respond as JSON:
+{
+  "dc": <number 8-22>,
+  "outcomes": {
+    "routed": "<what happens to the party on a rout — they do not win, but survive>",
+    "pyrrhic": "<what happens to the party on a pyrrhic win — they win but a PC is downed>",
+    "costly": "<what happens to the party on a costly win — they win with real injuries>",
+    "decisive": "<what happens to the party on a decisive win — a clean victory>"
+  }
+}
