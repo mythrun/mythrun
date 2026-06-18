@@ -1,0 +1,61 @@
+digraph transcript_search {
+  // Transcript search (MYT-74d) — a player-facing in-session lookback over the
+  // PLAYER-FACING transcript ("what did Bram say about the ledger"). Postgres
+  // full-text search (websearch_to_tsquery + ts_rank + ts_headline), NOT
+  // embeddings — the canon Voyage/pgvector stack stays for canon. The corpus is
+  // the PROSE-BEARING session_messages rows only (dm_text + player_message);
+  // mechanical JSON rows (skill_check/dice_roll/world_fact_lookup/ledger) are
+  // excluded by a PARTIAL GIN index whose predicate is in lockstep with the
+  // repo's SEARCHABLE_MESSAGE_TYPES. ZFC: this is mechanical retrieval (the
+  // structural-computation exception), no Haiku query step. ENFORCED IGNORANCE:
+  // the corpus is PUBLIC BY CONSTRUCTION (the FT never narrates a secret), so
+  // there is nothing to tier-filter — the only structural guard is the
+  // campaign_id join + requireCampaignMember. Speaker attribution is shared with
+  // the WS replay path (resolveSpeaker: DM / character name / "Former player").
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  member [label="campaign member\n(player UI search box —\na Frontend ticket)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_route {
+    label="GET /api/campaigns/:id/transcript/search  (routes/campaigns.ts)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    guard [label="requireCampaignMember\n(any member — not owner-only)", color="ember", fontcolor="ember"];
+    zod   [label="Zod querystring\nq (trim·min 1 → 400 invalid_query)\nsessionId? · limit ≤ 50 · offset ≤ 500\nNO Haiku step — q is parsed mechanically", color="ember", fontcolor="ember"];
+    attr  [label="resolveSpeaker (shared)\nnull → DM · in map → character name\nabsent → \"Former player\"\nlistForCampaign userId→name map"];
+    shape [label="shape → { hits, query, limit, offset }\neach hit: speaker, snippet, content,\nsessionNumber, sessionId, seq, createdAt\n(raw userId dropped)"];
+  }
+
+  subgraph cluster_repo {
+    label="searchTranscript  (repo/transcript-search.ts)";
+    style="dashed";
+    fts [label="websearch_to_tsquery('english', $q)\nCROSS JOIN LATERAL (parsed once)\n@@ content_tsv · ts_rank DESC\ninner: rank+filter+paginate", color="ember", fontcolor="ember"];
+    headline [label="OUTER ts_headline\n<mark>…</mark> snippet\nONLY for the ≤ limit returned rows"];
+    order [label="TOTAL order\nrank DESC, created_at DESC,\nsession_id, seq DESC\n(session_id, seq) breaks ties →\nLIMIT/OFFSET can't skip/dup"];
+  }
+
+  subgraph cluster_pg {
+    label="Postgres  (migration 029)";
+    style="dashed";
+    tsv  [label="session_messages.content_tsv\nGENERATED ALWAYS … STORED\n(append-only — no update churn)", shape=cylinder];
+    gin  [label="idx_session_messages_content_tsv\nPARTIAL GIN\nWHERE message_type IN\n('dm_text','player_message')\n= SEARCHABLE_MESSAGE_TYPES (D7)", color="ember", fontcolor="ember"];
+    join [label="JOIN sessions\ncampaign_id = $1 (scoping guard)\nsession_number surfaced\nignores sessions.status"];
+  }
+
+  member -> guard [label="q=…&sessionId?"];
+  guard -> zod    [label="member proven"];
+  zod -> fts      [label="searchTranscript\n(campaignId, q, …)", color="ember"];
+  fts -> join     [label="@@ uses partial index", color="ember"];
+  join -> tsv     [label="prose rows only", style=dotted];
+  gin -> fts      [label="answers @@", style=dotted, color="ember"];
+  fts -> order;
+  order -> headline [label="page of ≤ limit"];
+  headline -> attr  [label="hits + userId", color="ember"];
+  attr -> shape     [label="speaker per hit"];
+  shape -> member   [label="200 { hits }", color="ember"];
+}

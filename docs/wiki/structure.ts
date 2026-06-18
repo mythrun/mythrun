@@ -34,6 +34,7 @@ export const structure: Section[] = [
       { slug: 'slow-thinker', title: 'Slow Thinker' },
       { slug: 'scribe', title: 'Scribe' },
       { slug: 'session-reconcile', title: 'End-of-session reconciliation' },
+      { slug: 'transcript-search', title: 'Transcript search' },
       { slug: 'dm-trigger', title: 'DM trigger' },
     ],
   },

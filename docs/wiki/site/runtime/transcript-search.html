@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Transcript search · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="transcript-search">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html" class="active">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Transcript search</div>
+        <article>
+<h1>Transcript search</h1>
+
+<p class="lead">
+  A player-facing lookback over the campaign's play transcript — "what did Bram say about the
+  ledger," "what happened with the harbourmaster" — answered by Postgres full-text search over the
+  prose-bearing <code>session_messages</code> rows, relevance-ranked, with a highlighted snippet per
+  hit. It is a sibling player-read surface to the
+  <a href="./session-reconcile.html">campaign wiki</a>, but a different corpus: the wiki reads
+  <em>canon</em> at the <code>known</code> tier; search reads the <em>raw transcript</em>, which is
+  public by construction.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="2400pt" height="398pt"
+ viewBox="14.00 14.00 2386.00 383.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 379.4)">
+<title>transcript_search</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-365 2367.38,-365 2367.38,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_route</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1589.52,-38 1589.52,-228 2355.38,-228 2355.38,-38 1589.52,-38"/>
+<text xml:space="preserve" text-anchor="middle" x="1972.45" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET /api/campaigns/:id/transcript/search &#160;(routes/campaigns.ts)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_repo</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="434.93,-44 434.93,-149 1435.5,-149 1435.5,-44 434.93,-44"/>
+<text xml:space="preserve" text-anchor="middle" x="935.22" y="-135.1" font-family="Courier,monospace" font-size="11.00">searchTranscript &#160;(repo/transcript&#45;search.ts)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_pg</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-149 8,-353 691.05,-353 691.05,-149 8,-149"/>
+<text xml:space="preserve" text-anchor="middle" x="349.53" y="-339.1" font-family="Courier,monospace" font-size="11.00">Postgres &#160;(migration 029)</text>
+</g>
+<!-- member -->
+<g id="node1" class="node">
+<title>member</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1399.2,-240.44 1202.49,-240.44 1202.49,-183.56 1399.2,-183.56 1399.2,-240.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-221.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaign member</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-208.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(player UI search box —</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-195.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">a Frontend ticket)</text>
+</g>
+<!-- guard -->
+<g id="node2" class="node">
+<title>guard</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1855.54,-187.84 1619.22,-187.84 1619.22,-144.16 1855.54,-144.16 1855.54,-187.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-169.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">requireCampaignMember</text>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-156.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(any member — not owner&#45;only)</text>
+</g>
+<!-- member&#45;&gt;guard -->
+<g id="edge1" class="edge">
+<title>member&#45;&gt;guard</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1399.9,-201.62C1462.08,-195.04 1543.11,-186.46 1610.08,-179.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1610.08,-181.83 1616.78,-178.66 1609.57,-176.96 1610.08,-181.83"/>
+<text xml:space="preserve" text-anchor="middle" x="1512.51" y="-197.47" font-family="Courier,monospace" font-size="10.00">q=…&amp;sessionId?</text>
+</g>
+<!-- zod -->
+<g id="node3" class="node">
+<title>zod</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2355.38,-108.04 2033.26,-108.04 2033.26,-37.96 2355.38,-37.96 2355.38,-108.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-89.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Zod querystring</text>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-76.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">q (trim·min 1 → 400 invalid_query)</text>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-63.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">sessionId? · limit ≤ 50 · offset ≤ 500</text>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-49.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">NO Haiku step — q is parsed mechanically</text>
+</g>
+<!-- guard&#45;&gt;zod -->
+<g id="edge2" class="edge">
+<title>guard&#45;&gt;zod</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1855.98,-149.52C1902.37,-142.36 1956,-133.26 2004.26,-123 2021.39,-119.36 2039.3,-115.15 2056.97,-110.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2057.12,-113.25 2063.31,-109.17 2055.93,-108.5 2057.12,-113.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1959.25" y="-142.59" font-family="Courier,monospace" font-size="10.00">member proven</text>
+</g>
+<!-- fts -->
+<g id="node6" class="node">
+<title>fts</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="697.65,-125.04 434.93,-125.04 434.93,-54.96 697.65,-54.96 697.65,-125.04"/>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-106.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">websearch_to_tsquery(&#39;english&#39;, $q)</text>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-93.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CROSS JOIN LATERAL (parsed once)</text>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-80.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@@ content_tsv · ts_rank DESC</text>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-66.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">inner: rank+filter+paginate</text>
+</g>
+<!-- zod&#45;&gt;fts -->
+<g id="edge3" class="edge">
+<title>zod&#45;&gt;fts</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2046.24,-37.25C1957.62,-18.75 1842.17,0 1738.38,0 880.41,0 880.41,0 880.41,0 801.51,0 715.63,-26.72 653.81,-51.04"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="652.91,-48.76 647.31,-53.63 654.72,-53.31 652.91,-48.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-15" font-family="Courier,monospace" font-size="10.00">searchTranscript</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-3" font-family="Courier,monospace" font-size="10.00">(campaignId, q, …)</text>
+</g>
+<!-- attr -->
+<g id="node4" class="node">
+<title>attr</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1885.24,-115.04 1589.52,-115.04 1589.52,-44.96 1885.24,-44.96 1885.24,-115.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-96.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolveSpeaker (shared)</text>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-83.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">null → DM · in map → character name</text>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-70.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">absent → &quot;Former player&quot;</text>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-56.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listForCampaign userId→name map</text>
+</g>
+<!-- shape -->
+<g id="node5" class="node">
+<title>shape</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2342.18,-207.04 2046.46,-207.04 2046.46,-136.96 2342.18,-136.96 2342.18,-207.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-188.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">shape → { hits, query, limit, offset }</text>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-175.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">each hit: speaker, snippet, content,</text>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-162.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessionNumber, sessionId, seq, createdAt</text>
+<text xml:space="preserve" text-anchor="middle" x="2194.32" y="-148.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(raw userId dropped)</text>
+</g>
+<!-- attr&#45;&gt;shape -->
+<g id="edge10" class="edge">
+<title>attr&#45;&gt;shape</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1885.89,-85.7C1924.95,-89.87 1966.69,-96.74 2004.26,-108 2018.16,-112.17 2019.82,-117.52 2033.26,-123 2042.1,-126.61 2051.32,-130.1 2060.66,-133.44"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2059.76,-135.72 2067.18,-135.73 2061.39,-131.1 2059.76,-135.72"/>
+<text xml:space="preserve" text-anchor="middle" x="1959.25" y="-111" font-family="Courier,monospace" font-size="10.00">speaker per hit</text>
+</g>
+<!-- shape&#45;&gt;member -->
+<g id="edge11" class="edge">
+<title>shape&#45;&gt;member</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2045.78,-188.28C1994.96,-193.38 1937.66,-198.56 1885.24,-202 1698.58,-214.24 1651.56,-213.57 1464.5,-213 1446.46,-212.94 1427.3,-212.85 1408.69,-212.75"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1408.73,-210.3 1401.72,-212.71 1408.7,-215.2 1408.73,-210.3"/>
+<text xml:space="preserve" text-anchor="middle" x="1737.38" y="-216.23" font-family="Courier,monospace" font-size="10.00">200 { hits }</text>
+</g>
+<!-- order -->
+<g id="node8" class="node">
+<title>order</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1006.17,-127.64 756.65,-127.64 756.65,-44.36 1006.17,-44.36 1006.17,-127.64"/>
+<text xml:space="preserve" text-anchor="middle" x="881.41" y="-109.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">TOTAL order</text>
+<text xml:space="preserve" text-anchor="middle" x="881.41" y="-95.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rank DESC, created_at DESC,</text>
+<text xml:space="preserve" text-anchor="middle" x="881.41" y="-82.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_id, seq DESC</text>
+<text xml:space="preserve" text-anchor="middle" x="881.41" y="-69.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(session_id, seq) breaks ties →</text>
+<text xml:space="preserve" text-anchor="middle" x="881.41" y="-56.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">LIMIT/OFFSET can&#39;t skip/dup</text>
+</g>
+<!-- fts&#45;&gt;order -->
+<g id="edge7" class="edge">
+<title>fts&#45;&gt;order</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M698.27,-88.33C714.54,-88.12 731.18,-87.91 747.48,-87.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="747.19,-90.15 754.15,-87.61 747.12,-85.25 747.19,-90.15"/>
+</g>
+<!-- join -->
+<g id="node11" class="node">
+<title>join</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="250.91,-332.04 8,-332.04 8,-261.96 250.91,-261.96 250.91,-332.04"/>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-313.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">JOIN sessions</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-300.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaign_id = $1 (scoping guard)</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-287.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_number surfaced</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-273.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ignores sessions.status</text>
+</g>
+<!-- fts&#45;&gt;join -->
+<g id="edge4" class="edge">
+<title>fts&#45;&gt;join</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M462.6,-125.68C452.93,-130.59 443.54,-136.02 434.93,-142 419.17,-152.95 421.36,-162.58 405.93,-174 344.73,-219.32 320.55,-216.17 250.91,-247 242.75,-250.61 234.24,-254.3 225.69,-257.95"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="224.99,-255.59 219.51,-260.58 226.91,-260.1 224.99,-255.59"/>
+<text xml:space="preserve" text-anchor="middle" x="342.92" y="-237.47" font-family="Courier,monospace" font-size="10.00">@@ uses partial index</text>
+</g>
+<!-- headline -->
+<g id="node7" class="node">
+<title>headline</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1435.5,-111.44 1166.18,-111.44 1166.18,-54.56 1435.5,-54.56 1435.5,-111.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-92.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">OUTER ts_headline</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-79.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&lt;mark&gt;…&lt;/mark&gt; snippet</text>
+<text xml:space="preserve" text-anchor="middle" x="1300.84" y="-66.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ONLY for the ≤ limit returned rows</text>
+</g>
+<!-- headline&#45;&gt;attr -->
+<g id="edge9" class="edge">
+<title>headline&#45;&gt;attr</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1436.06,-82.07C1481.71,-81.76 1533.12,-81.4 1580.33,-81.08"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1580.29,-83.53 1587.28,-81.03 1580.26,-78.63 1580.29,-83.53"/>
+<text xml:space="preserve" text-anchor="middle" x="1512.51" y="-84.86" font-family="Courier,monospace" font-size="10.00">hits + userId</text>
+</g>
+<!-- order&#45;&gt;headline -->
+<g id="edge8" class="edge">
+<title>order&#45;&gt;headline</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1006.81,-85.11C1053.95,-84.77 1108,-84.38 1156.74,-84.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1156.66,-86.48 1163.64,-83.98 1156.62,-81.58 1156.66,-86.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1086.18" y="-87.86" font-family="Courier,monospace" font-size="10.00">page of ≤ limit</text>
+</g>
+<!-- tsv -->
+<g id="node9" class="node">
+<title>tsv</title>
+<path fill="#efe9dc" stroke="#231b12" stroke-width="1.5" d="M691.05,-325C691.05,-328.92 635.13,-332.11 566.29,-332.11 497.45,-332.11 441.54,-328.92 441.54,-325 441.54,-325 441.54,-261 441.54,-261 441.54,-257.08 497.45,-253.9 566.29,-253.9 635.13,-253.9 691.05,-257.08 691.05,-261 691.05,-261 691.05,-325 691.05,-325"/>
+<path fill="none" stroke="#231b12" stroke-width="1.5" d="M691.05,-325C691.05,-321.07 635.13,-317.88 566.29,-317.88 497.45,-317.88 441.54,-321.07 441.54,-325"/>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-302.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_messages.content_tsv</text>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-289.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GENERATED ALWAYS … STORED</text>
+<text xml:space="preserve" text-anchor="middle" x="566.29" y="-276.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(append&#45;only — no update churn)</text>
+</g>
+<!-- gin -->
+<g id="node10" class="node">
+<title>gin</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="250.91,-232.64 8,-232.64 8,-149.36 250.91,-149.36 250.91,-232.64"/>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">idx_session_messages_content_tsv</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-200.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PARTIAL GIN</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-187.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">WHERE message_type IN</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-174.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(&#39;dm_text&#39;,&#39;player_message&#39;)</text>
+<text xml:space="preserve" text-anchor="middle" x="129.46" y="-161.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">= SEARCHABLE_MESSAGE_TYPES (D7)</text>
+</g>
+<!-- gin&#45;&gt;fts -->
+<g id="edge6" class="edge">
+<title>gin&#45;&gt;fts</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M251.58,-162.87C305.72,-150.29 369.85,-135.4 425.96,-122.36"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="426.51,-124.75 432.77,-120.78 425.4,-119.98 426.51,-124.75"/>
+<text xml:space="preserve" text-anchor="middle" x="342.92" y="-158.45" font-family="Courier,monospace" font-size="10.00">answers @@</text>
+</g>
+<!-- join&#45;&gt;tsv -->
+<g id="edge5" class="edge">
+<title>join&#45;&gt;tsv</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M251.58,-295.89C307.75,-295.37 374.67,-294.75 432.25,-294.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="432.24,-296.67 439.22,-294.16 432.2,-291.77 432.24,-296.67"/>
+<text xml:space="preserve" text-anchor="middle" x="342.92" y="-298.59" font-family="Courier,monospace" font-size="10.00">prose rows only</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The transcript is the <code>session_messages</code> log the
+  <a href="./session-transport.html">session transport</a> writes — every player line and every
+  Fast-Thinker narration row, in seq order, across all of a campaign's sessions. Search is a single
+  member-readable route, <code>GET /api/campaigns/:campaignId/transcript/search</code> in
+  <code>routes/campaigns.ts</code>, backed by one repo read, <code>searchTranscript</code> in
+  <code>repo/transcript-search.ts</code>, over a full-text index added in migration 029. There is no
+  AI in the path: the player's raw query is parsed mechanically and matched against a Postgres
+  <code>tsvector</code>. The diagram traces the whole request — the member, the route's
+  auth-and-parse, the FTS read against the index, the speaker attribution, and the shaped result.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Full-text search, not embeddings</strong> — the
+  <a href="../data/world-store-retrieval.html">canon retrieval stack</a> already runs Voyage
+  embeddings + pgvector, so the obvious move is to reuse it for the transcript. But the transcript
+  is the largest corpus in the system (thousands of prose rows per campaign, growing every turn),
+  and the use case is <em>literal recall</em> — a name, an item, a place, a line someone said.
+  Postgres FTS answers that exactly, with no per-message embedding cost and no embedding pipeline to
+  run on the hot append path. Semantic transcript search is a documented later enhancement, not a v1
+  gap; the canon stack stays embeddings-based because canon retrieval <em>is</em> a
+  semantic-similarity problem, and the transcript search is not.
+</aside>
+
+<h2 id="the-corpus-is-the-prose-bearing-rows-only">The corpus is the prose-bearing rows only</h2>
+
+<p>
+  <code>session_messages</code> holds two shapes of row. The <strong>prose-bearing</strong> types —
+  Fast-Thinker narration (<code>dm_text</code>) and player messages (<code>player_message</code>) —
+  store human-readable text. The <strong>mechanical</strong> types (<code>skill_check</code>,
+  <code>dice_roll</code>, <code>world_fact_lookup</code>, and the
+  <a href="./character-ledger.html">party-ledger</a> tool rows) store
+  <code>JSON.stringify</code> blobs — a tool call's input and output, not prose. Search indexes and
+  returns only the prose-bearing types; a constant <code>SEARCHABLE_MESSAGE_TYPES</code> in the repo
+  names them.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the mechanical JSON rows are excluded</strong> — indexing a JSON blob would tokenize
+  field names and UUIDs as spurious match terms, and a hit would return an un-renderable
+  highlighted-JSON snippet — the opposite of a "what did X say" lookback. Nothing is lost: the
+  readable narration of a roll or a ledger change already lives in the adjacent
+  <code>dm_text</code> prose, which <em>is</em> indexed. So the exclusion keeps the index lean and
+  guarantees every returned <code>content</code> and <code>snippet</code> is human-readable.
+</aside>
+
+<p>
+  This exclusion is enforced in two places that must stay in lockstep: migration 029's partial GIN
+  index carries a <code>WHERE message_type IN ('dm_text', 'player_message')</code> predicate, and
+  the query repeats the same literal in its <code>WHERE</code>. The literal is duplicated
+  deliberately — a parameterised <code>= ANY($n)</code> would not match the partial-index predicate,
+  so the planner would fall back to a sequential scan. A repo test <code>EXPLAIN</code>s the query
+  and asserts a bitmap index scan on <code>idx_session_messages_content_tsv</code>, pinning the
+  coupling so a drift surfaces as a failing test rather than a production latency cliff.
+</p>
+
+<h2 id="the-index-a-generated-tsvector-column">The index: a generated tsvector column</h2>
+
+<p>
+  Migration 029 adds a <code>content_tsv tsvector</code> column to <code>session_messages</code>,
+  <code>GENERATED ALWAYS AS (to_tsvector('english', content)) STORED</code>. Postgres maintains it
+  on insert, so there is no application write-path change — <code>append</code> and
+  <code>appendDmTurn</code> are untouched. The <code>'english'</code> config stems and tokenizes
+  prose; proper nouns ("Bram", "the Obsidian Cabal") tokenize fine. A partial GIN index over the
+  column, restricted to the prose-bearing rows, answers the membership predicate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A <code>STORED</code> generated column, not a trigger or an application write</strong> —
+  the transcript is append-only, so a generated-stored column carries no update churn: each row's
+  <code>content_tsv</code> is computed once at insert and never recomputed. A trigger would be more
+  machinery for the same result, and computing the <code>tsvector</code> in application code would
+  put it on the hot append path the transport keeps lean. The migration lands pre-launch against an
+  empty table, so the column add (a full table rewrite) and the GIN build are effectively free; the
+  spec notes that a comparable column-add against a populated production table would need an online
+  backfill instead — this in-transaction form is safe only because the table is empty here.
+</aside>
+
+<h2 id="the-read-rank-paginate-then-highlight">The read: rank, paginate, then highlight</h2>
+
+<p>
+  <code>searchTranscript</code> is one SQL statement. It binds
+  <code>websearch_to_tsquery('english', $q)</code> once through a
+  <code>CROSS JOIN LATERAL</code> row source, joins <code>sessions</code> to scope by
+  <code>campaign_id</code> and surface the <code>session_number</code>, filters to the prose-bearing
+  rows that match the query, ranks by <code>ts_rank</code>, and paginates. The expensive
+  <code>ts_headline</code> snippet — the <code>&lt;mark&gt;</code>-wrapped highlight that shows
+  <em>why</em> a row matched — is computed in an <strong>outer</strong> query over the
+  already-paginated inner result, so it runs only for the rows actually returned, never for the full
+  match set.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The <code>ORDER BY</code> is a total order, or pagination silently corrupts</strong> —
+  <code>appendDmTurn</code> writes every row of one DM turn in a single multi-VALUES
+  <code>INSERT</code>, so those rows share one <code>created_at</code>; equal-length terse rows tie
+  on <code>ts_rank</code> to the digit. <code>rank DESC, created_at DESC</code> alone is therefore
+  not a total order, and <code>LIMIT/OFFSET</code> over a non-total order can skip or duplicate rows
+  across pages. Adding <code>session_id, seq DESC</code> — the <code>(session_id, seq)</code> pair
+  is unique — makes the sort total, so paging through with increasing <code>offset</code> returns
+  every row exactly once. The inner query ranks-filters-paginates and the outer re-applies the same
+  total order before adding the headline.
+</aside>
+
+<p>
+  Search is campaign-wide by default — "what happened with the harbourmaster" spans sessions — with
+  an optional <code>sessionId</code> to narrow to one session's in-session lookback. It
+  <strong>intentionally ignores</strong> <code>sessions.status</code>: an <code>ended</code> or
+  <code>crashed</code> session's transcript is part of "the story so far" and stays searchable.
+  (That differs from the WebSocket connect path, which gates on <code>status = 'active'</code> — the
+  lookback has no such gate.)
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Parsing the query is mechanical retrieval, not cognition (ZFC)</strong> —
+  <code>websearch_to_tsquery</code> handles phrases (<code>"obsidian cabal"</code>), exclusions
+  (<code>-term</code>), and <code>or</code> from the player's raw string, mechanically. Search is
+  structural retrieval — the same
+  <a href="../runtime/index.html">Zero Framework Cognition</a> mechanical-computation exception as
+  dice math or movement ranges — so there is no Haiku query-reformulation step. It also means no
+  fuzzy or prefix matching: a partial name or a misspelling returns nothing, which is the accepted
+  literal-recall v1 scope (consistent with the embeddings deferral).
+</aside>
+
+<h2 id="speaker-attribution-is-shared-with-the-replay-path">Speaker attribution is shared with the replay path</h2>
+
+<p>
+  A hit's raw <code>user_id</code> is not useful to a player — they want a name. The route resolves
+  each hit to a speaker through <code>resolveSpeaker</code> in <code>session/attribution.ts</code>,
+  the one source of truth for "who said it," built once from the campaign's
+  <code>userId → character name</code> map (<code>characters.listForCampaign</code>). Because the
+  corpus is now <code>dm_text</code> + <code>player_message</code> only, there are exactly three
+  cases:
+</p>
+
+<ul>
+  <li>
+    a <code>null</code> <code>user_id</code> (a DM-authored <code>dm_text</code> row) →
+    <code>"DM"</code>;
+  </li>
+  <li>
+    a <code>user_id</code> present in the map (a <code>player_message</code> from an active member)
+    → the speaking character's name;
+  </li>
+  <li>
+    a <code>user_id</code> absent from the map — a player who has since left the campaign, so they
+    dropped out of <code>listForCampaign</code> — → the <code>"Former player"</code> placeholder.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>A departed author is "Former player," never "DM"</strong> — collapsing a departed player's
+  line into <code>"DM"</code> is a "who said it" mis-attribution: it would put words in the Dungeon
+  Master's mouth that a player actually said. The <code>DEPARTED_AUTHOR_NAME</code> constant was
+  already the <a href="./session-transport.html">WebSocket reconnect replay</a>'s fallback byline;
+  MYT-74d extracted <code>resolveSpeaker</code> into <code>session/attribution.ts</code> so both the
+  replay path and search resolve speakers through one tested helper rather than two parallel copies
+  (the <code>ws-session.ts</code> change was a behaviour-preserving import swap).
+</aside>
+
+<h2 id="enforced-ignorance-nothing-to-tier-filter">Enforced ignorance: nothing to tier-filter</h2>
+
+<p>
+  The campaign wiki is a carefully tier-gated read — it must filter to <code>known</code> canon and
+  drop every secret. Transcript search has no such filter, and deliberately so: the transcript
+  corpus is <strong>public by construction</strong>. The
+  <a href="./fast-thinker.html">Fast Thinker</a> operates under enforced ignorance and never
+  narrates a secret; the <a href="./slow-thinker.html">Slow Thinker</a>'s sanctioned reveals are
+  public the moment they are narrated; and the <code>[[DM CORRECTION:]]</code> marker that buries a
+  leak is an FT <em>input</em> direction that never persists into the FT's <em>output</em> content
+  (the persisted row is the rendered retcon prose). There is no <code>access_level</code> on
+  <code>session_messages</code>, and the debug Slow-Thinker / Scribe streams are not in the table at
+  all. So search has nothing it could leak.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The one real guard is the campaign join</strong> — the surface this read <em>does</em>
+  introduce is cross-campaign bleed, and it is closed structurally: the
+  <code>s.campaign_id = $1</code> join restricts every result to the caller's own campaign, and
+  <code>requireCampaignMember</code> proves the caller is a member of it. A
+  <code>sessionId</code> that belongs to another campaign, passed with this campaign's id, returns
+  zero rows — the <code>AND</code>-ed predicates can only narrow <em>within</em> the campaign. There
+  is no tier-bypass parameter on the route, because there is no tier to widen. Two defense-in-depth
+  repo tests pin the property the feature rests on: the prose-only corpus (a mechanical JSON row is
+  never returned) and a correction-derived row (it returns the player-facing retcon prose, never the
+  literal marker).
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="run-a-transcript-search-by-hand">Run a transcript search by hand</h3>
+<ol>
+  <li>
+    As a campaign member, call
+    <code>GET /api/campaigns/:campaignId/transcript/search?q=harbourmaster</code>. The response is
+    <code>{ hits, query, limit, offset }</code>; each hit carries a <code>speaker</code>, a
+    <code>&lt;mark&gt;</code>-highlighted <code>snippet</code>, the full <code>content</code>, and
+    the locators <code>sessionNumber</code> / <code>sessionId</code> / <code>seq</code> /
+    <code>createdAt</code>.
+  </li>
+  <li>
+    Narrow to one session by adding <code>&amp;sessionId=&lt;uuid&gt;</code>; page with
+    <code>&amp;limit=</code> (≤ 50) and <code>&amp;offset=</code> (≤ 500). An empty or
+    whitespace-only <code>q</code> returns <code>400 invalid_query</code>; a non-member returns
+    <code>403</code>; a fresh campaign with no sessions returns <code>200 { hits: [] }</code>, not
+    an error.
+  </li>
+</ol>
+
+<h3 id="confirm-a-search-uses-the-partial-index">Confirm a search uses the partial index</h3>
+<ol>
+  <li>
+    If campaign-wide search ever feels slow, the first check is whether the query is hitting the
+    partial GIN index. <code>EXPLAIN</code> the search SQL and confirm a
+    <code>Bitmap Index Scan on idx_session_messages_content_tsv</code> — a sequential scan means the
+    repo's <code>message_type</code> literal has drifted from migration 029's partial-index
+    predicate.
+  </li>
+  <li>
+    The repo's <code>EXPLAIN</code> test exists to catch exactly this in CI; a red one points at the
+    lockstep between <code>SEARCHABLE_MESSAGE_TYPES</code> and the migration's <code>WHERE</code>.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The corpus is the <code>session_messages</code> transcript the
+  <a href="./session-transport.html">session transport</a> writes through persist-then-broadcast;
+  the <code>content_tsv</code> column and its partial GIN index are on the
+  <a href="../data/schema.html">schema</a> (migration 029). Speaker attribution shares the
+  <code>resolveSpeaker</code> helper with the transport's reconnect-replay byline. This is a sibling
+  player-read surface to the <a href="./session-reconcile.html">campaign wiki</a> — both are
+  member-readable, campaign-scoped, per-user rate-limited routes in
+  <code>routes/campaigns.ts</code> with no dev-tool panel (each sits in the dev-tool contract's
+  <code>EXEMPT_ROUTES</code>) — but search reads the raw transcript, not promoted canon, so unlike
+  the wiki it is <em>not</em> a pipeline route and has no stage gate. The read goes through the
+  <a href="../data/repository.html">repository layer</a>'s new
+  <code>transcriptSearch</code> namespace. The search box itself is a Frontend ticket; 74d is the
+  data and API layer.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="the-route-get-api-campaigns-campaignid-transcript-search">The route (<code>GET /api/campaigns/:campaignId/transcript/search</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Facet</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Auth</td>
+      <td><code>requireCampaignMember(repo)</code> — any party member.</td>
+    </tr>
+    <tr>
+      <td>Querystring</td>
+      <td>
+        <code>q</code> (required, trimmed-non-empty → else <code>400 invalid_query</code>);
+        <code>sessionId?</code> (uuid); <code>limit?</code> (default 20, ≤ 50); <code>offset?</code>
+        (default 0, ≤ 500).
+      </td>
+    </tr>
+    <tr>
+      <td>Rate limit</td>
+      <td>
+        30/min, keyed per-user (IP fallback) — heavier than the 60/min member polls (an
+        <code>O(matches)</code> rank-sort plus a per-returned-row <code>ts_headline</code>).
+      </td>
+    </tr>
+    <tr>
+      <td>Response</td>
+      <td>
+        <code>200 { hits, query, limit, offset }</code>; each hit is
+        <code
+          >{ sessionId, sessionNumber, seq, messageType, speaker, content, snippet, createdAt
+          }</code
+        >. <code>400 invalid_query</code> · <code>403</code> (non-member).
+      </td>
+    </tr>
+    <tr>
+      <td>Contract</td>
+      <td>
+        In <code>contract/backend-routes.ts</code> and the dev-tool <code>verify-registry.ts</code>
+        <code>EXEMPT_ROUTES</code>. <strong>Not</strong> in <code>dev-tool/coverage.json</code> or
+        <code>pipeline-routes.ts</code> — those are pipeline-only, and this is not a pipeline route.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="the-hit-transcripthit-shaped-wire-result">The hit (<code>TranscriptHit</code> → shaped wire result)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Source</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>speaker</code></td>
+      <td>
+        <code>resolveSpeaker(userId, map)</code> — <code>"DM"</code> / character name /
+        <code>"Former player"</code>. The raw <code>userId</code> is dropped at the route.
+      </td>
+    </tr>
+    <tr>
+      <td><code>snippet</code></td>
+      <td>
+        <code>ts_headline</code> highlight — <code>&lt;mark&gt;…&lt;/mark&gt;</code>, up to 2
+        fragments, computed only for the returned page.
+      </td>
+    </tr>
+    <tr>
+      <td><code>content</code></td>
+      <td>
+        The full prose row (always human-readable — mechanical JSON rows are not in the corpus).
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>sessionNumber</code> / <code>sessionId</code> / <code>seq</code> /
+        <code>createdAt</code>
+      </td>
+      <td>Locators — the UI jumps to full context via the existing message replay on click.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="storage-migration-029">Storage (migration 029)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Object</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session_messages.content_tsv</code></td>
+      <td>
+        <code>tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED</code> —
+        auto-maintained, no app write path.
+      </td>
+    </tr>
+    <tr>
+      <td><code>idx_session_messages_content_tsv</code></td>
+      <td>
+        Partial GIN over <code>content_tsv</code>,
+        <code>WHERE message_type IN ('dm_text', 'player_message')</code> — in lockstep with
+        <code>SEARCHABLE_MESSAGE_TYPES</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/repo/transcript-search.ts</code> (the <code>searchTranscript</code> read +
+  <code>SEARCHABLE_MESSAGE_TYPES</code>), <code>backend/src/session/attribution.ts</code> (the
+  shared <code>resolveSpeaker</code>), <code>backend/src/routes/campaigns.ts</code> (the member
+  route), and <code>backend/migrations/029_session_messages_fts.sql</code> (the generated column +
+  partial GIN index). Design spec:
+  <code>docs/superpowers/specs/2026-06-17-myt-74d-transcript-search-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-corpus-is-the-prose-bearing-rows-only">The corpus is the prose-bearing rows only</a></li><li style="padding-left:0"><a href="#the-index-a-generated-tsvector-column">The index: a generated tsvector column</a></li><li style="padding-left:0"><a href="#the-read-rank-paginate-then-highlight">The read: rank, paginate, then highlight</a></li><li style="padding-left:0"><a href="#speaker-attribution-is-shared-with-the-replay-path">Speaker attribution is shared with the replay path</a></li><li style="padding-left:0"><a href="#enforced-ignorance-nothing-to-tier-filter">Enforced ignorance: nothing to tier-filter</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-a-transcript-search-by-hand">Run a transcript search by hand</a></li><li style="padding-left:12px"><a href="#confirm-a-search-uses-the-partial-index">Confirm a search uses the partial index</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#the-route-get-api-campaigns-campaignid-transcript-search">The route (GET /api/campaigns/:campaignId/transcript/search)</a></li><li style="padding-left:12px"><a href="#the-hit-transcripthit-shaped-wire-result">The hit (TranscriptHit → shaped wire result)</a></li><li style="padding-left:12px"><a href="#storage-migration-029">Storage (migration 029)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>
