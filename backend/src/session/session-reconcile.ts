@@ -278,7 +278,13 @@ async function runReconcile(
   const v = validateReconcilePlan(plan, { workingSet: items, liveCandidateEntityIds, liveFactIds })
   if (!v.ok) {
     deps.logger.error(
-      { sessionId, reason: v.reason, entityOps: plan.entities.length, factOps: plan.facts.length },
+      {
+        sessionId,
+        reason: v.reason,
+        entityOps: plan.entities.length,
+        factOps: plan.facts.length,
+        promotions: plan.promotions.length,
+      },
       'reconcile_plan_rejected',
     )
     throw new Error(`reconcile_plan_rejected: ${v.reason}`)
@@ -302,7 +308,13 @@ async function runReconcile(
   if (committed) {
     await deps.workingSet.clear(campaignId)
     deps.logger.info(
-      { sessionId, campaignId, entityOps: plan.entities.length, factOps: plan.facts.length },
+      {
+        sessionId,
+        campaignId,
+        entityOps: plan.entities.length,
+        factOps: plan.facts.length,
+        promotions: plan.promotions.length,
+      },
       'reconcile_committed',
     )
   } else {

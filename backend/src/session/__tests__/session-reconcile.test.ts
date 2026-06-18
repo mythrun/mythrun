@@ -364,6 +364,28 @@ describe('processReconcileJob — clean run', () => {
     await processReconcileJob(deps, job())
     expect(rec.findCalls.map((c) => c.text).sort()).toEqual(['the duke', 'the gate'])
   })
+
+  it('reconcile_committed log carries a promotions COUNT, never the promotion fact id', async () => {
+    // A clean commit whose plan promotes one live canon fact. The structural log
+    // must report `promotions: 1` (a count), and the promotion fact id must NOT
+    // appear in ANY logger argument — enforced ignorance: counts only, no ids.
+    // The promoted id must be a LIVE candidate fact (else `dangling_promotion`),
+    // so we promote the default live fact `f-live-1`.
+    const PROMO_FACT_ID = 'f-live-1'
+    const { deps } = makeDeps({ plan: validPlan({ promotions: [PROMO_FACT_ID] }) })
+
+    await processReconcileJob(deps, job())
+
+    const infoMock = deps.logger.info as ReturnType<typeof vi.fn>
+    const committedCall = infoMock.mock.calls.find((args) => args[1] === 'reconcile_committed')
+    expect(committedCall).toBeDefined()
+    const payload = committedCall?.[0] as Record<string, unknown>
+    expect(payload.promotions).toBe(1)
+    // ENFORCED IGNORANCE: the promotion fact id leaks into NO logger argument.
+    expect(loggerCallsToString(infoMock)).not.toContain(PROMO_FACT_ID)
+    expect(loggerCallsToString(deps.logger.warn as ReturnType<typeof vi.fn>)).not.toContain(PROMO_FACT_ID)
+    expect(loggerCallsToString(deps.logger.error as ReturnType<typeof vi.fn>)).not.toContain(PROMO_FACT_ID)
+  })
 })
 
 describe('processReconcileJob — empty working set', () => {
