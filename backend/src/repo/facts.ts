@@ -171,6 +171,21 @@ export function factsNs(c: ClientLike) {
       /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
       return result.rowCount ?? 0
     },
+    /** MYT-74c — promote discovered facts to `known` (a metadata flip; content
+     *  unchanged → no supersede, no re-embed). Skips already-known + superseded
+     *  facts (idempotent, never resurrects dead canon). Returns the DISTINCT
+     *  owning entity ids actually flipped, so the caller can promote those
+     *  entities too (the wiki filters entities by tier before facts). */
+    promoteToKnown: async (factIds: readonly string[]): Promise<readonly string[]> => {
+      if (factIds.length === 0) return []
+      const result = await c.query<{ entity_id: string }>(
+        `UPDATE facts SET access_level = 'known'
+          WHERE id = ANY($1) AND access_level <> 'known' AND superseded_by IS NULL
+          RETURNING entity_id`,
+        [factIds],
+      )
+      return [...new Set(result.rows.map((r) => r.entity_id))]
+    },
     updateContentById: async (factId: string, patch: { content: string }): Promise<number> => {
       const result = await c.query(
         `UPDATE facts SET content = $1, updated_at = now() WHERE id = $2`,
