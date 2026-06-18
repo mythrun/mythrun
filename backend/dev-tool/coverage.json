@@ -44,7 +44,9 @@
   ],
   "jobs": ["world-gen", "character-creation", "character-integration", "session-prep"],
   "exempt": {
-    "routes": {},
+    "routes": {
+      "GET /api/campaigns/:campaignId/wiki": "MYT-74c — player-facing member-readable campaign wiki (narrow known-tier). Not a dev-tool inspector surface: the owner-only world-snapshot panel already covers world inspection. This route exists for the player UI (a Frontend ticket), so it has no dev-tool panel; mirrors EXEMPT_ROUTES in verify-registry.ts."
+    },
     "events": {},
     "jobs": {}
   }
