@@ -161,6 +161,11 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // route exists for the player UI (a Frontend ticket), so it has no dev-tool panel.
   { method: 'GET', path: '/api/campaigns/:campaignId/wiki' },
 
+  // GET /api/campaigns/:campaignId/transcript/search (MYT-74d): player-facing
+  // FTS lookback over the transcript. Member-readable; no dev-tool inspector
+  // surface (the player UI owns the search box, a Frontend ticket).
+  { method: 'GET', path: '/api/campaigns/:campaignId/transcript/search' },
+
   // POST /webhooks/stripe: signature-verified consumer of Stripe events.
   // The HMAC over the raw body would reject any request not signed with
   // Stripe's webhook secret — there's no useful UI surface a human could

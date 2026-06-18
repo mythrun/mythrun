@@ -32,6 +32,7 @@ import { requireDbUser } from '../auth/require-db-user.js'
 import { requireUser } from '../auth/require-user.js'
 import { worldSnapshotView } from '../repo/world-snapshot-view.js'
 import { campaignWikiView } from '../repo/campaign-wiki-view.js'
+import { resolveSpeaker } from '../session/attribution.js'
 import { derivePhase, type PhaseAndStages, type PipelinePhase } from '../sse/derive-phase.js'
 import { openSseConnection } from '../sse/sse-connection.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
@@ -135,6 +136,27 @@ const CreateCampaignBodySchema = z.object({
 
 type CreateCampaignBody = z.infer<typeof CreateCampaignBodySchema>
 type NewWorldSource = (CreateCampaignBody['world'] & { kind: 'new' })['source']
+
+// ---------------------------------------------------------------------------
+// Query schema for GET /api/campaigns/:campaignId/transcript/search (MYT-74d).
+// `q` is the player's raw search; trimmed-min(1) rejects whitespace-only
+// queries with a 400. limit/offset are paginated reads with hard caps so a
+// crafted request can't ask for an unbounded page.
+// ---------------------------------------------------------------------------
+
+const TranscriptSearchQuerySchema = z.object({
+  q: z.string().trim().min(1),
+  sessionId: z.uuid().optional(),
+  limit: z.coerce.number().int().positive().max(50).default(20),
+  offset: z.coerce.number().int().min(0).max(500).default(0),
+})
+
+interface TranscriptSearchQuerystring {
+  q?: string
+  sessionId?: string
+  limit?: string
+  offset?: string
+}
 
 // ---------------------------------------------------------------------------
 // Errors raised by the create transaction (typed so the route can map
@@ -714,6 +736,70 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
       const wiki = await campaignWikiView.fetch(opts.pool, campaign.worldId)
       return reply.send(wiki)
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId/transcript/search (MYT-74d)
+  //
+  // Player-facing in-session lookback: FTS over the prose-bearing transcript
+  // (dm_text + player_message), campaign-scoped, session-filterable. Public by
+  // construction (the FT never narrates secrets); the only structural guard is
+  // the campaign_id join (inside searchTranscript) + requireCampaignMember.
+  // NOT a pipelineRoute — session-runtime data, no stage gate.
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: Params; Querystring: TranscriptSearchQuerystring }>(
+    '/api/campaigns/:campaignId/transcript/search',
+    {
+      config: {
+        // Member-read, per-user (UI-fanned). 30/min — heavier than the 60/min
+        // status/wiki polls (an O(matches) rank-sort + per-row ts_headline).
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest): string => {
+            try {
+              return requireDbUser(req).id
+            } catch {
+              return req.ip
+            }
+          },
+        },
+      },
+      preHandler: requireCampaignMember(repo),
+    },
+    async (request, reply) => {
+      const parsed = TranscriptSearchQuerySchema.safeParse(request.query)
+      if (!parsed.success) {
+        return reply.code(400).send({ code: 'invalid_query', issues: parsed.error.issues })
+      }
+      const { q, sessionId, limit, offset } = parsed.data
+      const campaignId = request.params.campaignId
+
+      const characters = await repo.characters.listForCampaign(campaignId)
+      const characterByUser = new Map(characters.map((ch) => [ch.userId, ch.name]))
+
+      const hits = await repo.transcriptSearch.searchTranscript({
+        campaignId,
+        query: q,
+        sessionId,
+        limit,
+        offset,
+      })
+
+      const shaped = hits.map((h) => ({
+        sessionId: h.sessionId,
+        sessionNumber: h.sessionNumber,
+        seq: h.seq,
+        messageType: h.messageType,
+        speaker: resolveSpeaker(h.userId, characterByUser),
+        content: h.content,
+        snippet: h.snippet,
+        createdAt: h.createdAt,
+      }))
+
+      return reply.send({ hits: shaped, query: q, limit, offset })
     },
   )
 

@@ -48,6 +48,7 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
   { method: 'GET', path: '/api/campaigns/:campaignId/world-snapshot' }, // myth-exac
   { method: 'GET', path: '/api/campaigns/:campaignId/wiki' }, // MYT-74c
+  { method: 'GET', path: '/api/campaigns/:campaignId/transcript/search' }, // MYT-74d
   // MYT-53 — per-player parallel character creation
   { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },
   { method: 'POST', path: '/api/campaigns/:campaignId/archive' },
