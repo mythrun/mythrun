@@ -30,6 +30,18 @@ export interface WorldSummary {
   readonly vocabularyRegistry: VocabularyRegistry
 }
 
+// Narrow PLAYER-facing world projection (MYT-74c). Like WorldSummary but WITHOUT
+// `concept` — the owner's raw freeform world seed, which can carry plot and must
+// not reach a player wiki. One home for the column list, like getSnapshotSummary.
+export interface WikiWorldSummary {
+  readonly id: string
+  readonly name: string
+  readonly tone: string | null
+  readonly themes: string | null
+  readonly era: string | null
+  readonly vocabularyRegistry: VocabularyRegistry
+}
+
 // Raw row shape of the allowlist SELECT — snake_case columns straight from pg.
 interface WorldSummaryDbRow {
   readonly id: string
@@ -167,6 +179,38 @@ export function worldsNs(c: ClientLike) {
         themes: row.themes,
         era: row.era,
         vocabularyRegistry: registry,
+      }
+    },
+
+    /**
+     * Player-facing narrow projection (MYT-74c) — the single-sourced home of
+     * the world column list a player wiki is allowed to see. Returns
+     * `WikiWorldSummary`, which is `WorldSummary` MINUS `concept`: the owner's
+     * raw freeform world seed can carry plot and must never reach a player
+     * wiki. Returns null when the world id is unknown.
+     */
+    getWikiSummary: async (id: string): Promise<WikiWorldSummary | null> => {
+      const result = await c.query<{
+        id: string
+        name: string
+        tone: string | null
+        themes: string | null
+        era: string | null
+        vocabulary_registry: unknown
+      }>(
+        `SELECT id, name, tone, themes, era, vocabulary_registry
+           FROM worlds WHERE id = $1`,
+        [id],
+      )
+      const row = result.rows[0]
+      if (row === undefined) return null
+      return {
+        id: row.id,
+        name: row.name,
+        tone: row.tone,
+        themes: row.themes,
+        era: row.era,
+        vocabularyRegistry: VocabularyRegistrySchema.parse(row.vocabulary_registry),
       }
     },
 
