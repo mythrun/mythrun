@@ -53,7 +53,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:750efe4190d81257601edfda9b198dcfa271e8943b3a9f1ba6de69141fa646bf -->
+<!-- source-hash: sha256:78c33a0b144932cd88644cf7aecc6ad1c813dc0a75830cf2357271dfc8d86651 -->
 <!-- last-ticket: MYT-71 -->
 
 <h1>World gen</h1>
@@ -89,7 +89,7 @@
 <h2>How it fits together</h2>
 
 <p>
-  Seven routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
+  Eight routes form the consumption surface — all under <code>/api/campaigns</code>, all listed in
   the <code>PIPELINE_ROUTES</code> contract so the boot-time enforcer keeps the dev tool, the route
   registrations, and the contract honest in lockstep. <code>POST /api/campaigns</code> is the create
   flow described above. <code>GET /api/campaigns/:campaignId</code> returns the campaign row, the
@@ -110,7 +110,11 @@
   publish of the <code>world_snapshot_ready</code> phase event itself fires one stage later, after
   <code>entity_consolidation</code> commits, so a reconnecting subscriber sees the signal once the
   phantom-reference reconciliation has fully landed; in either case the snapshot is safe to fetch
-  from stage 4 onward.
+  from stage 4 onward. <code>GET /api/campaigns/:campaignId/wiki</code> (MYT-74c) is the
+  <em>member-readable</em> counterpart to the owner-only snapshot — same stage-4 readiness gate, but
+  a deliberately narrower known-tier projection for players (no owner <code>concept</code>, no prose
+  kernels, no stat blocks); see
+  <a href="./session-reconcile.html#the-player-campaign-wiki">the player campaign wiki</a>.
 </p>
 
 <aside class="wiki-rationale">
