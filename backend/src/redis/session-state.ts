@@ -70,6 +70,79 @@ export interface SessionStateBlob {
   readonly worldId?: string
 }
 
+/** MYT-75 — the combat outcome tier. A deterministic skill-check-style roll
+ *  (DC + d20 + party modifier) lands in one of four bands; the band picks the
+ *  narrative envelope the FT writes within. Enforced-ignorance-safe: it carries
+ *  no plot, only the mechanical shape of how the fight went. */
+export type CombatTier = 'routed' | 'pyrrhic' | 'costly' | 'decisive'
+
+/** The hard constraints the matched `CombatTier` imposes on the FT's combat
+ *  prose — the L1 analogue of the skill-check outcome table. The FT writes
+ *  within these bounds; it never invents a worse (or better) result than the
+ *  deterministic roll allows. */
+export interface CombatEnvelope {
+  readonly partyWins: boolean
+  readonly minDownedPcs: number
+  readonly minAggregateHpLossFraction: number
+  readonly allowPcDeathNarration: boolean
+}
+
+/** The deterministic resolution of a combat: the roll, its tier, the prose
+ *  seed for that tier, and the `CombatEnvelope` the FT must honour. The LLM
+ *  never rolls — this is computed in code (the "LLM never generates random
+ *  numbers" principle) and injected as a constraint. */
+export interface CombatOutcome {
+  readonly tier: CombatTier
+  readonly dc: number
+  readonly roll: number
+  readonly total: number
+  readonly tierProse: string
+  readonly envelope: CombatEnvelope
+}
+
+/** The Scribe-grade structured summary the FT/Scribe emits once a fight is
+ *  resolved (L1). Persisted on the combat blob so the post-combat world-state
+ *  update reads casualties / HP deltas / loot without re-deriving them from
+ *  prose. */
+export interface CombatSummaryL1 {
+  readonly outcome: 'victory' | 'defeat' | 'flee' | 'other'
+  readonly outcomeDescription: string
+  readonly casualties: readonly {
+    name: string
+    type: 'pc' | 'npc'
+    fate: 'dead' | 'unconscious' | 'fled' | 'captured'
+  }[]
+  readonly hpChanges: readonly {
+    combatant: string
+    hpBefore: number
+    hpAfter: number
+    maxHp: number
+  }[]
+  readonly conditionsRemaining: readonly { combatant: string; condition: string }[]
+  readonly loot: readonly { source: string; items: readonly string[] }[]
+}
+
+/** The resolved-combat payload: the structured L1 summary. Wrapped in an
+ *  object so the contract can grow (e.g. a prose field) without churning every
+ *  call site. `null` on the blob until the fight resolves. */
+export interface CombatResult {
+  readonly summary: CombatSummaryL1
+}
+
+/** The `session:{cId}:combat` Redis blob (MYT-75). Holds the setup the combat
+ *  was entered with (enemies / environment / surprise / initiative), the
+ *  deterministic `CombatOutcome`, and — once resolved — the `CombatResult`.
+ *  `status` flips `resolving` → `resolved`; `result` is `null` until then. */
+export interface CombatStateBlob {
+  readonly status: 'resolving' | 'resolved'
+  readonly enemies: readonly { name: string; description: string; count: number }[]
+  readonly environment: string
+  readonly surprise: 'none' | 'players_surprised' | 'enemies_surprised'
+  readonly initiative: readonly { combatant: string; roll: number }[]
+  readonly outcome: CombatOutcome
+  readonly result: CombatResult | null
+}
+
 /**
  * The LLM-tier turn state a worker-side `SessionController` loads at the top of
  * a turn and flushes at the bottom (MYT-66). Backed by two Redis keys
@@ -178,6 +251,22 @@ export interface SessionState {
    *  an end has begun). A missing key (never ended, or the TTL reaped a stale
    *  flag) reads `false`. */
   isEnding(campaignId: string): Promise<boolean>
+  /** MYT-75 — read the `:combat` blob, or null if unset / corrupt. The session
+   *  is in combat mode (the `:state` blob's `mode`) iff this returns non-null. */
+  getCombatState(campaignId: string): Promise<CombatStateBlob | null>
+  /** MYT-75 — write the `:combat` blob (JSON) with the state TTL. */
+  setCombatState(campaignId: string, state: CombatStateBlob): Promise<void>
+  /** MYT-75 — DEL the `:combat` blob AND the `:resumed` interlock, so a session
+   *  that re-enters combat later can claim the resume gate again. Called when a
+   *  fight resolves and the session returns to exploration. */
+  clearCombatState(campaignId: string): Promise<void>
+  /** MYT-75 — atomically claim the once-only combat-resume interlock.
+   *  `SET … NX` on `session:{cId}:resumed`: returns `true` for the FIRST caller
+   *  and `false` thereafter, so a crash-recovery resume of an in-flight fight
+   *  runs exactly once even if two containers race the reconnect. The key carries
+   *  a TTL so a flag stranded by a crash self-heals; `clearCombatState` releases
+   *  it on resolution so a subsequent fight resumes anew. */
+  tryMarkResumed(campaignId: string): Promise<boolean>
 }
 
 export function makeSessionState(redis: Redis, keyPrefix: string): SessionState {
@@ -188,6 +277,8 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const usageKey = (campaignId: string): string => `${base(campaignId)}:usage`
   const usageStKey = (campaignId: string): string => `${base(campaignId)}:usage:st`
   const endingKey = (campaignId: string): string => `${base(campaignId)}:ending`
+  const combatKey = (campaignId: string): string => `${base(campaignId)}:combat`
+  const resumedKey = (campaignId: string): string => `${base(campaignId)}:resumed`
   const connKey = (campaignId: string, containerId: string, userId: string): string =>
     `${base(campaignId)}:conn:${containerId}:${userId}`
   const connPattern = (campaignId: string): string => `${base(campaignId)}:conn:*`
@@ -307,10 +398,11 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
 
     refreshTtls: async (campaignId) => {
       // EXPIRE is a no-op on a missing key (returns 0), so refreshing a
-      // not-yet-created :state/:seq doesn't conjure it.
+      // not-yet-created :state/:seq/:combat doesn't conjure it.
       await Promise.all([
         redis.expire(seqKey(campaignId), STATE_TTL),
         redis.expire(stateKey(campaignId), STATE_TTL),
+        redis.expire(combatKey(campaignId), STATE_TTL),
       ])
     },
 
@@ -371,6 +463,37 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
     isEnding: async (campaignId) => {
       // EXISTS is 1 when the flag is set, 0 when unset / TTL-reaped.
       return (await redis.exists(endingKey(campaignId))) === 1
+    },
+
+    getCombatState: async (campaignId) => {
+      const raw = await redis.get(combatKey(campaignId))
+      if (raw === null || typeof raw !== 'string') return null
+      try {
+        // Corrupt blob → treat as absent (mirrors getState's parse arm); the
+        // connect/recovery path rebuilds combat from the Postgres checkpoint.
+        return JSON.parse(raw) as CombatStateBlob
+      } catch {
+        return null
+      }
+    },
+
+    setCombatState: async (campaignId, state) => {
+      await redis.set(combatKey(campaignId), JSON.stringify(state), 'EX', STATE_TTL)
+    },
+
+    clearCombatState: async (campaignId) => {
+      // DEL both keys: a re-entered fight must be able to claim the resume gate
+      // again, so the once-only `:resumed` flag is released alongside `:combat`.
+      await redis.del(combatKey(campaignId), resumedKey(campaignId))
+    },
+
+    tryMarkResumed: async (campaignId) => {
+      // SET NX is atomic: the first resume (the winning crash-recovery path)
+      // gets 'OK'; a racing second container gets null and short-circuits, so an
+      // in-flight fight resumes exactly once. The TTL self-heals a stranded flag;
+      // clearCombatState releases it so a later fight resumes anew.
+      const result = await redis.set(resumedKey(campaignId), '1', 'EX', ENDING_TTL, 'NX')
+      return result === 'OK'
     },
   }
 }

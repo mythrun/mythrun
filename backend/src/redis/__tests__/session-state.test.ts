@@ -1,7 +1,12 @@
 import IoRedisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { type CheckpointStore, PRESENCE_TTL, makeSessionState } from '../session-state.js'
+import {
+  type CheckpointStore,
+  type CombatStateBlob,
+  PRESENCE_TTL,
+  makeSessionState,
+} from '../session-state.js'
 
 const KEY_PREFIX = 'test:use1:'
 const cId = 'c-1'
@@ -442,5 +447,96 @@ describe('makeSessionState — ending flag (MYT-74a T11)', () => {
     expect(await ss.isEnding('c-B')).toBe(false)
     // c-B can still claim its own end independently.
     expect(await ss.tryMarkEnding('c-B')).toBe(true)
+  })
+})
+
+describe('makeSessionState — combat state (MYT-75)', () => {
+  let redis: Redis
+
+  beforeEach(async () => {
+    redis = new IoRedisMock()
+    await redis.flushall()
+  })
+  afterEach(async () => {
+    await redis.quit()
+  })
+
+  // A representative resolving combat blob used across the round-trip tests.
+  const sampleCombat = (): CombatStateBlob => ({
+    status: 'resolving',
+    enemies: [{ name: 'Goblin', description: 'a wiry raider', count: 3 }],
+    environment: 'a moonlit clearing',
+    surprise: 'none',
+    initiative: [
+      { combatant: 'userA', roll: 17 },
+      { combatant: 'Goblin', roll: 8 },
+    ],
+    outcome: {
+      tier: 'decisive',
+      dc: 12,
+      roll: 15,
+      total: 18,
+      tierProse: 'The party carves through the raiders.',
+      envelope: {
+        partyWins: true,
+        minDownedPcs: 0,
+        minAggregateHpLossFraction: 0.1,
+        allowPcDeathNarration: false,
+      },
+    },
+    result: null,
+  })
+
+  it('setCombatState then getCombatState round-trips the JSON blob', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    const blob = sampleCombat()
+    await ss.setCombatState(cId, blob)
+    expect(await ss.getCombatState(cId)).toEqual(blob)
+  })
+
+  it('getCombatState returns null for an unset session', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.getCombatState('never-set')).toBeNull()
+  })
+
+  it('clearCombatState removes the combat blob (getCombatState → null)', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.setCombatState(cId, sampleCombat())
+    await ss.clearCombatState(cId)
+    expect(await ss.getCombatState(cId)).toBeNull()
+  })
+
+  it('clearCombatState also clears the resumed interlock so a re-entered fight can resume again', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.setCombatState(cId, sampleCombat())
+    // First fight: claim the resume interlock.
+    expect(await ss.tryMarkResumed(cId)).toBe(true)
+    expect(await ss.tryMarkResumed(cId)).toBe(false)
+    // Combat resolves and clears — the resume flag is released too.
+    await ss.clearCombatState(cId)
+    // A re-entered fight can claim the resume interlock anew.
+    expect(await ss.tryMarkResumed(cId)).toBe(true)
+  })
+
+  it('tryMarkResumed is once-only: first call wins (true), subsequent calls lose (false)', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.tryMarkResumed(cId)).toBe(true)
+    expect(await ss.tryMarkResumed(cId)).toBe(false)
+    expect(await ss.tryMarkResumed(cId)).toBe(false)
+  })
+
+  it('tryMarkResumed is isolated per campaign', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.tryMarkResumed('c-A')).toBe(true)
+    // c-B can still claim its own resume independently.
+    expect(await ss.tryMarkResumed('c-B')).toBe(true)
+    expect(await ss.tryMarkResumed('c-A')).toBe(false)
+  })
+
+  it('refreshTtls extends the :combat key', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.setCombatState(cId, sampleCombat())
+    await ss.refreshTtls(cId)
+    expect(await redis.ttl(`${KEY_PREFIX}session:${cId}:combat`)).toBeGreaterThan(0)
   })
 })
