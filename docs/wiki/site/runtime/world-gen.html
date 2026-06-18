@@ -2141,6 +2141,24 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>The owner snapshot is not the player wiki</strong> — this endpoint is the
+  <em>owner-only</em> dev-tool inspector. MYT-74c added a separate <em>member-readable</em>
+  <a href="./session-reconcile.html#the-player-campaign-wiki"
+    ><code>GET /api/campaigns/:campaignId/wiki</code></a
+  >
+  for players, in the same <code>routes/campaigns.ts</code> file. The wiki is deliberately narrower:
+  it drops the owner's raw <code>concept</code> seed (via a dedicated
+  <code>getWikiSummary</code> projection), carries no prose kernels and no stat blocks, and
+  hardcodes the tier bypass off — and it <em>grows with play</em>, because the
+  <a href="./session-reconcile.html#the-access-tier-promotion-state-machine"
+    >end-of-session reconcile</a
+  >
+  promotes the <code>discoverable</code> / <code>secret</code> facts the party discovered this
+  session up to <code>known</code>. The owner snapshot below is unchanged; the two reads are
+  distinct surfaces for distinct audiences.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>An explicit <code>WorldSummary</code> projection, not <code>SELECT *</code></strong> — the
   <code>worlds</code> table holds plot-bearing columns the Fast Thinker must never see:
   <code>key_tensions</code>, <code>political_summary</code>, <code>starting_situations</code>,
@@ -2167,7 +2185,12 @@
   <code>facts.access_level</code> from the old <code>(public, private, secret)</code> vocabulary,
   added the same column to <code>entities</code> with <code>NOT NULL DEFAULT 'known'</code>, and
   added a covering index <code>(world_id, access_level)</code> for the snapshot endpoint's primary
-  filter.
+  filter. The tier is not fixed at world-gen: read as a one-way
+  <a href="./session-reconcile.html#the-access-tier-promotion-state-machine"
+    >promotion state machine</a
+  >, a <code>discoverable</code> or (ST-revealed) <code>secret</code> fact the party surfaces in
+  play is promoted to <code>known</code> at end-of-session reconcile, so it joins the baseline
+  public knowledge the player wiki shows.
 </p>
 
 <p>

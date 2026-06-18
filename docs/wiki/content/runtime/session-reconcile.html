@@ -14,11 +14,15 @@
 <!-- source: backend/src/repo/facts.ts -->
 <!-- source: backend/src/repo/sessions.ts -->
 <!-- source: backend/src/repo/entities.ts -->
+<!-- source: backend/src/repo/worlds.ts -->
+<!-- source: backend/src/repo/campaign-wiki-view.ts -->
+<!-- source: backend/src/routes/campaigns.ts -->
 <!-- source: backend/src/server-queues.ts -->
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
-<!-- source-hash: sha256:b94a42a9ba01f877b8f8c09a43d242c1c035273db09560746c0f8fa381287601 -->
-<!-- last-ticket: MYT-74b -->
+<!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
+<!-- source-hash: sha256:c1560fec6c73b139ae9acd289ba60de6be203ad7d9a5b5e161a5f0d4d400d463 -->
+<!-- last-ticket: MYT-74c -->
 
 <h1>End-of-session reconciliation</h1>
 
@@ -28,7 +32,11 @@
   off-the-hot-path jobs fire. <strong>Reconcile</strong> folds the in-session working set — every
   fact the Fast Thinker improvised this session, tier- and provenance-annotated by the
   <a href="./scribe.html">Scribe</a> — into durable canon: entities, append-only facts, relationship
-  edges, and embeddings, via one holistic Opus match-vs-mint pass.
+  edges, and embeddings, via one holistic Opus match / mint / supersede /
+  <strong>promote</strong> pass. Promotion is what makes the party's
+  <strong>campaign wiki</strong> grow with play: a <code>discoverable</code> or
+  <code>secret</code> canon fact the party surfaced this session is flipped up to
+  <code>known</code>, after which it appears in the member-readable wiki read.
   <strong>Post-session analysis</strong> reads the transcript and writes the next session's
   narrative state — a player-facing recap plus a secret-aware <strong>handoff</strong> that primes
   the prep engine (including verbatim NPC voice lines that keep characterization consistent across
@@ -284,13 +292,46 @@
   <code>generateObject</code> boundary. Its input is the full working set (each item's subject name,
   content, kind, tier, provenance, source, optional parent name), the retrieved candidates and their
   live facts, and the world tone. Its output is a structured <strong>plan</strong>: entity
-  match/mint ops, fact appends (each optionally superseding a live fact), and relationship edges.
-  The model owns every judgment — it decides match vs mint per subject, resolves contradictions by
-  <em>absorb</em> (canonize the improvised version) or <em>supersede</em> (append the canonical
-  version and point the old fact's <code>superseded_by</code> at it), bakes an NPC's attribution
-  into an attributed claim's content, and <em>omits</em> any restatement that already matches live
-  canon so a stable entity doesn't accrete a duplicate fact every session.
+  match/mint ops, fact appends (each optionally superseding a live fact), relationship edges, and a
+  <code>promotions</code> list. The model owns every judgment — it decides match vs mint per
+  subject, resolves contradictions by <em>absorb</em> (canonize the improvised version) or
+  <em>supersede</em> (append the canonical version and point the old fact's
+  <code>superseded_by</code> at it), bakes an NPC's attribution into an attributed claim's content,
+  and <em>omits</em> any restatement that already matches live canon so a stable entity doesn't
+  accrete a duplicate fact every session.
 </p>
+
+<h4>The fourth branch: promote (MYT-74c)</h4>
+
+<p>
+  Per working-set item the reconciler already retrieves the canon candidates and their live facts at
+  every tier — and the candidates render with their <code>factId</code> and
+  <code>accessLevel</code>. So the model has everything it needs to make one more per-item decision
+  after match/mint/supersede: <strong>promotion</strong>. When a working-set item matches an
+  existing candidate fact that is <code>discoverable</code> or <code>secret</code> — the same
+  underlying fact, surfaced in play this session — the reconciler puts that candidate's
+  <code>factId</code> in <code>promotions</code> rather than minting a near-duplicate
+  <code>known</code> fact. A match against an already-<code>known</code> candidate is omitted as
+  before (already public); a genuinely new item is minted at its tier; a refinement supersedes — and
+  a superseded fact is never also promoted (it is dead canon). Promotion needs no new discovery
+  signal, no registry, no per-secret-to-fact linkage: the working-set match <em>is</em> the
+  discovery signal.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Promotion is a branch of the match the reconciler already makes, not a new mechanism</strong
+  >
+  — the obvious alternative is a real-time "fact was revealed" hook firing mid-session, or a
+  side-table mapping each <code>[SECRET-n]</code> to the fact it guards. Both are machinery the
+  reconcile pass doesn't need: it already does a read-then-write that decides, per working-set item,
+  whether it matches existing canon. "Matched a non-<code>known</code> candidate the party surfaced"
+  is the same trusted judgment the reconciler makes for every canon write — promotion is just the
+  fourth outcome of it. The residual risk (a spurious match promoting a fact that wasn't really
+  discovered) is exactly the residual match-quality risk of any reconcile write, bounded by the same
+  eval, and — critically — never reaches a player except through the <code>known</code>-tier,
+  no-bypass, member-scoped wiki read.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The output ceiling is pinned, and <code>redactRawText</code> is on</strong> — the budget
@@ -312,9 +353,20 @@
   resolves every fact and relationship op through it. The arms: every <code>match</code> points at a
   live candidate; every minted type is legal (<code>npc | location | faction | item</code>); every
   fact subject and every relationship endpoint resolves to an entity op (else it is a dangling ref →
-  reject); a supersede target is a live fact. There is no semantic re-judgment here — the validator
-  enforces structure and policy, not meaning.
+  reject); a supersede target is a live fact; and — MYT-74c — every <code>promotions</code> id is a
+  live candidate fact (<code>dangling_promotion</code> otherwise). There is no semantic re-judgment
+  here — the validator enforces structure and policy, not meaning.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Promotion is a distinct op — it does NOT pass the tier-floor</strong> — the
+  <code>tier_downgrade</code> arm guards fact-<em>add</em> ops: a minted/superseded fact may never
+  land <em>weaker</em> than its working-set item's tier (that would bury a secret as public). A
+  promotion is the sanctioned <em>upgrade</em> of an existing canon fact, so routing it through the
+  same floor would be backwards. Its check is its own: the id must be in <code>liveFactIds</code> —
+  the same live-candidate set that backs the supersede arm, so no new validator input is needed. The
+  reject <code>reason</code> stays a structural code with no content, per the log rule below.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Reject the plan, don't silently fix it</strong> — a dangling reference or a tier downgrade
@@ -335,8 +387,30 @@
   sub-faction hierarchy edges, and writes the new facts' embeddings. The Voyage re-embed call runs
   <em>before</em> the transaction opens — slow I/O never sits inside a <code>BEGIN</code> — and the
   resulting vectors are written inside the transaction, so embeddings are atomic with the facts and
-  can't desync across a retry. On a clean commit the worker clears the working set.
+  can't desync across a retry. After the play-marking and before the
+  <code>markReconciled</code> gate, it applies the <code>promotions</code>:
+  <code>facts.promoteToKnown</code> flips each matched candidate to <code>known</code> and returns
+  the distinct owning entity ids it actually flipped, then
+  <code>entities.promoteToKnown</code> flips those entities too. On a clean commit the worker clears
+  the working set.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Entity follows fact, deterministically</strong> — the wiki filters <em>entities</em> by
+  tier first, then loads their <code>known</code> facts. A fact promoted to <code>known</code> on a
+  still-<code>discoverable</code> entity would be orphaned out of the view — the fact is public but
+  its owning entity is hidden, so the read never reaches it. So the commit auto-promotes the owning
+  entity of every promoted fact (this is mechanical bookkeeping, not LLM judgment — the explicit ZFC
+  exception). Revealing one fact reveals the entity's existence plus that fact <em>only</em>: the
+  entity's <em>other</em> non-<code>known</code> facts stay tier-filtered, and the wire carries no
+  prose kernel for it, so no characterization blob leaks with the reveal. Promotion is a metadata
+  flip — <code>access_level</code> changes, <code>content</code> does not — so there is no supersede
+  and no re-embed: the content-derived embedding is already live and simply starts passing the
+  <code>known</code> filter. Both repo UPDATEs guard <code>access_level &lt;&gt; 'known'</code> (and
+  <code>facts.promoteToKnown</code> also <code>superseded_by IS NULL</code>), so a re-run is
+  idempotent and a dead fact is never resurrected. The whole step lives inside the reconcile
+  transaction, so a gated re-run rolls the promotions back with everything else.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The conditional <code>reconciled_at</code> update is the idempotency mutex</strong> — the
@@ -502,14 +576,112 @@
   a later reconcile and un-retcon itself).
 </p>
 
+<h2>The access-tier promotion state machine</h2>
+
+<p>
+  Promotion only makes sense once you read <code>access_level</code> as a one-way
+  <strong>state machine</strong>, not a per-player visibility flag. Every fact and entity sits at
+  one of three tiers, and play moves them in one direction — toward public:
+</p>
+
+<ul>
+  <li>
+    <strong><code>known</code></strong> — public baseline the world ships with, <em>or</em>
+    something the party has learned through play. This is what the wiki shows. Available from
+    session 1 so players can browse the world they're dropped into.
+  </li>
+  <li>
+    <strong><code>discoverable</code></strong> — unknown to the players but easy to learn (a skill
+    check, a conversation). <em>Not</em> behind enforced ignorance: the
+    <a href="./fast-thinker.html">Fast Thinker</a> may freely know and use a discoverable fact
+    before it is formally revealed. On discovery (a working-set item matches it this session) →
+    promoted to <code>known</code>.
+  </li>
+  <li>
+    <strong><code>secret</code></strong> — core plot material, the enforced-ignorance line. The FT
+    never sees it unsanctioned. Revealed only when the
+    <a href="./slow-thinker.html">Slow Thinker</a>
+    sanctions it — the ST-vet relays it, or the ST director stages it. On reveal → promoted to
+    <code>known</code>.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The promotion direction is what keeps secret-promotion safe</strong> — a
+  <code>secret</code> fact can only be promoted when a working-set item matches it, and a secret
+  reaches the working set <em>only</em> when the ST already sanctioned surfacing it: a
+  <code>tier:'secret'</code> working-set item comes solely from the
+  <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet's</a> relay (<code
+    >st_injection</code
+  >
+  source), and a director-staged reveal lands as a <code>known</code> <code>ft_delta</code> the FT
+  delivered. The FT cannot author a <code>secret</code>-tier working-set item itself. So the ST
+  sanction is the floor that populates the working set, the working-set match is the gate that
+  promotes, and the wiki read is the final fence (<code>known</code>-only, no bypass,
+  member-scoped). The reconciler never free-scans the secret candidates looking for things to
+  promote.
+</aside>
+
+<h2>The player campaign wiki</h2>
+
+<p>
+  Promotion exists to feed one reader: the <strong>campaign wiki</strong>. This is the players' view
+  of the world they are playing — a member-readable, <code>known</code>-tier read that starts at the
+  world's baseline public knowledge and grows every time a session promotes something. The route is
+  <code>GET /api/campaigns/:campaignId/wiki</code> in <code>routes/campaigns.ts</code>;
+  <code>repo/campaign-wiki-view.ts</code> composes the body.
+</p>
+
+<p>
+  The composition is deliberately narrow — a sibling of the owner-only dev-tool
+  <a href="./world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a>,
+  <em>not</em> a re-pointing of it. It carries: a <strong>narrow world summary</strong> (<code
+    >worlds.getWikiSummary</code
+  >
+  — name, tone, themes, era, plus the <code>known</code>-filtered vocabulary registry); the
+  <code>known</code> entities (name + type only); their live <code>known</code> facts; and the
+  <code>known</code>-tier relationships among them. It carries <strong>no prose kernels</strong> and
+  <strong>no stat blocks</strong>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A purpose-built projection, not the owner snapshot's composition</strong> — the obvious
+  shortcut is to point the player wiki at the existing <code>worldSnapshotView</code>. It leaks. The
+  snapshot's <code>WorldSummary</code> includes the owner's raw freeform <code>concept</code> (the
+  world seed, which can contain plot), and its per-entity prose kernels are FT-facing generation
+  artifacts that are <em>not</em> tier-gated — a play-promoted secret entity's kernel is its full
+  characterization blob. So the wiki gets its own composition over a new
+  <code>getWikiSummary</code> that drops <code>concept</code> at the SELECT, and the view attaches
+  no kernels and no stat blocks. The owner-only snapshot keeps its full composition unchanged; the
+  two reads are distinct surfaces for distinct audiences.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Member-readable, no bypass, per-user rate-limited</strong> — the snapshot is
+  <code>requireCampaignMember(repo, 'owner')</code>; the wiki is
+  <code>requireCampaignMember(repo)</code> — any party member. Its dev-mode tier bypass is
+  <em>hardcoded off</em>: there is no knob to widen it past <code>known</code>, so the structural
+  guarantee is the narrow projection itself, not a flag a future caller could flip. Readiness gates
+  on the same stage-4 (<code>entity_relationships</code>) check the snapshot uses (<code
+    >409 wiki_not_ready</code
+  >
+  before it, <code>404 campaign_not_found</code> on a null world id). It is rate-limited per-<em
+    >user</em
+  >
+  (60/min, the member-poll precedent), not per-IP like the owner snapshot — a whole party fanning
+  the same read shouldn't share one IP bucket. Because it is a player route with no dev-tool panel,
+  it sits in the dev-tool contract's <code>EXEMPT_ROUTES</code>.
+</aside>
+
 <h2>Enforced ignorance</h2>
 
 <p>
   The reconciler reasons over secret-tier working-set items <em>and</em> secret-cleared candidate
   facts, so the validated plan legitimately contains secret prose — a <code>secret</code> fact's
   content <em>is</em> the secret, and this call is allowed to write it into canon. The boundary here
-  is therefore <strong>not</strong> "no player-facing surface." There are two real surfaces, and
-  both are mechanical, not prompt-trusted.
+  is therefore <strong>not</strong> "no player-facing surface." There are three real surfaces — the
+  log/alert path, the tier/attribution guard, and now the wiki read — and all three are mechanical,
+  not prompt-trusted.
 </p>
 
 <p>
@@ -518,8 +690,20 @@
   it), and every alert payload — a validator reject, a terminal failure — carries
   <strong>structural facts only</strong>: op counts, a reject reason code, ids,
   <code>sessionId</code>, never <code>content</code> prose or the working-set snapshot. A reject
-  reason is a structural code (<code>dangling_match</code>, <code>tier_downgrade</code>, …), never a
-  string that echoes a fact.
+  reason is a structural code (<code>dangling_match</code>, <code>tier_downgrade</code>,
+  <code>dangling_promotion</code>, …), never a string that echoes a fact. The success and reject
+  logs carry <code>promotions.length</code> as a count — never the promoted fact ids or content.
+</p>
+
+<p>
+  <strong
+    >The wiki read is the third surface, and it is <code>known</code>-only by construction.</strong
+  >
+  A player cannot receive a <code>discoverable</code> or <code>secret</code> fact, the owner's raw
+  <code>concept</code> seed, or a play-promoted entity's prose kernel — the projection structurally
+  cannot carry them and the bypass is hardcoded off. Secret promotion is upstream-gated by the ST
+  sanction that is the only way a secret reaches the working set at all, so the only thing the wiki
+  ever shows from a former secret is a fact the Slow Thinker already chose to reveal at the table.
 </p>
 
 <p>
@@ -592,10 +776,31 @@
   </li>
   <li>
     Watch the worker logs for <code>session_finalized</code>, then
-    <code>reconcile_committed</code> and <code>analysis_written</code> (all carry counts only). Then
-    inspect <code>sessions.reconciled_at</code> (now set), <code>sessions.summary</code> /
+    <code>reconcile_committed</code> and <code>analysis_written</code> (all carry counts only — a
+    nonzero <code>promotions</code> count means facts were promoted this session). Then inspect
+    <code>sessions.reconciled_at</code> (now set), <code>sessions.summary</code> /
     <code>sessions.handoff</code> (now populated), and the new <code>facts</code> rows
     (<code>source='session'</code>) for the world.
+  </li>
+</ol>
+
+<h3 id="confirm-a-promotion-reached-the-wiki">Confirm a promotion reached the campaign wiki</h3>
+<ol>
+  <li>
+    Before the session, note a <code>discoverable</code> or (ST-revealed) <code>secret</code> fact:
+    <code>SELECT id, access_level FROM facts WHERE entity_id = $1 AND superseded_by IS NULL</code>.
+    It is absent from <code>GET /api/campaigns/:campaignId/wiki</code> (the read is
+    <code>known</code>-only).
+  </li>
+  <li>
+    Run a session that surfaces that fact, then end it (above). The reconcile commit's
+    <code>promotions</code> log count should be ≥ 1.
+  </li>
+  <li>
+    Re-query: the fact (and its owning entity) now read back <code>access_level='known'</code>, and
+    the same <code>GET …/wiki</code> call now returns the entity and the fact. A fact the party did
+    <em>not</em> surface stays at its old tier and absent — that is the over-promotion guard
+    working, not a bug.
   </li>
 </ol>
 
@@ -638,9 +843,17 @@
   <code>writeAnalysis</code>. The append-only <code>superseded_by</code> /
   <code>superseded_at</code> columns, <code>sessions.reconciled_at</code>, and the migration-028
   <code>session_messages.trigger_kind</code> column are on the
-  <a href="../data/schema.html">schema</a>. Downstream, the next session's
-  <a href="./session-prep.html">prep</a> reads the handoff and the prior summaries; secret tiers
-  stay behind the <a href="./slow-thinker.html">Slow-Thinker</a> gate.
+  <a href="../data/schema.html">schema</a>. The reconcile commit's <code>promoteToKnown</code> tier
+  flips and the player wiki's <code>campaignWikiView</code> +
+  <code>getWikiSummary</code> composition also live in the
+  <a href="../data/repository.html">repository layer</a>; the wiki read is a deliberately narrow
+  sibling of world-gen's owner-only
+  <a href="./world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a>
+  (which shares the <code>known</code> / <code>discoverable</code> / <code>secret</code> tier
+  model). Downstream, the next session's <a href="./session-prep.html">prep</a> reads the handoff
+  and the prior summaries; secret tiers stay behind the
+  <a href="./slow-thinker.html">Slow-Thinker</a> gate, whose sanction is also what lets a secret be
+  promoted into the wiki at all.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -678,6 +891,15 @@
         <code>description</code>.
       </td>
     </tr>
+    <tr>
+      <td><code>promotions[]</code></td>
+      <td>
+        Live candidate <code>factId</code>s the reconciler matched to a working-set item and judged
+        public — flipped to <code>known</code> at commit. <code>.default([])</code> so an absent
+        field (or the <code>EMPTY_PLAN</code> literal) degrades to empty, never a terminal repair
+        failure.
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -713,6 +935,10 @@
     <tr>
       <td><code>attribution_dropped</code></td>
       <td>An attributed item's fact has <code>claimedBy: null</code>.</td>
+    </tr>
+    <tr>
+      <td><code>dangling_promotion</code></td>
+      <td>A <code>promotions[]</code> id is not a live candidate fact.</td>
     </tr>
   </tbody>
 </table>
@@ -797,6 +1023,45 @@
   </tbody>
 </table>
 
+<h3>The campaign-wiki read (<code>GET /api/campaigns/:campaignId/wiki</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Facet</th>
+      <th>Value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Auth</td>
+      <td>
+        <code>requireCampaignMember(repo)</code> — any party member; tier bypass hardcoded off.
+      </td>
+    </tr>
+    <tr>
+      <td>Readiness</td>
+      <td>
+        <code>409 wiki_not_ready</code> until stage 4 (<code>entity_relationships</code>);
+        <code>404 campaign_not_found</code> on a null world id.
+      </td>
+    </tr>
+    <tr>
+      <td>Rate limit</td>
+      <td>60/min, keyed per-user (IP fallback) — the member-poll precedent.</td>
+    </tr>
+    <tr>
+      <td>Body (<code>CampaignWiki</code>)</td>
+      <td>
+        <code>world</code> (<code>WikiWorldSummary</code> — name/tone/themes/era +
+        <code>known</code> vocabulary, <strong>no <code>concept</code></strong
+        >), <code>known</code> <code>entities[]</code> (id/name/type), their live <code>known</code>
+        <code>facts[]</code>, <code>known</code>-tier <code>relationships[]</code>. No prose
+        kernels, no stat blocks.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
 <h2>Source</h2>
 
 <p>
@@ -815,8 +1080,15 @@
   schema, and prompt), <code>backend/src/session/session-turn-queue-events.ts</code> (the terminal-
   stall finalize backstop), <code>backend/src/repo/facts.ts</code> / <code>sessions.ts</code> /
   <code>entities.ts</code> (the append-only fact writes, the <code>markEnded</code> /
-  <code>writeAnalysis</code> / <code>getPriorContextForPrep</code> binders, play-marking),
-  <code>backend/src/server-queues.ts</code> (the reconcile + analysis queue builds), and
-  <code>backend/migrations/027_fact_supersede.sql</code> (the append-only columns). Design spec:
-  <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code>.
+  <code>writeAnalysis</code> / <code>getPriorContextForPrep</code> binders, play-marking, and the
+  MYT-74c <code>promoteToKnown</code> tier-flips),
+  <code>backend/src/repo/worlds.ts</code> (<code>getWikiSummary</code>, the narrow no-<code
+    >concept</code
+  >
+  player projection), <code>backend/src/repo/campaign-wiki-view.ts</code> (the player wiki
+  composition) + <code>backend/src/routes/campaigns.ts</code> (the <code>GET …/wiki</code> member
+  route), <code>backend/src/server-queues.ts</code> (the reconcile + analysis queue builds), and
+  <code>backend/migrations/027_fact_supersede.sql</code> (the append-only columns). Design specs:
+  <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code> and
+  <code>docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md</code>.
 </p>

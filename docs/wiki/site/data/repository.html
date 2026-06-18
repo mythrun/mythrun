@@ -675,7 +675,10 @@
   transaction.
 </aside>
 
-<h2 id="the-enforced-ignorance-split-getsnapshotsummary-vs-getbyid">The enforced-ignorance split: <code>getSnapshotSummary</code> vs. <code>getById</code></h2>
+<h2 id="the-enforced-ignorance-split-getsnapshotsummary-vs-getbyid-vs-getwikisummary">
+  The enforced-ignorance split: <code>getSnapshotSummary</code> vs. <code>getById</code> vs.
+  <code>getWikiSummary</code>
+</h2>
 
 <p>
   <code>worlds.getSnapshotSummary(id)</code> is the single-sourced home of the world-column
@@ -691,15 +694,61 @@
   composes <code>getSnapshotSummary</code> rather than re-deriving its own projection.
 </p>
 
+<p>
+  MYT-74c adds a <em>third</em> world-summary projection: <code>worlds.getWikiSummary(id)</code>,
+  the home of the even-narrower <strong>player</strong> allowlist. It returns a
+  <code>WikiWorldSummary</code> of <code>id, name, tone, themes, era, vocabulary_registry</code> —
+  the snapshot's list <em>minus <code>concept</code></em
+  >. The owner's raw freeform <code>concept</code> seed is fine for the owner-facing snapshot but
+  can contain plot, so the player wiki must not carry it. Like <code>getSnapshotSummary</code>, the
+  SELECT lives once in <code>worlds.ts</code>, so widening the player wire is a deliberate edit,
+  never an accidental <code>SELECT *</code>.
+</p>
+
 <aside class="wiki-rationale">
-  <strong>The allowlist has exactly one home</strong> — enforced ignorance is a hard boundary
-  (CLAUDE.md Non-Negotiable Principle), and a hard boundary needs one definition, not a column list
-  copied into every player-facing read. Pointing a Fast-Thinker world read at
+  <strong>The allowlist has exactly one home, per audience</strong> — enforced ignorance is a hard
+  boundary (CLAUDE.md Non-Negotiable Principle), and a hard boundary needs one definition, not a
+  column list copied into every player-facing read. Pointing a Fast-Thinker world read at
   <code>getById</code> re-exposes the plot fields, so the split makes that a type error rather than
-  a silent leak: a player-facing caller takes <code>WorldSummary</code>, which can't carry the plot
-  columns at all. The allowlist SELECT lives in <code>worlds.ts</code> beside
-  <code>getSnapshotSummary</code>; the snapshot view re-exports the <code>WorldSummary</code> type
-  for back-compat but does not own the projection.
+  a silent leak: a player-facing caller takes <code>WorldSummary</code> or
+  <code>WikiWorldSummary</code>, neither of which can carry the plot columns. The owner snapshot and
+  the player wiki are separate audiences with separate allowlists (the owner sees
+  <code>concept</code>; the player does not), so they get separate projections rather than one
+  shared one a future widening could leak across.
+</aside>
+
+<h3 id="the-player-campaign-wiki-view">The player campaign-wiki view</h3>
+
+<p>
+  <code>campaignWikiView.fetch(client, worldId)</code> in
+  <code>backend/src/repo/campaign-wiki-view.ts</code> is the composite read behind
+  <a href="../runtime/session-reconcile.html#the-player-campaign-wiki"
+    ><code>GET /api/campaigns/:campaignId/wiki</code></a
+  >
+  — the members' <code>known</code>-tier view of the world they are playing, which grows as each
+  session promotes facts into <code>known</code>. It is a deliberate sibling of
+  <code>worldSnapshotView</code>, <strong>not</strong> a reuse: it composes the narrow
+  <code>getWikiSummary</code> (with the registry entries further filtered to <code>known</code>),
+  the <code>known</code> entities (id/name/type via
+  <code>entities.listByWorld(worldId, {accessLevels:['known']})</code>), their live
+  <code>known</code> facts (<code
+    >facts.listByEntities(ids, {accessLevels:['known'], liveOnly:true})</code
+  >), and the <code>known</code>-tier relationships among them
+  (<code>relationships.listAmong</code>). It attaches
+  <strong>no prose kernels and no stat blocks</strong>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A separate view, because the snapshot's composition leaks for a player</strong> — the
+  tempting shortcut is to point the player wiki at <code>worldSnapshotView</code>. It carries the
+  owner's raw <code>concept</code> (now dropped by <code>getWikiSummary</code>) and, worse,
+  per-entity <strong>prose kernels</strong> — FT-facing generation artifacts that are <em>not</em>
+  tier-gated, so a play-promoted secret entity's kernel is its full characterization blob. The wiki
+  view therefore composes its own player-safe surface and attaches neither kernels nor stat blocks.
+  The owner-only snapshot keeps its full composition unchanged; the two reads are distinct surfaces
+  for distinct audiences, exactly like the three world-summary projections above. The
+  <a href="../runtime/session-reconcile.html#the-player-campaign-wiki">reconcile page</a> covers the
+  route's member-auth, no-bypass, and readiness gates.
 </aside>
 
 <h2 id="the-claude-md-mandate-and-the-no-raw-db-access-lint-rule">The CLAUDE.md mandate and the <code>no-raw-db-access</code> lint rule</h2>
@@ -1423,7 +1472,15 @@
   CHECK-constrained to the same three-tier vocabulary as <code>facts.access_level</code>. MYT-74a
   adds <code>markTouchedByPlay(ids)</code> — the
   <a href="../runtime/session-reconcile.html">end-of-session reconcile</a> calls it to flag every
-  entity it minted or matched as <code>modified_by_play = true</code> in one statement.
+  entity it minted or matched as <code>modified_by_play = true</code> in one statement — and MYT-74c
+  adds the sibling <code>promoteToKnown(entityIds)</code>:
+  <code
+    >UPDATE entities SET access_level='known', updated_at=now() WHERE id = ANY($1) AND access_level
+    &lt;&gt; 'known'</code
+  >, returning the rowCount. The reconcile commit calls it on the distinct owning entity ids
+  <code>facts.promoteToKnown</code> returned, so an entity follows its promoted fact into the
+  <code>known</code> tier (else the player wiki, which filters entities by tier first, would orphan
+  the now-public fact). Idempotent, set-based, last-write-wins on the <code>updated_at</code> bump.
 </p>
 
 <aside class="wiki-rationale">
@@ -1471,10 +1528,23 @@
   returning the new id), and <code>setSuperseded(oldId, newId)</code> points a corrected fact's
   <code>superseded_by</code> at its replacement and NULLs its embedding — the
   <a href="../runtime/session-reconcile.html">end-of-session reconcile</a>'s append-only correction
-  primitives, retiring <code>updateContentById</code> from the canon-correction path.
-  <code>facts.access_level</code> was renamed under migration 014 from
-  <code>(public, private, secret)</code> to <code>(known, discoverable, secret)</code>; the new
-  vocabulary mirrors D&amp;D-mechanic semantics.
+  primitives, retiring <code>updateContentById</code> from the canon-correction path. MYT-74c adds
+  <code>promoteToKnown(factIds)</code> — the reconcile commit's tier-promotion primitive: a single
+  <code
+    >UPDATE facts SET access_level='known' WHERE id = ANY($1) AND access_level &lt;&gt; 'known' AND
+    superseded_by IS NULL RETURNING entity_id</code
+  >, whose returned entity ids are <strong>deduped in JS</strong> (<code>[...new Set(...)]</code>)
+  because two promoted facts can share one owning entity and the contract is "distinct owning entity
+  ids." The <code>&lt;&gt; 'known'</code> + <code>superseded_by IS NULL</code> guards make it
+  idempotent and keep it from ever resurrecting dead canon. <code>facts.access_level</code> was
+  renamed under migration 014 from <code>(public, private, secret)</code> to
+  <code>(known, discoverable, secret)</code>; the new vocabulary mirrors D&amp;D-mechanic semantics,
+  and — read top to bottom — it is a one-way promotion state machine (<code>secret</code> /
+  <code>discoverable</code> → <code>known</code> on discovery), the model the
+  <a href="../runtime/session-reconcile.html#the-access-tier-promotion-state-machine"
+    >reconcile page</a
+  >
+  tells in full.
 </p>
 
 <p>
@@ -1723,17 +1793,18 @@
       <td>
         <code>worldsNs(c)</code> binder — <code>create</code>, <code>insertGenerating</code>,
         <code>getById</code> (full row, prep/ST tier),
-        <code>getSnapshotSummary</code> (enforced-ignorance allowlist → <code>WorldSummary</code>),
-        <code>getDemo</code>, <code>listByUser</code>, <code>update</code>,
-        <code>updateStatus</code>, <code>incrementForkCount</code>; plus the world-gen stage writers
-        the prep pipeline composes inside its per-stage <code>repo.transaction</code> (<code
-          >markComplete</code
-        >
-        / <code>markFailed</code> / <code>resetFailedToGenerating</code>, <code>applyConcept</code>,
+        <code>getSnapshotSummary</code> (owner-snapshot allowlist → <code>WorldSummary</code>),
+        <code>getWikiSummary</code> (the narrower player-wiki allowlist, no <code>concept</code> →
+        <code>WikiWorldSummary</code>), <code>getDemo</code>, <code>listByUser</code>,
+        <code>update</code>, <code>updateStatus</code>, <code>incrementForkCount</code>; plus the
+        world-gen stage writers the prep pipeline composes inside its per-stage
+        <code>repo.transaction</code> (<code>markComplete</code> / <code>markFailed</code> /
+        <code>resetFailedToGenerating</code>, <code>applyConcept</code>,
         <code>setVocabularyRegistry</code>, <code>setWorldOverview</code>, the
         <code>entity_consolidation_pending</code> get/set/clear trio, and the starting-situation
-        setters); <code>WorldSummary</code> type; <code>createWorldsRepo(pool)</code> back-compat
-        factory.
+        setters), <code>getWikiSummary</code> (player-wiki allowlist, no <code>concept</code>);
+        <code>WorldSummary</code> + <code>WikiWorldSummary</code> types;
+        <code>createWorldsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
     <tr>
@@ -1871,7 +1942,9 @@
       <td>
         <code>entities.insert</code> (caller-supplied UUID + required
         <code>createdIn</code> provenance tag), <code>findByWorldAndName</code>,
-        <code>listByWorld</code>.
+        <code>findIdByWorldAndNormalizedName</code>, <code>listByWorld</code>,
+        <code>markTouchedByPlay</code>, <code>promoteToKnown</code> (reconcile entity-follows-fact
+        tier flip).
       </td>
     </tr>
     <tr>
@@ -1885,8 +1958,11 @@
       <td><code>src/repo/facts.ts</code></td>
       <td>
         <code>facts.insertMany</code> (stamps <code>narrative_status='undelivered'</code> as a
-        constant; <code>source</code> via column default), <code>updateContentById</code>
-        (coherence-pass fix_fact).
+        constant; <code>source</code> via column default),
+        <code>updateContentById</code> (coherence-pass fix_fact), <code>insertReconciled</code> /
+        <code>setSuperseded</code> (append-only correction), <code>listByEntities</code> (tier +
+        <code>liveOnly</code> filter), <code>promoteToKnown</code> (tier flip → distinct owning
+        entity ids).
       </td>
     </tr>
     <tr>
@@ -1903,6 +1979,15 @@
         <code>entityHierarchyNs(c)</code> — <code>insert</code>, <code>listForWorld</code>. Caller
         pre-filters against the table's <code>UNIQUE(child_entity_id)</code> — repo does NOT do
         <code>ON CONFLICT</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/campaign-wiki-view.ts</code></td>
+      <td>
+        <code>campaignWikiView.fetch(client, worldId)</code> — the player campaign-wiki composite
+        read (narrow <code>getWikiSummary</code> + <code>known</code> entities/facts/relationships,
+        no kernels, no stat blocks). The member-facing sibling of <code>worldSnapshotView</code>;
+        <code>CampaignWiki</code> / <code>WikiEntity</code> types.
       </td>
     </tr>
     <tr>
@@ -2040,7 +2125,8 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#one-method-body-two-bindings-the-clientlike-binder">One method body, two bindings: the ClientLike binder</a></li><li style="padding-left:0"><a href="#repo-transaction-the-multi-table-atomic-write-primitive">repo.transaction: the multi-table atomic-write primitive</a></li><li style="padding-left:0"><a href="#two-idioms-composable-binders-vs-self-managing-methods">Two idioms: composable binders vs. self-managing methods</a></li><li style="padding-left:0"><a href="#the-enforced-ignorance-split-getsnapshotsummary-vs-getbyid">The enforced-ignorance split: getSnapshotSummary vs. getById</a></li><li style="padding-left:0"><a href="#the-claude-md-mandate-and-the-no-raw-db-access-lint-rule">The CLAUDE.md mandate and the no-raw-db-access lint rule</a></li><li style="padding-left:0"><a href="#namespace-boundaries-shipped-vs-deferred">Namespace boundaries: shipped vs. deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:12px"><a href="#recordusage-budgetsummary">recordUsage and budgetSummary</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</a></li><li style="padding-left:0"><a href="#the-four-billing-namespaces-tx-composed-by-the-webhook-pool-bound-by-the-routes">The four billing namespaces: tx-composed by the webhook, pool-bound by the routes</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#one-method-body-two-bindings-the-clientlike-binder">One method body, two bindings: the ClientLike binder</a></li><li style="padding-left:0"><a href="#repo-transaction-the-multi-table-atomic-write-primitive">repo.transaction: the multi-table atomic-write primitive</a></li><li style="padding-left:0"><a href="#two-idioms-composable-binders-vs-self-managing-methods">Two idioms: composable binders vs. self-managing methods</a></li><li style="padding-left:0"><a href="#the-enforced-ignorance-split-getsnapshotsummary-vs-getbyid-vs-getwikisummary">The enforced-ignorance split: getSnapshotSummary vs. getById vs.
+  getWikiSummary</a></li><li style="padding-left:12px"><a href="#the-player-campaign-wiki-view">The player campaign-wiki view</a></li><li style="padding-left:0"><a href="#the-claude-md-mandate-and-the-no-raw-db-access-lint-rule">The CLAUDE.md mandate and the no-raw-db-access lint rule</a></li><li style="padding-left:0"><a href="#namespace-boundaries-shipped-vs-deferred">Namespace boundaries: shipped vs. deferred</a></li><li style="padding-left:0"><a href="#camel-out-snake-in-mappers-at-the-boundary">Camel out, snake in: mappers at the boundary</a></li><li style="padding-left:0"><a href="#narrowing-helpers-for-enum-like-check-columns">Narrowing helpers for enum-like CHECK columns</a></li><li style="padding-left:0"><a href="#uuidv7-in-its-own-seam">UUIDv7 in its own seam</a></li><li style="padding-left:0"><a href="#insert-returning-one-round-trip-callers-get-the-row">INSERT … RETURNING *: one round-trip, callers get the row</a></li><li style="padding-left:0"><a href="#update-coalesce-n-col-fixed-form-patches">UPDATE … COALESCE($n, col): fixed-form patches</a></li><li style="padding-left:0"><a href="#the-boot-gate-s-stub-pool-composed">The boot gate's stub pool, composed</a></li><li style="padding-left:0"><a href="#per-namespace-shape">Per-namespace shape</a></li><li style="padding-left:12px"><a href="#recordusage-budgetsummary">recordUsage and budgetSummary</a></li><li style="padding-left:0"><a href="#the-credits-namespace-append-only-ledger-with-an-atomic-spend">The credits namespace: append-only ledger with an atomic spend</a></li><li style="padding-left:0"><a href="#the-world-content-namespaces-streaming-stages-share-a-caller-owned-transaction">The world-content namespaces: streaming stages share a caller-owned transaction</a></li><li style="padding-left:0"><a href="#the-four-billing-namespaces-tx-composed-by-the-webhook-pool-bound-by-the-routes">The four billing namespaces: tx-composed by the webhook, pool-bound by the routes</a></li><li style="padding-left:0"><a href="#tests-real-postgres-truncate-based-reset">Tests: real Postgres, TRUNCATE-based reset</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-source-layout">Appendix: source layout</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
