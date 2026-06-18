@@ -143,6 +143,7 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
     factEmbeddings: readonly (readonly number[])[]
   } {
     const plan: ReconcilePlan = {
+      promotions: [],
       entities: [
         {
           op: 'mint',
@@ -362,6 +363,7 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
     const s = await seed()
     // Two minted entities: a parent faction "Cabal" and a child npc "Acolyte".
     const plan: ReconcilePlan = {
+      promotions: [],
       entities: [
         {
           op: 'mint',
@@ -445,6 +447,7 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
     // A plan that re-matches both entities and a working set that WOULD parent
     // Acolyte under Cabal — but Acolyte already has a parent, so it's skipped.
     const plan2: ReconcilePlan = {
+      promotions: [],
       entities: [
         {
           op: 'match',
@@ -501,6 +504,7 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
     // against canon (findIdByWorldAndNormalizedName), not just the plan's map.
     const s = await seed() // seeds canon faction 'The Ashen Court' (canonFactionId)
     const plan: ReconcilePlan = {
+      promotions: [],
       entities: [
         {
           op: 'mint',

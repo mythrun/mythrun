@@ -103,4 +103,16 @@ describe('ReconcilePlanSchema', () => {
     })
     expect(r.success).toBe(true)
   })
+
+  it('accepts promotions and defaults it to []', () => {
+    const withProm = ReconcilePlanSchema.parse({
+      entities: [],
+      facts: [],
+      relationships: [],
+      promotions: ['f1', 'f2'],
+    })
+    expect(withProm.promotions).toEqual(['f1', 'f2'])
+    const without = ReconcilePlanSchema.parse({ entities: [], facts: [], relationships: [] })
+    expect(without.promotions).toEqual([])
+  })
 })

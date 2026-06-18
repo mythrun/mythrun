@@ -103,6 +103,7 @@ function validPlan(over: Partial<ReconcilePlan> = {}): ReconcilePlan {
       },
     ],
     relationships: [],
+    promotions: [],
     ...over,
   }
 }
@@ -111,6 +112,7 @@ function validPlan(over: Partial<ReconcilePlan> = {}): ReconcilePlan {
  *  working-set item (secret → known is a `tier_downgrade`). */
 function tierDowngradePlan(): ReconcilePlan {
   return {
+    promotions: [],
     entities: [
       { op: 'mint', subjectName: 'the cult', canonEntityId: null, name: 'The Hidden Hand', entityType: 'faction', accessLevel: 'secret' },
     ],
@@ -372,7 +374,7 @@ describe('processReconcileJob — empty working set', () => {
     expect(rec.reconcilerCalls).toHaveLength(0)
     expect(rec.committedArgs).toHaveLength(1)
     const args = rec.committedArgs[0] as { plan: ReconcilePlan; map: ReadonlyMap<string, unknown> }
-    expect(args.plan).toEqual({ entities: [], facts: [], relationships: [] })
+    expect(args.plan).toEqual({ entities: [], facts: [], relationships: [], promotions: [] })
     expect(args.map.size).toBe(0)
     expect(rec.cleared).toEqual([CAMPAIGN])
     expect(rec.released).toBe(1)

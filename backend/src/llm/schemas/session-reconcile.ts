@@ -50,5 +50,11 @@ export const ReconcilePlanSchema = z.object({
       description: z.string().min(1),
     }),
   ),
+  /** MYT-74c — ids of EXISTING candidate facts (discoverable/secret) the
+   *  reconciler MATCHED to a working-set item this session and judged should
+   *  become public → promote to `known`. Each must be a live candidate factId
+   *  (validator-enforced). `.default([])` so an absent field / EMPTY_PLAN is [],
+   *  never a terminal repair failure. NEVER a fact also being superseded. */
+  promotions: z.array(z.string()).default([]),
 })
 export type ReconcilePlan = z.infer<typeof ReconcilePlanSchema>

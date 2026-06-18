@@ -61,7 +61,7 @@ function wsItem(o: Partial<WorkingSetItem> = {}): WorkingSetItem {
 }
 
 function plan(o: Partial<ReconcilePlan> = {}): ReconcilePlan {
-  return { entities: [], facts: [], relationships: [], ...o }
+  return { entities: [], facts: [], relationships: [], promotions: [], ...o }
 }
 
 const CANON_ALDRIC = '0192a000-0000-7000-8000-000000000001'

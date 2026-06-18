@@ -167,7 +167,7 @@ export function renderCandidates(
 
 // ── Processor ───────────────────────────────────────────────────────────────
 
-const EMPTY_PLAN: ReconcilePlan = { entities: [], facts: [], relationships: [] }
+const EMPTY_PLAN: ReconcilePlan = { entities: [], facts: [], relationships: [], promotions: [] }
 
 /**
  * The end-of-session reconcile job. NOT total — THROWS on transient failure so

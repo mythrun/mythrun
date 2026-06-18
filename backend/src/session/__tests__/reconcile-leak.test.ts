@@ -119,7 +119,7 @@ function wsItem(o: Partial<WorkingSetItem> = {}): WorkingSetItem {
 }
 
 function plan(o: Partial<ReconcilePlan> = {}): ReconcilePlan {
-  return { entities: [], facts: [], relationships: [], ...o }
+  return { entities: [], facts: [], relationships: [], promotions: [], ...o }
 }
 
 function ctx(o: Partial<ValidateCtx> = {}): ValidateCtx {
@@ -248,6 +248,7 @@ function session(over: Partial<Session> = {}): Session {
  *  working-set item (secret → known) AND its content is the SECRET prose. */
 function secretTierDowngradePlan(): ReconcilePlan {
   return {
+    promotions: [],
     entities: [
       {
         op: 'mint',
@@ -530,6 +531,7 @@ describe('MYT-74a T14 leak matrix — real PG (read-path filter + tier preserved
     // A plan minting a NEW entity + a secret-tier fact, with a matching secret-tier
     // working-set item (so the validator's tier floor passes, not downgrades).
     const p: ReconcilePlan = {
+      promotions: [],
       entities: [
         {
           op: 'mint',
