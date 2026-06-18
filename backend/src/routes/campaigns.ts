@@ -31,6 +31,7 @@ import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 import { requireUser } from '../auth/require-user.js'
 import { worldSnapshotView } from '../repo/world-snapshot-view.js'
+import { campaignWikiView } from '../repo/campaign-wiki-view.js'
 import { derivePhase, type PhaseAndStages, type PipelinePhase } from '../sse/derive-phase.js'
 import { openSseConnection } from '../sse/sse-connection.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
@@ -662,6 +663,57 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
       const snapshot = await worldSnapshotView.fetch(opts.pool, campaign.worldId, { bypass })
       return reply.send(snapshot)
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /api/campaigns/:campaignId/wiki (MYT-74c T10)
+  //
+  // The PLAYER-facing campaign wiki: any campaign member (not owner-only)
+  // reads the narrow `known`-tier projection. Always known-tier — players
+  // never get the discoverable/secret content, so unlike world-snapshot
+  // there is no bypass widening. Same 409-until-stage-4 readiness gate
+  // (entities + facts + relationships are only fully written once
+  // entity_relationships commits), but the `wiki_not_ready` code.
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: Params }>(
+    '/api/campaigns/:campaignId/wiki',
+    {
+      config: {
+        // Member-read surface (every party member, likely UI-fanned) → per-user
+        // key, 60/min — the `status` member-poll precedent, not the owner
+        // snapshot's 30/IP.
+        rateLimit: {
+          max: 60,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest): string => {
+            try {
+              return requireDbUser(req).id
+            } catch {
+              return req.ip
+            }
+          },
+        },
+        pipelineRoute: true,
+      },
+      preHandler: requireCampaignMember(repo),
+    },
+    async (request, reply) => {
+      const campaign = await repo.campaigns.getById(request.params.campaignId)
+      /* c8 ignore start — `!campaign` arm: requireCampaignMember has already
+       * verified the row exists; deletion-mid-flight is the race this guards. */
+      if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
+      /* c8 ignore stop */
+
+      const ready = await pipelineRunsRepo.isStageCompleted(
+        campaign.worldId,
+        'entity_relationships',
+      )
+      if (!ready) return reply.code(409).send({ code: 'wiki_not_ready' })
+
+      const wiki = await campaignWikiView.fetch(opts.pool, campaign.worldId)
+      return reply.send(wiki)
     },
   )
 

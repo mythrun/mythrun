@@ -155,6 +155,12 @@ export interface PageRegistration {
  * a panel can't / shouldn't exist — the default is to author a panel.
  */
 export const EXEMPT_ROUTES: readonly BackendRoute[] = [
+  // GET /api/campaigns/:campaignId/wiki (MYT-74c): the PLAYER-facing campaign
+  // wiki (member-readable, narrow known-tier). Not a dev-tool inspector surface —
+  // the owner-only world-snapshot panel already covers world inspection; this
+  // route exists for the player UI (a Frontend ticket), so it has no dev-tool panel.
+  { method: 'GET', path: '/api/campaigns/:campaignId/wiki' },
+
   // POST /webhooks/stripe: signature-verified consumer of Stripe events.
   // The HMAC over the raw body would reject any request not signed with
   // Stripe's webhook secret — there's no useful UI surface a human could

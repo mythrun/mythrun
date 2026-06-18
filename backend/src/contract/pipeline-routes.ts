@@ -24,6 +24,8 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'PATCH /api/campaigns/:campaignId/name',
   // myth-exac — dev-tool snapshot inspector (owner-only, gated on stage 4):
   'GET /api/campaigns/:campaignId/world-snapshot',
+  // MYT-74c — player campaign wiki (member-readable, narrow known-tier, gated on stage 4):
+  'GET /api/campaigns/:campaignId/wiki',
   // MYT-53 — per-player parallel character creation. NOTE:
   // POST /archive is intentionally NOT here — the route is a campaign-
   // level state flip (setup/active → archived), not a stage in the prep
