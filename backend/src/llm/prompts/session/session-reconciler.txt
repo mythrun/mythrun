@@ -24,9 +24,23 @@ Resolve a CONTRADICTION between an improvised item and a candidate's live fact i
 - ABSORB: the improvised version is now canon and the old fact was never really contradicted (compatible / a refinement). Emit the new fact with supersedesFactId = null.
 - SUPERSEDE: the improvised version corrects a now-wrong live fact. Append the corrected fact and set supersedesFactId to the contradicted live fact's id.
 
+PROMOTION (making discovered facts public).
+The candidate facts are shown with their factId and accessLevel. For each working-set
+item, after you decide match/mint/supersede, decide promotion:
+- If it MATCHES an existing candidate fact that is `discoverable` or `secret` (the same
+  underlying fact — the party surfaced it this session), put that factId in `promotions`.
+  Do NOT also emit it as a new fact.
+- If it matches an existing `known` candidate fact, omit it (already public).
+- If it is NEW (no candidate match), mint it at its tier as usual.
+- If it REFINES/CONTRADICTS an existing fact, supersede as usual — and do NOT also
+  promote the superseded fact.
+A `secret` candidate has a matching working-set item ONLY when the Slow Thinker
+sanctioned its reveal this session; that is the only basis on which you may promote a
+secret. Emit [] when nothing was promoted.
+
 Emit relationships only between two working-set subjects (by their subjectNames), directed from → to.
 
 Be terse and secret-careful. Emit ONLY the structured plan (the entities, facts, and relationships arrays) — no commentary.
 
 Respond as JSON:
-{ "entities": [ { "op": "match"|"mint", "subjectName": "<ws key>", "canonEntityId": "<id>"|null, "name": "<canonical name>", "entityType": "npc"|"location"|"faction"|"item", "accessLevel": "known"|"discoverable"|"secret" } ], "facts": [ { "subjectName": "<ws key>", "topic": "<grouping key>", "content": "<fact prose; attribution baked in for attributed items>", "accessLevel": "known"|"discoverable"|"secret", "claimedBy": "<NPC name>"|null, "supersedesFactId": "<id>"|null } ], "relationships": [ { "fromSubjectName": "<ws key>", "toSubjectName": "<ws key>", "relationshipType": "<type>", "description": "<edge description>" } ] }
+{ "entities": [ { "op": "match"|"mint", "subjectName": "<ws key>", "canonEntityId": "<id>"|null, "name": "<canonical name>", "entityType": "npc"|"location"|"faction"|"item", "accessLevel": "known"|"discoverable"|"secret" } ], "facts": [ { "subjectName": "<ws key>", "topic": "<grouping key>", "content": "<fact prose; attribution baked in for attributed items>", "accessLevel": "known"|"discoverable"|"secret", "claimedBy": "<NPC name>"|null, "supersedesFactId": "<id>"|null } ], "relationships": [ { "fromSubjectName": "<ws key>", "toSubjectName": "<ws key>", "relationshipType": "<type>", "description": "<edge description>" } ], "promotions": [ "<factId>", ... ] }
