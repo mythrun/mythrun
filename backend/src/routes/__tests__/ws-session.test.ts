@@ -1665,6 +1665,9 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
     skillCheck: vi.fn().mockResolvedValue(undefined),
     diceRoll: vi.fn().mockResolvedValue(undefined),
     ledgerUpdate: vi.fn().mockResolvedValue(undefined),
+    modeChange: vi.fn().mockResolvedValue(undefined),
+    combatStarted: vi.fn().mockResolvedValue(undefined),
+    combatResolved: vi.fn().mockResolvedValue(undefined),
     turnEnd: vi.fn().mockResolvedValue(undefined),
     turnError: vi.fn().mockResolvedValue(undefined),
     emitFor: vi.fn().mockReturnValue({
@@ -1672,6 +1675,9 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
       emitSkillCheck: () => Promise.resolve(undefined),
       emitDiceRoll: () => Promise.resolve(undefined),
       emitLedgerUpdate: () => Promise.resolve(undefined),
+      emitModeChange: () => Promise.resolve(undefined),
+      emitCombatStarted: () => Promise.resolve(undefined),
+      emitCombatResolved: () => Promise.resolve(undefined),
     }),
   }
 }

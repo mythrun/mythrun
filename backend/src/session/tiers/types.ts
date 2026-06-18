@@ -182,6 +182,36 @@ export interface DiceRollFramePayload {
   readonly total: number
 }
 
+/** MYT-75 §combat — the L1 mode-change frame payload: the session flips between
+ *  exploration and combat. `reason` is a public, behavior-bound label (never
+ *  secret rationale). */
+export interface ModeChangeFramePayload {
+  readonly from: 'exploration' | 'combat'
+  readonly to: 'exploration' | 'combat'
+  readonly reason: string
+}
+
+/** MYT-75 §combat — the combat_started frame payload: the rolled enemy roster
+ *  and the initiative order. */
+export interface CombatStartedFramePayload {
+  readonly enemies: readonly { name: string; description: string; count: number }[]
+  readonly initiative: readonly { combatant: string; roll: number }[]
+}
+
+/** MYT-75 §combat — the combat_resolved frame payload: the close-out narration,
+ *  the outcome, the casualty list, and the per-combatant HP deltas. */
+export interface CombatResolvedFramePayload {
+  readonly narration: string
+  readonly outcome: 'victory' | 'defeat' | 'flee' | 'other'
+  readonly casualties: readonly { name: string; type: 'pc' | 'npc'; fate: string }[]
+  readonly hpChanges: readonly {
+    combatant: string
+    hpBefore: number
+    hpAfter: number
+    maxHp: number
+  }[]
+}
+
 /** The widened emit seam (§3.7): one method per player-visible frame kind.
  *  ALL emission happens from the FT's consume loop in stream-part order —
  *  tools never emit (§3.2 step 5). */
@@ -195,6 +225,13 @@ export interface TurnEmitter {
    *  consume loop only emits on `ok:true` (and a non-no-op condition) — `ok:false`
    *  rejections and idempotent no-ops emit nothing (§8). */
   emitLedgerUpdate(payload: LedgerUpdatePayload): Promise<void>
+  /** MYT-75 §combat L1 — the session flips between exploration and combat. */
+  emitModeChange(payload: ModeChangeFramePayload): Promise<void>
+  /** MYT-75 §combat L1 — combat begins: the rolled enemy roster + initiative. */
+  emitCombatStarted(payload: CombatStartedFramePayload): Promise<void>
+  /** MYT-75 §combat L1 — combat ends: close-out narration, outcome, casualties,
+   *  and per-combatant HP deltas. */
+  emitCombatResolved(payload: CombatResolvedFramePayload): Promise<void>
 }
 
 export interface AssistantMessage {

@@ -31,6 +31,9 @@ describe('tier stubs', () => {
       emitSkillCheck: vi.fn(() => Promise.resolve()),
       emitDiceRoll: vi.fn(() => Promise.resolve()),
       emitLedgerUpdate: vi.fn(() => Promise.resolve()),
+      emitModeChange: vi.fn(() => Promise.resolve()),
+      emitCombatStarted: vi.fn(() => Promise.resolve()),
+      emitCombatResolved: vi.fn(() => Promise.resolve()),
     }
     const msg = await new StubFastThinker().render(ctx, emit)
     expect(emitted).toEqual(['(the DM considers the scene…)'])

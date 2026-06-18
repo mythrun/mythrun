@@ -164,6 +164,18 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
       calls.order.push('ledger_update')
       return Promise.resolve()
     }),
+    modeChange: vi.fn((): Promise<void> => {
+      calls.order.push('mode_change')
+      return Promise.resolve()
+    }),
+    combatStarted: vi.fn((): Promise<void> => {
+      calls.order.push('combat_started')
+      return Promise.resolve()
+    }),
+    combatResolved: vi.fn((): Promise<void> => {
+      calls.order.push('combat_resolved')
+      return Promise.resolve()
+    }),
     turnError: vi.fn((campaignId: string, turnId: string, message: string): Promise<void> => {
       calls.order.push('turn_error')
       calls.turnErrorArgs.push({ campaignId, turnId, message })
@@ -188,6 +200,18 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
         },
         emitLedgerUpdate: (): Promise<void> => {
           calls.order.push('ledger_update')
+          return Promise.resolve()
+        },
+        emitModeChange: (): Promise<void> => {
+          calls.order.push('mode_change')
+          return Promise.resolve()
+        },
+        emitCombatStarted: (): Promise<void> => {
+          calls.order.push('combat_started')
+          return Promise.resolve()
+        },
+        emitCombatResolved: (): Promise<void> => {
+          calls.order.push('combat_resolved')
           return Promise.resolve()
         },
       }
@@ -3115,6 +3139,9 @@ describe('makeLatchedEmitter', () => {
         order.push('inner.emitLedgerUpdate')
         return Promise.resolve()
       },
+      emitModeChange: (): Promise<void> => Promise.resolve(),
+      emitCombatStarted: (): Promise<void> => Promise.resolve(),
+      emitCombatResolved: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -3141,6 +3168,9 @@ describe('makeLatchedEmitter', () => {
         order.push('inner.emitLedgerUpdate')
         return Promise.resolve()
       },
+      emitModeChange: (): Promise<void> => Promise.resolve(),
+      emitCombatStarted: (): Promise<void> => Promise.resolve(),
+      emitCombatResolved: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -3169,6 +3199,9 @@ describe('makeLatchedEmitter', () => {
       },
       emitDiceRoll: (): Promise<void> => Promise.resolve(),
       emitLedgerUpdate: (): Promise<void> => Promise.resolve(),
+      emitModeChange: (): Promise<void> => Promise.resolve(),
+      emitCombatStarted: (): Promise<void> => Promise.resolve(),
+      emitCombatResolved: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -3479,6 +3512,9 @@ describe('publishTerminalTurnError', () => {
       skillCheck: vi.fn((): Promise<void> => Promise.resolve()),
       diceRoll: vi.fn((): Promise<void> => Promise.resolve()),
       ledgerUpdate: vi.fn((): Promise<void> => Promise.resolve()),
+      modeChange: vi.fn((): Promise<void> => Promise.resolve()),
+      combatStarted: vi.fn((): Promise<void> => Promise.resolve()),
+      combatResolved: vi.fn((): Promise<void> => Promise.resolve()),
       turnEnd: vi.fn((): Promise<void> => Promise.resolve()),
       turnError: vi.fn((): Promise<void> => Promise.reject(publishErr)),
       emitFor: vi.fn(
@@ -3487,6 +3523,9 @@ describe('publishTerminalTurnError', () => {
           emitSkillCheck: (): Promise<void> => Promise.resolve(),
           emitDiceRoll: (): Promise<void> => Promise.resolve(),
           emitLedgerUpdate: (): Promise<void> => Promise.resolve(),
+          emitModeChange: (): Promise<void> => Promise.resolve(),
+          emitCombatStarted: (): Promise<void> => Promise.resolve(),
+          emitCombatResolved: (): Promise<void> => Promise.resolve(),
         }),
       ),
     }

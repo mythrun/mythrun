@@ -127,6 +127,9 @@ function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
       seen.push({ kind: 'ledger_update', payload })
       return Promise.resolve()
     },
+    emitModeChange: () => Promise.resolve(),
+    emitCombatStarted: () => Promise.resolve(),
+    emitCombatResolved: () => Promise.resolve(),
   }
   return { emit, seen }
 }

@@ -231,6 +231,92 @@ describe('createTurnPublisher', () => {
     })
   })
 
+  it('modeChange publishes a mode_change frame built field-by-field (no live seq)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.modeChange(CAMPAIGN, TURN, { from: 'exploration', to: 'combat', reason: 'combat' })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'mode_change',
+      turnId: TURN,
+      from: 'exploration',
+      to: 'combat',
+      reason: 'combat',
+    })
+    expect((received[0]?.frame as { seq?: number }).seq).toBeUndefined()
+  })
+
+  it('combatStarted publishes a combat_started frame carrying enemies + initiative (no live seq)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.combatStarted(CAMPAIGN, TURN, {
+      enemies: [{ name: 'Goblin', description: 'a snarling scout', count: 3 }],
+      initiative: [
+        { combatant: 'Mara', roll: 18 },
+        { combatant: 'Goblin', roll: 7 },
+      ],
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'combat_started',
+      turnId: TURN,
+      enemies: [{ name: 'Goblin', description: 'a snarling scout', count: 3 }],
+      initiative: [
+        { combatant: 'Mara', roll: 18 },
+        { combatant: 'Goblin', roll: 7 },
+      ],
+    })
+    expect((received[0]?.frame as { seq?: number }).seq).toBeUndefined()
+  })
+
+  it('combatResolved publishes a combat_resolved frame carrying narration/outcome/casualties/hpChanges', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.combatResolved(CAMPAIGN, TURN, {
+      narration: 'The last goblin flees into the dark.',
+      outcome: 'victory',
+      casualties: [{ name: 'Goblin', type: 'npc', fate: 'slain' }],
+      hpChanges: [{ combatant: 'Mara', hpBefore: 18, hpAfter: 11, maxHp: 18 }],
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'combat_resolved',
+      turnId: TURN,
+      narration: 'The last goblin flees into the dark.',
+      outcome: 'victory',
+      casualties: [{ name: 'Goblin', type: 'npc', fate: 'slain' }],
+      hpChanges: [{ combatant: 'Mara', hpBefore: 18, hpAfter: 11, maxHp: 18 }],
+    })
+  })
+
+  it('emitFor returns a bound TurnEmitter whose combat methods publish', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    const emit = pub.emitFor(CAMPAIGN, TURN)
+    await emit.emitModeChange({ from: 'exploration', to: 'combat', reason: 'combat' })
+    await emit.emitCombatStarted({
+      enemies: [{ name: 'Goblin', description: 'a snarling scout', count: 3 }],
+      initiative: [{ combatant: 'Mara', roll: 18 }],
+    })
+    await emit.emitCombatResolved({
+      narration: 'The fight ends.',
+      outcome: 'victory',
+      casualties: [],
+      hpChanges: [],
+    })
+    await tick()
+
+    expect(received).toHaveLength(3)
+    expect(received.map((m) => m.frame.type)).toEqual([
+      'mode_change',
+      'combat_started',
+      'combat_resolved',
+    ])
+    expect(received.every((m) => m.channel === sessionChannel(KEY_PREFIX, CAMPAIGN))).toBe(true)
+  })
+
   it('emitFor returns a bound TurnEmitter that publishes via each method', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
     const emit = pub.emitFor(CAMPAIGN, TURN)

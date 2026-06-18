@@ -9,11 +9,14 @@
 // and replayed from session_messages rows on reconnect. MYT-70 adds
 // ledger_update (server->client only) — a post-mutation character-sheet delta
 // (hp/gold/item/feature/spell_slot/condition/rest), same live-then-replayed
-// lifecycle as the MYT-68 mechanical frames. The remaining §5.2
-// DM-turn frames (combat_*, session_end, st_evaluation, scribe_result,
-// reaction_window, ...) are still deliberately ABSENT here — they land as
-// those surfaces are built. Adding them prematurely would let the transport
-// accept / broadcast frame types it has no handler for.
+// lifecycle as the MYT-68 mechanical frames. MYT-75 adds the combat L1 server
+// frames (mode_change, combat_started, combat_resolved server->client); the
+// matching resume_combat client frame lands with the WS handler that owns it.
+// The remaining §5.2 DM-turn frames (session_end already
+// landed; st_evaluation, scribe_result, reaction_window, ...) are still
+// deliberately ABSENT here — they land as those surfaces are built. Adding them
+// prematurely would let the transport accept / broadcast frame types it has no
+// handler for.
 //
 // Mirrors the pattern in backend/src/contract/pipeline-events.ts: a
 // `readonly string[]` allowlist + a discriminated-union payload type per
@@ -42,9 +45,10 @@ export const CLIENT_FRAME_TYPES = [
 
 // Server -> Client frame types. The MYT-65 subset, the MYT-66 DM-turn
 // streaming frames (`dm_thinking`, `text_delta`, `turn_end`, `turn_error`),
-// the MYT-68 mechanical frames (`skill_check`, `dice_roll`, `dm_message`), and
-// the MYT-70 `ledger_update` character-sheet delta frame. `combat_*`,
-// `session_end`, etc. are further DM-turn frames added later.
+// the MYT-68 mechanical frames (`skill_check`, `dice_roll`, `dm_message`), the
+// MYT-70 `ledger_update` character-sheet delta frame, and the MYT-75 combat L1
+// frames (`mode_change`, `combat_started`, `combat_resolved`). Further DM-turn
+// frames (`st_evaluation`, `scribe_result`, ...) are added later.
 export const SERVER_FRAME_TYPES = [
   'session_ready',
   'session_reconnect',
@@ -81,6 +85,15 @@ export const SERVER_FRAME_TYPES = [
   // persisted, not replayed — a reconnect to an ended session is rejected at the
   // ws-ticket handshake (status !== 'active'), so there is no replay path here.
   'session_end',
+  // MYT-75 combat L1 frames. Same live-then-replayed lifecycle as the MYT-68
+  // mechanical frames: streamed during a turn (no seq) and replayed from
+  // session_messages rows on reconnect (then carrying the row's seq).
+  // `mode_change` flips exploration<->combat; `combat_started` carries the
+  // rolled enemy roster + initiative; `combat_resolved` carries the close-out
+  // narration + outcome + casualties + HP deltas.
+  'mode_change',
+  'combat_started',
+  'combat_resolved',
 ] as const
 
 // Snapshot of a connected participant, used in the reconnect replay payload.
@@ -211,6 +224,39 @@ export type ServerFrame =
   // budget auto-end (T12 may add further reasons). Carries NO seq (a control
   // frame, like the presence frames) and is not persisted/replayed.
   | { type: 'session_end'; reason: 'normal' }
+  // MYT-75 combat L1 frames. Live-streamed during a turn (no seq) and replayed
+  // from session_messages rows on reconnect (then carrying the row's seq), same
+  // lifecycle as the MYT-68 mechanical frames. Each carries `turnId` (stable
+  // across redeliveries, H2).
+  | {
+      type: 'mode_change'
+      turnId: string
+      seq?: number // present only on reconnect replay (persisted row)
+      from: 'exploration' | 'combat'
+      to: 'exploration' | 'combat'
+      reason: string
+    }
+  | {
+      type: 'combat_started'
+      turnId: string
+      seq?: number // present only on reconnect replay (persisted row)
+      enemies: readonly { name: string; description: string; count: number }[]
+      initiative: readonly { combatant: string; roll: number }[]
+    }
+  | {
+      type: 'combat_resolved'
+      turnId: string
+      seq?: number // present only on reconnect replay (persisted row)
+      narration: string
+      outcome: 'victory' | 'defeat' | 'flee' | 'other'
+      casualties: readonly { name: string; type: 'pc' | 'npc'; fate: string }[]
+      hpChanges: readonly {
+        combatant: string
+        hpBefore: number
+        hpAfter: number
+        maxHp: number
+      }[]
+    }
 
 // Tripwire over the client allowlist. Only these client frame types may
 // originate a persisted/broadcast frame; everything else (DM-turn frames,

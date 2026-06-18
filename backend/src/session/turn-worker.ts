@@ -296,6 +296,18 @@ export function makeLatchedEmitter(inner: TurnEmitter, markEmitted: () => Promis
       await ensureMarked()
       await inner.emitLedgerUpdate(payload)
     },
+    emitModeChange: async (payload) => {
+      await ensureMarked()
+      await inner.emitModeChange(payload)
+    },
+    emitCombatStarted: async (payload) => {
+      await ensureMarked()
+      await inner.emitCombatStarted(payload)
+    },
+    emitCombatResolved: async (payload) => {
+      await ensureMarked()
+      await inner.emitCombatResolved(payload)
+    },
   }
 }
 

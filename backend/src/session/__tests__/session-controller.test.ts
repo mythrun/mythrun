@@ -155,6 +155,9 @@ function recordingEmitter(emitted: string[]): TurnEmitter {
     emitSkillCheck: vi.fn((): Promise<void> => Promise.resolve()),
     emitDiceRoll: vi.fn((): Promise<void> => Promise.resolve()),
     emitLedgerUpdate: vi.fn((): Promise<void> => Promise.resolve()),
+    emitModeChange: vi.fn((): Promise<void> => Promise.resolve()),
+    emitCombatStarted: vi.fn((): Promise<void> => Promise.resolve()),
+    emitCombatResolved: vi.fn((): Promise<void> => Promise.resolve()),
   }
 }
 
@@ -202,6 +205,12 @@ function fakeSessionState(opts: {
     // never calls them, so they stay as throwing stubs.
     tryMarkEnding: unused('tryMarkEnding'),
     isEnding: unused('isEnding'),
+    // MYT-75 combat-state additions — the combat surfaces own these; the
+    // controller never calls them, so they stay as throwing stubs.
+    getCombatState: unused('getCombatState'),
+    setCombatState: unused('setCombatState'),
+    clearCombatState: unused('clearCombatState'),
+    tryMarkResumed: unused('tryMarkResumed'),
   }
 }
 

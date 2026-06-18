@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { CLIENT_FRAME_TYPES, SERVER_FRAME_TYPES, classifyClientFrame } from '../session-events.js'
 
 describe('session-events contract', () => {
-  it('client frames are the MYT-65 subset plus the MYT-67 dm_invoke summon + the MYT-74a end_session', () => {
+  it('client frames are the MYT-65 subset plus dm_invoke and end_session', () => {
     expect(CLIENT_FRAME_TYPES).toEqual([
       'player_message',
       'typing_start',
@@ -58,6 +58,20 @@ describe('session-events contract', () => {
       expect(SERVER_FRAME_TYPES).toContain('session_end')
       expect(CLIENT_FRAME_TYPES).not.toContain('session_end')
       expect(classifyClientFrame('session_end')).toBe(false)
+    })
+  })
+
+  describe('MYT-75 combat L1 frames', () => {
+    it('server allowlist gains mode_change / combat_started / combat_resolved', () => {
+      expect(SERVER_FRAME_TYPES).toContain('mode_change')
+      expect(SERVER_FRAME_TYPES).toContain('combat_started')
+      expect(SERVER_FRAME_TYPES).toContain('combat_resolved')
+    })
+    it('the combat server frames are server-only — never inbound client frames', () => {
+      for (const t of ['mode_change', 'combat_started', 'combat_resolved']) {
+        expect(CLIENT_FRAME_TYPES).not.toContain(t)
+        expect(classifyClientFrame(t)).toBe(false)
+      }
     })
   })
 })

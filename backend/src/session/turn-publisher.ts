@@ -21,8 +21,11 @@ import type { Redis } from 'ioredis'
 import { sessionChannel } from '../contract/session-channel.js'
 import type { ServerFrame } from '../contract/session-events.js'
 import type {
+  CombatResolvedFramePayload,
+  CombatStartedFramePayload,
   DiceRollFramePayload,
   LedgerUpdatePayload,
+  ModeChangeFramePayload,
   SkillCheckFramePayload,
   TurnEmitter,
 } from './tiers/types.js'
@@ -40,6 +43,9 @@ export interface TurnPublisher {
   skillCheck(campaignId: string, turnId: string, p: SkillCheckFramePayload): Promise<void>
   diceRoll(campaignId: string, turnId: string, p: DiceRollFramePayload): Promise<void>
   ledgerUpdate(campaignId: string, turnId: string, p: LedgerUpdatePayload): Promise<void>
+  modeChange(campaignId: string, turnId: string, p: ModeChangeFramePayload): Promise<void>
+  combatStarted(campaignId: string, turnId: string, p: CombatStartedFramePayload): Promise<void>
+  combatResolved(campaignId: string, turnId: string, p: CombatResolvedFramePayload): Promise<void>
   turnEnd(campaignId: string, turnId: string): Promise<void>
   turnError(campaignId: string, turnId: string, message: string): Promise<void>
   /** A frame emitter bound to one (campaign, turn) for the Fast Thinker. */
@@ -122,6 +128,58 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     })
   }
 
+  // MYT-75 combat L1. Built field-by-field from the payload + turnId — never a
+  // spread-with-cast, so the wire frame's exact field list (per
+  // contract/session-events.ts) is checked at compile time. Array fields are
+  // copied (`.map` to a fresh per-element object) so the published frame never
+  // aliases the caller's ReadonlyArray. Live frames carry NO seq.
+  async function modeChange(
+    campaignId: string,
+    turnId: string,
+    p: ModeChangeFramePayload,
+  ): Promise<void> {
+    await publish(campaignId, {
+      type: 'mode_change',
+      turnId,
+      from: p.from,
+      to: p.to,
+      reason: p.reason,
+    })
+  }
+
+  async function combatStarted(
+    campaignId: string,
+    turnId: string,
+    p: CombatStartedFramePayload,
+  ): Promise<void> {
+    await publish(campaignId, {
+      type: 'combat_started',
+      turnId,
+      enemies: p.enemies.map((e) => ({ name: e.name, description: e.description, count: e.count })),
+      initiative: p.initiative.map((i) => ({ combatant: i.combatant, roll: i.roll })),
+    })
+  }
+
+  async function combatResolved(
+    campaignId: string,
+    turnId: string,
+    p: CombatResolvedFramePayload,
+  ): Promise<void> {
+    await publish(campaignId, {
+      type: 'combat_resolved',
+      turnId,
+      narration: p.narration,
+      outcome: p.outcome,
+      casualties: p.casualties.map((c) => ({ name: c.name, type: c.type, fate: c.fate })),
+      hpChanges: p.hpChanges.map((h) => ({
+        combatant: h.combatant,
+        hpBefore: h.hpBefore,
+        hpAfter: h.hpAfter,
+        maxHp: h.maxHp,
+      })),
+    })
+  }
+
   async function textDelta(campaignId: string, turnId: string, text: string): Promise<void> {
     await publish(campaignId, { type: 'text_delta', turnId, text })
   }
@@ -134,6 +192,9 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     skillCheck,
     diceRoll,
     ledgerUpdate,
+    modeChange,
+    combatStarted,
+    combatResolved,
     async turnEnd(campaignId, turnId): Promise<void> {
       await publish(campaignId, { type: 'turn_end', turnId })
     },
@@ -148,6 +209,12 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
         emitDiceRoll: (p: DiceRollFramePayload): Promise<void> => diceRoll(campaignId, turnId, p),
         emitLedgerUpdate: (p: LedgerUpdatePayload): Promise<void> =>
           ledgerUpdate(campaignId, turnId, p),
+        emitModeChange: (p: ModeChangeFramePayload): Promise<void> =>
+          modeChange(campaignId, turnId, p),
+        emitCombatStarted: (p: CombatStartedFramePayload): Promise<void> =>
+          combatStarted(campaignId, turnId, p),
+        emitCombatResolved: (p: CombatResolvedFramePayload): Promise<void> =>
+          combatResolved(campaignId, turnId, p),
       }
     },
   }
