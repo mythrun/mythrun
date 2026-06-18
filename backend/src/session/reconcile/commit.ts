@@ -159,6 +159,15 @@ export async function applyReconcileCommit(
     // 6. Play-marking: flag every entity the plan minted or matched as touched.
     await tx.entities.markTouchedByPlay([...resolvedIds.values()])
 
+    // 6b. MYT-74c — promote matched discovered facts (+ their owning entities) to
+    //     `known`. A metadata flip: no supersede, no re-embed. promoteToKnown returns
+    //     the distinct owning entity ids actually flipped; promote those too so the
+    //     wiki (entity-tier-filtered) doesn't orphan the now-known facts.
+    if (plan.promotions.length > 0) {
+      const promotedEntityIds = await tx.facts.promoteToKnown(plan.promotions)
+      if (promotedEntityIds.length > 0) await tx.entities.promoteToKnown(promotedEntityIds)
+    }
+
     // 7. Gate (LAST statement). markReconciled sets reconciled_at only when it
     //    is still NULL. A 0 rowCount means a concurrent execution already
     //    reconciled this session — roll the whole tx back so no duplicate canon

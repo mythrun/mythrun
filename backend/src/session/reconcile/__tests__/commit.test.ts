@@ -544,4 +544,99 @@ describe('applyReconcileCommit (MYT-74a T9, integration)', () => {
     // The edge points at the EXISTING canon faction id, resolved by name.
     expect(hier.rows[0]?.parent_entity_id).toBe(s.canonFactionId)
   })
+
+  it('promotes matched discovered facts (+ owning entities) to known (MYT-74c T7)', async () => {
+    // Seed entity E (discoverable) with a live secret fact f. A plan with
+    // promotions:[f] (nothing else) must flip f → known and E → known.
+    const s = await seed()
+    const entityId = uuidv7()
+    await repo.entities.insert({
+      id: entityId,
+      worldId: s.worldId,
+      entityType: 'npc',
+      name: 'The Veiled Envoy',
+      accessLevel: 'discoverable',
+      createdIn: 'stage:test',
+    })
+    const f = await repo.facts.insertReconciled({
+      entityId,
+      topic: 'errand',
+      content: 'The Veiled Envoy carries a sealed writ.',
+      accessLevel: 'secret',
+    })
+
+    const r = await applyReconcileCommit(repo, {
+      plan: { entities: [], facts: [], relationships: [], promotions: [f] },
+      map: new Map<string, SubjectResolution>(),
+      workingSet: [],
+      worldId: s.worldId,
+      sessionId: s.sessionId,
+      factEmbeddings: [],
+    })
+    expect(r).toEqual({ committed: true })
+
+    // f reads back as known; its owning entity reads back as known too.
+    const factRow = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM facts WHERE id = $1`,
+      [f],
+    )
+    expect(factRow.rows[0]?.access_level).toBe('known')
+    const entityRow = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM entities WHERE id = $1`,
+      [entityId],
+    )
+    expect(entityRow.rows[0]?.access_level).toBe('known')
+  })
+
+  it('promoting a fact superseded earlier in the plan is a no-op (MYT-74c T7)', async () => {
+    // f is superseded (dead canon). A promotion of it must NOT flip it: it
+    // stays secret + superseded, and the commit still succeeds.
+    const s = await seed()
+    const entityId = uuidv7()
+    await repo.entities.insert({
+      id: entityId,
+      worldId: s.worldId,
+      entityType: 'npc',
+      name: 'The Quiet Clerk',
+      accessLevel: 'secret',
+      createdIn: 'stage:test',
+    })
+    const fOld = await repo.facts.insertReconciled({
+      entityId,
+      topic: 'station',
+      content: 'The Quiet Clerk keeps the lower ledger.',
+      accessLevel: 'secret',
+    })
+    const fNew = await repo.facts.insertReconciled({
+      entityId,
+      topic: 'station',
+      content: 'The Quiet Clerk keeps the upper ledger.',
+      accessLevel: 'secret',
+    })
+    await repo.facts.setSuperseded(fOld, fNew)
+
+    const r = await applyReconcileCommit(repo, {
+      plan: { entities: [], facts: [], relationships: [], promotions: [fOld] },
+      map: new Map<string, SubjectResolution>(),
+      workingSet: [],
+      worldId: s.worldId,
+      sessionId: s.sessionId,
+      factEmbeddings: [],
+    })
+    expect(r).toEqual({ committed: true })
+
+    // fOld is untouched: still secret, still superseded by fNew.
+    const oldRow = await pool.query<{ access_level: string; superseded_by: string | null }>(
+      `SELECT access_level, superseded_by FROM facts WHERE id = $1`,
+      [fOld],
+    )
+    expect(oldRow.rows[0]?.access_level).toBe('secret')
+    expect(oldRow.rows[0]?.superseded_by).toBe(fNew)
+    // The owning entity is not promoted either (no fact was flipped).
+    const entityRow = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM entities WHERE id = $1`,
+      [entityId],
+    )
+    expect(entityRow.rows[0]?.access_level).toBe('secret')
+  })
 })
