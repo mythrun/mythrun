@@ -240,6 +240,20 @@ export function entitiesNs(c: ClientLike) {
       /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
       return r.rowCount ?? 0
     },
+    /** MYT-74c — promote entities to `known` (deterministic "entity follows fact":
+     *  the commit promotes the owning entities of any promoted facts so the wiki,
+     *  which filters entities by tier first, doesn't orphan the now-known facts).
+     *  Idempotent (skips already-known). Returns rowCount. */
+    promoteToKnown: async (entityIds: readonly string[]): Promise<number> => {
+      if (entityIds.length === 0) return 0
+      const result = await c.query(
+        `UPDATE entities SET access_level = 'known', updated_at = now()
+          WHERE id = ANY($1) AND access_level <> 'known'`,
+        [entityIds],
+      )
+      /* c8 ignore next — `?? 0` falsy arm: pg always returns a numeric rowCount on UPDATE. */
+      return result.rowCount ?? 0
+    },
     /**
      * starting-situation (stage 6) input read: every location / npc / faction
      * entity for a world with its prose-kernel content, ordered by type then
