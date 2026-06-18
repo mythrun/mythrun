@@ -1,4 +1,3 @@
-import { type Pool } from 'pg'
 import type { ClientLike } from './_types.js'
 
 /**
@@ -95,6 +94,3 @@ export function transcriptSearchNs(c: ClientLike) {
     },
   }
 }
-
-/** Back-compat factory — pool-bound surface. */
-export const createTranscriptSearchRepo = (pool: Pool) => transcriptSearchNs(pool)
