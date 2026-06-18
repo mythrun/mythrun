@@ -31,6 +31,9 @@ export const DM_MESSAGE_TYPES = [
   // the exact tool. The persisted relay is secret-free by construction (the
   // ST-vet sanitizes the output upstream) — this codec only round-trips it.
   'world_fact_lookup',
+  // MYT-75 — combat L1 tools; kind === tool name, persist {toolCallId,input,output} JSON like the ledger tools.
+  'combat_initiate',
+  'combat_resolve',
 ] as const
 export type DmMessageType = (typeof DM_MESSAGE_TYPES)[number]
 
@@ -61,6 +64,9 @@ const KIND_TO_TOOL: Record<Exclude<DmMessageType, 'dm_text'>, string> = {
   // from the row JSON's `toolName`; this entry is only the fallback used when a
   // row omits it (legacy/corrupt-guard).
   world_fact_lookup: 'search_lore',
+  // MYT-75 — combat L1 tools: kind === tool name.
+  combat_initiate: 'initiate_combat',
+  combat_resolve: 'resolve_combat',
 }
 
 const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
@@ -78,6 +84,9 @@ const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
   search_lore: 'world_fact_lookup',
   characters_known_to: 'world_fact_lookup',
   faction_tree: 'world_fact_lookup',
+  // MYT-75 — combat L1 tools: tool name === kind.
+  initiate_combat: 'combat_initiate',
+  resolve_combat: 'combat_resolve',
 }
 
 const DM_TYPE_SET: ReadonlySet<string> = new Set(DM_MESSAGE_TYPES)

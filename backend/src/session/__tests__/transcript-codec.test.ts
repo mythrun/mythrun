@@ -243,6 +243,65 @@ describe('world_fact_lookup tools (MYT-72 §T8)', () => {
   })
 })
 
+// MYT-75 — the two combat L1 tools persist + round-trip exactly like the
+// ledger rows: kind === tool name (combat_initiate / combat_resolve map to
+// initiate_combat / resolve_combat), {toolCallId, input, output} JSON.
+const COMBAT_TOOLS = [
+  { tool: 'initiate_combat', kind: 'combat_initiate' },
+  { tool: 'resolve_combat', kind: 'combat_resolve' },
+] as const
+
+describe('combat tools (MYT-75)', () => {
+  it('round-trips combat tool rows (combat_initiate / combat_resolve)', () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'tool_call', toolCallId: 'c1', toolName: 'initiate_combat', input: { enemies: [] } },
+        { kind: 'tool_result', toolCallId: 'c1', toolName: 'initiate_combat', output: { ok: true } },
+        { kind: 'tool_call', toolCallId: 'c2', toolName: 'resolve_combat', input: { narration: 'x' } },
+        { kind: 'tool_result', toolCallId: 'c2', toolName: 'resolve_combat', output: { ok: true } },
+      ],
+    }
+    const rows = assistantToRows(assistant)
+    expect(rows.map((r) => r.kind)).toEqual(['combat_initiate', 'combat_resolve'])
+  })
+
+  for (const { tool, kind } of COMBAT_TOOLS) {
+    it(`${tool} round-trips: assistantToRows → rowsToConversation reconstructs the tool_call+tool_result pair`, () => {
+      const assistant: AssistantMessage = {
+        role: 'assistant',
+        parts: [
+          { kind: 'text', text: 'Before.' },
+          { kind: 'tool_call', toolCallId: 'c1', toolName: tool, input: { detail: 1 } },
+          { kind: 'tool_result', toolCallId: 'c1', toolName: tool, output: { ok: true, applied: true } },
+          { kind: 'text', text: 'After.' },
+        ],
+      }
+      const turnRows = assistantToRows(assistant)
+      // The tool pair collapses to ONE row keyed by `kind` (kind === tool name).
+      expect(turnRows).toEqual([
+        { kind: 'dm_text', content: 'Before.' },
+        {
+          kind,
+          content: JSON.stringify({
+            toolCallId: 'c1',
+            input: { detail: 1 },
+            output: { ok: true, applied: true },
+          }),
+        },
+        { kind: 'dm_text', content: 'After.' },
+      ])
+
+      const rows = turnRows.map((r, i) =>
+        row({ messageType: r.kind, content: r.content, seq: 10 + i, turnOrdinal: i, turnId: 'tC' }),
+      )
+      const conv = rowsToConversation(rows, names)
+      expect(conv).toHaveLength(1)
+      expect(conv[0]).toEqual({ v: 1, role: 'assistant', parts: assistant.parts })
+    })
+  }
+})
+
 describe('rowsToConversation', () => {
   it('round-trips deterministically (the §3.9 byte-stability requirement)', () => {
     const assistant: AssistantMessage = {
@@ -341,5 +400,7 @@ it('DM_MESSAGE_TYPES is the closed kind set', () => {
     'update_condition',
     'take_rest',
     'world_fact_lookup',
+    'combat_initiate',
+    'combat_resolve',
   ])
 })
