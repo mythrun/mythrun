@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --no-error-on-unmatched-pattern",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --exclude '**/config-wiring.test.ts'"
   },
   "dependencies": {
     "@mythrun/ui": "workspace:*",
