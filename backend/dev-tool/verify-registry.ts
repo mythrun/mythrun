@@ -114,6 +114,14 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'fire-turn': [
     { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
   ],
+  // MYT-75 T10: combat L1 inspector. Exercises the WS session channel
+  // (`GET /ws/session/:sessionId`) — formerly EXEMPT (no JSDOM socket
+  // transport), now a REAL panel. It mounts to `ready` synchronously and
+  // opens the live socket only on the Connect click, so the JSDOM verifier
+  // never reaches the socket; the live combat-frame + resume_combat flow is
+  // human / wire-smoke verified. The HTTP ticket-mint half stays covered by
+  // the session-ticket panel.
+  combat: [{ method: 'GET', path: '/ws/session/:sessionId' }],
 }
 
 // Panels that legitimately have a `mount*` export but are NOT composed
@@ -196,16 +204,15 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // page panel; E2E via MYT-64. (MYT-62 T6.)
   { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
 
-  // GET /ws/session/:sessionId: the MYT-65 WebSocket-upgrade handshake. A WS
-  // upgrade is not a fetch-able HTTP endpoint — JSDOM has no socket transport,
-  // the verify harness only wraps `fetch`, and none of the three panel patterns
-  // (fetch-on-mount / event-driven / action-only) models a raw upgrade. The
-  // HTTP half of the handshake (ticket mint) IS exercised by the session-ticket
-  // panel; the live socket is covered by the backend ws-session two-client
-  // integration test. The three REST lifecycle routes (/start, /active,
-  // /messages) are NOT exempt — they now have dev-tool action panels on the
-  // System page (session-start / session-active / session-messages).
-  { method: 'GET', path: '/ws/session/:sessionId' },
+  // NOTE (MYT-75 T10): GET /ws/session/:sessionId is NO LONGER exempt — the
+  // combat L1 inspector (`combat` panel, System page) is a real panel that
+  // exercises it. The panel mounts to `ready` synchronously and opens the live
+  // WebSocket only on the Connect click (the ticket carries identity, so the
+  // header-less browser socket authenticates), so the JSDOM verify harness —
+  // which has no socket transport — never reaches the connect path; the live
+  // combat-frame + resume_combat flow is human / wire-smoke verified. The HTTP
+  // ticket-mint half stays covered by the session-ticket panel. See
+  // PANEL_EXERCISES['combat'] above.
 
 ]
 
@@ -309,6 +316,7 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
       'session-active',
       'session-messages',
       'fire-turn',
+      'combat',
     ],
   },
 }

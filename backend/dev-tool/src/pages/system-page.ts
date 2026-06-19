@@ -14,6 +14,7 @@ import { mountSessionStartPanel } from '../components/session-start-panel.js'
 import { mountSessionActivePanel } from '../components/session-active-panel.js'
 import { mountSessionMessagesPanel } from '../components/session-messages-panel.js'
 import { mountFireTurnPanel } from '../components/fire-turn-panel.js'
+import { mountCombatPanel } from '../components/combat-panel.js'
 
 const SECTIONS: readonly {
   readonly id: string
@@ -26,6 +27,7 @@ const SECTIONS: readonly {
   { id: 'session-active', mount: mountSessionActivePanel },
   { id: 'session-messages', mount: mountSessionMessagesPanel },
   { id: 'fire-turn', mount: mountFireTurnPanel },
+  { id: 'combat', mount: mountCombatPanel },
 ]
 
 export function mountSystemPage(parent: HTMLElement): PanelHandle {
