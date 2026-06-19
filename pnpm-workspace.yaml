@@ -2,3 +2,5 @@ packages:
   - 'backend'
   - 'backend/dev-tool'
   - 'docs/wiki'
+  - 'frontend'
+  - 'frontend/ui'
