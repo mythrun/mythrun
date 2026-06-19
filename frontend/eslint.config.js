@@ -61,6 +61,15 @@ export default [
       ...reactHooks.configs.recommended.rules,
       'react/react-in-jsx-scope': 'off',
       'mythrun-ui/no-ad-hoc-ui': 'error',
+      // `jsx-only` is the strongest mode this plugin offers (catches JSX text +
+      // attribute literals; attributes are the load-bearing case since mythrunUI
+      // props carry most user text). KNOWN LIMITATION (eslint-plugin-i18next@6):
+      // it allowlists bare JSX *text* inside PascalCase arrow-const components
+      // (`const X = () => <Text>hi</Text>` is NOT flagged — it treats the
+      // uppercase const like a constant). It DOES catch all attribute literals
+      // and JSX text in `function Comp() {}` declarations. Closing the
+      // arrow-const component-text gap is MYT-80's job, with the typed t()
+      // runtime + a callee allow-list (and possibly a complementary rule).
       'i18next/no-literal-string': [
         'error',
         { mode: 'jsx-only', ignoreAttribute: ['data-testid', 'aria-*', 'role', 'id'] },

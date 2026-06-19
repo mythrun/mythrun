@@ -19,7 +19,7 @@ Rails go down before track. No feature flow, no real component, and no real desi
 | Rule of the road | Enforcement in MYT-79 |
 |---|---|
 | **Rule 1** — no hardcoded user-facing strings (i18n) | `i18next/no-literal-string` (off-the-shelf) in `mode: 'jsx-only'`, scoped to feature code. Catches JSX text + attribute string literals now; MYT-80 wires the typed `t()` runtime + key files + the callee allow-list. |
-| **Rule 2** — no ad-hoc UI; everything composes mythrunUI | `mythrun/no-ad-hoc-ui` (custom rule). Feature code may not use raw DOM elements, `style`, or `className`. |
+| **Rule 2** — no ad-hoc UI; everything composes mythrunUI | `mythrun-ui/no-ad-hoc-ui` (custom rule; distinct plugin namespace — root reserves `mythrun`). Feature code may not use raw DOM elements, `style`, or `className`. |
 | **Rule 3** — rules are CI lints, not conventions | Both rails wired into a `frontend-check.yml` CI workflow (an always-running required check) + a diff-scoped pre-push section, with a config-wiring test (rule registered+scoped) and a fires-on-violation test. The escape hatch is itself lint-enforced (§5.1). |
 
 ## 3. Locked decisions
@@ -81,7 +81,7 @@ frontend/ui/             # @mythrun/ui — the mythrunUI design system (SHELL ON
 
 ## 5. The lint rails
 
-### 5.1 `mythrun/no-ad-hoc-ui` (custom)
+### 5.1 `mythrun-ui/no-ad-hoc-ui` (custom)
 
 Authored as `frontend/eslint-rules/no-ad-hoc-ui.js` (ESM module — imported by both `frontend/eslint.config.js` and its Vitest test, so it is **instrumented by Vitest and counts toward the 100% logic threshold**; this deliberately departs from the backend's `.cjs` rules, which are excluded from Vitest and run by nothing — see §6.3).
 
@@ -95,7 +95,7 @@ Authored as `frontend/eslint-rules/no-ad-hoc-ui.js` (ESM module — imported by 
 
 **Explicitly NOT reported:** JSX fragments (`<>…</>` is a `JSXFragment` with no opening identifier; `<React.Fragment>` is a `JSXMemberExpression`, not a lowercase identifier) — fragments carry no DOM/styling and are allowed. Component elements (capitalized identifiers / member expressions) are allowed.
 
-**Escape hatch (lint-enforced, not convention):** a true one-off uses `// eslint-disable-next-line mythrun/no-ad-hoc-ui -- <reason>`. To make this *enforced* (Rule 3) rather than a bare-disable free-for-all, the frontend config adds:
+**Escape hatch (lint-enforced, not convention):** a true one-off uses `// eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- <reason>`. To make this *enforced* (Rule 3) rather than a bare-disable free-for-all, the frontend config adds:
 - `linterOptions: { reportUnusedDisableDirectives: 'error' }` (a disable that no longer suppresses anything is a CI error), and
 - `@eslint-community/eslint-comments/require-description: 'error'` (a disable directive without a trailing `-- reason` is a CI error).
 
@@ -120,7 +120,7 @@ export default [
   ...root,                                  // inherits strict/stylistic type-checked + mythrun bans
   { ignores: ['src/**/*.css','index.html','vite.config.ts','vitest.config.ts','dist/**'] },
   { files: ['src/**/*.{ts,tsx}'], /* React surface + the two rails @ error + escape-hatch enforcement */
-    rules: { 'mythrun/no-ad-hoc-ui':'error', 'i18next/no-literal-string':['error',{mode:'jsx-only', ignoreAttribute:[...]}],
+    rules: { 'mythrun-ui/no-ad-hoc-ui':'error', 'i18next/no-literal-string':['error',{mode:'jsx-only', ignoreAttribute:[...]}],
              '@typescript-eslint/no-misused-promises':['error',{checksVoidReturn:{attributes:false}}], ... },
     linterOptions: { reportUnusedDisableDirectives: 'error' } },
   eslintConfigPrettier,                     // re-applied LAST so React stylistic rules don't fight prettier
@@ -130,7 +130,7 @@ export default [
 - `@typescript-eslint/no-misused-promises` is tuned with `checksVoidReturn.attributes: false` — without it, the universal React idiom `onClick={async () => …}` errors under `strictTypeChecked`. (Forward-looking; the empty scaffold won't trip it, but the baseline is set now so MYT-82/83 don't fight it.)
 - `eslint-config-prettier` is re-appended last in the frontend config so the React stylistic rules added after the root spread don't conflict with Prettier.
 
-`frontend/ui/eslint.config.js` (`@mythrun/ui`): same import-and-extend shape, but `mythrun/no-ad-hoc-ui` is **off** (the library zone — where raw elements + Tailwind + `className` legitimately live). `jsx-a11y` rules *do* apply here (and effectively only here, since intrinsic elements only exist in the library) — accessible-element authoring is a library responsibility by design.
+`frontend/ui/eslint.config.js` (`@mythrun/ui`): same import-and-extend shape, but `mythrun-ui/no-ad-hoc-ui` is **off** (the library zone — where raw elements + Tailwind + `className` legitimately live). `jsx-a11y` rules *do* apply here (and effectively only here, since intrinsic elements only exist in the library) — accessible-element authoring is a library responsibility by design.
 
 - Lint scripts: `eslint . --no-error-on-unmatched-pattern` run from each package dir (mirrors dev-tool — ESLint resolves the nearest `eslint.config.js`). Root `pnpm -r lint` runs each.
 
@@ -161,7 +161,7 @@ Frontend Vitest enforces **100% lines/branches/functions/statements on the logic
 
 Two Vitest tests (`frontend/eslint-rules/config-wiring.test.ts`), each asserting a distinct guarantee, both fast (no type-aware program build):
 
-1. **Registration + path-scoping** — mirror the *actual* `backend/eslint-rules/__tests__/config-wiring.test.mjs` pattern: `new ESLint().calculateConfigForFile(path)` and assert `mythrun/no-ad-hoc-ui` + `i18next/no-literal-string` are `error` for a `frontend/src/**` path and `no-ad-hoc-ui` is `off` for a `frontend/ui/**` path. (This is config resolution — it lints nothing, so it avoids the slow/flaky `projectService` build the backend test was rewritten to avoid.)
+1. **Registration + path-scoping** — mirror the *actual* `backend/eslint-rules/__tests__/config-wiring.test.mjs` pattern: `new ESLint().calculateConfigForFile(path)` and assert `mythrun-ui/no-ad-hoc-ui` + `i18next/no-literal-string` are `error` for a `frontend/src/**` path and `no-ad-hoc-ui` is `off` for a `frontend/ui/**` path. (This is config resolution — it lints nothing, so it avoids the slow/flaky `projectService` build the backend test was rewritten to avoid.)
 2. **Fires on violation** — assert the rules actually report:
    - `no-ad-hoc-ui`: covered by the RuleTester suite (`no-ad-hoc-ui.test.ts`) with **inline code-string** cases (invalid: `<div>`, `style=`, `className=`; valid: `<Text/>`, `<>…</>`), using a JSX-capable **non-type-aware** parser (`languageOptions.parserOptions.ecmaFeatures.jsx: true`) — the rule is pure AST shape and needs no type info.
    - `i18next/no-literal-string`: a small `new ESLint({ overrideConfigFile: true, overrideConfig: {…jsx-only…} }).lintText('<Text>Hello</Text>')` assertion over an **inline string** with a non-type-aware JSX parser — asserts the JSX-text literal is reported.
@@ -184,9 +184,9 @@ MYT-79 ships: the two workspace packages, the scaffold, the two rails, the gates
 1. `pnpm install` succeeds with the two new workspace packages; `@mythrun/web` builds (`vite build`); `@mythrun/ui` typechecks (it has no `build`); `import { Text } from '@mythrun/ui'` resolves under `moduleResolution: Bundler`.
 2. Root `pnpm -r typecheck/lint/test` include the frontend packages; `pnpm -r build` includes `@mythrun/web` and intentionally skips `@mythrun/ui`.
 3. An intentional raw `<div style={…}>` / `className` in feature code **fails** `pnpm lint`.
-4. An intentional inline **JSX user-facing string** (text or attribute) in feature code **fails** `pnpm lint`.
+4. An intentional inline **JSX user-facing string** in feature code **fails** `pnpm lint` — for all **attribute** literals (the load-bearing case) and JSX **text** in function-declaration components. **Known limitation (carry to MYT-80):** `eslint-plugin-i18next@6` allowlists bare JSX text inside *PascalCase arrow-const* components (`const X = () => <Text>hi</Text>` is not flagged — it treats the uppercase const like a constant). Raw elements there still fail via `mythrun-ui/no-ad-hoc-ui`; closing the component-text gap is MYT-80's job, alongside the typed `t()` runtime + callee allow-list.
 5. A feature file composing `<Text>` from `@mythrun/ui` with no raw markup **passes**.
-6. A bare `// eslint-disable-next-line mythrun/no-ad-hoc-ui` (no `-- reason`) **fails** lint; a `-- reason` form passes; an unused disable directive **fails**.
+6. A bare `// eslint-disable-next-line mythrun-ui/no-ad-hoc-ui` (no `-- reason`) **fails** lint; a `-- reason` form passes; an unused disable directive **fails**.
 7. The config-wiring + fires-on-violation tests (§6.4) pass.
 8. `frontend-check.yml` runs the four steps unconditionally in CI (a required check that never blocks-pending on backend-only PRs); the pre-push hook runs them diff-scoped on `origin/main...HEAD`; `deploy.yml` ignores `frontend/**`.
 9. The custom rule is Vitest-instrumented and hits the 100% logic threshold via its RuleTester suite.
