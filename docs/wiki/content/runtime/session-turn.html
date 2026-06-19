@@ -10,7 +10,7 @@
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:1e98c04ec6b1563360169c58f69e6253f28bcd87335dacbb90f6989458a33a41 -->
+<!-- source-hash: sha256:d74aca7c8dfe8843e50dc75fbc50c26eebe3ca4cc48a3cb2e9ef185d3220cce0 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Session turn</h1>
@@ -534,6 +534,22 @@
 </p>
 
 <p>
+  MYT-75 adds one more post-flush side-effect here: the
+  <strong><a href="../combat/single-shot-combat.html">combat L1</a> application</strong>. The combat
+  tools are pure resolvers — they record a fight's deterministic outcome and reconciled deltas into
+  a per-turn combat-event accumulator but write nothing durable (the recovery invariant forbids a
+  mid-turn durable write). So this post-flush block is where a combat turn lands: it applies the
+  reconciled PC HP to the shared <a href="./character-ledger.html">ledger</a> (set-authoritative +
+  journaled), durably writes the <code>session:{cId}:combat</code> blob and flips
+  <code>mode</code> to <code>combat</code>, and emits <code>combat_resolved</code>. It is gated on a
+  fight having been initiated this turn and sits in its own try/catch (like the st-evaluation
+  enqueue), and it is idempotent under a BullMQ re-run via a synthetic, turn-stable
+  <code>combat-resolve:&lt;turnId&gt;</code> journal key. A combat turn otherwise rides this same
+  normal post-turn tail — the st-evaluation and Scribe enqueues above process the fight once, at
+  turn-end, so the any-member resume is purely the mode flip with no second extraction.
+</p>
+
+<p>
   Two MYT-74b additions live in this <code>finally</code>. First, an <strong>ending gate</strong>:
   once <code>endSession</code> has claimed the <code>ending</code> flag, both the explicit drain and
   the quiet-window re-mature are suppressed — re-summoning the DM into a session that is winding
@@ -870,6 +886,17 @@
         <a href="./session-transport.html">transport</a> contract.
       </td>
     </tr>
+    <tr>
+      <td><code>mode_change</code> / <code>combat_started</code> / <code>combat_resolved</code></td>
+      <td><code>{ type, … }</code></td>
+      <td>
+        MYT-75 <a href="../combat/single-shot-combat.html">combat L1</a> frames. The consume loop
+        emits <code>mode_change</code> + <code>combat_started</code> on initiate; the worker's
+        post-flush combat application emits <code>combat_resolved</code> after the ledger write. No
+        seq; mid-fight reconnect replays a synthetic frame from the <code>:combat</code> blob. Owned
+        by the <a href="./session-transport.html">transport</a> contract.
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -999,7 +1026,13 @@
         <code>session_messages</code> rows and the multi-part <code>ConversationMessage</code>;
         <code>TranscriptCorruptError</code>. MYT-70 added the six ledger-tool row types to
         <code>DM_MESSAGE_TYPES</code>; MYT-72 added the single <code>world_fact_lookup</code> kind
-        (three lookup tools collapse to it; <code>toolName</code> rides the row JSON).
+        (three lookup tools collapse to it; <code>toolName</code> rides the row JSON); MYT-75 added
+        two <a href="../combat/single-shot-combat.html">combat</a> kinds (<code
+          >combat_initiate</code
+        >
+        / <code>combat_resolve</code>, kind === tool name) so a combat turn's tool rows persist
+        instead of crashing the codec — no migration, since
+        <code>session_messages.message_type</code> is free TEXT.
       </td>
     </tr>
     <tr>

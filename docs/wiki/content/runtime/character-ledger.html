@@ -29,8 +29,10 @@
   The ledger is the mutable companion to character creation's static sheet. When the
   <a href="./character-creation.html">character-sheet stage</a> finalizes a PC it seeds the opening
   balances — gold, a hit-dice pool, caster progression, the SRD-derived spell slots — and from then
-  on the only thing that moves those numbers out of combat is the Rules Lawyer. The FT's tool belt
-  (built by <code>buildFtTools</code>) gained six ledger tools alongside the
+  on two paths move those numbers: out of combat, the Rules Lawyer's six tools below; in combat, the
+  <a href="../combat/single-shot-combat.html">combat L1 resolver</a>, which writes the same ledger
+  through the same primitive (the dedicated section below). The FT's tool belt (built by
+  <code>buildFtTools</code>) gained six ledger tools alongside the
   <a href="./fast-thinker.html">dice and skill-check tools</a>:
 </p>
 
@@ -71,8 +73,11 @@
   The same logic that retired the <a href="./session-turn.html">FT transcript's Redis hot cache</a>
   applies: there is no fan-out for a cache to serve (the resolver reads its own writes within a
   turn), and the expensive repeated cost in a turn is LLM tokens, not an indexed row read. Keeping
-  the authoritative numbers in one store means the combat engine and the out-of-combat Rules Lawyer
-  share one source of truth rather than reconciling two.
+  the authoritative numbers in one store means combat and the out-of-combat Rules Lawyer share one
+  source of truth rather than reconciling two — and as of MYT-75 the
+  <a href="../combat/single-shot-combat.html">combat resolver</a> writes through the same ledger and
+  the same <code>writeHp</code> primitive, so a fight's HP changes carry seamlessly into exploration
+  with no second store to reconcile.
 </aside>
 
 <h2>Binding vs. informational: the rock principle</h2>
@@ -174,6 +179,32 @@
   ZFC-exempt), rolled over <code>crypto.randomInt</code>, and the rolled faces ride the payload so
   the FT can narrate the specific result.
 </p>
+
+<h2>The combat write: set-authoritative, not a delta</h2>
+
+<p>
+  <a href="../combat/single-shot-combat.html">Combat L1</a> writes PC HP through this same ledger,
+  but the way it writes is the mirror image of <code>adjust_hp</code>. Where
+  <code>adjust_hp</code> applies a <em>delta</em> (damage or heal), the combat resolver
+  <strong>SETs</strong> each PC's HP to an authoritative target —
+  <code>combat-start HP − reconciled damage</code> — through the same <code>writeHp</code> primitive
+  (which still clamps to <code>[0, max]</code> and auto-syncs <code>unconscious</code>). It then
+  journals the write like every other HP-mutation path, so the ledger audit trail stays complete.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A whole fight's HP is one authoritative result, so it is set, not accumulated</strong> —
+  during a fight the FT may narrate a wound and call <code>adjust_hp</code> <em>and</em> report that
+  same wound to the combat resolver. Applying a combat delta on top of the <code>adjust_hp</code>
+  delta double-counts and lands the PC at the wrong HP. Setting the HP to the combat target — the
+  single source of truth for the encounter — collapses both into one correct value, and makes the
+  write inherently idempotent: a BullMQ re-run re-sets the same target. The combat resolver owns
+  <em>all</em> of a fight's mechanical HP and conditions; the FT prompt directs the model to report
+  combat wounds through the combat tool rather than the out-of-combat ledger tools, so the two write
+  paths never fight over the same number. The journal's find-first idempotency keys on a synthetic,
+  turn-stable <code>combat-resolve:&lt;turnId&gt;</code>, so a re-run that already applied writes no
+  second audit row.
+</aside>
 
 <h2>Prep co-evolution: the ledger is seeded, structured, and de-duplicated at creation</h2>
 
@@ -313,7 +344,10 @@
   whose schema and prompt co-evolved to emit the ledger's structure. The
   <code>ledger_update</code> frame joins the mechanical frames on the
   <a href="./session-transport.html">transport</a>'s wire contract and replays from the persisted DM
-  rows. The same per-character state is the contract the combat engine (later) shares.
+  rows. The same per-character state is the contract the
+  <a href="../combat/single-shot-combat.html">combat L1 resolver</a> shares — it applies a fight's
+  PC HP through the same <code>writeHp</code> primitive and the same journal, set-authoritatively
+  (the <a href="#the-combat-write-set-authoritative-not-a-delta">section above</a>).
 </p>
 
 <h2>Appendix: surface</h2>

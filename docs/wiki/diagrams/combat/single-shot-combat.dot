@@ -1,0 +1,80 @@
+digraph single_shot_combat {
+  // Combat Layer 1 (MYT-75) — the exploration<->combat MODE seam + a single-shot
+  // resolver, the deliberate placeholder for the unbuilt round-by-round combat
+  // mode. A fight resolves in ONE FT turn: the model calls initiate_combat
+  // (rolls initiative + determines the outcome via resolveCombat), narrates,
+  // then resolve_combat (reports deltas). Both are PURE DATA RESOLVERS — execute
+  // returns data, mutates no session state, emits no frame. The deterministic
+  // outcome is a whole-fight skill check (Principle #4/#5): Haiku rates the
+  // encounter → DC + four tiered outcomes; a dice roll (partyCapability + d20 vs
+  // DC) selects the tier; the FT narrates the MATCHED tier within a BINDING cost
+  // ENVELOPE — so the dice own the stakes, not the LLM. The consume loop emits
+  // the transient frames; the durable mode flip + :combat blob + ledger write
+  // happen at persistTurn (the recovery invariant: nothing durable mid-turn).
+  // resolve_combat's envelope reconciler clamps the FT's deltas to the tier;
+  // applyToLedger SETS each PC's HP to the authoritative combat target. The
+  // session then SITS in combat (turns gated off — D14) until ANY member sends
+  // resume_combat (SET-NX once-only — D15), which flips back to exploration. The
+  // combat rides the NORMAL post-turn tail (ST-eval + Scribe fire once at
+  // turn-end), so resume is purely the mode flip.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.8;
+
+  player [label="player attacks\n(exploration mode)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_turn {
+    label="one FT turn  (session/tiers/ft-tools.ts — pure data resolvers)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    initiate [label="initiate_combat.execute\nroll initiative (d20, flavor — D7)\nresolveCombat → CombatOutcome\n(returns DATA: outcome + tier constraint)", color="ember", fontcolor="ember"];
+    narrate  [label="FT narrates the MATCHED tier\nwithin the binding envelope\n(the telling, not the outcome)"];
+    resolve  [label="resolve_combat.execute\nreconcileDeltas vs envelope (D13)\npartition PC / enemy by name\n(returns DATA: reconciled deltas)", color="ember", fontcolor="ember"];
+  }
+
+  subgraph cluster_resolver {
+    label="resolveCombat  (session/combat/outcome.ts) — Principle #4/#5";
+    style="dashed";
+    haiku [label="Haiku outcome table\nDC + 4 tiered outcomes\n(enemies + PUBLIC party snapshot)\nfail-soft fallback table"];
+    roll  [label="partyCapability(0..12) + d20  vs  DC\ndecisive / costly / pyrrhic / routed\nthe DICE select the tier, never the LLM", color="ember", fontcolor="ember"];
+    env   [label="CombatEnvelope (per tier)\npartyWins · minDownedPcs\nminAggregateHpLoss · allowPcDeath\nthe hard cost floor", shape=note];
+  }
+
+  subgraph cluster_persist {
+    label="consume loop + persistTurn  (turn-worker.ts T7 — durable, lock-held)";
+    style="dashed";
+    frames [label="transient frames (consume loop)\nmode_change(expl→combat)\ncombat_started · combat_resolved"];
+    ledger [label="applyToLedger → shared ledger\nSET each PC hp = hpBefore − dmg\n(authoritative + journaled + idempotent)", color="ember", fontcolor="ember"];
+    blob   [label="durable at persist\nmode='combat' (merged write)\nsession:{cId}:combat = CombatStateBlob\n+ CombatSummaryL1", shape=cylinder];
+  }
+
+  tail [label="NORMAL post-turn tail\nST-eval + Scribe enqueue\n(process the combat ONCE — D10)"];
+
+  subgraph cluster_resume {
+    label="resume  (routes/ws-session.ts — combat-mode gate)";
+    style="dashed";
+    gate   [label="combat-mode inbound DROP-GATE (D14)\nonly resume_combat accepted\n(no phantom turn over the fight)"];
+    resume_in [label="resume_combat  (ANY member — D6)\ntryMarkResumed SET-NX once (D15)\nflip mode→exploration · clear :combat", color="ember", fontcolor="ember"];
+  }
+
+  back [label="exploration resumes\n(aftermath in the next turn's context)", color="ember", fontcolor="ember"];
+
+  player -> initiate [label="combat triggers"];
+  initiate -> haiku [label="rate the encounter", color="ember"];
+  haiku -> roll;
+  roll -> env [label="matched tier", style=dotted];
+  env -> initiate [label="outcome + envelope", style=dotted, color="ember"];
+  initiate -> narrate [label="tier constraint"];
+  narrate -> resolve;
+  resolve -> env [label="clamp deltas to floor", style=dotted, color="ember"];
+  resolve -> frames [label="recorded events\n(worker reads post-turn)", color="ember"];
+  frames -> ledger;
+  ledger -> blob;
+  blob -> tail [label="rides the normal tail"];
+  blob -> gate [label="session SITS in combat"];
+  gate -> resume_in [label="member clicks okay"];
+  resume_in -> back [label="mode_change(combat→expl)", color="ember"];
+}

@@ -1,0 +1,436 @@
+<!-- source: backend/src/session/combat/outcome.ts -->
+<!-- source: backend/src/session/combat/apply.ts -->
+<!-- source: backend/src/session/combat/events.ts -->
+<!-- source: backend/src/session/tiers/ft-tools.ts -->
+<!-- source: backend/src/redis/session-state.ts -->
+<!-- source: backend/src/llm/schemas/combat-outcome.ts -->
+<!-- source: backend/src/llm/prompts/session/combat-outcome.txt -->
+<!-- source: docs/superpowers/specs/2026-06-18-myt-75-combat-l1-design.md -->
+<!-- source-hash: sha256:b51d8cb61bfb6aa01decf57bd7a7379b463c087eace701bbf625740378ba0e2f -->
+
+<h1>Single-shot combat (Layer 1)</h1>
+
+<p class="lead">
+  The first activation of the session's <strong>combat mode</strong>, and the single-shot resolver
+  that fills it: a player attacks, the fight resolves in one beat — the dice decide the outcome and
+  the <a href="../runtime/fast-thinker.html">Fast Thinker</a> narrates it — the shared
+  <a href="../runtime/character-ledger.html">character ledger</a> updates, any party member resumes,
+  and the session flips back to exploration. It is the deliberate placeholder for the unbuilt
+  round-by-round combat mode: it proves the exploration↔combat plumbing end-to-end
+  <em>with real stakes</em> but <em>without a rules engine</em> — no turns, no enemy stat blocks, no
+  voxel map.
+</p>
+
+<!-- @diagram: combat/single-shot-combat -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The session has always carried a first-class <code>mode</code> —
+  <code>exploration | combat</code> in the
+  <a href="../runtime/session-transport.html">session-state</a> blob — but until now it was stubbed
+  to always-<code>exploration</code>. Combat L1 activates that seam. A fight runs as
+  <strong
+    >two tools on the existing <a href="../runtime/fast-thinker.html">Fast Thinker</a> tool
+    loop</strong
+  >, fired in a single DM turn: <code>initiate_combat</code> declares the fight and determines its
+  outcome; <code>resolve_combat</code> reports the mechanical results. Between them the model
+  narrates the fight. The whole encounter is resolved when that one turn ends — there is no
+  per-combatant round loop. The diagram traces the path: the attack, the deterministic resolution,
+  the narration, the durable mode flip and ledger write at turn-commit, and the any-member resume
+  that returns the table to exploration.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Single-shot, not round-by-round — and why that is the right L1</strong> — a faithful
+  round-by-round combat <em>mode</em> (initiative sequencing, player actions, enemy stat blocks, the
+  action stack, a React combat screen) is a large milestone of its own. L1 ships the part that the
+  rest of the system needs first: a real, exercised <code>combat</code> mode and a resolver that
+  produces genuine consequences. The two tools and the mode seam are the scaffolding the real mode
+  grows into; only the single-shot resolution between them gets replaced. Shipping the seam now
+  means the ledger, the transport, the worker, and the transcript all learn to carry a combat turn
+  before the rules engine lands on top.
+</aside>
+
+<h2>A whole fight is one big skill check</h2>
+
+<p>
+  The outcome is decided exactly the way a
+  <a href="../runtime/fast-thinker.html#skill-check-resolver">skill check</a> is decided (Principle
+  #5), scaled up from a single action to a whole encounter. <code>resolveCombat</code> (in
+  <code>combat/outcome.ts</code>) asks Haiku to rate the fight — it sees the Fast-Thinker-declared
+  enemies and a <strong>public</strong> party snapshot (each member's level and current/max HP,
+  nothing else) and returns a <code>DC</code> plus four tiered outcome descriptions. Then
+  deterministic code rolls: a bounded <code>partyCapability</code> term plus a <code>d20</code>,
+  compared against the DC, selects one of four tiers — <code>decisive</code>, <code>costly</code>,
+  <code>pyrrhic</code>, or <code>routed</code>. The matched tier's prose becomes the Fast Thinker's
+  constraint: it narrates <em>that</em> outcome, it does not choose one.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The dice decide the outcome — the LLM never does (Principle #4/#5)</strong> — this is the
+  same hard line the skill-check resolver draws, and the reason combat is built this way rather than
+  "ask the model who won." The LLM never rolls a number and never decides win or loss; it receives a
+  dice-selected tier and writes the prose that <em>tells</em> it. So a fight's stakes are an
+  auditable mechanical fact, not a narrative whim — the same property that makes a skill check
+  trustworthy makes a combat trustworthy. The roll matters: <code>partyCapability</code> is a
+  bounded <code>0..12</code> term (average level, a small party-size bonus, a malus when the party
+  is already badly wounded), deliberately <em>not</em> a raw stat sum that would swamp the d20 and
+  make the roll cosmetic. A mid party against a mid DC lands across all four tiers as the d20
+  swings.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Win-skewed by construction, and recoverable by default</strong> — three of the four tiers
+  are wins. That is intended: players who pick a fight they triggered should usually prevail, but
+  with real, dice-determined cost (a pyrrhic win downs a party member; a costly win burns a chunk of
+  the party's HP). The fourth tier, <code>routed</code>, is a defeat — but a
+  <em>recoverable</em> one (flee, capture, downed), never a blanket party wipe on a single bad roll.
+  PC death is reachable only in the worst tier and only when the narration calls for it within that
+  tier's envelope; it stays rare. The skew is bounded by <code>partyCapability</code>, so a weak
+  party against a strong enemy genuinely reaches the defeat tiers.
+</aside>
+
+<p>
+  The Haiku call is <strong>fail-soft</strong>: on any failure (including a per-turn timeout abort)
+  the resolver falls back to a fixed mid-band DC and four generic-but-distinct outcome strings, so
+  the deterministic roll still selects a meaningful tier. "Roll, then match" holds even when the
+  table generation fails — the one place in the combat path where code, not Haiku, picks the values.
+</p>
+
+<h2>The binding cost envelope: the dice own the stakes, not the telling</h2>
+
+<p>
+  A tier is more than a prose seed. Each carries a hard <code>CombatEnvelope</code> — a mechanical
+  floor the result must satisfy: whether the party wins, the minimum number of PCs reduced to 0 HP,
+  the minimum aggregate HP loss as a fraction of the party's max, and whether PC-death narration is
+  permitted at all. When <code>resolve_combat</code> reports the Fast Thinker's proposed HP and
+  casualty deltas, the <strong>envelope reconciler</strong> (<code>reconcileDeltas</code> in
+  <code>combat/apply.ts</code>) validates them against the selected tier and clamps or augments them
+  to meet the floor before anything is applied.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the envelope exists — the FT cannot narrate away the stakes</strong> — the skill-check
+  guarantee is that the dice own the outcome. Without an envelope, the Fast Thinker could quietly
+  re-decide a <code>pyrrhic</code> result by reporting trivial damage and no casualties — the prose
+  says "a hard-won, costly victory" while the ledger shows everyone unscathed. The envelope closes
+  that gap deterministically: a <code>pyrrhic</code> tier requires at least one PC dropped, so if
+  the Fast Thinker under-states the cost, the reconciler downs the lowest-HP member itself
+  (deterministic by HP then name). The dice own the <em>outcome and its required cost</em>; the Fast
+  Thinker owns the <em>telling</em> and the specifics <em>within</em> the floor. An adversarial test
+  feeds the resolver deltas that contradict the tier and asserts the floor still wins.
+</aside>
+
+<p>
+  The reconciler also <strong>partitions every reported name</strong> into PCs and enemies. Only PC
+  HP and conditions touch the ledger; enemy casualties are narrative-only (enemies have no stat
+  block and no ledger row in L1 — they are carried as <code>{ name, description, count }</code>). A
+  name that matches neither — a model typo or hallucination — is dropped with a logged warning,
+  never written. A PC casualty is represented mechanically as <code>hp = 0</code> (which
+  auto-applies <code>unconscious</code>): the ledger has no death state in L1, so a narrated "death"
+  on the worst tier is a label recorded in the combat summary, not a distinct ledger row. Real death
+  and dying arrive with the L2 rules engine.
+</p>
+
+<h2>Pure resolvers, durable at commit: the recovery invariant holds</h2>
+
+<p>
+  Both combat tools are <strong>pure data resolvers</strong>, the same discipline every
+  <a href="../runtime/fast-thinker.html#tool-registry-pure-resolvers">FT tool</a> follows: their
+  <code>execute</code> computes and returns data, mutates no session state, and emits no frame.
+  <code>initiate_combat.execute</code> rolls initiative and runs <code>resolveCombat</code> (a pure
+  computation that nests the Haiku call, exactly like the skill-check resolver), then returns the
+  outcome plus the tier as a narration constraint. <code>resolve_combat.execute</code> runs the
+  reconciler and returns the reconciled deltas. Each records its decision into a per-turn
+  combat-event accumulator the worker reads after the turn.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The durable mode flip and ledger write happen at persist, not in the tool</strong> — the
+  SDK runs a tool's <code>execute</code> <em>ahead</em> of the consumer, and the
+  <a href="../runtime/session-turn.html">turn's recovery invariant</a> is that nothing durable is
+  written between turn-load and the atomic commit (a mid-turn crash must roll back cleanly). An
+  eager durable Redis write from <code>execute</code> would break that. So the side-effects live
+  where they are safe: the consume loop emits the transient <code>mode_change</code> /
+  <code>combat_started</code> / <code>combat_resolved</code> frames in stream order, and the durable
+  mode flip, the <code>:combat</code> blob, and the ledger write all happen at
+  <code>persistTurn</code> — part of the atomic, lock-held, idempotent turn commit. The client flips
+  its screen immediately on the transient frame; Redis flips durably at commit.
+</aside>
+
+<p>
+  The ledger write is <strong>set-authoritative</strong>: <code>applyToLedger</code> SETs each PC's
+  HP to the combat target (<code>combat-start HP − reconciled damage</code>) rather than applying a
+  delta, and journals each write to the
+  <a href="../runtime/character-ledger.html">ledger audit trail</a>. Because the combat outcome is
+  the authoritative result of the whole fight, setting the target subsumes any in-turn
+  <code>adjust_hp</code> the Fast Thinker also fired for a combatant, and it is inherently
+  idempotent — a BullMQ re-run re-sets the same target and the journal idempotency key (a synthetic,
+  turn-stable <code>combat-resolve:&lt;turnId&gt;</code>) makes the re-run a true no-op.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Set-authoritative because a delta double-applies</strong> — the Fast Thinker may narrate a
+  wound and call <code>adjust_hp</code> during the render, <em>and</em> report that same wound to
+  <code>resolve_combat</code>. Applying a combat delta on top of that lands the PC at the wrong HP
+  (the L1 double-application bug). Setting the HP to the authoritative target — the single source of
+  truth for the fight — collapses both into one correct value and makes the write idempotent for
+  free. The combat resolver owns all of a fight's mechanical HP and conditions; the Fast-Thinker
+  prompt instructs the model to report wounds through <code>resolve_combat</code>, not the
+  out-of-combat ledger tools.
+</aside>
+
+<h2>The mode is a real server-side mode, not a display flag</h2>
+
+<p>
+  Once the fight resolves, the session <strong>sits</strong> in <code>combat</code> mode, showing
+  the result, until a player resumes. While it sits there, the
+  <a href="../runtime/session-transport.html">WebSocket inbound handler</a>
+  <strong>drops every inbound frame except <code>resume_combat</code></strong> (and
+  <code>end_session</code>) — the same drop-gate shape the end-of-session flow uses. This is what
+  makes <code>mode</code> a genuine server-side mode rather than a client display hint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The combat drop-gate stops a phantom turn over the unresolved result</strong> — without
+  it, a player typing while the result is on screen would re-arm the
+  <a href="../runtime/dm-trigger.html">DM trigger</a> and fire a normal exploration turn on top of
+  the fight that has not been acknowledged. Gating inbound frames to
+  <code>resume_combat</code> while in combat mode is the difference between a mode and a flag: the
+  server, not the UI, enforces that nothing else happens until the party resumes.
+</aside>
+
+<p>
+  Resume is <strong>any-member</strong> and <strong>once-only</strong>. Combat is a shared party
+  beat, so the first player to send <code>resume_combat</code> flips the whole session. A
+  <code>tryMarkResumed</code> SET-NX claim guards it so two simultaneous "okay"s flip the mode and
+  clear the <code>:combat</code> blob exactly once; the loser no-ops. The winner flips
+  <code>mode → exploration</code>, clears <code>:combat</code>, and broadcasts the
+  <code>mode_change</code>. A member who reconnects mid-fight does not see a blank screen: the
+  reconnect path reads the <code>:combat</code> blob and replays a synthetic combat frame (the
+  result if resolved, the roster and initiative if still resolving), and the blob is kept alive
+  across a suspend by the TTL-refresh set, so a session never wedges in combat mode with no result.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Resume is purely the mode flip — the ST and Scribe already ran</strong> — it is tempting
+  to hand the combat off to the <a href="../runtime/slow-thinker.html">Slow Thinker</a> and
+  <a href="../runtime/scribe.html">Scribe</a> at resume. That would double-extract. The
+  <code>initiate</code>+<code>resolve</code> turn is an ordinary DM turn: it rides the
+  <a href="../runtime/session-turn.html">worker's normal post-turn tail</a>, which enqueues the
+  ST-evaluation and the Scribe once, at turn-end. The combat summary is stored on the
+  <code>:combat</code> blob and surfaces to the next turn's context after resume. Resume produces no
+  new prose by itself — the resolution narration already told the fight — so it is just the mode
+  flip plus the control action. The ST eval that runs before the player resumes is fine: it is
+  post-hoc context for the <em>next</em> turn, which cannot fire until resume re-opens the inbound
+  path anyway.
+</aside>
+
+<h2>Enforced ignorance: nothing to tier-filter</h2>
+
+<p>
+  Combat is player-facing prose by construction. The Fast Thinker authors the narration openly; the
+  Haiku outcome table sees only the FT-declared enemies (public) and the party's mechanical ledger
+  state (levels and HP — a player's own numbers carry no secret). No plot or NPC-secret input ever
+  reaches the combat path, and there is no tier filter to misconfigure: the combat narration joins
+  the transcript as an ordinary public <code>dm_text</code> row, like all FT prose. The combat tool
+  rows themselves are persisted as tool metadata (registered in the
+  <a href="../runtime/session-turn.html">transcript codec</a> so a combat turn does not crash at
+  persist) but are excluded from the searchable corpus — they are not prose.
+</p>
+
+<h2>Integration points</h2>
+
+<p>
+  Combat L1 reaches across the live-play system rather than living in one module. The two tools
+  register on the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s tool loop, alongside the
+  dice, skill-check, and ledger tools. The deterministic outcome is the
+  <a href="../runtime/fast-thinker.html#skill-check-resolver">skill-check resolver</a>'s shape,
+  widened to four tiers. The mode seam, the <code>:combat</code> Redis key, the new client/server
+  frames, and the combat-mode inbound drop-gate are all the
+  <a href="../runtime/session-transport.html">session transport</a>'s surface. The durable mode
+  flip, the blob write, and the post-turn combat application happen in the
+  <a href="../runtime/session-turn.html">turn worker</a>'s post-flush phase, which also enqueues the
+  normal post-turn <a href="../runtime/slow-thinker.html">ST-evaluation</a> and
+  <a href="../runtime/scribe.html">Scribe</a> jobs that process the fight once. PC HP and conditions
+  apply through the <a href="../runtime/character-ledger.html">character ledger</a>'s
+  set-authoritative, journaled write path. The combat inspector in the
+  <a href="../runtime/dev-tool.html">dev tool</a> is the stand-in for the player combat screen,
+  which is a Frontend ticket. The round-by-round combat <em>mode</em> — turns, player actions, enemy
+  stat blocks, the action stack, voxel maps — grows into this same seam at L2.
+</p>
+
+<h2>Appendix: surface</h2>
+
+<h3>The combat tools (<code>session/tiers/ft-tools.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Input</th>
+      <th>Resolver (pure <code>execute</code>)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>initiate_combat</code></td>
+      <td>
+        <code>enemies[{ name, description, count }]</code>, <code>environment</code>,
+        <code>surprise</code>
+      </td>
+      <td>
+        Rolls initiative (flavor only — L1 sequences nothing); runs <code>resolveCombat</code> →
+        <code>CombatOutcome</code>; returns the outcome + the tier as a narration constraint.
+      </td>
+    </tr>
+    <tr>
+      <td><code>resolve_combat</code></td>
+      <td>
+        <code>narration</code>, <code>hp_changes</code>, <code>conditions_applied</code> /
+        <code>conditions_removed</code>, <code>casualties[{ combatant_name, fate }]</code>
+      </td>
+      <td>
+        <code>reconcileDeltas</code> (clamp to the envelope, partition PC/enemy); returns the
+        reconciled deltas + the assembled <code>CombatSummaryL1</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>The four tiers and their envelopes (<code>combat/outcome.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Tier</th>
+      <th>Roll vs DC</th>
+      <th>Outcome</th>
+      <th>Cost envelope (the hard floor)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>decisive</code></td>
+      <td><code>total ≥ DC + 7</code></td>
+      <td>victory</td>
+      <td>no PC casualties; minimal HP loss.</td>
+    </tr>
+    <tr>
+      <td><code>costly</code></td>
+      <td><code>DC ≤ total &lt; DC + 7</code></td>
+      <td>victory</td>
+      <td>aggregate PC HP loss ≥ 30% of party max; no PC dropped.</td>
+    </tr>
+    <tr>
+      <td><code>pyrrhic</code></td>
+      <td><code>DC − 7 ≤ total &lt; DC</code></td>
+      <td>victory</td>
+      <td>≥ 1 PC reduced to 0 HP; the party still prevails.</td>
+    </tr>
+    <tr>
+      <td><code>routed</code></td>
+      <td><code>total &lt; DC − 7</code></td>
+      <td>defeat</td>
+      <td>
+        party does not win; recoverable (flee/capture/downed). PC-death narration permitted, rare.
+      </td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  <code>total = partyCapability(0..12) + d20</code>; <code>DC</code> is the Haiku-supplied
+  <code>8..22</code> band (a fixed mid DC of 15 on the fail-soft fallback).
+</p>
+
+<h3>Redis state (<code>session:{cId}:combat</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Surface</th>
+      <th>Shape / role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{cId}:combat</code></td>
+      <td>
+        The <code>CombatStateBlob</code> — <code>status</code> (<code>resolving</code> /
+        <code>resolved</code>), the enemies, environment, surprise, rolled initiative, the
+        deterministic <code>CombatOutcome</code> (set at initiate), and the
+        <code>CombatResult</code> with its <code>CombatSummaryL1</code> (set at resolve).
+        TTL-refreshed across a suspend.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:state</code> · <code>mode</code></td>
+      <td>
+        Flipped to <code>combat</code> at the resolved turn's persist (a merged write, never a blind
+        overwrite), back to <code>exploration</code> at resume.
+      </td>
+    </tr>
+    <tr>
+      <td><code>tryMarkResumed</code> (SET-NX)</td>
+      <td>
+        The once-only resume interlock — claims the resume exactly once across simultaneous
+        any-member "okay"s; released when <code>:combat</code> is cleared.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Wire frames (<code>contract/session-events.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Frame</th>
+      <th>Direction</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>mode_change</code></td>
+      <td>server → client</td>
+      <td><code>{ from, to }</code> — flips the screen on every exploration↔combat transition.</td>
+    </tr>
+    <tr>
+      <td><code>combat_started</code></td>
+      <td>server → client</td>
+      <td>
+        <code>{ enemies, initiative }</code> — the rolled roster + the "roll initiative" flourish.
+      </td>
+    </tr>
+    <tr>
+      <td><code>combat_resolved</code></td>
+      <td>server → client</td>
+      <td>
+        <code>{ narration, summary }</code> — the close-out narration + the
+        <code>CombatSummaryL1</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>resume_combat</code></td>
+      <td>client → server</td>
+      <td>
+        The any-member resume summon (no payload) — flips a combat-mode session back to exploration.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/session/combat/outcome.ts</code> (the <code>resolveCombat</code> resolver +
+  <code>partyCapability</code> / <code>selectTier</code> + the per-tier envelopes),
+  <code>backend/src/session/combat/apply.ts</code> (the <code>reconcileDeltas</code> envelope
+  reconciler + <code>applyToLedger</code> + <code>assembleSummary</code>),
+  <code>backend/src/session/combat/events.ts</code> (the per-turn combat-event sink),
+  <code>backend/src/session/tiers/ft-tools.ts</code> (the <code>initiate_combat</code> /
+  <code>resolve_combat</code> tools), <code>backend/src/redis/session-state.ts</code> (the
+  <code>:combat</code> blob, the <code>CombatState</code> / <code>CombatOutcome</code> /
+  <code>CombatSummaryL1</code> types, <code>tryMarkResumed</code>), and
+  <code>backend/src/llm/schemas/combat-outcome.ts</code> +
+  <code>backend/src/llm/prompts/session/combat-outcome.txt</code> (the Haiku table). Design spec:
+  <code>docs/superpowers/specs/2026-06-18-myt-75-combat-l1-design.md</code>.
+</p>

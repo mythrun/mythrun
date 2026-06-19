@@ -11,7 +11,7 @@
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
-<!-- source-hash: sha256:ef675575e3983072d46662ab0fb0ff99860fdf672e486ecb3fce10066ebbe7d8 -->
+<!-- source-hash: sha256:9077846931d5e77625936dce5147d3653e53919731d356539961e591c66f21de -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Session transport</h1>
@@ -509,8 +509,12 @@
   close before the structural one. The <code>session_end</code> frame carries no seq (a control
   frame, like the presence frames) and is not persisted or replayed — a reconnect to an ended
   session is rejected at the ws-ticket handshake (<code>status !== 'active'</code>), so there is no
-  replay path. The rest — <code>combat_*</code>, <code>st_evaluation</code>,
-  <code>scribe_result</code>, and the rest — is still deliberately absent until its surface is
+  replay path. MYT-75 builds the <a href="../combat/single-shot-combat.html">combat L1</a> frames
+  the contract had reserved: three server → client frames (<code>mode_change</code>,
+  <code>combat_started</code>, <code>combat_resolved</code>) on the same live-then-replayed
+  lifecycle as the mechanical frames, and one client → server frame, <code>resume_combat</code> (the
+  any-member resume summon, no payload). The rest — <code>st_evaluation</code>,
+  <code>scribe_result</code>, and the others — is still deliberately absent until its surface is
   built.
 </p>
 
@@ -538,6 +542,45 @@
   beat desyncs — and <code>turn_end</code> now fires at model speed, before a client finishes
   animating.
 </aside>
+
+<h2>Combat mode: a real server-side mode the transport enforces</h2>
+
+<p>
+  The session-state blob has always carried a first-class <code>mode</code> (<code
+    >exploration | combat</code
+  >); MYT-75's <a href="../combat/single-shot-combat.html">combat L1</a> is the first thing to
+  exercise it, and the transport is where that mode becomes more than a display flag. When a fight
+  resolves, the session <strong>sits</strong> in <code>combat</code> mode showing the result, and
+  the inbound handler
+  <strong>drops every inbound frame except <code>resume_combat</code></strong> (and
+  <code>end_session</code>) — the same drop-gate shape the end-of-session <code>ending</code> flag
+  uses. The <code>resume_combat</code> summon is any-member and guarded by a
+  <code>tryMarkResumed</code> SET-NX claim, so two simultaneous "okay"s flip the mode and clear the
+  <code>session:{cId}:combat</code> blob exactly once.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The drop-gate is what makes <code>mode</code> a mode</strong> — without it, a player
+  typing while the combat result is on screen would re-arm the
+  <a href="./dm-trigger.html">DM trigger</a>
+  and fire a normal exploration turn over the unresolved fight. Gating inbound frames to
+  <code>resume_combat</code> while in combat mode moves the enforcement from the UI to the server:
+  the session genuinely cannot do anything but resume until the party acknowledges the fight. It
+  mirrors the existing <code>ending</code>-flag gate exactly, so the two server-side modes share one
+  shape.
+</aside>
+
+<p>
+  The reconnect-replay path is combat-aware: a member who reconnects mid-fight reads the
+  <code>:combat</code> blob and gets a synthetic combat frame (a <code>combat_resolved</code> from
+  the stored result if the fight has resolved, a <code>combat_started</code> from the roster and
+  initiative if it is still resolving) rather than a blank combat screen. The
+  <code>:combat</code> key is added to the TTL-refresh set so a suspend mid-fight never lets it
+  lapse and wedge the session in combat mode with no result. The combat frames themselves are
+  intra-turn control frames — not persisted to <code>session_messages</code>, hence the
+  synthetic-replay path — while the fight's player-facing prose persists as an ordinary
+  <code>dm_text</code> row and replays the normal way.
+</p>
 
 <h2>Operating this piece</h2>
 
@@ -762,6 +805,16 @@
         (MYT-74a). It gates the inbound handler as the post-end drop-gate, the turn worker's
         post-turn re-engagement, and — MYT-74b — the <code>/start</code>
         <code>session_ending</code> 409 while a session-end is mid-flight.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:combat</code></td>
+      <td>
+        The <a href="../combat/single-shot-combat.html">combat L1</a>
+        <code>CombatStateBlob</code> (status, enemies, initiative, the deterministic outcome, and
+        the resolved summary). Written at a combat turn's persist, read on a mid-fight reconnect,
+        cleared at resume; TTL-refreshed on suspend. The paired <code>:resumed</code> SET-NX flag
+        (<code>tryMarkResumed</code>) makes the any-member resume once-only.
       </td>
     </tr>
     <tr>

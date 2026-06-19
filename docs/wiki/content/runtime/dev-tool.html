@@ -35,7 +35,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:7a6043659e5d85211b8f4a74e800678ae7c7a8c3a7bb2c8dbe3d813632f920f6 -->
+<!-- source-hash: sha256:0fa8e3e3b9f7cc9555830f89e7f0433b58851e9ea0a51ee387d9d22953d97fb8 -->
 <!-- last-ticket: MYT-66 -->
 
 <h1>Dev tool</h1>
@@ -223,7 +223,10 @@
       <td><code>System</code></td>
       <td>
         Health (liveness) / Health (ready) / WS ticket / Session start / Session active / Session
-        messages / Fire turn (dev-only DM-turn trigger).
+        messages / Fire turn (dev-only DM-turn trigger) / Combat inspector (the
+        <a href="../combat/single-shot-combat.html">combat L1</a> mode flips +
+        <code>combat_started</code> / <code>combat_resolved</code> events with a resume button — the
+        stand-in for the player combat screen).
       </td>
     </tr>
   </tbody>

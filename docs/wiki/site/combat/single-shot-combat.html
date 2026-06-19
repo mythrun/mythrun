@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Single-shot combat (L1) · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="combat" data-page="single-shot-combat">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html" class="active">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../combat/index.html">Overview</a></li><li><a href="../combat/single-shot-combat.html" class="active">Single-shot combat (L1)</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Combat › Single-shot combat (L1)</div>
+        <article>
+<h1>Single-shot combat (Layer 1)</h1>
+
+<p class="lead">
+  The first activation of the session's <strong>combat mode</strong>, and the single-shot resolver
+  that fills it: a player attacks, the fight resolves in one beat — the dice decide the outcome and
+  the <a href="../runtime/fast-thinker.html">Fast Thinker</a> narrates it — the shared
+  <a href="../runtime/character-ledger.html">character ledger</a> updates, any party member resumes,
+  and the session flips back to exploration. It is the deliberate placeholder for the unbuilt
+  round-by-round combat mode: it proves the exploration↔combat plumbing end-to-end
+  <em>with real stakes</em> but <em>without a rules engine</em> — no turns, no enemy stat blocks, no
+  voxel map.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="4074pt" height="301pt"
+ viewBox="14.00 14.00 4059.00 287.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 282.58)">
+<title>single_shot_combat</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-268.18 4040.92,-268.18 4040.92,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_turn</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="298.51,-140.18 298.51,-231.18 1451.71,-231.18 1451.71,-140.18 298.51,-140.18"/>
+<text xml:space="preserve" text-anchor="middle" x="875.11" y="-217.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">one FT turn &#160;(session/tiers/ft&#45;tools.ts — pure data resolvers)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_resolver</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="766.86,-48.18 766.86,-139.18 1929.65,-139.18 1929.65,-48.18 766.86,-48.18"/>
+<text xml:space="preserve" text-anchor="middle" x="1348.25" y="-125.28" font-family="Courier,monospace" font-size="11.00">resolveCombat &#160;(session/combat/outcome.ts) — Principle #4/#5</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_persist</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="1676.83,-139.18 1676.83,-256.18 2625.89,-256.18 2625.89,-139.18 1676.83,-139.18"/>
+<text xml:space="preserve" text-anchor="middle" x="2151.36" y="-242.28" font-family="Courier,monospace" font-size="11.00">consume loop + persistTurn &#160;(turn&#45;worker.ts T7 — durable, lock&#45;held)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_resume</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="2815.92,-106.18 2815.92,-184.18 3540.37,-184.18 3540.37,-106.18 2815.92,-106.18"/>
+<text xml:space="preserve" text-anchor="middle" x="3178.14" y="-170.28" font-family="Courier,monospace" font-size="11.00">resume &#160;(routes/ws&#45;session.ts — combat&#45;mode gate)</text>
+</g>
+<!-- player -->
+<g id="node1" class="node">
+<title>player</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="150.5,-197.02 0,-197.02 0,-153.34 150.5,-153.34 150.5,-197.02"/>
+<text xml:space="preserve" text-anchor="middle" x="75.25" y="-178.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player attacks</text>
+<text xml:space="preserve" text-anchor="middle" x="75.25" y="-165.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(exploration mode)</text>
+</g>
+<!-- initiate -->
+<g id="node2" class="node">
+<title>initiate</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="600.84,-210.22 298.51,-210.22 298.51,-140.14 600.84,-140.14 600.84,-210.22"/>
+<text xml:space="preserve" text-anchor="middle" x="449.68" y="-191.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">initiate_combat.execute</text>
+<text xml:space="preserve" text-anchor="middle" x="449.68" y="-178.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">roll initiative (d20, flavor — D7)</text>
+<text xml:space="preserve" text-anchor="middle" x="449.68" y="-165.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">resolveCombat → CombatOutcome</text>
+<text xml:space="preserve" text-anchor="middle" x="449.68" y="-152.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(returns DATA: outcome + tier constraint)</text>
+</g>
+<!-- player&#45;&gt;initiate -->
+<g id="edge1" class="edge">
+<title>player&#45;&gt;initiate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M151.17,-175.18C190.94,-175.18 241.42,-175.18 289.45,-175.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="289.25,-177.63 296.25,-175.18 289.25,-172.73 289.25,-177.63"/>
+<text xml:space="preserve" text-anchor="middle" x="224.51" y="-178.18" font-family="Courier,monospace" font-size="10.00">combat triggers</text>
+</g>
+<!-- narrate -->
+<g id="node3" class="node">
+<title>narrate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1006.47,-203.62 776.76,-203.62 776.76,-146.74 1006.47,-146.74 1006.47,-203.62"/>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-185.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FT narrates the MATCHED tier</text>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-171.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">within the binding envelope</text>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-158.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(the telling, not the outcome)</text>
+</g>
+<!-- initiate&#45;&gt;narrate -->
+<g id="edge6" class="edge">
+<title>initiate&#45;&gt;narrate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M601.46,-175.18C655.65,-175.18 716.08,-175.18 767.63,-175.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="767.34,-177.63 774.34,-175.18 767.34,-172.73 767.34,-177.63"/>
+<text xml:space="preserve" text-anchor="middle" x="683.85" y="-178.18" font-family="Courier,monospace" font-size="10.00">tier constraint</text>
+</g>
+<!-- haiku -->
+<g id="node5" class="node">
+<title>haiku</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1016.37,-118.22 766.86,-118.22 766.86,-48.14 1016.37,-48.14 1016.37,-118.22"/>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-99.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Haiku outcome table</text>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-86.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DC + 4 tiered outcomes</text>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-73.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(enemies + PUBLIC party snapshot)</text>
+<text xml:space="preserve" text-anchor="middle" x="891.61" y="-60.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fail&#45;soft fallback table</text>
+</g>
+<!-- initiate&#45;&gt;haiku -->
+<g id="edge2" class="edge">
+<title>initiate&#45;&gt;haiku</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M601.46,-143.64C652.25,-133.02 708.52,-121.26 757.82,-110.95"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="758.17,-113.37 764.52,-109.54 757.17,-108.58 758.17,-113.37"/>
+<text xml:space="preserve" text-anchor="middle" x="683.85" y="-140.42" font-family="Courier,monospace" font-size="10.00">rate the encounter</text>
+</g>
+<!-- resolve -->
+<g id="node4" class="node">
+<title>resolve</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1451.71,-210.22 1202.19,-210.22 1202.19,-140.14 1451.71,-140.14 1451.71,-210.22"/>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-191.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">resolve_combat.execute</text>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-178.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reconcileDeltas vs envelope (D13)</text>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-165.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">partition PC / enemy by name</text>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-152.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(returns DATA: reconciled deltas)</text>
+</g>
+<!-- narrate&#45;&gt;resolve -->
+<g id="edge7" class="edge">
+<title>narrate&#45;&gt;resolve</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1007.03,-175.18C1064.15,-175.18 1133.58,-175.18 1193.05,-175.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1192.93,-177.63 1199.93,-175.18 1192.93,-172.73 1192.93,-177.63"/>
+</g>
+<!-- env -->
+<g id="node7" class="node">
+<title>env</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1923.65,-118.22 1673.53,-118.22 1673.53,-48.14 1929.65,-48.14 1929.65,-112.22 1923.65,-118.22"/>
+<polyline fill="none" stroke="#231b12" stroke-width="1.5" points="1923.65,-118.22 1923.65,-112.22"/>
+<polyline fill="none" stroke="#231b12" stroke-width="1.5" points="1929.65,-112.22 1923.65,-112.22"/>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-99.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CombatEnvelope (per tier)</text>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-86.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">partyWins · minDownedPcs</text>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-73.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">minAggregateHpLoss · allowPcDeath</text>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-60.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the hard cost floor</text>
+</g>
+<!-- resolve&#45;&gt;env -->
+<g id="edge8" class="edge">
+<title>resolve&#45;&gt;env</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M1452.44,-150.94C1517.62,-138.26 1597.55,-122.7 1664.37,-109.69"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1664.69,-112.13 1671.09,-108.38 1663.75,-107.32 1664.69,-112.13"/>
+<text xml:space="preserve" text-anchor="middle" x="1572.52" y="-143.12" font-family="Courier,monospace" font-size="10.00">clamp deltas to floor</text>
+</g>
+<!-- frames -->
+<g id="node8" class="node">
+<title>frames</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1926.35,-203.62 1676.83,-203.62 1676.83,-146.74 1926.35,-146.74 1926.35,-203.62"/>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-185.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">transient frames (consume loop)</text>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-171.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mode_change(expl→combat)</text>
+<text xml:space="preserve" text-anchor="middle" x="1801.59" y="-158.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">combat_started · combat_resolved</text>
+</g>
+<!-- resolve&#45;&gt;frames -->
+<g id="edge9" class="edge">
+<title>resolve&#45;&gt;frames</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1452.44,-175.18C1518.67,-175.18 1600.12,-175.18 1667.59,-175.18"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1667.35,-177.63 1674.35,-175.18 1667.35,-172.73 1667.35,-177.63"/>
+<text xml:space="preserve" text-anchor="middle" x="1572.52" y="-190.18" font-family="Courier,monospace" font-size="10.00">recorded events</text>
+<text xml:space="preserve" text-anchor="middle" x="1572.52" y="-178.18" font-family="Courier,monospace" font-size="10.00">(worker reads post&#45;turn)</text>
+</g>
+<!-- roll -->
+<g id="node6" class="node">
+<title>roll</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1471.51,-111.62 1182.39,-111.62 1182.39,-54.74 1471.51,-54.74 1471.51,-111.62"/>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-93.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">partyCapability(0..12) + d20 &#160;vs &#160;DC</text>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-79.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">decisive / costly / pyrrhic / routed</text>
+<text xml:space="preserve" text-anchor="middle" x="1326.95" y="-66.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the DICE select the tier, never the LLM</text>
+</g>
+<!-- haiku&#45;&gt;roll -->
+<g id="edge3" class="edge">
+<title>haiku&#45;&gt;roll</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1017.08,-83.18C1065.66,-83.18 1121.84,-83.18 1172.86,-83.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1172.84,-85.63 1179.84,-83.18 1172.84,-80.73 1172.84,-85.63"/>
+</g>
+<!-- roll&#45;&gt;env -->
+<g id="edge4" class="edge">
+<title>roll&#45;&gt;env</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1472.01,-81.38C1481.65,-81.3 1491.22,-81.23 1500.51,-81.18 1564.52,-80.8 1580.52,-80.77 1644.53,-81.18 1651.01,-81.22 1657.64,-81.27 1664.33,-81.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1664.01,-83.77 1671.03,-81.39 1664.05,-78.87 1664.01,-83.77"/>
+<text xml:space="preserve" text-anchor="middle" x="1572.52" y="-84.18" font-family="Courier,monospace" font-size="10.00">matched tier</text>
+</g>
+<!-- env&#45;&gt;initiate -->
+<g id="edge5" class="edge">
+<title>env&#45;&gt;initiate</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M1673.18,-56.19C1476.33,-19.14 1087.49,35.52 766.86,-33.18 675.83,-52.68 579.34,-100.47 517.25,-135.24"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="516.32,-132.94 511.43,-138.52 518.73,-137.21 516.32,-132.94"/>
+<text xml:space="preserve" text-anchor="middle" x="1099.38" y="-4.37" font-family="Courier,monospace" font-size="10.00">outcome + envelope</text>
+</g>
+<!-- ledger -->
+<g id="node9" class="node">
+<title>ledger</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2284.37,-210.62 1988.65,-210.62 1988.65,-153.74 2284.37,-153.74 2284.37,-210.62"/>
+<text xml:space="preserve" text-anchor="middle" x="2136.51" y="-192.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">applyToLedger → shared ledger</text>
+<text xml:space="preserve" text-anchor="middle" x="2136.51" y="-178.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SET each PC hp = hpBefore − dmg</text>
+<text xml:space="preserve" text-anchor="middle" x="2136.51" y="-165.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(authoritative + journaled + idempotent)</text>
+</g>
+<!-- frames&#45;&gt;ledger -->
+<g id="edge10" class="edge">
+<title>frames&#45;&gt;ledger</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1927.03,-177.79C1944.09,-178.15 1961.79,-178.52 1979.33,-178.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1979.06,-181.34 1986.11,-179.03 1979.16,-176.44 1979.06,-181.34"/>
+</g>
+<!-- blob -->
+<g id="node10" class="node">
+<title>blob</title>
+<path fill="#efe9dc" stroke="#231b12" stroke-width="1.5" d="M2625.89,-226.6C2625.89,-231.43 2562.58,-235.36 2484.63,-235.36 2406.69,-235.36 2343.37,-231.43 2343.37,-226.6 2343.37,-226.6 2343.37,-147.76 2343.37,-147.76 2343.37,-142.92 2406.69,-139 2484.63,-139 2562.58,-139 2625.89,-142.92 2625.89,-147.76 2625.89,-147.76 2625.89,-226.6 2625.89,-226.6"/>
+<path fill="none" stroke="#231b12" stroke-width="1.5" d="M2625.89,-226.6C2625.89,-221.76 2562.58,-217.84 2484.63,-217.84 2406.69,-217.84 2343.37,-221.76 2343.37,-226.6"/>
+<text xml:space="preserve" text-anchor="middle" x="2484.63" y="-203.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">durable at persist</text>
+<text xml:space="preserve" text-anchor="middle" x="2484.63" y="-190.48" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mode=&#39;combat&#39; (merged write)</text>
+<text xml:space="preserve" text-anchor="middle" x="2484.63" y="-177.28" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:combat = CombatStateBlob</text>
+<text xml:space="preserve" text-anchor="middle" x="2484.63" y="-164.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ CombatSummaryL1</text>
+</g>
+<!-- ledger&#45;&gt;blob -->
+<g id="edge11" class="edge">
+<title>ledger&#45;&gt;blob</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2285.05,-184.31C2301.34,-184.54 2317.93,-184.78 2334.23,-185.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2333.88,-187.46 2340.92,-185.11 2333.95,-182.56 2333.88,-187.46"/>
+</g>
+<!-- tail -->
+<g id="node11" class="node">
+<title>tail</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3072.03,-248.62 2822.52,-248.62 2822.52,-191.74 3072.03,-191.74 3072.03,-248.62"/>
+<text xml:space="preserve" text-anchor="middle" x="2947.27" y="-230.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">NORMAL post&#45;turn tail</text>
+<text xml:space="preserve" text-anchor="middle" x="2947.27" y="-216.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ST&#45;eval + Scribe enqueue</text>
+<text xml:space="preserve" text-anchor="middle" x="2947.27" y="-203.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(process the combat ONCE — D10)</text>
+</g>
+<!-- blob&#45;&gt;tail -->
+<g id="edge12" class="edge">
+<title>blob&#45;&gt;tail</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2626.34,-197.26C2685.86,-201.52 2754.83,-206.46 2813.46,-210.66"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2813.07,-213.09 2820.22,-211.15 2813.42,-208.2 2813.07,-213.09"/>
+<text xml:space="preserve" text-anchor="middle" x="2720.91" y="-211.56" font-family="Courier,monospace" font-size="10.00">rides the normal tail</text>
+</g>
+<!-- gate -->
+<g id="node12" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3078.63,-162.62 2815.92,-162.62 2815.92,-105.74 3078.63,-105.74 3078.63,-162.62"/>
+<text xml:space="preserve" text-anchor="middle" x="2947.27" y="-144.08" font-family="Courier,monospace" font-size="11.00" fill="#231b12">combat&#45;mode inbound DROP&#45;GATE (D14)</text>
+<text xml:space="preserve" text-anchor="middle" x="2947.27" y="-130.88" font-family="Courier,monospace" font-size="11.00" fill="#231b12">only resume_combat accepted</text>
+<text xml:space="preserve" text-anchor="middle" x="2947.27" y="-117.68" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(no phantom turn over the fight)</text>
+</g>
+<!-- blob&#45;&gt;gate -->
+<g id="edge13" class="edge">
+<title>blob&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2626.34,-170.99C2683.6,-164.4 2749.6,-156.8 2806.74,-150.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2806.98,-152.67 2813.66,-149.43 2806.42,-147.8 2806.98,-152.67"/>
+<text xml:space="preserve" text-anchor="middle" x="2720.91" y="-169.98" font-family="Courier,monospace" font-size="10.00">session SITS in combat</text>
+</g>
+<!-- resume_in -->
+<g id="node13" class="node">
+<title>resume_in</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3540.37,-162.62 3244.65,-162.62 3244.65,-105.74 3540.37,-105.74 3540.37,-162.62"/>
+<text xml:space="preserve" text-anchor="middle" x="3392.51" y="-144.08" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">resume_combat &#160;(ANY member — D6)</text>
+<text xml:space="preserve" text-anchor="middle" x="3392.51" y="-130.88" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">tryMarkResumed SET&#45;NX once (D15)</text>
+<text xml:space="preserve" text-anchor="middle" x="3392.51" y="-117.68" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">flip mode→exploration · clear :combat</text>
+</g>
+<!-- gate&#45;&gt;resume_in -->
+<g id="edge14" class="edge">
+<title>gate&#45;&gt;resume_in</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3079.16,-134.18C3128.16,-134.18 3184.3,-134.18 3235.36,-134.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3235.35,-136.63 3242.35,-134.18 3235.35,-131.73 3235.35,-136.63"/>
+<text xml:space="preserve" text-anchor="middle" x="3161.64" y="-137.18" font-family="Courier,monospace" font-size="10.00">member clicks okay</text>
+</g>
+<!-- back -->
+<g id="node14" class="node">
+<title>back</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4036.92,-156.02 3754.4,-156.02 3754.4,-112.34 4036.92,-112.34 4036.92,-156.02"/>
+<text xml:space="preserve" text-anchor="middle" x="3895.66" y="-137.48" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">exploration resumes</text>
+<text xml:space="preserve" text-anchor="middle" x="3895.66" y="-124.28" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(aftermath in the next turn&#39;s context)</text>
+</g>
+<!-- resume_in&#45;&gt;back -->
+<g id="edge15" class="edge">
+<title>resume_in&#45;&gt;back</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M3540.82,-134.18C3605.22,-134.18 3680.64,-134.18 3745.26,-134.18"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3745.09,-136.63 3752.09,-134.18 3745.09,-131.73 3745.09,-136.63"/>
+<text xml:space="preserve" text-anchor="middle" x="3647.39" y="-137.18" font-family="Courier,monospace" font-size="10.00">mode_change(combat→expl)</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The session has always carried a first-class <code>mode</code> —
+  <code>exploration | combat</code> in the
+  <a href="../runtime/session-transport.html">session-state</a> blob — but until now it was stubbed
+  to always-<code>exploration</code>. Combat L1 activates that seam. A fight runs as
+  <strong
+    >two tools on the existing <a href="../runtime/fast-thinker.html">Fast Thinker</a> tool
+    loop</strong
+  >, fired in a single DM turn: <code>initiate_combat</code> declares the fight and determines its
+  outcome; <code>resolve_combat</code> reports the mechanical results. Between them the model
+  narrates the fight. The whole encounter is resolved when that one turn ends — there is no
+  per-combatant round loop. The diagram traces the path: the attack, the deterministic resolution,
+  the narration, the durable mode flip and ledger write at turn-commit, and the any-member resume
+  that returns the table to exploration.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Single-shot, not round-by-round — and why that is the right L1</strong> — a faithful
+  round-by-round combat <em>mode</em> (initiative sequencing, player actions, enemy stat blocks, the
+  action stack, a React combat screen) is a large milestone of its own. L1 ships the part that the
+  rest of the system needs first: a real, exercised <code>combat</code> mode and a resolver that
+  produces genuine consequences. The two tools and the mode seam are the scaffolding the real mode
+  grows into; only the single-shot resolution between them gets replaced. Shipping the seam now
+  means the ledger, the transport, the worker, and the transcript all learn to carry a combat turn
+  before the rules engine lands on top.
+</aside>
+
+<h2 id="a-whole-fight-is-one-big-skill-check">A whole fight is one big skill check</h2>
+
+<p>
+  The outcome is decided exactly the way a
+  <a href="../runtime/fast-thinker.html#skill-check-resolver">skill check</a> is decided (Principle
+  #5), scaled up from a single action to a whole encounter. <code>resolveCombat</code> (in
+  <code>combat/outcome.ts</code>) asks Haiku to rate the fight — it sees the Fast-Thinker-declared
+  enemies and a <strong>public</strong> party snapshot (each member's level and current/max HP,
+  nothing else) and returns a <code>DC</code> plus four tiered outcome descriptions. Then
+  deterministic code rolls: a bounded <code>partyCapability</code> term plus a <code>d20</code>,
+  compared against the DC, selects one of four tiers — <code>decisive</code>, <code>costly</code>,
+  <code>pyrrhic</code>, or <code>routed</code>. The matched tier's prose becomes the Fast Thinker's
+  constraint: it narrates <em>that</em> outcome, it does not choose one.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The dice decide the outcome — the LLM never does (Principle #4/#5)</strong> — this is the
+  same hard line the skill-check resolver draws, and the reason combat is built this way rather than
+  "ask the model who won." The LLM never rolls a number and never decides win or loss; it receives a
+  dice-selected tier and writes the prose that <em>tells</em> it. So a fight's stakes are an
+  auditable mechanical fact, not a narrative whim — the same property that makes a skill check
+  trustworthy makes a combat trustworthy. The roll matters: <code>partyCapability</code> is a
+  bounded <code>0..12</code> term (average level, a small party-size bonus, a malus when the party
+  is already badly wounded), deliberately <em>not</em> a raw stat sum that would swamp the d20 and
+  make the roll cosmetic. A mid party against a mid DC lands across all four tiers as the d20
+  swings.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Win-skewed by construction, and recoverable by default</strong> — three of the four tiers
+  are wins. That is intended: players who pick a fight they triggered should usually prevail, but
+  with real, dice-determined cost (a pyrrhic win downs a party member; a costly win burns a chunk of
+  the party's HP). The fourth tier, <code>routed</code>, is a defeat — but a
+  <em>recoverable</em> one (flee, capture, downed), never a blanket party wipe on a single bad roll.
+  PC death is reachable only in the worst tier and only when the narration calls for it within that
+  tier's envelope; it stays rare. The skew is bounded by <code>partyCapability</code>, so a weak
+  party against a strong enemy genuinely reaches the defeat tiers.
+</aside>
+
+<p>
+  The Haiku call is <strong>fail-soft</strong>: on any failure (including a per-turn timeout abort)
+  the resolver falls back to a fixed mid-band DC and four generic-but-distinct outcome strings, so
+  the deterministic roll still selects a meaningful tier. "Roll, then match" holds even when the
+  table generation fails — the one place in the combat path where code, not Haiku, picks the values.
+</p>
+
+<h2 id="the-binding-cost-envelope-the-dice-own-the-stakes-not-the-telling">The binding cost envelope: the dice own the stakes, not the telling</h2>
+
+<p>
+  A tier is more than a prose seed. Each carries a hard <code>CombatEnvelope</code> — a mechanical
+  floor the result must satisfy: whether the party wins, the minimum number of PCs reduced to 0 HP,
+  the minimum aggregate HP loss as a fraction of the party's max, and whether PC-death narration is
+  permitted at all. When <code>resolve_combat</code> reports the Fast Thinker's proposed HP and
+  casualty deltas, the <strong>envelope reconciler</strong> (<code>reconcileDeltas</code> in
+  <code>combat/apply.ts</code>) validates them against the selected tier and clamps or augments them
+  to meet the floor before anything is applied.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the envelope exists — the FT cannot narrate away the stakes</strong> — the skill-check
+  guarantee is that the dice own the outcome. Without an envelope, the Fast Thinker could quietly
+  re-decide a <code>pyrrhic</code> result by reporting trivial damage and no casualties — the prose
+  says "a hard-won, costly victory" while the ledger shows everyone unscathed. The envelope closes
+  that gap deterministically: a <code>pyrrhic</code> tier requires at least one PC dropped, so if
+  the Fast Thinker under-states the cost, the reconciler downs the lowest-HP member itself
+  (deterministic by HP then name). The dice own the <em>outcome and its required cost</em>; the Fast
+  Thinker owns the <em>telling</em> and the specifics <em>within</em> the floor. An adversarial test
+  feeds the resolver deltas that contradict the tier and asserts the floor still wins.
+</aside>
+
+<p>
+  The reconciler also <strong>partitions every reported name</strong> into PCs and enemies. Only PC
+  HP and conditions touch the ledger; enemy casualties are narrative-only (enemies have no stat
+  block and no ledger row in L1 — they are carried as <code>{ name, description, count }</code>). A
+  name that matches neither — a model typo or hallucination — is dropped with a logged warning,
+  never written. A PC casualty is represented mechanically as <code>hp = 0</code> (which
+  auto-applies <code>unconscious</code>): the ledger has no death state in L1, so a narrated "death"
+  on the worst tier is a label recorded in the combat summary, not a distinct ledger row. Real death
+  and dying arrive with the L2 rules engine.
+</p>
+
+<h2 id="pure-resolvers-durable-at-commit-the-recovery-invariant-holds">Pure resolvers, durable at commit: the recovery invariant holds</h2>
+
+<p>
+  Both combat tools are <strong>pure data resolvers</strong>, the same discipline every
+  <a href="../runtime/fast-thinker.html#tool-registry-pure-resolvers">FT tool</a> follows: their
+  <code>execute</code> computes and returns data, mutates no session state, and emits no frame.
+  <code>initiate_combat.execute</code> rolls initiative and runs <code>resolveCombat</code> (a pure
+  computation that nests the Haiku call, exactly like the skill-check resolver), then returns the
+  outcome plus the tier as a narration constraint. <code>resolve_combat.execute</code> runs the
+  reconciler and returns the reconciled deltas. Each records its decision into a per-turn
+  combat-event accumulator the worker reads after the turn.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The durable mode flip and ledger write happen at persist, not in the tool</strong> — the
+  SDK runs a tool's <code>execute</code> <em>ahead</em> of the consumer, and the
+  <a href="../runtime/session-turn.html">turn's recovery invariant</a> is that nothing durable is
+  written between turn-load and the atomic commit (a mid-turn crash must roll back cleanly). An
+  eager durable Redis write from <code>execute</code> would break that. So the side-effects live
+  where they are safe: the consume loop emits the transient <code>mode_change</code> /
+  <code>combat_started</code> / <code>combat_resolved</code> frames in stream order, and the durable
+  mode flip, the <code>:combat</code> blob, and the ledger write all happen at
+  <code>persistTurn</code> — part of the atomic, lock-held, idempotent turn commit. The client flips
+  its screen immediately on the transient frame; Redis flips durably at commit.
+</aside>
+
+<p>
+  The ledger write is <strong>set-authoritative</strong>: <code>applyToLedger</code> SETs each PC's
+  HP to the combat target (<code>combat-start HP − reconciled damage</code>) rather than applying a
+  delta, and journals each write to the
+  <a href="../runtime/character-ledger.html">ledger audit trail</a>. Because the combat outcome is
+  the authoritative result of the whole fight, setting the target subsumes any in-turn
+  <code>adjust_hp</code> the Fast Thinker also fired for a combatant, and it is inherently
+  idempotent — a BullMQ re-run re-sets the same target and the journal idempotency key (a synthetic,
+  turn-stable <code>combat-resolve:&lt;turnId&gt;</code>) makes the re-run a true no-op.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Set-authoritative because a delta double-applies</strong> — the Fast Thinker may narrate a
+  wound and call <code>adjust_hp</code> during the render, <em>and</em> report that same wound to
+  <code>resolve_combat</code>. Applying a combat delta on top of that lands the PC at the wrong HP
+  (the L1 double-application bug). Setting the HP to the authoritative target — the single source of
+  truth for the fight — collapses both into one correct value and makes the write idempotent for
+  free. The combat resolver owns all of a fight's mechanical HP and conditions; the Fast-Thinker
+  prompt instructs the model to report wounds through <code>resolve_combat</code>, not the
+  out-of-combat ledger tools.
+</aside>
+
+<h2 id="the-mode-is-a-real-server-side-mode-not-a-display-flag">The mode is a real server-side mode, not a display flag</h2>
+
+<p>
+  Once the fight resolves, the session <strong>sits</strong> in <code>combat</code> mode, showing
+  the result, until a player resumes. While it sits there, the
+  <a href="../runtime/session-transport.html">WebSocket inbound handler</a>
+  <strong>drops every inbound frame except <code>resume_combat</code></strong> (and
+  <code>end_session</code>) — the same drop-gate shape the end-of-session flow uses. This is what
+  makes <code>mode</code> a genuine server-side mode rather than a client display hint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The combat drop-gate stops a phantom turn over the unresolved result</strong> — without
+  it, a player typing while the result is on screen would re-arm the
+  <a href="../runtime/dm-trigger.html">DM trigger</a> and fire a normal exploration turn on top of
+  the fight that has not been acknowledged. Gating inbound frames to
+  <code>resume_combat</code> while in combat mode is the difference between a mode and a flag: the
+  server, not the UI, enforces that nothing else happens until the party resumes.
+</aside>
+
+<p>
+  Resume is <strong>any-member</strong> and <strong>once-only</strong>. Combat is a shared party
+  beat, so the first player to send <code>resume_combat</code> flips the whole session. A
+  <code>tryMarkResumed</code> SET-NX claim guards it so two simultaneous "okay"s flip the mode and
+  clear the <code>:combat</code> blob exactly once; the loser no-ops. The winner flips
+  <code>mode → exploration</code>, clears <code>:combat</code>, and broadcasts the
+  <code>mode_change</code>. A member who reconnects mid-fight does not see a blank screen: the
+  reconnect path reads the <code>:combat</code> blob and replays a synthetic combat frame (the
+  result if resolved, the roster and initiative if still resolving), and the blob is kept alive
+  across a suspend by the TTL-refresh set, so a session never wedges in combat mode with no result.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Resume is purely the mode flip — the ST and Scribe already ran</strong> — it is tempting
+  to hand the combat off to the <a href="../runtime/slow-thinker.html">Slow Thinker</a> and
+  <a href="../runtime/scribe.html">Scribe</a> at resume. That would double-extract. The
+  <code>initiate</code>+<code>resolve</code> turn is an ordinary DM turn: it rides the
+  <a href="../runtime/session-turn.html">worker's normal post-turn tail</a>, which enqueues the
+  ST-evaluation and the Scribe once, at turn-end. The combat summary is stored on the
+  <code>:combat</code> blob and surfaces to the next turn's context after resume. Resume produces no
+  new prose by itself — the resolution narration already told the fight — so it is just the mode
+  flip plus the control action. The ST eval that runs before the player resumes is fine: it is
+  post-hoc context for the <em>next</em> turn, which cannot fire until resume re-opens the inbound
+  path anyway.
+</aside>
+
+<h2 id="enforced-ignorance-nothing-to-tier-filter">Enforced ignorance: nothing to tier-filter</h2>
+
+<p>
+  Combat is player-facing prose by construction. The Fast Thinker authors the narration openly; the
+  Haiku outcome table sees only the FT-declared enemies (public) and the party's mechanical ledger
+  state (levels and HP — a player's own numbers carry no secret). No plot or NPC-secret input ever
+  reaches the combat path, and there is no tier filter to misconfigure: the combat narration joins
+  the transcript as an ordinary public <code>dm_text</code> row, like all FT prose. The combat tool
+  rows themselves are persisted as tool metadata (registered in the
+  <a href="../runtime/session-turn.html">transcript codec</a> so a combat turn does not crash at
+  persist) but are excluded from the searchable corpus — they are not prose.
+</p>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  Combat L1 reaches across the live-play system rather than living in one module. The two tools
+  register on the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s tool loop, alongside the
+  dice, skill-check, and ledger tools. The deterministic outcome is the
+  <a href="../runtime/fast-thinker.html#skill-check-resolver">skill-check resolver</a>'s shape,
+  widened to four tiers. The mode seam, the <code>:combat</code> Redis key, the new client/server
+  frames, and the combat-mode inbound drop-gate are all the
+  <a href="../runtime/session-transport.html">session transport</a>'s surface. The durable mode
+  flip, the blob write, and the post-turn combat application happen in the
+  <a href="../runtime/session-turn.html">turn worker</a>'s post-flush phase, which also enqueues the
+  normal post-turn <a href="../runtime/slow-thinker.html">ST-evaluation</a> and
+  <a href="../runtime/scribe.html">Scribe</a> jobs that process the fight once. PC HP and conditions
+  apply through the <a href="../runtime/character-ledger.html">character ledger</a>'s
+  set-authoritative, journaled write path. The combat inspector in the
+  <a href="../runtime/dev-tool.html">dev tool</a> is the stand-in for the player combat screen,
+  which is a Frontend ticket. The round-by-round combat <em>mode</em> — turns, player actions, enemy
+  stat blocks, the action stack, voxel maps — grows into this same seam at L2.
+</p>
+
+<h2 id="appendix-surface">Appendix: surface</h2>
+
+<h3 id="the-combat-tools-session-tiers-ft-tools-ts">The combat tools (<code>session/tiers/ft-tools.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Input</th>
+      <th>Resolver (pure <code>execute</code>)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>initiate_combat</code></td>
+      <td>
+        <code>enemies[{ name, description, count }]</code>, <code>environment</code>,
+        <code>surprise</code>
+      </td>
+      <td>
+        Rolls initiative (flavor only — L1 sequences nothing); runs <code>resolveCombat</code> →
+        <code>CombatOutcome</code>; returns the outcome + the tier as a narration constraint.
+      </td>
+    </tr>
+    <tr>
+      <td><code>resolve_combat</code></td>
+      <td>
+        <code>narration</code>, <code>hp_changes</code>, <code>conditions_applied</code> /
+        <code>conditions_removed</code>, <code>casualties[{ combatant_name, fate }]</code>
+      </td>
+      <td>
+        <code>reconcileDeltas</code> (clamp to the envelope, partition PC/enemy); returns the
+        reconciled deltas + the assembled <code>CombatSummaryL1</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="the-four-tiers-and-their-envelopes-combat-outcome-ts">The four tiers and their envelopes (<code>combat/outcome.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Tier</th>
+      <th>Roll vs DC</th>
+      <th>Outcome</th>
+      <th>Cost envelope (the hard floor)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>decisive</code></td>
+      <td><code>total ≥ DC + 7</code></td>
+      <td>victory</td>
+      <td>no PC casualties; minimal HP loss.</td>
+    </tr>
+    <tr>
+      <td><code>costly</code></td>
+      <td><code>DC ≤ total &lt; DC + 7</code></td>
+      <td>victory</td>
+      <td>aggregate PC HP loss ≥ 30% of party max; no PC dropped.</td>
+    </tr>
+    <tr>
+      <td><code>pyrrhic</code></td>
+      <td><code>DC − 7 ≤ total &lt; DC</code></td>
+      <td>victory</td>
+      <td>≥ 1 PC reduced to 0 HP; the party still prevails.</td>
+    </tr>
+    <tr>
+      <td><code>routed</code></td>
+      <td><code>total &lt; DC − 7</code></td>
+      <td>defeat</td>
+      <td>
+        party does not win; recoverable (flee/capture/downed). PC-death narration permitted, rare.
+      </td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  <code>total = partyCapability(0..12) + d20</code>; <code>DC</code> is the Haiku-supplied
+  <code>8..22</code> band (a fixed mid DC of 15 on the fail-soft fallback).
+</p>
+
+<h3 id="redis-state-session-cid-combat">Redis state (<code>session:{cId}:combat</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Surface</th>
+      <th>Shape / role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>session:{cId}:combat</code></td>
+      <td>
+        The <code>CombatStateBlob</code> — <code>status</code> (<code>resolving</code> /
+        <code>resolved</code>), the enemies, environment, surprise, rolled initiative, the
+        deterministic <code>CombatOutcome</code> (set at initiate), and the
+        <code>CombatResult</code> with its <code>CombatSummaryL1</code> (set at resolve).
+        TTL-refreshed across a suspend.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{cId}:state</code> · <code>mode</code></td>
+      <td>
+        Flipped to <code>combat</code> at the resolved turn's persist (a merged write, never a blind
+        overwrite), back to <code>exploration</code> at resume.
+      </td>
+    </tr>
+    <tr>
+      <td><code>tryMarkResumed</code> (SET-NX)</td>
+      <td>
+        The once-only resume interlock — claims the resume exactly once across simultaneous
+        any-member "okay"s; released when <code>:combat</code> is cleared.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="wire-frames-contract-session-events-ts">Wire frames (<code>contract/session-events.ts</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Frame</th>
+      <th>Direction</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>mode_change</code></td>
+      <td>server → client</td>
+      <td><code>{ from, to }</code> — flips the screen on every exploration↔combat transition.</td>
+    </tr>
+    <tr>
+      <td><code>combat_started</code></td>
+      <td>server → client</td>
+      <td>
+        <code>{ enemies, initiative }</code> — the rolled roster + the "roll initiative" flourish.
+      </td>
+    </tr>
+    <tr>
+      <td><code>combat_resolved</code></td>
+      <td>server → client</td>
+      <td>
+        <code>{ narration, summary }</code> — the close-out narration + the
+        <code>CombatSummaryL1</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>resume_combat</code></td>
+      <td>client → server</td>
+      <td>
+        The any-member resume summon (no payload) — flips a combat-mode session back to exploration.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/session/combat/outcome.ts</code> (the <code>resolveCombat</code> resolver +
+  <code>partyCapability</code> / <code>selectTier</code> + the per-tier envelopes),
+  <code>backend/src/session/combat/apply.ts</code> (the <code>reconcileDeltas</code> envelope
+  reconciler + <code>applyToLedger</code> + <code>assembleSummary</code>),
+  <code>backend/src/session/combat/events.ts</code> (the per-turn combat-event sink),
+  <code>backend/src/session/tiers/ft-tools.ts</code> (the <code>initiate_combat</code> /
+  <code>resolve_combat</code> tools), <code>backend/src/redis/session-state.ts</code> (the
+  <code>:combat</code> blob, the <code>CombatState</code> / <code>CombatOutcome</code> /
+  <code>CombatSummaryL1</code> types, <code>tryMarkResumed</code>), and
+  <code>backend/src/llm/schemas/combat-outcome.ts</code> +
+  <code>backend/src/llm/prompts/session/combat-outcome.txt</code> (the Haiku table). Design spec:
+  <code>docs/superpowers/specs/2026-06-18-myt-75-combat-l1-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#a-whole-fight-is-one-big-skill-check">A whole fight is one big skill check</a></li><li style="padding-left:0"><a href="#the-binding-cost-envelope-the-dice-own-the-stakes-not-the-telling">The binding cost envelope: the dice own the stakes, not the telling</a></li><li style="padding-left:0"><a href="#pure-resolvers-durable-at-commit-the-recovery-invariant-holds">Pure resolvers, durable at commit: the recovery invariant holds</a></li><li style="padding-left:0"><a href="#the-mode-is-a-real-server-side-mode-not-a-display-flag">The mode is a real server-side mode, not a display flag</a></li><li style="padding-left:0"><a href="#enforced-ignorance-nothing-to-tier-filter">Enforced ignorance: nothing to tier-filter</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#the-combat-tools-session-tiers-ft-tools-ts">The combat tools (session/tiers/ft-tools.ts)</a></li><li style="padding-left:12px"><a href="#the-four-tiers-and-their-envelopes-combat-outcome-ts">The four tiers and their envelopes (combat/outcome.ts)</a></li><li style="padding-left:12px"><a href="#redis-state-session-cid-combat">Redis state (session:{cId}:combat)</a></li><li style="padding-left:12px"><a href="#wire-frames-contract-session-events-ts">Wire frames (contract/session-events.ts)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

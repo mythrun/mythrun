@@ -413,7 +413,7 @@
   rebuilt history stays clean and never 400s the next turn.
 </aside>
 
-<h2 id="the-tool-registry-pure-resolvers">The tool registry: pure resolvers</h2>
+<h2 id="tool-registry-pure-resolvers">The tool registry: pure resolvers</h2>
 
 <p>
   <code>ft-tools.ts</code> (<code>buildFtTools</code>) is the extension point — the place tools
@@ -423,10 +423,31 @@
   <code>spend_resource</code>, <code>acquire_resource</code>, <code>adjust_hp</code>,
   <code>update_condition</code>, <code>take_rest</code>); MYT-72 added the three world-knowledge
   lookups (<code>search_lore</code>, <code>characters_known_to</code>, <code>faction_tree</code> —
-  the <a href="#world-knowledge-lookups">section below</a>); combat tools stay deferred. Tools are
-  <strong>pure resolvers</strong>: their <code>execute</code> returns data only, never emits a
-  frame, and the SDK feeds each result back to the model as the next step's input.
+  the <a href="#world-knowledge-lookups">section below</a>); MYT-75 added the two
+  <a href="../combat/single-shot-combat.html">combat L1</a> tools (<code>initiate_combat</code>,
+  <code>resolve_combat</code>). Tools are <strong>pure resolvers</strong>: their
+  <code>execute</code> returns data only, never emits a frame, and the SDK feeds each result back to
+  the model as the next step's input.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The combat tools are pure resolvers too — and the resolver, not the model, owns the
+    fight</strong
+  >
+  — <code>initiate_combat.execute</code> rolls initiative and runs the
+  <a href="../combat/single-shot-combat.html">single-shot resolver</a> (a whole fight as one big
+  skill check — the same <a href="#skill-check-resolver">skill-check shape</a>, scaled up: a Haiku
+  table generates a DC + four tiered outcomes, a dice roll selects the tier, the matched tier
+  becomes the model's narration constraint). The FT narrates that outcome and reports its mechanical
+  results through <code>resolve_combat</code>; it never decides who won. Both return data only — the
+  durable mode flip, the ledger write, and the combat frames all happen outside
+  <code>execute</code>, at the <a href="./session-turn.html">turn's commit</a>, never inside the
+  tool (the SDK runs <code>execute</code> ahead of the consumer). The FT prompt directs the model to
+  route all of a fight's HP and conditions through <code>resolve_combat</code> rather than the
+  out-of-combat ledger tools, so the combat resolver is the single authority for the encounter's
+  stakes.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The ledger tools return a structured constraint, never throw, never emit</strong> — each
@@ -486,7 +507,7 @@
   normal roll. An injectable RNG makes every path deterministically unit-testable.
 </p>
 
-<h2 id="the-skill-check-resolver-principle-5">The skill-check resolver (Principle #5)</h2>
+<h2 id="skill-check-resolver">The skill-check resolver (Principle #5)</h2>
 
 <p>
   <code>skill-check.ts</code> is the pre-generated-DC-table flow — and it is <strong>total</strong>:
@@ -1134,7 +1155,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-wrapper-streamtextwithtools">The wrapper: streamTextWithTools</a></li><li style="padding-left:0"><a href="#the-consume-loop-the-single-emission-point">The consume loop: the single emission point</a></li><li style="padding-left:0"><a href="#the-cap-and-the-prose-close">The cap and the prose close</a></li><li style="padding-left:0"><a href="#the-tool-registry-pure-resolvers">The tool registry: pure resolvers</a></li><li style="padding-left:0"><a href="#the-dice-engine-principle-4">The dice engine (Principle #4)</a></li><li style="padding-left:0"><a href="#the-skill-check-resolver-principle-5">The skill-check resolver (Principle #5)</a></li><li style="padding-left:0"><a href="#enforced-ignorance-and-the-prompt">Enforced ignorance and the prompt</a></li><li style="padding-left:0"><a href="#the-world-delta-the-ft-proposes-its-own-facts">The world delta: the FT proposes its own facts</a></li><li style="padding-left:0"><a href="#world-knowledge-lookups">World-knowledge lookups: the Slow-Thinker-gated read seam</a></li><li style="padding-left:12px"><a href="#step-1-the-contextual-skill-gate-haiku">Step 1 — the contextual skill-gate (Haiku)</a></li><li style="padding-left:12px"><a href="#step-2-resolve-over-pull-and-step-3-the-st-vet-opus">Step 2 — resolve (over-pull) and Step 3 — the ST-vet (Opus)</a></li><li style="padding-left:12px"><a href="#step-4-relay-and-fail-soft-everywhere">Step 4 — relay, and fail-soft everywhere</a></li><li style="padding-left:12px"><a href="#the-working-set-canon-read-merge-myt-73">The working set ∪ canon read-merge (MYT-73)</a></li><li style="padding-left:0"><a href="#prompt-caching-the-cost-lever">Prompt caching: the cost lever</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#config-constants-ft-config-ts">Config constants (ft-config.ts)</a></li><li style="padding-left:12px"><a href="#world-lookup-config-constants-world-lookup-config-ts">World-lookup config constants (world-lookup-config.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-wrapper-streamtextwithtools">The wrapper: streamTextWithTools</a></li><li style="padding-left:0"><a href="#the-consume-loop-the-single-emission-point">The consume loop: the single emission point</a></li><li style="padding-left:0"><a href="#the-cap-and-the-prose-close">The cap and the prose close</a></li><li style="padding-left:0"><a href="#tool-registry-pure-resolvers">The tool registry: pure resolvers</a></li><li style="padding-left:0"><a href="#the-dice-engine-principle-4">The dice engine (Principle #4)</a></li><li style="padding-left:0"><a href="#skill-check-resolver">The skill-check resolver (Principle #5)</a></li><li style="padding-left:0"><a href="#enforced-ignorance-and-the-prompt">Enforced ignorance and the prompt</a></li><li style="padding-left:0"><a href="#the-world-delta-the-ft-proposes-its-own-facts">The world delta: the FT proposes its own facts</a></li><li style="padding-left:0"><a href="#world-knowledge-lookups">World-knowledge lookups: the Slow-Thinker-gated read seam</a></li><li style="padding-left:12px"><a href="#step-1-the-contextual-skill-gate-haiku">Step 1 — the contextual skill-gate (Haiku)</a></li><li style="padding-left:12px"><a href="#step-2-resolve-over-pull-and-step-3-the-st-vet-opus">Step 2 — resolve (over-pull) and Step 3 — the ST-vet (Opus)</a></li><li style="padding-left:12px"><a href="#step-4-relay-and-fail-soft-everywhere">Step 4 — relay, and fail-soft everywhere</a></li><li style="padding-left:12px"><a href="#the-working-set-canon-read-merge-myt-73">The working set ∪ canon read-merge (MYT-73)</a></li><li style="padding-left:0"><a href="#prompt-caching-the-cost-lever">Prompt caching: the cost lever</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#config-constants-ft-config-ts">Config constants (ft-config.ts)</a></li><li style="padding-left:12px"><a href="#world-lookup-config-constants-world-lookup-config-ts">World-lookup config constants (world-lookup-config.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
