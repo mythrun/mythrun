@@ -173,6 +173,12 @@ importers:
 
   frontend:
     dependencies:
+      '@fontsource/ibm-plex-mono':
+        specifier: ^5.0.0
+        version: 5.2.7
+      '@fontsource/source-serif-4':
+        specifier: ^5.0.0
+        version: 5.2.9
       '@mythrun/ui':
         specifier: workspace:*
         version: link:ui

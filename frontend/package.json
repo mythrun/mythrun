@@ -12,6 +12,8 @@
     "test:coverage": "vitest run --coverage --exclude '**/config-wiring.test.ts'"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.0.0",
+    "@fontsource/source-serif-4": "^5.0.0",
     "@mythrun/ui": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
