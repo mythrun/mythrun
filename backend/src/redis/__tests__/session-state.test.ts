@@ -506,6 +506,12 @@ describe('makeSessionState — combat state (MYT-75)', () => {
     expect(await ss.getCombatState(cId)).toBeNull()
   })
 
+  it('getCombatState treats a corrupt blob as absent (→ null)', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await redis.set(`${KEY_PREFIX}session:${cId}:combat`, '{not json')
+    expect(await ss.getCombatState(cId)).toBeNull()
+  })
+
   it('clearCombatState also clears the resumed interlock so a re-entered fight can resume again', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
     await ss.setCombatState(cId, sampleCombat())
