@@ -15,6 +15,13 @@ export default [
     // emitted by `test:coverage`) — build artifacts, not source. Without this
     // those `coverage/*.js` files hit the root config's type-aware projectService
     // and fail with "not found by the project service".
+    //
+    // `ui/scripts/**` is the `@mythrun/ui` palette generator. It's a build-time
+    // `.mjs` outside every tsconfig project and is already eslint-ignored within
+    // `@mythrun/ui`'s own config — but `@mythrun/web`'s `eslint .` (run from
+    // `frontend/`) globs across the nested `ui/` directory and would otherwise
+    // hit it with the root config's type-aware projectService, same failure mode
+    // as `coverage/**`. `@mythrun/ui` lints its own `src/**`; web ignores it here.
     ignores: [
       'dist/**',
       'coverage/**',
@@ -22,6 +29,7 @@ export default [
       'index.html',
       'vite.config.ts',
       'vitest.config.ts',
+      'ui/scripts/**',
     ],
   },
   {
