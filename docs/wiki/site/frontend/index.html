@@ -25,15 +25,408 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html" class="active">Overview</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend</div>
-        <article><h1>Frontend</h1>
-<p class="lead">Components, Three.js layer, design system adapters.</p>
-<p>Nothing built here yet. Will be populated as the frontend ships.</p>
+        <article>
+<h1>Frontend</h1>
+
+<p class="lead">
+  The frontend workspace and the lint rails that gate it. Two pnpm packages —
+  <code>@mythrun/web</code> (the React app) and <code>@mythrun/ui</code> (the design system) — plus
+  three "rules of the road" turned into CI lints <em>before</em> any real UI is built. As of today
+  this is an empty-but-enforced skeleton: it builds, the rails bite, and the gates run. No real
+  components, tokens, or flows yet — those land in later issues.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1267pt" height="278pt"
+ viewBox="14.00 14.00 1252.00 263.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 259.4)">
+<title>frontend_foundation</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-245 1233.88,-245 1233.88,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_ws</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-113 8,-204 514.23,-204 514.23,-113 8,-113"/>
+<text xml:space="preserve" text-anchor="middle" x="261.11" y="-190.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">frontend workspace</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_rails</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="646.24,-18 646.24,-233 902.36,-233 902.36,-18 646.24,-18"/>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-219.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lint rails (error on src/**)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_gates</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="939.36,-8 939.36,-161 1221.88,-161 1221.88,-8 939.36,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">gates (Rule 3)</text>
+</g>
+<!-- web -->
+<g id="node1" class="node">
+<title>web</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-172.44 8,-172.44 8,-115.56 171.7,-115.56 171.7,-172.44"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-153.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-140.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">frontend/src/**</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-127.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(features · routes)</text>
+</g>
+<!-- ui -->
+<g id="node2" class="node">
+<title>ui</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="514.23,-183.04 363.73,-183.04 363.73,-112.96 514.23,-112.96 514.23,-183.04"/>
+<text xml:space="preserve" text-anchor="middle" x="438.98" y="-164.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@mythrun/ui</text>
+<text xml:space="preserve" text-anchor="middle" x="438.98" y="-151.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">frontend/ui/src/**</text>
+<text xml:space="preserve" text-anchor="middle" x="438.98" y="-138.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(&lt;Text&gt; anchor;</text>
+<text xml:space="preserve" text-anchor="middle" x="438.98" y="-124.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">library zone)</text>
+</g>
+<!-- web&#45;&gt;ui -->
+<g id="edge1" class="edge">
+<title>web&#45;&gt;ui</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.24,-144.94C227.02,-145.57 299.06,-146.4 354.31,-147.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="354.19,-149.48 361.21,-147.12 354.24,-144.58 354.19,-149.48"/>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-173.93" font-family="Courier,monospace" font-size="10.00">import { Text }</text>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-161.93" font-family="Courier,monospace" font-size="10.00">(source via exports map,</text>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-149.93" font-family="Courier,monospace" font-size="10.00">moduleResolution: Bundler)</text>
+</g>
+<!-- adhoc -->
+<g id="node3" class="node">
+<title>adhoc</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="902.36,-136.44 646.24,-136.44 646.24,-79.56 902.36,-79.56 902.36,-136.44"/>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-117.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;ui/no&#45;ad&#45;hoc&#45;ui</text>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-104.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(custom rule)</text>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-91.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no raw &lt;div&gt; · style · className</text>
+</g>
+<!-- web&#45;&gt;adhoc -->
+<g id="edge2" class="edge">
+<title>web&#45;&gt;adhoc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.37,-124.3C226.3,-112.3 298.79,-98.13 363.73,-92 430.32,-85.71 447.37,-89.94 514.23,-92 554.17,-93.23 597.54,-95.53 637.16,-98.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="637.3,-100.47 644.43,-98.44 637.58,-95.58 637.3,-100.47"/>
+<text xml:space="preserve" text-anchor="middle" x="438.98" y="-95" font-family="Courier,monospace" font-size="10.00">src/** lint</text>
+</g>
+<!-- ui&#45;&gt;adhoc -->
+<g id="edge3" class="edge">
+<title>ui&#45;&gt;adhoc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M514.78,-139.02C550.87,-134.69 595.33,-129.36 637.13,-124.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="637.27,-126.79 643.93,-123.53 636.68,-121.93 637.27,-126.79"/>
+<text xml:space="preserve" text-anchor="middle" x="580.23" y="-151.18" font-family="Courier,monospace" font-size="10.00">no&#45;ad&#45;hoc&#45;ui OFF</text>
+<text xml:space="preserve" text-anchor="middle" x="580.23" y="-139.18" font-family="Courier,monospace" font-size="10.00">(jsx&#45;a11y ON)</text>
+</g>
+<!-- ci -->
+<g id="node6" class="node">
+<title>ci</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1221.88,-139.44 939.36,-139.44 939.36,-82.56 1221.88,-82.56 1221.88,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">frontend&#45;check.yml</text>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(always&#45;on required check)</text>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typecheck·lint·test·coverage·build</text>
+</g>
+<!-- adhoc&#45;&gt;ci -->
+<g id="edge4" class="edge">
+<title>adhoc&#45;&gt;ci</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M903.04,-109.26C912.03,-109.35 921.15,-109.44 930.25,-109.53"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.52,-111.98 937.54,-109.6 930.57,-107.08 930.52,-111.98"/>
+</g>
+<!-- i18n -->
+<g id="node4" class="node">
+<title>i18n</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="872.65,-61.84 675.95,-61.84 675.95,-18.16 872.65,-18.16 872.65,-61.84"/>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-43.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">i18next/no&#45;literal&#45;string</text>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-30.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(jsx&#45;only: text + attrs)</text>
+</g>
+<!-- hook -->
+<g id="node7" class="node">
+<title>hook</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1159.17,-64.44 1002.07,-64.44 1002.07,-7.56 1159.17,-7.56 1159.17,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.husky/pre&#45;push</text>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(diff&#45;scoped on</text>
+<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">origin/main...HEAD)</text>
+</g>
+<!-- i18n&#45;&gt;hook -->
+<!-- hatch -->
+<g id="node5" class="node">
+<title>hatch</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="885.86,-211.44 662.74,-211.44 662.74,-154.56 885.86,-154.56 885.86,-211.44"/>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-192.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">escape hatch</text>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-179.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reportUnusedDisableDirectives</text>
+<text xml:space="preserve" text-anchor="middle" x="774.3" y="-166.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ require&#45;description</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<aside class="wiki-rationale">
+  <strong>Rails before track</strong> — the foundation ships the enforcement, not the UI. Once the
+  rails are wired, a hardcoded string or an ad-hoc element in feature code is a CI failure from the
+  first real component onward. Putting the gates down first means the team never has to retrofit
+  discipline onto a pile of already-written markup.
+</aside>
+
+<h2 id="the-two-package-workspace">The two-package workspace</h2>
+
+<p>
+  <code>pnpm-workspace.yaml</code> lists two new packages alongside the backend and the wiki.
+  <code>frontend/</code> is <code>@mythrun/web</code> — the React app: routes, features, flows.
+  <code>frontend/ui/</code> is <code>@mythrun/ui</code> — the mythrunUI design system. The app
+  declares <code>"@mythrun/ui": "workspace:*"</code> and pnpm symlinks the package directory.
+</p>
+
+<p>
+  <code>@mythrun/web</code> imports the library as <strong>source</strong>, not a built bundle.
+  <code>@mythrun/ui</code>'s <code>package.json</code> points its <code>exports</code> map at
+  <code>./src/index.ts</code>, and the consumer's <code>moduleResolution: "Bundler"</code> permits
+  importing <code>.ts</code>/<code>.tsx</code> source directly. So
+  <code>import { Text } from '@mythrun/ui'</code> resolves to the library's TypeScript, with no
+  intermediate compile step. The library has <strong>no <code>build</code> script</strong>; root
+  <code>pnpm -r build</code> builds <code>@mythrun/web</code> (via Vite) and intentionally skips
+  <code>@mythrun/ui</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Source-consumed library, no publish step</strong> — both packages live in this repo and
+  deploy together; there is no external consumer that needs a versioned, pre-built
+  <code>@mythrun/ui</code> artifact. Skipping the build step keeps the library editable in place — a
+  change to a primitive is visible in the app on the next Vite reload, with no rebuild-and-relink
+  dance. The cost (the app's bundler must understand TypeScript source) is already paid: Vite
+  compiles the app's own <code>.tsx</code> anyway.
+</aside>
+
+<p>
+  The scaffold is Vite + React 19 + TypeScript (strict) + Tailwind v4. The
+  <code>tsconfig.json</code> mirrors the dev-tool package, not the backend:
+  <code>module: ESNext</code>, <code>moduleResolution: Bundler</code>, <code>jsx: react-jsx</code>,
+  with <code>strict</code>, <code>noUncheckedIndexedAccess</code>, and
+  <code>exactOptionalPropertyTypes</code> all on. Tailwind is wired CSS-first through
+  <code>@tailwindcss/vite</code> — a single <code>src/index.css</code> with
+  <code>@import "tailwindcss"</code> and an empty <code>@theme {}</code> block; the real OKLCH brand
+  tokens land in a later issue. The library today is one trivial <code>&lt;Text&gt;</code> primitive
+  — the boundary anchor that makes the lint rails testable on day one.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Mirrors dev-tool, not backend</strong> — the backend uses
+  <code>moduleResolution: NodeNext</code>, but Vite and Vitest config files default-export, which
+  the repo-wide ESLint config bans, and a bundler-style resolution is what lets the app import
+  library <code>.ts</code> source. The <code>backend/dev-tool</code> package already solved exactly
+  this shape — a per-package config with <code>Bundler</code> resolution — so the frontend follows
+  that precedent rather than the backend one.
+</aside>
+
+<h2 id="the-three-rules-of-the-road">The three rules of the road</h2>
+
+<p>
+  Three conventions govern all frontend code. Each is enforced as a lint, not left as a style guide
+  — the third rule is that anything the team cares about <em>becomes</em> a CI lint.
+</p>
+
+<h3 id="rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</h3>
+
+<p>
+  Every user-visible string is an i18n key, never inline text. The off-the-shelf
+  <code>i18next/no-literal-string</code> rule enforces it, set to <code>error</code> in
+  <code>mode: 'jsx-only'</code> over feature code. That mode flags string literals in JSX text
+  <em>and</em> in JSX attributes — the attribute case is load-bearing because mythrunUI props (<code
+    >&lt;Text label="…" /&gt;</code
+  >) carry most user-facing text, and the plugin's weaker default would let those through.
+  Non-user-facing attributes (<code>data-testid</code>, <code>aria-*</code>, <code>role</code>,
+  <code>id</code>) are exempted so they don't trip the rule.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A known gap, carried forward deliberately</strong> —
+  <code>eslint-plugin-i18next</code> allowlists bare JSX <em>text</em> inside PascalCase arrow-const
+  components (<code>const X = () =&gt; &lt;Text&gt;hi&lt;/Text&gt;</code> is not flagged — it treats
+  the uppercase const like a constant). All attribute literals and JSX text inside
+  <code>function Comp() {}</code> declarations still fail, and a raw element there still fails the
+  no-ad-hoc-UI rail. Closing the arrow-const text gap belongs to the i18n-runtime issue, which also
+  adds the typed <code>t()</code> provider and a callee allow-list. The gap is documented in the
+  config so nobody mistakes it for a hole.
+</aside>
+
+<h3 id="rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</h3>
+
+<p>
+  Feature code composes <code>@mythrun/ui</code> components only — never raw DOM. The custom
+  <code>mythrun-ui/no-ad-hoc-ui</code> rule (authored at
+  <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>) reports three AST shapes: an intrinsic
+  lowercase JSX element (<code>&lt;div&gt;</code>, <code>&lt;button&gt;</code>, …), a
+  <code>style</code> attribute, and a <code>className</code> attribute. It is pure AST shape — no
+  type information needed. JSX fragments (<code>&lt;&gt;…&lt;/&gt;</code>) and component elements
+  (capitalized identifiers) are allowed; they carry no raw markup or styling.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The rule lives in the frontend config, not the root <code>mythrun</code> plugin</strong>
+  — it is scoped to where it applies (<code>frontend/src/**</code>) and uses a distinct
+  <code>mythrun-ui/</code> plugin namespace, leaving the root <code>mythrun</code> namespace for
+  backend rules. The rule file is a <code>.js</code> ESM module imported by both the ESLint config
+  and its Vitest test, so it is instrumented by Vitest and counts toward the coverage gate — unlike
+  the backend's <code>.cjs</code> rule files, which Vitest excludes.
+</aside>
+
+<p>
+  The boundary is asymmetric. In the library zone (<code>frontend/ui/**</code>) the rule is
+  <strong>off</strong> — raw elements, <code>className</code>, and Tailwind utilities legitimately
+  live there, because that is where the primitives wrapping them are built. The
+  <code>jsx-a11y</code> accessibility rails ride alongside, applying effectively only in the
+  library, since intrinsic elements exist nowhere else. Accessible-element authoring is, by design,
+  a library responsibility.
+</p>
+
+<h3 id="rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</h3>
+
+<p>
+  A true one-off escapes the no-ad-hoc-UI rail with
+  <code>// eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- &lt;reason&gt;</code>. The escape
+  hatch is itself enforced so it can't decay into a free-for-all. The frontend config sets
+  <code>reportUnusedDisableDirectives: 'error'</code> (a disable that no longer suppresses anything
+  is a CI error) and <code>@eslint-community/eslint-comments/require-description: 'error'</code> (a
+  disable without a trailing <code>-- reason</code> is a CI error). A bare disable fails; only a
+  disable that names its reason — and still suppresses a real violation — passes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The hatch enforcement is added, not inherited</strong> — ESLint does not natively require
+  a <code>-- reason</code>, and the root config does not set
+  <code>reportUnusedDisableDirectives</code> at error severity. The frontend config adds both. This
+  is what makes the escape hatch a deliberate, reviewed act (a named reason in the diff) rather than
+  a silent bypass.
+</aside>
+
+<h2 id="coverage-and-the-wiring-tests">Coverage and the wiring tests</h2>
+
+<p>
+  Frontend Vitest enforces 100% on the logic surface — lines, branches, functions, statements —
+  while presentational code is excluded from the percentage (rendered in tests, not %-gated). Today
+  the only logic is the custom lint rule; <code>coverage.include</code> is
+  <code>eslint-rules/**</code>, to be extended with <code>src/lib/**</code>,
+  <code>src/hooks/**</code>, and the future API/transport clients as they land. The convention that
+  keeps this honest: logic lives in <code>.ts</code>, never <code>.tsx</code>, so the
+  <code>.tsx</code> exclusion can't launder untested logic.
+</p>
+
+<p>
+  Two test files supply the acceptance evidence that the rails are real. The RuleTester suite for
+  <code>no-ad-hoc-ui</code> drives the rule with inline code strings — invalid
+  (<code>&lt;div&gt;</code>, <code>style=</code>, <code>className=</code>), valid
+  (<code>&lt;Text/&gt;</code>, fragments) — and is what instruments the rule to 100%. The
+  config-wiring test uses <code>ESLint.calculateConfigForFile</code> to assert both rails are
+  <code>error</code> for a <code>src/**</code> path and <code>no-ad-hoc-ui</code> is
+  <code>off</code> for a <code>ui/**</code> path, then lints inline strings to prove the rails
+  actually fire. The wiring test runs under the plain <code>test</code> script (and is gated in CI)
+  but is excluded from the coverage run, where loading the rule through ESLint's own loader corrupts
+  the v8 map.
+</p>
+
+<h2 id="the-gates">The gates</h2>
+
+<p>
+  Both rails run in two places — a CI workflow and the pre-push hook — so a violation is caught
+  before it can land. <code>.github/workflows/frontend-check.yml</code> is the frontend's required
+  status check; <code>.husky/pre-push</code> gains a diff-scoped section that runs the same chain
+  locally when a push touches the frontend. Both are documented in detail on the
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page — including why
+  frontend-check runs unconditionally (so it never blocks merges Pending on backend-only PRs) and
+  why the pre-push section diffs on <code>origin/main...HEAD</code> rather than the staging area.
+  The companion change: <code>deploy.yml</code> adds <code>frontend/**</code> to its
+  <code>paths-ignore</code>, so a frontend-only push skips the backend image build and ECS deploy
+  entirely.
+</p>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The workspace is two of the packages <code>pnpm-workspace.yaml</code> declares — see the
+  <a href="../runtime/index.html">Backend</a> page's monorepo section for the full set and the root
+  <code>pnpm -r</code> verbs. The CI workflow and pre-push section that gate this code are detailed
+  on the <a href="../infra/ci-cd.html">CI/CD</a> page.
+</p>
+
+<h2 id="appendix-packages-amp-rails">Appendix: packages &amp; rails</h2>
+
+<h3 id="workspace-packages">Workspace packages</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Path</th>
+      <th>Role</th>
+      <th>Build</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@mythrun/web</code></td>
+      <td><code>frontend/</code></td>
+      <td>React app — routes, features, flows</td>
+      <td><code>vite build</code></td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/ui</code></td>
+      <td><code>frontend/ui/</code></td>
+      <td>mythrunUI design system (source-consumed)</td>
+      <td>none (no build script)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="lint-rails-feature-code-frontend-src">Lint rails (feature code, <code>frontend/src/**</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Rule</th>
+      <th>Source</th>
+      <th>Severity</th>
+      <th>Library zone</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>i18next/no-literal-string</code> (<code>mode: jsx-only</code>)</td>
+      <td>off-the-shelf</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td><code>mythrun-ui/no-ad-hoc-ui</code></td>
+      <td>custom rule</td>
+      <td>error</td>
+      <td>off</td>
+    </tr>
+    <tr>
+      <td><code>reportUnusedDisableDirectives</code></td>
+      <td>linterOptions</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td><code>eslint-comments/require-description</code></td>
+      <td>off-the-shelf</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td><code>jsx-a11y/*</code> (recommended)</td>
+      <td>off-the-shelf</td>
+      <td>error</td>
+      <td>on (library only)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/</code> (<code>@mythrun/web</code>),
+  <code>frontend/ui/</code> (<code>@mythrun/ui</code>), <code>frontend/eslint.config.js</code>,
+  <code>frontend/ui/eslint.config.js</code>, <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>,
+  <code>frontend/vitest.config.ts</code>, <code>pnpm-workspace.yaml</code>,
+  <code>.github/workflows/frontend-check.yml</code>.
+</p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <p class="wiki-toc-empty" style="font-size:11px;color:var(--paper-500);">—</p>
+        <ul><li style="padding-left:0"><a href="#the-two-package-workspace">The two-package workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

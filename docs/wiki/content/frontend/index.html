@@ -1,3 +1,293 @@
+<!-- source: frontend/package.json -->
+<!-- source: frontend/ui/package.json -->
+<!-- source: frontend/tsconfig.json -->
+<!-- source: frontend/eslint.config.js -->
+<!-- source: frontend/ui/eslint.config.js -->
+<!-- source: frontend/eslint-rules/no-ad-hoc-ui.js -->
+<!-- source: frontend/vitest.config.ts -->
+<!-- source: frontend/ui/src/text.tsx -->
+<!-- source: pnpm-workspace.yaml -->
+<!-- source: .github/workflows/frontend-check.yml -->
+<!-- source-hash: sha256:2f940766a9f466c40c53b1998d3aae49b7b0a068a53aa0d7545e369ab5b95118 -->
+<!-- last-ticket: MYT-79 -->
+
 <h1>Frontend</h1>
-<p class="lead">Components, Three.js layer, design system adapters.</p>
-<p>Nothing built here yet. Will be populated as the frontend ships.</p>
+
+<p class="lead">
+  The frontend workspace and the lint rails that gate it. Two pnpm packages —
+  <code>@mythrun/web</code> (the React app) and <code>@mythrun/ui</code> (the design system) — plus
+  three "rules of the road" turned into CI lints <em>before</em> any real UI is built. As of today
+  this is an empty-but-enforced skeleton: it builds, the rails bite, and the gates run. No real
+  components, tokens, or flows yet — those land in later issues.
+</p>
+
+<!-- @diagram: frontend/foundation -->
+
+<aside class="wiki-rationale">
+  <strong>Rails before track</strong> — the foundation ships the enforcement, not the UI. Once the
+  rails are wired, a hardcoded string or an ad-hoc element in feature code is a CI failure from the
+  first real component onward. Putting the gates down first means the team never has to retrofit
+  discipline onto a pile of already-written markup.
+</aside>
+
+<h2>The two-package workspace</h2>
+
+<p>
+  <code>pnpm-workspace.yaml</code> lists two new packages alongside the backend and the wiki.
+  <code>frontend/</code> is <code>@mythrun/web</code> — the React app: routes, features, flows.
+  <code>frontend/ui/</code> is <code>@mythrun/ui</code> — the mythrunUI design system. The app
+  declares <code>"@mythrun/ui": "workspace:*"</code> and pnpm symlinks the package directory.
+</p>
+
+<p>
+  <code>@mythrun/web</code> imports the library as <strong>source</strong>, not a built bundle.
+  <code>@mythrun/ui</code>'s <code>package.json</code> points its <code>exports</code> map at
+  <code>./src/index.ts</code>, and the consumer's <code>moduleResolution: "Bundler"</code> permits
+  importing <code>.ts</code>/<code>.tsx</code> source directly. So
+  <code>import { Text } from '@mythrun/ui'</code> resolves to the library's TypeScript, with no
+  intermediate compile step. The library has <strong>no <code>build</code> script</strong>; root
+  <code>pnpm -r build</code> builds <code>@mythrun/web</code> (via Vite) and intentionally skips
+  <code>@mythrun/ui</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Source-consumed library, no publish step</strong> — both packages live in this repo and
+  deploy together; there is no external consumer that needs a versioned, pre-built
+  <code>@mythrun/ui</code> artifact. Skipping the build step keeps the library editable in place — a
+  change to a primitive is visible in the app on the next Vite reload, with no rebuild-and-relink
+  dance. The cost (the app's bundler must understand TypeScript source) is already paid: Vite
+  compiles the app's own <code>.tsx</code> anyway.
+</aside>
+
+<p>
+  The scaffold is Vite + React 19 + TypeScript (strict) + Tailwind v4. The
+  <code>tsconfig.json</code> mirrors the dev-tool package, not the backend:
+  <code>module: ESNext</code>, <code>moduleResolution: Bundler</code>, <code>jsx: react-jsx</code>,
+  with <code>strict</code>, <code>noUncheckedIndexedAccess</code>, and
+  <code>exactOptionalPropertyTypes</code> all on. Tailwind is wired CSS-first through
+  <code>@tailwindcss/vite</code> — a single <code>src/index.css</code> with
+  <code>@import "tailwindcss"</code> and an empty <code>@theme {}</code> block; the real OKLCH brand
+  tokens land in a later issue. The library today is one trivial <code>&lt;Text&gt;</code> primitive
+  — the boundary anchor that makes the lint rails testable on day one.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Mirrors dev-tool, not backend</strong> — the backend uses
+  <code>moduleResolution: NodeNext</code>, but Vite and Vitest config files default-export, which
+  the repo-wide ESLint config bans, and a bundler-style resolution is what lets the app import
+  library <code>.ts</code> source. The <code>backend/dev-tool</code> package already solved exactly
+  this shape — a per-package config with <code>Bundler</code> resolution — so the frontend follows
+  that precedent rather than the backend one.
+</aside>
+
+<h2>The three rules of the road</h2>
+
+<p>
+  Three conventions govern all frontend code. Each is enforced as a lint, not left as a style guide
+  — the third rule is that anything the team cares about <em>becomes</em> a CI lint.
+</p>
+
+<h3>Rule 1 — no hardcoded user-facing strings</h3>
+
+<p>
+  Every user-visible string is an i18n key, never inline text. The off-the-shelf
+  <code>i18next/no-literal-string</code> rule enforces it, set to <code>error</code> in
+  <code>mode: 'jsx-only'</code> over feature code. That mode flags string literals in JSX text
+  <em>and</em> in JSX attributes — the attribute case is load-bearing because mythrunUI props (<code
+    >&lt;Text label="…" /&gt;</code
+  >) carry most user-facing text, and the plugin's weaker default would let those through.
+  Non-user-facing attributes (<code>data-testid</code>, <code>aria-*</code>, <code>role</code>,
+  <code>id</code>) are exempted so they don't trip the rule.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A known gap, carried forward deliberately</strong> —
+  <code>eslint-plugin-i18next</code> allowlists bare JSX <em>text</em> inside PascalCase arrow-const
+  components (<code>const X = () =&gt; &lt;Text&gt;hi&lt;/Text&gt;</code> is not flagged — it treats
+  the uppercase const like a constant). All attribute literals and JSX text inside
+  <code>function Comp() {}</code> declarations still fail, and a raw element there still fails the
+  no-ad-hoc-UI rail. Closing the arrow-const text gap belongs to the i18n-runtime issue, which also
+  adds the typed <code>t()</code> provider and a callee allow-list. The gap is documented in the
+  config so nobody mistakes it for a hole.
+</aside>
+
+<h3>Rule 2 — no ad-hoc UI</h3>
+
+<p>
+  Feature code composes <code>@mythrun/ui</code> components only — never raw DOM. The custom
+  <code>mythrun-ui/no-ad-hoc-ui</code> rule (authored at
+  <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>) reports three AST shapes: an intrinsic
+  lowercase JSX element (<code>&lt;div&gt;</code>, <code>&lt;button&gt;</code>, …), a
+  <code>style</code> attribute, and a <code>className</code> attribute. It is pure AST shape — no
+  type information needed. JSX fragments (<code>&lt;&gt;…&lt;/&gt;</code>) and component elements
+  (capitalized identifiers) are allowed; they carry no raw markup or styling.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The rule lives in the frontend config, not the root <code>mythrun</code> plugin</strong>
+  — it is scoped to where it applies (<code>frontend/src/**</code>) and uses a distinct
+  <code>mythrun-ui/</code> plugin namespace, leaving the root <code>mythrun</code> namespace for
+  backend rules. The rule file is a <code>.js</code> ESM module imported by both the ESLint config
+  and its Vitest test, so it is instrumented by Vitest and counts toward the coverage gate — unlike
+  the backend's <code>.cjs</code> rule files, which Vitest excludes.
+</aside>
+
+<p>
+  The boundary is asymmetric. In the library zone (<code>frontend/ui/**</code>) the rule is
+  <strong>off</strong> — raw elements, <code>className</code>, and Tailwind utilities legitimately
+  live there, because that is where the primitives wrapping them are built. The
+  <code>jsx-a11y</code> accessibility rails ride alongside, applying effectively only in the
+  library, since intrinsic elements exist nowhere else. Accessible-element authoring is, by design,
+  a library responsibility.
+</p>
+
+<h3>Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</h3>
+
+<p>
+  A true one-off escapes the no-ad-hoc-UI rail with
+  <code>// eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- &lt;reason&gt;</code>. The escape
+  hatch is itself enforced so it can't decay into a free-for-all. The frontend config sets
+  <code>reportUnusedDisableDirectives: 'error'</code> (a disable that no longer suppresses anything
+  is a CI error) and <code>@eslint-community/eslint-comments/require-description: 'error'</code> (a
+  disable without a trailing <code>-- reason</code> is a CI error). A bare disable fails; only a
+  disable that names its reason — and still suppresses a real violation — passes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The hatch enforcement is added, not inherited</strong> — ESLint does not natively require
+  a <code>-- reason</code>, and the root config does not set
+  <code>reportUnusedDisableDirectives</code> at error severity. The frontend config adds both. This
+  is what makes the escape hatch a deliberate, reviewed act (a named reason in the diff) rather than
+  a silent bypass.
+</aside>
+
+<h2>Coverage and the wiring tests</h2>
+
+<p>
+  Frontend Vitest enforces 100% on the logic surface — lines, branches, functions, statements —
+  while presentational code is excluded from the percentage (rendered in tests, not %-gated). Today
+  the only logic is the custom lint rule; <code>coverage.include</code> is
+  <code>eslint-rules/**</code>, to be extended with <code>src/lib/**</code>,
+  <code>src/hooks/**</code>, and the future API/transport clients as they land. The convention that
+  keeps this honest: logic lives in <code>.ts</code>, never <code>.tsx</code>, so the
+  <code>.tsx</code> exclusion can't launder untested logic.
+</p>
+
+<p>
+  Two test files supply the acceptance evidence that the rails are real. The RuleTester suite for
+  <code>no-ad-hoc-ui</code> drives the rule with inline code strings — invalid
+  (<code>&lt;div&gt;</code>, <code>style=</code>, <code>className=</code>), valid
+  (<code>&lt;Text/&gt;</code>, fragments) — and is what instruments the rule to 100%. The
+  config-wiring test uses <code>ESLint.calculateConfigForFile</code> to assert both rails are
+  <code>error</code> for a <code>src/**</code> path and <code>no-ad-hoc-ui</code> is
+  <code>off</code> for a <code>ui/**</code> path, then lints inline strings to prove the rails
+  actually fire. The wiring test runs under the plain <code>test</code> script (and is gated in CI)
+  but is excluded from the coverage run, where loading the rule through ESLint's own loader corrupts
+  the v8 map.
+</p>
+
+<h2>The gates</h2>
+
+<p>
+  Both rails run in two places — a CI workflow and the pre-push hook — so a violation is caught
+  before it can land. <code>.github/workflows/frontend-check.yml</code> is the frontend's required
+  status check; <code>.husky/pre-push</code> gains a diff-scoped section that runs the same chain
+  locally when a push touches the frontend. Both are documented in detail on the
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page — including why
+  frontend-check runs unconditionally (so it never blocks merges Pending on backend-only PRs) and
+  why the pre-push section diffs on <code>origin/main...HEAD</code> rather than the staging area.
+  The companion change: <code>deploy.yml</code> adds <code>frontend/**</code> to its
+  <code>paths-ignore</code>, so a frontend-only push skips the backend image build and ECS deploy
+  entirely.
+</p>
+
+<h2>Integration points</h2>
+
+<p>
+  The workspace is two of the packages <code>pnpm-workspace.yaml</code> declares — see the
+  <a href="../runtime/index.html">Backend</a> page's monorepo section for the full set and the root
+  <code>pnpm -r</code> verbs. The CI workflow and pre-push section that gate this code are detailed
+  on the <a href="../infra/ci-cd.html">CI/CD</a> page.
+</p>
+
+<h2>Appendix: packages &amp; rails</h2>
+
+<h3>Workspace packages</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Path</th>
+      <th>Role</th>
+      <th>Build</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@mythrun/web</code></td>
+      <td><code>frontend/</code></td>
+      <td>React app — routes, features, flows</td>
+      <td><code>vite build</code></td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/ui</code></td>
+      <td><code>frontend/ui/</code></td>
+      <td>mythrunUI design system (source-consumed)</td>
+      <td>none (no build script)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Lint rails (feature code, <code>frontend/src/**</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Rule</th>
+      <th>Source</th>
+      <th>Severity</th>
+      <th>Library zone</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>i18next/no-literal-string</code> (<code>mode: jsx-only</code>)</td>
+      <td>off-the-shelf</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td><code>mythrun-ui/no-ad-hoc-ui</code></td>
+      <td>custom rule</td>
+      <td>error</td>
+      <td>off</td>
+    </tr>
+    <tr>
+      <td><code>reportUnusedDisableDirectives</code></td>
+      <td>linterOptions</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td><code>eslint-comments/require-description</code></td>
+      <td>off-the-shelf</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td><code>jsx-a11y/*</code> (recommended)</td>
+      <td>off-the-shelf</td>
+      <td>error</td>
+      <td>on (library only)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/</code> (<code>@mythrun/web</code>),
+  <code>frontend/ui/</code> (<code>@mythrun/ui</code>), <code>frontend/eslint.config.js</code>,
+  <code>frontend/ui/eslint.config.js</code>, <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>,
+  <code>frontend/vitest.config.ts</code>, <code>pnpm-workspace.yaml</code>,
+  <code>.github/workflows/frontend-check.yml</code>.
+</p>

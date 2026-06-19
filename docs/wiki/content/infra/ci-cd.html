@@ -1,5 +1,6 @@
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/db-migrate.yml -->
+<!-- source: .github/workflows/frontend-check.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
 <!-- source: .github/dependabot.yml -->
 <!-- source: .husky/pre-push -->
@@ -7,8 +8,8 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:c518185272076d0bf2a9d4da1bc470381f7ceb99d7e60ef650f67841a7538716 -->
-<!-- last-ticket: MYT-49 -->
+<!-- source-hash: sha256:5413bc1c7c0f12d163f275a61efb729452e82655c67d89e24dcad3af8eed660c -->
+<!-- last-ticket: MYT-79 -->
 
 <h1>CI/CD</h1>
 
@@ -32,8 +33,10 @@
   The workflow lives at <code>.github/workflows/deploy.yml</code>. It triggers on pushes to
   <code>main</code> whose paths include application code — doc-only and tracker-only commits
   (<code>docs/**</code>, <code>.beads/**</code>, <code>**/*.md</code>, <code>wiki/**</code>) skip
-  the run. <code>workflow_dispatch</code> is on so a deploy can be re-run by hand from the Actions
-  tab without pushing a no-op commit.
+  the run, as does <code>frontend/**</code> (the frontend has no backend image to roll; it is gated
+  by its own <a href="#the-frontend-check-gate">frontend-check</a> workflow).
+  <code>workflow_dispatch</code> is on so a deploy can be re-run by hand from the Actions tab
+  without pushing a no-op commit.
 </p>
 
 <aside class="wiki-rationale">
@@ -335,15 +338,38 @@
   </tbody>
 </table>
 
+<h2 id="the-frontend-check-gate">The frontend-check gate</h2>
+
+<p>
+  <code>.github/workflows/frontend-check.yml</code> is the frontend's own required status check,
+  separate from the backend deploy pipeline. It installs only the two frontend packages (<code
+    >--filter @mythrun/web... --filter @mythrun/ui...</code
+  >) and runs the chain typecheck → lint → test → coverage → build. The lint step is where the
+  <a href="../frontend/index.html">frontend lint rails</a> bite — a hardcoded JSX string or a raw
+  <code>&lt;div&gt;</code> in feature code fails here. There are no Postgres, Redis, or secrets
+  dependencies; the job is fast and self-contained.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Runs unconditionally, no <code>paths:</code> filter</strong> — GitHub leaves a
+  path-filtered required check <em>Pending</em> (never green) when its paths don't match, which
+  blocks merges on every backend-only PR. Running frontend-check on every push and PR keeps it a
+  clean required check that resolves to a real pass/fail. The cost is a few seconds of CI per
+  backend push — cheap, because the job has no infra to spin up. This is the mirror image of
+  <code>deploy.yml</code> adding <code>frontend/**</code> to its <code>paths-ignore</code>: each
+  surface gates its own changes, and a frontend-only push skips the backend image build entirely.
+</aside>
+
 <h2>The pre-push hook (local mirror of CI)</h2>
 
 <p>
   Every push to <code>main</code> from a developer's machine first passes through
-  <code>.husky/pre-push</code>, a six-stage gate that mirrors what CI is going to re-assert on the
+  <code>.husky/pre-push</code>, a seven-stage gate that mirrors what CI is going to re-assert on the
   push it just accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s
-  typecheck, a ~10 s lint, the ~3 min coverage suite, a ~2 s wiki source-hash diff, and (when the
-  diff touches the dev-tool surface) a ~30 s JSDOM verifier run. Any non-zero step refuses the push
-  and prints the diagnostic the operator needs.
+  typecheck, a ~10 s lint, the ~3 min coverage suite, a ~2 s wiki source-hash diff, (when the diff
+  touches the dev-tool surface) a ~30 s JSDOM verifier run, and (when the diff touches the frontend)
+  the frontend typecheck + lint + coverage chain. Any non-zero step refuses the push and prints the
+  diagnostic the operator needs.
 </p>
 
 <aside class="wiki-rationale">
@@ -355,7 +381,7 @@
   queue), not coverage on its own.
 </aside>
 
-<p>The six stages, in order:</p>
+<p>The seven stages, in order:</p>
 
 <ol>
   <li>
@@ -400,7 +426,25 @@
     Added 2026-05-15 (<code>myth-e5mn</code>) after three dev-tool bugs shipped to the user despite
     green unit tests + green <code>dev-tool:check</code>.
   </li>
+  <li>
+    <strong>Frontend rails.</strong> Conditional — runs only when the commits being pushed touch
+    <code>frontend/**</code> or <code>frontend-check.yml</code>. The diff is computed with the
+    three-dot range <code>git diff --name-only origin/main...HEAD</code> (the commits relative to
+    the merge-base with <code>origin/main</code>), then the section runs both packages' typecheck +
+    lint and the <code>@mythrun/web</code> test + coverage — the same chain
+    <a href="#the-frontend-check-gate">frontend-check</a> runs in CI. Added with MYT-79 alongside
+    the frontend workspace.
+  </li>
 </ol>
+
+<aside class="wiki-rationale">
+  <strong>Three-dot range, not <code>--cached</code></strong> — the existing dev-tool stage diffs
+  with <code>git diff --cached --name-only origin/main</code>, which inspects the staging area;
+  post-commit, on a normal <code>git push</code>, nothing is staged, so that idiom silently no-ops
+  and skips the gate. The frontend section deliberately uses <code>origin/main...HEAD</code> — the
+  commits actually being pushed — so the gate fires on every push that carries frontend changes.
+  (The dev-tool stage carries the same latent skip; reconciling it is a separate task.)
+</aside>
 
 <aside class="wiki-rationale">
   <strong>100% coverage as a hard threshold, not a soft target</strong> — Mythrun's production code
@@ -645,7 +689,7 @@
       <td><code>push</code></td>
       <td>
         <code>main</code>, <code>paths-ignore</code>:
-        <code>docs/** .beads/** **/*.md wiki/** .github/wiki/**</code>
+        <code>docs/** .beads/** **/*.md wiki/** .github/wiki/** frontend/**</code>
       </td>
     </tr>
     <tr>
@@ -731,8 +775,8 @@
 
 <p>
   <code>.github/workflows/deploy.yml</code>, <code>.github/workflows/db-migrate.yml</code>,
-  <code>.github/workflows/lint-auth.yml</code>, <code>.github/dependabot.yml</code>,
-  <code>.husky/pre-push</code>, <code>backend/vitest.config.ts</code>,
-  <code>backend/src/boot/migrations-current.ts</code>, <code>backend/src/db/migrate.ts</code>,
-  <code>infra/modules/serving/migrate.tf</code>.
+  <code>.github/workflows/frontend-check.yml</code>, <code>.github/workflows/lint-auth.yml</code>,
+  <code>.github/dependabot.yml</code>, <code>.husky/pre-push</code>,
+  <code>backend/vitest.config.ts</code>, <code>backend/src/boot/migrations-current.ts</code>,
+  <code>backend/src/db/migrate.ts</code>, <code>infra/modules/serving/migrate.tf</code>.
 </p>
