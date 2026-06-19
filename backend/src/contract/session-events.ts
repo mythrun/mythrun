@@ -10,8 +10,8 @@
 // ledger_update (server->client only) — a post-mutation character-sheet delta
 // (hp/gold/item/feature/spell_slot/condition/rest), same live-then-replayed
 // lifecycle as the MYT-68 mechanical frames. MYT-75 adds the combat L1 server
-// frames (mode_change, combat_started, combat_resolved server->client); the
-// matching resume_combat client frame lands with the WS handler that owns it.
+// frames (mode_change, combat_started, combat_resolved server->client) and the
+// matching resume_combat client frame (T8, owned by the ws-session handler).
 // The remaining §5.2 DM-turn frames (session_end already
 // landed; st_evaluation, scribe_result, reaction_window, ...) are still
 // deliberately ABSENT here — they land as those surfaces are built. Adding them
@@ -32,15 +32,21 @@
 // `typing_start`, `typing_stop`), the MYT-67 explicit `dm_invoke` summon — the
 // "@DM button" that asks the DM to take a turn (no payload fields) — and the
 // MYT-74a `end_session` lifecycle frame (a bare summon that ends the live
-// session; no payload fields). `roll_complete`, `combat_action`,
-// `auth_response`, `combat_move` are further full-protocol client frames added
-// later.
+// session; no payload fields), and the MYT-75 `resume_combat` summon (a bare
+// summon that flips a combat-mode session back to exploration; no payload
+// fields). `roll_complete`, `combat_action`, `auth_response`, `combat_move` are
+// further full-protocol client frames added later.
 export const CLIENT_FRAME_TYPES = [
   'player_message',
   'typing_start',
   'typing_stop',
   'dm_invoke',
   'end_session',
+  // MYT-75 T8: the combat-resume summon. Combat resolves single-shot, then the
+  // session SITS in `combat` mode (the `:combat` blob, status `resolved`)
+  // showing the result until ANY member sends `resume_combat`, which flips back
+  // to `exploration`. Carries no payload fields (the summon is the whole signal).
+  'resume_combat',
 ] as const
 
 // Server -> Client frame types. The MYT-65 subset, the MYT-66 DM-turn
@@ -117,6 +123,11 @@ export type ClientFrame =
   // end-of-session reconcile). Carries no payload fields (the summon is the
   // whole signal); the server resolves campaign/world/session from the socket.
   | { type: 'end_session' }
+  // MYT-75 T8: combat-resume summon — flips a `combat`-mode session (sitting on a
+  // resolved fight) back to `exploration`. Carries no payload fields; the server
+  // resolves campaign/session from the socket and reads the live `:state`/`:combat`
+  // blobs. A once-only interlock (`tryMarkResumed`) collapses concurrent summons.
+  | { type: 'resume_combat' }
 
 // Server -> Client payloads. Discriminated on `type`.
 //
@@ -227,10 +238,13 @@ export type ServerFrame =
   // MYT-75 combat L1 frames. Live-streamed during a turn (no seq) and replayed
   // from session_messages rows on reconnect (then carrying the row's seq), same
   // lifecycle as the MYT-68 mechanical frames. Each carries `turnId` (stable
-  // across redeliveries, H2).
+  // across redeliveries, H2) when emitted INSIDE a turn.
   | {
       type: 'mode_change'
-      turnId: string
+      // OPTIONAL (MYT-75 T8): a turn emits mode_change with a turnId, but the
+      // `resume_combat` flip back to exploration is turn-LESS (no turn is
+      // running), so it publishes mode_change without one.
+      turnId?: string
       seq?: number // present only on reconnect replay (persisted row)
       from: 'exploration' | 'combat'
       to: 'exploration' | 'combat'

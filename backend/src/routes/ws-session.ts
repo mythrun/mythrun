@@ -51,7 +51,7 @@ import type {
 import type { Redis } from 'ioredis'
 import type { Repo } from '../repo/index.js'
 import type { SessionMessage } from '../repo/types.js'
-import type { SessionState } from '../redis/session-state.js'
+import type { CombatStateBlob, SessionState } from '../redis/session-state.js'
 import type { SessionHub } from '../ws/session-hub.js'
 import type { SuspendQueueLike } from '../session/session-suspend.js'
 import type { TriggerState } from '../session/trigger-state.js'
@@ -483,11 +483,60 @@ async function buildReconnectFrame(
     rowToReplayFrame(row, displayByUser, characterByUser, ctx.app.log),
   )
 
+  const mode = state?.mode ?? 'exploration'
+
+  // MYT-75 T8 — combat-mode reconnect. The combat frames (combat_started /
+  // combat_resolved) are intra-turn control frames: they are NOT persisted to
+  // session_messages, so a member reconnecting into a session that is SITTING in
+  // combat would otherwise see a blank combat screen. Read the live `:combat`
+  // blob and append a synthetic, turn-LESS frame so the reconnect carries the
+  // current state — the resolved result (the common case: a single-shot fight
+  // awaiting `resume_combat`) or, if still resolving, the roster + initiative.
+  if (mode === 'combat') {
+    const combat = await ctx.deps.sessionState.getCombatState(campaignId)
+    const combatFrame = combat ? buildCombatReconnectFrame(combat) : null
+    if (combatFrame) messages.push(combatFrame)
+  }
+
   return {
     type: 'session_reconnect',
     messages,
     participants,
-    mode: state?.mode ?? 'exploration',
+    mode,
+  }
+}
+
+/** Build the synthetic combat replay frame for a combat-mode reconnect. A
+ *  RESOLVED fight → a `combat_resolved` frame from the blob's `result.summary`
+ *  (narration = the close-out `outcomeDescription`, plus outcome / casualties /
+ *  HP deltas). A still-RESOLVING fight (or a resolved blob with a null result,
+ *  defensively) → a `combat_started` frame from the enemies + initiative the
+ *  fight was entered with. Both are turn-LESS (no seq; an empty turnId — these
+ *  are synthesized at reconnect, not replayed from a persisted row). */
+function buildCombatReconnectFrame(
+  combat: CombatStateBlob,
+): Extract<ServerFrame, { type: 'combat_resolved' | 'combat_started' }> {
+  if (combat.status === 'resolved' && combat.result) {
+    const summary = combat.result.summary
+    return {
+      type: 'combat_resolved',
+      turnId: '',
+      narration: summary.outcomeDescription,
+      outcome: summary.outcome,
+      casualties: summary.casualties.map((c) => ({ name: c.name, type: c.type, fate: c.fate })),
+      hpChanges: summary.hpChanges.map((h) => ({
+        combatant: h.combatant,
+        hpBefore: h.hpBefore,
+        hpAfter: h.hpAfter,
+        maxHp: h.maxHp,
+      })),
+    }
+  }
+  return {
+    type: 'combat_started',
+    turnId: '',
+    enemies: combat.enemies.map((e) => ({ name: e.name, description: e.description, count: e.count })),
+    initiative: combat.initiative.map((i) => ({ combatant: i.combatant, roll: i.roll })),
   }
 }
 
@@ -868,6 +917,47 @@ export async function handleInbound(
       return
     }
 
+    // MYT-75 T8 — the COMBAT drop-gate + resume. While a session sits in `combat`
+    // mode (the single-shot fight resolved and is awaiting a `resume_combat`
+    // summon), no inbound frame may start a NEW exploration turn: a normal
+    // player_message / dm_invoke / typing frame all (re-)arm the dm-trigger
+    // debounce, which would fire a DM turn mid-combat. We DROP every inbound
+    // frame EXCEPT `resume_combat` (the flip back) and `end_session` (a member
+    // may end a session that is sitting in combat). One `:state` read serves both
+    // the gate and the resume branch (no double round-trip). A read failure is
+    // swallowed by the outer catch (fail-open keeps the socket alive on a Redis
+    // blip; the resume is idempotent via the `tryMarkResumed` interlock).
+    const state = await sessionState.getState(campaignId)
+    if (
+      state?.mode === 'combat' &&
+      frame.type !== 'resume_combat' &&
+      frame.type !== 'end_session'
+    ) {
+      return
+    }
+
+    if (frame.type === 'resume_combat') {
+      // Nothing to resume unless the session is actually sitting in combat.
+      if (state?.mode !== 'combat') return
+      // Once-only interlock: the FIRST summon flips; a racing second summon
+      // (another member clicking resume at the same instant) loses the SET-NX and
+      // short-circuits, so the flip + clear + broadcast happen exactly once.
+      if (!(await sessionState.tryMarkResumed(campaignId))) return
+      // Flip the live mode back to exploration (carry the rest of the blob), drop
+      // the `:combat` blob (+ release the resume interlock so a later fight can
+      // claim it), and broadcast the turn-LESS mode_change so every client leaves
+      // the combat result screen and re-enables exploration input.
+      await sessionState.setState(campaignId, { ...state, mode: 'exploration' })
+      await sessionState.clearCombatState(campaignId)
+      await hub.publish(campaignId, {
+        type: 'mode_change',
+        from: 'combat',
+        to: 'exploration',
+        reason: 'resume',
+      })
+      return
+    }
+
     if (frame.type === 'end_session') {
       // MYT-74b §1 — BEGIN the end. Resolve the worldId (blob-cached campaign→
       // world, reusing the turn worker's resolver) and thread it onto the farewell
@@ -1087,6 +1177,8 @@ export function parseClientFrame(raw: WsRawData, log: FastifyBaseLogger): Client
   // MYT-74a: the explicit session-end summon likewise carries no payload fields
   // — return a clean bare frame (strip any client-supplied extras).
   if (type === 'end_session') return { type: 'end_session' }
+  // MYT-75 T8: the combat-resume summon — a bare frame too (strip extras).
+  if (type === 'resume_combat') return { type: 'resume_combat' }
   if (type === 'player_message') {
     const text = (parsed as { text?: unknown }).text
     // A player_message must carry a string `text`; a malformed one drops.

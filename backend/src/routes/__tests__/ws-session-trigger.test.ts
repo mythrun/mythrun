@@ -187,12 +187,15 @@ function makeHarness(opts: {
   const { hub, publishes } = makeFakeHub()
   const log = makeAppLog()
 
-  // sessionState needs nextSeq for the player_message persist path + isEnding
-  // for the MYT-74a inbound end drop-gate at the top of handleInbound (these
-  // trigger tests run with the session NOT ending, so it resolves false).
+  // sessionState needs nextSeq for the player_message persist path, isEnding for
+  // the MYT-74a inbound end drop-gate, and getState for the MYT-75 combat
+  // drop-gate — both at the top of handleInbound. These trigger tests run with
+  // the session NOT ending and NOT in combat, so the gates pass through (isEnding
+  // → false, getState → null so `state?.mode === 'combat'` is false).
   const sessionState = {
     nextSeq: vi.fn().mockResolvedValue(opts.nextSeq ?? 1),
     isEnding: vi.fn().mockResolvedValue(false),
+    getState: vi.fn().mockResolvedValue(null),
   } as unknown as WsSessionDeps['sessionState']
 
   const deps: WsSessionDeps = {

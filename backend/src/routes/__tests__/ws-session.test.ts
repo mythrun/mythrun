@@ -1223,6 +1223,130 @@ describe('ws-session route (integration)', () => {
     }
   })
 
+  it('MYT-75 T8: reconnect while mode==="combat" with a RESOLVED :combat blob appends a combat_resolved frame carrying the result', async () => {
+    // The session is SITTING in combat mode after a single-shot resolve: the
+    // :state blob's mode is 'combat' and the :combat blob is status 'resolved'
+    // with a CombatResult. A reconnecting member must see the RESULT (the
+    // close-out narration + outcome + casualties + HP deltas), not a blank
+    // combat screen — buildReconnectFrame appends a synthetic combat_resolved.
+    const sessionState = makeSessionState(redis, KEY_PREFIX)
+    await sessionState.setState(campaignId, {
+      participants: [],
+      mode: 'combat',
+      status: 'active',
+    })
+    await sessionState.setCombatState(campaignId, {
+      status: 'resolved',
+      enemies: [{ name: 'Goblin', description: 'a snarling goblin', count: 3 }],
+      environment: 'a narrow ravine',
+      surprise: 'none',
+      initiative: [{ combatant: 'Aila Thornwood', roll: 17 }],
+      outcome: {
+        tier: 'decisive',
+        dc: 12,
+        roll: 18,
+        total: 21,
+        tierProse: 'The party carries the day.',
+        envelope: {
+          partyWins: true,
+          minDownedPcs: 0,
+          minAggregateHpLossFraction: 0,
+          allowPcDeathNarration: false,
+        },
+      },
+      result: {
+        summary: {
+          outcome: 'victory',
+          outcomeDescription: 'The goblins break and scatter into the rocks.',
+          casualties: [{ name: 'Goblin', type: 'npc', fate: 'dead' }],
+          hpChanges: [
+            { combatant: 'Aila Thornwood', hpBefore: 11, hpAfter: 8, maxHp: 11 },
+          ],
+          conditionsRemaining: [],
+          loot: [{ source: 'Goblin', items: ['a rusted dagger'] }],
+        },
+      },
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The reconnect carries the combat mode…
+      expect(first.mode).toBe('combat')
+      // …and a synthetic combat_resolved frame built from the blob's result.
+      const resolved = first.messages.find((m) => m.type === 'combat_resolved')
+      expect(resolved).toMatchObject({
+        type: 'combat_resolved',
+        narration: 'The goblins break and scatter into the rocks.',
+        outcome: 'victory',
+        casualties: [{ name: 'Goblin', type: 'npc', fate: 'dead' }],
+        hpChanges: [{ combatant: 'Aila Thornwood', hpBefore: 11, hpAfter: 8, maxHp: 11 }],
+      })
+      // It is turn-less: a synthetic replay frame carries no seq.
+      expect(resolved).not.toHaveProperty('seq')
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('MYT-75 T8: reconnect while mode==="combat" with a RESOLVING :combat blob appends a combat_started frame (enemies + initiative)', async () => {
+    // A fight that is still resolving (status 'resolving', result null) replays
+    // a combat_started frame so a reconnecting member sees the roster, not a
+    // blank screen.
+    const sessionState = makeSessionState(redis, KEY_PREFIX)
+    await sessionState.setState(campaignId, {
+      participants: [],
+      mode: 'combat',
+      status: 'active',
+    })
+    await sessionState.setCombatState(campaignId, {
+      status: 'resolving',
+      enemies: [{ name: 'Bandit', description: 'a masked bandit', count: 2 }],
+      environment: 'a forest road',
+      surprise: 'players_surprised',
+      initiative: [
+        { combatant: 'Bandit', roll: 19 },
+        { combatant: 'Aila Thornwood', roll: 12 },
+      ],
+      outcome: {
+        tier: 'costly',
+        dc: 14,
+        roll: 9,
+        total: 11,
+        tierProse: 'A hard, grinding fight.',
+        envelope: {
+          partyWins: true,
+          minDownedPcs: 1,
+          minAggregateHpLossFraction: 0.4,
+          allowPcDeathNarration: false,
+        },
+      },
+      result: null,
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.mode).toBe('combat')
+      const started = first.messages.find((m) => m.type === 'combat_started')
+      expect(started).toMatchObject({
+        type: 'combat_started',
+        enemies: [{ name: 'Bandit', description: 'a masked bandit', count: 2 }],
+        initiative: [
+          { combatant: 'Bandit', roll: 19 },
+          { combatant: 'Aila Thornwood', roll: 12 },
+        ],
+      })
+      expect(started).not.toHaveProperty('seq')
+    } finally {
+      ws.terminate()
+    }
+  })
+
   it('reconnect with a malformed ?lastSeq → treated as a fresh connect (session_ready)', async () => {
     // A non-integer lastSeq is ignored → the connect behaves exactly like a
     // fresh connect (session_ready, no session_reconnect).
@@ -1558,6 +1682,9 @@ function makeStubSessionState(): {
   setState: ReturnType<typeof vi.fn>
   refreshTtls: ReturnType<typeof vi.fn>
   isEnding: ReturnType<typeof vi.fn>
+  getCombatState: ReturnType<typeof vi.fn>
+  clearCombatState: ReturnType<typeof vi.fn>
+  tryMarkResumed: ReturnType<typeof vi.fn>
 } {
   return {
     nextSeq: vi.fn().mockResolvedValue(1),
@@ -1571,6 +1698,11 @@ function makeStubSessionState(): {
     // MYT-74a T11: the inbound end drop-gate reads this at the top of
     // handleInbound; these unit tests run with the session NOT ending.
     isEnding: vi.fn().mockResolvedValue(false),
+    // MYT-75 T8: the combat-mode reconnect reads getCombatState (null → no
+    // synthetic combat frame appended); the resume branch clears + interlocks.
+    getCombatState: vi.fn().mockResolvedValue(null),
+    clearCombatState: vi.fn().mockResolvedValue(undefined),
+    tryMarkResumed: vi.fn().mockResolvedValue(true),
   }
 }
 

@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { CLIENT_FRAME_TYPES, SERVER_FRAME_TYPES, classifyClientFrame } from '../session-events.js'
 
 describe('session-events contract', () => {
-  it('client frames are the MYT-65 subset plus dm_invoke and end_session', () => {
+  it('client frames are the MYT-65 subset plus dm_invoke, end_session, and resume_combat', () => {
     expect(CLIENT_FRAME_TYPES).toEqual([
       'player_message',
       'typing_start',
       'typing_stop',
       'dm_invoke',
       'end_session',
+      'resume_combat',
     ])
   })
   it('server frames include join/left/ready/reconnect, and MYT-66 DM-turn types', () => {
@@ -72,6 +73,10 @@ describe('session-events contract', () => {
         expect(CLIENT_FRAME_TYPES).not.toContain(t)
         expect(classifyClientFrame(t)).toBe(false)
       }
+    })
+    it('resume_combat is an accepted inbound client frame (MYT-75 T8)', () => {
+      expect(CLIENT_FRAME_TYPES).toContain('resume_combat')
+      expect(classifyClientFrame('resume_combat')).toBe(true)
     })
   })
 })
