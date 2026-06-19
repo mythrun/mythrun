@@ -1,0 +1,50 @@
+/* Semantic aliases. The remap vars live in :root/.dark (plain CSS, so the
+   .dark override CASCADES); `@theme inline` surfaces them as bg-bg/text-ink
+   utilities that reference the var at runtime. A plain @theme alias would
+   resolve at :root and never flip — that is the v4 gotcha this avoids. */
+:root {
+  --bg: var(--color-paper-100);
+  --surface: var(--color-paper-50);
+  --border: var(--color-paper-300);
+  --ink: var(--color-paper-900);
+  --ink-secondary: var(--color-paper-700);
+  --ink-tertiary: var(--color-paper-600); /* paper-600 = AA body; brand doc's paper-500 is only 3.27:1 */
+  --accent: var(--color-ember-600);
+  --accent-hover: var(--color-ember-700);
+  --success: var(--color-success-500);
+  --warning: var(--color-warning-500);
+  --danger: var(--color-danger-500);
+  --info: var(--color-info-600);
+}
+
+.dark {
+  --bg: var(--color-paper-900);
+  --surface: var(--color-paper-800);
+  --border: var(--color-paper-700);
+  --ink: var(--color-paper-100);
+  --ink-secondary: var(--color-paper-300);
+  --ink-tertiary: var(--color-paper-400);
+  --accent: var(--color-ember-400);
+  --accent-hover: var(--color-ember-300);
+  --success: var(--color-success-400);
+  --warning: var(--color-warning-400);
+  --danger: var(--color-danger-400);
+  --info: var(--color-info-400);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-tertiary: var(--ink-tertiary);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
