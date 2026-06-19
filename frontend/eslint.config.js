@@ -23,6 +23,7 @@ export default [
       'index.html',
       'vite.config.ts',
       'vitest.config.ts',
+      'scripts/**', // node tooling scripts (e.g. i18n-todo.mjs) — outside the TS project
     ],
   },
   {
