@@ -4,21 +4,35 @@
 <!-- source: frontend/eslint.config.js -->
 <!-- source: frontend/ui/eslint.config.js -->
 <!-- source: frontend/eslint-rules/no-ad-hoc-ui.js -->
+<!-- source: frontend/eslint-rules/no-untranslated-jsx-text.js -->
 <!-- source: frontend/vitest.config.ts -->
 <!-- source: frontend/ui/src/text.tsx -->
+<!-- source: frontend/src/main.tsx -->
+<!-- source: frontend/src/index.css -->
+<!-- source: frontend/src/i18n/config.ts -->
+<!-- source: frontend/src/i18n/i18next.d.ts -->
+<!-- source: frontend/src/i18n/locales/en/common.json -->
+<!-- source: frontend/scripts/i18n-todo.mjs -->
+<!-- source: frontend/ui/scripts/generate-palette.mjs -->
+<!-- source: frontend/ui/src/styles/semantic.css -->
+<!-- source: frontend/ui/src/styles/theme.css -->
+<!-- source: frontend/ui/src/styles/base.css -->
+<!-- source: frontend/ui/src/styles/index.css -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:2f940766a9f466c40c53b1998d3aae49b7b0a068a53aa0d7545e369ab5b95118 -->
-<!-- last-ticket: MYT-79 -->
+<!-- source-hash: sha256:e1d783652621a9e41d491f166ac97c7227f1212c64e09675a04aa72696cb063c -->
+<!-- last-ticket: MYT-81 -->
 
 <h1>Frontend</h1>
 
 <p class="lead">
-  The frontend workspace and the lint rails that gate it. Two pnpm packages —
+  The frontend foundation: the workspace, the lint rails that gate it, the i18n layer every string
+  flows through, and the design tokens every component consumes. Two pnpm packages —
   <code>@mythrun/web</code> (the React app) and <code>@mythrun/ui</code> (the design system) — plus
-  three "rules of the road" turned into CI lints <em>before</em> any real UI is built. As of today
-  this is an empty-but-enforced skeleton: it builds, the rails bite, and the gates run. No real
-  components, tokens, or flows yet — those land in later issues.
+  the "rules of the road" turned into CI lints <em>before</em> any real UI is built. There are still
+  no feature flows or composed components, but the substrate they will be built from is in place and
+  enforced: the rails bite, every string is a typed key, and the brand's Parchment &amp; Ink palette
+  is importable in CSS and Tailwind.
 </p>
 
 <!-- @diagram: frontend/foundation -->
@@ -65,10 +79,12 @@
   <code>module: ESNext</code>, <code>moduleResolution: Bundler</code>, <code>jsx: react-jsx</code>,
   with <code>strict</code>, <code>noUncheckedIndexedAccess</code>, and
   <code>exactOptionalPropertyTypes</code> all on. Tailwind is wired CSS-first through
-  <code>@tailwindcss/vite</code> — a single <code>src/index.css</code> with
-  <code>@import "tailwindcss"</code> and an empty <code>@theme {}</code> block; the real OKLCH brand
-  tokens land in a later issue. The library today is one trivial <code>&lt;Text&gt;</code> primitive
-  — the boundary anchor that makes the lint rails testable on day one.
+  <code>@tailwindcss/vite</code> — a single <code>src/index.css</code> that does
+  <code>@import "tailwindcss"</code> then <code>@import "@mythrun/ui/styles.css"</code> to pull in
+  the token layer (below). Because Tailwind v4 doesn't scan <code>node_modules</code>, the same file
+  adds <code>@source "../ui/src"</code> so utility classes used inside the library are detected. The
+  library today is one trivial <code>&lt;Text&gt;</code> primitive — the boundary anchor that makes
+  the lint rails testable on day one.
 </p>
 
 <aside class="wiki-rationale">
@@ -90,25 +106,43 @@
 <h3>Rule 1 — no hardcoded user-facing strings</h3>
 
 <p>
-  Every user-visible string is an i18n key, never inline text. The off-the-shelf
-  <code>i18next/no-literal-string</code> rule enforces it, set to <code>error</code> in
-  <code>mode: 'jsx-only'</code> over feature code. That mode flags string literals in JSX text
-  <em>and</em> in JSX attributes — the attribute case is load-bearing because mythrunUI props (<code
+  Every user-visible string is an i18n key, never inline text. The rail is split across two
+  cooperating rules because no single off-the-shelf rule covers both places a string can hide.
+  <strong>JSX child text</strong> — the words between tags — is owned by a custom rule,
+  <code>mythrun-ui/no-untranslated-jsx-text</code>. <strong>JSX attribute</strong> literals (<code
     >&lt;Text label="…" /&gt;</code
-  >) carry most user-facing text, and the plugin's weaker default would let those through.
-  Non-user-facing attributes (<code>data-testid</code>, <code>aria-*</code>, <code>role</code>,
-  <code>id</code>) are exempted so they don't trip the rule.
+  >, which is where most mythrunUI copy actually lives) are owned by the off-the-shelf
+  <code>i18next/no-literal-string</code>, now scoped to attributes only. Both are
+  <code>error</code> on feature code under <code>src/**</code>.
+</p>
+
+<p>
+  The custom rule is the authoritative JSX-child rail. It reports bare non-whitespace text, a string
+  literal inside a child <code>{…}</code> expression, and a template literal with static text — and
+  exempts numeric/expression children, interpolation-only templates, and anything inside a
+  <code>&lt;Trans&gt;</code> element. The escape valve is the same one Rule 3 governs: a named
+  <code>// eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- &lt;reason&gt;</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>A known gap, carried forward deliberately</strong> —
-  <code>eslint-plugin-i18next</code> allowlists bare JSX <em>text</em> inside PascalCase arrow-const
-  components (<code>const X = () =&gt; &lt;Text&gt;hi&lt;/Text&gt;</code> is not flagged — it treats
-  the uppercase const like a constant). All attribute literals and JSX text inside
-  <code>function Comp() {}</code> declarations still fail, and a raw element there still fails the
-  no-ad-hoc-UI rail. Closing the arrow-const text gap belongs to the i18n-runtime issue, which also
-  adds the typed <code>t()</code> provider and a callee allow-list. The gap is documented in the
-  config so nobody mistakes it for a hole.
+  <strong>A custom child-text rail, not the plugin's</strong> —
+  <code>eslint-plugin-i18next</code> has two holes on JSX children. It allowlists bare text inside
+  PascalCase arrow-const components (it treats the uppercase const like a constant), and its
+  <code>should-validate-template:false</code> default skips template-literal children entirely. The
+  MYT-79 page documented the arrow-const gap as a known limitation; MYT-80 closed it for real by
+  writing a purpose-built rule that covers every component shape and the template-literal case. The
+  plugin keeps the attribute job, where it has no equivalent blind spot.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>jsx-attributes.exclude</code>, not <code>ignoreAttribute</code></strong> — the
+  attribute rail allowlists non-user-facing attributes (<code>className</code>, <code>style</code>,
+  <code>type</code>, <code>id</code>, <code>data-testid</code>, <code>aria-*</code>,
+  <code>role</code>, …) so they don't trip the rule. MYT-79 inherited an
+  <code>ignoreAttribute</code> key here that is not a real plugin option — a silent no-op that
+  allowlisted nothing. MYT-80 replaced it with the plugin's real
+  <code>jsx-attributes.exclude</code> array. Because that array <em>replaces</em> the plugin
+  defaults rather than extending them, the defaults are re-listed alongside the additions.
 </aside>
 
 <h3>Rule 2 — no ad-hoc UI</h3>
@@ -165,25 +199,26 @@
 
 <p>
   Frontend Vitest enforces 100% on the logic surface — lines, branches, functions, statements —
-  while presentational code is excluded from the percentage (rendered in tests, not %-gated). Today
-  the only logic is the custom lint rule; <code>coverage.include</code> is
-  <code>eslint-rules/**</code>, to be extended with <code>src/lib/**</code>,
-  <code>src/hooks/**</code>, and the future API/transport clients as they land. The convention that
-  keeps this honest: logic lives in <code>.ts</code>, never <code>.tsx</code>, so the
-  <code>.tsx</code> exclusion can't launder untested logic.
+  while presentational code is excluded from the percentage (rendered in tests, not %-gated). The
+  logic surface is the two custom lint rules plus the palette generator;
+  <code>coverage.include</code> spans <code>eslint-rules/**</code> and the generator, to be extended
+  with <code>src/lib/**</code>, <code>src/hooks/**</code>, and the future API/transport clients as
+  they land. The convention that keeps this honest: logic lives in <code>.ts</code>, never
+  <code>.tsx</code>, so the <code>.tsx</code> exclusion can't launder untested logic.
 </p>
 
 <p>
-  Two test files supply the acceptance evidence that the rails are real. The RuleTester suite for
-  <code>no-ad-hoc-ui</code> drives the rule with inline code strings — invalid
-  (<code>&lt;div&gt;</code>, <code>style=</code>, <code>className=</code>), valid
-  (<code>&lt;Text/&gt;</code>, fragments) — and is what instruments the rule to 100%. The
-  config-wiring test uses <code>ESLint.calculateConfigForFile</code> to assert both rails are
-  <code>error</code> for a <code>src/**</code> path and <code>no-ad-hoc-ui</code> is
-  <code>off</code> for a <code>ui/**</code> path, then lints inline strings to prove the rails
-  actually fire. The wiring test runs under the plain <code>test</code> script (and is gated in CI)
-  but is excluded from the coverage run, where loading the rule through ESLint's own loader corrupts
-  the v8 map.
+  The test files supply the acceptance evidence that the rails are real. A RuleTester suite drives
+  each custom rule with inline code strings — invalid (<code>&lt;div&gt;</code>, bare child text,
+  template-literal children) and valid (<code>&lt;Text/&gt;</code>, fragments,
+  <code>{t('k')}</code>, <code>&lt;Trans&gt;</code> descendants) — and is what instruments the rules
+  to 100%. The config-wiring test uses <code>ESLint.calculateConfigForFile</code> to assert the
+  rails are <code>error</code> for a <code>src/**</code> path and <code>no-ad-hoc-ui</code> is
+  <code>off</code> for a <code>ui/**</code> path, then lints inline strings to prove they actually
+  fire. The wiring test runs under the plain <code>test</code> script (and is gated in CI) but is
+  excluded from the coverage run, where loading a rule through ESLint's own loader corrupts the v8
+  map. The token layer is covered separately — a manifest-driven presence test and a structural
+  guard, both described under design tokens below.
 </p>
 
 <h2>The gates</h2>
@@ -199,6 +234,126 @@
   The companion change: <code>deploy.yml</code> adds <code>frontend/**</code> to its
   <code>paths-ignore</code>, so a frontend-only push skips the backend image build and ECS deploy
   entirely.
+</p>
+
+<h2>The i18n layer</h2>
+
+<p>
+  Rule 1 says no hardcoded strings; the i18n layer is where they go instead. It is
+  <code>react-i18next</code> on top of <code>i18next</code>, initialized once in
+  <code>src/i18n/config.ts</code> and provided at the app root in <code>main.tsx</code> via
+  <code>&lt;I18nextProvider&gt;</code>. Strings live in per-namespace locale files under
+  <code>src/i18n/locales/en/</code> — today a single <code>common</code> namespace — and components
+  read them through <code>t('key')</code>. The config is wired against the diagram's
+  <strong>i18n layer</strong> cluster: <code>config.ts</code> binds the typed-keys augmentation and
+  the locale resources.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Synchronous init, no Suspense</strong> — <code>config.ts</code> calls
+  <code>init()</code> with inline <code>resources</code> and <strong>no</strong> init callback. That
+  combination is load-bearing: an init callback re-triggers i18next's internal
+  <code>setTimeout</code> deferral, and an async backend would leave the first render before strings
+  are loaded. With neither, <code>init()</code> loads synchronously and sets
+  <code>isInitialized</code> before returning, so <code>useTranslation()</code>'s
+  <code>ready</code> is true on first render — no flash-of-keys and no need for a
+  <code>&lt;Suspense&gt;</code> boundary. Adding a callback or an async backend later would require
+  reintroducing Suspense.
+</aside>
+
+<p>
+  Keys are <strong>typed</strong>. <code>src/i18n/i18next.d.ts</code> augments the
+  <code>i18next</code> module's <code>CustomTypeOptions</code> with the actual resource shape, so
+  <code>t('back')</code> compiles and <code>t('not.a.key')</code> is a type error. A guard file
+  (<code>typed-keys.guard.ts</code>) is typechecked but never imported: it holds a
+  <code>@ts-expect-error</code> over a known-bad key, so if typed keys ever regress to plain
+  <code>string</code>, the directive goes unused and <code>pnpm typecheck</code> fails loudly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Typed keys via the i18next module augmentation</strong> — the alternative is a hand-kept
+  union of key strings that drifts from the locale files. Augmenting
+  <code>CustomTypeOptions</code> with <code>typeof resources</code> makes the locale JSON itself the
+  source of truth: add a key to <code>common.json</code> and it is callable; remove one and every
+  stale <code>t()</code> call fails to compile. The compiler enforces the catalog with zero
+  hand-maintained list.
+</aside>
+
+<p>
+  Prose copy is Miklos's to write, so most values ship as a
+  <code>[placeholder for &lt;purpose&gt;]</code> string rather than guessed text — only generic
+  chrome (<code>Back</code>, nav labels) gets a real value on day one. The
+  <code>pnpm i18n:todo</code> script JSON-walks every locale file and lists each value still holding
+  a placeholder, so unwritten copy is findable instead of silently shipping a bracketed string. It
+  walks values structurally, so it survives nested keys and <code>_one</code>/<code>_other</code>
+  plural shapes.
+</p>
+
+<h2>Design tokens</h2>
+
+<p>
+  Every component consumes the same visual vocabulary: the brand's
+  <strong>Parchment &amp; Ink</strong> palette plus type, motion, and shadow scales. The tokens live
+  in <code>@mythrun/ui</code> under <code>src/styles/</code> and are pulled into the app through the
+  single <code>@import "@mythrun/ui/styles.css"</code> in <code>src/index.css</code>. That entry
+  file imports four layers in order — the generated palette, the <code>@theme</code> scales, the
+  semantic aliases, and the base reset — matching the diagram's
+  <strong>design tokens</strong> cluster.
+</p>
+
+<p>
+  The palette is 60 colors: six ten-step ramps (<code>paper</code>, <code>ember</code>, and the
+  <code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code> semantics). The
+  <code>paper</code> and <code>ember</code> anchors are the brand's hand-picked hexes, copied
+  verbatim. The 36 other steps are <em>generated</em>:
+  <code>scripts/generate-palette.mjs</code> uses <code>culori</code> to read each semantic anchor in
+  OKLCH, then interpolates the rest of the ramp by borrowing <code>ember</code>'s perceptual
+  lightness curve and scaling chroma to the anchor — writing <code>colors.generated.css</code> (a
+  <code>@theme</code> block of <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>,
+  and a <code>tokens.html</code> audit page.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A generator for the 36 steps, not 36 hand-picked hexes</strong> — hand-tuning forty
+  intermediate swatches by eye produces ramps that drift in lightness and read inconsistently
+  against each other. Anchoring each semantic ramp to <code>ember</code>'s OKLCH lightness curve
+  makes every ramp perceptually parallel by construction, and the generator asserts strict monotonic
+  lightness so a bad interpolation fails the build rather than shipping a muddy step. The brand's
+  chosen anchors are still authoritative — they're emitted verbatim; only the in-between steps are
+  computed.
+</aside>
+
+<p>
+  On top of the raw palette sit <strong>semantic aliases</strong> — <code>--bg</code>,
+  <code>--surface</code>, <code>--ink</code>, <code>--accent</code>, and the rest — that name a role
+  rather than a color. These are what dark mode flips: a <code>.dark</code> class remaps each alias
+  to a different paper/ember step (a true warm dark, not a second palette), and because the aliases
+  are plain CSS custom properties in <code>:root</code>/<code>.dark</code>, the cascade does the
+  flipping. A small <code>@theme inline</code> block then surfaces each alias as a Tailwind utility
+  (<code>bg-bg</code>, <code>text-ink</code>) that references the var at runtime.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>@theme inline</code> for the dark flip</strong> — a plain Tailwind v4
+  <code>@theme</code> alias resolves its value once, at <code>:root</code>, and bakes it in — so a
+  later <code>.dark</code> override never reaches the utility and the theme can't flip. Declaring
+  the alias <code>inline</code> emits <code>--color-bg: var(--bg)</code> instead of the resolved
+  paper hex, so the utility reads <code>--bg</code> live and the <code>.dark</code> remap cascades
+  through. A token gate guards this: a structural test asserts <code>semantic.css</code> still maps
+  <code>--color-bg</code> to <code>var(--bg)</code>, so a well-meaning "simplification" to a plain
+  alias fails CI rather than silently breaking dark mode.
+</aside>
+
+<p>
+  The type scale is the brand's narrative-serif / machine-mono split —
+  <strong>Source Serif 4</strong> for body and narrative, <strong>IBM Plex Mono</strong> for UI and
+  data — both self-hosted via <code>@fontsource</code> (imported in <code>main.tsx</code>), not
+  pulled from a CDN. The <code>@theme</code> scales also carry the type-size, motion-duration, and
+  shadow tokens, and the base layer adds a <code>prefers-reduced-motion</code> reset that collapses
+  animation and transition durations for users who ask for less motion. The token gate's other half
+  is a manifest-driven presence test: it reads <code>tokens.manifest.json</code> and asserts every
+  declared color token actually appears in the source CSS, and that every semantic alias has both a
+  <code>:root</code> and a <code>.dark</code> value.
 </p>
 
 <h2>Integration points</h2>
@@ -250,7 +405,15 @@
   </thead>
   <tbody>
     <tr>
-      <td><code>i18next/no-literal-string</code> (<code>mode: jsx-only</code>)</td>
+      <td><code>mythrun-ui/no-untranslated-jsx-text</code></td>
+      <td>custom rule</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td>
+        <code>i18next/no-literal-string</code> (attributes; <code>jsx-attributes.exclude</code>)
+      </td>
       <td>off-the-shelf</td>
       <td>error</td>
       <td>n/a</td>
@@ -288,6 +451,10 @@
   <code>frontend/</code> (<code>@mythrun/web</code>),
   <code>frontend/ui/</code> (<code>@mythrun/ui</code>), <code>frontend/eslint.config.js</code>,
   <code>frontend/ui/eslint.config.js</code>, <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>,
+  <code>frontend/eslint-rules/no-untranslated-jsx-text.js</code>, <code>frontend/src/i18n/</code>,
+  <code>frontend/scripts/i18n-todo.mjs</code>,
+  <code>frontend/ui/scripts/generate-palette.mjs</code>, <code>frontend/ui/src/styles/</code>,
+  <code>frontend/src/index.css</code>, <code>frontend/src/main.tsx</code>,
   <code>frontend/vitest.config.ts</code>, <code>pnpm-workspace.yaml</code>,
   <code>.github/workflows/frontend-check.yml</code>.
 </p>

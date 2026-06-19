@@ -1,10 +1,13 @@
 digraph frontend_foundation {
-  // The frontend foundation: two workspace packages and the lint rails that
-  // gate feature code before any UI is built. @mythrun/web (feature/route code)
-  // consumes @mythrun/ui as SOURCE through the exports map. Feature code under
-  // src/** must pass two rails — no ad-hoc UI, no hardcoded strings — enforced
-  // identically by the frontend-check CI workflow and the diff-scoped pre-push
-  // section. The library zone (frontend/ui/**) is exempt: raw elements live there.
+  // The frontend foundation: two workspace packages, the lint rails that gate
+  // feature code, the i18n layer every string flows through, and the design
+  // tokens every component consumes. @mythrun/web (feature/route code) consumes
+  // @mythrun/ui as SOURCE through the exports map — both its TS primitives and
+  // its styles.css token layer. Feature code under src/** must pass the rails:
+  // no ad-hoc UI, and two cooperating no-hardcoded-strings rails (JSX-child text
+  // + attributes). Rails are enforced identically by the frontend-check CI
+  // workflow and the diff-scoped pre-push section. The library zone
+  // (frontend/ui/**) is exempt: raw elements and tokens live there.
   rankdir=LR;
   compound=true;
 
@@ -15,8 +18,34 @@ digraph frontend_foundation {
     fontcolor="ember";
 
     web [label="@mythrun/web\nfrontend/src/**\n(features · routes)", color="ember", fontcolor="ember"];
-    ui  [label="@mythrun/ui\nfrontend/ui/src/**\n(<Text> anchor;\nlibrary zone)"];
-    web -> ui [label="import { Text }\n(source via exports map,\nmoduleResolution: Bundler)"];
+    ui  [label="@mythrun/ui\nfrontend/ui/src/**\n(<Text> anchor +\ndesign tokens;\nlibrary zone)"];
+    web -> ui [label="import { Text }\n+ @import styles.css\n(source via exports map,\nmoduleResolution: Bundler)"];
+  }
+
+  subgraph cluster_i18n {
+    label="i18n layer (MYT-80)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    cfg  [label="i18n/config.ts\nsync init · no Suspense\ninline resources"];
+    keys [label="typed keys\n(CustomTypeOptions\naugmentation)"];
+    loc  [label="locales/en/*.json\nreal chrome +\n[placeholder for …]"];
+    cfg -> keys [style="dotted"];
+    cfg -> loc  [style="dotted"];
+  }
+
+  subgraph cluster_tokens {
+    label="design tokens (MYT-81)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    gen  [label="generate-palette.mjs\n(culori OKLCH)"];
+    pal  [label="colors.generated.css\n60 tokens @theme"];
+    sem  [label="semantic.css\n@theme inline +\n:root/.dark flip"];
+    gen -> pal [label="generates"];
+    pal -> sem [style="dotted", label="aliased"];
   }
 
   subgraph cluster_rails {
@@ -26,7 +55,8 @@ digraph frontend_foundation {
     fontcolor="ember";
 
     adhoc [label="mythrun-ui/no-ad-hoc-ui\n(custom rule)\nno raw <div> · style · className"];
-    i18n  [label="i18next/no-literal-string\n(jsx-only: text + attrs)"];
+    jsxt  [label="mythrun-ui/no-untranslated-jsx-text\n(custom rule)\nbare JSX child text"];
+    i18n  [label="i18next/no-literal-string\n(jsx-only: attributes,\njsx-attributes.exclude)"];
     hatch [label="escape hatch\nreportUnusedDisableDirectives\n+ require-description"];
   }
 
@@ -39,6 +69,9 @@ digraph frontend_foundation {
     ci   [label="frontend-check.yml\n(always-on required check)\ntypecheck·lint·test·coverage·build"];
     hook [label=".husky/pre-push\n(diff-scoped on\norigin/main...HEAD)"];
   }
+
+  web -> cfg   [lhead=cluster_i18n, style="dotted", label="t('key')"];
+  ui  -> sem   [lhead=cluster_tokens, style="dotted", label="bg-bg · text-ink"];
 
   web -> adhoc [lhead=cluster_rails, label="src/** lint"];
   ui  -> adhoc [style="dotted", label="no-ad-hoc-ui OFF\n(jsx-a11y ON)"];

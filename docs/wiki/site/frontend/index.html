@@ -29,121 +29,230 @@
 <h1>Frontend</h1>
 
 <p class="lead">
-  The frontend workspace and the lint rails that gate it. Two pnpm packages —
+  The frontend foundation: the workspace, the lint rails that gate it, the i18n layer every string
+  flows through, and the design tokens every component consumes. Two pnpm packages —
   <code>@mythrun/web</code> (the React app) and <code>@mythrun/ui</code> (the design system) — plus
-  three "rules of the road" turned into CI lints <em>before</em> any real UI is built. As of today
-  this is an empty-but-enforced skeleton: it builds, the rails bite, and the gates run. No real
-  components, tokens, or flows yet — those land in later issues.
+  the "rules of the road" turned into CI lints <em>before</em> any real UI is built. There are still
+  no feature flows or composed components, but the substrate they will be built from is in place and
+  enforced: the rails bite, every string is a typed key, and the brand's Parchment &amp; Ink palette
+  is importable in CSS and Tailwind.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1267pt" height="278pt"
- viewBox="14.00 14.00 1252.00 263.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 259.4)">
+<svg width="1319pt" height="587pt"
+ viewBox="14.00 14.00 1304.00 572.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 568.4)">
 <title>frontend_foundation</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-245 1233.88,-245 1233.88,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-554 1286.09,-554 1286.09,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_ws</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-113 8,-204 514.23,-204 514.23,-113 8,-113"/>
-<text xml:space="preserve" text-anchor="middle" x="261.11" y="-190.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">frontend workspace</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-335 8,-440 534.03,-440 534.03,-335 8,-335"/>
+<text xml:space="preserve" text-anchor="middle" x="271.01" y="-426.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">frontend workspace</text>
 </g>
 <g id="clust2" class="cluster">
-<title>cluster_rails</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="646.24,-18 646.24,-233 902.36,-233 902.36,-18 646.24,-18"/>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-219.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lint rails (error on src/**)</text>
+<title>cluster_i18n</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="363.73,-8 363.73,-161 908.36,-161 908.36,-8 363.73,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="636.04" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">i18n layer (MYT&#45;80)</text>
 </g>
 <g id="clust3" class="cluster">
+<title>cluster_tokens</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-464 8,-542 891.86,-542 891.86,-464 8,-464"/>
+<text xml:space="preserve" text-anchor="middle" x="449.93" y="-528.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">design tokens (MYT&#45;81)</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_rails</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="691.85,-161 691.85,-464 954.57,-464 954.57,-161 691.85,-161"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-450.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lint rails (error on src/**)</text>
+</g>
+<g id="clust5" class="cluster">
 <title>cluster_gates</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="939.36,-8 939.36,-161 1221.88,-161 1221.88,-8 939.36,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">gates (Rule 3)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="991.57,-207 991.57,-360 1274.09,-360 1274.09,-207 991.57,-207"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-346.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">gates (Rule 3)</text>
 </g>
 <!-- web -->
 <g id="node1" class="node">
 <title>web</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-172.44 8,-172.44 8,-115.56 171.7,-115.56 171.7,-172.44"/>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-153.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-140.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">frontend/src/**</text>
-<text xml:space="preserve" text-anchor="middle" x="89.85" y="-127.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(features · routes)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="171.7,-391.44 8,-391.44 8,-334.56 171.7,-334.56 171.7,-391.44"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-372.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-359.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">frontend/src/**</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-346.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(features · routes)</text>
 </g>
 <!-- ui -->
 <g id="node2" class="node">
 <title>ui</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="514.23,-183.04 363.73,-183.04 363.73,-112.96 514.23,-112.96 514.23,-183.04"/>
-<text xml:space="preserve" text-anchor="middle" x="438.98" y="-164.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@mythrun/ui</text>
-<text xml:space="preserve" text-anchor="middle" x="438.98" y="-151.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">frontend/ui/src/**</text>
-<text xml:space="preserve" text-anchor="middle" x="438.98" y="-138.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(&lt;Text&gt; anchor;</text>
-<text xml:space="preserve" text-anchor="middle" x="438.98" y="-124.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">library zone)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="534.03,-418.64 383.53,-418.64 383.53,-335.36 534.03,-335.36 534.03,-418.64"/>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-400.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@mythrun/ui</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-386.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">frontend/ui/src/**</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-373.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(&lt;Text&gt; anchor +</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-360.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">design tokens;</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-347.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">library zone)</text>
 </g>
 <!-- web&#45;&gt;ui -->
 <g id="edge1" class="edge">
 <title>web&#45;&gt;ui</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.24,-144.94C227.02,-145.57 299.06,-146.4 354.31,-147.04"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="354.19,-149.48 361.21,-147.12 354.24,-144.58 354.19,-149.48"/>
-<text xml:space="preserve" text-anchor="middle" x="267.71" y="-173.93" font-family="Courier,monospace" font-size="10.00">import { Text }</text>
-<text xml:space="preserve" text-anchor="middle" x="267.71" y="-161.93" font-family="Courier,monospace" font-size="10.00">(source via exports map,</text>
-<text xml:space="preserve" text-anchor="middle" x="267.71" y="-149.93" font-family="Courier,monospace" font-size="10.00">moduleResolution: Bundler)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.28,-366.11C232.25,-368.4 313.55,-371.5 374.05,-373.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="373.92,-376.25 381.01,-374.07 374.1,-371.36 373.92,-376.25"/>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-411.47" font-family="Courier,monospace" font-size="10.00">import { Text }</text>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-399.47" font-family="Courier,monospace" font-size="10.00">+ @import styles.css</text>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-387.47" font-family="Courier,monospace" font-size="10.00">(source via exports map,</text>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-375.47" font-family="Courier,monospace" font-size="10.00">moduleResolution: Bundler)</text>
+</g>
+<!-- cfg -->
+<g id="node3" class="node">
+<title>cfg</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="553.83,-139.44 363.73,-139.44 363.73,-82.56 553.83,-82.56 553.83,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">i18n/config.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sync init · no Suspense</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">inline resources</text>
+</g>
+<!-- web&#45;&gt;cfg -->
+<g id="edge6" class="edge">
+<title>web&#45;&gt;cfg</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M122.39,-334.17C141.35,-317.36 166.26,-296.16 189.7,-279 245.52,-238.12 311.31,-196.8 363.74,-165.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="364.74,-167.63 369.49,-161.93 362.23,-163.42 364.74,-167.63"/>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-282" font-family="Courier,monospace" font-size="10.00">t(&#39;key&#39;)</text>
 </g>
 <!-- adhoc -->
-<g id="node3" class="node">
+<g id="node9" class="node">
 <title>adhoc</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="902.36,-136.44 646.24,-136.44 646.24,-79.56 902.36,-79.56 902.36,-136.44"/>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-117.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;ui/no&#45;ad&#45;hoc&#45;ui</text>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-104.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(custom rule)</text>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-91.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no raw &lt;div&gt; · style · className</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="951.27,-367.44 695.15,-367.44 695.15,-310.56 951.27,-310.56 951.27,-367.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-348.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;ui/no&#45;ad&#45;hoc&#45;ui</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-335.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(custom rule)</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-322.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no raw &lt;div&gt; · style · className</text>
 </g>
 <!-- web&#45;&gt;adhoc -->
-<g id="edge2" class="edge">
+<g id="edge8" class="edge">
 <title>web&#45;&gt;adhoc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.37,-124.3C226.3,-112.3 298.79,-98.13 363.73,-92 430.32,-85.71 447.37,-89.94 514.23,-92 554.17,-93.23 597.54,-95.53 637.16,-98.01"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="637.3,-100.47 644.43,-98.44 637.58,-95.58 637.3,-100.47"/>
-<text xml:space="preserve" text-anchor="middle" x="438.98" y="-95" font-family="Courier,monospace" font-size="10.00">src/** lint</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.43,-344.43C226.39,-333.13 298.88,-319.78 363.73,-314 471.8,-304.37 594.56,-312.05 685.83,-321.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="682.77,-323.37 690.05,-321.99 683.5,-318.52 682.77,-323.37"/>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-317" font-family="Courier,monospace" font-size="10.00">src/** lint</text>
+</g>
+<!-- sem -->
+<g id="node8" class="node">
+<title>sem</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="891.86,-520.44 754.56,-520.44 754.56,-463.56 891.86,-463.56 891.86,-520.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-501.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">semantic.css</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-488.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@theme inline +</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-475.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:root/.dark flip</text>
+</g>
+<!-- ui&#45;&gt;sem -->
+<g id="edge7" class="edge">
+<title>ui&#45;&gt;sem</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M534.64,-405.98C579.79,-422.91 638.68,-444.01 691.85,-460 693.67,-460.55 695.51,-461.09 697.37,-461.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="696.43,-463.92 703.83,-463.5 697.78,-459.21 696.43,-463.92"/>
+<text xml:space="preserve" text-anchor="middle" x="622.84" y="-457.12" font-family="Courier,monospace" font-size="10.00">bg&#45;bg · text&#45;ink</text>
 </g>
 <!-- ui&#45;&gt;adhoc -->
-<g id="edge3" class="edge">
+<g id="edge9" class="edge">
 <title>ui&#45;&gt;adhoc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M514.78,-139.02C550.87,-134.69 595.33,-129.36 637.13,-124.34"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="637.27,-126.79 643.93,-123.53 636.68,-121.93 637.27,-126.79"/>
-<text xml:space="preserve" text-anchor="middle" x="580.23" y="-151.18" font-family="Courier,monospace" font-size="10.00">no&#45;ad&#45;hoc&#45;ui OFF</text>
-<text xml:space="preserve" text-anchor="middle" x="580.23" y="-139.18" font-family="Courier,monospace" font-size="10.00">(jsx&#45;a11y ON)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M534.44,-369.17C578.11,-364.59 634.59,-358.67 685.94,-353.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="685.95,-355.75 692.66,-352.58 685.44,-350.88 685.95,-355.75"/>
+<text xml:space="preserve" text-anchor="middle" x="622.84" y="-379.71" font-family="Courier,monospace" font-size="10.00">no&#45;ad&#45;hoc&#45;ui OFF</text>
+<text xml:space="preserve" text-anchor="middle" x="622.84" y="-367.71" font-family="Courier,monospace" font-size="10.00">(jsx&#45;a11y ON)</text>
+</g>
+<!-- keys -->
+<g id="node4" class="node">
+<title>keys</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="898.46,-64.44 747.96,-64.44 747.96,-7.56 898.46,-7.56 898.46,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typed keys</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(CustomTypeOptions</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">augmentation)</text>
+</g>
+<!-- cfg&#45;&gt;keys -->
+<g id="edge2" class="edge">
+<title>cfg&#45;&gt;keys</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M554.53,-91.39C611.78,-79.54 684.08,-64.58 739.1,-53.2"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="739.3,-55.66 745.66,-51.84 738.3,-50.86 739.3,-55.66"/>
+</g>
+<!-- loc -->
+<g id="node5" class="node">
+<title>loc</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="908.36,-139.44 738.06,-139.44 738.06,-82.56 908.36,-82.56 908.36,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">locales/en/*.json</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">real chrome +</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">[placeholder for …]</text>
+</g>
+<!-- cfg&#45;&gt;loc -->
+<g id="edge3" class="edge">
+<title>cfg&#45;&gt;loc</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M554.53,-111C608.27,-111 675.26,-111 728.79,-111"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="728.78,-113.45 735.78,-111 728.78,-108.55 728.78,-113.45"/>
+</g>
+<!-- gen -->
+<g id="node6" class="node">
+<title>gen</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="171.7,-513.84 8,-513.84 8,-470.16 171.7,-470.16 171.7,-513.84"/>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-495.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generate&#45;palette.mjs</text>
+<text xml:space="preserve" text-anchor="middle" x="89.85" y="-482.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(culori OKLCH)</text>
+</g>
+<!-- pal -->
+<g id="node7" class="node">
+<title>pal</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="540.63,-513.84 376.93,-513.84 376.93,-470.16 540.63,-470.16 540.63,-513.84"/>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-495.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">colors.generated.css</text>
+<text xml:space="preserve" text-anchor="middle" x="458.78" y="-482.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">60 tokens @theme</text>
+</g>
+<!-- gen&#45;&gt;pal -->
+<g id="edge4" class="edge">
+<title>gen&#45;&gt;pal</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.28,-492C230.14,-492 307.84,-492 367.58,-492"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="367.44,-494.45 374.44,-492 367.44,-489.55 367.44,-494.45"/>
+<text xml:space="preserve" text-anchor="middle" x="267.71" y="-495" font-family="Courier,monospace" font-size="10.00">generates</text>
+</g>
+<!-- pal&#45;&gt;sem -->
+<g id="edge5" class="edge">
+<title>pal&#45;&gt;sem</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M541.12,-492C602.18,-492 685.26,-492 745.24,-492"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="745.1,-494.45 752.1,-492 745.1,-489.55 745.1,-494.45"/>
+<text xml:space="preserve" text-anchor="middle" x="622.84" y="-495" font-family="Courier,monospace" font-size="10.00">aliased</text>
 </g>
 <!-- ci -->
-<g id="node6" class="node">
+<g id="node13" class="node">
 <title>ci</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1221.88,-139.44 939.36,-139.44 939.36,-82.56 1221.88,-82.56 1221.88,-139.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">frontend&#45;check.yml</text>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(always&#45;on required check)</text>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typecheck·lint·test·coverage·build</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1274.09,-338.44 991.57,-338.44 991.57,-281.56 1274.09,-281.56 1274.09,-338.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-319.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">frontend&#45;check.yml</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-306.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(always&#45;on required check)</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-293.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typecheck·lint·test·coverage·build</text>
 </g>
 <!-- adhoc&#45;&gt;ci -->
-<g id="edge4" class="edge">
+<g id="edge10" class="edge">
 <title>adhoc&#45;&gt;ci</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M903.04,-109.26C912.03,-109.35 921.15,-109.44 930.25,-109.53"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="930.52,-111.98 937.54,-109.6 930.57,-107.08 930.52,-111.98"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M954.56,-326.71C963.79,-325.84 973.13,-324.96 982.45,-324.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="983,-326.49 989.76,-323.44 982.57,-321.61 983,-326.49"/>
+</g>
+<!-- jsxt -->
+<g id="node10" class="node">
+<title>jsxt</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="954.57,-292.44 691.85,-292.44 691.85,-235.56 954.57,-235.56 954.57,-292.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-273.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;ui/no&#45;untranslated&#45;jsx&#45;text</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-260.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(custom rule)</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-247.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bare JSX child text</text>
 </g>
 <!-- i18n -->
-<g id="node4" class="node">
+<g id="node11" class="node">
 <title>i18n</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="872.65,-61.84 675.95,-61.84 675.95,-18.16 872.65,-18.16 872.65,-61.84"/>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-43.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">i18next/no&#45;literal&#45;string</text>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-30.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(jsx&#45;only: text + attrs)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="921.56,-217.44 724.85,-217.44 724.85,-160.56 921.56,-160.56 921.56,-217.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-198.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">i18next/no&#45;literal&#45;string</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-185.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(jsx&#45;only: attributes,</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-172.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">jsx&#45;attributes.exclude)</text>
 </g>
 <!-- hook -->
-<g id="node7" class="node">
+<g id="node14" class="node">
 <title>hook</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1159.17,-64.44 1002.07,-64.44 1002.07,-7.56 1159.17,-7.56 1159.17,-64.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.husky/pre&#45;push</text>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(diff&#45;scoped on</text>
-<text xml:space="preserve" text-anchor="middle" x="1080.62" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">origin/main...HEAD)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1211.38,-263.44 1054.28,-263.44 1054.28,-206.56 1211.38,-206.56 1211.38,-263.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-244.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">.husky/pre&#45;push</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-231.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(diff&#45;scoped on</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.83" y="-218.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">origin/main...HEAD)</text>
 </g>
 <!-- i18n&#45;&gt;hook -->
 <!-- hatch -->
-<g id="node5" class="node">
+<g id="node12" class="node">
 <title>hatch</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="885.86,-211.44 662.74,-211.44 662.74,-154.56 885.86,-154.56 885.86,-211.44"/>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-192.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">escape hatch</text>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-179.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reportUnusedDisableDirectives</text>
-<text xml:space="preserve" text-anchor="middle" x="774.3" y="-166.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ require&#45;description</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="934.76,-442.44 711.65,-442.44 711.65,-385.56 934.76,-385.56 934.76,-442.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-423.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">escape hatch</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-410.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reportUnusedDisableDirectives</text>
+<text xml:space="preserve" text-anchor="middle" x="823.21" y="-397.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ require&#45;description</text>
 </g>
 </g>
 </svg>
@@ -195,10 +304,12 @@
   <code>module: ESNext</code>, <code>moduleResolution: Bundler</code>, <code>jsx: react-jsx</code>,
   with <code>strict</code>, <code>noUncheckedIndexedAccess</code>, and
   <code>exactOptionalPropertyTypes</code> all on. Tailwind is wired CSS-first through
-  <code>@tailwindcss/vite</code> — a single <code>src/index.css</code> with
-  <code>@import "tailwindcss"</code> and an empty <code>@theme {}</code> block; the real OKLCH brand
-  tokens land in a later issue. The library today is one trivial <code>&lt;Text&gt;</code> primitive
-  — the boundary anchor that makes the lint rails testable on day one.
+  <code>@tailwindcss/vite</code> — a single <code>src/index.css</code> that does
+  <code>@import "tailwindcss"</code> then <code>@import "@mythrun/ui/styles.css"</code> to pull in
+  the token layer (below). Because Tailwind v4 doesn't scan <code>node_modules</code>, the same file
+  adds <code>@source "../ui/src"</code> so utility classes used inside the library are detected. The
+  library today is one trivial <code>&lt;Text&gt;</code> primitive — the boundary anchor that makes
+  the lint rails testable on day one.
 </p>
 
 <aside class="wiki-rationale">
@@ -220,25 +331,43 @@
 <h3 id="rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</h3>
 
 <p>
-  Every user-visible string is an i18n key, never inline text. The off-the-shelf
-  <code>i18next/no-literal-string</code> rule enforces it, set to <code>error</code> in
-  <code>mode: 'jsx-only'</code> over feature code. That mode flags string literals in JSX text
-  <em>and</em> in JSX attributes — the attribute case is load-bearing because mythrunUI props (<code
+  Every user-visible string is an i18n key, never inline text. The rail is split across two
+  cooperating rules because no single off-the-shelf rule covers both places a string can hide.
+  <strong>JSX child text</strong> — the words between tags — is owned by a custom rule,
+  <code>mythrun-ui/no-untranslated-jsx-text</code>. <strong>JSX attribute</strong> literals (<code
     >&lt;Text label="…" /&gt;</code
-  >) carry most user-facing text, and the plugin's weaker default would let those through.
-  Non-user-facing attributes (<code>data-testid</code>, <code>aria-*</code>, <code>role</code>,
-  <code>id</code>) are exempted so they don't trip the rule.
+  >, which is where most mythrunUI copy actually lives) are owned by the off-the-shelf
+  <code>i18next/no-literal-string</code>, now scoped to attributes only. Both are
+  <code>error</code> on feature code under <code>src/**</code>.
+</p>
+
+<p>
+  The custom rule is the authoritative JSX-child rail. It reports bare non-whitespace text, a string
+  literal inside a child <code>{…}</code> expression, and a template literal with static text — and
+  exempts numeric/expression children, interpolation-only templates, and anything inside a
+  <code>&lt;Trans&gt;</code> element. The escape valve is the same one Rule 3 governs: a named
+  <code>// eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- &lt;reason&gt;</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>A known gap, carried forward deliberately</strong> —
-  <code>eslint-plugin-i18next</code> allowlists bare JSX <em>text</em> inside PascalCase arrow-const
-  components (<code>const X = () =&gt; &lt;Text&gt;hi&lt;/Text&gt;</code> is not flagged — it treats
-  the uppercase const like a constant). All attribute literals and JSX text inside
-  <code>function Comp() {}</code> declarations still fail, and a raw element there still fails the
-  no-ad-hoc-UI rail. Closing the arrow-const text gap belongs to the i18n-runtime issue, which also
-  adds the typed <code>t()</code> provider and a callee allow-list. The gap is documented in the
-  config so nobody mistakes it for a hole.
+  <strong>A custom child-text rail, not the plugin's</strong> —
+  <code>eslint-plugin-i18next</code> has two holes on JSX children. It allowlists bare text inside
+  PascalCase arrow-const components (it treats the uppercase const like a constant), and its
+  <code>should-validate-template:false</code> default skips template-literal children entirely. The
+  MYT-79 page documented the arrow-const gap as a known limitation; MYT-80 closed it for real by
+  writing a purpose-built rule that covers every component shape and the template-literal case. The
+  plugin keeps the attribute job, where it has no equivalent blind spot.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>jsx-attributes.exclude</code>, not <code>ignoreAttribute</code></strong> — the
+  attribute rail allowlists non-user-facing attributes (<code>className</code>, <code>style</code>,
+  <code>type</code>, <code>id</code>, <code>data-testid</code>, <code>aria-*</code>,
+  <code>role</code>, …) so they don't trip the rule. MYT-79 inherited an
+  <code>ignoreAttribute</code> key here that is not a real plugin option — a silent no-op that
+  allowlisted nothing. MYT-80 replaced it with the plugin's real
+  <code>jsx-attributes.exclude</code> array. Because that array <em>replaces</em> the plugin
+  defaults rather than extending them, the defaults are re-listed alongside the additions.
 </aside>
 
 <h3 id="rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</h3>
@@ -295,25 +424,26 @@
 
 <p>
   Frontend Vitest enforces 100% on the logic surface — lines, branches, functions, statements —
-  while presentational code is excluded from the percentage (rendered in tests, not %-gated). Today
-  the only logic is the custom lint rule; <code>coverage.include</code> is
-  <code>eslint-rules/**</code>, to be extended with <code>src/lib/**</code>,
-  <code>src/hooks/**</code>, and the future API/transport clients as they land. The convention that
-  keeps this honest: logic lives in <code>.ts</code>, never <code>.tsx</code>, so the
-  <code>.tsx</code> exclusion can't launder untested logic.
+  while presentational code is excluded from the percentage (rendered in tests, not %-gated). The
+  logic surface is the two custom lint rules plus the palette generator;
+  <code>coverage.include</code> spans <code>eslint-rules/**</code> and the generator, to be extended
+  with <code>src/lib/**</code>, <code>src/hooks/**</code>, and the future API/transport clients as
+  they land. The convention that keeps this honest: logic lives in <code>.ts</code>, never
+  <code>.tsx</code>, so the <code>.tsx</code> exclusion can't launder untested logic.
 </p>
 
 <p>
-  Two test files supply the acceptance evidence that the rails are real. The RuleTester suite for
-  <code>no-ad-hoc-ui</code> drives the rule with inline code strings — invalid
-  (<code>&lt;div&gt;</code>, <code>style=</code>, <code>className=</code>), valid
-  (<code>&lt;Text/&gt;</code>, fragments) — and is what instruments the rule to 100%. The
-  config-wiring test uses <code>ESLint.calculateConfigForFile</code> to assert both rails are
-  <code>error</code> for a <code>src/**</code> path and <code>no-ad-hoc-ui</code> is
-  <code>off</code> for a <code>ui/**</code> path, then lints inline strings to prove the rails
-  actually fire. The wiring test runs under the plain <code>test</code> script (and is gated in CI)
-  but is excluded from the coverage run, where loading the rule through ESLint's own loader corrupts
-  the v8 map.
+  The test files supply the acceptance evidence that the rails are real. A RuleTester suite drives
+  each custom rule with inline code strings — invalid (<code>&lt;div&gt;</code>, bare child text,
+  template-literal children) and valid (<code>&lt;Text/&gt;</code>, fragments,
+  <code>{t('k')}</code>, <code>&lt;Trans&gt;</code> descendants) — and is what instruments the rules
+  to 100%. The config-wiring test uses <code>ESLint.calculateConfigForFile</code> to assert the
+  rails are <code>error</code> for a <code>src/**</code> path and <code>no-ad-hoc-ui</code> is
+  <code>off</code> for a <code>ui/**</code> path, then lints inline strings to prove they actually
+  fire. The wiring test runs under the plain <code>test</code> script (and is gated in CI) but is
+  excluded from the coverage run, where loading a rule through ESLint's own loader corrupts the v8
+  map. The token layer is covered separately — a manifest-driven presence test and a structural
+  guard, both described under design tokens below.
 </p>
 
 <h2 id="the-gates">The gates</h2>
@@ -329,6 +459,126 @@
   The companion change: <code>deploy.yml</code> adds <code>frontend/**</code> to its
   <code>paths-ignore</code>, so a frontend-only push skips the backend image build and ECS deploy
   entirely.
+</p>
+
+<h2 id="the-i18n-layer">The i18n layer</h2>
+
+<p>
+  Rule 1 says no hardcoded strings; the i18n layer is where they go instead. It is
+  <code>react-i18next</code> on top of <code>i18next</code>, initialized once in
+  <code>src/i18n/config.ts</code> and provided at the app root in <code>main.tsx</code> via
+  <code>&lt;I18nextProvider&gt;</code>. Strings live in per-namespace locale files under
+  <code>src/i18n/locales/en/</code> — today a single <code>common</code> namespace — and components
+  read them through <code>t('key')</code>. The config is wired against the diagram's
+  <strong>i18n layer</strong> cluster: <code>config.ts</code> binds the typed-keys augmentation and
+  the locale resources.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Synchronous init, no Suspense</strong> — <code>config.ts</code> calls
+  <code>init()</code> with inline <code>resources</code> and <strong>no</strong> init callback. That
+  combination is load-bearing: an init callback re-triggers i18next's internal
+  <code>setTimeout</code> deferral, and an async backend would leave the first render before strings
+  are loaded. With neither, <code>init()</code> loads synchronously and sets
+  <code>isInitialized</code> before returning, so <code>useTranslation()</code>'s
+  <code>ready</code> is true on first render — no flash-of-keys and no need for a
+  <code>&lt;Suspense&gt;</code> boundary. Adding a callback or an async backend later would require
+  reintroducing Suspense.
+</aside>
+
+<p>
+  Keys are <strong>typed</strong>. <code>src/i18n/i18next.d.ts</code> augments the
+  <code>i18next</code> module's <code>CustomTypeOptions</code> with the actual resource shape, so
+  <code>t('back')</code> compiles and <code>t('not.a.key')</code> is a type error. A guard file
+  (<code>typed-keys.guard.ts</code>) is typechecked but never imported: it holds a
+  <code>@ts-expect-error</code> over a known-bad key, so if typed keys ever regress to plain
+  <code>string</code>, the directive goes unused and <code>pnpm typecheck</code> fails loudly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Typed keys via the i18next module augmentation</strong> — the alternative is a hand-kept
+  union of key strings that drifts from the locale files. Augmenting
+  <code>CustomTypeOptions</code> with <code>typeof resources</code> makes the locale JSON itself the
+  source of truth: add a key to <code>common.json</code> and it is callable; remove one and every
+  stale <code>t()</code> call fails to compile. The compiler enforces the catalog with zero
+  hand-maintained list.
+</aside>
+
+<p>
+  Prose copy is Miklos's to write, so most values ship as a
+  <code>[placeholder for &lt;purpose&gt;]</code> string rather than guessed text — only generic
+  chrome (<code>Back</code>, nav labels) gets a real value on day one. The
+  <code>pnpm i18n:todo</code> script JSON-walks every locale file and lists each value still holding
+  a placeholder, so unwritten copy is findable instead of silently shipping a bracketed string. It
+  walks values structurally, so it survives nested keys and <code>_one</code>/<code>_other</code>
+  plural shapes.
+</p>
+
+<h2 id="design-tokens">Design tokens</h2>
+
+<p>
+  Every component consumes the same visual vocabulary: the brand's
+  <strong>Parchment &amp; Ink</strong> palette plus type, motion, and shadow scales. The tokens live
+  in <code>@mythrun/ui</code> under <code>src/styles/</code> and are pulled into the app through the
+  single <code>@import "@mythrun/ui/styles.css"</code> in <code>src/index.css</code>. That entry
+  file imports four layers in order — the generated palette, the <code>@theme</code> scales, the
+  semantic aliases, and the base reset — matching the diagram's
+  <strong>design tokens</strong> cluster.
+</p>
+
+<p>
+  The palette is 60 colors: six ten-step ramps (<code>paper</code>, <code>ember</code>, and the
+  <code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code> semantics). The
+  <code>paper</code> and <code>ember</code> anchors are the brand's hand-picked hexes, copied
+  verbatim. The 36 other steps are <em>generated</em>:
+  <code>scripts/generate-palette.mjs</code> uses <code>culori</code> to read each semantic anchor in
+  OKLCH, then interpolates the rest of the ramp by borrowing <code>ember</code>'s perceptual
+  lightness curve and scaling chroma to the anchor — writing <code>colors.generated.css</code> (a
+  <code>@theme</code> block of <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>,
+  and a <code>tokens.html</code> audit page.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A generator for the 36 steps, not 36 hand-picked hexes</strong> — hand-tuning forty
+  intermediate swatches by eye produces ramps that drift in lightness and read inconsistently
+  against each other. Anchoring each semantic ramp to <code>ember</code>'s OKLCH lightness curve
+  makes every ramp perceptually parallel by construction, and the generator asserts strict monotonic
+  lightness so a bad interpolation fails the build rather than shipping a muddy step. The brand's
+  chosen anchors are still authoritative — they're emitted verbatim; only the in-between steps are
+  computed.
+</aside>
+
+<p>
+  On top of the raw palette sit <strong>semantic aliases</strong> — <code>--bg</code>,
+  <code>--surface</code>, <code>--ink</code>, <code>--accent</code>, and the rest — that name a role
+  rather than a color. These are what dark mode flips: a <code>.dark</code> class remaps each alias
+  to a different paper/ember step (a true warm dark, not a second palette), and because the aliases
+  are plain CSS custom properties in <code>:root</code>/<code>.dark</code>, the cascade does the
+  flipping. A small <code>@theme inline</code> block then surfaces each alias as a Tailwind utility
+  (<code>bg-bg</code>, <code>text-ink</code>) that references the var at runtime.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>@theme inline</code> for the dark flip</strong> — a plain Tailwind v4
+  <code>@theme</code> alias resolves its value once, at <code>:root</code>, and bakes it in — so a
+  later <code>.dark</code> override never reaches the utility and the theme can't flip. Declaring
+  the alias <code>inline</code> emits <code>--color-bg: var(--bg)</code> instead of the resolved
+  paper hex, so the utility reads <code>--bg</code> live and the <code>.dark</code> remap cascades
+  through. A token gate guards this: a structural test asserts <code>semantic.css</code> still maps
+  <code>--color-bg</code> to <code>var(--bg)</code>, so a well-meaning "simplification" to a plain
+  alias fails CI rather than silently breaking dark mode.
+</aside>
+
+<p>
+  The type scale is the brand's narrative-serif / machine-mono split —
+  <strong>Source Serif 4</strong> for body and narrative, <strong>IBM Plex Mono</strong> for UI and
+  data — both self-hosted via <code>@fontsource</code> (imported in <code>main.tsx</code>), not
+  pulled from a CDN. The <code>@theme</code> scales also carry the type-size, motion-duration, and
+  shadow tokens, and the base layer adds a <code>prefers-reduced-motion</code> reset that collapses
+  animation and transition durations for users who ask for less motion. The token gate's other half
+  is a manifest-driven presence test: it reads <code>tokens.manifest.json</code> and asserts every
+  declared color token actually appears in the source CSS, and that every semantic alias has both a
+  <code>:root</code> and a <code>.dark</code> value.
 </p>
 
 <h2 id="integration-points">Integration points</h2>
@@ -380,7 +630,15 @@
   </thead>
   <tbody>
     <tr>
-      <td><code>i18next/no-literal-string</code> (<code>mode: jsx-only</code>)</td>
+      <td><code>mythrun-ui/no-untranslated-jsx-text</code></td>
+      <td>custom rule</td>
+      <td>error</td>
+      <td>n/a</td>
+    </tr>
+    <tr>
+      <td>
+        <code>i18next/no-literal-string</code> (attributes; <code>jsx-attributes.exclude</code>)
+      </td>
       <td>off-the-shelf</td>
       <td>error</td>
       <td>n/a</td>
@@ -418,6 +676,10 @@
   <code>frontend/</code> (<code>@mythrun/web</code>),
   <code>frontend/ui/</code> (<code>@mythrun/ui</code>), <code>frontend/eslint.config.js</code>,
   <code>frontend/ui/eslint.config.js</code>, <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>,
+  <code>frontend/eslint-rules/no-untranslated-jsx-text.js</code>, <code>frontend/src/i18n/</code>,
+  <code>frontend/scripts/i18n-todo.mjs</code>,
+  <code>frontend/ui/scripts/generate-palette.mjs</code>, <code>frontend/ui/src/styles/</code>,
+  <code>frontend/src/index.css</code>, <code>frontend/src/main.tsx</code>,
   <code>frontend/vitest.config.ts</code>, <code>pnpm-workspace.yaml</code>,
   <code>.github/workflows/frontend-check.yml</code>.
 </p>
@@ -426,7 +688,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#the-two-package-workspace">The two-package workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#the-two-package-workspace">The two-package workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#the-i18n-layer">The i18n layer</a></li><li style="padding-left:0"><a href="#design-tokens">Design tokens</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
