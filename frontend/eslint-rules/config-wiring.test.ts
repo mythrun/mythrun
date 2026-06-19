@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
 import i18next from 'eslint-plugin-i18next'
 import eslintComments from '@eslint-community/eslint-plugin-eslint-comments'
+import { noUntranslatedJsxText } from './no-untranslated-jsx-text.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const frontendDir = resolve(here, '..')
@@ -31,6 +32,14 @@ describe('frontend lint rails — registration & scoping', () => {
     const ui = new ESLint({ cwd: uiDir })
     const libCfg = await ui.calculateConfigForFile(resolve(uiDir, 'src/text.tsx'))
     expect(libCfg.rules['mythrun-ui/no-ad-hoc-ui']?.[0] ?? 0).toBe(0)
+  })
+
+  it('no-untranslated-jsx-text is error; i18next rail uses real jsx-attributes.exclude', async () => {
+    const web = new ESLint({ cwd: frontendDir })
+    const cfg = await web.calculateConfigForFile(resolve(frontendDir, 'src/app.tsx'))
+    expect(cfg.rules['mythrun-ui/no-untranslated-jsx-text']?.[0]).toBe(2)
+    const i18nextOpts = cfg.rules['i18next/no-literal-string']?.[1]
+    expect(i18nextOpts?.['jsx-attributes']?.exclude).toContain('data-testid')
   })
 })
 
@@ -86,6 +95,87 @@ describe('frontend lint rails — fire on violation (isolated, no type-aware bui
     assert(res)
     expect(res.messages.map((m) => m.ruleId)).toContain(
       '@eslint-community/eslint-comments/require-description',
+    )
+  })
+
+  it('i18next rail exempts data-testid via jsx-attributes.exclude', async () => {
+    const eslint = new ESLint({
+      overrideConfigFile: true,
+      overrideConfig: {
+        files: ['**/*.jsx'],
+        plugins: { i18next },
+        languageOptions: {
+          ecmaVersion: 2024,
+          sourceType: 'module',
+          parserOptions: { ecmaFeatures: { jsx: true } },
+        },
+        rules: {
+          'i18next/no-literal-string': [
+            'error',
+            {
+              mode: 'jsx-only',
+              'jsx-attributes': {
+                exclude: [
+                  'className',
+                  'styleName',
+                  'style',
+                  'type',
+                  'key',
+                  'id',
+                  'width',
+                  'height',
+                  'data-testid',
+                  'aria-.*',
+                  'role',
+                ],
+              },
+            },
+          ],
+        },
+      },
+    })
+    const [res] = await eslint.lintText(
+      'export const A = () => <Widget data-testid="x" />\n',
+      { filePath: 'fixture.jsx' },
+    )
+    assert(res)
+    expect(res.messages.map((m) => m.ruleId)).not.toContain('i18next/no-literal-string')
+  })
+})
+
+describe('no-untranslated-jsx-text — fire on violation', () => {
+  function isolated(): ESLint {
+    return new ESLint({
+      overrideConfigFile: true,
+      overrideConfig: {
+        files: ['**/*.jsx'],
+        plugins: { 'mythrun-ui': { rules: { 'no-untranslated-jsx-text': noUntranslatedJsxText } } },
+        languageOptions: {
+          ecmaVersion: 2024,
+          sourceType: 'module',
+          parserOptions: { ecmaFeatures: { jsx: true } },
+        },
+        rules: { 'mythrun-ui/no-untranslated-jsx-text': 'error' },
+      },
+    })
+  }
+  async function ids(code: string): Promise<(string | null)[]> {
+    const [res] = await isolated().lintText(code, { filePath: 'fixture.jsx' })
+    if (!res) throw new Error('no lint result')
+    return res.messages.map((m) => m.ruleId)
+  }
+  it('fires on bare text + template-literal children; silent on t()/<Trans>', async () => {
+    expect(await ids('export const A = () => <Text>hi</Text>\n')).toContain(
+      'mythrun-ui/no-untranslated-jsx-text',
+    )
+    expect(await ids('export const A = () => <Text>{`hi`}</Text>\n')).toContain(
+      'mythrun-ui/no-untranslated-jsx-text',
+    )
+    expect(await ids('export const A = () => <Text>{t("k")}</Text>\n')).not.toContain(
+      'mythrun-ui/no-untranslated-jsx-text',
+    )
+    expect(await ids('export const A = () => <Trans>hi</Trans>\n')).not.toContain(
+      'mythrun-ui/no-untranslated-jsx-text',
     )
   })
 })

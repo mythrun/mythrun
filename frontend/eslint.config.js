@@ -6,6 +6,7 @@ import i18next from 'eslint-plugin-i18next'
 import eslintComments from '@eslint-community/eslint-plugin-eslint-comments'
 import eslintConfigPrettier from 'eslint-config-prettier'
 import { noAdHocUi } from './eslint-rules/no-ad-hoc-ui.js'
+import { noUntranslatedJsxText } from './eslint-rules/no-untranslated-jsx-text.js'
 
 export default [
   ...root,
@@ -52,7 +53,9 @@ export default [
       'jsx-a11y': jsxA11y,
       i18next,
       '@eslint-community/eslint-comments': eslintComments,
-      'mythrun-ui': { rules: { 'no-ad-hoc-ui': noAdHocUi } },
+      'mythrun-ui': {
+        rules: { 'no-ad-hoc-ui': noAdHocUi, 'no-untranslated-jsx-text': noUntranslatedJsxText },
+      },
     },
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
     settings: { react: { version: 'detect' } },
@@ -61,18 +64,26 @@ export default [
       ...reactHooks.configs.recommended.rules,
       'react/react-in-jsx-scope': 'off',
       'mythrun-ui/no-ad-hoc-ui': 'error',
-      // `jsx-only` is the strongest mode this plugin offers (catches JSX text +
-      // attribute literals; attributes are the load-bearing case since mythrunUI
-      // props carry most user text). KNOWN LIMITATION (eslint-plugin-i18next@6):
-      // it allowlists bare JSX *text* inside PascalCase arrow-const components
-      // (`const X = () => <Text>hi</Text>` is NOT flagged — it treats the
-      // uppercase const like a constant). It DOES catch all attribute literals
-      // and JSX text in `function Comp() {}` declarations. Closing the
-      // arrow-const component-text gap is MYT-80's job, with the typed t()
-      // runtime + a callee allow-list (and possibly a complementary rule).
+      'mythrun-ui/no-untranslated-jsx-text': 'error',
+      // Two cooperating no-hardcoded-strings rails. mythrun-ui/no-untranslated-jsx-text
+      // is the complete JSX-child-text rail (and closes the template-literal-child
+      // case the plugin skips via should-validate-template:false). eslint-plugin-i18next
+      // owns ATTRIBUTE coverage; `t()` and `<Trans>` are exempt by the plugin's own
+      // defaults. `jsx-attributes.exclude` REPLACES the plugin defaults, so the defaults
+      // are re-listed + the additions (data-testid, aria-.*, role); patterns are
+      // full-match regex. (This replaces the prior `ignoreAttribute`, which was a silent
+      // no-op — not a real option.)
       'i18next/no-literal-string': [
         'error',
-        { mode: 'jsx-only', ignoreAttribute: ['data-testid', 'aria-*', 'role', 'id'] },
+        {
+          mode: 'jsx-only',
+          'jsx-attributes': {
+            exclude: [
+              'className', 'styleName', 'style', 'type', 'key', 'id', 'width', 'height',
+              'data-testid', 'aria-.*', 'role',
+            ],
+          },
+        },
       ],
       '@eslint-community/eslint-comments/require-description': 'error',
       '@typescript-eslint/no-misused-promises': [
