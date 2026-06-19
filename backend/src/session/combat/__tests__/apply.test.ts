@@ -13,6 +13,7 @@ import type { CombatOutcome, CombatSummaryL1 } from '../../../redis/session-stat
 import type { RulesLawyerDeps } from '../../rules-lawyer.js'
 import type {
   FindLedgerCharacterResult,
+  LedgerEventInput,
   LedgerOps,
   PartyLedgerSnapshot,
 } from '../../../repo/characters-ledger.js'
@@ -66,7 +67,7 @@ describe('reconcileDeltas — partition', () => {
       ],
     }
     const r = reconcileDeltas(outcomeWith(DECISIVE_ENV), ft, party, ['Goblin'])
-    expect(r.pcDamage).toEqual([{ characterId: 'a', name: 'Bram', amount: 10 }])
+    expect(r.pcDamage).toEqual([{ characterId: 'a', name: 'Bram', amount: 10, hpBefore: 40 }])
     expect(r.enemyCasualties).toEqual([{ name: 'Goblin', fate: 'dead' }])
   })
 
@@ -86,8 +87,8 @@ describe('reconcileDeltas — partition', () => {
       casualties: [],
     }
     const r = reconcileDeltas(outcomeWith(DECISIVE_ENV), ft, party, [])
-    expect(r.pcDamage).toContainEqual({ characterId: 'a', name: 'Bram', amount: 10 })
-    expect(r.pcDamage).toContainEqual({ characterId: 'b', name: 'Sel', amount: 8 })
+    expect(r.pcDamage).toContainEqual({ characterId: 'a', name: 'Bram', amount: 10, hpBefore: 30 })
+    expect(r.pcDamage).toContainEqual({ characterId: 'b', name: 'Sel', amount: 8, hpBefore: 8 })
   })
 
   it('floors net at 0 when healing exceeds damage (no negative damage)', () => {
@@ -99,7 +100,7 @@ describe('reconcileDeltas — partition', () => {
       casualties: [],
     }
     const r = reconcileDeltas(outcomeWith(DECISIVE_ENV), ft, party, [])
-    expect(r.pcDamage).toEqual([{ characterId: 'a', name: 'Bram', amount: 0 }])
+    expect(r.pcDamage).toEqual([{ characterId: 'a', name: 'Bram', amount: 0, hpBefore: 40 }])
   })
 })
 
@@ -327,10 +328,14 @@ interface FakeRow {
   readonly name: string
 }
 
-/** An in-memory LedgerOps covering only the methods resolveAdjustHp touches:
- *  findLedgerCharacterByName, findLedgerEvent, readPartyLedgerSnapshot, writeHp,
- *  writeLedgerEvent. Throws on every unused method so an accidental call is loud. */
-function makeFakeLedger(rows: Map<string, FakeRow>): LedgerOps {
+/** An in-memory LedgerOps covering the methods applyToLedger touches:
+ *  findLedgerCharacterByName, readPartyLedgerSnapshot, writeHp, and the §10
+ *  journal pair (findLedgerEvent / writeLedgerEvent — backed by a real
+ *  `journal` store so the audit-row + idempotency assertions are observable).
+ *  Throws on every unused method so an accidental call is loud. The optional
+ *  `journal` array (shared with the caller) records every committed event;
+ *  `findLedgerEvent` reads it back so a re-run is detected as already-applied. */
+function makeFakeLedger(rows: Map<string, FakeRow>, journal: LedgerEventInput[] = []): LedgerOps {
   const unsupported = (m: string): never => {
     throw new Error(`fake LedgerOps: ${m} not implemented`)
   }
@@ -361,12 +366,24 @@ function makeFakeLedger(rows: Map<string, FakeRow>): LedgerOps {
     row.hp = clamped
     return { hp: clamped, maxHp: row.maxHp }
   }
+  const hasEvent = (turnId: string, toolCallId: string, characterId: string): boolean =>
+    journal.some(
+      (e) => e.turnId === turnId && e.toolCallId === toolCallId && e.characterId === characterId,
+    )
+  const recordEvent = (input: LedgerEventInput): string | null => {
+    // Mirror the UNIQUE (turn_id, tool_call_id, character_id) constraint: an
+    // existing row is a no-op insert (NULL RETURNING), else append + return id.
+    if (hasEvent(input.turnId, input.toolCallId, input.characterId)) return null
+    journal.push(input)
+    return 'evt'
+  }
   return {
     findLedgerCharacterByName: (_sessionId, name) => Promise.resolve(resolveFind(name)),
     readPartyLedgerSnapshot: () => Promise.resolve(snapshot()),
     writeHp: (characterId, newHp) => Promise.resolve(setHp(characterId, newHp)),
-    findLedgerEvent: () => Promise.resolve(false),
-    writeLedgerEvent: () => Promise.resolve('evt'),
+    findLedgerEvent: (turnId, toolCallId, characterId) =>
+      Promise.resolve(hasEvent(turnId, toolCallId, characterId)),
+    writeLedgerEvent: (input) => Promise.resolve(recordEvent(input)),
     debitGold: () => unsupported('debitGold'),
     creditGold: () => unsupported('creditGold'),
     debitItem: () => unsupported('debitItem'),
@@ -394,17 +411,18 @@ function makeDeps(ledger: LedgerOps): RulesLawyerDeps {
 }
 
 describe('applyToLedger', () => {
-  it('applies each pcDamage entry and returns hpBefore/hpAfter/maxHp', async () => {
+  it('applies each pcDamage entry, returns hpBefore/hpAfter/maxHp, and journals one audit row per PC', async () => {
     const rows = new Map<string, FakeRow>([
       ['a', { hp: 40, maxHp: 40, name: 'Bram' }],
       ['b', { hp: 12, maxHp: 30, name: 'Sel' }],
     ])
-    const ledger = makeFakeLedger(rows)
+    const journal: LedgerEventInput[] = []
+    const ledger = makeFakeLedger(rows, journal)
     const reconciled: ReconciledCombat = {
       outcomeKind: 'victory',
       pcDamage: [
-        { characterId: 'a', name: 'Bram', amount: 10 },
-        { characterId: 'b', name: 'Sel', amount: 12 },
+        { characterId: 'a', name: 'Bram', amount: 10, hpBefore: 40 },
+        { characterId: 'b', name: 'Sel', amount: 12, hpBefore: 12 },
       ],
       pcCasualties: [{ name: 'Sel', fate: 'unconscious' }],
       enemyCasualties: [],
@@ -413,6 +431,18 @@ describe('applyToLedger', () => {
     const hpChanges = await applyToLedger(makeDeps(ledger), reconciled)
     expect(hpChanges).toContainEqual({ combatant: 'Bram', hpBefore: 40, hpAfter: 30, maxHp: 40 })
     expect(hpChanges).toContainEqual({ combatant: 'Sel', hpBefore: 12, hpAfter: 0, maxHp: 30 })
+    // Combat HP is AUDITED like every other HP-mutation path: one ledger_events
+    // row per PC, under the synthetic combat-resolve toolCallId, with the applied
+    // HP delta in `delta` (magnitude = HP removed; kind tags the combat path).
+    expect(journal).toHaveLength(2)
+    expect(journal).toContainEqual({
+      characterId: 'a', sessionId: 's', turnId: 't', toolCallId: 'tc',
+      tool: 'resolve_combat', delta: { kind: 'combat', magnitude: 10, hp: 30 },
+    })
+    expect(journal).toContainEqual({
+      characterId: 'b', sessionId: 's', turnId: 't', toolCallId: 'tc',
+      tool: 'resolve_combat', delta: { kind: 'combat', magnitude: 12, hp: 0 },
+    })
   })
 
   it('skips a zero-amount damage entry (no resolver call needed)', async () => {
@@ -420,7 +450,7 @@ describe('applyToLedger', () => {
     const ledger = makeFakeLedger(rows)
     const reconciled: ReconciledCombat = {
       outcomeKind: 'victory',
-      pcDamage: [{ characterId: 'a', name: 'Bram', amount: 0 }],
+      pcDamage: [{ characterId: 'a', name: 'Bram', amount: 0, hpBefore: 40 }],
       pcCasualties: [],
       enemyCasualties: [],
       conditions: [],
@@ -429,26 +459,64 @@ describe('applyToLedger', () => {
     expect(hpChanges).toEqual([])
   })
 
-  it('logs + skips a damage entry the resolver rejects (unresolvable name)', async () => {
-    const rows = new Map<string, FakeRow>([['a', { hp: 40, maxHp: 40, name: 'Bram' }]])
-    const ledger = makeFakeLedger(rows)
-    const warnings: string[] = []
-    const deps: RulesLawyerDeps = {
-      ...makeDeps(ledger),
-      logger: { warn: (_o, m) => warnings.push(m) },
-    }
+  it('SETS to the combat target (hpBefore − amount), NOT a delta — subsumes a prior in-turn adjust_hp (double-application regression)', async () => {
+    // MYT-75 L1: in one combat turn the FT called BOTH resolve_combat (reporting
+    // a wound) AND the standalone adjust_hp ledger tool for the same PC. The
+    // wound was applied TWICE — once live by adjust_hp during the render, once by
+    // the worker's post-turn applyCombat (a delta on top). Bram ended at 0 instead
+    // of his real target. The fix makes the combat outcome authoritative: SET HP
+    // to the target (combat-start HP − reconciled damage), which subsumes any
+    // in-turn adjust_hp and is idempotent.
+    //
+    // Snapshot HP 28, combat damage 16 → target 12. The live ledger is ALREADY at
+    // 12 (a prior adjust_hp this turn took 28 → 12). A delta would land Bram at
+    // 12 − 16 = 0 (double-counted); SETTING to 12 is correct.
+    const rows = new Map<string, FakeRow>([
+      ['a', { hp: 12, maxHp: 28, name: 'Bram' }], // live ledger already at 12 from a prior adjust_hp
+    ])
+    const journal: LedgerEventInput[] = []
+    const ledger = makeFakeLedger(rows, journal)
+    const deps = makeDeps(ledger) // stable synthetic toolCallId across re-runs
     const reconciled: ReconciledCombat = {
       outcomeKind: 'victory',
-      pcDamage: [{ characterId: 'z', name: 'Ghost', amount: 10 }], // no such row
+      pcDamage: [{ characterId: 'a', name: 'Bram', amount: 16, hpBefore: 28 }], // snapshot 28, dmg 16 → target 12
       pcCasualties: [],
       enemyCasualties: [],
       conditions: [],
     }
     const hpChanges = await applyToLedger(deps, reconciled)
-    expect(hpChanges).toEqual([])
-    // The shared logger sees the resolver's own resolution-failed warn AND the
-    // combat-apply skip warn; assert OUR skip message is present.
-    expect(warnings.some((m) => m.startsWith('combat-apply:'))).toBe(true)
+    // The PC ends at the combat TARGET (12), NOT double-counted to 0.
+    expect(hpChanges).toEqual([{ combatant: 'Bram', hpBefore: 28, hpAfter: 12, maxHp: 28 }])
+    expect(rows.get('a')?.hp).toBe(12)
+    // Exactly ONE audit row was journaled for the wound (16 HP removed).
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toMatchObject({
+      characterId: 'a', toolCallId: 'tc', tool: 'resolve_combat',
+      delta: { kind: 'combat', magnitude: 16, hp: 12 },
+    })
+
+    // IDEMPOTENT under §10 find-first: a BullMQ re-run with the SAME deps finds
+    // the existing journal row and SKIPS — no second ledger_events row, the set
+    // is a no-op (the PC is still at the target). hpChanges is empty (skipped).
+    const replay = await applyToLedger(deps, reconciled)
+    expect(replay).toEqual([])
+    expect(journal).toHaveLength(1) // still exactly one row — not double-journaled
+    expect(rows.get('a')?.hp).toBe(12)
+  })
+
+  it('clamps the SET target at 0 (damage at/above hpBefore downs the PC, never negative)', async () => {
+    // hpBefore 10, damage 40 → Math.max(0, 10 − 40) = 0; writeHp clamps + auto-downs.
+    const rows = new Map<string, FakeRow>([['a', { hp: 10, maxHp: 40, name: 'Bram' }]])
+    const ledger = makeFakeLedger(rows)
+    const reconciled: ReconciledCombat = {
+      outcomeKind: 'victory',
+      pcDamage: [{ characterId: 'a', name: 'Bram', amount: 40, hpBefore: 10 }],
+      pcCasualties: [{ name: 'Bram', fate: 'unconscious' }],
+      enemyCasualties: [],
+      conditions: [],
+    }
+    const hpChanges = await applyToLedger(makeDeps(ledger), reconciled)
+    expect(hpChanges).toEqual([{ combatant: 'Bram', hpBefore: 10, hpAfter: 0, maxHp: 40 }])
   })
 })
 

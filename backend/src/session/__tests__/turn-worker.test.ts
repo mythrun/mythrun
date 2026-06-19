@@ -3473,7 +3473,8 @@ describe('processTurnJob', () => {
 
     const reconciled: ReconciledCombat = {
       outcomeKind: 'victory',
-      pcDamage: [{ characterId: 'ch1', name: 'Mara', amount: 4 }],
+      // hpBefore 11, amount 4 → applyToLedger SETS Mara to 11 − 4 = 7 (authoritative).
+      pcDamage: [{ characterId: 'ch1', name: 'Mara', amount: 4, hpBefore: 11 }],
       pcCasualties: [],
       enemyCasualties: [{ name: 'Goblin', fate: 'dead' }],
       conditions: [],

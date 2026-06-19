@@ -997,7 +997,10 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
     initiate_combat: tool({
       description:
         "Declare combat when a fight breaks out. Rolls initiative + determines the encounter's outcome " +
-        '(the returned constraint is the authoritative result — narrate within it, then call resolve_combat).',
+        '(the returned constraint is the authoritative result — narrate within it, then call resolve_combat). ' +
+        'The combat resolver owns ALL mechanical HP and conditions for the fight: report every wound, heal, ' +
+        'and condition via resolve_combat — do NOT call adjust_hp or other ledger-mutation tools for combatants ' +
+        'during the fight.',
       inputSchema: INITIATE_COMBAT_INPUT,
       execute: async (input, { abortSignal }) => {
         const party = await deps.combatParty()
@@ -1059,7 +1062,9 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
     resolve_combat: tool({
       description:
         'Resolve the fight you initiated: narrate what happened (consistent with the initiate_combat ' +
-        'constraint) and report the mechanical results. Call AFTER initiate_combat.',
+        'constraint) and report the mechanical results. Call AFTER initiate_combat. This tool owns ALL ' +
+        "combatants' HP and conditions for the fight — report every wound, heal, and condition here; do NOT " +
+        'also call adjust_hp or other ledger-mutation tools for combatants during the fight.',
       inputSchema: RESOLVE_COMBAT_INPUT,
       execute: async (input) => {
         const init = deps.pendingInitiate()

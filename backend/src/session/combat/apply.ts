@@ -8,16 +8,19 @@
 // enemy names, and returns the RECONCILED deltas — clamped/augmented so the
 // envelope's floors (minDownedPcs / minAggregateHpLossFraction) are met and its
 // caps (no PC death unless allowPcDeathNarration) are honoured. `applyToLedger`
-// then writes the reconciled PC damage to the shared ledger through the REAL
-// Rules-Lawyer resolver (one `toolCallId`, characterId-keyed idempotency), and
-// `assembleSummary` builds the `CombatSummaryL1` the post-combat world update
-// reads.
+// then writes the reconciled PC HP to the shared ledger by SETTING each PC's HP
+// to the combat target (`combat-start HP − reconciled damage`), not by applying
+// a delta. The combat outcome is the AUTHORITATIVE result of the whole fight:
+// setting the target subsumes any in-turn `adjust_hp` the FT also fired for a
+// combatant (MYT-75 L1 double-application bug) AND is inherently idempotent (a
+// BullMQ re-run re-sets the same target → no-op). `assembleSummary` builds the
+// `CombatSummaryL1` the post-combat world update reads.
 //
 // Pure orchestration (ZFC): all the judgment — who fought, who fell, how bad it
 // was — was made by the deterministic roll + the FT's narration. This module
 // only enforces the mechanical envelope contract; it reasons about nothing.
 
-import { resolveAdjustHp } from '../rules-lawyer-vitals.js'
+import type { LedgerOps } from '../../repo/characters-ledger.js'
 import type { RulesLawyerDeps } from '../rules-lawyer.js'
 import type { CombatOutcome, CombatSummaryL1 } from '../../redis/session-state.js'
 
@@ -42,8 +45,11 @@ export interface FtCombatDeltas {
 export interface ReconciledCombat {
   /** 'defeat' iff !envelope.partyWins, else 'victory' (L1 collapses flee/other). */
   readonly outcomeKind: 'victory' | 'defeat' | 'flee' | 'other'
-  /** Net damage to APPLY (post-envelope), each capped at the PC's current hp. */
-  readonly pcDamage: readonly { characterId: string; name: string; amount: number }[]
+  /** Net damage to APPLY (post-envelope), each capped at the PC's current hp.
+   *  `hpBefore` is the PC's combat-start/snapshot HP; `applyToLedger` SETS the
+   *  PC's HP to `hpBefore − amount` (authoritative target), it does NOT apply a
+   *  delta — so any in-turn `adjust_hp` is subsumed, not double-counted. */
+  readonly pcDamage: readonly { characterId: string; name: string; amount: number; hpBefore: number }[]
   /** PCs reduced to 0 hp — 'dead' only when the envelope permits death narration,
    *  otherwise 'unconscious' (mechanically the ledger only has 0-hp/unconscious). */
   readonly pcCasualties: readonly { name: string; fate: 'dead' | 'unconscious' }[]
@@ -113,7 +119,14 @@ export function reconcileDeltas(
 
   return {
     outcomeKind: envelope.partyWins ? 'victory' : 'defeat',
-    pcDamage: pcs.map((p) => ({ characterId: p.characterId, name: p.name, amount: p.damage })),
+    // `hp` is the PC's combat-start/snapshot HP — the SET target downstream is
+    // `hpBefore − amount`, making the combat outcome authoritative + idempotent.
+    pcDamage: pcs.map((p) => ({
+      characterId: p.characterId,
+      name: p.name,
+      amount: p.damage,
+      hpBefore: p.hp,
+    })),
     pcCasualties: buildPcCasualties(pcs, envelope.allowPcDeathNarration),
     enemyCasualties: buildEnemyCasualties(ft, enemySet),
     conditions: buildConditions(ft, byName),
@@ -243,7 +256,7 @@ function buildConditions(
 }
 
 // ---------------------------------------------------------------------------
-// applyToLedger — write the reconciled PC damage through the real resolver
+// applyToLedger — SET each PC's HP to the authoritative combat target
 // ---------------------------------------------------------------------------
 
 export interface CombatHpChange {
@@ -253,37 +266,65 @@ export interface CombatHpChange {
   readonly maxHp: number
 }
 
+/** The journal `tool` label for a combat HP write — combat damage is one of the
+ *  named HP-mutation paths (alongside `adjust_hp` / `update_condition` /
+ *  `take_rest`), so the `ledger_events` audit trail is complete + consistent. */
+const COMBAT_LEDGER_TOOL = 'resolve_combat'
+
+/**
+ * Write the reconciled combat result to the shared ledger by SETTING each PC's
+ * HP to the authoritative combat target (`hpBefore − amount`), NOT by applying a
+ * delta — AND journaling each write to `ledger_events` (§10). The combat outcome
+ * is the authoritative result of the whole fight, so setting the target:
+ *   - SUBSUMES any in-turn `adjust_hp` the FT also fired for a combatant (the
+ *     MYT-75 L1 double-application bug: `adjust_hp` during the render + a delta
+ *     on top here landed a PC at 0 instead of its real target), and
+ *   - is INHERENTLY IDEMPOTENT under the set — a re-run re-sets the same target.
+ *
+ * The journal is restored on top of the set so combat HP is AUDITED like every
+ * other HP-mutation path, and the §10 find-first idempotency (keyed on the
+ * synthetic, turn-stable `deps.toolCallId` = `combat-resolve:<turnId>`) makes a
+ * BullMQ re-run a true no-op: an already-journaled PC is skipped, so no second
+ * `ledger_events` row is written. Mirrors `applyWithJournal`'s find-then-
+ * (mutate + journal) shape inline so all N PCs' sets + journal rows commit in
+ * ONE transaction (the worker binds `runInTx` to a single tx-scoped `LedgerOps`).
+ *
+ * The signature is unchanged (the T7 worker call site is untouched) — `deps`
+ * already carries the synthetic `toolCallId`, `sessionId`, `turnId`, `ledger`,
+ * and `runInTx`. `writeHp` is the §5a SET primitive (clamps to [0, maxHp] and
+ * auto-syncs the `unconscious` condition at 0).
+ */
 export async function applyToLedger(
   deps: RulesLawyerDeps,
   reconciled: ReconciledCombat,
 ): Promise<readonly CombatHpChange[]> {
-  const changes: CombatHpChange[] = []
-  for (const d of reconciled.pcDamage) {
-    if (d.amount <= 0) continue // no-op damage — nothing to journal
-    const resolution = await resolveAdjustHp(deps, {
-      character_name: d.name,
-      kind: 'damage',
-      amount: d.amount,
-    })
-    if (!resolution.ok) {
-      // Should not happen for a valid PC — log + skip (never narrate past it).
-      deps.logger?.warn(
-        { combatant: d.name, constraint: resolution.constraint },
-        'combat-apply: adjust_hp rejected for a reconciled PC',
-      )
-      continue
+  const targets = reconciled.pcDamage.filter((d) => d.amount > 0) // 0-damage → no set
+  if (targets.length === 0) return []
+  return deps.runInTx(async (txLedger: LedgerOps) => {
+    const changes: CombatHpChange[] = []
+    for (const d of targets) {
+      // §10 idempotency: a re-run already journaled this (turn, call, character).
+      // Skip — a present row IS the audit record + the set is idempotent, so
+      // re-writing nothing here is a true no-op (no duplicate ledger_events row).
+      const already = await txLedger.findLedgerEvent(deps.turnId, deps.toolCallId, d.characterId)
+      if (already) continue
+      const targetHp = Math.max(0, d.hpBefore - d.amount)
+      const { hp, maxHp } = await txLedger.writeHp(d.characterId, targetHp)
+      // Journal the applied HP delta (negative magnitude semantics live in the
+      // `kind` — `magnitude` is the HP removed), matching the adjust_hp/rest
+      // journal shape: one append-only row per character, same tx as the write.
+      await txLedger.writeLedgerEvent({
+        characterId: d.characterId,
+        sessionId: deps.sessionId,
+        turnId: deps.turnId,
+        toolCallId: deps.toolCallId,
+        tool: COMBAT_LEDGER_TOOL,
+        delta: { kind: 'combat', magnitude: d.hpBefore - targetHp, hp },
+      })
+      changes.push({ combatant: d.name, hpBefore: d.hpBefore, hpAfter: hp, maxHp })
     }
-    const { hp, maxHp } = resolution.payload
-    // The resolver's payload carries hpAfter (`hp`) + maxHp; hpBefore is the
-    // applied damage added back (damage is capped at current hp, so this is exact).
-    // The `?? 0` arms are defensive against the optional payload fields: an
-    // `adjust_hp` success ALWAYS sets hp + maxHp (kind:'hp'), so they never fire.
-    /* c8 ignore next 2 -- hp/maxHp are always set on a successful adjust_hp payload */
-    const hpAfter = hp ?? 0
-    const max = maxHp ?? 0
-    changes.push({ combatant: d.name, hpBefore: hpAfter + d.amount, hpAfter, maxHp: max })
-  }
-  return changes
+    return changes
+  })
 }
 
 // ---------------------------------------------------------------------------
