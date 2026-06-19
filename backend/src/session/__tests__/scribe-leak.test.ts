@@ -473,6 +473,11 @@ function searchLoreDeps(
     recordInjection: vi.fn(),
     workingSet,
     cosine: realCosine,
+    // MYT-75 combat surface — inert here (the scribe-leak suite drives only the
+    // lookup tools; the combat tools never execute on this path).
+    combatParty: vi.fn().mockResolvedValue([]),
+    recordCombat: vi.fn(),
+    pendingInitiate: vi.fn().mockReturnValue(null),
   }
 }
 

@@ -30,6 +30,8 @@ import {
   SEARCH_LORE_INPUT,
   CHARACTERS_KNOWN_TO_INPUT,
   FACTION_TREE_INPUT,
+  INITIATE_COMBAT_INPUT,
+  RESOLVE_COMBAT_INPUT,
   type FtToolDeps,
 } from '../ft-tools.js'
 import { STANDARD_DICE } from '../../dice/engine.js'
@@ -45,6 +47,7 @@ import type {
   WorldFactLookupVet,
   WorldFactLookupResult,
 } from '../../world-fact-lookup.js'
+import type { CombatEvent, CombatPartyMember, InitiateCombatEvent } from '../../combat/events.js'
 import type { SearchResolvers } from '../../../world/retrieval/search.js'
 import type { GraphDeps } from '../../../world/retrieval/graph.js'
 import type { WorkingSetItem } from '../../working-set/types.js'
@@ -289,15 +292,44 @@ function makeWsItem(overrides: Partial<WorkingSetItem> = {}): WorkingSetItem {
   }
 }
 
+/** The MYT-75 combat surface added to FtToolDeps. `combatParty` projects the
+ *  per-turn party-ledger snapshot to `CombatPartyMember[]`; `recordCombat` is
+ *  the per-turn sink; `pendingInitiate` returns the last recorded initiate
+ *  event (or null). Overridable per test so a combat-tool test can seed a
+ *  pending initiate or assert what the tool recorded. */
+interface CombatSurface {
+  combatParty: FtToolDeps['combatParty']
+  recordCombat: FtToolDeps['recordCombat']
+  pendingInitiate: FtToolDeps['pendingInitiate']
+}
+
+const DEFAULT_COMBAT_PARTY: readonly CombatPartyMember[] = [
+  { characterId: 'char-1', name: 'Vire', level: 3, hp: 20, maxHp: 20 },
+]
+
+function makeCombatSurface(overrides: Partial<CombatSurface> = {}): CombatSurface {
+  return {
+    combatParty: vi
+      .fn<() => Promise<readonly CombatPartyMember[]>>()
+      .mockResolvedValue(DEFAULT_COMBAT_PARTY),
+    recordCombat: vi.fn(),
+    pendingInitiate: vi.fn<() => InitiateCombatEvent | null>().mockReturnValue(null),
+    ...overrides,
+  }
+}
+
 /** SkillCheckDeps minus abortSignal — buildFtTools threads the SDK signal in.
  *  The Rules Lawyer ledger surface defaults to an all-throwing fake (tests that
  *  exercise a ledger tool pass their own stubbed ledger + tx). The MYT-72 lookup
- *  surface defaults to harmless fakes; lookup-tool tests override per case. */
+ *  surface defaults to harmless fakes; lookup-tool tests override per case. The
+ *  MYT-75 combat surface defaults to a one-PC party + a fresh recordCombat spy +
+ *  no pending initiate. */
 function makeDeps(
   mech: MechanicalReads,
   ledger: LedgerOps = fakeLedger(),
   runInTx: LedgerTxRunner = passthroughTx(ledger),
   lookup: LookupSurface = makeLookupSurface(),
+  combat: CombatSurface = makeCombatSurface(),
 ): FtToolDeps {
   return {
     mech,
@@ -307,6 +339,7 @@ function makeDeps(
     runInTx,
     turnId: 'turn-1',
     ...lookup,
+    ...combat,
   }
 }
 
@@ -2565,5 +2598,324 @@ describe('faction_tree working-set merge (MYT-73)', () => {
 
     expect(empty).toBe(false)
     expect(results).toContain('The Ember Hand: A cell that exists only in this session so far.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MYT-75 Task 6 — the two combat FT tools. PURE DATA RESOLVERS: execute returns
+// DATA, mutates no session state, emits no frame; it records its decision into
+// the per-turn `recordCombat` sink the worker reads post-turn (T7). The
+// `initiate_combat` outcome comes from the REAL `resolveCombat` (Haiku DC table
+// mocked at the `'ai'` boundary, same scaffold as outcome.test.ts); the
+// `resolve_combat` reconciliation runs the REAL `reconcileDeltas`.
+// ---------------------------------------------------------------------------
+
+// A combat DC outcome table (the §4 four-tier shape). dc 15 lets the scripted
+// roll + capability land a deterministic tier.
+const COMBAT_TABLE = {
+  dc: 15,
+  outcomes: {
+    routed: 'The party is driven from the field, but survives.',
+    pyrrhic: 'The party wins, but a comrade is downed.',
+    costly: 'The party wins the fight, bloodied.',
+    decisive: 'The party wins cleanly.',
+  },
+}
+
+function mockCombatTableOnce(table = COMBAT_TABLE): void {
+  mockGenerateText.mockResolvedValueOnce({
+    output: table,
+    finishReason: 'stop',
+    usage: HAIKU_USAGE,
+  } as never)
+}
+
+const COMBAT_ENEMIES = [
+  { name: 'Goblin', description: 'scrawny raider', count: 4 },
+]
+
+describe('INITIATE_COMBAT_INPUT', () => {
+  it('requires at least one enemy with name/description/positive count', () => {
+    expect(INITIATE_COMBAT_INPUT.safeParse({ enemies: [], environment: 'x', surprise: 'none' }).success).toBe(false)
+    expect(
+      INITIATE_COMBAT_INPUT.safeParse({
+        enemies: [{ name: 'Goblin', description: 'raider', count: 0 }],
+        environment: 'x',
+        surprise: 'none',
+      }).success,
+    ).toBe(false)
+    expect(
+      INITIATE_COMBAT_INPUT.safeParse({
+        enemies: [{ name: 'Goblin', description: 'raider', count: 4 }],
+        environment: 'a mineshaft',
+        surprise: 'none',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects an unknown surprise enum', () => {
+    expect(
+      INITIATE_COMBAT_INPUT.safeParse({
+        enemies: [{ name: 'Goblin', description: 'raider', count: 1 }],
+        environment: 'x',
+        surprise: 'ambush',
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('RESOLVE_COMBAT_INPUT', () => {
+  it('requires narration; defaults the four delta arrays to []', () => {
+    expect(RESOLVE_COMBAT_INPUT.safeParse({ narration: '' }).success).toBe(false)
+    const parsed = RESOLVE_COMBAT_INPUT.parse({ narration: 'The fight ends.' })
+    expect(parsed.hp_changes).toEqual([])
+    expect(parsed.conditions_applied).toEqual([])
+    expect(parsed.conditions_removed).toEqual([])
+    expect(parsed.casualties).toEqual([])
+  })
+
+  it('rejects negative damage/healing and an unknown casualty fate', () => {
+    expect(
+      RESOLVE_COMBAT_INPUT.safeParse({
+        narration: 'x',
+        hp_changes: [{ combatant_name: 'Vire', damage: -1, healing: 0 }],
+      }).success,
+    ).toBe(false)
+    expect(
+      RESOLVE_COMBAT_INPUT.safeParse({
+        narration: 'x',
+        casualties: [{ combatant_name: 'Goblin', fate: 'banished' }],
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe('initiate_combat tool', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('execute returns {ok, enemies, initiative, outcome_tier, constraint} and records an initiate event', async () => {
+    mockCombatTableOnce() // dc 15
+    const recordCombat = vi.fn()
+    // One PC (level 3 → capability 3). The party rolls d20=10, the enemy d20=18;
+    // resolveCombat re-rolls its own d20=14 for the outcome. capability 3 + 14 =
+    // 17 ≥ dc(15) but < dc+7 → costly.
+    const combat = makeCombatSurface({
+      combatParty: vi
+        .fn<() => Promise<readonly CombatPartyMember[]>>()
+        .mockResolvedValue([{ characterId: 'char-1', name: 'Vire', level: 3, hp: 30, maxHp: 30 }]),
+      recordCombat,
+    })
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface(), combat)
+    // Scripted RNG: party initiative d20=10, enemy initiative d20=18, then the
+    // resolveCombat outcome d20=14.
+    const exec = requireExecute(buildFtTools(deps, scriptedRng(10, 18, 14)), 'initiate_combat')
+
+    const result = (await exec(
+      { enemies: COMBAT_ENEMIES, environment: 'a collapsed mineshaft', surprise: 'none' },
+      callOpts(),
+    )) as {
+      ok: true
+      enemies: typeof COMBAT_ENEMIES
+      initiative: readonly { combatant: string; roll: number }[]
+      outcome_tier: string
+      constraint: string
+    }
+
+    expect(result.ok).toBe(true)
+    expect(result.enemies).toEqual(COMBAT_ENEMIES)
+    // Initiative: one entry per PC, then one per enemy name.
+    expect(result.initiative).toEqual([
+      { combatant: 'Vire', roll: 10 },
+      { combatant: 'Goblin', roll: 18 },
+    ])
+    expect(result.outcome_tier).toBe('costly')
+    expect(result.constraint).toBe(COMBAT_TABLE.outcomes.costly)
+
+    // The sink recorded ONE initiate event with the outcome + setup.
+    expect(recordCombat).toHaveBeenCalledTimes(1)
+    const event = recordCombat.mock.calls[0]?.[0] as CombatEvent
+    expect(event.kind).toBe('initiate')
+    if (event.kind !== 'initiate') throw new Error('expected initiate event')
+    expect(event.outcome.tier).toBe('costly')
+    expect(event.outcome.tierProse).toBe(COMBAT_TABLE.outcomes.costly)
+    expect(event.enemies).toEqual(COMBAT_ENEMIES)
+    expect(event.environment).toBe('a collapsed mineshaft')
+    expect(event.surprise).toBe('none')
+    expect(event.initiative).toEqual(result.initiative)
+  })
+
+  it('is a pure resolver — no state mutation beyond the recordCombat sink (no frame surface)', () => {
+    mockCombatTableOnce()
+    const deps = makeDeps(foundMech(makeCharacter(), []))
+    const initiateTool = buildFtTools(deps, scriptedRng(10, 18, 14)).initiate_combat
+    if (initiateTool === undefined) throw new Error('initiate_combat missing')
+    for (const k of Object.keys(initiateTool)) {
+      expect(['description', 'inputSchema', 'execute', 'type']).toContain(k)
+    }
+  })
+
+  it("threads the SDK's abortSignal into resolveCombat and works with production rng (no injected rng)", async () => {
+    mockCombatTableOnce()
+    const controller = new AbortController()
+    // No injected rng → the engine uses crypto.randomInt (the `rng === undefined`
+    // spread arm). The Haiku table is still mocked, so resolveCombat completes.
+    const deps = makeDeps(foundMech(makeCharacter(), []))
+    const exec = requireExecute(buildFtTools(deps), 'initiate_combat')
+
+    const result = (await exec(
+      { enemies: COMBAT_ENEMIES, environment: 'a mineshaft', surprise: 'none' },
+      callOpts({ abortSignal: controller.signal }),
+    )) as { ok: true; initiative: readonly { combatant: string; roll: number }[] }
+
+    expect(result.ok).toBe(true)
+    // The combined abort signal threaded into resolveCombat's Haiku call.
+    const sdkOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { abortSignal: AbortSignal }
+    expect(sdkOpts.abortSignal).toBeInstanceOf(AbortSignal)
+    expect(sdkOpts.abortSignal.aborted).toBe(false)
+    controller.abort()
+    expect(sdkOpts.abortSignal.aborted).toBe(true)
+    // Initiative rolls are real d20s in [1, 20].
+    for (const i of result.initiative) {
+      expect(i.roll).toBeGreaterThanOrEqual(1)
+      expect(i.roll).toBeLessThanOrEqual(20)
+    }
+  })
+
+  it('on a Haiku DC-table failure, the fail-soft warn forwards through the FT logger (combatLogger adapter)', async () => {
+    // resolveCombat is TOTAL: a Haiku reject falls back to the tier-neutral table
+    // and warns through the injected logger. The combat tool adapts the FT
+    // logger's `(o: Record, …)` warn to resolveCombat's `(o: unknown, …)`.
+    mockGenerateText.mockRejectedValueOnce(new Error('haiku 529 overloaded'))
+    const warn = vi.fn<(o: Record<string, unknown>, m: string) => void>()
+    const recordCombat = vi.fn()
+    const deps: FtToolDeps = {
+      ...makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface(), makeCombatSurface({ recordCombat })),
+      logger: { warn },
+    }
+    const exec = requireExecute(buildFtTools(deps, scriptedRng(10, 18, 14)), 'initiate_combat')
+
+    const result = (await exec(
+      { enemies: COMBAT_ENEMIES, environment: 'a mineshaft', surprise: 'none' },
+      callOpts(),
+    )) as { ok: true; outcome_tier: string }
+
+    // Still produced an outcome (fail-soft fallback, dc 15).
+    expect(result.ok).toBe(true)
+    // The adapter forwarded the fail-soft warn (object bindings narrowed via
+    // asLogObject), proving line 1031 + asLogObject's object arm.
+    expect(warn).toHaveBeenCalledWith(
+      { err: new Error('haiku 529 overloaded') },
+      'combat-outcome: DC table failed; using fallback',
+    )
+    expect(recordCombat).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('resolve_combat tool', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  /** A fixed initiate event the pendingInitiate stub returns — a costly outcome
+   *  (partyWins, no death narration) over a one-Goblin fight. */
+  function pendingInitiateEvent(): InitiateCombatEvent {
+    return {
+      kind: 'initiate',
+      outcome: {
+        tier: 'costly',
+        dc: 15,
+        roll: 14,
+        total: 17,
+        tierProse: COMBAT_TABLE.outcomes.costly,
+        envelope: {
+          partyWins: true,
+          minDownedPcs: 0,
+          minAggregateHpLossFraction: 0.3,
+          allowPcDeathNarration: false,
+        },
+      },
+      enemies: COMBAT_ENEMIES,
+      environment: 'a collapsed mineshaft',
+      surprise: 'none',
+      initiative: [{ combatant: 'Vire', roll: 10 }],
+    }
+  }
+
+  it('execute with a pending initiate returns {ok, narration, outcome_kind} and records a resolve event with reconciled deltas', async () => {
+    const recordCombat = vi.fn()
+    const combat = makeCombatSurface({
+      combatParty: vi
+        .fn<() => Promise<readonly CombatPartyMember[]>>()
+        .mockResolvedValue([{ characterId: 'char-1', name: 'Vire', level: 3, hp: 30, maxHp: 30 }]),
+      recordCombat,
+      pendingInitiate: vi.fn<() => InitiateCombatEvent | null>().mockReturnValue(pendingInitiateEvent()),
+    })
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface(), combat)
+    const exec = requireExecute(buildFtTools(deps), 'resolve_combat')
+
+    // Parse through the schema the way the SDK does before calling execute —
+    // the .default([]) arms fill the unsupplied delta arrays.
+    const result = (await exec(
+      RESOLVE_COMBAT_INPUT.parse({
+        narration: 'The goblins fall, but Vire takes a nasty gash.',
+        hp_changes: [{ combatant_name: 'Vire', damage: 8, healing: 0 }],
+        casualties: [{ combatant_name: 'Goblin', fate: 'dead' }],
+      }),
+      callOpts(),
+    )) as { ok: true; narration: string; outcome_kind: string }
+
+    expect(result.ok).toBe(true)
+    expect(result.narration).toBe('The goblins fall, but Vire takes a nasty gash.')
+    // costly envelope wins → victory.
+    expect(result.outcome_kind).toBe('victory')
+
+    expect(recordCombat).toHaveBeenCalledTimes(1)
+    const event = recordCombat.mock.calls[0]?.[0] as CombatEvent
+    expect(event.kind).toBe('resolve')
+    if (event.kind !== 'resolve') throw new Error('expected resolve event')
+    expect(event.narration).toBe('The goblins fall, but Vire takes a nasty gash.')
+    expect(event.reconciled.outcomeKind).toBe('victory')
+    // The FT's 8 damage on Vire reconciled through (envelope floor 0.3*30=9 may
+    // top it up, but Vire's damage is at least the reported 8 and ≤ 30).
+    const vire = event.reconciled.pcDamage.find((d) => d.name === 'Vire')
+    expect(vire).toBeDefined()
+    expect(vire?.amount).toBeGreaterThanOrEqual(8)
+    expect(vire?.characterId).toBe('char-1')
+    // The enemy casualty passes through narratively.
+    expect(event.reconciled.enemyCasualties).toEqual([{ name: 'Goblin', fate: 'dead' }])
+  })
+
+  it('applies schema defaults (empty delta arrays) when only narration is supplied', async () => {
+    const recordCombat = vi.fn()
+    const combat = makeCombatSurface({
+      recordCombat,
+      pendingInitiate: vi.fn<() => InitiateCombatEvent | null>().mockReturnValue(pendingInitiateEvent()),
+    })
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface(), combat)
+    const exec = requireExecute(buildFtTools(deps), 'resolve_combat')
+
+    const result = (await exec(RESOLVE_COMBAT_INPUT.parse({ narration: 'The fight ends.' }), callOpts())) as {
+      ok: true
+      narration: string
+    }
+
+    expect(result.ok).toBe(true)
+    expect(recordCombat).toHaveBeenCalledTimes(1)
+    const event = recordCombat.mock.calls[0]?.[0] as CombatEvent
+    if (event.kind !== 'resolve') throw new Error('expected resolve event')
+    expect(event.reconciled.enemyCasualties).toEqual([])
+  })
+
+  it('with no pending initiate returns {error} and records nothing', async () => {
+    const recordCombat = vi.fn()
+    const combat = makeCombatSurface({
+      recordCombat,
+      pendingInitiate: vi.fn<() => InitiateCombatEvent | null>().mockReturnValue(null),
+    })
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, makeLookupSurface(), combat)
+    const exec = requireExecute(buildFtTools(deps), 'resolve_combat')
+
+    const result = (await exec({ narration: 'x' }, callOpts())) as { error: string }
+
+    expect(result.error).toBe('no combat in progress to resolve')
+    expect(recordCombat).not.toHaveBeenCalled()
   })
 })

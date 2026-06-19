@@ -57,6 +57,7 @@ import { SessionController, type TranscriptStore } from './session-controller.js
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
 import { buildFtTools } from './tiers/ft-tools.js'
+import type { CombatEvent, CombatPartyMember, InitiateCombatEvent } from './combat/events.js'
 import type { FastThinker, PartyLedgerSnapshot, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
 import type { LedgerOps } from '../repo/characters-ledger.js'
@@ -203,6 +204,10 @@ export interface TierTurnArgs {
    *  this — the SAME array the SessionController carries onto the Scribe job
    *  payload. Threaded into the lookup tools' `recordInjection`. */
   readonly recordInjection: (p: WorkingSetProposal) => void
+  /** MYT-75: the per-turn party-ledger snapshot (the same one read for the
+   *  fresh-run arm). The combat tools' `combatParty` dep projects it to
+   *  `CombatPartyMember[]` (id + name + level + current/max HP). */
+  readonly partyLedger: PartyLedgerSnapshot
 }
 
 export interface TurnProcessorDeps {
@@ -242,8 +247,10 @@ export interface TurnProcessorDeps {
    *  latch wiring; the controller receives the SAME emitter via its deps). The
    *  SlowThinker seam is retired (MYT-69 — the ST runs off the turn path in its
    *  own worker) and the on-path Scribe seam is retired (MYT-73 — it is a
-   *  post-turn job), so the factory returns only `{ ft }`. */
-  readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker }
+   *  post-turn job). MYT-75 adds the per-turn `combatEvents` accumulator the
+   *  combat tools push into; the worker reads `tiers.combatEvents` post-turn (T7)
+   *  to apply the ledger, persist the blob, flip the mode, and emit the frames. */
+  readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker; combatEvents: CombatEvent[] }
   /** MYT-74a T12 — the budget-100% auto-end. A bound closure (the worker binds
    *  the real `endSession` orchestration's deps in `buildSessionTurnWorker`) so
    *  the processor stays testable. Invoked on the post-flush success phase when
@@ -493,6 +500,7 @@ export async function processTurnJob(
       campaignId,
       recentNarrative,
       recordInjection: (p) => injections.push(p),
+      partyLedger,
     })
 
     const controller = new SessionController(
@@ -863,11 +871,36 @@ export function buildSessionTurnWorker(
       campaignId,
       recentNarrative,
       recordInjection,
+      partyLedger,
     }) => {
       const mech: MechanicalReads = {
         findSessionParticipantCharacterByName: (sid, name) =>
           repo.characters.findSessionParticipantCharacterByName(sid, name),
       }
+      // MYT-75 §combat — the per-turn combat-event accumulator the two combat
+      // tools push into via `recordCombat`. The worker reads `tiers.combatEvents`
+      // post-turn (T7) to apply the reconciled ledger, persist the combat blob,
+      // flip the mode, and emit `combat_resolved`.
+      const combatEvents: CombatEvent[] = []
+      // `combatParty` projects the per-turn party-ledger snapshot (already read
+      // for the fresh-run arm) → the public CombatPartyMember shape the resolvers
+      // consume (id + name + level + current/max HP). Pure projection — no read.
+      const combatParty = (): Promise<readonly CombatPartyMember[]> =>
+        Promise.resolve(
+          partyLedger.map((c) => ({
+            characterId: c.characterId,
+            name: c.name,
+            level: c.level,
+            hp: c.hitPoints,
+            maxHp: c.maxHitPoints,
+          })),
+        )
+      // `pendingInitiate` returns the LAST recorded initiate event this turn (or
+      // null) so `resolve_combat` reconciles against the right outcome envelope.
+      // `find`'s predicate discriminates the union, so `last` is already narrowed
+      // to `InitiateCombatEvent | undefined`.
+      const pendingInitiate = (): InitiateCombatEvent | null =>
+        [...combatEvents].reverse().find((e) => e.kind === 'initiate') ?? null
       // MYT-70 §5/§10 — the scoped LedgerOps the FT's ledger tools resolve
       // against. `repo.characters` composes `charactersLedgerNs`, so the
       // pool-bound surface IS a LedgerOps superset (used for the pre-mutation
@@ -901,11 +934,24 @@ export function buildSessionTurnWorker(
       return {
         ft: new SonnetFastThinker({
           tools: buildFtTools(
-            { mech, ledger, runInTx, sessionId, turnId, worldTone, logger, ...lookup },
+            {
+              mech,
+              ledger,
+              runInTx,
+              sessionId,
+              turnId,
+              worldTone,
+              logger,
+              ...lookup,
+              combatParty,
+              recordCombat: (e) => combatEvents.push(e),
+              pendingInitiate,
+            },
             undefined,
           ),
           logger,
         }),
+        combatEvents,
       }
     },
     /* c8 ignore stop */

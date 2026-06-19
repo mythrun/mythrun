@@ -43,6 +43,10 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   // LedgerUpdatePayload, the frame payload types). No executable code; consumers
   // import the types transitively.
   'src/session/tiers/types.ts',
+  // MYT-75 combat-event sink contract — interface-only (CombatPartyMember,
+  // InitiateCombatEvent, ResolveCombatEvent, CombatEvent). No executable code;
+  // the combat tools + the worker (T7) import the types transitively.
+  'src/session/combat/events.ts',
   'src/contract/pipeline-jobs.ts',
   // Stripe SDK pricing-data fixture — module-level price tables that are
   // imported wholesale; the contract is "data is present + well-typed,"

@@ -159,6 +159,7 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             publisher,
             makeTiers: () => ({
               ft: new StubFastThinker(),
+              combatEvents: [],
             }),
             heartbeatMs: HEARTBEAT_MS,
             logger,

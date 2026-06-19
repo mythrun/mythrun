@@ -72,6 +72,7 @@ import type {
   SkillCheckFramePayload,
   DiceRollFramePayload,
   LedgerUpdatePayload,
+  CombatStartedFramePayload,
   TokenUsage,
   PartyLedgerSnapshot,
 } from './types.js'
@@ -362,6 +363,27 @@ function toDiceRollFrame(
     results,
     total: Number(output.total),
   }
+}
+
+/** MYT-75 §combat — coerce an `initiate_combat` ok-output onto the
+ *  `CombatStartedFramePayload`. The tool result is `unknown` in the consume loop
+ *  (the SDK types it so); read `out.enemies` + `out.initiative` defensively the
+ *  way `toSkillCheckFrame`/`toDiceRollFrame` read their fields, mapping each
+ *  element through a record coercion. A non-array field degrades to `[]`. */
+function toCombatStartedFrame(out: Record<string, unknown>): CombatStartedFramePayload {
+  const enemies = Array.isArray(out.enemies)
+    ? out.enemies.map((e) => {
+        const r = asRecord(e)
+        return { name: String(r.name), description: String(r.description), count: Number(r.count) }
+      })
+    : []
+  const initiative = Array.isArray(out.initiative)
+    ? out.initiative.map((i) => {
+        const r = asRecord(i)
+        return { combatant: String(r.combatant), roll: Number(r.roll) }
+      })
+    : []
+  return { enemies, initiative }
 }
 
 /** The three MYT-72 world-knowledge lookup tools (§4.2). Their `execute`
@@ -788,6 +810,16 @@ export class SonnetFastThinker implements FastThinker {
     }
     if (toolName === 'roll_dice') {
       await emit.emitDiceRoll(toDiceRollFrame(out, callInput))
+      return
+    }
+    // MYT-75 §combat L1 — initiate_combat: flip the session into combat mode,
+    // then announce the rolled roster + initiative. The `'error' in out`
+    // short-circuit above already handled the no-fight error arm. resolve_combat
+    // emits NO consume-loop frame — the worker emits combat_resolved post-ledger
+    // (T7), after the reconciled deltas have been applied + persisted.
+    if (toolName === 'initiate_combat') {
+      await emit.emitModeChange({ from: 'exploration', to: 'combat', reason: 'combat' })
+      await emit.emitCombatStarted(toCombatStartedFrame(out))
       return
     }
     // §4.2 world-lookup tools: the data-only result carries `skill_gate` (an

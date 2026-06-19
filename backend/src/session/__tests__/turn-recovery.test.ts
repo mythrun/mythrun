@@ -269,6 +269,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       publisher,
       makeTiers: () => ({
         ft: new LockKillingFastThinker(realtime, lockKeyFor(CAMPAIGN)),
+        combatEvents: [],
       }),
       // Tiny heartbeat so extend() fires during the 60ms render and flips
       // lockLost before the post-processDmTurn checkpoint.
@@ -308,6 +309,7 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       publisher,
       makeTiers: () => ({
         ft: new StubFastThinker(),
+        combatEvents: [],
       }),
       heartbeatMs: 15_000,
       logger: silentLogger,

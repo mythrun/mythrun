@@ -105,7 +105,14 @@ function mockResult(
 
 // Capturing emitter — records the ORDER and payloads of all emissions.
 interface Emission {
-  readonly kind: 'text' | 'skill_check' | 'dice_roll' | 'ledger_update'
+  readonly kind:
+    | 'text'
+    | 'skill_check'
+    | 'dice_roll'
+    | 'ledger_update'
+    | 'mode_change'
+    | 'combat_started'
+    | 'combat_resolved'
   readonly payload: unknown
 }
 function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
@@ -127,9 +134,18 @@ function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
       seen.push({ kind: 'ledger_update', payload })
       return Promise.resolve()
     },
-    emitModeChange: () => Promise.resolve(),
-    emitCombatStarted: () => Promise.resolve(),
-    emitCombatResolved: () => Promise.resolve(),
+    emitModeChange: (payload) => {
+      seen.push({ kind: 'mode_change', payload })
+      return Promise.resolve()
+    },
+    emitCombatStarted: (payload) => {
+      seen.push({ kind: 'combat_started', payload })
+      return Promise.resolve()
+    },
+    emitCombatResolved: (payload) => {
+      seen.push({ kind: 'combat_resolved', payload })
+      return Promise.resolve()
+    },
   }
   return { emit, seen }
 }
@@ -942,6 +958,131 @@ describe('SonnetFastThinker.render', () => {
     const payload = seen[0]?.payload as SkillCheckFramePayload
     expect(payload.roll2).toBe(7)
     expect(payload.rollType).toBe('advantage')
+  })
+
+  // ── MYT-75 Task 6: combat-tool frame emission (§combat L1) ─────────────────
+  // initiate_combat → emitModeChange(exploration→combat) THEN emitCombatStarted
+  // (reads out.enemies + out.initiative). resolve_combat emits NO consume-loop
+  // frame — the worker emits combat_resolved post-ledger (T7).
+
+  const INITIATE_OUTPUT = {
+    ok: true,
+    enemies: [{ name: 'Goblin', description: 'scrawny raider', count: 4 }],
+    initiative: [
+      { combatant: 'Vire', roll: 10 },
+      { combatant: 'Goblin', roll: 18 },
+    ],
+    outcome_tier: 'costly',
+    constraint: 'The party wins the fight, bloodied.',
+  }
+
+  it('29a. initiate_combat result emits mode_change(exploration→combat) THEN combat_started, in order', async () => {
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Steel rings out.' },
+      {
+        type: 'tool-call',
+        toolCallId: 'ic1',
+        toolName: 'initiate_combat',
+        input: { enemies: INITIATE_OUTPUT.enemies, environment: 'a mineshaft', surprise: 'none' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'ic1',
+        toolName: 'initiate_combat',
+        input: { enemies: INITIATE_OUTPUT.enemies, environment: 'a mineshaft', surprise: 'none' },
+        output: INITIATE_OUTPUT,
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['text', 'mode_change', 'combat_started'])
+    expect(seen[1]?.payload).toEqual({ from: 'exploration', to: 'combat', reason: 'combat' })
+    // combat_started reads out.enemies + out.initiative.
+    expect(seen[2]?.payload).toEqual({
+      enemies: INITIATE_OUTPUT.enemies,
+      initiative: INITIATE_OUTPUT.initiative,
+    })
+  })
+
+  it('29b. resolve_combat result emits NO consume-loop frame (the worker emits combat_resolved post-ledger)', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'rc1',
+        toolName: 'resolve_combat',
+        input: { narration: 'The goblins fall.' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'rc1',
+        toolName: 'resolve_combat',
+        input: { narration: 'The goblins fall.' },
+        output: { ok: true, narration: 'The goblins fall.', outcome_kind: 'victory' },
+      },
+      { type: 'text-delta', id: '1', text: 'The dust settles.' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    // Only the trailing prose — no mode_change / combat_started / combat_resolved.
+    expect(seen.map((e) => e.kind)).toEqual(['text'])
+    expect(seen.some((e) => e.kind.startsWith('combat') || e.kind === 'mode_change')).toBe(false)
+  })
+
+  it('29d. initiate_combat result with non-array enemies/initiative degrades to empty arrays (defensive coercion)', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'ic1',
+        toolName: 'initiate_combat',
+        input: {},
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'ic1',
+        toolName: 'initiate_combat',
+        input: {},
+        // A degenerate output (enemies/initiative not arrays) — the coercer reads
+        // them defensively and degrades each to []. mode_change still fires.
+        output: { ok: true, enemies: null, initiative: 'oops' },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen.map((e) => e.kind)).toEqual(['mode_change', 'combat_started'])
+    expect(seen[1]?.payload).toEqual({ enemies: [], initiative: [] })
+  })
+
+  it('29c. initiate_combat result with an `error` short-circuits (no combat frame)', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'ic1',
+        toolName: 'initiate_combat',
+        input: { enemies: INITIATE_OUTPUT.enemies, environment: 'a mineshaft', surprise: 'none' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'ic1',
+        toolName: 'initiate_combat',
+        input: { enemies: INITIATE_OUTPUT.enemies, environment: 'a mineshaft', surprise: 'none' },
+        output: { error: 'something went wrong' },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen).toEqual([])
   })
 
   it('25. ledger_update: a payload carrying gold/item/feature value fields threads them all onto the frame', async () => {

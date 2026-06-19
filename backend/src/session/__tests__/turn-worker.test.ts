@@ -260,7 +260,9 @@ function installSlowProcessDmTurn(): MockInstance<(maxConsumedSeq: number) => Pr
 }
 
 function makeTiers(): ReturnType<TurnProcessorDeps['makeTiers']> {
-  return { ft: new StubFastThinker() }
+  // MYT-75: makeTiers now returns the per-turn combatEvents accumulator (the
+  // combat tools push into it; the worker reads it post-turn at T7).
+  return { ft: new StubFastThinker(), combatEvents: [] }
 }
 
 /** A minimal in-memory `TurnWorkerRepo`. Overrides let a test set
@@ -655,7 +657,7 @@ describe('processTurnJob', () => {
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ ft }),
+      makeTiers: () => ({ ft, combatEvents: [] }),
       heartbeatMs: 10_000,
       logger: silentLogger,
     }
@@ -1436,7 +1438,7 @@ describe('processTurnJob', () => {
       publisher: recordingPublisher(calls),
       makeTiers: (turn) => {
         seenTone = turn.worldTone
-        return { ft: new StubFastThinker() }
+        return { ft: new StubFastThinker(), combatEvents: [] }
       },
       heartbeatMs: 10_000,
       logger: silentLogger,
@@ -1560,7 +1562,7 @@ describe('processTurnJob', () => {
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ ft: capturingFt }),
+      makeTiers: () => ({ ft: capturingFt, combatEvents: [] }),
       heartbeatMs: 10_000,
       logger: silentLogger,
     }
@@ -2097,7 +2099,7 @@ describe('processTurnJob', () => {
     }
     const recordingTiers: TurnProcessorDeps['makeTiers'] = (args) => {
       args.recordInjection(injected)
-      return { ft: new StubFastThinker() }
+      return { ft: new StubFastThinker(), combatEvents: [] }
     }
 
     const deps: TurnProcessorDeps = {
@@ -2872,7 +2874,7 @@ describe('processTurnJob', () => {
       endSession: inertEndSession(),
       finalizeEndedSession: finalize,
       publisher: recordingPublisher(calls),
-      makeTiers: () => ({ ft }),
+      makeTiers: () => ({ ft, combatEvents: [] }),
       heartbeatMs: 10_000,
       logger: silentLogger,
     }

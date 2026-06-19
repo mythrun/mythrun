@@ -23,8 +23,11 @@
 
 import { z } from 'zod'
 import { tool, type ToolSet } from '../../llm/ai.js'
-import { MAX_DICE_COUNT, rollDice, STANDARD_DICE, type Rng } from '../dice/engine.js'
+import { MAX_DICE_COUNT, rollD20WithType, rollDice, STANDARD_DICE, type Rng } from '../dice/engine.js'
 import { resolveSkillCheck, type SkillCheckDeps } from '../skill-check.js'
+import { resolveCombat } from '../combat/outcome.js'
+import { reconcileDeltas } from '../combat/apply.js'
+import type { CombatEvent, CombatPartyMember, InitiateCombatEvent } from '../combat/events.js'
 import { MAX_GOLD_TRANSACTION } from '../ft-config.js'
 import type { LedgerOps, LedgerTxRunner, RulesLawyerDeps } from '../rules-lawyer.js'
 import {
@@ -225,6 +228,20 @@ export type FtToolDeps = Omit<SkillCheckDeps, 'abortSignal'> & {
    *  Ranks working-set embeddings against searchLore's query vector — no second
    *  Voyage call. */
   readonly cosine: (a: readonly number[], b: readonly number[]) => number
+  // ── MYT-75 combat surface (Task 6) ──
+  /** The per-turn party projection the combat tools resolve against — each
+   *  joined PC's public mechanical shape (id + name + level + current/max HP),
+   *  derived from the party-ledger snapshot. */
+  readonly combatParty: () => Promise<readonly CombatPartyMember[]>
+  /** Turn-scoped combat-event sink (mirrors `recordInjection`). `initiate_combat`
+   *  records an `initiate` event (the deterministic outcome + setup);
+   *  `resolve_combat` records a `resolve` event (the reconciled deltas +
+   *  narration). The worker reads the accumulator post-turn (T7) to apply the
+   *  ledger, persist the blob, flip the mode, and emit `combat_resolved`. */
+  readonly recordCombat: (e: CombatEvent) => void
+  /** The last recorded `initiate` event this turn, or null. `resolve_combat`
+   *  reads it to reconcile its deltas against the right outcome envelope. */
+  readonly pendingInitiate: () => InitiateCombatEvent | null
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +295,58 @@ export const FACTION_TREE_INPUT = z.object({
   faction: z.string().min(1),
   skill: DM_SKILL.optional(),
   asker_name: z.string().min(1).optional(),
+})
+
+// ---------------------------------------------------------------------------
+// MYT-75 §combat — the two combat tools' input schemas. Structural validation
+// only (ZFC-exempt); the deterministic outcome (resolveCombat) + envelope
+// reconciliation (reconcileDeltas) own the judgment. `initiate_combat` declares
+// the fight; `resolve_combat` reports its mechanical results.
+// ---------------------------------------------------------------------------
+
+export const INITIATE_COMBAT_INPUT = z.object({
+  enemies: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        description: z.string().min(1),
+        count: z.number().int().positive(),
+      }),
+    )
+    .min(1),
+  environment: z.string().min(1),
+  surprise: z.enum(['none', 'players_surprised', 'enemies_surprised']),
+})
+
+/** One PHB condition string (free-form min-1; the enemy/PC condition split is the
+ *  reconciler's, not the schema's). A combat condition delta is `{ combatant_name,
+ *  condition }`. */
+const COMBAT_CONDITION = z.object({
+  combatant_name: z.string().min(1),
+  condition: z.string().min(1),
+})
+
+export const RESOLVE_COMBAT_INPUT = z.object({
+  narration: z.string().min(1),
+  hp_changes: z
+    .array(
+      z.object({
+        combatant_name: z.string().min(1),
+        damage: z.number().int().min(0),
+        healing: z.number().int().min(0),
+      }),
+    )
+    .default([]),
+  conditions_applied: z.array(COMBAT_CONDITION).default([]),
+  conditions_removed: z.array(COMBAT_CONDITION).default([]),
+  casualties: z
+    .array(
+      z.object({
+        combatant_name: z.string().min(1),
+        fate: z.enum(['dead', 'unconscious', 'fled']),
+      }),
+    )
+    .default([]),
 })
 
 /** A TOTAL fail-soft tool result — the channel-appropriate in-fiction blank the
@@ -915,6 +984,102 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
           question: `What is the structure of ${input.faction}?`,
           resolve,
         })
+      },
+    }),
+    // -----------------------------------------------------------------------
+    // MYT-75 §combat L1 — the two combat tools. PURE DATA RESOLVERS: `execute`
+    // returns DATA, mutates no session state, emits no frame. Each records its
+    // decision into the per-turn `recordCombat` sink the worker reads post-turn
+    // (T7) to apply the ledger, persist the blob, flip the mode, and emit the
+    // combat frames. The deterministic outcome (initiate) + envelope
+    // reconciliation (resolve) own the judgment — the FT narrates within them.
+    // -----------------------------------------------------------------------
+    initiate_combat: tool({
+      description:
+        "Declare combat when a fight breaks out. Rolls initiative + determines the encounter's outcome " +
+        '(the returned constraint is the authoritative result — narrate within it, then call resolve_combat).',
+      inputSchema: INITIATE_COMBAT_INPUT,
+      execute: async (input, { abortSignal }) => {
+        const party = await deps.combatParty()
+        // Initiative: one d20 per PC, then one per enemy name (Principle #4 — the
+        // engine rolls, never the LLM).
+        const initiative = [
+          ...party.map((p) => ({ combatant: p.name, roll: rollD20WithType('normal', rng).keptRoll })),
+          ...input.enemies.map((e) => ({
+            combatant: e.name,
+            roll: rollD20WithType('normal', rng).keptRoll,
+          })),
+        ]
+        // The whole fight resolves as one big skill check (§4) — Haiku
+        // pre-generates the DC table, the engine rolls, the matched tier + its
+        // hard envelope become the FT's constraint. Conditional-spread the
+        // optionals for exactOptionalPropertyTypes.
+        // `ResolveCombatDeps.logger.warn` takes `(o: unknown, …)`; `deps.logger`'s
+        // takes `(o: Record<string, unknown>, …)`. A narrower-input function is not
+        // assignable to a wider-input one (parameter contravariance), so adapt with
+        // a wrapper whose `warn` accepts `unknown` and forwards to the FT logger.
+        // resolveCombat only ever logs object bindings (`{ err }`), so the forward
+        // cast is exact — the FT logger never sees a non-object.
+        const ftLogger = deps.logger
+        const combatLogger =
+          ftLogger !== undefined
+            ? {
+                warn: (o: unknown, m: string): void => {
+                  ftLogger.warn(o as Record<string, unknown>, m)
+                },
+              }
+            : undefined
+        const outcome = await resolveCombat(
+          {
+            worldTone: deps.worldTone,
+            ...(rng !== undefined ? { rng } : {}),
+            ...(abortSignal !== undefined ? { abortSignal } : {}),
+            ...(combatLogger !== undefined ? { logger: combatLogger } : {}),
+          },
+          input.enemies,
+          party.map((p) => ({ level: p.level, hp: p.hp, maxHp: p.maxHp })),
+        )
+        deps.recordCombat({
+          kind: 'initiate',
+          outcome,
+          enemies: input.enemies,
+          environment: input.environment,
+          surprise: input.surprise,
+          initiative,
+        })
+        return {
+          ok: true,
+          enemies: input.enemies,
+          initiative,
+          outcome_tier: outcome.tier,
+          constraint: outcome.tierProse,
+        }
+      },
+    }),
+    resolve_combat: tool({
+      description:
+        'Resolve the fight you initiated: narrate what happened (consistent with the initiate_combat ' +
+        'constraint) and report the mechanical results. Call AFTER initiate_combat.',
+      inputSchema: RESOLVE_COMBAT_INPUT,
+      execute: async (input) => {
+        const init = deps.pendingInitiate()
+        if (init === null) return { error: 'no combat in progress to resolve' }
+        const party = await deps.combatParty()
+        // Reconcile the FT's deltas against the deterministic outcome's hard
+        // envelope (the dice are authoritative over the narration's stakes).
+        const reconciled = reconcileDeltas(
+          init.outcome,
+          {
+            hp_changes: input.hp_changes,
+            conditions_applied: input.conditions_applied,
+            conditions_removed: input.conditions_removed,
+            casualties: input.casualties,
+          },
+          party.map((p) => ({ characterId: p.characterId, name: p.name, hp: p.hp, maxHp: p.maxHp })),
+          init.enemies.map((e) => e.name),
+        )
+        deps.recordCombat({ kind: 'resolve', reconciled, narration: input.narration })
+        return { ok: true, narration: input.narration, outcome_kind: reconciled.outcomeKind }
       },
     }),
   }
