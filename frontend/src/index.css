@@ -1,5 +1,6 @@
 @import "tailwindcss";
+@import "@mythrun/ui/styles.css";
 
-@theme {
-  /* MYT-81 ports the 60 OKLCH brand tokens here. */
-}
+/* @mythrun/ui is a workspace package; Tailwind v4 does NOT auto-scan
+   node_modules, so register the lib's own source for class detection. */
+@source "../ui/src";

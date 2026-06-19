@@ -5,7 +5,7 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 export default [
   ...root,
   {
-    ignores: ['dist/**', 'src/**/*.css'],
+    ignores: ['dist/**', 'src/**/*.css', 'scripts/**'],
   },
   {
     // a11y enforcement is a LIBRARY responsibility (spec §5.3): intrinsic DOM

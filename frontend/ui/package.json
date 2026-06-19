@@ -3,18 +3,27 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles/index.css"
+  },
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --no-error-on-unmatched-pattern"
+    "lint": "eslint . --no-error-on-unmatched-pattern",
+    "generate:palette": "node scripts/generate-palette.mjs"
   },
   "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "dependencies": {
+    "@fontsource/source-serif-4": "^5.0.0",
+    "@fontsource/ibm-plex-mono": "^5.0.0"
+  },
   "devDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "culori": "^4.0.0"
   }
 }
