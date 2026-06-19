@@ -58,10 +58,11 @@ import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
 import { buildFtTools } from './tiers/ft-tools.js'
 import type { CombatEvent, CombatPartyMember, InitiateCombatEvent } from './combat/events.js'
+import { applyToLedger, assembleSummary, reconcileDeltas, type ReconcilePc } from './combat/apply.js'
 import type { FastThinker, PartyLedgerSnapshot, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
 import type { LedgerOps } from '../repo/characters-ledger.js'
-import type { LedgerTxRunner } from './rules-lawyer.js'
+import type { LedgerTxRunner, RulesLawyerDeps } from './rules-lawyer.js'
 import type { VoyageEmbedder } from '../llm/embed.js'
 import { buildLookupDeps } from './tiers/lookup-wiring.js'
 import { reloadFtContext, resolveWorldId } from './turn-context.js'
@@ -251,6 +252,21 @@ export interface TurnProcessorDeps {
    *  combat tools push into; the worker reads `tiers.combatEvents` post-turn (T7)
    *  to apply the ledger, persist the blob, flip the mode, and emit the frames. */
   readonly makeTiers: (turn: TierTurnArgs) => { ft: FastThinker; combatEvents: CombatEvent[] }
+  /** MYT-75 T7 — the scoped `LedgerOps` the POST-TURN combat application writes the
+   *  reconciled PC damage through (the pre-mutation reads in `applyToLedger` →
+   *  `resolveAdjustHp`). The SAME `repo.characters` surface `makeTiers`'s FT ledger
+   *  tools resolve against (a `LedgerOps` superset). Threaded on the processor deps
+   *  (not `TurnWorkerRepo.characters`, whose FT-side type stays the narrow
+   *  skill-check projection) so the post-flush block applies combat without
+   *  widening the FT-facing repo surface. */
+  readonly combatLedger: LedgerOps
+  /** MYT-75 T7 — the ledger tx runner the post-turn combat application binds onto
+   *  `RulesLawyerDeps.runInTx`. The SAME runner `makeTiers`/`buildFtTools` build
+   *  (`repo.transaction((tx) => fn(tx.characters)).then(expectCommitted)`), so each
+   *  HP write + its `ledger_events` journal row commit atomically (§10). The
+   *  journal makes `applyToLedger` idempotent under the synthetic, turn-stable
+   *  `combat-resolve:${turnId}` toolCallId — a BullMQ re-run replays as a no-op. */
+  readonly ledgerTx: LedgerTxRunner
   /** MYT-74a T12 — the budget-100% auto-end. A bound closure (the worker binds
    *  the real `endSession` orchestration's deps in `buildSessionTurnWorker`) so
    *  the processor stays testable. Invoked on the post-flush success phase when
@@ -316,6 +332,24 @@ export function makeLatchedEmitter(inner: TurnEmitter, markEmitted: () => Promis
       await inner.emitCombatResolved(payload)
     },
   }
+}
+
+/**
+ * MYT-75 T7 — project the per-turn party-ledger snapshot onto the `ReconcilePc[]`
+ * the envelope reconciler resolves PC damage against (id + name + current/max HP).
+ * Pure projection — the snapshot was already read for the fresh-run arm, so the
+ * post-turn combat application needs no second ledger read. Exported so the
+ * projection is directly unit-testable.
+ */
+export function projectPartyLedgerToReconcilePc(
+  partyLedger: PartyLedgerSnapshot,
+): readonly ReconcilePc[] {
+  return partyLedger.map((c) => ({
+    characterId: c.characterId,
+    name: c.name,
+    hp: c.hitPoints,
+    maxHp: c.maxHitPoints,
+  }))
 }
 
 /**
@@ -535,6 +569,33 @@ export async function processTurnJob(
     if (isLockLost()) throw new LockLostError()
     await controller.persistTurn()
     await controller.flushToRedis()
+    // MYT-75 T7 — post-turn combat application (the post-flush side-effect seam).
+    // The combat tools recorded into `tiers.combatEvents` (D12: pure execute — no
+    // session-state write there); the durable ledger writes + the CombatState blob
+    // + the mode flip + the `combat_resolved` emit all happen HERE. Gated on
+    // `!isPlayerless` like the rest of the post-flush tail (a correction/farewell
+    // never opens combat). OWN try/catch (like `enqueueStEval`): a combat-apply
+    // failure logs but never crashes the turn — the turn already persisted, so a
+    // throw here would re-run an already-flushed turn via BullMQ `attempts`.
+    //
+    // Idempotent via a synthetic, turn-stable toolCallId (`combat-resolve:${turnId}`):
+    // `applyToLedger` → `applyWithJournal` checks `ledger_events` FIRST, so a BullMQ
+    // re-run of THIS post-flush block (after the rows already landed) replays as a
+    // no-op. KNOWN L1 LIMITATION: a crash AFTER flush but BEFORE this completes
+    // leaves the combat tools persisted but the mechanical apply not yet applied —
+    // rare; the next turn proceeds in exploration (we do NOT make this fully atomic
+    // with the turn flush in L1; that's a documented follow-up).
+    if (!isPlayerless) {
+      try {
+        await applyCombat(deps, tiers.combatEvents, partyLedger, emitter, {
+          campaignId,
+          sessionId,
+          turnId,
+        })
+      } catch (combatErr) {
+        deps.logger.error({ err: combatErr, campaignId, turnId }, 'failed to apply post-turn combat')
+      }
+    }
     // §4.7 — the batch is responded: advance the watermark so the next trigger
     // batch starts at `(maxConsumedSeq, …]`. Only on a real (flushed) success —
     // a lock-lost abort never flushes, so it must never advance the watermark.
@@ -699,6 +760,99 @@ export async function processTurnJob(
   }
 }
 
+/** The per-turn identifiers `applyCombat` threads onto the journal + the frame. */
+interface CombatApplyIds {
+  readonly campaignId: string
+  readonly sessionId: string
+  readonly turnId: string
+}
+
+/**
+ * MYT-75 T7 — the post-turn combat application. Reads the per-turn
+ * `combatEvents`; if a fight was initiated this turn, applies the reconciled PC
+ * ledger deltas, assembles the `CombatSummaryL1`, durably writes the resolved
+ * `CombatState` + flips `mode` to `combat`, and emits `combat_resolved`. Extracted
+ * + exported so the application is unit-testable apart from the turn lifecycle.
+ *
+ * The reconciliation source depends on whether the FT also resolved the fight in
+ * the SAME turn:
+ *   - `resolve` present → use the FT's already-reconciled deltas + close-out
+ *     narration (the natural path: initiate then resolve in one turn).
+ *   - `resolve` ABSENT (a cap-hit: `initiate` fired but the FT loop hit its tool
+ *     cap before resolving) → FORCE-RESOLVE from the deterministic envelope by
+ *     reconciling EMPTY FT deltas. The envelope's floors (minDownedPcs /
+ *     minAggregateHpLossFraction) still fill, so the dice stay authoritative.
+ *
+ * The ledger write is journal-idempotent under the synthetic, turn-stable
+ * `combat-resolve:${turnId}` toolCallId — a re-run that already applied is a no-op.
+ */
+export async function applyCombat(
+  deps: TurnProcessorDeps,
+  combatEvents: readonly CombatEvent[],
+  partyLedger: PartyLedgerSnapshot,
+  emitter: TurnEmitter,
+  ids: CombatApplyIds,
+): Promise<void> {
+  // LAST initiate wins (a turn could re-enter combat); `find` over the reversed
+  // list narrows the union to `InitiateCombatEvent`.
+  const initiate = [...combatEvents].reverse().find((e) => e.kind === 'initiate')
+  if (initiate === undefined) return
+
+  const resolve = [...combatEvents].reverse().find((e) => e.kind === 'resolve')
+  const party = projectPartyLedgerToReconcilePc(partyLedger)
+  // resolve present → the FT's reconciled deltas; absent (cap hit) → force-resolve
+  // from the envelope by reconciling EMPTY deltas (the envelope fills the floors).
+  const reconciled =
+    resolve !== undefined
+      ? resolve.reconciled
+      : reconcileDeltas(
+          initiate.outcome,
+          { hp_changes: [], conditions_applied: [], conditions_removed: [], casualties: [] },
+          party,
+          initiate.enemies.map((e) => e.name),
+        )
+  const narration = resolve !== undefined ? resolve.narration : initiate.outcome.tierProse
+
+  // The synthetic, turn-stable toolCallId is the §10 journal idempotency key: a
+  // BullMQ re-run of the post-flush block replays `applyToLedger` as a no-op.
+  const rlDeps: RulesLawyerDeps = {
+    ledger: deps.combatLedger,
+    runInTx: deps.ledgerTx,
+    sessionId: ids.sessionId,
+    turnId: ids.turnId,
+    toolCallId: `combat-resolve:${ids.turnId}`,
+    logger: deps.logger,
+  }
+  const hpChanges = await applyToLedger(rlDeps, reconciled)
+  const summary = assembleSummary(initiate.outcome, reconciled, hpChanges, narration)
+
+  // Persist the resolved combat blob + flip the durable mode to 'combat'. Read
+  // the live `:state` blob first; a missing one (never started / TTL-reaped)
+  // means there is nothing to flip — skip the blob/mode writes but still emit.
+  const state = await deps.sessionState.getState(ids.campaignId)
+  if (state !== null) {
+    await deps.sessionState.setCombatState(ids.campaignId, {
+      status: 'resolved',
+      enemies: initiate.enemies,
+      environment: initiate.environment,
+      surprise: initiate.surprise,
+      initiative: initiate.initiative,
+      outcome: initiate.outcome,
+      result: { summary },
+    })
+    // The durable mode flip — the client already flipped on the consume-loop
+    // mode_change frame; this makes a cold-start reconnect read 'combat'.
+    await deps.sessionState.setState(ids.campaignId, { ...state, mode: 'combat' })
+  }
+
+  await emitter.emitCombatResolved({
+    narration,
+    outcome: summary.outcome,
+    casualties: summary.casualties,
+    hpChanges: summary.hpChanges,
+  })
+}
+
 /** BullMQ lock duration. Held below the session lock TTL so the session lock is
  *  the binding mutex (H1): `lockDuration(30s) < sessionLockTtl(45s) ≈
  *  stalledInterval(30s)`. A stalled job is reclaimed AFTER the session lock has
@@ -854,6 +1008,19 @@ export function buildSessionTurnWorker(
     scribeQueue,
     dmTriggerQueue,
     publisher,
+    // MYT-75 T7 — the post-turn combat application's ledger surface. `repo.characters`
+    // composes `charactersLedgerNs`, so the pool-bound surface IS a `LedgerOps`
+    // superset (the pre-mutation reads); `ledgerTx` opens ONE repo transaction per
+    // mutation so the HP write + its `ledger_events` journal row commit atomically.
+    // Identical wiring to `makeTiers`'s FT ledger tools (the same surface + runner).
+    combatLedger: repo.characters,
+    // The tx-runner arrow fires only when a real combat applies through the builder
+    // (the §10 real-Anthropic E2E smoke), never the converge-path builder unit tests
+    // — c8-ignored like the sibling stEvalQueue/scribeQueue/endSession passthroughs.
+    // The applyCombat orchestration itself is covered via the injected ledger/tx in
+    // processTurnJob's combat-application tests.
+    /* c8 ignore next */
+    ledgerTx: (fn) => repo.transaction((tx) => fn(tx.characters)).then(expectCommitted),
     // The real FastThinker, constructed per turn with the scoped skill-check
     // mechanical projection (§8 — ONLY findSessionParticipantCharacterByName,
     // never the whole repo), the turn's world tone, and the worker-owned latched

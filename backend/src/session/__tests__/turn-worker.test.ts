@@ -4,9 +4,15 @@ import type { Pool } from 'pg'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import {
   makeSessionState,
+  type CombatOutcome,
   type SessionState,
   type SessionStateBlob,
 } from '../../redis/session-state.js'
+import type { LedgerOps } from '../../repo/characters-ledger.js'
+import type { Character } from '../../repo/types.js'
+import type { CombatEvent } from '../combat/events.js'
+import type { ReconciledCombat } from '../combat/apply.js'
+import type { CombatEnemy } from '../combat/outcome.js'
 import { sessionChannelPattern } from '../../contract/session-channel.js'
 import { SessionController } from '../session-controller.js'
 import { StubFastThinker } from '../tiers/stubs.js'
@@ -433,6 +439,211 @@ function inertFinalize(): TurnProcessorDeps['finalizeEndedSession'] {
   return vi.fn((): Promise<void> => Promise.resolve())
 }
 
+/** MYT-75 T7 — an inert `LedgerOps` for the paths that never apply combat (the
+ *  StubFastThinker records no combat events, so `applyCombat` early-returns and
+ *  the ledger is never dereferenced). Every method throws so an accidental call
+ *  is LOUD. The combat-application tests build a real in-memory ledger instead. */
+function inertCombatLedger(): LedgerOps {
+  const unsupported = (m: string): never => {
+    throw new Error(`inert LedgerOps: ${m} called on a non-combat path`)
+  }
+  return {
+    findLedgerCharacterByName: () => unsupported('findLedgerCharacterByName'),
+    readPartyLedgerSnapshot: () => unsupported('readPartyLedgerSnapshot'),
+    writeHp: () => unsupported('writeHp'),
+    findLedgerEvent: () => unsupported('findLedgerEvent'),
+    writeLedgerEvent: () => unsupported('writeLedgerEvent'),
+    debitGold: () => unsupported('debitGold'),
+    creditGold: () => unsupported('creditGold'),
+    debitItem: () => unsupported('debitItem'),
+    acquireItem: () => unsupported('acquireItem'),
+    debitFeatureUse: () => unsupported('debitFeatureUse'),
+    debitSpellSlot: () => unsupported('debitSpellSlot'),
+    readSpellSlots: () => unsupported('readSpellSlots'),
+    readCharacterSpells: () => unsupported('readCharacterSpells'),
+    applyCondition: () => unsupported('applyCondition'),
+    clearCondition: () => unsupported('clearCondition'),
+    shortRest: () => unsupported('shortRest'),
+    longRest: () => unsupported('longRest'),
+    readRestParticipants: () => unsupported('readRestParticipants'),
+  }
+}
+
+/** MYT-75 T7 — an inert ledger tx runner: passes the inert ledger straight to the
+ *  callback (no real transaction). Never invoked on a non-combat path (applyCombat
+ *  early-returns), so the inert ledger inside is never touched. */
+function inertLedgerTx(): TurnProcessorDeps['ledgerTx'] {
+  return (fn) => fn(inertCombatLedger())
+}
+
+// ── MYT-75 T7 — combat-application test fixtures ──────────────────────────────
+
+/** A rolled enemy roster the initiate event carries onto the CombatState blob. */
+const GOBLIN_ENEMIES: readonly CombatEnemy[] = [
+  { name: 'Goblin', description: 'a scrawny cave goblin', count: 1 },
+]
+
+/** A deterministic CombatOutcome for a tier — the same envelopes the real
+ *  resolver assigns. `tierProse` is the fallback narration the force-resolve path
+ *  uses when there is no FT close-out. */
+function combatOutcome(tier: 'pyrrhic' | 'costly'): CombatOutcome {
+  const envelope =
+    tier === 'pyrrhic'
+      ? { partyWins: true, minDownedPcs: 1, minAggregateHpLossFraction: 0.3, allowPcDeathNarration: false }
+      : { partyWins: true, minDownedPcs: 0, minAggregateHpLossFraction: 0.3, allowPcDeathNarration: false }
+  return {
+    tier,
+    dc: 15,
+    roll: 11,
+    total: 13,
+    tierProse: `The party prevails, ${tier === 'pyrrhic' ? 'but at brutal cost' : 'though bloodied'}.`,
+    envelope,
+  }
+}
+
+interface CombatLedgerRow {
+  hp: number
+  readonly maxHp: number
+  readonly name: string
+}
+
+/** Build a full Character so the ledger projection is real (no `as`). */
+function combatCharacter(id: string, name: string, hp: number, maxHp: number): Character {
+  return {
+    id,
+    userId: 'u',
+    entityId: null,
+    name,
+    level: 3,
+    class: 'Fighter',
+    species: 'Human',
+    background: 'Soldier',
+    str: 10,
+    dex: 10,
+    con: 10,
+    int: 10,
+    wis: 10,
+    cha: 10,
+    hitPoints: hp,
+    maxHitPoints: maxHp,
+    armorClass: 10,
+    proficiencyBonus: 2,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  }
+}
+
+/** A real in-memory LedgerOps covering the methods `applyToLedger` →
+ *  `resolveAdjustHp` touches (resolve, journal idempotency check + write, HP
+ *  write). Every unused method throws so an accidental call is loud. Mirrors
+ *  apply.test.ts's makeFakeLedger — the apply path runs for real here. */
+function makeCombatLedger(rows: Map<string, CombatLedgerRow>): LedgerOps {
+  const unsupported = (m: string): never => {
+    throw new Error(`combat LedgerOps: ${m} not implemented`)
+  }
+  const findId = (name: string): string | undefined => {
+    for (const [id, r] of rows) {
+      if (r.name.trim().toLowerCase() === name.trim().toLowerCase()) return id
+    }
+    return undefined
+  }
+  return {
+    findLedgerCharacterByName: (_sessionId, name) => {
+      const id = findId(name)
+      const row = id === undefined ? undefined : rows.get(id)
+      if (id === undefined || row === undefined) return Promise.resolve({ outcome: 'not_found' })
+      return Promise.resolve({
+        outcome: 'found',
+        projection: {
+          character: combatCharacter(id, row.name, row.hp, row.maxHp),
+          gold: 0,
+          hitDie: 8,
+          hitDiceRemaining: 2,
+          spellcastingProgression: 'none',
+          conMod: 0,
+        },
+      })
+    },
+    writeHp: (characterId, newHp) => {
+      const row = rows.get(characterId)
+      if (row === undefined) throw new Error('combat writeHp: no row')
+      row.hp = Math.max(0, Math.min(newHp, row.maxHp))
+      return Promise.resolve({ hp: row.hp, maxHp: row.maxHp })
+    },
+    findLedgerEvent: () => Promise.resolve(false),
+    writeLedgerEvent: () => Promise.resolve('evt'),
+    // resolveAdjustHp's pre-write readHp reads the live HP off this snapshot, so
+    // it must reflect the current rows (the writeHp mutates them in place).
+    readPartyLedgerSnapshot: () =>
+      Promise.resolve(
+        [...rows.entries()].map(([id, r]) => ({
+          characterId: id,
+          name: r.name,
+          hitPoints: r.hp,
+          maxHitPoints: r.maxHp,
+          hitDie: 8,
+          hitDiceRemaining: 2,
+          level: 3,
+          gold: 0,
+          slots: [],
+          conditions: [],
+          trackedFeatures: [],
+          spells: [],
+          equipment: [],
+        })),
+      ),
+    debitGold: () => unsupported('debitGold'),
+    creditGold: () => unsupported('creditGold'),
+    debitItem: () => unsupported('debitItem'),
+    acquireItem: () => unsupported('acquireItem'),
+    debitFeatureUse: () => unsupported('debitFeatureUse'),
+    debitSpellSlot: () => unsupported('debitSpellSlot'),
+    readSpellSlots: () => unsupported('readSpellSlots'),
+    readCharacterSpells: () => unsupported('readCharacterSpells'),
+    applyCondition: () => unsupported('applyCondition'),
+    clearCondition: () => unsupported('clearCondition'),
+    shortRest: () => unsupported('shortRest'),
+    longRest: () => unsupported('longRest'),
+    readRestParticipants: () => unsupported('readRestParticipants'),
+  }
+}
+
+/** Build a full processor deps for a combat-application test: the real ledger +
+ *  a tx runner that passes it straight through (the ledger's writeHp mutates the
+ *  shared rows map, so the apply path is observable). The per-test `sessionState`
+ *  / `triggerState` (reassigned in `beforeEach`) are threaded in. */
+function combatDeps(opts: {
+  calls: PublisherCalls
+  handle: SessionLockHandle
+  ledger: LedgerOps
+  makeTiers: TurnProcessorDeps['makeTiers']
+  sessionState: SessionState
+  triggerState: TriggerState
+  /** The party-ledger snapshot the fresh-run arm reads + threads into
+   *  `applyCombat` (the force-resolve path reconciles against it). Defaults to []
+   *  for the no-combat test (the apply path early-returns). */
+  partyLedger?: PartyLedgerSnapshot
+}): TurnProcessorDeps {
+  return {
+    lock: fakeLock(opts.handle),
+    sessionState: opts.sessionState,
+    repo: fakeRepo(opts.partyLedger ? { partyLedger: opts.partyLedger } : {}),
+    triggerState: opts.triggerState,
+    sessionTurnQueue: inertTurnQueue(),
+    dmTriggerQueue: inertDmTriggerQueue(),
+    stEvalQueue: inertStEvalQueue(),
+    scribeQueue: inertScribeQueue(),
+    endSession: inertEndSession(),
+    finalizeEndedSession: inertFinalize(),
+    combatLedger: opts.ledger,
+    ledgerTx: (fn) => fn(opts.ledger),
+    publisher: recordingPublisher(opts.calls),
+    makeTiers: opts.makeTiers,
+    heartbeatMs: 10_000,
+    logger: silentLogger,
+  }
+}
+
 describe('processTurnJob', () => {
   let redis: Redis
   let sessionState: SessionState
@@ -465,6 +676,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -506,6 +719,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -556,6 +771,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -607,6 +824,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -656,6 +875,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft, combatEvents: [] }),
       heartbeatMs: 10_000,
@@ -695,6 +916,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -752,6 +975,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -783,6 +1008,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -820,6 +1047,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -863,6 +1092,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -909,6 +1140,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -947,6 +1180,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -982,6 +1217,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1019,6 +1256,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1050,6 +1289,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1082,6 +1323,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1117,6 +1360,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1160,6 +1405,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1212,6 +1459,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: exploding,
       heartbeatMs: 10_000,
@@ -1253,6 +1502,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1334,6 +1585,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher,
       makeTiers,
       heartbeatMs: 10_000,
@@ -1385,6 +1638,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -1435,6 +1690,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: (turn) => {
         seenTone = turn.worldTone
@@ -1481,6 +1738,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1561,6 +1820,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft: capturingFt, combatEvents: [] }),
       heartbeatMs: 10_000,
@@ -1620,6 +1881,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1659,6 +1922,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1691,6 +1956,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1716,6 +1983,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1753,6 +2022,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1798,6 +2069,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1833,6 +2106,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1860,6 +2135,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1913,6 +2190,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1949,6 +2228,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -1982,6 +2263,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 5,
@@ -2021,6 +2304,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2056,6 +2341,8 @@ describe('processTurnJob', () => {
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2113,6 +2400,8 @@ describe('processTurnJob', () => {
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: recordingTiers,
       heartbeatMs: 10_000,
@@ -2146,6 +2435,8 @@ describe('processTurnJob', () => {
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2177,6 +2468,8 @@ describe('processTurnJob', () => {
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2214,6 +2507,8 @@ describe('processTurnJob', () => {
       scribeQueue,
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2263,6 +2558,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession,
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2303,6 +2600,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession,
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2339,6 +2638,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession,
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2378,6 +2679,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession,
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2436,6 +2739,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2483,6 +2788,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2523,6 +2830,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2567,6 +2876,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2618,6 +2929,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2679,6 +2992,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2727,6 +3042,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2791,6 +3108,8 @@ describe('processTurnJob', () => {
       scribeQueue: recordingScribeQueue(scribeCalls),
       endSession,
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2830,6 +3149,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: finalize,
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2873,6 +3194,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: finalize,
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers: () => ({ ft, combatEvents: [] }),
       heartbeatMs: 10_000,
@@ -2914,6 +3237,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: finalize,
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -2955,6 +3280,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: finalize,
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -3004,6 +3331,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: finalize,
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -3061,6 +3390,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -3100,6 +3431,8 @@ describe('processTurnJob', () => {
       scribeQueue: inertScribeQueue(),
       endSession: inertEndSession(),
       finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
       publisher: recordingPublisher(calls),
       makeTiers,
       heartbeatMs: 10_000,
@@ -3114,6 +3447,274 @@ describe('processTurnJob', () => {
     expect(queueCalls[0]?.data.trigger.kind).toBe('explicit')
     expect(triggerCalls).toHaveLength(1)
     expect(triggerCalls[0]?.name).toBe('evaluate')
+  })
+
+  // ── MYT-75 T7 — post-turn combat application ──────────────────────────────
+  it('applies combat: reconciled ledger deltas, resolved CombatState, mode flip, combat_resolved', async () => {
+    // A turn whose makeTiers records an `initiate` + a `resolve` event. The
+    // post-flush block must: apply the FT's reconciled PC damage through the
+    // ledger (hpChanges flow into the summary), write the resolved CombatState
+    // blob, durably flip mode→combat, and emit combat_resolved.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    // Seed the :state blob so the durable mode flip has something to flip.
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+    })
+
+    // A real in-memory ledger: Mara at 11/14 HP. applyToLedger → resolveAdjustHp
+    // writes through it, so the returned hpChanges are real.
+    const rows = new Map<string, CombatLedgerRow>([['ch1', { name: 'Mara', hp: 11, maxHp: 14 }]])
+    const ledger = makeCombatLedger(rows)
+
+    const reconciled: ReconciledCombat = {
+      outcomeKind: 'victory',
+      pcDamage: [{ characterId: 'ch1', name: 'Mara', amount: 4 }],
+      pcCasualties: [],
+      enemyCasualties: [{ name: 'Goblin', fate: 'dead' }],
+      conditions: [],
+    }
+    const combatEvents: CombatEvent[] = [
+      {
+        kind: 'initiate',
+        outcome: combatOutcome('costly'),
+        enemies: GOBLIN_ENEMIES,
+        environment: 'a damp cave mouth',
+        surprise: 'none',
+        initiative: [{ combatant: 'Mara', roll: 14 }],
+      },
+      { kind: 'resolve', reconciled, narration: 'Mara stands over the fallen goblin.' },
+    ]
+
+    const deps = combatDeps({
+      calls,
+      handle,
+      ledger,
+      makeTiers: () => ({ ft: new StubFastThinker(), combatEvents }),
+      sessionState,
+      triggerState,
+    })
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+
+    // The resolved CombatState blob was written with the summary.
+    const combat = await sessionState.getCombatState(CAMPAIGN)
+    expect(combat?.status).toBe('resolved')
+    expect(combat?.enemies).toEqual(GOBLIN_ENEMIES)
+    expect(combat?.environment).toBe('a damp cave mouth')
+    expect(combat?.result?.summary.outcome).toBe('victory')
+    // hpChanges flowed from the real ledger write into the summary (11 → 7).
+    expect(combat?.result?.summary.hpChanges).toContainEqual({
+      combatant: 'Mara',
+      hpBefore: 11,
+      hpAfter: 7,
+      maxHp: 14,
+    })
+    // The ledger actually moved (the apply path ran, not just the summary).
+    expect(rows.get('ch1')?.hp).toBe(7)
+
+    // The durable mode flip landed on the :state blob.
+    const state = await sessionState.getState(CAMPAIGN)
+    expect(state?.mode).toBe('combat')
+
+    // combat_resolved was emitted (the latched emitter routes it to the publisher).
+    expect(calls.order).toContain('combat_resolved')
+  })
+
+  it('force-resolves a cap-hit: initiate WITHOUT resolve fills the envelope floors and applies', async () => {
+    // The recovery path: the FT initiated combat but its tool loop hit the cap
+    // before resolving. With no `resolve` event, the worker reconciles EMPTY FT
+    // deltas against the envelope — pyrrhic's floors (minDownedPcs:1 +
+    // minAggregateHpLossFraction:0.30) still down a PC and apply HP loss.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+    })
+
+    // One PC at full HP; pyrrhic forces it down (minDownedPcs:1).
+    const rows = new Map<string, CombatLedgerRow>([['ch1', { name: 'Mara', hp: 14, maxHp: 14 }]])
+    const ledger = makeCombatLedger(rows)
+    // The force-resolve path reconciles EMPTY FT deltas against the per-turn party
+    // snapshot — so the worker must read a roster matching the ledger to know whom
+    // to down (the snapshot is the fresh-run arm's `readPartyLedgerSnapshot`).
+    const partyLedger: PartyLedgerSnapshot = [
+      {
+        characterId: 'ch1',
+        name: 'Mara',
+        hitPoints: 14,
+        maxHitPoints: 14,
+        hitDie: 8,
+        hitDiceRemaining: 2,
+        level: 3,
+        gold: 0,
+        slots: [],
+        conditions: [],
+        trackedFeatures: [],
+        spells: [],
+        equipment: [],
+      },
+    ]
+
+    const combatEvents: CombatEvent[] = [
+      {
+        kind: 'initiate',
+        outcome: combatOutcome('pyrrhic'),
+        enemies: GOBLIN_ENEMIES,
+        environment: 'a damp cave mouth',
+        surprise: 'none',
+        initiative: [{ combatant: 'Mara', roll: 9 }],
+      },
+      // No resolve event — the cap-hit case.
+    ]
+
+    const deps = combatDeps({
+      calls,
+      handle,
+      ledger,
+      partyLedger,
+      makeTiers: () => ({ ft: new StubFastThinker(), combatEvents }),
+      sessionState,
+      triggerState,
+    })
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+
+    const combat = await sessionState.getCombatState(CAMPAIGN)
+    expect(combat?.status).toBe('resolved')
+    // The narration fell back to the deterministic tier prose (no FT close-out).
+    expect(combat?.result?.summary.outcomeDescription).toBe(combatOutcome('pyrrhic').tierProse)
+    // The envelope's minDownedPcs:1 floor downed Mara → 0 HP in the ledger.
+    expect(rows.get('ch1')?.hp).toBe(0)
+    // The summary lists the downed PC as a casualty.
+    expect(combat?.result?.summary.casualties).toContainEqual({
+      name: 'Mara',
+      type: 'pc',
+      fate: 'unconscious',
+    })
+
+    const state = await sessionState.getState(CAMPAIGN)
+    expect(state?.mode).toBe('combat')
+    expect(calls.order).toContain('combat_resolved')
+  })
+
+  it('no combat events → none of the combat writes happen', async () => {
+    // The exploration-only turn: makeTiers records no combat events, so the
+    // post-flush block early-returns — no CombatState blob, no mode flip, no
+    // combat_resolved emit.
+    const calls = newCalls()
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+    })
+
+    const deps = combatDeps({
+      calls,
+      handle,
+      // The inert ledger throws on any call — proving the apply path never ran.
+      ledger: inertCombatLedger(),
+      makeTiers: () => ({ ft: new StubFastThinker(), combatEvents: [] }),
+      sessionState,
+      triggerState,
+    })
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    // No combat blob was written.
+    expect(await sessionState.getCombatState(CAMPAIGN)).toBeNull()
+    // The :state blob stayed in exploration (no durable flip).
+    const state = await sessionState.getState(CAMPAIGN)
+    expect(state?.mode).toBe('exploration')
+    // No combat_resolved frame.
+    expect(calls.order).not.toContain('combat_resolved')
+  })
+
+  it('a combat-apply failure is logged but does NOT crash the turn (own try/catch)', async () => {
+    // The turn already persisted before applyCombat runs, so a throw there must
+    // NOT re-run the turn via BullMQ attempts. Force a throw by making the blob
+    // write reject; the catch arm logs and the turn still completes (turn_end).
+    const calls = newCalls()
+    const errorLogger = { warn: vi.fn(), error: vi.fn() }
+    const release = vi.fn((): Promise<void> => Promise.resolve())
+    const handle = fakeHandle({ extendReturns: true, release })
+
+    await sessionState.setState(CAMPAIGN, {
+      participants: ['u1'],
+      mode: 'exploration',
+      status: 'active',
+    })
+
+    const rows = new Map<string, CombatLedgerRow>([['ch1', { name: 'Mara', hp: 11, maxHp: 14 }]])
+    const ledger = makeCombatLedger(rows)
+    const combatEvents: CombatEvent[] = [
+      {
+        kind: 'initiate',
+        outcome: combatOutcome('costly'),
+        enemies: GOBLIN_ENEMIES,
+        environment: 'a damp cave mouth',
+        surprise: 'none',
+        initiative: [{ combatant: 'Mara', roll: 14 }],
+      },
+      {
+        kind: 'resolve',
+        reconciled: {
+          outcomeKind: 'victory',
+          pcDamage: [],
+          pcCasualties: [],
+          enemyCasualties: [],
+          conditions: [],
+        },
+        narration: 'It is over.',
+      },
+    ]
+
+    // Make the durable CombatState write reject — applyCombat throws past the
+    // ledger apply, into the worker's combat try/catch.
+    const setCombatSpy = vi
+      .spyOn(sessionState, 'setCombatState')
+      .mockRejectedValue(new Error('redis write failed'))
+
+    const deps: TurnProcessorDeps = {
+      ...combatDeps({
+        calls,
+        handle,
+        ledger,
+        makeTiers: () => ({ ft: new StubFastThinker(), combatEvents }),
+        sessionState,
+        triggerState,
+      }),
+      logger: errorLogger,
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    // The turn still completed (not rethrown) and reached turn_end.
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // The failure was logged at error.
+    expect(errorLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
+      'failed to apply post-turn combat',
+    )
+
+    setCombatSpy.mockRestore()
   })
 })
 
@@ -3227,6 +3828,63 @@ describe('makeLatchedEmitter', () => {
 
     expect(order).toEqual(['mark', 'inner.emitSkillCheck'])
     expect(mark).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks before — and passes through — the combat/mode frame kinds (MYT-75)', async () => {
+    // The §combat frame arrows: emitModeChange / emitCombatStarted /
+    // emitCombatResolved each await the latch BEFORE the inner publish, then pass
+    // their payloads straight through.
+    const order: string[] = []
+    const seen: { mode?: unknown; started?: unknown; resolved?: unknown } = {}
+    const inner: TurnEmitter = {
+      emitText: (): Promise<void> => Promise.resolve(),
+      emitSkillCheck: (): Promise<void> => Promise.resolve(),
+      emitDiceRoll: (): Promise<void> => Promise.resolve(),
+      emitLedgerUpdate: (): Promise<void> => Promise.resolve(),
+      emitModeChange: (p): Promise<void> => {
+        order.push('inner.emitModeChange')
+        seen.mode = p
+        return Promise.resolve()
+      },
+      emitCombatStarted: (p): Promise<void> => {
+        order.push('inner.emitCombatStarted')
+        seen.started = p
+        return Promise.resolve()
+      },
+      emitCombatResolved: (p): Promise<void> => {
+        order.push('inner.emitCombatResolved')
+        seen.resolved = p
+        return Promise.resolve()
+      },
+    }
+    const mark = vi.fn((): Promise<void> => {
+      order.push('mark')
+      return Promise.resolve()
+    })
+
+    const latched = makeLatchedEmitter(inner, mark)
+    await latched.emitModeChange({ from: 'exploration', to: 'combat', reason: 'enemies attack' })
+    await latched.emitCombatStarted({
+      enemies: [{ name: 'Goblin', description: 'a scrawny goblin', count: 1 }],
+      initiative: [{ combatant: 'Mara', roll: 14 }],
+    })
+    await latched.emitCombatResolved({
+      narration: 'It is over.',
+      outcome: 'victory',
+      casualties: [],
+      hpChanges: [],
+    })
+
+    // The FIRST emit marks; the rest don't re-mark; all three passed through in order.
+    expect(order).toEqual([
+      'mark',
+      'inner.emitModeChange',
+      'inner.emitCombatStarted',
+      'inner.emitCombatResolved',
+    ])
+    expect(mark).toHaveBeenCalledTimes(1)
+    expect(seen.mode).toEqual({ from: 'exploration', to: 'combat', reason: 'enemies attack' })
+    expect((seen.resolved as { outcome: string }).outcome).toBe('victory')
   })
 })
 

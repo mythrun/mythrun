@@ -36,6 +36,36 @@ import { createTurnPublisher } from '../turn-publisher.js'
 import { StubFastThinker } from '../tiers/stubs.js'
 import { processTurnJob, type TurnWorkerRepo } from '../turn-worker.js'
 import { enqueueTurn, type TurnJobPayload, type TurnQueueLike } from '../turn-queue.js'
+import type { LedgerOps } from '../../repo/characters-ledger.js'
+
+// MYT-75 T7 — an inert `LedgerOps`/tx runner for the E2E (the StubFastThinker
+// records no combat events, so `applyCombat` early-returns and the ledger is
+// never dereferenced). Every method throws so an accidental call is loud.
+function inertCombatLedger(): LedgerOps {
+  const unsupported = (m: string): never => {
+    throw new Error(`inert LedgerOps: ${m} called on the E2E path`)
+  }
+  return {
+    findLedgerCharacterByName: () => unsupported('findLedgerCharacterByName'),
+    readPartyLedgerSnapshot: () => unsupported('readPartyLedgerSnapshot'),
+    writeHp: () => unsupported('writeHp'),
+    findLedgerEvent: () => unsupported('findLedgerEvent'),
+    writeLedgerEvent: () => unsupported('writeLedgerEvent'),
+    debitGold: () => unsupported('debitGold'),
+    creditGold: () => unsupported('creditGold'),
+    debitItem: () => unsupported('debitItem'),
+    acquireItem: () => unsupported('acquireItem'),
+    debitFeatureUse: () => unsupported('debitFeatureUse'),
+    debitSpellSlot: () => unsupported('debitSpellSlot'),
+    readSpellSlots: () => unsupported('readSpellSlots'),
+    readCharacterSpells: () => unsupported('readCharacterSpells'),
+    applyCondition: () => unsupported('applyCondition'),
+    clearCondition: () => unsupported('clearCondition'),
+    shortRest: () => unsupported('shortRest'),
+    longRest: () => unsupported('longRest'),
+    readRestParticipants: () => unsupported('readRestParticipants'),
+  }
+}
 
 // A fresh-run in-memory repo for the E2E: no durable rows, empty transcript, a
 // no-op DM append (the round-trip is asserted on the published frames, not PG),
@@ -156,6 +186,10 @@ describe('turn E2E — enqueue → real Worker → real subscriber round-trip (H
             // Unconditional farewell finalize (MYT-74b §1.3) — no farewell turn
             // runs on this path, so it is never reached; inert here.
             finalizeEndedSession: () => Promise.resolve(),
+            // Post-turn combat application (MYT-75 T7) — the StubFastThinker
+            // records no combat events, so applyCombat early-returns; inert here.
+            combatLedger: inertCombatLedger(),
+            ledgerTx: (fn) => fn(inertCombatLedger()),
             publisher,
             makeTiers: () => ({
               ft: new StubFastThinker(),

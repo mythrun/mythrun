@@ -48,6 +48,7 @@ import type {
   TurnEmitter,
 } from '../tiers/types.js'
 import { processTurnJob, type TurnProcessorDeps, type TurnWorkerRepo } from '../turn-worker.js'
+import type { LedgerOps } from '../../repo/characters-ledger.js'
 import type { DmTriggerQueueLike } from '../dm-trigger-queue.js'
 import type { StEvalQueueLike } from '../st-eval-queue.js'
 import type { ScribeQueueLike } from '../scribe-queue.js'
@@ -132,6 +133,33 @@ const inertEndSession: TurnProcessorDeps['endSession'] = () => Promise.resolve()
 // MYT-74b §1.3 — these lock-loss recovery flows never run a farewell turn, so the
 // unconditional finalize is never reached; inert.
 const inertFinalize: TurnProcessorDeps['finalizeEndedSession'] = () => Promise.resolve()
+// MYT-75 T7 — these recovery flows never apply combat (the LockKillingFastThinker
+// aborts before the post-flush block; the StubFastThinker records no combat
+// events). Every ledger method throws so an accidental call is loud.
+const inertCombatLedger: LedgerOps = {
+  findLedgerCharacterByName: () => unsupportedLedgerOp('findLedgerCharacterByName'),
+  readPartyLedgerSnapshot: () => unsupportedLedgerOp('readPartyLedgerSnapshot'),
+  writeHp: () => unsupportedLedgerOp('writeHp'),
+  findLedgerEvent: () => unsupportedLedgerOp('findLedgerEvent'),
+  writeLedgerEvent: () => unsupportedLedgerOp('writeLedgerEvent'),
+  debitGold: () => unsupportedLedgerOp('debitGold'),
+  creditGold: () => unsupportedLedgerOp('creditGold'),
+  debitItem: () => unsupportedLedgerOp('debitItem'),
+  acquireItem: () => unsupportedLedgerOp('acquireItem'),
+  debitFeatureUse: () => unsupportedLedgerOp('debitFeatureUse'),
+  debitSpellSlot: () => unsupportedLedgerOp('debitSpellSlot'),
+  readSpellSlots: () => unsupportedLedgerOp('readSpellSlots'),
+  readCharacterSpells: () => unsupportedLedgerOp('readCharacterSpells'),
+  applyCondition: () => unsupportedLedgerOp('applyCondition'),
+  clearCondition: () => unsupportedLedgerOp('clearCondition'),
+  shortRest: () => unsupportedLedgerOp('shortRest'),
+  longRest: () => unsupportedLedgerOp('longRest'),
+  readRestParticipants: () => unsupportedLedgerOp('readRestParticipants'),
+}
+function unsupportedLedgerOp(m: string): never {
+  throw new Error(`inert LedgerOps: ${m} called on a recovery path`)
+}
+const inertLedgerTx: TurnProcessorDeps['ledgerTx'] = (fn) => fn(inertCombatLedger)
 
 function payload(): { data: TurnJobPayload } {
   return {
@@ -266,6 +294,8 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       scribeQueue: inertScribeQueue,
       endSession: inertEndSession,
       finalizeEndedSession: inertFinalize,
+      combatLedger: inertCombatLedger,
+      ledgerTx: inertLedgerTx,
       publisher,
       makeTiers: () => ({
         ft: new LockKillingFastThinker(realtime, lockKeyFor(CAMPAIGN)),
@@ -306,6 +336,8 @@ describe('turn crash-recovery — A loses lock mid-turn, B completes from clean 
       scribeQueue: inertScribeQueue,
       endSession: inertEndSession,
       finalizeEndedSession: inertFinalize,
+      combatLedger: inertCombatLedger,
+      ledgerTx: inertLedgerTx,
       publisher,
       makeTiers: () => ({
         ft: new StubFastThinker(),
