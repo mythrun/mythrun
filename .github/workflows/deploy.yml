@@ -9,6 +9,7 @@ on:
       - '**/*.md'
       - 'wiki/**'
       - '.github/wiki/**'
+      - 'frontend/**'
   workflow_dispatch:
 
 permissions:

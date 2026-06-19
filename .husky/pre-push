@@ -72,3 +72,17 @@ if echo "$diff_files" | grep -qE '^(backend/dev-tool/|backend/src/contract/(back
 else
   echo "  (diff doesn't touch dev-tool surface; skipping)"
 fi
+
+echo "→ pre-push gate (frontend): lint rails + tests + coverage (diff-scoped)"
+# Three-dot range = commits being pushed vs the merge-base with origin/main.
+fe_files=$(git diff --name-only origin/main...HEAD 2>/dev/null || true)
+if echo "$fe_files" | grep -qE '^(frontend/|\.github/workflows/frontend-check\.yml)'; then
+  pnpm --filter @mythrun/ui typecheck
+  pnpm --filter @mythrun/web typecheck
+  pnpm --filter @mythrun/ui lint
+  pnpm --filter @mythrun/web lint
+  pnpm --filter @mythrun/web test
+  pnpm --filter @mythrun/web test:coverage
+else
+  echo "  (diff doesn't touch frontend; skipping)"
+fi
