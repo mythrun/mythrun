@@ -81,5 +81,18 @@ export default [
       ],
     },
   },
+  {
+    // Test files legitimately render raw DOM probes: @testing-library tests
+    // assert `textContent` of bare nodes addressed by `data-testid`, and they
+    // exercise component-slot rendering (<Trans>) against real intrinsic
+    // elements. `no-ad-hoc-ui` is a feature-code rule (already off in the
+    // library zone); test harness markup is the same kind of exception, so we
+    // carve test files out here — mirroring the root config's test-file
+    // overrides — rather than peppering inline disables across every probe.
+    files: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'mythrun-ui/no-ad-hoc-ui': 'off',
+    },
+  },
   eslintConfigPrettier,
 ]

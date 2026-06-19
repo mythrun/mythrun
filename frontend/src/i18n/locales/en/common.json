@@ -1,0 +1,5 @@
+{
+  "back": "Back",
+  "appGreeting": "[placeholder for app greeting] {{name}}",
+  "richSample": "[placeholder for rich-text sample with a <1>link</1>]"
+}
