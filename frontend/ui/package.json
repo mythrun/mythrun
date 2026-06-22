@@ -11,19 +11,20 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --no-error-on-unmatched-pattern",
-    "generate:palette": "node scripts/generate-palette.mjs"
+    "build:tokens": "node ../client-core/src/tokens/generate-palette.mjs ./src/styles",
+    "build": "pnpm build:tokens"
   },
   "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
   "dependencies": {
     "@fontsource/source-serif-4": "^5.0.0",
-    "@fontsource/ibm-plex-mono": "^5.0.0"
+    "@fontsource/ibm-plex-mono": "^5.0.0",
+    "@mythrun/client-core": "workspace:*"
   },
   "devDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.6.0",
-    "culori": "^4.0.0"
+    "typescript": "^5.6.0"
   }
 }

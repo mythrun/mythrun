@@ -3,7 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { "./contract": "./src/contract/index.ts" },
+  "exports": {
+    "./contract": "./src/contract/index.ts",
+    "./tokens": "./src/tokens/generate-palette.mjs",
+    "./tokens/scales": "./src/tokens/scales.ts"
+  },
   "types": "./src/contract/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -12,6 +16,9 @@
     "test:coverage": "vitest run --coverage"
   },
   "peerDependencies": { "react": "^19.0.0" },
+  "dependencies": {
+    "culori": "^4.0.0"
+  },
   "devDependencies": {
     "react": "^19.0.0",
     "@types/react": "^19.0.0",

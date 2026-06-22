@@ -14,7 +14,12 @@ export default [
     // `**/*.config.js` — not the `.ts` config). It's also outside this
     // package's TS project, so the root's type-aware projectService would
     // reject it. Ignored here, mirroring the `@mythrun/web` precedent.
-    ignores: ['dist/**', 'vitest.config.ts'],
+    //
+    // `src/tokens/generate-palette.mjs` is a build-time Node script (relocated
+    // from @mythrun/ui's `scripts/`, which was itself lint-ignored via
+    // `scripts/**`). With no `allowJs`, `.mjs` falls outside this package's TS
+    // `include`, so the type-aware projectService rejects it. Same carve-out.
+    ignores: ['dist/**', 'vitest.config.ts', 'src/tokens/generate-palette.mjs'],
   },
   eslintConfigPrettier,
 ]

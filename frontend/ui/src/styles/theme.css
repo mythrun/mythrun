@@ -11,12 +11,69 @@
   --text-2xl: 1.75rem;  --text-2xl--line-height: 1.3;
   --text-3xl: 2.25rem;  --text-3xl--line-height: 1.2;
 
-  /* Motion (brand-silent; conventional). */
+  /* ── Static scales (§4). Hand-authored to MATCH @mythrun/client-core/tokens/scales;
+     the drift-guard in tokens.test.ts fails if these diverge. These are NOT
+     theme-aware — they don't flip light/dark, so they live here, not in
+     semantic.css. Theme-aware tokens (focus/border-strong/surfaces/status) are
+     in semantic.css per the :root/.dark idiom. ── */
+
+  /* Spacing — 4px base. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 48px;
+  --space-9: 64px;
+
+  /* Radius — flat 1-bit: sharp corners everywhere. */
+  --radius: 0px;
+
+  /* Control heights (md default; ≥44px hit-target padded on all controls). */
+  --control-sm: 32px;
+  --control-md: 40px;
+  --control-lg: 48px;
+
+  /* Icon sizes — Pixelarticons are vector (crispest at 24/48). */
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 24px;
+
+  /* Z-index — semantic stacking scale. */
+  --z-base: 0;
+  --z-nav: 10;
+  --z-dropdown: 1000;
+  --z-popover: 1100;
+  --z-overlay: 1200;
+  --z-modal: 1300;
+  --z-toast: 1400;
+  --z-tooltip: 1500;
+
+  /* Motion — only opacity/fades animate; nothing slides/bounces. */
   --duration-fast: 120ms;
   --duration-base: 200ms;
   --duration-slow: 360ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-linear: linear;
 
-  /* Soft, quiet shadows. */
-  --shadow-soft: 0 1px 2px rgb(35 27 18 / 0.06), 0 4px 12px rgb(35 27 18 / 0.06);
-  --shadow-float: 0 2px 4px rgb(35 27 18 / 0.07), 0 8px 24px rgb(35 27 18 / 0.08);
+  /* Font weights. */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Letter-spacing. */
+  --tracking-normal: 0;
+  --tracking-wide: 0.5px;
+
+  /* Serif prose column width. */
+  --measure: 64ch;
+
+  /* Breakpoints — Tailwind defaults (logical-property layout keeps RTL open). */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
 }

@@ -198,6 +198,9 @@ importers:
       '@eslint-community/eslint-plugin-eslint-comments':
         specifier: ^4.4.0
         version: 4.7.2(eslint@9.39.4(jiti@2.7.0))
+      '@mythrun/client-core':
+        specifier: workspace:*
+        version: link:client-core
       '@tailwindcss/vite':
         specifier: ^4.0.0
         version: 4.3.1(vite@6.4.2(@types/node@24.12.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.4))
@@ -248,6 +251,10 @@ importers:
         version: 3.2.4(@types/node@24.12.2)(jiti@2.7.0)(jsdom@25.0.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.4)
 
   frontend/client-core:
+    dependencies:
+      culori:
+        specifier: ^4.0.0
+        version: 4.0.2
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -273,6 +280,9 @@ importers:
       '@fontsource/source-serif-4':
         specifier: ^5.0.0
         version: 5.2.9
+      '@mythrun/client-core':
+        specifier: workspace:*
+        version: link:../client-core
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -280,9 +290,6 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.0
         version: 19.2.3(@types/react@19.2.17)
-      culori:
-        specifier: ^4.0.0
-        version: 4.0.2
       react:
         specifier: ^19.0.0
         version: 19.2.7

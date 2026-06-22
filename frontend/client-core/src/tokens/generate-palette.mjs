@@ -67,9 +67,21 @@ body{font-family:ui-monospace,monospace;background:${p.paper[100]};color:${p.pap
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const here = dirname(fileURLToPath(import.meta.url))
+  // process.argv[2] = output dir for colors.generated.css + tokens.manifest.json.
+  // A passed arg resolves against process.cwd() (normal CLI path semantics — so
+  // `build:tokens` run from frontend/ui with `./src/styles` lands there, and the
+  // round-trip test's absolute tmpDir is honored verbatim). With NO arg we fall
+  // back to a path anchored at this file's dir that reproduces the pre-relocation
+  // behavior: write into @mythrun/ui's styles dir. tokens.html is written next to
+  // src/ at the package root (../../ from .../src/styles → frontend/ui/tokens.html),
+  // matching the pre-relocation location.
+  const argDir = process.argv[2]
+  const outDir = argDir === undefined
+    ? resolve(here, '../../../ui/src/styles')
+    : resolve(process.cwd(), argDir)
   const p = generatePalette()
-  writeFileSync(resolve(here, '../src/styles/colors.generated.css'), toThemeCss(p))
-  writeFileSync(resolve(here, '../src/styles/tokens.manifest.json'), JSON.stringify(toManifest(p), null, 2) + '\n')
-  writeFileSync(resolve(here, '../tokens.html'), toAuditHtml(p))
+  writeFileSync(resolve(outDir, 'colors.generated.css'), toThemeCss(p))
+  writeFileSync(resolve(outDir, 'tokens.manifest.json'), JSON.stringify(toManifest(p), null, 2) + '\n')
+  writeFileSync(resolve(outDir, '../../tokens.html'), toAuditHtml(p))
   console.log('generated colors.generated.css, tokens.manifest.json, tokens.html')
 }

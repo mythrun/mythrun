@@ -1,50 +1,142 @@
 /* Semantic aliases. The remap vars live in :root/.dark (plain CSS, so the
    .dark override CASCADES); `@theme inline` surfaces them as bg-bg/text-ink
    utilities that reference the var at runtime. A plain @theme alias would
-   resolve at :root and never flip — that is the v4 gotcha this avoids. */
+   resolve at :root and never flip — that is the v4 gotcha this avoids.
+
+   CONTRAST (MYT-82 §3/§4): every focus/border/status token below clears its
+   WCAG threshold in BOTH themes — non-text ≥3:1, body text ≥4.5:1 (AA).
+   Ratios measured with culori's wcagContrast against the actual bg/surface
+   steps; values cited inline so a future step change can't silently regress. */
 :root {
   --bg: var(--color-paper-100);
   --surface: var(--color-paper-50);
-  --border: var(--color-paper-300);
+  --border: var(--color-paper-300);          /* decorative dividers ONLY (1.5:1 — sub-3:1, intentional) */
   --ink: var(--color-paper-900);
   --ink-secondary: var(--color-paper-700);
   --ink-tertiary: var(--color-paper-600); /* paper-600 = AA body; brand doc's paper-500 is only 3.27:1 */
   --accent: var(--color-ember-600);
   --accent-hover: var(--color-ember-700);
+  --accent-active: var(--color-ember-800);   /* token-swap pressed state (one step past hover) */
   --success: var(--color-success-500);
   --warning: var(--color-warning-500);
   --danger: var(--color-danger-500);
   --info: var(--color-info-600);
+
+  /* Interactive control boundary — must clear 3:1 vs bg(paper-100) AND surface(paper-50).
+     paper-500 → 3.27:1 vs bg, 3.60:1 vs surface. (paper-300 --border is decorative only.) */
+  --border-strong: var(--color-paper-500);
+
+  /* Token-swap hover surface (one paper step toward the page). */
+  --surface-hover: var(--color-paper-100);
+
+  /* Elevation tiers. Light parchment has no step lighter than paper-50, so the
+     raised/overlay tiers sit at paper-50 and elevation is carried by
+     --border-strong + the modal scrim (flat-1-bit: depth via borders, not
+     shadow — §3). Dark mode has headroom and steps genuinely (see .dark). */
+  --surface-raised: var(--color-paper-50);   /* popover */
+  --surface-overlay: var(--color-paper-50);  /* modal */
+
+  /* Focus ring — 2px hard square outline, 2px offset, theme-aware color.
+     var(--accent) = ember-600 here → 4.81:1 vs bg, 5.30:1 vs surface (≥3:1). */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--accent);
+
+  /* Status-intent (light). --surface-* = tinted -50 panel; body text on it uses
+     --ink. --border-* = -500 step (≥3:1 non-text). --text-* = AA (≥4.5:1) on
+     BOTH the page (paper-100) and its own -50 tint; warning needs -700 (the -600
+     step is only 3.91:1 on paper-100), the rest clear at -600. */
+  --surface-success: var(--color-success-50);
+  --border-success: var(--color-success-500);  /* 3.85:1 vs paper-100, 3.61:1 vs success-50 */
+  --text-success: var(--color-success-600);    /* 4.91:1 vs paper-100, 4.60:1 vs success-50 */
+  --surface-warning: var(--color-warning-50);
+  --border-warning: var(--color-warning-500);  /* 3.11:1 vs paper-100, 3.42:1 vs warning-50 */
+  --text-warning: var(--color-warning-700);    /* 5.30:1 vs paper-100, 5.84:1 vs warning-50 */
+  --surface-danger: var(--color-danger-50);
+  --border-danger: var(--color-danger-500);    /* 3.84:1 vs paper-100, 3.71:1 vs danger-50 */
+  --text-danger: var(--color-danger-600);      /* 4.87:1 vs paper-100, 4.71:1 vs danger-50 */
+  --surface-info: var(--color-info-50);
+  --border-info: var(--color-info-500);        /* 3.67:1 vs paper-100, 3.59:1 vs info-50 */
+  --text-info: var(--color-info-600);          /* 4.67:1 vs paper-100, 4.56:1 vs info-50 */
 }
 
 .dark {
   --bg: var(--color-paper-900);
   --surface: var(--color-paper-800);
-  --border: var(--color-paper-700);
+  --border: var(--color-paper-700);          /* decorative dividers ONLY (1.4:1 — sub-3:1, intentional) */
   --ink: var(--color-paper-100);
   --ink-secondary: var(--color-paper-300);
   --ink-tertiary: var(--color-paper-400);
   --accent: var(--color-ember-400);
   --accent-hover: var(--color-ember-300);
+  --accent-active: var(--color-ember-200);   /* token-swap pressed (lighter one step in dark) */
   --success: var(--color-success-400);
   --warning: var(--color-warning-400);
   --danger: var(--color-danger-400);
   --info: var(--color-info-400);
+
+  /* Interactive control boundary — clear 3:1 vs bg(paper-900) AND surface(paper-800).
+     paper-500 → 4.29:1 vs bg, 3.82:1 vs surface. */
+  --border-strong: var(--color-paper-500);
+
+  --surface-hover: var(--color-paper-700);
+
+  /* Dark elevation steps genuinely: surface=800, raised/overlay=700. */
+  --surface-raised: var(--color-paper-700);  /* popover */
+  --surface-overlay: var(--color-paper-700); /* modal */
+
+  /* Focus ring color flips with --accent → ember-400 here:
+     4.76:1 vs bg, 4.23:1 vs surface (≥3:1). ember-600 would be sub-3:1 on dark. */
+  --focus-ring-color: var(--accent);
+
+  /* Status-intent (dark). --surface-* = tinted -900 panel; body text uses --ink.
+     --border-* = -400 (≥3:1 non-text). --text-* = -300, AA (≥4.5:1) on BOTH the
+     page (paper-900) and its own -900 tint (the -400 step is only ~4.0:1 on its
+     own tint, so it fails AA there — -300 clears both). */
+  --surface-success: var(--color-success-900);
+  --border-success: var(--color-success-400);  /* 4.68:1 vs paper-900, 4.03:1 vs success-900 */
+  --text-success: var(--color-success-300);    /* 6.28:1 vs paper-900, 5.40:1 vs success-900 */
+  --surface-warning: var(--color-warning-900);
+  --border-warning: var(--color-warning-400);  /* 5.74:1 vs paper-900, 4.01:1 vs warning-900 */
+  --text-warning: var(--color-warning-300);    /* 7.61:1 vs paper-900, 5.31:1 vs warning-900 */
+  --surface-danger: var(--color-danger-900);
+  --border-danger: var(--color-danger-400);    /* 4.66:1 vs paper-900, 3.88:1 vs danger-900 */
+  --text-danger: var(--color-danger-300);      /* 6.30:1 vs paper-900, 5.24:1 vs danger-900 */
+  --surface-info: var(--color-info-900);
+  --border-info: var(--color-info-400);        /* 4.91:1 vs paper-900, 4.04:1 vs info-900 */
+  --text-info: var(--color-info-300);          /* 6.56:1 vs paper-900, 5.38:1 vs info-900 */
 }
 
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-ink: var(--ink);
   --color-ink-secondary: var(--ink-secondary);
   --color-ink-tertiary: var(--ink-tertiary);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
   --color-info: var(--info);
+  --color-surface-success: var(--surface-success);
+  --color-border-success: var(--border-success);
+  --color-text-success: var(--text-success);
+  --color-surface-warning: var(--surface-warning);
+  --color-border-warning: var(--border-warning);
+  --color-text-warning: var(--text-warning);
+  --color-surface-danger: var(--surface-danger);
+  --color-border-danger: var(--border-danger);
+  --color-text-danger: var(--text-danger);
+  --color-surface-info: var(--surface-info);
+  --color-border-info: var(--border-info);
+  --color-text-info: var(--text-info);
 }
 
 @custom-variant dark (&:where(.dark, .dark *));

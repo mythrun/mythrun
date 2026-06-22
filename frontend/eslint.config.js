@@ -17,12 +17,15 @@ export default [
     // those `coverage/*.js` files hit the root config's type-aware projectService
     // and fail with "not found by the project service".
     //
-    // `ui/scripts/**` is the `@mythrun/ui` palette generator. It's a build-time
-    // `.mjs` outside every tsconfig project and is already eslint-ignored within
-    // `@mythrun/ui`'s own config — but `@mythrun/web`'s `eslint .` (run from
-    // `frontend/`) globs across the nested `ui/` directory and would otherwise
-    // hit it with the root config's type-aware projectService, same failure mode
-    // as `coverage/**`. `@mythrun/ui` lints its own `src/**`; web ignores it here.
+    // The palette generator + nested-package config/build files are build-time
+    // `.mjs`/`.ts` outside every tsconfig project, already eslint-ignored within
+    // their own packages — but `@mythrun/web`'s `eslint .` (run from `frontend/`)
+    // globs across the nested `ui/` and `client-core/` package dirs and would
+    // otherwise hit them with the root config's type-aware projectService, the
+    // same failure mode as `coverage/**`. Each nested package lints its own
+    // `src/**`; web ignores only their out-of-project files here.
+    // (The generator relocated to `client-core/src/tokens/` in MYT-82 F0b — the
+    // former `ui/scripts/**` carve-out is gone with it.)
     ignores: [
       'dist/**',
       'coverage/**',
@@ -31,7 +34,8 @@ export default [
       'vite.config.ts',
       'vitest.config.ts',
       'scripts/**', // node tooling scripts (e.g. i18n-todo.mjs) — outside the TS project
-      'ui/scripts/**',
+      'client-core/vitest.config.ts',
+      'client-core/src/tokens/generate-palette.mjs',
     ],
   },
   {
