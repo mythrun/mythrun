@@ -33,3 +33,9 @@ export type { SpinnerProps } from './spinner.ts'
 // Icon + Spinner leaves; the contracts stay DOM-free (`onPress`, no className).
 export type { ButtonProps, ButtonVariant, ButtonSize, ButtonType } from './button.ts'
 export type { IconButtonProps } from './icon-button.ts'
+
+// Text-input contracts (MYT-82 Wave 2b) — Input + TextArea. Native form
+// controls, but DOM-free here: the neutral `onChange(value)` (§9), no
+// className/style/raw DOM events.
+export type { InputProps, InputSize, InputType } from './input.ts'
+export type { TextAreaProps } from './text-area.ts'

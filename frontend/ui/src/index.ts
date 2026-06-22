@@ -22,6 +22,10 @@ export { Spinner } from './components/Spinner/Spinner.tsx'
 export { Button } from './components/Button/Button.tsx'
 export { IconButton } from './components/IconButton/IconButton.tsx'
 
+// Text inputs (MYT-82 Wave 2b) — native <input>/<textarea>, neutral onChange.
+export { Input } from './components/Input/Input.tsx'
+export { TextArea } from './components/TextArea/TextArea.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -44,4 +48,8 @@ export type {
   ButtonSize,
   ButtonType,
   IconButtonProps,
+  InputProps,
+  InputSize,
+  InputType,
+  TextAreaProps,
 } from '@mythrun/client-core/contract'

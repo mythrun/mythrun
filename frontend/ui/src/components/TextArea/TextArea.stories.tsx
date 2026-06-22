@@ -1,0 +1,74 @@
+import type { Meta, StoryObj } from '@storybook/react-vite'
+import { TextArea } from './TextArea.tsx'
+
+// TextArea — the multi-line text control. A REAL native <textarea> (form
+// control + a11y), the multi-line sibling of Input: same flat 1-bit register
+// (0px radius, `--border-strong`, `bg-surface`/`text-ink`, mono `font-ui`), same
+// neutral `onChange(value)` (§9), same theme-aware focus ring. Height comes from
+// `rows`; only vertical resize is allowed.
+//
+// State matrix (§6): default · focus (tab to it) · invalid (danger border +
+// `aria-invalid` + danger focus ring) · disabled · read-only. Sizes sm/md/lg set
+// the per-control min-height from `--control-*`.
+//
+// Labelling is FormField's job in the real app. Content/i18n: `placeholder` is
+// an i18n key the consumer resolves.
+
+const meta: Meta<typeof TextArea> = {
+  title: 'Controls/TextArea',
+  component: TextArea,
+  tags: ['autodocs'],
+  argTypes: {
+    size: { control: 'inline-radio', options: ['sm', 'md', 'lg'] },
+    rows: { control: 'number' },
+    invalid: { control: 'boolean' },
+    disabled: { control: 'boolean' },
+    readOnly: { control: 'boolean' },
+    required: { control: 'boolean' },
+    onChange: { action: 'changed' },
+  },
+}
+
+// eslint-disable-next-line no-restricted-syntax -- Storybook CSF requires the meta object as the module's default export.
+export default meta
+
+type Story = StoryObj<typeof TextArea>
+
+export const Default: Story = {
+  args: { rows: 4, defaultValue: 'The road to Stonehollow winds through the fog.' },
+}
+
+// The size axis — sm/md/lg set the per-control min-height (32/40/48px).
+export const Sizes: Story = {
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-3)] w-80">
+      <TextArea size="sm" rows={2} placeholder="control.sm" />
+      <TextArea size="md" rows={3} placeholder="control.md" />
+      <TextArea size="lg" rows={4} placeholder="control.lg" />
+    </div>
+  ),
+}
+
+// Invalid — the danger border token + a danger-colored focus ring; the impl
+// also sets `aria-invalid` so the state reaches assistive tech.
+export const Invalid: Story = {
+  args: { invalid: true, rows: 4, defaultValue: 'Too short.' },
+}
+
+// Disabled — the native disabled attribute + muted token swap (a11y-exempt for
+// contrast). Non-interactive.
+export const Disabled: Story = {
+  args: { disabled: true, rows: 4, defaultValue: "Can't edit this." },
+}
+
+// Read-only — value visible but not editable (native readOnly). Still focusable.
+export const ReadOnly: Story = {
+  name: 'Read-only',
+  args: { readOnly: true, rows: 4, defaultValue: 'Locked narration.' },
+}
+
+// Placeholder — an i18n key the consumer resolves (shown muted).
+export const WithPlaceholder: Story = {
+  name: 'With placeholder',
+  args: { rows: 4, placeholder: 'field.session_notes' },
+}
