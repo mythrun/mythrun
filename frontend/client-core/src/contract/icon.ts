@@ -19,6 +19,11 @@ export type IconName =
   | 'menu'
   | 'search'
   | 'external-link'
+  // Status-intent severities (MYT-82 W3c — Banner / Toast). `check` (above)
+  // doubles as the success glyph; these add the other three severities.
+  | 'info'
+  | 'warning-diamond'
+  | 'square-alert'
 
 /** Token icon size → `--icon-sm/md/lg` (16 / 20 / 24px). Default `md`. */
 export type IconSize = 'sm' | 'md' | 'lg'

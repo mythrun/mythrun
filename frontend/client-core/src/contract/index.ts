@@ -80,3 +80,13 @@ export type { PopoverProps, PopoverSide } from './popover.ts'
 export type { TooltipProps, TooltipProviderProps, TooltipSide } from './tooltip.ts'
 export type { TabsProps, TabItem } from './tabs.ts'
 export type { MenuProps, MenuItem, MenuSide } from './menu.ts'
+
+// Status-intent feedback contracts (MYT-82 Wave 3c) — Banner (inline, persistent)
+// + Toast (transient, app-global). Both share the `Severity` intent union. The
+// `--surface/border/text-{severity}` token triad carries the icon + accent only;
+// body text is always `--ink` (§4). Banner's role is status (success/info) vs
+// alert (warning/danger); the Toast subsystem is imperative — `toast()` + a root
+// `ToastProvider` whose viewport is a pre-existing live region. The `toast()`
+// function is a RUNTIME value, so it ships from the UI package, not this barrel.
+export type { BannerProps, Severity } from './banner.ts'
+export type { ToastOptions, ToastProviderProps } from './toast.ts'

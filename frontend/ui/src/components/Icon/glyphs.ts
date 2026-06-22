@@ -81,4 +81,21 @@ export const GLYPHS: Record<IconName, Glyph> = {
       'M21 3h-8v2h8V3Z',
     ],
   },
+  // Status-intent severity glyphs (MYT-82 W3c). `info` = info-box, `warning-diamond`
+  // = warning, `square-alert` = danger. Success reuses `check` (above). Path data
+  // copied VERBATIM from pixelarticons/svg/<name>.svg (all viewBox="0 0 24 24").
+  info: {
+    viewBox: VIEWBOX_24,
+    paths: ['M4 2h16v2H4zm0 18h16v2H4zM2 4h2v16H2zm18 0h2v16h-2zm-9 5h2V7h-2zm0 8h2v-6h-2z'],
+  },
+  'warning-diamond': {
+    viewBox: VIEWBOX_24,
+    paths: [
+      'M2 10h2v2H2zm0 4h2v-2H2zm20-4h-2v2h2zm0 4h-2v-2h2zM4 8h2v2H4zm0 8h2v-2H4zm16-8h-2v2h2zm0 8h-2v-2h2zM6 6h2v2H6zm0 12h2v-2H6zM18 6h-2v2h2zm0 12h-2v-2h2zM8 4h2v2H8zm0 16h2v-2H8zm8-16h-2v2h2zm0 16h-2v-2h2zM10 2h2v2h-2zm0 20h2v-2h-2zm4-20h-2v2h2zm0 20h-2v-2h2zm-3-5h2v-2h-2zm0-4h2V7h-2z',
+    ],
+  },
+  'square-alert': {
+    viewBox: VIEWBOX_24,
+    paths: ['M4 2h16v2H4zm0 18h16v2H4zM20 4h2v16h-2zM2 4h2v16H2zm9 2h2v8h-2zm0 10h2v2h-2z'],
+  },
 }

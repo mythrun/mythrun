@@ -57,6 +57,13 @@ export { Tooltip, TooltipProvider } from './components/Tooltip/Tooltip.tsx'
 export { Tabs } from './components/Tabs/Tabs.tsx'
 export { Menu } from './components/Menu/Menu.tsx'
 
+// Status-intent feedback (MYT-82 Wave 3c) — Banner (inline, persistent) + the
+// Toast subsystem (transient, app-global). Toast is IMPERATIVE: mount a single
+// `<ToastProvider>` at the app root and call `toast(options)` from anywhere.
+export { Banner } from './components/Banner/Banner.tsx'
+export { ToastProvider } from './components/Toast/Toast.tsx'
+export { toast } from './components/Toast/toast-store.ts'
+
 export type {
   StackProps,
   BoxProps,
@@ -108,4 +115,8 @@ export type {
   MenuProps,
   MenuItem,
   MenuSide,
+  BannerProps,
+  Severity,
+  ToastOptions,
+  ToastProviderProps,
 } from '@mythrun/client-core/contract'
