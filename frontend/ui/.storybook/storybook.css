@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+@import '@mythrun/ui/styles.css';
+
+/* Tailwind v4 does NOT auto-scan node_modules or this config dir's siblings,
+   so register the library's own source for utility-class detection — every
+   token class used in a story (bg-ember-600, text-ink, etc.) must be findable
+   here. Mirrors frontend/src/index.css's @source "../ui/src". */
+@source "../src";

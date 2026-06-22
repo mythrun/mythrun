@@ -5,7 +5,16 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 export default [
   ...root,
   {
-    ignores: ['dist/**', 'src/**/*.css', 'scripts/**'],
+    // `vitest.config.ts` default-exports `defineConfig(...)` (banned repo-wide
+    // by the root config's no-default-export rule, which only ignores
+    // `**/*.config.js` — not the `.ts` config), and is outside this package's
+    // TS project, so the root's type-aware projectService would reject it.
+    // Ignored here, mirroring the @mythrun/web + client-core precedent.
+    // (`.storybook/main.ts` + `.storybook/preview.tsx` ALSO default-export, but
+    // they ARE inside the TS project — included in tsconfig.json so they
+    // typecheck — so they carry an inline `no-restricted-syntax` disable
+    // instead of a blanket ignore here, keeping the rest of the rule active.)
+    ignores: ['dist/**', 'storybook-static/**', 'src/**/*.css', 'scripts/**', 'vitest.config.ts'],
   },
   {
     // a11y enforcement is a LIBRARY responsibility (spec §5.3): intrinsic DOM

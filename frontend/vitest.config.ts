@@ -1,8 +1,15 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig, configDefaults } from 'vitest/config'
 
 export default defineConfig({
   test: {
     environment: 'jsdom',
+    // @mythrun/web is the root frontend package; `client-core/` and `ui/` are
+    // NESTED workspace packages that each own their own vitest config + run.
+    // Without these excludes, web's default `frontend/**` discovery would pick
+    // up their *.test.* files and run them here too — out of their own package
+    // context (wrong setup/coverage config) and double-counted in CI. Each
+    // nested package runs under its own `pnpm --filter` test script.
+    exclude: [...configDefaults.exclude, 'client-core/**', 'ui/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],

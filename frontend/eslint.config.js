@@ -36,6 +36,12 @@ export default [
       'scripts/**', // node tooling scripts (e.g. i18n-todo.mjs) — outside the TS project
       'client-core/vitest.config.ts',
       'client-core/src/tokens/generate-palette.mjs',
+      // @mythrun/ui's vitest config default-exports `defineConfig(...)` and is
+      // outside web's TS project — same carve-out as client-core's. ui lints
+      // it under its own package config. (`ui/.storybook/**` is a dot-dir,
+      // auto-skipped by `eslint .`; its configs are linted within @mythrun/ui.)
+      'ui/vitest.config.ts',
+      'ui/storybook-static/**', // Storybook build output (gitignored artifact) — never lint it
     ],
   },
   {
