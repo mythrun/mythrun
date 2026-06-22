@@ -50,6 +50,13 @@ export default [
       // auto-skipped by `eslint .`; its configs are linted within @mythrun/ui.)
       'ui/vitest.config.ts',
       'ui/storybook-static/**', // Storybook build output (gitignored artifact) — never lint it
+      // @mythrun/ui's node tooling scripts (e.g. the story-coverage gate + its
+      // vitest test) live in `ui/scripts/**`, outside web's TS project — same
+      // out-of-project carve-out as web's own `scripts/**` above. ui lints them
+      // under its own package config (where they are likewise eslint-ignored as
+      // node tooling). Without this, web's `eslint .` globs across the nested
+      // dir and the root config's type-aware projectService rejects them.
+      'ui/scripts/**',
     ],
   },
   {
@@ -116,6 +123,68 @@ export default [
       '@typescript-eslint/no-misused-promises': [
         'error',
         { checksVoidReturn: { attributes: false } },
+      ],
+    },
+  },
+  {
+    // R2/R5 (portability) — design-system import boundary, the enforceable-now
+    // half (MYT-82 F0c4). The design system's internal building blocks
+    // (radix-ui, CVA, tailwind-merge/clsx, the pixelarticons icon set) belong
+    // INSIDE @mythrun/ui — they are how the library is built, not API for app /
+    // feature code. App code composes the library's PUBLIC components; reaching
+    // for these primitives in a feature means a one-off UI element that lives
+    // outside the system (un-portable, R2). Deep imports into @mythrun/ui's
+    // source (`@mythrun/ui/src/*`) bypass the package entry and couple app code
+    // to the library's internal file layout, so they are banned too — import
+    // from the package root `@mythrun/ui`.
+    //
+    // DEFERRED to MYT-83 (when feature directories + the component taxonomy
+    // exist): the FULL "features may import UI only from an allowlist" rule and
+    // the cross-feature-component boundary (no feature reaching into another
+    // feature's components). Those need `eslint-plugin-import`'s
+    // `no-restricted-paths` / `eslint-plugin-boundaries` keyed off the
+    // not-yet-existing feature dir structure, so they can't be expressed today.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'radix-ui',
+              message:
+                "radix-ui is a design-system primitive. Build with it INSIDE @mythrun/ui; app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+            },
+            {
+              name: 'class-variance-authority',
+              message:
+                "class-variance-authority is a design-system internal. Variants live INSIDE @mythrun/ui; app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+            },
+            {
+              name: 'tailwind-merge',
+              message:
+                "tailwind-merge is a design-system internal. Class merging belongs INSIDE @mythrun/ui (cn()); app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+            },
+            {
+              name: 'clsx',
+              message:
+                "clsx is a design-system internal. Class composition belongs INSIDE @mythrun/ui (cn()); app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+            },
+            {
+              name: 'pixelarticons',
+              message:
+                "pixelarticons is the design-system's icon source. Icons are exposed as @mythrun/ui components; app/feature code imports those from '@mythrun/ui', not the raw icon set. (MYT-82 F0c4 import boundary.)",
+            },
+          ],
+          patterns: [
+            {
+              group: ['@mythrun/ui/src/*', '@mythrun/ui/src/**'],
+              message:
+                "Deep imports into @mythrun/ui's source bypass the package entry and couple app code to the library's internal layout. Import from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+            },
+          ],
+        },
       ],
     },
   },

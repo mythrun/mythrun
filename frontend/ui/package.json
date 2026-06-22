@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --no-error-on-unmatched-pattern",
     "lint:css": "stylelint 'src/components/**/*.css' --allow-empty-input",
+    "story-coverage": "node scripts/story-coverage.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "build:tokens": "node ../client-core/src/tokens/generate-palette.mjs ./src/styles",

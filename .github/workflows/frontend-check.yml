@@ -19,11 +19,28 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile --filter @mythrun/web... --filter @mythrun/ui...
+      - run: pnpm install --frozen-lockfile --filter @mythrun/web... --filter @mythrun/ui... --filter @mythrun/client-core...
 
+      # @mythrun/client-core — the platform-neutral client brain (contract +
+      # tokens). Logic-tested + 100% coverage gated (its own tiered config).
+      - run: pnpm --filter @mythrun/client-core typecheck
+      - run: pnpm --filter @mythrun/client-core lint
+      - run: pnpm --filter @mythrun/client-core test
+      - run: pnpm --filter @mythrun/client-core test:coverage
+
+      # @mythrun/ui — the design system. typecheck/lint + CSS lint, behavior
+      # tests + tiered coverage, the story-coverage gate (every component ships
+      # a story), and a Storybook production build (catches story/MDX breakage).
       - run: pnpm --filter @mythrun/ui typecheck
-      - run: pnpm --filter @mythrun/web typecheck
       - run: pnpm --filter @mythrun/ui lint
+      - run: pnpm --filter @mythrun/ui lint:css
+      - run: pnpm --filter @mythrun/ui test
+      - run: pnpm --filter @mythrun/ui test:coverage
+      - run: pnpm --filter @mythrun/ui story-coverage
+      - run: pnpm --filter @mythrun/ui build-storybook
+
+      # @mythrun/web — the app shell (consumes @mythrun/ui).
+      - run: pnpm --filter @mythrun/web typecheck
       - run: pnpm --filter @mythrun/web lint
       - run: pnpm --filter @mythrun/web test
       - run: pnpm --filter @mythrun/web test:coverage
