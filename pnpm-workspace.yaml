@@ -3,4 +3,5 @@ packages:
   - 'backend/dev-tool'
   - 'docs/wiki'
   - 'frontend'
+  - 'frontend/client-core'
   - 'frontend/ui'

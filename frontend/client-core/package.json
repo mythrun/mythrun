@@ -1,0 +1,22 @@
+{
+  "name": "@mythrun/client-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./contract": "./src/contract/index.ts" },
+  "types": "./src/contract/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --no-error-on-unmatched-pattern",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": { "react": "^19.0.0" },
+  "devDependencies": {
+    "react": "^19.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0",
+    "@vitest/coverage-v8": "^3.0.0"
+  }
+}
