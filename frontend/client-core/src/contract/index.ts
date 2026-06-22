@@ -9,3 +9,11 @@ export interface BaseProps {
   children?: ReactNode
   'data-testid'?: string
 }
+
+// Layout-primitive contracts (MYT-82 Wave 1). Type-only re-exports — the barrel
+// stays free of runtime values (asserted by contract.test.ts).
+export type { SpaceToken } from './space-token.ts'
+export type { StackProps } from './stack.ts'
+export type { BoxProps } from './box.ts'
+export type { GridProps } from './grid.ts'
+export type { DividerProps } from './divider.ts'

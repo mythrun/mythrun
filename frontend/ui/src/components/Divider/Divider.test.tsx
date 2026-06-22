@@ -1,0 +1,61 @@
+import { describe, it, expect } from 'vitest'
+import { createRef } from 'react'
+import { render } from '@testing-library/react'
+import { axe } from 'jest-axe'
+import { Divider } from './Divider.tsx'
+
+describe('Divider', () => {
+  it('renders a separator', () => {
+    const { getByRole } = render(<Divider data-testid="divider" />)
+    const el = getByRole('separator')
+    expect(el.tagName).toBe('DIV')
+  })
+
+  it('is horizontal by default with aria-orientation=horizontal', () => {
+    const { getByRole } = render(<Divider />)
+    const el = getByRole('separator')
+    expect(el.getAttribute('aria-orientation')).toBe('horizontal')
+  })
+
+  it('sets aria-orientation=vertical when orientation=vertical', () => {
+    const { getByRole } = render(<Divider orientation="vertical" />)
+    expect(getByRole('separator').getAttribute('aria-orientation')).toBe('vertical')
+  })
+
+  it('is a 1px horizontal rule by default', () => {
+    const { getByRole } = render(<Divider />)
+    const el = getByRole('separator')
+    expect(el.classList.contains('h-px')).toBe(true)
+    expect(el.classList.contains('w-full')).toBe(true)
+  })
+
+  it('is a 1px vertical rule when orientation=vertical', () => {
+    const { getByRole } = render(<Divider orientation="vertical" />)
+    const el = getByRole('separator')
+    expect(el.classList.contains('w-px')).toBe(true)
+    expect(el.classList.contains('h-full')).toBe(true)
+  })
+
+  it('uses the decorative --border token (not --border-strong)', () => {
+    const { getByRole } = render(<Divider />)
+    const el = getByRole('separator')
+    expect(el.classList.contains('bg-border')).toBe(true)
+    expect(el.classList.contains('bg-border-strong')).toBe(false)
+  })
+
+  it('forwards its ref to the underlying div', () => {
+    const ref = createRef<HTMLDivElement>()
+    render(<Divider ref={ref} />)
+    expect(ref.current).toBeInstanceOf(HTMLDivElement)
+  })
+
+  it('has no axe violations (horizontal)', async () => {
+    const { container } = render(<Divider />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('has no axe violations (vertical)', async () => {
+    const { container } = render(<Divider orientation="vertical" />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
