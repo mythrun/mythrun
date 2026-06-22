@@ -1,0 +1,125 @@
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { axe } from 'jest-axe'
+import { Menu } from './Menu.tsx'
+
+const ITEMS = [
+  { value: 'rename', label: 'menu.rename' },
+  { value: 'duplicate', label: 'menu.duplicate' },
+  { value: 'delete', label: 'menu.delete' },
+] as const
+
+const trigger = <button type="button">actions</button>
+
+describe('Menu', () => {
+  it('is closed initially and opens on click', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} />)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await user.click(screen.getByText('actions'))
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+  })
+
+  // KEYBOARD: opens on Enter, ArrowDown navigates items, Enter selects (fires the
+  // neutral onSelect with the item VALUE).
+  it('keyboard: opens on Enter, ArrowDown navigates, Enter selects — onSelect gets the value', async () => {
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} onSelect={onSelect} />)
+
+    screen.getByText('actions').focus()
+    await user.keyboard('{Enter}')
+    await screen.findByRole('menu')
+
+    // First item is focused on open; ArrowDown moves to the second; Enter selects it.
+    await user.keyboard('{ArrowDown}{Enter}')
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('duplicate')
+    })
+    expect(typeof onSelect.mock.calls[0]?.[0]).toBe('string')
+  })
+
+  it('keyboard: opens on ArrowDown as well', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} />)
+    screen.getByText('actions').focus()
+    await user.keyboard('{ArrowDown}')
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+  })
+
+  // Esc closes AND returns focus to the trigger.
+  it('Esc closes and returns focus to the trigger', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} />)
+    const triggerEl = screen.getByText('actions')
+    triggerEl.focus()
+    await user.keyboard('{Enter}')
+    await screen.findByRole('menu')
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(triggerEl).toHaveFocus()
+    })
+  })
+
+  it('pointer: clicking an item selects it and reports the value', async () => {
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} onSelect={onSelect} />)
+    await user.click(screen.getByText('actions'))
+    await user.click(await screen.findByRole('menuitem', { name: 'menu.delete' }))
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('delete')
+    })
+  })
+
+  it('a disabled item is present but not selectable', async () => {
+    const items = [
+      { value: 'a', label: 'menu.a' },
+      { value: 'b', label: 'menu.b', disabled: true },
+    ]
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={items} onSelect={onSelect} />)
+    await user.click(screen.getByText('actions'))
+    const disabledItem = await screen.findByRole('menuitem', { name: 'menu.b' })
+    expect(disabledItem).toHaveAttribute('data-disabled')
+    await user.click(disabledItem)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('controlled: onOpenChange fires a boolean', async () => {
+    const onOpenChange = vi.fn()
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} onOpenChange={onOpenChange} />)
+    await user.click(screen.getByText('actions'))
+    await screen.findByRole('menu')
+    expect(onOpenChange).toHaveBeenCalledWith(true)
+    expect(typeof onOpenChange.mock.calls[0]?.[0]).toBe('boolean')
+  })
+
+  it('menu content carries the raised surface + z-dropdown + border tokens', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} data-testid="menu" />)
+    await user.click(screen.getByText('actions'))
+    const panel = await screen.findByTestId('menu')
+    expect(panel).toHaveClass('bg-surface-raised', 'rounded-none', 'border', 'border-border-strong')
+    expect(panel.className).toContain('z-[var(--z-dropdown)]')
+  })
+
+  it('has no axe violations when open', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={trigger} items={ITEMS} />)
+    await user.click(screen.getByText('actions'))
+    await screen.findByRole('menu')
+    // Scan the whole document so the PORTALLED menu is included. `region` is a
+    // page-STRUCTURE best-practice rule (all content must sit in a landmark) — an
+    // app-shell concern, not a component one; the portalled popper wrapper is a
+    // bare div by design, so we disable just that rule here and keep every
+    // component-level a11y rule active.
+    expect(await axe(document.body, { rules: { region: { enabled: false } } })).toHaveNoViolations()
+  })
+})

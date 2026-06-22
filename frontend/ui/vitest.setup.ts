@@ -37,3 +37,23 @@ elementProto.hasPointerCapture = () => false
 elementProto.setPointerCapture = () => undefined
 elementProto.releasePointerCapture = () => undefined
 elementProto.scrollIntoView = () => undefined
+
+// Radix overlays that POSITION a portalled layer (Popover, Tooltip, DropdownMenu
+// via @floating-ui) observe the trigger/content geometry with ResizeObserver,
+// which jsdom does not implement. Without this shim the open path throws on
+// `new ResizeObserver(...)` instead of exercising the keyboard/focus behavior.
+// A no-op observer is sufficient: the tests assert open/close + focus + ARIA, not
+// pixel placement (jsdom has no layout). ENVIRONMENT polyfill, not production.
+if (!('ResizeObserver' in globalThis)) {
+  ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+    observe() {
+      return undefined
+    }
+    unobserve() {
+      return undefined
+    }
+    disconnect() {
+      return undefined
+    }
+  }
+}

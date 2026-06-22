@@ -45,6 +45,18 @@ export { FormField } from './components/FormField/FormField.tsx'
 // shadow); the compound-component / slot pattern (§9).
 export { Card, CardHeader, CardBody, CardFooter } from './components/Card/Card.tsx'
 
+// Overlays (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu. Each wraps
+// an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip / Tabs /
+// DropdownMenu): Radix supplies the a11y headline (focus trap + focus-RETURN,
+// keyboard nav, portals, ARIA wiring), we supply the token styling + `--z-*`
+// layering. DOM-free contracts (neutral onOpenChange/onChange/onSelect). Tooltip
+// ships its Provider (mount once at the app root).
+export { Modal } from './components/Modal/Modal.tsx'
+export { Popover } from './components/Popover/Popover.tsx'
+export { Tooltip, TooltipProvider } from './components/Tooltip/Tooltip.tsx'
+export { Tabs } from './components/Tabs/Tabs.tsx'
+export { Menu } from './components/Menu/Menu.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -85,4 +97,15 @@ export type {
   CardHeaderProps,
   CardBodyProps,
   CardFooterProps,
+  ModalProps,
+  PopoverProps,
+  PopoverSide,
+  TooltipProps,
+  TooltipProviderProps,
+  TooltipSide,
+  TabsProps,
+  TabItem,
+  MenuProps,
+  MenuItem,
+  MenuSide,
 } from '@mythrun/client-core/contract'

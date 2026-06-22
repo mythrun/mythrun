@@ -35,6 +35,8 @@ describe('token presence (manifest-driven)', () => {
       '--accent', '--accent-hover', '--success', '--warning', '--danger', '--info',
       // --surface family extends the shipped alias (theme-aware tiers, §4)
       '--surface-raised', '--surface-overlay', '--surface-hover',
+      // modal scrim — the theme-aware dimming veil behind an overlay (§3/§4)
+      '--scrim',
       // interactive control boundary + theme-aware focus ring color
       '--border-strong', '--focus-ring-color', '--accent-active',
       // status-intent triplets (theme-aware, AA-verified)

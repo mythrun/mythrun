@@ -67,3 +67,16 @@ export type {
   CardBodyProps,
   CardFooterProps,
 } from './card.ts'
+
+// Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
+// Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip
+// / Tabs / DropdownMenu) in the web impl — Radix supplies the a11y headline
+// (focus trap + focus-RETURN, keyboard nav, portals, ARIA wiring), we supply the
+// token styling + `--z-*` layering. The contracts stay DOM-free: neutral
+// `onOpenChange`/`onChange`/`onSelect` booleans/values, i18n-key labels, no
+// className/style/raw DOM events. Triggers + panel content come in as slots.
+export type { ModalProps } from './modal.ts'
+export type { PopoverProps, PopoverSide } from './popover.ts'
+export type { TooltipProps, TooltipProviderProps, TooltipSide } from './tooltip.ts'
+export type { TabsProps, TabItem } from './tabs.ts'
+export type { MenuProps, MenuItem, MenuSide } from './menu.ts'
