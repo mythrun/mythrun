@@ -12,6 +12,11 @@ export { Heading } from './components/Heading/Heading.tsx'
 export { Link } from './components/Link/Link.tsx'
 export { VisuallyHidden } from './components/VisuallyHidden/VisuallyHidden.tsx'
 
+// Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
+// IconButton).
+export { Icon } from './components/Icon/Icon.tsx'
+export { Spinner } from './components/Spinner/Spinner.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -25,4 +30,8 @@ export type {
   HeadingRole,
   LinkProps,
   VisuallyHiddenProps,
+  IconProps,
+  IconName,
+  IconSize,
+  SpinnerProps,
 } from '@mythrun/client-core/contract'

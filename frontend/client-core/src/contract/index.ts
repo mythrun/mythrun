@@ -23,3 +23,8 @@ export type { TextProps, TextRole } from './text.ts'
 export type { HeadingProps, HeadingLevel, HeadingRole } from './heading.ts'
 export type { LinkProps } from './link.ts'
 export type { VisuallyHiddenProps } from './visually-hidden.ts'
+
+// Leaf-primitive contracts (MYT-82 Wave 1c) — Icon + Spinner, composed by the
+// controls (Button loading, IconButton).
+export type { IconProps, IconName, IconSize } from './icon.ts'
+export type { SpinnerProps } from './spinner.ts'
