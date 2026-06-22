@@ -1,0 +1,39 @@
+import type { BaseProps } from './index.ts'
+
+/**
+ * Flat container with optional header / body / footer slots. Depth rides on the
+ * brand's flat 1-bit register (§3): a 1px `--border-strong` edge over a paper
+ * surface tier, 0px radius, NO shadow. Use it to group related content into a
+ * bounded panel — a titled card, a list item, a form section.
+ *
+ * Compound-component / slot pattern (§9): compose `Card` with `CardHeader`,
+ * `CardBody`, and `CardFooter`. `Card` is a neutral generic container — it
+ * imposes no role and no implicit heading; if a `CardHeader` carries a heading,
+ * that is the consumer's call (render a {@link HeadingProps Heading} inside it).
+ */
+export interface CardProps extends BaseProps {
+  /**
+   * Elevation surface: `base` (`--surface`) or `raised` (`--surface-raised`,
+   * popover tier). Default `base`. Depth is the surface tier + the
+   * `--border-strong` edge, never a shadow.
+   */
+  surface?: 'base' | 'raised'
+}
+
+/**
+ * Top region of a {@link CardProps Card}. Token-padded, with a 1px decorative
+ * `--border` divider along its bottom edge separating it from the body. A
+ * generic container — supply your own {@link HeadingProps Heading} as a child
+ * if the card is titled.
+ */
+export type CardHeaderProps = BaseProps
+
+/** Main content region of a {@link CardProps Card}. Token-padded, no divider. */
+export type CardBodyProps = BaseProps
+
+/**
+ * Bottom region of a {@link CardProps Card}. Token-padded, with a 1px decorative
+ * `--border` divider along its top edge separating it from the body — the home
+ * for card actions (a footer {@link ButtonProps Button}).
+ */
+export type CardFooterProps = BaseProps

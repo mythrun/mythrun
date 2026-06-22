@@ -40,6 +40,11 @@ export { Switch } from './components/Switch/Switch.tsx'
 export { Label } from './components/Label/Label.tsx'
 export { FormField } from './components/FormField/FormField.tsx'
 
+// Containers (MYT-82 Wave 3a) — Card + its header/body/footer slots. A flat
+// container (1px --border-strong edge, paper surface tier, 0px radius, no
+// shadow); the compound-component / slot pattern (§9).
+export { Card, CardHeader, CardBody, CardFooter } from './components/Card/Card.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -76,4 +81,8 @@ export type {
   SwitchProps,
   LabelProps,
   FormFieldProps,
+  CardProps,
+  CardHeaderProps,
+  CardBodyProps,
+  CardFooterProps,
 } from '@mythrun/client-core/contract'

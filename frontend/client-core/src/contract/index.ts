@@ -56,3 +56,14 @@ export type { SwitchProps } from './switch.ts'
 // `describedBy` relationship prop. DOM-free: i18n keys, no className/style.
 export type { LabelProps } from './label.ts'
 export type { FormFieldProps } from './form-field.ts'
+
+// Container contracts (MYT-82 Wave 3a) — Card + its header/body/footer slots.
+// The compound-component / slot pattern (§9): `Card` is a neutral flat
+// container (1px `--border-strong` edge, paper surface tier, 0px radius, no
+// shadow); the slots are token-padded regions with `--border` dividers.
+export type {
+  CardProps,
+  CardHeaderProps,
+  CardBodyProps,
+  CardFooterProps,
+} from './card.ts'
