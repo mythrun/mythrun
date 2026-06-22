@@ -17,3 +17,23 @@ expect.extend(toHaveNoViolations)
 afterEach(() => {
   cleanup()
 })
+
+// jsdom gaps for Radix primitives. Radix Select (and other Popper-positioned
+// primitives) call Pointer Capture + scrollIntoView APIs that jsdom does not
+// implement; without these shims the open/keyboard interaction tests throw
+// instead of exercising the real behavior. These are ENVIRONMENT polyfills (a
+// known jsdom gap), not production code — they live in the test setup only.
+//
+// TS types these methods as always-present on Element.prototype (the DOM lib
+// declares them), so the runtime assignment goes through an `unknown` cast —
+// jsdom genuinely lacks them and the no-op bodies are deliberate.
+const elementProto = Element.prototype as unknown as {
+  hasPointerCapture: () => boolean
+  setPointerCapture: () => void
+  releasePointerCapture: () => void
+  scrollIntoView: () => void
+}
+elementProto.hasPointerCapture = () => false
+elementProto.setPointerCapture = () => undefined
+elementProto.releasePointerCapture = () => undefined
+elementProto.scrollIntoView = () => undefined

@@ -26,6 +26,14 @@ export { IconButton } from './components/IconButton/IconButton.tsx'
 export { Input } from './components/Input/Input.tsx'
 export { TextArea } from './components/TextArea/TextArea.tsx'
 
+// Form controls (MYT-82 Wave 2c) — Select / Checkbox / Radio + RadioGroup /
+// Switch. Each wraps an unstyled `radix-ui` primitive, styled with our tokens,
+// behind the DOM-free contract (neutral onChange).
+export { Select } from './components/Select/Select.tsx'
+export { Checkbox } from './components/Checkbox/Checkbox.tsx'
+export { RadioGroup, Radio } from './components/RadioGroup/RadioGroup.tsx'
+export { Switch } from './components/Switch/Switch.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -52,4 +60,12 @@ export type {
   InputSize,
   InputType,
   TextAreaProps,
+  SelectProps,
+  SelectOption,
+  SelectSize,
+  CheckboxProps,
+  CheckedState,
+  RadioProps,
+  RadioGroupProps,
+  SwitchProps,
 } from '@mythrun/client-core/contract'

@@ -39,3 +39,13 @@ export type { IconButtonProps } from './icon-button.ts'
 // className/style/raw DOM events.
 export type { InputProps, InputSize, InputType } from './input.ts'
 export type { TextAreaProps } from './text-area.ts'
+
+// Form-control contracts (MYT-82 Wave 2c) — Select / Checkbox / Radio /
+// RadioGroup / Switch. These wrap the unstyled `radix-ui` primitives in the web
+// impl, styled with our tokens; the contracts stay DOM-free (neutral
+// `onChange(value|checked)`, no className/style/raw DOM events). The native impl
+// swaps `rn-primitives` (same API) behind the same contract.
+export type { SelectProps, SelectOption, SelectSize } from './select.ts'
+export type { CheckboxProps, CheckedState } from './checkbox.ts'
+export type { RadioProps, RadioGroupProps } from './radio.ts'
+export type { SwitchProps } from './switch.ts'
