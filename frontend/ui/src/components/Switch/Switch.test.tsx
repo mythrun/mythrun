@@ -91,6 +91,22 @@ describe('Switch', () => {
     expect(thumb).toHaveClass('data-[state=checked]:translate-x-[var(--space-3)]')
   })
 
+  it('has a VISIBLE thumb in BOTH states — contrasting token color per state', () => {
+    // The round-2 bug: OFF the thumb was `bg-paper-50`, equal to the `--surface`
+    // track → invisible. The thumb must contrast with its track in EACH state, so
+    // the state reads without relying on the slide alone: OFF → `--ink` thumb on
+    // the muted surface track; ON → `--surface` thumb on the `--accent` track.
+    render(<Switch />)
+    const thumb = screen.getByRole('switch').querySelector('span')
+    expect(thumb).not.toBeNull()
+    // OFF resting color = ink (contrasts the surface track).
+    expect(thumb).toHaveClass('bg-ink')
+    // ON color = surface (contrasts the accent track) — token-swapped on checked.
+    expect(thumb).toHaveClass('data-[state=checked]:bg-surface')
+    // The OFF color is NOT the old track-matching paper-50.
+    expect(thumb).not.toHaveClass('bg-paper-50')
+  })
+
   it('forwards its ref to the underlying control', () => {
     const ref = createRef<HTMLButtonElement>()
     render(<Switch ref={ref} />)

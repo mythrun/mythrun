@@ -11,14 +11,17 @@ import { cn } from '../../lib/cn.ts'
 //
 // Flat 1-bit (§3): 0px radius everywhere — a RECTANGULAR track with a RECTANGULAR
 // thumb (`rounded-none` on both), no pill exception. off → `--surface` track +
-// `--border-strong` edge; on → `--accent` fill (the token-swap). The thumb
-// SLIDES via a logical-property translate — but that's a control affordance (the
-// state IS its position), not decorative motion. We keep it to `transform` +
-// `--duration-fast`/`--ease-out`; the global `prefers-reduced-motion` reset in
-// base.css neutralises the transition for motion-averse users (the on/off color
-// swap still conveys the state, so motion is never the sole signal). disabled
-// gets the muted token swap (a11y-exempt for contrast, §4); the focus ring is the
-// shared theme-aware `outline-accent`.
+// `--border-strong` edge; on → `--accent` fill (the token-swap). The THUMB is a
+// contrasting block in BOTH states so it's always visible (round-2 fix: the old
+// `bg-paper-50` thumb equalled the `--surface` track off → it vanished). off →
+// `--ink` thumb on the surface track; on → `--surface` thumb on the accent track.
+// The thumb SLIDES via a logical-property translate — but that's a control
+// affordance (the state IS its position), not decorative motion. We keep it to
+// `transform` + `--duration-fast`/`--ease-out`; the global `prefers-reduced-motion`
+// reset in base.css neutralises the transition for motion-averse users (the on/off
+// color swap + the visible thumb still convey the state, so motion is never the
+// sole signal). disabled gets the muted token swap (a11y-exempt for contrast, §4);
+// the focus ring is the shared theme-aware `outline-accent`.
 
 export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch(
   { checked, defaultChecked, onChange, disabled = false, id, describedBy, name, label },
@@ -48,8 +51,11 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
     >
       <RadixSwitch.Thumb
         className={cn(
-          'block h-[var(--space-3)] w-[var(--space-3)] rounded-none bg-paper-50',
-          // The slide IS the state — opacity/position only, fast + eased, reduced-motion-safe.
+          'block h-[var(--space-3)] w-[var(--space-3)] rounded-none',
+          // Contrasting thumb in BOTH states (so the state never relies on slide
+          // alone): off = ink on the surface track; on = surface on the accent track.
+          'bg-ink data-[state=checked]:bg-surface',
+          // The slide IS the state — position only, fast + eased, reduced-motion-safe.
           'transition-transform duration-[var(--duration-fast)] ease-[var(--ease-out)]',
           'translate-x-0 data-[state=checked]:translate-x-[var(--space-3)]',
         )}

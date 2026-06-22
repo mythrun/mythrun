@@ -8,8 +8,8 @@ import { CELL_PX } from './bayer.ts'
 // The exact pixels are hard to unit-test (jsdom has no layout), so these assert
 // STRUCTURE: the decorative texture layer exists, it is built from the design
 // TOKEN colors (CSS vars, never raw hex), it is NOT a smooth CSS gradient (the
-// brand forbids those), it honours the cell size + axis, and any children layer
-// over it stay in the a11y tree.
+// brand forbids those), it TILES square cells (no stretching viewBox), it honours
+// the cell size + axis, and any children layer over it stay in the a11y tree.
 
 describe('Dither', () => {
   it('renders a decorative (aria-hidden) texture layer', () => {
@@ -29,6 +29,45 @@ describe('Dither', () => {
     // The forbidden smooth fallback: assert no gradient is used anywhere.
     const html = container.innerHTML
     expect(html).not.toMatch(/linear-gradient|radial-gradient|conic-gradient|<linearGradient|<radialGradient/)
+  })
+
+  it('TILES the cells (square at any size): no viewBox + no preserveAspectRatio stretch', () => {
+    // The headline contract. The OLD bug was a fixed-viewBox SVG with
+    // `preserveAspectRatio="none"`, which stretched square cells into rectangles
+    // when the host outgrew the viewBox. The fix authors the SVG with NO viewBox
+    // (1 user unit = 1 CSS px → no internal scaling) and tiles a `<pattern>`.
+    const { container } = render(<Dither />)
+    const texture = container.querySelector('[data-dither-texture]')
+    expect(texture).not.toBeNull()
+    // No stretching: neither a viewBox to scale into nor the stretch directive.
+    expect(texture).not.toHaveAttribute('viewBox')
+    expect(texture).not.toHaveAttribute('preserveAspectRatio')
+    // Square cells: anti-aliasing off so the cell edges stay crisp.
+    expect(texture).toHaveAttribute('shape-rendering', 'crispEdges')
+  })
+
+  it('paints into a userSpaceOnUse <pattern> (the tile that repeats to fill)', () => {
+    const { container } = render(<Dither scale="preview" />)
+    const pattern = container.querySelector('[data-dither-pattern]')
+    expect(pattern).not.toBeNull()
+    // userSpaceOnUse + absolute px size → the tile is NOT scaled with the viewport.
+    expect(pattern).toHaveAttribute('patternUnits', 'userSpaceOnUse')
+    // One vertical preview tile = 24 cross × 8px wide, 28 axis × 8px tall.
+    expect(pattern).toHaveAttribute('width', '192')
+    expect(pattern).toHaveAttribute('height', '224')
+    // The fill rect references the pattern, so it tiles to cover the field.
+    expect(container.innerHTML).toContain('url(#')
+  })
+
+  it('draws every dither cell as a perfect cellPx square (width === height)', () => {
+    const { container } = render(<Dither scale="hero" />)
+    const pattern = container.querySelector('[data-dither-pattern]')
+    // Every painted CELL rect (not the full-tile ground/accent backdrops) is a
+    // 6×6 square at hero scale — width and height are equal, so cells never warp.
+    const cellRects = Array.from(pattern?.querySelectorAll('rect') ?? []).filter(
+      (r) => r.getAttribute('width') === '6' && r.getAttribute('height') === '6',
+    )
+    expect(cellRects.length).toBeGreaterThan(0)
   })
 
   it('paints cells with the design TOKEN colors, never raw hex', () => {

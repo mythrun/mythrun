@@ -23,6 +23,25 @@ export const CHAOS = 0.15
 export const CELL_PX = { preview: 8, hero: 6 } as const
 
 /**
+ * Cross-axis cell count of ONE pattern tile. The texture is a fixed-cell SVG
+ * `<pattern>` (`userSpaceOnUse`, no viewBox) that TILES to fill the host — it is
+ * never stretched — so this is the repeat period across the band, not a stretched
+ * resolution. A multiple of 4 (the Bayer period) keeps the ordered grid seamless
+ * across the tile boundary; chaos still breaks the perfect grid (the grain). 24 =
+ * 6 Bayer periods — wide enough that the repeat doesn't read as a vertical stripe.
+ */
+export const CROSS_CELLS = 24
+
+/**
+ * Solid framing blocks: a few cells of pure ground before the band and pure
+ * accent after it (the brand frames the 20-cell band with two solid blocks).
+ */
+export const FRAME_CELLS = 4
+
+/** Transition-axis length of ONE tile in cells: ground frame + band + accent frame. */
+export const AXIS_CELLS = FRAME_CELLS + BAND_CELLS + FRAME_CELLS
+
+/**
  * The standard 4×4 ordered Bayer threshold matrix, normalized to [0, 1). The
  * canonical integer matrix is
  *   [ 0  8  2 10 ]

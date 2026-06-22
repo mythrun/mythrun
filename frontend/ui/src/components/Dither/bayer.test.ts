@@ -3,6 +3,9 @@ import {
   BAND_CELLS,
   CHAOS,
   CELL_PX,
+  CROSS_CELLS,
+  FRAME_CELLS,
+  AXIS_CELLS,
   BAYER_4X4,
   chaosAt,
   thresholdAt,
@@ -107,5 +110,21 @@ describe('buildBand', () => {
     for (let row = BAND_CELLS / 2; row < BAND_CELLS; row++) {
       expect(cells.filter((c) => c.y === row && c.accent).length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('tile geometry constants', () => {
+  it('pins CROSS_CELLS, FRAME_CELLS, and the derived AXIS_CELLS', () => {
+    expect(CROSS_CELLS).toBeGreaterThan(0)
+    expect(FRAME_CELLS).toBeGreaterThan(0)
+    // The transition axis is ground frame + band + accent frame.
+    expect(AXIS_CELLS).toBe(FRAME_CELLS + BAND_CELLS + FRAME_CELLS)
+  })
+
+  it('makes the cross axis a multiple of the 4-cell Bayer period (seamless H-tile)', () => {
+    // The ordered Bayer term repeats every 4 cells; a CROSS_CELLS that is a clean
+    // multiple keeps the *ordered* grid tiling without a seam (chaos still breaks
+    // the perfect grid, which is the intended grain).
+    expect(CROSS_CELLS % 4).toBe(0)
   })
 })

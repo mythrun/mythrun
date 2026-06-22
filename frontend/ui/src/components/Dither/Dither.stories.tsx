@@ -111,6 +111,40 @@ export const Scale: Story = {
   ),
 }
 
+// SQUARE-PIXEL PROOF — the same vertical dither in three increasingly WIDE boxes.
+// The cells must stay PERFECTLY SQUARE: a wider box gets MORE identical-width
+// columns (the pattern tiles on the cross axis), never wider cells. Eyeball it —
+// the grain dots are the same size in all three; nothing stretches horizontally.
+// (This is the headline fix: the old SVG stretched a fixed viewBox and warped the
+// pixels into rectangles as the box widened.)
+export const SquarePixelsHoldAsWidthGrows: Story = {
+  name: 'Square pixels (widening box)',
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-4)]">
+      <figure className="flex flex-col gap-[var(--space-2)]">
+        <div className="h-56 w-56">
+          <Dither pairing="light-ink" scale="hero" />
+        </div>
+        <figcaption className="font-ui text-xs text-ink-secondary">224px wide — one tile</figcaption>
+      </figure>
+      <figure className="flex flex-col gap-[var(--space-2)]">
+        <div className="h-56 w-[28rem]">
+          <Dither pairing="light-ink" scale="hero" />
+        </div>
+        <figcaption className="font-ui text-xs text-ink-secondary">448px wide — tiles ×2 (cells unchanged)</figcaption>
+      </figure>
+      <figure className="flex flex-col gap-[var(--space-2)]">
+        <div className="h-56 w-full">
+          <Dither pairing="light-ink" scale="hero" />
+        </div>
+        <figcaption className="font-ui text-xs text-ink-secondary">
+          full width — tiles to fill (cells STILL square)
+        </figcaption>
+      </figure>
+    </div>
+  ),
+}
+
 // The canonical composition — content sits on the solid GROUND at the top; the
 // dither carries the transition below (splash / loading / error screens). The
 // content stays accessible; the texture behind it is aria-hidden.
