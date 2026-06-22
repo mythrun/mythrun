@@ -30,7 +30,9 @@ describe('frontend lint rails — registration & scoping', () => {
     expect(cfg.linterOptions?.reportUnusedDisableDirectives).toBe(2)
 
     const ui = new ESLint({ cwd: uiDir })
-    const libCfg = await ui.calculateConfigForFile(resolve(uiDir, 'src/text.tsx'))
+    const libCfg = await ui.calculateConfigForFile(
+      resolve(uiDir, 'src/components/Text/Text.tsx'),
+    )
     expect(libCfg.rules['mythrun-ui/no-ad-hoc-ui']?.[0] ?? 0).toBe(0)
   })
 

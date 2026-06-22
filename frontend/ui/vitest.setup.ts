@@ -1,6 +1,10 @@
 import { afterEach, expect } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { toHaveNoViolations } from 'jest-axe'
+// jest-dom matchers (toBeInTheDocument / toHaveAttribute / toHaveClass) for
+// component tests. Registered from W1b onward — earlier tests used native DOM
+// assertions and are not migrated.
+import '@testing-library/jest-dom/vitest'
 
 // Register the axe accessibility matcher (`expect(...).toHaveNoViolations()`)
 // for every component test. Components in this library are behavior-tested
