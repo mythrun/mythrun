@@ -5,6 +5,11 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 // so BOTH packages can register it without inverting the `client-core ← ui`
 // dependency direction. ui applies it to component prop-WIDENING.
 import { apiPurity } from '../client-core/eslint-rules/api-purity.js'
+// R3 (portability): component colors come from design tokens, never raw values.
+// Lives in client-core's lint plugin (the design-system rule home); ui registers
+// it on its component source only — color is a ui concern (the contract has no
+// colors), so client-core's own config does not register it.
+import { noAdHocColor } from '../client-core/eslint-rules/no-ad-hoc-color.js'
 
 export default [
   ...root,
@@ -38,6 +43,19 @@ export default [
     files: ['src/components/**/*.{ts,tsx}'],
     plugins: { 'mythrun-api': { rules: { 'api-purity': apiPurity } } },
     rules: { 'mythrun-api/api-purity': 'error' },
+  },
+  {
+    // R3 (portability): component color must come from design TOKEN utilities
+    // (bg-ember-600 / text-ink), never raw hex/rgb/hsl values or arbitrary-value
+    // color utilities (bg-[#abc]). Scoped to component source only — the color
+    // classes also live as string literals inside `cva({...})`/`cn(...)` call
+    // args here (the shadcn/CVA pattern), which a JSXAttribute-only rule would
+    // miss, so the rule scans every string literal in this zone. (Stories, the
+    // foundation specimen, and the token CSS legitimately hold raw values and
+    // are outside `src/components/**`.)
+    files: ['src/components/**/*.{ts,tsx}'],
+    plugins: { 'mythrun-ui': { rules: { 'no-ad-hoc-color': noAdHocColor } } },
+    rules: { 'mythrun-ui/no-ad-hoc-color': 'error' },
   },
   eslintConfigPrettier,
 ]
