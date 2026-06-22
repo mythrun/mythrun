@@ -90,3 +90,13 @@ export type { MenuProps, MenuItem, MenuSide } from './menu.ts'
 // function is a RUNTIME value, so it ships from the UI package, not this barrel.
 export type { BannerProps, Severity } from './banner.ts'
 export type { ToastOptions, ToastProviderProps } from './toast.ts'
+
+// Identity + display contracts (MYT-82 Wave 3d) — Avatar / AvatarGroup, Badge,
+// Dither. Avatar wraps `radix-ui`'s Avatar (image-with-fallback) behind a
+// DOM-free contract; Badge is a flat mono status chip; Dither is the brand's
+// ONLY sanctioned gradient (a locked 4×4-Bayer two-color transition, never a
+// smooth gradient) and takes its colors as a sanctioned token `pairing`, not raw
+// colors. All DOM-free (§9): no className/style/raw DOM events.
+export type { AvatarProps, AvatarGroupProps, AvatarSize } from './avatar.ts'
+export type { BadgeProps, BadgeVariant } from './badge.ts'
+export type { DitherProps, DitherPairing, DitherDirection } from './dither.ts'

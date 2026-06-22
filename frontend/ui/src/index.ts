@@ -64,6 +64,15 @@ export { Banner } from './components/Banner/Banner.tsx'
 export { ToastProvider } from './components/Toast/Toast.tsx'
 export { toast } from './components/Toast/toast-store.ts'
 
+// Identity + display (MYT-82 Wave 3d) — Avatar / AvatarGroup (Radix
+// image-with-fallback; the brand's one sanctioned ROUND shape), Badge (a flat
+// mono status chip), Dither (the brand's ONLY sanctioned gradient — a locked
+// 4×4-Bayer two-color transition, never a smooth gradient).
+export { Avatar } from './components/Avatar/Avatar.tsx'
+export { AvatarGroup } from './components/Avatar/AvatarGroup.tsx'
+export { Badge } from './components/Badge/Badge.tsx'
+export { Dither } from './components/Dither/Dither.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -119,4 +128,12 @@ export type {
   Severity,
   ToastOptions,
   ToastProviderProps,
+  AvatarProps,
+  AvatarGroupProps,
+  AvatarSize,
+  BadgeProps,
+  BadgeVariant,
+  DitherProps,
+  DitherPairing,
+  DitherDirection,
 } from '@mythrun/client-core/contract'
