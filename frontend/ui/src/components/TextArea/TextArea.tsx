@@ -49,6 +49,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     placeholder,
     name,
     id,
+    describedBy,
     size = 'md',
     rows,
     invalid = false,
@@ -74,6 +75,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       placeholder={placeholder}
       name={name}
       id={id}
+      aria-describedby={describedBy}
       rows={rows}
       disabled={disabled}
       readOnly={readOnly}

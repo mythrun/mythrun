@@ -139,6 +139,13 @@ describe('Select', () => {
     })
   })
 
+  it('maps describedBy → aria-describedby on the trigger', () => {
+    const { rerender } = render(<Select options={OPTIONS} placeholder="pick.race" />)
+    expect(screen.getByRole('combobox')).not.toHaveAttribute('aria-describedby')
+    rerender(<Select options={OPTIONS} placeholder="pick.race" describedBy="help-1 err-1" />)
+    expect(screen.getByRole('combobox')).toHaveAttribute('aria-describedby', 'help-1 err-1')
+  })
+
   it('has no axe violations (labelled / invalid / disabled)', async () => {
     const { container } = render(
       <div>

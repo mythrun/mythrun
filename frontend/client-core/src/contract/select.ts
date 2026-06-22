@@ -52,4 +52,11 @@ export interface SelectProps extends BaseProps {
   name?: string
   /** Element id — lets a consumer-supplied `<label htmlFor>` bind to the trigger. */
   id?: string
+  /**
+   * Ids of the elements that DESCRIBE this control (helper / error text). A
+   * portable a11y RELATIONSHIP (web → `aria-describedby` on the trigger, native →
+   * `accessibilityDescribedBy` later), not a raw DOM attribute. {@link FormFieldProps}
+   * sets this to its helper/error region ids; space-join multiple ids.
+   */
+  describedBy?: string
 }

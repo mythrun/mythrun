@@ -136,6 +136,21 @@ describe('RadioGroup / Radio', () => {
     )
   })
 
+  it('maps the group describedBy → aria-describedby on the radiogroup', () => {
+    const { rerender } = render(
+      <RadioGroup>
+        <Radio value="good" label="align.good" />
+      </RadioGroup>,
+    )
+    expect(screen.getByRole('radiogroup')).not.toHaveAttribute('aria-describedby')
+    rerender(
+      <RadioGroup describedBy="help-1 err-1">
+        <Radio value="good" label="align.good" />
+      </RadioGroup>,
+    )
+    expect(screen.getByRole('radiogroup')).toHaveAttribute('aria-describedby', 'help-1 err-1')
+  })
+
   it('forwards refs to the group container and an item', () => {
     const groupRef = createRef<HTMLDivElement>()
     const itemRef = createRef<HTMLButtonElement>()

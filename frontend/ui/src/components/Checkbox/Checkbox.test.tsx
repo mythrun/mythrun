@@ -114,6 +114,13 @@ describe('Checkbox', () => {
     expect(ref.current).toBeInstanceOf(HTMLButtonElement)
   })
 
+  it('maps describedBy → aria-describedby (the portable a11y relationship)', () => {
+    const { rerender } = render(<Checkbox />)
+    expect(screen.getByRole('checkbox')).not.toHaveAttribute('aria-describedby')
+    rerender(<Checkbox describedBy="help-1 err-1" />)
+    expect(screen.getByRole('checkbox')).toHaveAttribute('aria-describedby', 'help-1 err-1')
+  })
+
   it('has no axe violations (labelled / checked / indeterminate / invalid / disabled)', async () => {
     const { container } = render(
       <div>

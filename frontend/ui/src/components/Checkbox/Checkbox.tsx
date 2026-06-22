@@ -42,7 +42,7 @@ const box = cva(
 )
 
 export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Checkbox(
-  { checked, defaultChecked, onChange, disabled = false, invalid = false, id, name, label },
+  { checked, defaultChecked, onChange, disabled = false, invalid = false, id, describedBy, name, label },
   ref,
 ) {
   // Radix's prop types are non-undefined under `exactOptionalPropertyTypes`, so
@@ -52,6 +52,7 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
     <RadixCheckbox.Root
       ref={ref}
       {...(id !== undefined ? { id } : {})}
+      {...(describedBy !== undefined ? { 'aria-describedby': describedBy } : {})}
       {...(name !== undefined ? { name } : {})}
       {...(checked !== undefined ? { checked } : {})}
       {...(defaultChecked !== undefined ? { defaultChecked } : {})}

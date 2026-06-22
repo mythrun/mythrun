@@ -43,4 +43,11 @@ export interface RadioGroupProps extends BaseProps {
   disabled?: boolean
   /** Element id for the group container (the radiogroup landmark). */
   id?: string
+  /**
+   * Ids of the elements that DESCRIBE this group (helper / error text). A
+   * portable a11y RELATIONSHIP (web → `aria-describedby` on the radiogroup, native →
+   * `accessibilityDescribedBy` later), not a raw DOM attribute. {@link FormFieldProps}
+   * sets this to its helper/error region ids; space-join multiple ids.
+   */
+  describedBy?: string
 }

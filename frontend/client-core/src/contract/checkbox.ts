@@ -36,6 +36,13 @@ export interface CheckboxProps extends BaseProps {
   invalid?: boolean
   /** Element id — lets a consumer-supplied `<label htmlFor>` bind to it. */
   id?: string
+  /**
+   * Ids of the elements that DESCRIBE this control (helper / error text). A
+   * portable a11y RELATIONSHIP (web → `aria-describedby`, native →
+   * `accessibilityDescribedBy` later), not a raw DOM attribute. {@link FormFieldProps}
+   * sets this to its helper/error region ids; space-join multiple ids.
+   */
+  describedBy?: string
   /** Form field name (submitted with the form via Radix's hidden input). */
   name?: string
   /** Optional inline label (an i18n key). Full labelling is FormField's job. */

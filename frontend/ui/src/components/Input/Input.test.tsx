@@ -121,6 +121,13 @@ describe('Input', () => {
     expect(ref.current).toBeInstanceOf(HTMLInputElement)
   })
 
+  it('maps describedBy → aria-describedby (the portable a11y relationship)', () => {
+    const { getByRole, rerender } = render(<Input />)
+    expect(getByRole('textbox')).not.toHaveAttribute('aria-describedby')
+    rerender(<Input describedBy="help-1 err-1" />)
+    expect(getByRole('textbox')).toHaveAttribute('aria-describedby', 'help-1 err-1')
+  })
+
   it('has no axe violations (labelled / invalid / disabled / read-only)', async () => {
     // FormField provides the <label> in real use; the test harness binds one so
     // axe sees an associated label.

@@ -49,3 +49,10 @@ export type { SelectProps, SelectOption, SelectSize } from './select.ts'
 export type { CheckboxProps, CheckedState } from './checkbox.ts'
 export type { RadioProps, RadioGroupProps } from './radio.ts'
 export type { SwitchProps } from './switch.ts'
+
+// Form-field contracts (MYT-82 Wave 2d) — Label + FormField. FormField wraps a
+// single control, supplies the Label (associated to it), helper/error regions,
+// and required/invalid state, all wired for a11y via the controls' neutral
+// `describedBy` relationship prop. DOM-free: i18n keys, no className/style.
+export type { LabelProps } from './label.ts'
+export type { FormFieldProps } from './form-field.ts'

@@ -67,6 +67,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     type = 'text',
     name,
     id,
+    describedBy,
     size = 'md',
     invalid = false,
     disabled = false,
@@ -92,6 +93,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       placeholder={placeholder}
       name={name}
       id={id}
+      aria-describedby={describedBy}
       disabled={disabled}
       readOnly={readOnly}
       required={required}

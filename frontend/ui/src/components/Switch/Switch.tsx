@@ -20,7 +20,7 @@ import { cn } from '../../lib/cn.ts'
 // shared theme-aware `outline-accent`.
 
 export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch(
-  { checked, defaultChecked, onChange, disabled = false, id, name, label },
+  { checked, defaultChecked, onChange, disabled = false, id, describedBy, name, label },
   ref,
 ) {
   // Radix's prop types are non-undefined under `exactOptionalPropertyTypes`, so
@@ -30,6 +30,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
     <RadixSwitch.Root
       ref={ref}
       {...(id !== undefined ? { id } : {})}
+      {...(describedBy !== undefined ? { 'aria-describedby': describedBy } : {})}
       {...(name !== undefined ? { name } : {})}
       {...(checked !== undefined ? { checked } : {})}
       {...(defaultChecked !== undefined ? { defaultChecked } : {})}

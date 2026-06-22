@@ -83,6 +83,13 @@ describe('Switch', () => {
     expect(ref.current).toBeInstanceOf(HTMLButtonElement)
   })
 
+  it('maps describedBy → aria-describedby (the portable a11y relationship)', () => {
+    const { rerender } = render(<Switch />)
+    expect(screen.getByRole('switch')).not.toHaveAttribute('aria-describedby')
+    rerender(<Switch describedBy="help-1 err-1" />)
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-describedby', 'help-1 err-1')
+  })
+
   it('has no axe violations (labelled / on / disabled)', async () => {
     const { container } = render(
       <div>

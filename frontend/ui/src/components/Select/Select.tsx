@@ -66,6 +66,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
     disabled = false,
     name,
     id,
+    describedBy,
   },
   ref,
 ) {
@@ -83,6 +84,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
       <RadixSelect.Trigger
         ref={ref}
         {...(id !== undefined ? { id } : {})}
+        {...(describedBy !== undefined ? { 'aria-describedby': describedBy } : {})}
         aria-invalid={invalid || undefined}
         className={cn(trigger({ size, invalid }))}
       >

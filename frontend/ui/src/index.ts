@@ -34,6 +34,12 @@ export { Checkbox } from './components/Checkbox/Checkbox.tsx'
 export { RadioGroup, Radio } from './components/RadioGroup/RadioGroup.tsx'
 export { Switch } from './components/Switch/Switch.tsx'
 
+// Form fields (MYT-82 Wave 2d) — Label + FormField. FormField wraps a single
+// control with its Label, helper/error regions, and required/invalid state,
+// wired for a11y via the controls' neutral `describedBy` relationship prop.
+export { Label } from './components/Label/Label.tsx'
+export { FormField } from './components/FormField/FormField.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -68,4 +74,6 @@ export type {
   RadioProps,
   RadioGroupProps,
   SwitchProps,
+  LabelProps,
+  FormFieldProps,
 } from '@mythrun/client-core/contract'

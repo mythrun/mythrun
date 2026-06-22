@@ -19,7 +19,7 @@ import { cn } from '../../lib/cn.ts'
 // RadioGroup is the container; `children` are the Radio items. It carries the
 // neutral controlled/uncontrolled value model.
 export const RadioGroup = forwardRef<HTMLDivElement, RadioGroupProps>(function RadioGroup(
-  { value, defaultValue, onChange, name, disabled = false, id, children },
+  { value, defaultValue, onChange, name, disabled = false, id, describedBy, children },
   ref,
 ) {
   // Radix's prop types are non-undefined under `exactOptionalPropertyTypes`, so
@@ -29,6 +29,7 @@ export const RadioGroup = forwardRef<HTMLDivElement, RadioGroupProps>(function R
     <RadixRadioGroup.Root
       ref={ref}
       {...(id !== undefined ? { id } : {})}
+      {...(describedBy !== undefined ? { 'aria-describedby': describedBy } : {})}
       {...(value !== undefined ? { value } : {})}
       {...(defaultValue !== undefined ? { defaultValue } : {})}
       {...(onChange ? { onValueChange: onChange } : {})}

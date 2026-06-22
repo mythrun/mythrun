@@ -114,6 +114,13 @@ describe('TextArea', () => {
     expect(ref.current).toBeInstanceOf(HTMLTextAreaElement)
   })
 
+  it('maps describedBy → aria-describedby (the portable a11y relationship)', () => {
+    const { getByRole, rerender } = render(<TextArea />)
+    expect(getByRole('textbox')).not.toHaveAttribute('aria-describedby')
+    rerender(<TextArea describedBy="help-1 err-1" />)
+    expect(getByRole('textbox')).toHaveAttribute('aria-describedby', 'help-1 err-1')
+  })
+
   it('has no axe violations (labelled / invalid / disabled / read-only)', async () => {
     const { container } = render(
       <div>

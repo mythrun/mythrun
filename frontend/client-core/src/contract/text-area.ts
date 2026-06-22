@@ -24,6 +24,13 @@ export interface TextAreaProps extends BaseProps {
   name?: string
   /** Element id — lets a consumer-supplied `<label htmlFor>` bind to it. */
   id?: string
+  /**
+   * Ids of the elements that DESCRIBE this control (helper / error text). A
+   * portable a11y RELATIONSHIP (web → `aria-describedby`, native →
+   * `accessibilityDescribedBy` later), not a raw DOM attribute. {@link FormFieldProps}
+   * sets this to its helper/error region ids; space-join multiple ids.
+   */
+  describedBy?: string
   /** Token control size. Default `md` (sets the per-line min-height). */
   size?: InputSize
   /** Visible text rows (native `rows`). Drives the auto-height. */
