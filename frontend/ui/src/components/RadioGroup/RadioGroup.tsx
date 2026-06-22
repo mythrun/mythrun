@@ -66,7 +66,10 @@ export const Radio = forwardRef<HTMLButtonElement, RadioProps>(function Radio(
       )}
     >
       <RadixRadioGroup.Indicator
-        className={cn('inline-flex h-[var(--space-2)] w-[var(--space-2)] rounded-none bg-accent')}
+        // Selected = a solid accent square FILLING the box with an even ~5px gutter
+        // (14px in the 24px box ≈ 58%). Reads as a "filled box" — distinct from the
+        // Checkbox's edge-to-edge flood + check glyph. (33% read as a floating speck.)
+        className={cn('inline-flex h-[14px] w-[14px] rounded-none bg-accent')}
       />
     </RadixRadioGroup.Item>
   )
