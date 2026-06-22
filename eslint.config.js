@@ -129,7 +129,7 @@ export default tseslint.config(
     //
     // Tests may also `vi.mock('ai', ...)` and import SDK types directly
     // for mock factories. Disable no-restricted-imports for test files.
-    files: ['**/__tests__/**', '**/*.test.ts', '**/*.test.cjs', '**/*.test.mjs'],
+    files: ['**/__tests__/**', '**/*.test.ts', '**/*.test.tsx', '**/*.test.cjs', '**/*.test.mjs'],
     rules: {
       'max-lines-per-function': 'off',
       'no-restricted-imports': 'off',

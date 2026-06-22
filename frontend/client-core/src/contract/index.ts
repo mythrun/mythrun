@@ -28,3 +28,8 @@ export type { VisuallyHiddenProps } from './visually-hidden.ts'
 // controls (Button loading, IconButton).
 export type { IconProps, IconName, IconSize } from './icon.ts'
 export type { SpinnerProps } from './spinner.ts'
+
+// Control contracts (MYT-82 Wave 2a) — Button + IconButton. These compose the
+// Icon + Spinner leaves; the contracts stay DOM-free (`onPress`, no className).
+export type { ButtonProps, ButtonVariant, ButtonSize, ButtonType } from './button.ts'
+export type { IconButtonProps } from './icon-button.ts'

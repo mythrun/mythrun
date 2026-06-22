@@ -17,6 +17,11 @@ export { VisuallyHidden } from './components/VisuallyHidden/VisuallyHidden.tsx'
 export { Icon } from './components/Icon/Icon.tsx'
 export { Spinner } from './components/Spinner/Spinner.tsx'
 
+// Controls (MYT-82 Wave 2a) — Button + IconButton, composing the Icon + Spinner
+// leaves above.
+export { Button } from './components/Button/Button.tsx'
+export { IconButton } from './components/IconButton/IconButton.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -34,4 +39,9 @@ export type {
   IconName,
   IconSize,
   SpinnerProps,
+  ButtonProps,
+  ButtonVariant,
+  ButtonSize,
+  ButtonType,
+  IconButtonProps,
 } from '@mythrun/client-core/contract'
