@@ -4,6 +4,31 @@ import type { BaseProps } from './index.ts'
 export type AvatarSize = 'sm' | 'md' | 'lg'
 
 /**
+ * The 12 curated avatar pigments — the "scribe's pigments". Each is a muted,
+ * parchment-compatible hue that (a) stays distinguishable, (b) does NOT collide
+ * with the status colors, and (c) carries paper-50 initials at ≥4.5:1 (WCAG AA
+ * for 16px-bold = normal text). The web design system emits each as a
+ * `--color-avatar-<name>` token → a `bg-avatar-<name>` Tailwind utility; the
+ * single hex source is `@mythrun/client-core/tokens/scales`'s `AVATAR_COLORS`.
+ *
+ * A name (not a hex) keeps the contract platform-neutral: it is a neutral string
+ * union, so a typo is a compile error and the native impl maps the same names.
+ */
+export type AvatarColor =
+  | 'ember'
+  | 'sienna'
+  | 'ochre'
+  | 'moss'
+  | 'pine'
+  | 'verdigris'
+  | 'lapis'
+  | 'iris'
+  | 'heather'
+  | 'rose'
+  | 'umber'
+  | 'slate'
+
+/**
  * A small identity image with a deterministic fallback. When `src` resolves it
  * renders the image (its accessible name is `name`); when `src` is absent or
  * fails to load it falls back to 1–2 INITIALS derived from `name`, drawn on a
@@ -24,6 +49,11 @@ export interface AvatarProps extends BaseProps {
   src?: string
   /** Token size → `--control-sm/md/lg`. Default `md`. */
   size?: AvatarSize
+  /** Pigment for the INITIALS fallback chip (a `bg-avatar-<color>` token).
+   *  Omit to auto-assign a stable pigment derived from `name` — the same name
+   *  always maps to the same color. An explicit `color` overrides the
+   *  auto-assignment. (No effect when an image is shown.) */
+  color?: AvatarColor
 }
 
 /**

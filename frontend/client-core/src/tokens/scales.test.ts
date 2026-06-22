@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { wcagContrast } from 'culori'
 import {
   SPACING, RADIUS, CONTROL, ICON, ZINDEX, MOTION,
-  TYPE_ROLES, WEIGHTS, TRACKING, MEASURE, BREAKPOINTS,
+  TYPE_ROLES, WEIGHTS, TRACKING, MEASURE, BREAKPOINTS, AVATAR_COLORS,
 } from './scales.ts'
 
 describe('token scale data (single source for web @theme + future native)', () => {
@@ -39,5 +40,30 @@ describe('token scale data (single source for web @theme + future native)', () =
     expect(MEASURE.DEFAULT).toBe('64ch')
     expect(BREAKPOINTS.sm).toBe('640px')
     expect(BREAKPOINTS['2xl']).toBe('1536px')
+  })
+})
+
+describe('avatar pigments — the curated "scribe\'s pigments" (single token source)', () => {
+  const PAPER_50 = '#F8F4EA'
+  const NAMES = [
+    'ember', 'sienna', 'ochre', 'moss', 'pine', 'verdigris',
+    'lapis', 'iris', 'heather', 'rose', 'umber', 'slate',
+  ] as const
+
+  it('carries exactly the 12 curated pigment names', () => {
+    expect(Object.keys(AVATAR_COLORS)).toEqual([...NAMES])
+  })
+
+  it('every pigment is a 6-digit hex', () => {
+    for (const hex of Object.values(AVATAR_COLORS)) {
+      expect(hex).toMatch(/^#[0-9A-Fa-f]{6}$/)
+    }
+  })
+
+  it('carries paper-50 (#F8F4EA) initials at ≥4.5:1 (WCAG AA, 16px-bold)', () => {
+    for (const [name, hex] of Object.entries(AVATAR_COLORS)) {
+      const ratio = wcagContrast(PAPER_50, hex)
+      expect(ratio, `${name} (${hex}) on paper-50`).toBeGreaterThanOrEqual(4.5)
+    }
   })
 })

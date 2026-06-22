@@ -4,6 +4,7 @@ import { render, screen, within } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { Avatar } from './Avatar.tsx'
 import { AvatarGroup } from './AvatarGroup.tsx'
+import { avatarColorFor } from './avatar-color.ts'
 
 // The avatar Root is `role="img"` + `aria-label={name}` — it carries the
 // identity name in EVERY load state, so the avatar is named whether the image
@@ -56,6 +57,62 @@ describe('Avatar', () => {
     const ref = createRef<HTMLSpanElement>()
     render(<Avatar ref={ref} name="Ada" />)
     expect(ref.current).toBeInstanceOf(HTMLSpanElement)
+  })
+
+  it('applies the explicit pigment as a bg-avatar-* utility on the fallback', () => {
+    render(<Avatar name="Ada Lovelace" color="lapis" />)
+    const fallback = screen.getByText('AL')
+    expect(fallback).toHaveClass('bg-avatar-lapis')
+  })
+
+  it('an explicit color OVERRIDES the name-derived auto color', () => {
+    // 'iris' is a deliberate, almost-certainly-not-auto pick; the prop must win.
+    render(<Avatar name="Grace Hopper" color="iris" />)
+    const fallback = screen.getByText('GH')
+    expect(fallback).toHaveClass('bg-avatar-iris')
+    // and NOT the surface chip default from before the color prop existed.
+    expect(fallback).not.toHaveClass('bg-surface')
+  })
+
+  it('auto-assigns a deterministic pigment from the name when color is omitted', () => {
+    render(<Avatar name="Ada Lovelace" />)
+    const fallback = screen.getByText('AL')
+    expect(fallback).toHaveClass(`bg-avatar-${avatarColorFor('Ada Lovelace')}`)
+  })
+
+  it('maps the same name to the same pigment across renders', () => {
+    const first = render(<Avatar name="Edsger Dijkstra" />)
+    const a = first.getByText('ED').className
+    first.unmount()
+    const second = render(<Avatar name="Edsger Dijkstra" />)
+    const b = second.getByText('ED').className
+    expect(b).toBe(a)
+  })
+
+  it('spreads different names across distinct pigments', () => {
+    const names = ['Ada Lovelace', 'Grace Hopper', 'Alan Turing', 'Ken Thompson', 'Barbara Liskov']
+    const pigments = new Set(names.map(avatarColorFor))
+    // The auto-assign should not collapse a handful of distinct names onto one.
+    expect(pigments.size).toBeGreaterThanOrEqual(2)
+  })
+
+  it('draws paper-50 initials on the pigment chip, with the border on the root', () => {
+    render(<Avatar name="Ada Lovelace" color="pine" />)
+    const fallback = screen.getByText('AL')
+    expect(fallback).toHaveClass('text-paper-50')
+    // The 1px square frame lives on the ROOT (so the image variant is bordered
+    // too) — not on the chip, which only carries the pigment + initials.
+    const root = screen.getByRole('img', { name: 'Ada Lovelace' })
+    expect(root).toHaveClass('border')
+    expect(root).toHaveClass('border-border-strong')
+  })
+
+  it('an IMAGE avatar carries the same 1px border-strong square frame', () => {
+    render(<Avatar name="Ada Lovelace" src="https://example.test/ada.png" />)
+    const root = screen.getByRole('img', { name: 'Ada Lovelace' })
+    expect(root).toHaveClass('border')
+    expect(root).toHaveClass('border-border-strong')
+    expect(root).toHaveClass('rounded-none')
   })
 
   it('has no axe violations (image + fallback)', async () => {

@@ -76,4 +76,24 @@
   --breakpoint-lg: 1024px;
   --breakpoint-xl: 1280px;
   --breakpoint-2xl: 1536px;
+
+  /* ── Avatar pigments — the curated "scribe's pigments" (§Avatar). Hand-authored
+     to MATCH @mythrun/client-core/tokens/scales AVATAR_COLORS; the drift-guard in
+     tokens.test.ts fails if these diverge. Each is emitted as a color token so
+     Tailwind generates the `bg-avatar-<name>` utility the initials chip uses.
+     NOT theme-aware (a fixed identity hue, same in light/dark), so it lives here,
+     not semantic.css. Each carries paper-50 initials at ≥4.5:1 — ratios cited in
+     scales.ts. ── */
+  --color-avatar-ember: #8A5A3C;
+  --color-avatar-sienna: #A05A45;
+  --color-avatar-ochre: #82682E;
+  --color-avatar-moss: #62703C;
+  --color-avatar-pine: #41714D;
+  --color-avatar-verdigris: #3D6B60;
+  --color-avatar-lapis: #46647E;
+  --color-avatar-iris: #5E5A86;
+  --color-avatar-heather: #6E4C62;
+  --color-avatar-rose: #9E4F64;
+  --color-avatar-umber: #5A4636;
+  --color-avatar-slate: #586470;
 }

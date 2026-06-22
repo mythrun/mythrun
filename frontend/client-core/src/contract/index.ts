@@ -97,6 +97,6 @@ export type { ToastOptions, ToastProviderProps } from './toast.ts'
 // ONLY sanctioned gradient (a locked 4×4-Bayer two-color transition, never a
 // smooth gradient) and takes its colors as a sanctioned token `pairing`, not raw
 // colors. All DOM-free (§9): no className/style/raw DOM events.
-export type { AvatarProps, AvatarGroupProps, AvatarSize } from './avatar.ts'
+export type { AvatarProps, AvatarGroupProps, AvatarSize, AvatarColor } from './avatar.ts'
 export type { BadgeProps, BadgeVariant } from './badge.ts'
 export type { DitherProps, DitherPairing, DitherDirection } from './dither.ts'

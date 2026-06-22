@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import manifest from '../../ui/src/styles/tokens.manifest.json'
 import {
   SPACING, RADIUS, CONTROL, ICON, ZINDEX, MOTION,
-  WEIGHTS, TRACKING, MEASURE, BREAKPOINTS,
+  WEIGHTS, TRACKING, MEASURE, BREAKPOINTS, AVATAR_COLORS,
 } from '@mythrun/client-core/tokens/scales'
 
 const stylesDir = resolve(__dirname, '../../ui/src/styles')
@@ -89,6 +89,14 @@ describe('static scale drift guard (theme.css MUST equal scales.ts)', () => {
     for (const [k, v] of Object.entries(TRACKING)) expect(t[`--tracking-${k}`]).toBe(v)
     expect(t['--measure']).toBe(MEASURE.DEFAULT)
     for (const [k, v] of Object.entries(BREAKPOINTS)) expect(t[`--breakpoint-${k}`]).toBe(v)
+  })
+  it('avatar pigments — theme.css --color-avatar-* MUST equal AVATAR_COLORS', () => {
+    // The hand-curated avatar set lives in scales.ts; theme.css emits each as a
+    // --color-avatar-<name> token (so Tailwind generates bg-avatar-<name>). Case
+    // is normalized — Tailwind lowercases the @theme hex; scales.ts authors upper.
+    for (const [name, hex] of Object.entries(AVATAR_COLORS)) {
+      expect(t[`--color-avatar-${name}`]?.toLowerCase()).toBe(hex.toLowerCase())
+    }
   })
 })
 
