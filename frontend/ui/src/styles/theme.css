@@ -58,6 +58,25 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-linear: linear;
 
+  /* The Spinner's signature "dither develop" loop — an OPACITY-ONLY keyframe
+     (transparent → fully lit → transparent) that the Spinner's cells run with a
+     per-cell delay keyed to the Bayer threshold, so the dither fills and recedes
+     like ink developing on the page. Defined as a first-class `--animate-*`
+     theme utility (the canonical Tailwind v4 mechanism) so the STATIC,
+     statically-scannable class `animate-dither-develop` is generated — an
+     interpolated arbitrary `animate-[…]` class is NOT extractable by the source
+     scanner and silently never emits. Calm 3.7s/cycle (the 2.4s prototype read a
+     little fast); this duration MIRRORS develop.ts's DEVELOP_DURATION_MS, which
+     is the source of truth for the matching per-cell delays. */
+  --animate-dither-develop: dither-develop 3700ms ease-in-out infinite;
+
+  @keyframes dither-develop {
+    0% { opacity: 0; }
+    45% { opacity: 1; }
+    55% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   /* Font weights. */
   --weight-normal: 400;
   --weight-medium: 500;

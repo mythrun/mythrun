@@ -1,0 +1,46 @@
+/* The Spinner's "dither develop" loader — the brand's signature loading texture.
+ *
+ * A small square of cells (the ember token over a paper/surface ground) where the
+ * 4×4 Bayer dither FILLS and RECEDES on a slow opacity loop: each cell pulses
+ * opacity 0 → 1 → 0, and a per-cell `animation-delay` (keyed to the cell's Bayer
+ * THRESHOLD in develop.ts — low threshold first) phases the cells so the lit
+ * pattern sweeps up like ink developing on the page, then fades back. Calm and
+ * patient (~3.7s/cycle), opacity-ONLY (§4 — nothing spins/slides/bounces).
+ *
+ * This is the FIRST component stylesheet in @mythrun/ui. It is token-only (no raw
+ * color — the cells get their ember fill from the `bg-accent` Tailwind token
+ * utility on the element; this file only animates OPACITY), so stylelint's R3
+ * rail passes. It is imported into src/styles/index.css so it ships through
+ * `@mythrun/ui/styles.css` to both the app and Storybook. The `dither-develop`
+ * keyframe + the `animate-dither-develop` utility live in theme.css's `@theme`
+ * block (the canonical Tailwind v4 mechanism); this file carries only the resting
+ * state + the reduced-motion fallback.
+ *
+ * Each cell's RESTING opacity is 0 (paper ground shows through). During its delay
+ * window — before the animation's first frame paints — the cell must therefore be
+ * invisible, so the base rule floors opacity to 0; the running animation then
+ * overrides it across the cell's lit window. (Driving the rest state from CSS, not
+ * an inline style, lets the reduced-motion rule below reveal the static-lit cells
+ * without an inline-specificity fight.) */
+[data-spinner-cell] {
+  opacity: 0;
+}
+
+/* REDUCED MOTION — a LEGIBLE STATIC dither, never a blank box.
+ *
+ * Without this, the base.css global reduced-motion reset freezes the animation at
+ * its end frame (opacity 0) and the square goes blank. So when motion is reduced
+ * we cancel the develop animation entirely and paint a FIXED ~50% dither: the
+ * cells flagged `data-spinner-lit="true"` (the Bayer-threshold-below-0.5 subset,
+ * computed in develop.ts) hold full opacity; the rest stay transparent. The
+ * result is a static, readable dithered square — the same texture, paused. */
+@media (prefers-reduced-motion: reduce) {
+  [data-spinner-cell] {
+    animation: none !important;
+    opacity: 0;
+  }
+
+  [data-spinner-cell][data-spinner-lit='true'] {
+    opacity: 1;
+  }
+}
