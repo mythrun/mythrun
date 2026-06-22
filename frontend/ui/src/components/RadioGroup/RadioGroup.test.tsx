@@ -123,6 +123,24 @@ describe('RadioGroup / Radio', () => {
     expect(onChange).toHaveBeenCalledWith('good')
   })
 
+  it('is a SQUARE box that FILLS (0px radius), not a round dot — checked shows the accent square', () => {
+    render(
+      <RadioGroup defaultValue="good">
+        <Radio value="good" label="align.good" />
+      </RadioGroup>,
+    )
+    const radio = screen.getByRole('radio')
+    // The box itself is square (no rounded exception remains).
+    expect(radio).toHaveClass('rounded-none', 'border-border-strong', 'bg-surface')
+    expect(radio).not.toHaveClass('rounded-full')
+    // The selected indicator is a FILLED inner square in the accent token (Radix
+    // renders the Indicator only for the checked option), not a dot, not a glyph.
+    const indicator = radio.querySelector('span')
+    expect(indicator).not.toBeNull()
+    expect(indicator).toHaveClass('rounded-none', 'bg-accent')
+    expect(indicator).not.toHaveClass('rounded-full')
+  })
+
   it('each radio carries the theme-aware focus-ring classes', () => {
     render(
       <RadioGroup>

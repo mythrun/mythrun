@@ -7,10 +7,11 @@ import { RadioGroup, Radio } from './RadioGroup.tsx'
 // keyboard model; each `Radio` is an item rendered inside it. The neutral
 // `onChange(value)` hands the consumer the selected string (§9).
 //
-// Flat 1-bit (§3) with one exception: the radio dot is CIRCULAR (a radio must
-// read as a radio). The ring is the same 1px `--border-strong` boundary, the
-// selected dot is the `--accent` token, and the focus ring is the shared
-// theme-aware `outline-accent`.
+// Flat 1-bit (§3), 0px radius everywhere — no rounded exception. Each option is a
+// SQUARE box (1px `--border-strong` edge, `--surface` fill); selecting it FILLS an
+// inset inner square in the `--accent` token (that filled square is how a Radio
+// differs from a Checkbox, which stamps a `check` glyph). The focus ring is the
+// shared theme-aware `outline-accent`.
 //
 // State matrix (§6): default (one selected) · disabled (group or single option).
 // Content/i18n: each option's `label` is an i18n key the consumer resolves.
@@ -42,7 +43,7 @@ export const Default: Story = {
   ),
 }
 
-// Selected — the `--accent` dot marks the chosen option.
+// Selected — the `--accent` filled square marks the chosen option.
 export const Selected: Story = {
   args: { defaultValue: 'good' },
   render: (args) => (

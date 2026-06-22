@@ -44,9 +44,12 @@ describe('Avatar', () => {
     expect(container.querySelector('[class*="control-lg"]')).not.toBeNull()
   })
 
-  it('is round (the sanctioned avatar exception)', () => {
+  it('is SQUARE (0px radius, §3 — no rounded exception)', () => {
     const { container } = render(<Avatar name="Ada" />)
-    expect(container.querySelector('.rounded-full')).not.toBeNull()
+    const root = screen.getByRole('img', { name: 'Ada' })
+    expect(root).toHaveClass('rounded-none')
+    expect(root).not.toHaveClass('rounded-full')
+    expect(container.querySelector('.rounded-full')).toBeNull()
   })
 
   it('forwards its ref to the underlying element', () => {

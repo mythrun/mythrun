@@ -77,6 +77,20 @@ describe('Switch', () => {
     )
   })
 
+  it('is RECTANGULAR (0px radius) — track and thumb are rounded-none, no pill', () => {
+    render(<Switch defaultChecked />)
+    const sw = screen.getByRole('switch')
+    expect(sw).toHaveClass('rounded-none')
+    expect(sw).not.toHaveClass('rounded-full')
+    // The thumb is the only child element; it stays square + still slides.
+    const thumb = sw.querySelector('span')
+    expect(thumb).not.toBeNull()
+    expect(thumb).toHaveClass('rounded-none')
+    expect(thumb).not.toHaveClass('rounded-full')
+    // The slide transform survives the shape change (position IS the state).
+    expect(thumb).toHaveClass('data-[state=checked]:translate-x-[var(--space-3)]')
+  })
+
   it('forwards its ref to the underlying control', () => {
     const ref = createRef<HTMLButtonElement>()
     render(<Switch ref={ref} />)

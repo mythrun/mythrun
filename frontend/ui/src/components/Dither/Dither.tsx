@@ -53,13 +53,26 @@ export const Dither = forwardRef<HTMLDivElement, DitherProps>(function Dither(
   const widthCells = vertical ? CROSS_CELLS : axisCells
   const heightCells = vertical ? axisCells : CROSS_CELLS
 
+  // Intrinsic minimum size (px) = the cell grid at 1:1. The `absolute` SVG layer
+  // gives the root no height of its own, so this is what makes the texture render
+  // standalone (no `children`). A sized host can still stretch the band past it.
+  const minInlinePx = `${String(widthCells * cellPx)}px`
+  const minBlockPx = `${String(heightCells * cellPx)}px`
+
   return (
     <div
       ref={ref}
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       data-dither-direction={direction}
       data-cell-px={cellPx}
-      className="relative isolate overflow-hidden"
+      // Fill the host container (so a sized wrapper drives the texture), but carry
+      // a real intrinsic minimum so the band is VISIBLE standalone: the SVG layer
+      // is `absolute` and contributes NO height, so without this the root would
+      // collapse to 0px whenever there are no in-flow `children`. The min size is
+      // the band's own cell extent — exactly enough to read the full ground→accent
+      // transition at 1:1 — and the host can always grow past it.
+      style={{ minBlockSize: minBlockPx, minInlineSize: minInlinePx }}
+      className="relative isolate block h-full w-full overflow-hidden"
     >
       <svg
         data-dither-texture

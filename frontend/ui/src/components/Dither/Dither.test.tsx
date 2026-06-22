@@ -70,6 +70,27 @@ describe('Dither', () => {
     expect(horizontal.container.querySelector('[data-dither-direction="horizontal"]')).not.toBeNull()
   })
 
+  it('carries an intrinsic min-size so the texture is visible STANDALONE (no children)', () => {
+    // The texture <svg> is `position:absolute` and contributes no height; without
+    // a min-size on the root, a childless Dither in an auto-height host collapses
+    // to 0px and renders blank. The root must floor itself to the cell grid.
+    const { container } = render(<Dither />)
+    const root = container.querySelector<HTMLElement>('[data-dither-direction]')
+    expect(root).not.toBeNull()
+    // vertical preview: 28 transition cells × 8px = 224px block; 24 cross × 8px = 192px inline.
+    expect(root?.style.minBlockSize).toBe('224px')
+    expect(root?.style.minInlineSize).toBe('192px')
+  })
+
+  it('floors the min-size to the cell grid for the HERO scale + horizontal axis', () => {
+    // hero = 6px cell; horizontal transposes the axes (transition runs inline).
+    const { container } = render(<Dither scale="hero" direction="horizontal" />)
+    const root = container.querySelector<HTMLElement>('[data-dither-direction]')
+    // transition axis (inline) = 28 cells × 6px = 168px; cross (block) = 24 × 6px = 144px.
+    expect(root?.style.minInlineSize).toBe('168px')
+    expect(root?.style.minBlockSize).toBe('144px')
+  })
+
   it('renders children OVER the texture, keeping them accessible', () => {
     render(
       <Dither>

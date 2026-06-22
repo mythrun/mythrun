@@ -11,9 +11,9 @@ import { cn } from '../../lib/cn.ts'
 // image-with-fallback contract; the DOM-free `AvatarProps` keeps the swap
 // mechanical.
 //
-// Visual exception (§3): avatars are the brand's one sanctioned ROUND shape (like
-// the radio dot) — a conventional affordance the flat-1-bit register makes an
-// explicit exception for. So `rounded-full` here, sharp corners everywhere else.
+// Flat 1-bit (§3): 0px radius EVERYWHERE — avatars are SQUARE (`rounded-none`), no
+// rounded exception. The square frame matches the pixel-art register; the image is
+// `object-cover` so it fills the square without distortion.
 //
 // The fallback initials sit on the `--surface` tier with `--border-strong` edge +
 // `--ink` text (the quiet brand chip), mono `font-ui` (identity initials read as
@@ -61,7 +61,7 @@ export const Avatar = forwardRef<HTMLSpanElement, AvatarProps>(function Avatar(
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       className={cn(
         'relative inline-flex shrink-0 select-none items-center justify-center overflow-hidden',
-        'rounded-full align-middle',
+        'rounded-none align-middle',
         SIZE_CLASS[size],
       )}
     >

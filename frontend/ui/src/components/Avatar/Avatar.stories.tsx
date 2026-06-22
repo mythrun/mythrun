@@ -2,9 +2,10 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Avatar } from './Avatar.tsx'
 
 // Avatar — an identity image with a deterministic INITIALS fallback (built on
-// Radix's image-with-fallback primitive). Round — the brand's one sanctioned
-// round shape (§3 exception, like the radio dot). The clustered variant
-// (overlapping faces + `+N` overflow) is AvatarGroup, in its own story file.
+// Radix's image-with-fallback primitive). SQUARE — 0px radius everywhere (§3, no
+// rounded exception); the square frame matches the pixel-art register. The
+// clustered variant (overlapping faces + `+N` overflow) is AvatarGroup, in its
+// own story file.
 //
 // Do: pass a real `name` always — it's the accessible label AND the initials
 //   source, so the avatar is named whether the image loads or not.

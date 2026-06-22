@@ -4,22 +4,23 @@ import { cn } from '../../lib/cn.ts'
 
 // AvatarGroup — an overlapping cluster of Avatars. Each face is separated from
 // the one beneath it by a token RING (`ring-2 ring-bg`, the page color), so the
-// stack reads as distinct circles rather than a smear; a negative inline margin
+// stack reads as distinct squares rather than a smear; a negative inline margin
 // produces the overlap. When the child count exceeds `max`, the first `max`
 // render and a trailing `+N` overflow chip stands in for the rest.
 //
-// The overflow chip mirrors the Avatar shape (round, the sanctioned exception) +
-// the quiet brand chip tokens (`--surface` / `--border-strong` / `--ink`), mono
-// `font-ui` (it's a count — data). It is plain text (`+2`); the names it stands
-// in for live in the avatars it replaced, so no extra a11y wiring is needed.
+// The overflow chip mirrors the Avatar shape (SQUARE — 0px radius, §3, no rounded
+// exception) + the quiet brand chip tokens (`--surface` / `--border-strong` /
+// `--ink`), mono `font-ui` (it's a count — data). It is plain text (`+2`); the
+// names it stands in for live in the avatars it replaced, so no extra a11y wiring
+// is needed.
 //
 // `children` come in as Avatars; we cap with `Children.toArray` (which also
 // flattens fragments + filters nullish children) so `max` counts real avatars.
 
 const OVERLAP = '-ml-[var(--space-2)]'
 // A token ring in the page color separates overlapping faces. `ring-bg` =
-// var(--color-bg); `rounded-full` because the ring must follow the round avatar.
-const RING = cn('ring-2 ring-bg rounded-full', OVERLAP)
+// var(--color-bg); `rounded-none` because the ring must follow the SQUARE avatar.
+const RING = cn('ring-2 ring-bg rounded-none', OVERLAP)
 
 export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function AvatarGroup(
   { max, children, 'data-testid': dataTestId },
@@ -50,7 +51,7 @@ export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function
           className={cn(
             'inline-flex items-center justify-center',
             'w-[var(--control-md)] h-[var(--control-md)]',
-            'rounded-full bg-surface text-ink border border-border-strong',
+            'rounded-none bg-surface text-ink border border-border-strong',
             'font-ui text-sm font-medium leading-none',
             RING,
           )}

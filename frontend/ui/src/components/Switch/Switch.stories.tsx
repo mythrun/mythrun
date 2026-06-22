@@ -7,8 +7,9 @@ import { Switch } from './Switch.tsx'
 // Checkbox, which stages a form value). The neutral `onChange(checked)` hands the
 // consumer the new boolean (§9).
 //
-// Flat 1-bit (§3): a pill TRACK + a round THUMB. off → `--surface` track +
-// `--border-strong` edge; on → `--accent` fill (token-swap). The thumb SLIDES —
+// Flat 1-bit (§3): 0px radius everywhere — a RECTANGULAR track + a RECTANGULAR
+// thumb (no pill exception). off → `--surface` track + `--border-strong` edge; on
+// → `--accent` fill (token-swap). The thumb SLIDES —
 // but the position IS the state (a control affordance, not decorative motion);
 // the slide is `transform`-only at `--duration-fast`/`--ease-out`, and the global
 // `prefers-reduced-motion` reset neutralises it (the color swap still conveys
