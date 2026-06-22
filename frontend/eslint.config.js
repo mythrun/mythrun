@@ -36,6 +36,14 @@ export default [
       'scripts/**', // node tooling scripts (e.g. i18n-todo.mjs) — outside the TS project
       'client-core/vitest.config.ts',
       'client-core/src/tokens/generate-palette.mjs',
+      // @mythrun/client-core's lint-tooling files (the api-purity rule + its
+      // tests) live in `client-core/eslint-rules/**`. They are in client-core's
+      // OWN TS project and carry client-core's `no-unsafe-*` relaxation (the
+      // ESLint plugin API is inherently `any`-typed). web's `eslint .` globs
+      // across the nested dir and would otherwise lint them under the root
+      // config (no relaxation, and outside web's projectService) — same
+      // out-of-project carve-out as the files above. client-core lints them.
+      'client-core/eslint-rules/**',
       // @mythrun/ui's vitest config default-exports `defineConfig(...)` and is
       // outside web's TS project — same carve-out as client-core's. ui lints
       // it under its own package config. (`ui/.storybook/**` is a dot-dir,

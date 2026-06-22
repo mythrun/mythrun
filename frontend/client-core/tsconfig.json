@@ -12,10 +12,11 @@
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "noEmit": true,
     "isolatedModules": true,
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["src/**/*", "eslint.config.js"]
+  "include": ["src/**/*", "eslint.config.js", "eslint-rules/**/*"]
 }

@@ -1,6 +1,10 @@
 import root from '../../eslint.config.js'
 import jsxA11y from 'eslint-plugin-jsx-a11y'
 import eslintConfigPrettier from 'eslint-config-prettier'
+// R2 (portability): the api-purity rule lives in client-core (the base layer)
+// so BOTH packages can register it without inverting the `client-core ← ui`
+// dependency direction. ui applies it to component prop-WIDENING.
+import { apiPurity } from '../client-core/eslint-rules/api-purity.js'
 
 export default [
   ...root,
@@ -25,6 +29,15 @@ export default [
     plugins: { 'jsx-a11y': jsxA11y },
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
     rules: { ...jsxA11y.configs.recommended.rules },
+  },
+  {
+    // R2 (portability): catch a component that WIDENS its public *Props with a
+    // DOM prop — e.g. `(props: ButtonProps & { className?: string })` — which
+    // would smuggle a DOM-only prop past the platform-neutral contract. Same
+    // rule the contract layer uses, scoped here to the component prop surface.
+    files: ['src/components/**/*.{ts,tsx}'],
+    plugins: { 'mythrun-api': { rules: { 'api-purity': apiPurity } } },
+    rules: { 'mythrun-api/api-purity': 'error' },
   },
   eslintConfigPrettier,
 ]
