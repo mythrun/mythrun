@@ -199,6 +199,38 @@ describe('SeamlessInput', () => {
     expect(ref.current).toBeInstanceOf(HTMLTextAreaElement)
   })
 
+  it('multiline auto-grow FALLBACK (no CSS field-sizing): height tracks scrollHeight, unbounded', async () => {
+    // jsdom has no `CSS` global, so supportsFieldSizing() is false → the JS
+    // fallback is active (this is the Firefox path Miklos hit). jsdom has no
+    // layout, so stub scrollHeight and assert the height grows to it on input —
+    // no cap, no scrollbar (overflow stays hidden via the class).
+    const user = userEvent.setup()
+    const { getByRole } = render(<SeamlessInput multiline label="Q" />)
+    const el = getByRole('textbox') as HTMLTextAreaElement
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 200 })
+    await user.type(el, 'a long line of world-creation prose that would wrap')
+    expect(el.style.height).toBe('200px')
+  })
+
+  it('multiline with CSS field-sizing supported: NO inline height is set (CSS drives growth)', async () => {
+    const original = (globalThis as { CSS?: unknown }).CSS
+    ;(globalThis as { CSS?: { supports: (p: string, v: string) => boolean } }).CSS = {
+      supports: () => true,
+    }
+    try {
+      const user = userEvent.setup()
+      const { getByRole } = render(<SeamlessInput multiline label="Q" />)
+      const el = getByRole('textbox') as HTMLTextAreaElement
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 200 })
+      await user.type(el, 'prose')
+      // field-sizing handles the height; the JS fallback never runs.
+      expect(el.style.height).toBe('')
+    } finally {
+      if (original === undefined) delete (globalThis as { CSS?: unknown }).CSS
+      else (globalThis as { CSS?: unknown }).CSS = original
+    }
+  })
+
   it('has no axe violations (label association is the key a11y check)', async () => {
     const { container } = render(
       <div>

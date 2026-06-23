@@ -1,5 +1,5 @@
-import { forwardRef, useId } from 'react'
-import type { ComponentPropsWithoutRef, Ref } from 'react'
+import { forwardRef, useCallback, useEffect, useId, useRef } from 'react'
+import type { ComponentPropsWithoutRef, ForwardedRef, Ref } from 'react'
 import { cn } from '../../lib/cn.ts'
 import type { SeamlessInputProps } from '@mythrun/client-core/contract'
 
@@ -69,6 +69,23 @@ const FIELD_CLASS = cn(
 // (no resize handle, no inner scrollbar) since the height tracks the text.
 const MULTILINE_CLASS = 'field-sizing-content resize-none overflow-hidden'
 
+// `field-sizing: content` is the CSS path (Chrome/Safari). Firefox doesn't support
+// it yet, so without a fallback the textarea stays its default height and the
+// `overflow-hidden` clips the text with no scrollbar. Feature-detect and, when
+// absent, drive the height in JS instead.
+const supportsFieldSizing = () =>
+  typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content')
+
+// Merge the forwarded ref with our internal one so the JS fallback can read the
+// textarea node while the consumer keeps their own ref.
+const setTextareaRefs =
+  (internal: { current: HTMLTextAreaElement | null }, forwarded: ForwardedRef<HTMLTextAreaElement>) =>
+  (node: HTMLTextAreaElement | null) => {
+    internal.current = node
+    if (typeof forwarded === 'function') forwarded(node)
+    else if (forwarded) forwarded.current = node
+  }
+
 // The label sits ABOVE the field in the brand's serif `title` register so the
 // question reads as the prominent prompt (not the mono ui-label chrome the boxed
 // FormField uses — this is a conversational question, not a form-field caption).
@@ -119,6 +136,29 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
         }
       : undefined
 
+    // Firefox fallback for the multiline auto-grow (no CSS field-sizing): the
+    // classic resize — reset to `auto`, then set height to the full scrollHeight
+    // so the field grows to fit ALL content, UNBOUNDED (no max-height cap) and
+    // with NO scrollbar (overflow stays hidden). Only runs for `multiline` AND
+    // when field-sizing is unsupported, so Chrome/Safari pay nothing.
+    const innerRef = useRef<HTMLTextAreaElement | null>(null)
+    const resizeToContent = useCallback(() => {
+      const el = innerRef.current
+      if (!el) return
+      el.style.height = 'auto'
+      el.style.height = `${String(el.scrollHeight)}px`
+    }, [])
+    useEffect(() => {
+      if (!multiline || supportsFieldSizing()) return
+      const el = innerRef.current
+      if (!el) return
+      resizeToContent() // initial + on controlled-value change (value is a dep)
+      el.addEventListener('input', resizeToContent)
+      return () => {
+        el.removeEventListener('input', resizeToContent)
+      }
+    }, [multiline, value, defaultValue, resizeToContent])
+
     // Shared native attributes — the controlled/uncontrolled value shape, the
     // a11y relationships, and the form wiring, identical across both arms.
     const shared = {
@@ -140,7 +180,7 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
         </label>
         {multiline ? (
           <textarea
-            ref={ref as Ref<HTMLTextAreaElement>}
+            ref={setTextareaRefs(innerRef, ref as ForwardedRef<HTMLTextAreaElement>)}
             {...shared}
             className={cn(FIELD_CLASS, MULTILINE_CLASS)}
             {...rest}
