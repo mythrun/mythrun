@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { FormField } from './FormField.tsx'
 import { Input } from '../Input/Input.tsx'
 import { Select } from '../Select/Select.tsx'
+import { TextArea } from '../TextArea/TextArea.tsx'
 
 // FormField — the labelling / helper / error / required-state wrapper for a
 // single form control. It supplies the associated <Label>, optional helper +
@@ -107,6 +108,35 @@ export const WithSelect: Story = {
   render: (args) => (
     <FormField {...args}>
       <Select options={RACES} placeholder="field.race.placeholder" />
+    </FormField>
+  ),
+}
+
+// Disabled with a hint — a disabled control is otherwise a dead end with no
+// explanation, so the helper carries the WHY (e.g. "unlocks once you pick a
+// class"). The hint stays VISIBLE under the inert field. (a11y note: native
+// `disabled` removes the field from the tab order, so the describedBy hint isn't
+// announceable on focus — when the reason must reach AT on an inert field, prefer
+// readOnly / aria-disabled so it stays focusable. Here the hint is sighted
+// context.)
+export const DisabledWithHint: Story = {
+  name: 'Disabled (with hint)',
+  args: { label: 'field.patron_deity', description: 'field.patron_deity.locked_help' },
+  render: (args) => (
+    <FormField {...args}>
+      <Input disabled placeholder="field.patron_deity" />
+    </FormField>
+  ),
+}
+
+// FormField + TextArea — a multi-line control takes the same label / helper /
+// error wiring; the helper gives a longer-form field the context it needs.
+export const WithTextArea: Story = {
+  name: 'With TextArea',
+  args: { label: 'field.backstory', description: 'field.backstory.help' },
+  render: (args) => (
+    <FormField {...args}>
+      <TextArea rows={3} placeholder="field.backstory" />
     </FormField>
   ),
 }
