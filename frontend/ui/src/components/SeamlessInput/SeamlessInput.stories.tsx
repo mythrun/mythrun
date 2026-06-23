@@ -39,7 +39,7 @@ type Story = StoryObj<typeof SeamlessInput>
 // The magical view — a single question, the borderless field + ember caret
 // below. The screen is "just the prompt and the answer".
 export const Default: Story = {
-  name: 'What is your world called?',
+  name: 'Single line',
   render: () => (
     <div className="w-[40rem] max-w-full">
       <SeamlessInput label="What is your world called?" placeholder="A name will come to you…" />
@@ -51,7 +51,7 @@ export const Default: Story = {
 // a line and the field grows to fit (field-sizing-content); no resize handle, no
 // inner scrollbar.
 export const Multiline: Story = {
-  name: 'Describe the feel of your world…',
+  name: 'Auto-growing multi-line',
   render: () => (
     <div className="w-[40rem] max-w-full">
       <SeamlessInput
