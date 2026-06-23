@@ -26,6 +26,12 @@ export { IconButton } from './components/IconButton/IconButton.tsx'
 export { Input } from './components/Input/Input.tsx'
 export { TextArea } from './components/TextArea/TextArea.tsx'
 
+// Ghost input (MYT-82) — SeamlessInput, the borderless one-question creation-flow
+// field. A real native <input>/<textarea> with the box stripped (no
+// border/background); the question IS the associated label; the accent baseline
+// rule is the non-box focus indicator (WCAG 2.4.13). Neutral onChange(value).
+export { SeamlessInput } from './components/SeamlessInput/SeamlessInput.tsx'
+
 // Form controls (MYT-82 Wave 2c) — Select / Checkbox / Radio + RadioGroup /
 // Switch. Each wraps an unstyled `radix-ui` primitive, styled with our tokens,
 // behind the DOM-free contract (neutral onChange).
@@ -99,6 +105,7 @@ export type {
   InputSize,
   InputType,
   TextAreaProps,
+  SeamlessInputProps,
   SelectProps,
   SelectOption,
   SelectSize,

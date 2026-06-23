@@ -40,6 +40,12 @@ export type { IconButtonProps } from './icon-button.ts'
 export type { InputProps, InputSize, InputType } from './input.ts'
 export type { TextAreaProps } from './text-area.ts'
 
+// Ghost-input contract (MYT-82) — SeamlessInput, the borderless one-question
+// creation-flow field. A real native <input>/<textarea> with the box stripped
+// (no border/background); the question IS the associated label. DOM-free here:
+// the neutral `onChange(value)` (§9), no className/style/raw DOM events.
+export type { SeamlessInputProps } from './seamless-input.ts'
+
 // Form-control contracts (MYT-82 Wave 2c) — Select / Checkbox / Radio /
 // RadioGroup / Switch. These wrap the unstyled `radix-ui` primitives in the web
 // impl, styled with our tokens; the contracts stay DOM-free (neutral
