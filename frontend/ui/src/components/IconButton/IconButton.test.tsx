@@ -75,15 +75,29 @@ describe('IconButton', () => {
     expect(onPress).not.toHaveBeenCalled()
   })
 
-  it('enforces a ≥44px hit-target (min-width + min-height) at EVERY size, incl. sm', () => {
+  it('enforces a ≥44px touch hit-target on both axes (coarse pointer only)', () => {
     for (const size of ['sm', 'md', 'lg'] as const) {
       const { getByRole, unmount } = render(
         <IconButton icon="close" label="Close" size={size} />,
       )
-      // Icon-only: no text to pad the tap area, so both axes are pinned ≥44px.
-      expect(getByRole('button')).toHaveClass('min-w-[44px]', 'min-h-[44px]')
+      // Icon-only: both axes floor at 44px on touch — but only on a COARSE pointer,
+      // so the visual --control-* square stays distinct (sm 32 / md 40 / lg 48) on
+      // desktop. A blanket min would force sm + md both to 44px (identical).
+      expect(getByRole('button')).toHaveClass(
+        'pointer-coarse:min-w-[44px]',
+        'pointer-coarse:min-h-[44px]',
+      )
+      expect(getByRole('button')).not.toHaveClass('min-w-[44px]', 'min-h-[44px]')
       unmount()
     }
+  })
+
+  it('gives secondary + ghost a pressed (active) state', () => {
+    const sec = render(<IconButton icon="close" label="Close" variant="secondary" />)
+    expect(sec.getByRole('button')).toHaveClass('active:bg-surface-active')
+    sec.unmount()
+    const ghost = render(<IconButton icon="close" label="Close" variant="ghost" />)
+    expect(ghost.getByRole('button')).toHaveClass('active:bg-surface-active')
   })
 
   it('carries the theme-aware focus-ring outline classes', () => {
