@@ -52,15 +52,17 @@ describe('TextArea', () => {
     expect(getByRole('textbox')).toHaveAttribute('rows', '6')
   })
 
-  it('sets aria-invalid + the danger border ONLY when invalid', () => {
+  it('sets aria-invalid + the danger border AND bg wash ONLY when invalid', () => {
     const { getByRole, rerender } = render(<TextArea />)
     const el = getByRole('textbox')
     expect(el).not.toHaveAttribute('aria-invalid', 'true')
     expect(el).not.toHaveClass('border-border-danger')
+    expect(el).not.toHaveClass('bg-surface-danger')
 
     rerender(<TextArea invalid />)
     expect(el).toHaveAttribute('aria-invalid', 'true')
     expect(el).toHaveClass('border-border-danger')
+    expect(el).toHaveClass('bg-surface-danger')
   })
 
   it('blocks input when disabled', async () => {

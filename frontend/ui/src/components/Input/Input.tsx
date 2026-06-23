@@ -25,8 +25,12 @@ import { cn } from '../../lib/cn.ts'
 // disabled / readOnly: the native attributes + muted token styling
 // (`disabled:` swaps to `--surface` bg + `--ink-tertiary` text; a11y-exempt for
 // contrast as an inactive control, §4).
+// Font steps 12/14/16 (text-xs/sm/base) so sm reads clearly smaller than md —
+// without the down-step sm and md share the 14px face and look near-identical
+// (only an 8px height + 4px padding apart). Height = --control-* (32/40/48),
+// padding ramps +4 (8/12/16).
 const SIZE_CLASS: Record<InputSize, string> = {
-  sm: 'h-[var(--control-sm)] px-[var(--space-2)] text-sm',
+  sm: 'h-[var(--control-sm)] px-[var(--space-2)] text-xs',
   md: 'h-[var(--control-md)] px-[var(--space-3)] text-sm',
   lg: 'h-[var(--control-lg)] px-[var(--space-4)] text-base',
 }
@@ -47,10 +51,13 @@ const input = cva(
   {
     variants: {
       size: SIZE_CLASS,
-      // Invalid swaps the border to the danger token AND recolors the focus ring
-      // to danger. `aria-invalid` is set separately in the impl (not a class).
+      // Invalid: danger border + danger focus ring + a faint danger BG wash. The
+      // wash matters because our danger red sits close to the ember accent — a red
+      // border alone doesn't read as "error" at a glance; the tinted fill
+      // (`--surface-danger`, danger-50) makes the state unmistakable. `aria-invalid`
+      // is set separately in the impl (not a class).
       invalid: {
-        true: 'border-border-danger focus-visible:outline-border-danger',
+        true: 'border-border-danger bg-surface-danger focus-visible:outline-border-danger',
         false: '',
       },
     },

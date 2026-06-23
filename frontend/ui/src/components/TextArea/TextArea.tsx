@@ -14,8 +14,10 @@ import { cn } from '../../lib/cn.ts'
 // even a 1-row textarea clears the touch floor; vertical padding gives the text
 // breathing room, and only vertical resize is allowed (the base layer pins
 // `resize: vertical`).
+// Font steps 12/14/16 (text-xs/sm/base) so sm reads clearly smaller than md
+// (matches Input — without the down-step they share the 14px face).
 const SIZE_CLASS: Record<InputSize, string> = {
-  sm: 'min-h-[var(--control-sm)] px-[var(--space-2)] py-[var(--space-2)] text-sm',
+  sm: 'min-h-[var(--control-sm)] px-[var(--space-2)] py-[var(--space-2)] text-xs',
   md: 'min-h-[var(--control-md)] px-[var(--space-3)] py-[var(--space-2)] text-sm',
   lg: 'min-h-[var(--control-lg)] px-[var(--space-4)] py-[var(--space-3)] text-base',
 }
@@ -32,8 +34,11 @@ const textArea = cva(
   {
     variants: {
       size: SIZE_CLASS,
+      // Invalid: danger border + danger focus ring + a faint danger BG wash (our
+      // red sits close to the ember accent, so the tinted fill makes the error
+      // state unmistakable). `aria-invalid` is set in the impl.
       invalid: {
-        true: 'border-border-danger focus-visible:outline-border-danger',
+        true: 'border-border-danger bg-surface-danger focus-visible:outline-border-danger',
         false: '',
       },
     },
