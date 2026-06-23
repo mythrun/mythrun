@@ -44,16 +44,23 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 // Visual height from the `--control-*` token (32/40/48); padding ramps +4/+8
 // (12/16/24); font steps 12/14/16 (text-xs/sm/base). All three axes change per
 // step so the sizes are clearly distinguishable — not just the height.
+//
+// GAP (spinner/icon ↔ label): tuned to the spinner that actually sits there, not
+// a uniform value. sm/md carry the 12px spinner, so the canonical 8px gap reads
+// as 0.67em — too loose, the spinner detaches from the label; 6px ≈ half the
+// spinner pulls it into one unit. lg carries the 24px spinner, where 8px is a
+// clean 0.5em / one-third-of-spinner, so it keeps the --space-2 gap.
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: 'h-[var(--control-sm)] px-[var(--space-3)] text-xs',
-  md: 'h-[var(--control-md)] px-[var(--space-4)] text-sm',
-  lg: 'h-[var(--control-lg)] px-[var(--space-5)] text-base',
+  sm: 'h-[var(--control-sm)] px-[var(--space-3)] text-xs gap-[6px]',
+  md: 'h-[var(--control-md)] px-[var(--space-4)] text-sm gap-[6px]',
+  lg: 'h-[var(--control-lg)] px-[var(--space-5)] text-base gap-[var(--space-2)]',
 }
 
 const button = cva(
   cn(
     // Layout: label + (optional) spinner sit on one row, centered, never wrapping.
-    'inline-flex items-center justify-center gap-[var(--space-2)] whitespace-nowrap',
+    // The gap is per-size (see SIZE_CLASS) — tuned to the spinner that sits there.
+    'inline-flex items-center justify-center whitespace-nowrap',
     'font-ui font-medium select-none cursor-pointer',
     // Flat 1-bit corners.
     'rounded-none',
