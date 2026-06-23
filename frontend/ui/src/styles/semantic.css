@@ -66,8 +66,8 @@
   --border-warning: var(--color-warning-500);  /* 3.11:1 vs paper-100, 3.42:1 vs warning-50 */
   --text-warning: var(--color-warning-700);    /* 5.30:1 vs paper-100, 5.84:1 vs warning-50 */
   --surface-danger: var(--color-danger-50);
-  --border-danger: var(--color-danger-500);    /* 3.84:1 vs paper-100, 3.71:1 vs danger-50 */
-  --text-danger: var(--color-danger-600);      /* 4.87:1 vs paper-100, 4.71:1 vs danger-50 */
+  --border-danger: var(--color-danger-500);    /* 3.91:1 vs paper-100, 3.71:1 vs danger-50 */
+  --text-danger: var(--color-danger-600);      /* 4.96:1 vs paper-100, 4.70:1 vs danger-50 */
   --surface-info: var(--color-info-50);
   --border-info: var(--color-info-500);        /* 3.67:1 vs paper-100, 3.59:1 vs info-50 */
   --text-info: var(--color-info-600);          /* 4.67:1 vs paper-100, 4.56:1 vs info-50 */
@@ -121,8 +121,8 @@
   --border-warning: var(--color-warning-400);  /* 5.74:1 vs paper-900, 4.01:1 vs warning-900 */
   --text-warning: var(--color-warning-300);    /* 7.61:1 vs paper-900, 5.31:1 vs warning-900 */
   --surface-danger: var(--color-danger-900);
-  --border-danger: var(--color-danger-400);    /* 4.66:1 vs paper-900, 3.88:1 vs danger-900 */
-  --text-danger: var(--color-danger-300);      /* 6.30:1 vs paper-900, 5.24:1 vs danger-900 */
+  --border-danger: var(--color-danger-400);    /* 4.59:1 vs paper-900, 3.84:1 vs danger-900 */
+  --text-danger: var(--color-danger-300);      /* 6.20:1 vs paper-900, 5.19:1 vs danger-900 */
   --surface-info: var(--color-info-900);
   --border-info: var(--color-info-400);        /* 4.91:1 vs paper-900, 4.04:1 vs info-900 */
   --text-info: var(--color-info-300);          /* 6.56:1 vs paper-900, 5.38:1 vs info-900 */

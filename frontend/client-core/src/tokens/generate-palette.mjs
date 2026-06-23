@@ -8,7 +8,7 @@ const PAPER = { 50:'#F8F4EA',100:'#EFE9DC',200:'#E1D9C6',300:'#C9BFA8',400:'#A89
 const EMBER = { 50:'#F5E4D3',100:'#ECCDAB',200:'#DCAE7E',300:'#C99562',400:'#B47B4E',500:'#9E6A44',600:'#8A5A3C',700:'#714730',800:'#573624',900:'#3C2619' }
 export const SEMANTIC_ANCHORS = {
   success:{hex:'#6D7A3E',anchorStep:500}, warning:{hex:'#B07835',anchorStep:500},
-  danger:{hex:'#B55A48',anchorStep:500}, info:{hex:'#4A6B82',anchorStep:600},
+  danger:{hex:'#c34c43',anchorStep:500}, info:{hex:'#4A6B82',anchorStep:600},
 }
 const toRgb = toGamut('rgb', 'oklch')
 const emberOk = Object.fromEntries(STEPS.map((s) => [s, oklch(EMBER[s])]))
