@@ -31,7 +31,7 @@ const meta: Meta<typeof Spinner> = {
   component: Spinner,
   tags: ['autodocs'],
   argTypes: {
-    size: { control: 'inline-radio', options: ['sm', 'md', 'lg'] },
+    size: { control: 'inline-radio', options: ['xs', 'sm', 'md', 'lg'] },
     label: { control: 'text' },
   },
 }
@@ -49,12 +49,14 @@ export const Default: Story = {
   args: { label: 'Loading your campaign' },
 }
 
-// The size axis — the wave square scales sm → md → lg on the icon token grid.
-// NOTE: at sm (16px) the 12×12 grid yields ~1.3px cells — fine grain; if it reads
-// too small in context, the SIZE token scale (not the grid) is what would grow.
+// The size axis — the wave square scales xs → sm → md → lg in WHOLE-pixel cells
+// (1/2/3/4px → 12/24/36/48px), so every size lands crisp (no sub-pixel mush). xs
+// (12px, 1px cells) is the tightest crisp size, sized for the in-button slot; at
+// 1px-per-cell the dither reads as a fine grain rather than discrete squares.
 export const Sizes: Story = {
   render: () => (
     <div className="flex items-center gap-[var(--space-5)]">
+      <Spinner size="xs" />
       <Spinner size="sm" />
       <Spinner size="md" />
       <Spinner size="lg" />
@@ -63,7 +65,10 @@ export const Sizes: Story = {
 }
 
 // THE PRIMARY REAL CONTEXT: inside a loading Button. The control owns the
-// disabled/aria-busy state; the wave flows beside the still-visible label.
+// disabled/aria-busy state; the wave flows beside the still-visible label. The
+// in-button spinner is sized to be PROPORTIONATE to the label — sm/md buttons get
+// the 12px `xs` spinner (balanced beside the 12/14px label), lg gets the 24px `sm`
+// spinner (matched to its bigger 16px label).
 export const InLoadingButton: Story = {
   render: () => (
     <div className="flex flex-col items-start gap-[var(--space-4)]">

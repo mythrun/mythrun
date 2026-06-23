@@ -77,8 +77,12 @@ const button = cva(
   },
 )
 
-// The Spinner footprint tracks the control size (sm/md → small dots; lg → md).
-const SPINNER_SIZE: Record<ButtonSize, 'sm' | 'md'> = { sm: 'sm', md: 'sm', lg: 'md' }
+// The in-button Spinner footprint tracks the control size, sized to sit
+// PROPORTIONATE to the label rather than tower over it. sm/md buttons (12/14px
+// labels) get the 12px `xs` spinner; the bigger lg control (16px label) gets the
+// 24px `sm` spinner. (A 24px spinner next to a 14px md label read oversized — the
+// MYT-82 visual audit — so md drops from `sm`→`xs`.)
+const SPINNER_SIZE: Record<ButtonSize, 'xs' | 'sm' | 'md'> = { sm: 'xs', md: 'xs', lg: 'sm' }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {

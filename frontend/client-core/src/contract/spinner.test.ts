@@ -4,8 +4,8 @@ import type { SpinnerProps } from './spinner.ts'
 // Type-level contract for Spinner. Platform-neutral: a size token + an optional
 // SR label (an i18n key the consumer supplies; the impl provides a fallback).
 describe('SpinnerProps contract', () => {
-  it('accepts the three token sizes', () => {
-    expectTypeOf<SpinnerProps['size']>().toEqualTypeOf<'sm' | 'md' | 'lg' | undefined>()
+  it('accepts the four token sizes (xs is the in-button 12px size)', () => {
+    expectTypeOf<SpinnerProps['size']>().toEqualTypeOf<'xs' | 'sm' | 'md' | 'lg' | undefined>()
   })
 
   it('accepts an optional SR label', () => {

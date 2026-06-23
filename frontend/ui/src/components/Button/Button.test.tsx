@@ -93,6 +93,28 @@ describe('Button', () => {
     expect(el).toHaveTextContent('Saving')
   })
 
+  it('renders a proportionate in-button spinner: sm/md → 12px (xs), lg → 24px (sm)', () => {
+    // The in-button spinner must sit balanced next to the label, not tower over
+    // it. sm/md buttons (12/14px labels) get the 12px 'xs' spinner; the bigger lg
+    // control (16px label) gets the 24px 'sm' spinner. The grid width reveals the
+    // chosen Spinner size (xs=12px, sm=24px) — whole-pixel, crisp.
+    const expected: Record<'sm' | 'md' | 'lg', string> = {
+      sm: '12px',
+      md: '12px',
+      lg: '24px',
+    }
+    for (const size of ['sm', 'md', 'lg'] as const) {
+      const { getByRole, unmount } = render(
+        <Button size={size} loading>
+          Saving
+        </Button>,
+      )
+      const grid = getByRole('button').querySelector<HTMLElement>('[data-spinner-grid]')
+      expect(grid?.style.width).toBe(expected[size])
+      unmount()
+    }
+  })
+
   it('does NOT set aria-busy when not loading', () => {
     const { getByRole } = render(<Button>x</Button>)
     expect(getByRole('button')).not.toHaveAttribute('aria-busy', 'true')

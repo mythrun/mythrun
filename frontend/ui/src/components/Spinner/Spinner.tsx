@@ -34,9 +34,13 @@ import { GRID, GAP, SPEED_MS, buildCells, isOn } from './develop.ts'
 // Cell size in WHOLE pixels per spinner size. A 12×12 dither renders crisp ONLY
 // when the box is an exact multiple of 12, so each cell lands on whole-pixel
 // boundaries — otherwise the browser sub-pixel anti-aliases the cells into mush
-// (e.g. 16px ÷ 12 = 1.33px cells). So sizes are 12·cellPx: sm/md/lg = 2/3/4px
-// cells → 24/36/48px squares. width === height (the grid is square).
-const CELL_PX: Record<NonNullable<SpinnerProps['size']>, number> = { sm: 2, md: 3, lg: 4 }
+// (e.g. 16px ÷ 12 = 1.33px cells). So sizes are 12·cellPx: xs/sm/md/lg =
+// 1/2/3/4px cells → 12/24/36/48px squares. width === height (the grid is square).
+// `xs` is the smallest crisp size — 1px cells → exactly 12px (twelve whole 1px
+// cells) — sized for the IN-BUTTON loading slot, where it sits proportionate to a
+// 12/14px label rather than towering over it. The wave/notch/reduced-motion/a11y
+// behaviour is identical at every cellPx; only the box scales.
+const CELL_PX: Record<NonNullable<SpinnerProps['size']>, number> = { xs: 1, sm: 2, md: 3, lg: 4 }
 
 // The static cell geometry (computed once — pure + deterministic; the grain never
 // reshuffles across renders). The component renders these in order, so DOM child

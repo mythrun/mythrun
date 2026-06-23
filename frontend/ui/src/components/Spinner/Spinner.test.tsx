@@ -176,6 +176,30 @@ describe('Spinner', () => {
     })
   })
 
+  it('renders xs as a crisp 12px square (12 = 12·1px cells) — the in-button slot', () => {
+    const { getByRole } = render(<Spinner size="xs" />)
+    const grid = getByRole('status').querySelector<HTMLElement>('[data-spinner-grid]')
+    // xs = 1px cells → exactly 12px, whole-pixel (12 ÷ 12 = 1px cells, no
+    // sub-pixel anti-aliasing). This is the proportionate in-button footprint.
+    expect(grid?.style.width).toBe('12px')
+    expect(grid?.style.height).toBe('12px')
+    // The full 12×12 dither still renders (144 cells) at the smaller cell size.
+    const cells = getByRole('status').querySelectorAll('[data-spinner-cell]')
+    expect(cells.length).toBe(GRID * GRID)
+  })
+
+  it('xs honours reduced motion: NO rAF loop, a legible STATIC dither', () => {
+    mockMatchMedia(true)
+    const raf = vi.spyOn(window, 'requestAnimationFrame')
+    const { getByRole } = render(<Spinner size="xs" />)
+    expect(raf).not.toHaveBeenCalled()
+    const lit = Array.from(
+      getByRole('status').querySelectorAll<HTMLElement>('[data-spinner-cell]'),
+    ).filter((c) => c.style.opacity === '1')
+    expect(lit.length).toBe(buildCells().filter((c) => c.staticLit).length)
+    expect(lit.length).toBeGreaterThan(0)
+  })
+
   it('renders lg as a crisp whole-pixel square (48px = 12·4px cells)', () => {
     const { getByRole } = render(<Spinner size="lg" />)
     const grid = getByRole('status').querySelector<HTMLElement>('[data-spinner-grid]')
