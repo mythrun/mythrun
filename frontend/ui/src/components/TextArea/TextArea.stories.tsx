@@ -21,6 +21,9 @@ const meta: Meta<typeof TextArea> = {
   argTypes: {
     size: { control: 'inline-radio', options: ['sm', 'md', 'lg'] },
     rows: { control: 'number' },
+    autoSize: { control: 'boolean' },
+    minRows: { control: 'number' },
+    maxRows: { control: 'number' },
     invalid: { control: 'boolean' },
     disabled: { control: 'boolean' },
     readOnly: { control: 'boolean' },
@@ -71,4 +74,31 @@ export const ReadOnly: Story = {
 export const WithPlaceholder: Story = {
   name: 'With placeholder',
   args: { rows: 4, placeholder: 'field.session_notes' },
+}
+
+// AutoGrow — the chat-composer pattern. With `autoSize`, the textarea starts at
+// `minRows` and grows as you type newlines (Shift+Enter) or long prose wraps,
+// then caps at `maxRows` and scrolls. Mechanism: CSS `field-sizing: content`
+// (Tailwind `field-sizing-content`) with a JS scrollHeight fallback for Firefox.
+// `rows` is ignored in this mode. Type a few lines to watch it grow then cap.
+//
+// NOTE: Enter-to-submit vs Shift+Enter-for-newline is the CONSUMER's keydown
+// concern — the design-system component never hard-codes submit. Here Enter just
+// inserts a newline (the native default), which is what makes the grow visible.
+export const AutoGrow: Story = {
+  name: 'Auto-grow (chat composer)',
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-1)] w-96">
+      <label htmlFor="autogrow-composer" className="font-ui text-xs text-ink-secondary">
+        Message
+      </label>
+      <TextArea
+        id="autogrow-composer"
+        autoSize
+        minRows={1}
+        maxRows={6}
+        placeholder="composer.message"
+      />
+    </div>
+  ),
 }

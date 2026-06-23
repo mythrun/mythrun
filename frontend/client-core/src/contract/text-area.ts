@@ -35,6 +35,20 @@ export interface TextAreaProps extends BaseProps {
   size?: InputSize
   /** Visible text rows (native `rows`). Drives the auto-height. */
   rows?: number
+  /**
+   * Auto-grow mode (the chat-composer pattern). When `true` the textarea sizes
+   * to its CONTENT — starting at {@link minRows} lines, growing as the user
+   * types newlines or long prose wraps, then capping at {@link maxRows} and
+   * scrolling. `rows` is IGNORED in favour of `minRows`/`maxRows` (the underlying
+   * `field-sizing: content` ignores the `rows` attribute). Default `false`
+   * (fixed height from `rows`, the unchanged behaviour). Enter-vs-Shift+Enter is
+   * the consumer's keydown concern, not this prop's.
+   */
+  autoSize?: boolean
+  /** Auto-grow floor: minimum visible rows when `autoSize`. Default `1`. */
+  minRows?: number
+  /** Auto-grow cap: rows shown before the textarea scrolls when `autoSize`. Default `8`. */
+  maxRows?: number
   /** Invalid state: sets `aria-invalid` + the danger border/focus tokens. */
   invalid?: boolean
   /** Disabled state: the native `disabled` attribute + muted token styling. */
