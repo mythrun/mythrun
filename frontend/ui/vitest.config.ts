@@ -2,6 +2,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // RAM guard (each worker ~1-3GB under jsdom + v8 coverage; an uncapped
+    // 8-wide pool × concurrent runs OOM-crashed this 16GB machine). See
+    // frontend/vitest.config.ts for the full rationale.
+    maxWorkers: 3,
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     coverage: {

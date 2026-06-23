@@ -2,6 +2,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // RAM guard (each worker ~1-3GB under v8 coverage; an uncapped pool ×
+    // concurrent runs OOM-crashed this 16GB machine). See
+    // frontend/vitest.config.ts for the full rationale.
+    maxWorkers: 3,
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],

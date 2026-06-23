@@ -2,6 +2,11 @@ import { defineConfig, configDefaults } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // RAM guard: cap the worker pool. Vitest pools ~1 worker per core (8 here)
+    // and each worker is ~1-3GB under jsdom + v8 coverage; an uncapped pool ×
+    // concurrent runs OOM-crashed this 16GB machine. 3 keeps a full coverage
+    // run comfortably under RAM. Kept in lockstep across the 3 frontend configs.
+    maxWorkers: 3,
     environment: 'jsdom',
     // @mythrun/web is the root frontend package; `client-core/` and `ui/` are
     // NESTED workspace packages that each own their own vitest config + run.
