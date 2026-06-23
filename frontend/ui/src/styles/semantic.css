@@ -26,8 +26,14 @@
      paper-500 → 3.27:1 vs bg, 3.60:1 vs surface. (paper-300 --border is decorative only.) */
   --border-strong: var(--color-paper-500);
 
-  /* Token-swap hover surface (one paper step toward the page). */
-  --surface-hover: var(--color-paper-100);
+  /* Token-swap hover/active surfaces for neutral controls (secondary/ghost) and
+     menu/select item highlights. paper-200 (NOT paper-100): the page --bg is
+     ALSO paper-100, so a transparent ghost hovering to paper-100 would be
+     invisible against the page. paper-200 is a visible step against both the
+     page (paper-100) and a surface panel (paper-50). active is one step further
+     (paper-300) for the pressed state. */
+  --surface-hover: var(--color-paper-200);
+  --surface-active: var(--color-paper-300);   /* token-swap pressed (one step past hover) */
 
   /* Elevation tiers. Light parchment has no step lighter than paper-50, so the
      raised/overlay tiers sit at paper-50 and elevation is carried by
@@ -86,7 +92,10 @@
      paper-500 → 4.29:1 vs bg, 3.82:1 vs surface. */
   --border-strong: var(--color-paper-500);
 
+  /* Dark hover stays paper-700 (already ≠ the page paper-900, so visible);
+     active is one step lighter still (paper-600) for the pressed state. */
   --surface-hover: var(--color-paper-700);
+  --surface-active: var(--color-paper-600);   /* token-swap pressed (one step past hover) */
 
   /* Dark elevation steps genuinely: surface=800, raised/overlay=700. */
   --surface-raised: var(--color-paper-700);  /* popover */
@@ -131,6 +140,7 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-active: var(--accent-active);
   --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
   --color-surface-raised: var(--surface-raised);
   --color-surface-overlay: var(--surface-overlay);
   --color-scrim: var(--scrim);

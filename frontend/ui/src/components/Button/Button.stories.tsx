@@ -9,8 +9,10 @@ import { Button } from './Button.tsx'
 // and sets aria-busy.
 //
 // Variants: primary (accent fill — the page's main action), secondary (bordered
-// neutral), ghost (low-emphasis text). Sizes: sm/md/lg (32/40/48px VISUAL height
-// — the interactive hit-target is always ≥44px, padded under the visual box).
+// neutral), ghost (low-emphasis text). Sizes: sm/md/lg — distinct on three axes:
+// height 32/40/48 (--control-*), padding 12/16/24, font 12/14/16. On a COARSE
+// (touch) pointer the interactive target floors at ≥44px (WCAG 2.5.5); a fine
+// (mouse) pointer keeps the distinct visual heights.
 //
 // State matrix (§6): default · hover (doc) · active (doc) · focus (tab to it) ·
 // disabled · loading. hover/active are pointer states — see the Variants matrix
@@ -51,7 +53,8 @@ export const Variants: Story = {
   ),
 }
 
-// The size axis — sm/md/lg visual height (the tap area stays ≥44px on each).
+// The size axis — sm/md/lg, distinct on height (32/40/48), padding, and font
+// (12/14/16). On a touch (coarse) pointer each floors at a ≥44px tap target.
 export const Sizes: Story = {
   render: () => (
     <div className="flex items-center gap-[var(--space-4)]">
@@ -70,7 +73,9 @@ export const Focus: Story = {
 }
 
 // Hover / active are POINTER states — hover or press the button to see the fill
-// token swap (accent → accent-hover → accent-active). No transform/shadow.
+// token swap. primary: accent → accent-hover → accent-active. secondary/ghost:
+// surface → surface-hover → surface-active (a neutral paper step per state). No
+// transform/shadow.
 export const HoverAndActive: Story = {
   name: 'Hover · Active (pointer states — hover/press to see the token swap)',
   render: () => (

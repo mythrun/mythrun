@@ -21,19 +21,31 @@ import { Spinner } from '../Spinner/Spinner.tsx'
 // (R3) bans arbitrary color utilities; the token form is semantically identical.
 //
 // Hit-target (a11y-critical, §4): the VISUAL height is the `--control-*` token
-// (32/40/48), but the INTERACTIVE area is padded to ≥44px on every size via
-// `min-h-[44px]` — a touch target never shrinks below 44px even when the
-// button looks 32px tall (`sm`). (Non-color arbitrary values like `min-h-[44px]`
-// are allowed by R3 — it only bans arbitrary *color* utilities.)
+// (32/40/48), and those three heights MUST read as distinct in the size scale.
+// A blanket `min-h-[44px]` would force `sm`(32) and `md`(40) both up to 44px —
+// collapsing the scale (sm≈md). So the 44px WCAG 2.5.5 target rides the
+// `pointer-coarse:` variant instead (see the base class): only a COARSE pointer
+// (touch) gets the 44px floor — where target size matters — while a fine pointer
+// (mouse) keeps the distinct 32/40/48 visual hierarchy, which is what matters
+// there. (Non-color arbitrary values like `min-h-[44px]` are allowed by R3 — it
+// only bans arbitrary *color* utilities.)
+//
+// State matrix (§6): each variant carries a hover AND an active (pressed)
+// token-swap. primary swaps the accent fill (accent-hover → accent-active);
+// secondary/ghost swap the neutral surface (surface-hover → surface-active),
+// one paper step per state.
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: 'bg-accent text-paper-50 hover:bg-accent-hover active:bg-accent-active',
-  secondary: 'bg-surface text-ink border border-border-strong hover:bg-surface-hover',
-  ghost: 'bg-transparent text-ink hover:bg-surface-hover',
+  secondary:
+    'bg-surface text-ink border border-border-strong hover:bg-surface-hover active:bg-surface-active',
+  ghost: 'bg-transparent text-ink hover:bg-surface-hover active:bg-surface-active',
 }
 
-// Visual height from the `--control-*` token; horizontal padding scales with it.
+// Visual height from the `--control-*` token (32/40/48); padding ramps +4/+8
+// (12/16/24); font steps 12/14/16 (text-xs/sm/base). All three axes change per
+// step so the sizes are clearly distinguishable — not just the height.
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: 'h-[var(--control-sm)] px-[var(--space-3)] text-sm',
+  sm: 'h-[var(--control-sm)] px-[var(--space-3)] text-xs',
   md: 'h-[var(--control-md)] px-[var(--space-4)] text-sm',
   lg: 'h-[var(--control-lg)] px-[var(--space-5)] text-base',
 }
@@ -45,8 +57,10 @@ const button = cva(
     'font-ui font-medium select-none cursor-pointer',
     // Flat 1-bit corners.
     'rounded-none',
-    // ≥44px hit-target on every size (visual height may be smaller via --control-*).
-    'min-h-[44px]',
+    // ≥44px touch target on COARSE pointers only (WCAG 2.5.5). On a fine pointer
+    // the visual height stays the distinct --control-* step (32/40/48); a blanket
+    // min-h would flatten sm/md to 44px and kill the size scale.
+    'pointer-coarse:min-h-[44px]',
     // Theme-aware focus ring (== --focus-ring-color in both themes).
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
     // Disabled (incl. loading): muted token swap, non-interactive cursor.

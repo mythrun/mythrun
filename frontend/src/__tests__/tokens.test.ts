@@ -34,7 +34,7 @@ describe('token presence (manifest-driven)', () => {
     const aliases = ['--bg', '--surface', '--border', '--ink', '--ink-secondary', '--ink-tertiary',
       '--accent', '--accent-hover', '--success', '--warning', '--danger', '--info',
       // --surface family extends the shipped alias (theme-aware tiers, §4)
-      '--surface-raised', '--surface-overlay', '--surface-hover',
+      '--surface-raised', '--surface-overlay', '--surface-hover', '--surface-active',
       // modal scrim — the theme-aware dimming veil behind an overlay (§3/§4)
       '--scrim',
       // interactive control boundary + theme-aware focus ring color
@@ -117,6 +117,31 @@ describe('theme-aware semantic tokens (§4/§5)', () => {
     for (const name of ['--color-border-strong', '--color-surface-raised', '--color-text-danger']) {
       expect(semanticCss).toContain(name)
     }
+  })
+  it('@theme inline surfaces --surface-active so Tailwind generates bg-surface-active', () => {
+    expect(semanticCss).toMatch(/--color-surface-active:\s*var\(--surface-active\)/)
+  })
+})
+
+describe('hover/active surface steps (MYT-82 Button visual audit)', () => {
+  // Slice the :root block (light) and the .dark block so per-theme values can be
+  // pinned independently. :root spans from its opening brace to the first '}'.
+  const rootStart = semanticCss.indexOf(':root {')
+  const rootBlock = semanticCss.slice(rootStart, semanticCss.indexOf('}', rootStart))
+  const darkStart = semanticCss.indexOf('.dark {')
+  const darkBlock = semanticCss.slice(darkStart, semanticCss.indexOf('}', darkStart))
+
+  it('light --surface-hover is paper-200 (a visible step vs the page paper-100 AND a surface paper-50)', () => {
+    expect(rootBlock).toMatch(/--surface-hover:\s*var\(--color-paper-200\)/)
+  })
+  it('dark --surface-hover stays paper-700 (already ≠ the page paper-900)', () => {
+    expect(darkBlock).toMatch(/--surface-hover:\s*var\(--color-paper-700\)/)
+  })
+  it('light --surface-active is paper-300 (one step past the paper-200 hover)', () => {
+    expect(rootBlock).toMatch(/--surface-active:\s*var\(--color-paper-300\)/)
+  })
+  it('dark --surface-active is paper-600 (one step past the paper-700 hover)', () => {
+    expect(darkBlock).toMatch(/--surface-active:\s*var\(--color-paper-600\)/)
   })
 })
 
