@@ -154,6 +154,40 @@ describe('RadioGroup / Radio', () => {
     )
   })
 
+  // invalid lives on the GROUP: it sets aria-invalid on the radiogroup AND the 2px
+  // danger border on every item (mirrors Checkbox); the default has neither.
+  it('invalid sets aria-invalid on the group + the 2px danger border on each item; default has neither', () => {
+    const { rerender } = render(
+      <RadioGroup defaultValue="good">
+        <Radio value="good" label="align.good" />
+        <Radio value="evil" label="align.evil" />
+      </RadioGroup>,
+    )
+    const group = screen.getByRole('radiogroup')
+    expect(group).not.toHaveAttribute('aria-invalid', 'true')
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).not.toHaveClass('border-border-danger')
+    }
+
+    rerender(
+      <RadioGroup defaultValue="good" invalid>
+        <Radio value="good" label="align.good" />
+        <Radio value="evil" label="align.evil" />
+      </RadioGroup>,
+    )
+    expect(group).toHaveAttribute('aria-invalid', 'true')
+    // Every item gets the standardized 2px danger border, including the SELECTED
+    // one — the danger edge wins over the checked-accent border (the invalid arm
+    // re-points data-[state=checked]:border-* to danger, like Checkbox).
+    const radios = screen.getAllByRole('radio')
+    for (const radio of radios) {
+      expect(radio).toHaveClass('border-2', 'border-border-danger', 'data-[state=checked]:border-border-danger')
+    }
+    const checked = radios.find((r) => r.getAttribute('aria-checked') === 'true')
+    expect(checked).toBeDefined()
+    expect(checked).not.toHaveClass('data-[state=checked]:border-accent')
+  })
+
   it('maps the group describedBy → aria-describedby on the radiogroup', () => {
     const { rerender } = render(
       <RadioGroup>

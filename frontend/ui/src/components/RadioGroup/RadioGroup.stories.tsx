@@ -13,7 +13,8 @@ import { RadioGroup, Radio } from './RadioGroup.tsx'
 // differs from a Checkbox, which stamps a `check` glyph). The focus ring is the
 // shared theme-aware `outline-accent`.
 //
-// State matrix (§6): default (one selected) · disabled (group or single option).
+// State matrix (§6): default (one selected) · disabled (group or single option) ·
+// invalid (group-level — aria-invalid + a 2px danger border on every item).
 // Content/i18n: each option's `label` is an i18n key the consumer resolves.
 
 const meta: Meta<typeof RadioGroup> = {
@@ -22,6 +23,7 @@ const meta: Meta<typeof RadioGroup> = {
   tags: ['autodocs'],
   argTypes: {
     disabled: { control: 'boolean' },
+    invalid: { control: 'boolean' },
     onChange: { action: 'changed' },
   },
 }
@@ -59,6 +61,20 @@ export const Selected: Story = {
 // contrast).
 export const Disabled: Story = {
   args: { defaultValue: 'good', disabled: true },
+  render: (args) => (
+    <RadioGroup {...args}>
+      <Radio value="good" label="align.good" />
+      <Radio value="neutral" label="align.neutral" />
+      <Radio value="evil" label="align.evil" />
+    </RadioGroup>
+  ),
+}
+
+// Invalid — group-level error: `aria-invalid` on the radiogroup + the 2px danger
+// border on every item (the selected item's danger edge wins over its accent
+// border). No background wash — the re-saturated danger red carries the error.
+export const Invalid: Story = {
+  args: { defaultValue: 'good', invalid: true },
   render: (args) => (
     <RadioGroup {...args}>
       <Radio value="good" label="align.good" />

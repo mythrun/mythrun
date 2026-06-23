@@ -15,10 +15,14 @@ import { Icon } from '../Icon/Icon.tsx'
 // Flat 1-bit (§3): a square `--control` * ~half-height box, `rounded-none`, a 1px
 // `--border-strong` interactive boundary. The CHECKED / INDETERMINATE state is a
 // token-swap to the `--accent` fill with the `paper-50` glyph (the same on-accent
-// pairing Button uses). invalid swaps the border to the danger token AND sets
-// `aria-invalid` (both halves). disabled gets the muted token swap + a
-// non-interactive cursor (a11y-exempt for contrast, §4). The focus ring is the
-// shared theme-aware `outline-accent`.
+// pairing Button uses). invalid swaps the border to a 2px danger edge + the danger
+// focus ring AND sets `aria-invalid` (both halves), no background wash — the
+// re-saturated red carries the error. The danger border must WIN over the
+// checked-accent border (the error signal beats the checked state), so the invalid
+// arm also overrides `data-[state=checked]:border-*` to the danger token; twMerge
+// resolves the same-modifier conflict in favour of the later (variant) class.
+// disabled gets the muted token swap + a non-interactive cursor (a11y-exempt for
+// contrast, §4).
 const box = cva(
   cn(
     'inline-flex h-[var(--space-5)] w-[var(--space-5)] shrink-0 items-center justify-center',
@@ -32,8 +36,12 @@ const box = cva(
   ),
   {
     variants: {
+      // 2px danger border + danger ring, NO wash. The `data-[state=checked]` arm
+      // re-points the checked border to danger too, so invalid+checked still shows
+      // the danger edge (the error signal beats the checked-accent border); twMerge
+      // gives the later same-modifier class the win.
       invalid: {
-        true: 'border-border-danger focus-visible:outline-border-danger',
+        true: 'border-2 border-border-danger data-[state=checked]:border-border-danger focus-visible:outline-border-danger',
         false: '',
       },
     },

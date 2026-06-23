@@ -41,6 +41,13 @@ export interface RadioGroupProps extends BaseProps {
   name?: string
   /** Disable the whole group. Individual options may also be disabled. */
   disabled?: boolean
+  /**
+   * Invalid state: sets `aria-invalid` on the group + the 2px danger border on
+   * each item (mirrors Checkbox — the danger edge wins over a selected item's
+   * accent border). The error is conveyed to AT (aria-invalid) AND visually, not
+   * by color alone. {@link FormFieldProps} drives this from its error state.
+   */
+  invalid?: boolean
   /** Element id for the group container (the radiogroup landmark). */
   id?: string
   /**

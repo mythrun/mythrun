@@ -66,7 +66,7 @@ describe('Checkbox', () => {
     expect(box).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('sets aria-invalid + the danger border ONLY when invalid', () => {
+  it('sets aria-invalid + the 2px danger border ONLY when invalid', () => {
     const { rerender } = render(<Checkbox />)
     const box = screen.getByRole('checkbox')
     expect(box).not.toHaveAttribute('aria-invalid', 'true')
@@ -74,7 +74,21 @@ describe('Checkbox', () => {
 
     rerender(<Checkbox invalid />)
     expect(box).toHaveAttribute('aria-invalid', 'true')
-    expect(box).toHaveClass('border-border-danger')
+    // The standardized 2px danger border (no bg wash).
+    expect(box).toHaveClass('border-2', 'border-border-danger')
+  })
+
+  // invalid + checked: the danger border must WIN over the checked-accent border
+  // (the error signal beats the checked state). The invalid arm re-points the
+  // `data-[state=checked]:border-*` to danger, so twMerge keeps the danger token.
+  it('invalid + checked: the danger border wins over the checked-accent border', () => {
+    render(<Checkbox invalid checked />)
+    const box = screen.getByRole('checkbox')
+    expect(box).toHaveAttribute('aria-checked', 'true')
+    expect(box).toHaveAttribute('aria-invalid', 'true')
+    expect(box).toHaveClass('border-2', 'border-border-danger', 'data-[state=checked]:border-border-danger')
+    // The base checked-accent border was overridden — danger is the only border color.
+    expect(box).not.toHaveClass('data-[state=checked]:border-accent')
   })
 
   it('blocks toggling when disabled', async () => {

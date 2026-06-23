@@ -18,9 +18,12 @@ import { cn } from '../../lib/cn.ts'
 // is theme-aware via the `outline-accent` token utility (== --focus-ring-color
 // in both themes); no-ad-hoc-color (R3) bans the arbitrary token wrapper.
 //
-// invalid (§4): the danger-border token + a DANGER-colored focus ring, AND
-// `aria-invalid` on the element (set in the impl, not via class) — both halves,
-// so the state is conveyed to AT and not by color alone.
+// invalid (§4): a HEAVIER 2px danger border (vs the 1px `--border-strong` normal
+// edge) + a DANGER-colored focus ring, AND `aria-invalid` on the element (set in
+// the impl, not via class) — both halves, so the state is conveyed to AT and not
+// by color alone. No background wash: the danger red was re-saturated so the 2px
+// border reads unmistakably as error on its own. Box-sizing is border-box
+// (Tailwind default) so the 2px border grows inward — no layout shift.
 //
 // disabled / readOnly: the native attributes + muted token styling
 // (`disabled:` swaps to `--surface` bg + `--ink-tertiary` text; a11y-exempt for
@@ -51,13 +54,12 @@ const input = cva(
   {
     variants: {
       size: SIZE_CLASS,
-      // Invalid: danger border + danger focus ring + a faint danger BG wash. The
-      // wash matters because our danger red sits close to the ember accent — a red
-      // border alone doesn't read as "error" at a glance; the tinted fill
-      // (`--surface-danger`, danger-50) makes the state unmistakable. `aria-invalid`
-      // is set separately in the impl (not a class).
+      // Invalid: a 2px danger border (heavier than the 1px normal `--border-strong`
+      // edge) + a danger focus ring, NO background wash. The danger red was
+      // re-saturated so the border alone reads as "error" at a glance — the tinted
+      // fill is gone. `aria-invalid` is set separately in the impl (not a class).
       invalid: {
-        true: 'border-border-danger bg-surface-danger focus-visible:outline-border-danger',
+        true: 'border-2 border-border-danger focus-visible:outline-border-danger',
         false: '',
       },
     },

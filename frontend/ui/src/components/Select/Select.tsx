@@ -16,8 +16,9 @@ import { Icon } from '../Icon/Icon.tsx'
 // TRIGGER is shaped exactly like an Input — `rounded-none`, a 1px
 // `--border-strong` interactive boundary, `bg-surface`/`text-ink`, mono
 // `font-ui` (a chosen value is data), and the theme-aware `outline-accent`
-// focus ring. invalid swaps the border + ring to the danger token AND sets
-// `aria-invalid` on the trigger (both halves — not color alone). disabled gets
+// focus ring. invalid swaps the border to a 2px danger edge + the ring to the
+// danger token AND sets `aria-invalid` on the trigger (both halves — not color
+// alone); no background wash, the re-saturated red carries it. disabled gets
 // the muted token swap (a11y-exempt for contrast, §4).
 //
 // The CONTENT (portalled listbox) sits on the `--surface-raised` popover tier
@@ -45,8 +46,11 @@ const trigger = cva(
   {
     variants: {
       size: TRIGGER_SIZE,
+      // Invalid: a 2px danger border (heavier than the 1px normal `--border-strong`
+      // edge) + a danger focus ring, NO background wash — the re-saturated danger
+      // red reads as error on the border alone. `aria-invalid` is set in the impl.
       invalid: {
-        true: 'border-border-danger focus-visible:outline-border-danger',
+        true: 'border-2 border-border-danger focus-visible:outline-border-danger',
         false: '',
       },
     },

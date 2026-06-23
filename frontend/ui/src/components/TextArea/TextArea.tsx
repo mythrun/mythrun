@@ -43,11 +43,13 @@ const textArea = cva(
   {
     variants: {
       size: SIZE_CLASS,
-      // Invalid: danger border + danger focus ring + a faint danger BG wash (our
-      // red sits close to the ember accent, so the tinted fill makes the error
-      // state unmistakable). `aria-invalid` is set in the impl.
+      // Invalid: a 2px danger border (heavier than the 1px normal `--border-strong`
+      // edge) + a danger focus ring, NO background wash. The danger red was
+      // re-saturated so the border alone reads as error — the tinted fill is gone.
+      // Box-sizing is border-box so the 2px border grows inward (no layout shift).
+      // `aria-invalid` is set in the impl.
       invalid: {
-        true: 'border-border-danger bg-surface-danger focus-visible:outline-border-danger',
+        true: 'border-2 border-border-danger focus-visible:outline-border-danger',
         false: '',
       },
       // Auto-grow (the chat-composer pattern): the modern CSS `field-sizing:

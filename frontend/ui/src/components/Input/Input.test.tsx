@@ -59,7 +59,7 @@ describe('Input', () => {
     expect(onChange.mock.calls.every(([arg]) => typeof arg === 'string')).toBe(true)
   })
 
-  it('sets aria-invalid + the danger border AND bg wash ONLY when invalid', () => {
+  it('sets aria-invalid + the 2px danger border (NO bg wash) ONLY when invalid', () => {
     const { getByRole, rerender } = render(<Input />)
     const el = getByRole('textbox')
     expect(el).not.toHaveAttribute('aria-invalid', 'true')
@@ -68,9 +68,10 @@ describe('Input', () => {
 
     rerender(<Input invalid />)
     expect(el).toHaveAttribute('aria-invalid', 'true')
-    expect(el).toHaveClass('border-border-danger')
-    // The faint danger fill — red border alone reads too close to ember.
-    expect(el).toHaveClass('bg-surface-danger')
+    // A heavier 2px danger border — the standardized invalid treatment.
+    expect(el).toHaveClass('border-2', 'border-border-danger')
+    // The wash is GONE: the re-saturated danger red reads as error on its own.
+    expect(el).not.toHaveClass('bg-surface-danger')
   })
 
   it('blocks input when disabled', async () => {

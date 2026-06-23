@@ -85,7 +85,7 @@ describe('Select', () => {
     })
   })
 
-  it('sets aria-invalid + the danger border ONLY when invalid', () => {
+  it('sets aria-invalid + the 2px danger border ONLY when invalid', () => {
     const { rerender } = render(<Select options={OPTIONS} />)
     const trigger = screen.getByRole('combobox')
     expect(trigger).not.toHaveAttribute('aria-invalid', 'true')
@@ -93,7 +93,8 @@ describe('Select', () => {
 
     rerender(<Select options={OPTIONS} invalid />)
     expect(trigger).toHaveAttribute('aria-invalid', 'true')
-    expect(trigger).toHaveClass('border-border-danger')
+    // The standardized 2px danger border (no bg wash).
+    expect(trigger).toHaveClass('border-2', 'border-border-danger')
   })
 
   it('disabled trigger does not open', async () => {

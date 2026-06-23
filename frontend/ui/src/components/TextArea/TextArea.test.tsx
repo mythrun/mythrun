@@ -52,7 +52,7 @@ describe('TextArea', () => {
     expect(getByRole('textbox')).toHaveAttribute('rows', '6')
   })
 
-  it('sets aria-invalid + the danger border AND bg wash ONLY when invalid', () => {
+  it('sets aria-invalid + the 2px danger border (NO bg wash) ONLY when invalid', () => {
     const { getByRole, rerender } = render(<TextArea />)
     const el = getByRole('textbox')
     expect(el).not.toHaveAttribute('aria-invalid', 'true')
@@ -61,8 +61,10 @@ describe('TextArea', () => {
 
     rerender(<TextArea invalid />)
     expect(el).toHaveAttribute('aria-invalid', 'true')
-    expect(el).toHaveClass('border-border-danger')
-    expect(el).toHaveClass('bg-surface-danger')
+    // A heavier 2px danger border — the standardized invalid treatment.
+    expect(el).toHaveClass('border-2', 'border-border-danger')
+    // The wash is GONE: the re-saturated danger red reads as error on its own.
+    expect(el).not.toHaveClass('bg-surface-danger')
   })
 
   it('blocks input when disabled', async () => {

@@ -15,7 +15,7 @@ describe('generated palette — brand fidelity + shape', () => {
   it('pins each semantic anchor to its exact brand hex (info anchors at 600)', () => {
     expect(c['--color-success-500']).toBe('#6D7A3E')
     expect(c['--color-warning-500']).toBe('#B07835')
-    expect(c['--color-danger-500']).toBe('#B55A48')
+    expect(c['--color-danger-500']).toBe('#c34c43')
     expect(c['--color-info-600']).toBe('#4A6B82')
   })
 })
