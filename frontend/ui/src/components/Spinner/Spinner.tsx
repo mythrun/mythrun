@@ -31,14 +31,12 @@ import { GRID, GAP, SPEED_MS, buildCells, isOn } from './develop.ts'
 // consumer supplies; the default `'Loading'` keeps a bare <Spinner /> from being
 // silent to AT.
 
-// Per-size square dimensions, sized to the icon token scale (full literal token
-// classes so Tailwind v4's source scanner generates them — same technique as
-// `space.ts`). The grid is square, so width === height per size.
-const GRID_SIZE_CLASS: Record<NonNullable<SpinnerProps['size']>, string> = {
-  sm: 'w-[var(--icon-sm)] h-[var(--icon-sm)]',
-  md: 'w-[var(--icon-md)] h-[var(--icon-md)]',
-  lg: 'w-[var(--icon-lg)] h-[var(--icon-lg)]',
-}
+// Cell size in WHOLE pixels per spinner size. A 12×12 dither renders crisp ONLY
+// when the box is an exact multiple of 12, so each cell lands on whole-pixel
+// boundaries — otherwise the browser sub-pixel anti-aliases the cells into mush
+// (e.g. 16px ÷ 12 = 1.33px cells). So sizes are 12·cellPx: sm/md/lg = 2/3/4px
+// cells → 24/36/48px squares. width === height (the grid is square).
+const CELL_PX: Record<NonNullable<SpinnerProps['size']>, number> = { sm: 2, md: 3, lg: 4 }
 
 // The static cell geometry (computed once — pure + deterministic; the grain never
 // reshuffles across renders). The component renders these in order, so DOM child
@@ -130,10 +128,12 @@ export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinne
         ref={gridRef}
         aria-hidden="true"
         data-spinner-grid=""
-        className={cn('grid bg-surface', GRID_SIZE_CLASS[size])}
+        className="grid bg-surface"
         style={{
-          gridTemplateColumns: `repeat(${String(GRID)}, 1fr)`,
-          gridTemplateRows: `repeat(${String(GRID)}, 1fr)`,
+          width: `${String(GRID * CELL_PX[size])}px`,
+          height: `${String(GRID * CELL_PX[size])}px`,
+          gridTemplateColumns: `repeat(${String(GRID)}, ${String(CELL_PX[size])}px)`,
+          gridTemplateRows: `repeat(${String(GRID)}, ${String(CELL_PX[size])}px)`,
           gap: `${String(GAP)}px`,
         }}
       >

@@ -176,24 +176,21 @@ describe('Spinner', () => {
     })
   })
 
-  it('renders at the requested token size', () => {
+  it('renders lg as a crisp whole-pixel square (48px = 12·4px cells)', () => {
     const { getByRole } = render(<Spinner size="lg" />)
-    const grid = getByRole('status').querySelector('[data-spinner-grid]')
-    expect(grid).toHaveClass('w-[var(--icon-lg)]', 'h-[var(--icon-lg)]')
+    const grid = getByRole('status').querySelector<HTMLElement>('[data-spinner-grid]')
+    // The grid is sized to an exact multiple of GRID so every cell lands on whole
+    // pixels (no sub-pixel anti-aliasing). lg = 4px cells → 48px.
+    expect(grid?.style.width).toBe('48px')
+    expect(grid?.style.height).toBe('48px')
   })
 
-  it('scales the grid square sm → md → lg via the icon token scale', () => {
+  it('scales the grid square sm → md → lg in whole-pixel cells (24 / 36 / 48px)', () => {
     const sm = render(<Spinner size="sm" />)
-    expect(sm.container.querySelector('[data-spinner-grid]')).toHaveClass(
-      'w-[var(--icon-sm)]',
-      'h-[var(--icon-sm)]',
-    )
+    expect(sm.container.querySelector<HTMLElement>('[data-spinner-grid]')?.style.width).toBe('24px')
     sm.unmount()
     const md = render(<Spinner size="md" />)
-    expect(md.container.querySelector('[data-spinner-grid]')).toHaveClass(
-      'w-[var(--icon-md)]',
-      'h-[var(--icon-md)]',
-    )
+    expect(md.container.querySelector<HTMLElement>('[data-spinner-grid]')?.style.width).toBe('36px')
   })
 
   it('forwards its ref to the underlying element', () => {
