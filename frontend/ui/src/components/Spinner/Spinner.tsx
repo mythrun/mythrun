@@ -1,27 +1,29 @@
-import { forwardRef } from 'react'
+import { forwardRef, useEffect, useRef, useState } from 'react'
 import type { SpinnerProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
-import { buildDevelopCells, SPINNER_GRID } from './develop.ts'
-import './Spinner.css'
+import { GRID, GAP, SPEED_MS, buildCells, isOn } from './develop.ts'
 
-// An indeterminate busy indicator rendered as the brand's SIGNATURE "dither
-// develop": a small square whose 4×4 Bayer dither (paper → ember) FILLS and
-// RECEDES on a slow opacity loop — like ink developing on the page. Per the
-// brand's motion rule (spec §4 — "only opacity/fades animate, nothing
-// spins/slides/bounces") this is OPACITY-ONLY: each cell pulses opacity 0 → 1 →
-// 0 (the `dither-develop` keyframe in Spinner.css) and a per-cell
-// `animation-delay` keyed to the cell's Bayer THRESHOLD (low threshold first,
-// computed in develop.ts) phases the cells so the lit pattern sweeps up and
-// recedes in threshold order. Calm and patient (~3.7s/cycle), never a rotation.
+// An indeterminate busy indicator rendered as the brand's LOCKED "diagonal dither
+// wave": a 12×12 square of HARD binary cells (opacity 0 or 1, never between) — the
+// ember token over a paper/surface ground — where a continuous wave flows the lit
+// dither up the diagonal on a loop, with two notched corners (top-left +
+// bottom-right) cut to paper.
 //
-// REDUCED MOTION: the global `prefers-reduced-motion` reset in `base.css` freezes
-// CSS animations. So Spinner.css explicitly paints a LEGIBLE STATIC ~50% dither
-// when motion is reduced — the cells flagged `data-spinner-lit` hold full
-// opacity, the rest stay transparent — so the square is NEVER a blank box.
+// WHY requestAnimationFrame, not a CSS keyframe: the wave LEVEL is a continuous
+// sin() of each cell's DIAGONAL position (see develop.ts `levelAt`), and each
+// cell's ON/OFF is a hard threshold against that level. A CSS keyframe can't
+// express "level = f(diagonal, time)" per cell, so a rAF loop computes `isOn` per
+// cell per frame and writes `style.opacity` directly (no per-frame setState).
 //
-// COLOR is token-only (R3 / no-ad-hoc-color): the lit cells are the `accent`
-// (ember) token (`bg-accent`, theme-aware ember in both themes) over the `surface`
-// paper ground (`bg-surface`). No raw hex anywhere.
+// REDUCED MOTION: the base.css CSS reset does NOT stop a rAF loop, so we read
+// `matchMedia('(prefers-reduced-motion: reduce)')` and, when reduced, never start
+// the loop — we paint a STATIC frame at the baseline density (≈40% lit), a legible
+// dithered square (notch still cut), never a blank box. We also subscribe to the
+// media query so a runtime toggle starts/stops the wave.
+//
+// COLOR is token-only (R3 / no-ad-hoc-color): the cells are the `accent` (ember)
+// token (`bg-accent`, theme-aware ember in both themes) over the `surface` paper
+// ground (`bg-surface`). HARD opacity (0/1), 0px radius. No raw hex.
 //
 // a11y: `role="status"` (a polite live region) + an `aria-label` SR name. The
 // whole dither grid is `aria-hidden` (pure decoration); the status name carries
@@ -38,19 +40,80 @@ const GRID_SIZE_CLASS: Record<NonNullable<SpinnerProps['size']>, string> = {
   lg: 'w-[var(--icon-lg)] h-[var(--icon-lg)]',
 }
 
-// The develop animation utility — the first-class `animate-dither-develop` theme
-// utility (defined in theme.css's @theme: the `dither-develop` opacity keyframe,
-// a calm 3.7s/cycle that MIRRORS develop.ts's DEVELOP_DURATION_MS, gentle in-out
-// ease, looping). A STATIC literal class — an interpolated `animate-[…]` is not
-// extractable by Tailwind's source scanner and would silently never emit.
-const DEVELOP_ANIMATION_CLASS = 'animate-dither-develop'
+// The static cell geometry (computed once — pure + deterministic; the grain never
+// reshuffles across renders). The component renders these in order, so DOM child
+// index i ↔ CELLS[i] for the rAF loop.
+const CELLS = buildCells()
 
-// The static grid (computed once — pure + deterministic; the grain never
-// reshuffles across renders).
-const CELLS = buildDevelopCells()
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
+
+// Read the current reduced-motion preference (web-only package, so `window` and
+// `matchMedia` exist; guarded for any non-window environment).
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia(REDUCED_MOTION_QUERY).matches
+}
 
 export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinner(props, ref) {
   const { size = 'md', label = 'Loading' } = props
+  const gridRef = useRef<HTMLSpanElement>(null)
+  // Whether motion is reduced — initialized from the media query, kept in sync.
+  const [reduced, setReduced] = useState(prefersReducedMotion)
+
+  // Subscribe to runtime changes of the reduced-motion preference so the wave
+  // starts/stops if the user toggles it.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mql = window.matchMedia(REDUCED_MOTION_QUERY)
+    const onChange = (): void => {
+      setReduced(mql.matches)
+    }
+    mql.addEventListener('change', onChange)
+    return () => {
+      mql.removeEventListener('change', onChange)
+    }
+  }, [])
+
+  // The animation loop. When motion is reduced we DON'T start it — the static
+  // frame painted at render (and re-asserted below) is the resting state. When
+  // motion is allowed, a rAF loop writes each cell's HARD-binary opacity per
+  // frame from the wave math; it is cancelled on unmount / when `reduced` flips.
+  useEffect(() => {
+    const grid = gridRef.current
+    if (grid === null) return
+    const cellNodes = Array.from(grid.children) as HTMLElement[]
+
+    // Paint the static frame: each cell lit iff its baseline staticLit (the
+    // reduced-motion ≈40% dither). This is also the correct resting paint when we
+    // are NOT going to animate.
+    const paintStatic = (): void => {
+      cellNodes.forEach((node, i) => {
+        node.style.opacity = CELLS[i]?.staticLit ? '1' : '0'
+      })
+    }
+
+    if (reduced) {
+      paintStatic()
+      return
+    }
+
+    let raf = 0
+    let start: number | null = null
+    const tick = (now: number): void => {
+      start ??= now
+      const T = (now - start) / SPEED_MS
+      cellNodes.forEach((node, i) => {
+        const c = CELLS[i]
+        node.style.opacity = c !== undefined && isOn(c.x, c.y, T) ? '1' : '0'
+      })
+      raf = window.requestAnimationFrame(tick)
+    }
+    raf = window.requestAnimationFrame(tick)
+    return () => {
+      window.cancelAnimationFrame(raf)
+    }
+  }, [reduced])
+
   return (
     <span
       ref={ref}
@@ -59,27 +122,31 @@ export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinne
       className="inline-flex"
       data-testid={props['data-testid']}
     >
-      {/* The decorative dither grid: an ember-on-surface square of cells. The
-          role + accessible name above carry the busy meaning, so the texture is
-          aria-hidden. `grid` lays the cells out as a SPINNER_GRID × SPINNER_GRID
-          square that fills the icon-token footprint. */}
+      {/* The decorative dither grid: a 12×12 ember-on-surface square. The role +
+          accessible name above carry the busy meaning, so the texture is
+          aria-hidden. `grid` lays the cells out as a GRID × GRID square that fills
+          the icon-token footprint; GAP=0 so the dither reads as one field. */}
       <span
+        ref={gridRef}
         aria-hidden="true"
         data-spinner-grid=""
         className={cn('grid bg-surface', GRID_SIZE_CLASS[size])}
-        style={{ gridTemplateColumns: `repeat(${String(SPINNER_GRID)}, 1fr)` }}
+        style={{
+          gridTemplateColumns: `repeat(${String(GRID)}, 1fr)`,
+          gridTemplateRows: `repeat(${String(GRID)}, 1fr)`,
+          gap: `${String(GAP)}px`,
+        }}
       >
         {CELLS.map((c) => (
           <span
             key={`${String(c.x)}:${String(c.y)}`}
             data-spinner-cell=""
-            data-spinner-lit={c.staticLit ? 'true' : 'false'}
-            className={cn('bg-accent', DEVELOP_ANIMATION_CLASS)}
-            // Per-cell develop delay = the Bayer-threshold order (numeric, not a
-            // color → R3-clean). The cell's resting opacity (0) lives in
-            // Spinner.css so the reduced-motion rule can reveal the static-lit
-            // subset without an inline-specificity fight.
-            style={{ animationDelay: `${String(c.delayMs)}ms` }}
+            data-spinner-notched={c.notched ? 'true' : 'false'}
+            className={cn('bg-accent')}
+            // HARD-binary opacity, driven by the rAF loop (or the static frame
+            // under reduced motion). The initial inline value is the static frame
+            // so first paint / SSR is the legible ≈40% dither, never blank.
+            style={{ opacity: c.staticLit ? 1 : 0 }}
           />
         ))}
       </span>

@@ -5,12 +5,13 @@ import { Button } from '../Button/Button.tsx'
 import { Card, CardBody } from '../Card/Card.tsx'
 import { Text } from '../Text/Text.tsx'
 
-// Spinner — the brand's SIGNATURE "dither develop" loader. Per the motion rule
-// (§4) it does NOT rotate: a small ember-on-paper square whose 4×4 Bayer dither
-// FILLS and RECEDES on a slow opacity loop (~3.7s/cycle) — like ink developing
-// on the page. It exposes `role="status"` with an accessible name (the busy
+// Spinner — the brand's SIGNATURE "diagonal dither wave" loader. Per the motion
+// rule (§4) it does NOT rotate: a small ember-on-paper square (a 12×12 grid of
+// HARD binary cells) where a continuous wave flows the lit dither up the diagonal
+// on a loop (~1.8s/period), with two notched corners (top-left + bottom-right)
+// cut to paper. It exposes `role="status"` with an accessible name (the busy
 // state is announced to AT; motion is never the sole signal), and under
-// `prefers-reduced-motion` it settles to a LEGIBLE STATIC ~50% dither (never a
+// `prefers-reduced-motion` it settles to a LEGIBLE STATIC ~40% dither (never a
 // blank box).
 //
 // States (a static indicator): the only axis is SIZE (sm/md/lg → the icon token
@@ -22,7 +23,7 @@ import { Text } from '../Text/Text.tsx'
 // Do: pair with a disabled/aria-busy control during async work; supply a
 //   meaningful `label` (an i18n key) describing what is loading.
 // Don't: use it as the ONLY indication of progress for sighted users without
-//   any accompanying text/affordance; never expect rotation — this brand develops.
+//   any accompanying text/affordance; never expect rotation — this brand flows.
 // Content/i18n: `label` is an i18n KEY the consumer resolves (default 'Loading').
 
 const meta: Meta<typeof Spinner> = {
@@ -48,7 +49,9 @@ export const Default: Story = {
   args: { label: 'Loading your campaign' },
 }
 
-// The size axis — the develop square scales sm → md → lg on the icon token grid.
+// The size axis — the wave square scales sm → md → lg on the icon token grid.
+// NOTE: at sm (16px) the 12×12 grid yields ~1.3px cells — fine grain; if it reads
+// too small in context, the SIZE token scale (not the grid) is what would grow.
 export const Sizes: Story = {
   render: () => (
     <div className="flex items-center gap-[var(--space-5)]">
@@ -60,7 +63,7 @@ export const Sizes: Story = {
 }
 
 // THE PRIMARY REAL CONTEXT: inside a loading Button. The control owns the
-// disabled/aria-busy state; the Spinner develops beside the still-visible label.
+// disabled/aria-busy state; the wave flows beside the still-visible label.
 export const InLoadingButton: Story = {
   render: () => (
     <div className="flex flex-col items-start gap-[var(--space-4)]">
@@ -90,8 +93,8 @@ export const InThinkingPanel: Story = {
   ),
 }
 
-// On a surface — the develop square sits comfortably on any paper tier (the
-// cells are the ember token over the surface ground, so it reads on both themes).
+// On a surface — the wave square sits comfortably on any paper tier (the cells
+// are the ember token over the surface ground, so it reads on both themes).
 export const OnSurface: Story = {
   render: () => (
     <div className="bg-surface p-[var(--space-5)]">
@@ -100,17 +103,17 @@ export const OnSurface: Story = {
   ),
 }
 
-// REDUCED MOTION (note): under `prefers-reduced-motion: reduce` the develop loop
-// freezes and the Spinner settles to a LEGIBLE STATIC ~50% dither — never a blank
-// box. To eyeball it, enable "Reduce motion" in your OS accessibility settings
-// (or emulate it via the browser devtools rendering panel) and reload: the square
-// holds a fixed dithered pattern instead of animating.
+// REDUCED MOTION (note): under `prefers-reduced-motion: reduce` the wave loop
+// never starts and the Spinner paints a LEGIBLE STATIC ~40% dither — never a blank
+// box (the notched corners still cut). To eyeball it, enable "Reduce motion" in
+// your OS accessibility settings (or emulate it via the browser devtools rendering
+// panel) and reload: the square holds a fixed dithered pattern instead of flowing.
 export const ReducedMotionNote: Story = {
   render: () => (
     <div className="flex flex-col items-start gap-[var(--space-3)]">
       <Spinner size="lg" label="Loading (static under reduced motion)" />
       <Text role={UI_CAPTION}>
-        Enable OS &quot;reduce motion&quot; → the develop freezes to a static dither (not blank).
+        Enable OS &quot;reduce motion&quot; → the wave freezes to a static dither (not blank).
       </Text>
     </div>
   ),

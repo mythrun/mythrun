@@ -2,8 +2,3 @@
 @import "./theme.css";
 @import "./semantic.css";
 @import "./base.css";
-
-/* Component stylesheets. Token-only (no raw color), so stylelint's R3 rail
-   (lint:css over src/components/**) passes. Bundled here so they ship through
-   `@mythrun/ui/styles.css` to both the app and Storybook. */
-@import "../components/Spinner/Spinner.css";

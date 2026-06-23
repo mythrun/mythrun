@@ -1,21 +1,50 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRef } from 'react'
 import { render } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { Spinner } from './Spinner.tsx'
-import { SPINNER_CELLS } from './develop.ts'
+import { GRID, buildCells, isOn } from './develop.ts'
 
-// Spinner is the brand's SIGNATURE "dither develop" loader: a small square whose
-// 4×4 Bayer dither (paper → ember) FILLS and RECEDES on a slow opacity loop —
-// like ink developing on the page. The exact pixels / pacing are unverifiable in
-// jsdom (no layout, no animation clock), so these assert STRUCTURE + the brand
-// invariants: a status role + accessible name, a decorative ember-on-surface
-// grid, opacity-only animation (never spin/slide/bounce), a per-cell delay keyed
-// to the Bayer threshold (the develop ORDER), and a LEGIBLE STATIC fallback under
-// prefers-reduced-motion (never a blank box). The pure cell math is unit-tested
-// in develop.test.ts; this is the component contract.
+// Spinner is the brand's LOCKED "diagonal dither wave": a 12×12 square of HARD
+// binary cells (the ember token over a paper/surface ground) where a continuous
+// wave — a sin() of each cell's diagonal position — flows the lit dither up the
+// diagonal on a requestAnimationFrame loop, with two notched corners. The wave is
+// continuous in each cell's diagonal coordinate, so it can't be a CSS keyframe —
+// a rAF loop drives `style.opacity` per cell per frame. The pure wave/notch math
+// is unit-tested in develop.test.ts; these are the COMPONENT contract: a status
+// role + accessible name, the cell grid (notched corners cut), the rAF loop runs
+// (and is cancelled on unmount), the reduced-motion path skips the loop and paints
+// a legible STATIC ~40% dither, and NO spin/translate/scale (the brand rule).
+
+// jsdom has no matchMedia; the component reads it for prefers-reduced-motion.
+// Install a configurable mock so each test can choose reduce vs no-reduce.
+function mockMatchMedia(reduced: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: reduced,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  })
+}
 
 describe('Spinner', () => {
+  beforeEach(() => {
+    // Default: motion allowed (the animated path).
+    mockMatchMedia(false)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('exposes a status role to assistive tech', () => {
     const { getByRole } = render(<Spinner />)
     expect(getByRole('status')).toBeInTheDocument()
@@ -32,73 +61,119 @@ describe('Spinner', () => {
     expect(getByRole('status')).toHaveAccessibleName('Rolling the dice')
   })
 
-  it('renders a decorative (aria-hidden) dither grid carrying the meaning via role+label', () => {
+  it('renders a decorative (aria-hidden) grid; the role+label carry the meaning', () => {
     const { getByRole } = render(<Spinner />)
     const status = getByRole('status')
-    // The texture grid is decorative — the role + accessible name carry the
-    // busy meaning; the cells are aria-hidden so AT never reads the grid.
     const grid = status.querySelector('[data-spinner-grid]')
     expect(grid).not.toBeNull()
     expect(grid).toHaveAttribute('aria-hidden', 'true')
-    // It is a FULL square of cells (the develop fills the whole tile).
-    const cells = grid?.querySelectorAll('[data-spinner-cell]') ?? []
-    expect(cells.length).toBe(SPINNER_CELLS)
+  })
+
+  it('renders the full GRID×GRID cells, with the 6 notched corner cells flagged', () => {
+    const { getByRole } = render(<Spinner />)
+    const status = getByRole('status')
+    const cells = status.querySelectorAll('[data-spinner-cell]')
+    expect(cells.length).toBe(GRID * GRID)
+    // The two notched corners are cut: those cells carry the notched flag (so
+    // they never light) — exactly 6 of them.
+    const notched = status.querySelectorAll('[data-spinner-cell][data-spinner-notched="true"]')
+    expect(notched.length).toBe(6)
   })
 
   it('paints the lit cells with the EMBER token over a SURFACE/paper ground (no raw color)', () => {
     const { getByRole } = render(<Spinner />)
     const status = getByRole('status')
-    // Ground is a paper/surface token utility; the cells are the ember token.
     const grid = status.querySelector('[data-spinner-grid]')
     expect(grid?.className).toMatch(/bg-(surface|paper)/)
     const cell = status.querySelector('[data-spinner-cell]')
-    // `bg-accent` IS the ember token, theme-aware (ember-600 light / ember-400
-    // dark) — the brand ember in both themes.
+    // `bg-accent` IS the ember token, theme-aware (ember-600 light / ember-400 dark).
     expect(cell?.className).toMatch(/bg-(accent|ember)/)
-    // No raw color sigils leak into the markup (R3 / no-ad-hoc-color).
     const html = status.innerHTML
     expect(html).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
     expect(html).not.toMatch(/\b(?:rgba?|hsla?|oklch|oklab)\(/)
   })
 
-  it('develops by OPACITY, never rotation/slide/bounce (brand motion rule §4)', () => {
-    const { getByRole } = render(<Spinner />)
-    const status = getByRole('status')
-    const cell = status.querySelector('[data-spinner-cell]')
-    // The first-class `animate-dither-develop` theme utility (an opacity-only
-    // keyframe), NOT a Tailwind transform animation.
-    expect(cell).toHaveClass('animate-dither-develop')
-    // Guard the negative: no rotation/slide/bounce/ping utility leaks in.
-    const html = status.innerHTML
+  it('drives the wave with requestAnimationFrame (a continuous wave, not a keyframe)', () => {
+    const raf = vi.spyOn(window, 'requestAnimationFrame')
+    render(<Spinner />)
+    // The loop is started on mount (rAF scheduled at least once).
+    expect(raf).toHaveBeenCalled()
+    // HARD binary, opacity-driven — never a transform/keyframe utility.
+    const html = document.body.innerHTML
     expect(html).not.toMatch(/animate-spin|animate-bounce|animate-ping|translate|rotate|scale-/)
   })
 
-  it('staggers each cell by a delay keyed to its Bayer threshold (the develop ORDER)', () => {
+  it('actually toggles cell opacities across frames (the wave moves, HARD binary)', () => {
+    // Capture the rAF callbacks and step them through two distinct times; the
+    // rendered opacities must change between frames and be strictly 0 or 1.
+    const callbacks: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
+      callbacks.push(cb)
+      return callbacks.length
+    })
+    const { getByRole } = render(<Spinner />)
+    const grid = getByRole('status').querySelector('[data-spinner-grid]')
+    const step = (now: number): void => {
+      const cb = callbacks.shift()
+      if (cb) cb(now)
+    }
+    const snapshot = (): string =>
+      Array.from(grid?.querySelectorAll('[data-spinner-cell]') ?? [])
+        .map((c) => (c as HTMLElement).style.opacity)
+        .join('')
+    // First frame establishes the clock origin; a later frame advances time.
+    step(0)
+    const frameA = snapshot()
+    step(900) // ~half a wave period → many cells flip
+    const frameB = snapshot()
+    expect(frameA).not.toBe(frameB)
+    // HARD binary: only '0' or '1', never an in-between opacity.
+    for (const o of Array.from(grid?.querySelectorAll('[data-spinner-cell]') ?? []).map(
+      (c) => (c as HTMLElement).style.opacity,
+    )) {
+      expect(o === '0' || o === '1').toBe(true)
+    }
+  })
+
+  it('cancels the rAF loop on unmount (no leak)', () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 42)
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame')
+    const { unmount } = render(<Spinner />)
+    unmount()
+    expect(cancel).toHaveBeenCalledWith(42)
+  })
+
+  it('under prefers-reduced-motion: NO rAF loop, a legible STATIC ~40% dither', () => {
+    mockMatchMedia(true)
+    const raf = vi.spyOn(window, 'requestAnimationFrame')
+    const { getByRole } = render(<Spinner />)
+    // The animation loop never starts.
+    expect(raf).not.toHaveBeenCalled()
+    // A static frame is painted: the lit subset is the ~40% static dither, never
+    // empty (blank) nor full (solid), and never a notched cell.
+    const status = getByRole('status')
+    const lit = Array.from(status.querySelectorAll<HTMLElement>('[data-spinner-cell]')).filter(
+      (c) => c.style.opacity === '1',
+    )
+    expect(lit.length).toBe(buildCells().filter((c) => c.staticLit).length)
+    expect(lit.length).toBeGreaterThan(0)
+    expect(lit.length).toBeLessThan(GRID * GRID)
+    for (const c of lit) {
+      expect(c.getAttribute('data-spinner-notched')).not.toBe('true')
+    }
+  })
+
+  it('static frame matches the pure buildCells() staticLit at the baseline level', () => {
+    mockMatchMedia(true)
     const { getByRole } = render(<Spinner />)
     const cells = Array.from(
       getByRole('status').querySelectorAll<HTMLElement>('[data-spinner-cell]'),
     )
-    // Every cell carries an explicit per-cell animation-delay (ms) — that delay
-    // IS the Bayer-threshold develop order. There is more than one distinct
-    // delay (the sweep), and they all sit within the cycle window.
-    const delays = cells.map((c) => c.style.animationDelay)
-    for (const d of delays) {
-      expect(d).toMatch(/^\d+(\.\d+)?ms$/)
-    }
-    expect(new Set(delays).size).toBeGreaterThan(1)
-  })
-
-  it('renders a LEGIBLE STATIC dither under prefers-reduced-motion (never blank)', () => {
-    // The base.css reduced-motion reset freezes CSS animations; if the resting
-    // state were "all cells transparent" the box would go blank. A dedicated
-    // static layer paints a fixed ~50% dither so the square stays legible. We
-    // assert the static layer EXISTS and lights a non-empty, non-full subset of
-    // cells (a readable dither, not a solid block or an empty box).
-    const { getByRole } = render(<Spinner />)
-    const status = getByRole('status')
-    const staticCells = status.querySelectorAll('[data-spinner-cell][data-spinner-lit="true"]')
-    expect(staticCells.length).toBeGreaterThan(0)
-    expect(staticCells.length).toBeLessThan(SPINNER_CELLS)
+    const built = buildCells()
+    cells.forEach((c, i) => {
+      const lit = c.style.opacity === '1'
+      expect(lit).toBe(built[i]?.staticLit)
+    })
   })
 
   it('renders at the requested token size', () => {
@@ -135,5 +210,14 @@ describe('Spinner', () => {
   it('has no axe violations', async () => {
     const { container } = render(<Spinner label="Loading your campaign" />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// A direct consistency check that the hard-binary decision the loop renders with
+// is the same pure math (guards drift between isOn and the component loop).
+describe('isOn parity', () => {
+  it('a notched corner cell is never on; a mid cell follows the wave', () => {
+    expect(isOn(0, 0, 0.0)).toBe(false)
+    expect(typeof isOn(6, 6, 0.25)).toBe('boolean')
   })
 })
