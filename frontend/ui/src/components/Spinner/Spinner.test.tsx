@@ -6,7 +6,7 @@ import { Spinner } from './Spinner.tsx'
 import { GRID, buildCells, isOn } from './develop.ts'
 
 // Spinner is the brand's LOCKED "diagonal dither wave": a 12×12 square of HARD
-// binary cells (the ember token over a paper/surface ground) where a continuous
+// binary cells (currentColor pixels over a TRANSPARENT ground) where a continuous
 // wave — a sin() of each cell's diagonal position — flows the lit dither up the
 // diagonal on a requestAnimationFrame loop, with two notched corners. The wave is
 // continuous in each cell's diagonal coordinate, so it can't be a CSS keyframe —
@@ -80,17 +80,37 @@ describe('Spinner', () => {
     expect(notched.length).toBe(6)
   })
 
-  it('paints the lit cells with the EMBER token over a SURFACE/paper ground (no raw color)', () => {
+  it('default tone: a TRANSPARENT ground, lit cells = currentColor driven by the ACCENT token (no raw color)', () => {
     const { getByRole } = render(<Spinner />)
     const status = getByRole('status')
     const grid = status.querySelector('[data-spinner-grid]')
-    expect(grid?.className).toMatch(/bg-(surface|paper)/)
+    // The negative space (off-cells, notch, the box) is transparent — the grid
+    // draws NO paper/surface ground, so whatever is behind the spinner shows
+    // through. (The old `bg-surface` paper tile is gone.)
+    expect(grid?.className).not.toMatch(/bg-(surface|paper|bg|accent|ember)/)
+    // The default `accent` tone resolves currentColor to the brand ember via a
+    // `text-accent` token utility on the grid.
+    expect(grid?.className).toMatch(/\btext-accent\b/)
     const cell = status.querySelector('[data-spinner-cell]')
-    // `bg-accent` IS the ember token, theme-aware (ember-600 light / ember-400 dark).
-    expect(cell?.className).toMatch(/bg-(accent|ember)/)
+    // The lit pixels are `bg-current` (== currentColor), so the pixel color is
+    // whatever the grid's text color resolves to (ember for the default tone).
+    expect(cell?.className).toMatch(/\bbg-current\b/)
     const html = status.innerHTML
     expect(html).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
     expect(html).not.toMatch(/\b(?:rgba?|hsla?|oklch|oklab)\(/)
+  })
+
+  it('tone="inherit": NO color class on the grid — the pixels take the surrounding text color', () => {
+    const { getByRole } = render(<Spinner tone="inherit" />)
+    const status = getByRole('status')
+    const grid = status.querySelector('[data-spinner-grid]')
+    // Inside a colored control the spinner must match the control's foreground,
+    // so the grid carries NO `text-accent` (it inherits the ambient text color);
+    // the ground stays transparent and the pixels stay `bg-current`.
+    expect(grid?.className).not.toMatch(/\btext-accent\b/)
+    expect(grid?.className).not.toMatch(/bg-(surface|paper|bg|accent|ember)/)
+    const cell = status.querySelector('[data-spinner-cell]')
+    expect(cell?.className).toMatch(/\bbg-current\b/)
   })
 
   it('drives the wave with requestAnimationFrame (a continuous wave, not a keyframe)', () => {

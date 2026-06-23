@@ -20,4 +20,16 @@ export interface SpinnerProps extends BaseProps {
    * fallback (`'Loading'`) so a bare `<Spinner />` is never silent to AT.
    */
   label?: string
+  /**
+   * The pixel (lit-cell) color. The dither's negative space (off-cells, notch,
+   * the box) is always transparent — only the lit pixels carry color. Default
+   * `'accent'`.
+   *
+   * - `'accent'` — the brand ember. The standalone default (on a panel/surface).
+   * - `'inherit'` — take the surrounding text color, for use INSIDE a colored
+   *   control (e.g. a Button): the pixels match the label, so they read against
+   *   the control's fill (paper on a primary/ember button, ink on secondary/ghost)
+   *   instead of an ember-on-ember vanish.
+   */
+  tone?: 'accent' | 'inherit'
 }

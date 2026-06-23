@@ -12,6 +12,10 @@ describe('SpinnerProps contract', () => {
     expectTypeOf<SpinnerProps['label']>().toEqualTypeOf<string | undefined>()
   })
 
+  it('accepts a pixel tone (brand accent vs inherited control foreground)', () => {
+    expectTypeOf<SpinnerProps['tone']>().toEqualTypeOf<'accent' | 'inherit' | undefined>()
+  })
+
   it('is satisfiable with no props (sensible defaults)', () => {
     expectTypeOf<Record<string, never>>().toExtend<SpinnerProps>()
   })

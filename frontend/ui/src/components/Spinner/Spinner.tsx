@@ -4,10 +4,10 @@ import { cn } from '../../lib/cn.ts'
 import { GRID, GAP, SPEED_MS, buildCells, isOn } from './develop.ts'
 
 // An indeterminate busy indicator rendered as the brand's LOCKED "diagonal dither
-// wave": a 12×12 square of HARD binary cells (opacity 0 or 1, never between) — the
-// ember token over a paper/surface ground — where a continuous wave flows the lit
-// dither up the diagonal on a loop, with two notched corners (top-left +
-// bottom-right) cut to paper.
+// wave": a 12×12 square of HARD binary cells (opacity 0 or 1, never between) —
+// currentColor pixels over a TRANSPARENT ground — where a continuous wave flows
+// the lit dither up the diagonal on a loop, with two notched corners (top-left +
+// bottom-right) cut out (always transparent, like every off-cell).
 //
 // WHY requestAnimationFrame, not a CSS keyframe: the wave LEVEL is a continuous
 // sin() of each cell's DIAGONAL position (see develop.ts `levelAt`), and each
@@ -21,9 +21,17 @@ import { GRID, GAP, SPEED_MS, buildCells, isOn } from './develop.ts'
 // dithered square (notch still cut), never a blank box. We also subscribe to the
 // media query so a runtime toggle starts/stops the wave.
 //
-// COLOR is token-only (R3 / no-ad-hoc-color): the cells are the `accent` (ember)
-// token (`bg-accent`, theme-aware ember in both themes) over the `surface` paper
-// ground (`bg-surface`). HARD opacity (0/1), 0px radius. No raw hex.
+// COLOR is token-only (R3 / no-ad-hoc-color) AND context-aware: the GROUND is
+// transparent (the grid draws no fill, so the off-cells, the notch, and the box
+// all show whatever is behind the spinner — not a drawn paper tile). The lit cells
+// are `bg-current` (background = currentColor), so the pixel color is driven by the
+// grid's text color. `tone` picks that text color:
+//   - `accent` (default) → `text-accent` on the grid → the pixels are the brand
+//     ember (theme-aware). The standalone look (on a panel/surface).
+//   - `inherit` → NO color class → the pixels take the SURROUNDING text color, for
+//     use inside a colored control (a Button: paper on the ember primary fill, ink
+//     on secondary/ghost) — so an ember-on-ember vanish is impossible.
+// HARD opacity (0/1), 0px radius. No raw hex.
 //
 // a11y: `role="status"` (a polite live region) + an `aria-label` SR name. The
 // whole dither grid is `aria-hidden` (pure decoration); the status name carries
@@ -57,7 +65,7 @@ function prefersReducedMotion(): boolean {
 }
 
 export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinner(props, ref) {
-  const { size = 'md', label = 'Loading' } = props
+  const { size = 'md', label = 'Loading', tone = 'accent' } = props
   const gridRef = useRef<HTMLSpanElement>(null)
   // Whether motion is reduced — initialized from the media query, kept in sync.
   const [reduced, setReduced] = useState(prefersReducedMotion)
@@ -124,15 +132,18 @@ export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinne
       className="inline-flex"
       data-testid={props['data-testid']}
     >
-      {/* The decorative dither grid: a 12×12 ember-on-surface square. The role +
-          accessible name above carry the busy meaning, so the texture is
+      {/* The decorative dither grid: a 12×12 currentColor-on-transparent square. The
+          role + accessible name above carry the busy meaning, so the texture is
           aria-hidden. `grid` lays the cells out as a GRID × GRID square that fills
-          the icon-token footprint; GAP=0 so the dither reads as one field. */}
+          the icon-token footprint; GAP=0 so the dither reads as one field. The
+          ground draws NO fill (transparent); `text-accent` (default tone) makes the
+          `bg-current` pixels resolve to the brand ember, while `tone="inherit"`
+          omits it so the pixels take the surrounding control's text color. */}
       <span
         ref={gridRef}
         aria-hidden="true"
         data-spinner-grid=""
-        className="grid bg-surface"
+        className={cn('grid', tone === 'accent' && 'text-accent')}
         style={{
           width: `${String(GRID * CELL_PX[size])}px`,
           height: `${String(GRID * CELL_PX[size])}px`,
@@ -146,7 +157,7 @@ export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinne
             key={`${String(c.x)}:${String(c.y)}`}
             data-spinner-cell=""
             data-spinner-notched={c.notched ? 'true' : 'false'}
-            className={cn('bg-accent')}
+            className={cn('bg-current')}
             // HARD-binary opacity, driven by the rAF loop (or the static frame
             // under reduced motion). The initial inline value is the static frame
             // so first paint / SSR is the legible ≈40% dither, never blank.

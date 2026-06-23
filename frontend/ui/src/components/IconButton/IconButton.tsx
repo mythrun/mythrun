@@ -70,7 +70,14 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       className={cn(iconButton({ variant, size }))}
       {...rest}
     >
-      {loading ? <Spinner size={SPINNER_SIZE[size]} /> : <Icon name={icon} size={ICON_SIZE[size]} decorative />}
+      {/* tone="inherit": the spinner replaces the icon (the control's foreground),
+          so its pixels take the button's text color over a transparent ground —
+          paper on the ember primary, ink on secondary/ghost. */}
+      {loading ? (
+        <Spinner size={SPINNER_SIZE[size]} tone="inherit" />
+      ) : (
+        <Icon name={icon} size={ICON_SIZE[size]} decorative />
+      )}
     </button>
   )
 })

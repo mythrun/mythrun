@@ -111,7 +111,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       className={cn(button({ variant, size }))}
       {...rest}
     >
-      {loading && <Spinner size={SPINNER_SIZE[size]} />}
+      {/* tone="inherit": the spinner pixels take the button's text color (paper on
+          the ember primary, ink on secondary/ghost) over a transparent ground — so
+          it reads against the fill instead of vanishing ember-on-ember. */}
+      {loading && <Spinner size={SPINNER_SIZE[size]} tone="inherit" />}
       {children}
     </button>
   )

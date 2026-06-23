@@ -115,6 +115,21 @@ describe('Button', () => {
     }
   })
 
+  it('renders the loading spinner with tone="inherit" so the pixels match the label color', () => {
+    // The in-button spinner must read against the control fill: its pixels take
+    // the label color (paper on the ember primary fill, ink on secondary/ghost),
+    // NOT the brand ember — an ember spinner on the ember primary would vanish.
+    // `tone="inherit"` ⇒ the Spinner grid carries NO `text-accent` (it inherits
+    // the button's text color), and the negative space stays transparent.
+    const { getByRole } = render(<Button loading>Saving</Button>)
+    const grid = getByRole('button').querySelector('[data-spinner-grid]')
+    expect(grid?.className).not.toMatch(/\btext-accent\b/)
+    expect(grid?.className).not.toMatch(/bg-(surface|paper|accent|ember)/)
+    // The pixels themselves are currentColor.
+    const cell = grid?.querySelector('[data-spinner-cell]')
+    expect(cell?.className).toMatch(/\bbg-current\b/)
+  })
+
   it('does NOT set aria-busy when not loading', () => {
     const { getByRole } = render(<Button>x</Button>)
     expect(getByRole('button')).not.toHaveAttribute('aria-busy', 'true')

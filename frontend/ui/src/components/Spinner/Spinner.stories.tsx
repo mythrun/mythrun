@@ -6,19 +6,21 @@ import { Card, CardBody } from '../Card/Card.tsx'
 import { Text } from '../Text/Text.tsx'
 
 // Spinner — the brand's SIGNATURE "diagonal dither wave" loader. Per the motion
-// rule (§4) it does NOT rotate: a small ember-on-paper square (a 12×12 grid of
-// HARD binary cells) where a continuous wave flows the lit dither up the diagonal
-// on a loop (~1.8s/period), with two notched corners (top-left + bottom-right)
-// cut to paper. It exposes `role="status"` with an accessible name (the busy
-// state is announced to AT; motion is never the sole signal), and under
-// `prefers-reduced-motion` it settles to a LEGIBLE STATIC ~40% dither (never a
-// blank box).
+// rule (§4) it does NOT rotate: a small dither square (a 12×12 grid of HARD binary
+// cells) where a continuous wave flows the lit dither up the diagonal on a loop
+// (~1.8s/period), with two notched corners (top-left + bottom-right) cut out. It
+// exposes `role="status"` with an accessible name (the busy state is announced to
+// AT; motion is never the sole signal), and under `prefers-reduced-motion` it
+// settles to a LEGIBLE STATIC ~40% dither (never a blank box).
 //
-// States (a static indicator): the only axis is SIZE (sm/md/lg → the icon token
-// scale). It composes INTO a loading control — Button's `loading` renders a
-// Spinner beside the label — so the in-context stories below are the real test.
-// Color: the lit cells use the `accent` (ember) token over the `surface` paper
-// ground — theme-aware, so it reads on both light and warm-dark surfaces.
+// States (a static indicator): SIZE (xs/sm/md/lg → 12/24/36/48px) and TONE. It
+// composes INTO a loading control — Button's `loading` renders a Spinner beside
+// the label — so the in-context stories below are the real test.
+// Color: the GROUND is transparent (off-cells, notch + box show whatever is behind
+// the spinner through, never a drawn paper tile); the lit pixels are currentColor.
+// `tone="accent"` (default) paints them the brand ember; `tone="inherit"` takes the
+// surrounding text color, so inside a colored control (Button/IconButton) the
+// pixels match the label/icon and read against the fill.
 //
 // Do: pair with a disabled/aria-busy control during async work; supply a
 //   meaningful `label` (an i18n key) describing what is loading.
@@ -32,6 +34,7 @@ const meta: Meta<typeof Spinner> = {
   tags: ['autodocs'],
   argTypes: {
     size: { control: 'inline-radio', options: ['xs', 'sm', 'md', 'lg'] },
+    tone: { control: 'inline-radio', options: ['accent', 'inherit'] },
     label: { control: 'text' },
   },
 }
@@ -98,12 +101,33 @@ export const InThinkingPanel: Story = {
   ),
 }
 
-// On a surface — the wave square sits comfortably on any paper tier (the cells
-// are the ember token over the surface ground, so it reads on both themes).
+// On a surface — the transparent-ground wave square sits on any paper tier: the
+// off-cells/notch show the surface THROUGH (no drawn paper tile), and the lit
+// ember pixels (default `accent` tone) read on both themes.
 export const OnSurface: Story = {
   render: () => (
     <div className="bg-surface p-[var(--space-5)]">
       <Spinner size="lg" />
+    </div>
+  ),
+}
+
+// TONE on a colored fill — the negative-space fix made visible. On the ember
+// `accent` fill, the DEFAULT `accent` tone would be ember-on-ember (invisible), so
+// inside a control we pass `tone="inherit"`: the pixels take the foreground color
+// (paper here) and read against the fill. The ground is transparent, so the
+// off-cells show the ember fill through. (Button/IconButton pass this for you.)
+export const OnColoredFill: Story = {
+  name: 'Tone (inherit vs accent on a colored fill)',
+  render: () => (
+    <div className="flex items-center gap-[var(--space-5)]">
+      <div className="flex items-center gap-[var(--space-3)] bg-accent p-[var(--space-4)] text-paper-50">
+        <Spinner size="lg" tone="inherit" label="Loading (inherits the paper foreground)" />
+        <Text role={UI_CAPTION}>tone=&quot;inherit&quot; → paper pixels on ember</Text>
+      </div>
+      <div className="bg-surface p-[var(--space-4)]">
+        <Spinner size="lg" tone="accent" label="Loading (brand ember)" />
+      </div>
     </div>
   ),
 }

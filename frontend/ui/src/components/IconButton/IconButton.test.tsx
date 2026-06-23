@@ -71,6 +71,12 @@ describe('IconButton', () => {
     // Spinner replaces the icon while busy.
     expect(el.querySelector('[role="status"]')).not.toBeNull()
     expect(el.querySelector('svg')).toBeNull()
+    // The spinner replaces the icon (the control's foreground), so it uses
+    // tone="inherit" — pixels match the control's text color, transparent ground.
+    const grid = el.querySelector('[data-spinner-grid]')
+    expect(grid?.className).not.toMatch(/\btext-accent\b/)
+    expect(grid?.className).not.toMatch(/bg-(surface|paper|accent|ember)/)
+    expect(grid?.querySelector('[data-spinner-cell]')?.className).toMatch(/\bbg-current\b/)
     await user.click(el)
     expect(onPress).not.toHaveBeenCalled()
   })
