@@ -4,6 +4,20 @@ body {
   font-family: var(--font-body);
 }
 
+/* A `.dark` section is a REVERSED SURFACE (the page→footer break, an inverted panel).
+   The typographic roles set type, not color — color is INHERITED from the surface
+   (`body` above establishes the page's). So a nested `.dark` must re-establish its own
+   base bg + ink, or its inherited-color text keeps the light page's color and goes
+   dark-on-dark (invisible). Use the SEMANTIC vars (`--bg` / `--ink`), NOT the
+   `--color-*` theme tokens: under `@theme inline` the utilities inline `var(--bg)` /
+   `var(--ink)` (which flip under `.dark`), but the `--color-*` tokens resolve frozen at
+   the light value. `:where()` keeps it at ZERO specificity so any explicit `bg-*` /
+   `text-*` utility on the section still wins. */
+:where(.dark) {
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

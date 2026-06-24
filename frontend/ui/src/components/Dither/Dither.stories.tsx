@@ -22,6 +22,7 @@ import { Stack } from '../Stack/Stack.tsx'
 
 const HEADING: HeadingRole = 'heading'
 const PROSE: TextRole = 'prose-body'
+const CAPTION: TextRole = 'ui-caption'
 
 const meta: Meta<typeof Dither> = {
   title: 'Texture/Dither',
@@ -152,13 +153,14 @@ export const Footer: Story = {
         </Stack>
       </div>
       <Dither pairing="light-ink" />
-      {/* The reversed footer — its bg is `--ink` (paper-900), exactly the dither's ink
-          accent, so the band resolves into it seamlessly; text is light-on-dark. (A real
-          app section would flip via `.dark`; see the note about that token gap.) */}
-      <div className="bg-ink px-[var(--space-5)] py-[var(--space-6)]">
+      {/* The reversed footer — a `.dark` section. `.dark` alone re-establishes the reversed
+          surface (its bg = the flipped `--bg` = paper-900, exactly the dither's ink accent,
+          so the band resolves into it seamlessly) and the Text inherits the flipped light
+          `--ink`. No bg/text classes needed. */}
+      <div className="dark px-[var(--space-5)] py-[var(--space-6)]">
         <Stack gap={1}>
-          <span className="font-ui text-xs font-medium text-surface">Mythrun</span>
-          <span className="font-ui text-xs text-paper-300">© 2026 · Terms · Privacy · Discord</span>
+          <Text role={CAPTION}>Mythrun</Text>
+          <Text role={CAPTION}>© 2026 · Terms · Privacy · Discord</Text>
         </Stack>
       </div>
     </div>
