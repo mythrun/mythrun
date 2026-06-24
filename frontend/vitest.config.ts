@@ -20,13 +20,13 @@ export default defineConfig({
     // re-applies natives), safe for the whole suite. See the env module's
     // header + vitest-dev/vitest#8374 (fixed upstream in vitest 4 / PR #8390).
     environment: './test/jsdom-native-fetch.ts',
-    // @mythrun/web is the root frontend package; `client-core/` and `ui/` are
-    // NESTED workspace packages that each own their own vitest config + run.
-    // Without these excludes, web's default `frontend/**` discovery would pick
-    // up their *.test.* files and run them here too — out of their own package
-    // context (wrong setup/coverage config) and double-counted in CI. Each
+    // @mythrun/web is the root frontend package; `client-core/`, `ui/`, and
+    // `contract/` are NESTED workspace packages that each own their own vitest
+    // config + run. Without these excludes, web's default `frontend/**` discovery
+    // would pick up their *.test.* files and run them here too — out of their own
+    // package context (wrong setup/coverage config) and double-counted in CI. Each
     // nested package runs under its own `pnpm --filter` test script.
-    exclude: [...configDefaults.exclude, 'client-core/**', 'ui/**'],
+    exclude: [...configDefaults.exclude, 'client-core/**', 'ui/**', 'contract/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],
