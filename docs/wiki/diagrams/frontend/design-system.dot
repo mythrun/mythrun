@@ -1,0 +1,56 @@
+digraph frontend_design_system {
+  // mythrunUI: the brand-aligned component library the whole app composes. The
+  // story is a one-way pipeline — token DATA + a platform-neutral component
+  // CONTRACT live in @mythrun/client-core (zero DOM); @mythrun/ui implements the
+  // contract with DOM + Radix + Tailwind and emits the web CSS; @mythrun/web
+  // composes the public components. Every component ships a Storybook story and
+  // passes the enforcement gates. Dependency direction is client-core ← ui ← web.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_cc {
+    label="@mythrun/client-core  (platform-neutral · zero DOM · zero CSS)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    contract [label="the CONTRACT\nButtonProps · InputProps · …\n(import type 'react' only)\nexport: /contract (type-only)"];
+    tokendata [label="token DATA + generator\nscales.ts · generate-palette.mjs\n(culori OKLCH)\nexport: /tokens (build-time)"];
+  }
+
+  subgraph cluster_ui {
+    label="@mythrun/ui  (the web design system)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    impl  [label="web impl\n(props: ButtonProps)\nDOM + Radix + CVA + cn()"];
+    css   [label="web CSS\ncolors.generated.css\ntheme · semantic · base\nexport: ./styles.css"];
+    story [label="Button.stories.tsx\n(autodocs · state matrix ·\na11y notes · do/don't)"];
+  }
+
+  web [label="@mythrun/web\nfeature / route code\ncomposes PUBLIC components", color="ember", fontcolor="ember"];
+
+  // The pipeline: data + contract → web impl → story.
+  tokendata -> css   [label="run at build →\nemits @theme CSS"];
+  contract  -> impl  [label="import type\n(tsc: satisfies)"];
+  impl      -> css   [style="dotted", label="bg-ember-600\n(token utilities)"];
+  impl      -> story [label="documented by"];
+  impl      -> web   [ltail=cluster_ui, label="import { Button }\nfrom '@mythrun/ui'"];
+
+  subgraph cluster_gates {
+    label="enforcement gates (rules → CI)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    apipurity [label="api-purity lint (R2)\nno DOM props on the\npublic *Props surface"];
+    nocolor   [label="no-ad-hoc-color (R3)\ncolor from tokens only\n(scans cva()/cn() args)\n+ Stylelint on .css"];
+    storycov  [label="story-coverage gate\nevery component dir\nhas a *.stories.tsx"];
+    a11y      [label="jest-axe + keyboard\n+ token-contrast (3:1)"];
+    boundary  [label="import boundary (R5)\nfeatures import @mythrun/ui\nroot only — not radix/cva"];
+  }
+
+  contract -> apipurity [lhead=cluster_gates, style="dotted", label="gated by"];
+  web      -> boundary  [style="invis"];
+}

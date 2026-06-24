@@ -81,7 +81,10 @@ export const structure: Section[] = [
   {
     slug: 'frontend',
     title: 'Frontend',
-    pages: [{ slug: 'index', title: 'Overview' }],
+    pages: [
+      { slug: 'index', title: 'Overview' },
+      { slug: 'design-system', title: 'Design system' },
+    ],
   },
   {
     slug: 'reference',

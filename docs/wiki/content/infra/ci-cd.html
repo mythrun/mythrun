@@ -8,7 +8,7 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:5413bc1c7c0f12d163f275a61efb729452e82655c67d89e24dcad3af8eed660c -->
+<!-- source-hash: sha256:5eb5d084321af84a02dce41d5e5405f9b6c36497d1522f48cea4e68f3141c136 -->
 <!-- last-ticket: MYT-79 -->
 
 <h1>CI/CD</h1>
@@ -342,12 +342,17 @@
 
 <p>
   <code>.github/workflows/frontend-check.yml</code> is the frontend's own required status check,
-  separate from the backend deploy pipeline. It installs only the two frontend packages (<code
-    >--filter @mythrun/web... --filter @mythrun/ui...</code
-  >) and runs the chain typecheck → lint → test → coverage → build. The lint step is where the
+  separate from the backend deploy pipeline. It installs the three frontend packages (<code
+    >--filter @mythrun/web... --filter @mythrun/ui... --filter @mythrun/client-core...</code
+  >) and runs each package's chain. <code>@mythrun/client-core</code> (the platform-neutral contract
+  + token data) gets typecheck → lint → test → coverage. <code>@mythrun/ui</code> (the
+  <a href="../frontend/design-system.html">design system</a>) adds
+  <code>lint:css</code> (Stylelint), the <code>story-coverage</code> gate, and a full Storybook
+  production build on top. The lint steps are where the
   <a href="../frontend/index.html">frontend lint rails</a> bite — a hardcoded JSX string or a raw
-  <code>&lt;div&gt;</code> in feature code fails here. There are no Postgres, Redis, or secrets
-  dependencies; the job is fast and self-contained.
+  <code>&lt;div&gt;</code> in feature code, a DOM prop on a public contract, or a raw hex in a
+  <code>cva()</code> block all fail here. There are no Postgres, Redis, or secrets dependencies; the
+  job is fast and self-contained.
 </p>
 
 <aside class="wiki-rationale">

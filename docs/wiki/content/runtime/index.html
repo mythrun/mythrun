@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:2dd6d1011df17a7c56096cd7d95b7ca6c66bfbdf065448b0b74c53ea85b47c4d -->
+<!-- source-hash: sha256:a6096b9c5b64439ab71df5c28c0407b4b2b1bb8e4e5abae5d6ada1f07f16cf72 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Backend</h1>
@@ -36,15 +36,17 @@
   The repository is a pnpm monorepo. The root <code>package.json</code> pins
   <code>pnpm@10.30.3</code> via <code>packageManager</code> and <code>node &gt;= 24</code> via
   <code>engines</code>; <code>pnpm-workspace.yaml</code> declares the workspace packages —
-  <code>backend/</code>, <code>backend/dev-tool/</code>, <code>docs/wiki/</code>, and the two
-  frontend packages <code>frontend/</code> (<code>@mythrun/web</code>) and
-  <code>frontend/ui/</code> (<code>@mythrun/ui</code>) — and the root exposes the single-word verbs
-  (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
+  <code>backend/</code>, <code>backend/dev-tool/</code>, <code>docs/wiki/</code>, and the three
+  frontend packages <code>frontend/</code> (<code>@mythrun/web</code>),
+  <code>frontend/ui/</code> (<code>@mythrun/ui</code>), and
+  <code>frontend/client-core/</code> (<code>@mythrun/client-core</code>) — and the root exposes the
+  single-word verbs (<code>pnpm test</code>, <code>pnpm typecheck</code>, <code>pnpm lint</code>,
   <code>pnpm build</code>) that fan out across every workspace via <code>pnpm -r</code>. A second
   cluster of root scripts (<code>pnpm db:up</code>, <code>pnpm db:down</code>,
   <code>pnpm db:reset</code>) wraps the docker-compose local data stack. The frontend has its own
-  story — see the <a href="../frontend/index.html">Frontend</a> page for the two-package workspace
-  and the lint rails that gate it.
+  story — see the <a href="../frontend/index.html">Frontend</a> page for the workspace and the lint
+  rails that gate it, and the <a href="../frontend/design-system.html">Design system</a> page for
+  the mythrunUI component library.
 </p>
 
 <aside class="wiki-rationale">

@@ -1,0 +1,522 @@
+<!-- source: frontend/client-core/package.json -->
+<!-- source: frontend/client-core/src/contract/ -->
+<!-- source: frontend/client-core/src/tokens/scales.ts -->
+<!-- source: frontend/client-core/src/tokens/generate-palette.mjs -->
+<!-- source: frontend/client-core/CHANGELOG.md -->
+<!-- source: frontend/client-core/eslint-rules/api-purity.js -->
+<!-- source: frontend/client-core/eslint-rules/no-ad-hoc-color.js -->
+<!-- source: frontend/client-core/eslint.config.js -->
+<!-- source: frontend/ui/package.json -->
+<!-- source: frontend/ui/src/index.ts -->
+<!-- source: frontend/ui/src/components/ -->
+<!-- source: frontend/ui/src/lib/cn.ts -->
+<!-- source: frontend/ui/src/styles/theme.css -->
+<!-- source: frontend/ui/src/styles/semantic.css -->
+<!-- source: frontend/ui/eslint.config.js -->
+<!-- source: frontend/ui/scripts/story-coverage.mjs -->
+<!-- source: frontend/ui/.storybook/main.ts -->
+<!-- source: frontend/eslint.config.js -->
+<!-- source: .github/workflows/frontend-check.yml -->
+<!-- source-hash: sha256:75d9918f10a5eaed64e24d07408d4fdd9e25e7b55ca9c94287ab8ff615f80562 -->
+<!-- last-ticket: MYT-82 -->
+
+<h1>Design system</h1>
+
+<p class="lead">
+  mythrunUI — the brand-aligned, token-driven component library the whole app composes. The system
+  before the app: ~27 primitives (layout, type, controls, overlays, feedback, display) each typed
+  against a platform-neutral contract, styled from a single token vocabulary, documented in
+  Storybook, and held in place by lint and CI gates. Two packages carry it —
+  <code>@mythrun/client-core</code> (the platform-neutral brain: the component contract + the token
+  data) and <code>@mythrun/ui</code> (the web implementation that turns the contract into DOM).
+</p>
+
+<!-- @diagram: frontend/design-system -->
+
+<aside class="wiki-rationale">
+  <strong>Why a contract layer at all</strong> — Mythrun ships web first, then ports to true-native
+  iOS/Android later (not React-Native-Web, not Capacitor). For that port to be a mechanical
+  translation rather than a rewrite, the component <em>API</em> has to be platform-neutral from day
+  one. So the prop/variant types (<code>ButtonProps</code>, …) live in a DOM-free package and the
+  web implementation is typed <em>against</em> them. A future
+  <code>@mythrun/ui-native</code> implements the same contract; <code>tsc</code> catches any
+  prop-surface drift between the two. This is the frontend's portability rule R2 made structural —
+  the contract layer and the api-purity lint (below) are how that rule is enforced in code.
+</aside>
+
+<h2>Three packages, one direction</h2>
+
+<p>
+  The dependency arrow points one way: <code>client-core ← ui ← web</code>.
+  <code>@mythrun/client-core</code> is the base — born in this issue, it holds only platform-neutral
+  things and imports nothing but <code>react</code> (for <code>ReactNode</code> in a child slot) and
+  <code>culori</code> (in the build-time token generator). <code>@mythrun/ui</code> is the web
+  design system: it implements the contract with DOM, Radix, and Tailwind, and it owns all web CSS.
+  <code>@mythrun/web</code> is the app — it composes the library's public components and never
+  reaches past them.
+</p>
+
+<p>
+  <code>@mythrun/ui</code> consumes the contract via <code>import type</code> — erased at compile
+  time, so there is no runtime coupling and no circular import as <code>@mythrun/client-core</code>
+  later grows stores and transport (MYT-83). It invokes the token generator only in its build
+  script, never in shipped component code. The seam stays thin on purpose.
+</p>
+
+<h2>The contract — a typed seam enforced as a pair</h2>
+
+<p>
+  The contract is the set of exported <code>*Props</code> types under
+  <code>client-core/src/contract/</code>, surfaced as a <strong>type-only</strong> subpath,
+  <code>@mythrun/client-core/contract</code>. <code>ButtonProps</code>, <code>InputProps</code>,
+  <code>SelectProps</code>, … — prop shapes and variant unions, nothing else. The barrel
+  (<code>contract/index.ts</code>) re-exports them all with <code>export type</code> only, so the
+  package root stays free of runtime values; a test asserts that property.
+</p>
+
+<p>
+  Each web component is typed <code>(props: ButtonProps)</code> against its contract type.
+  <code>tsc</code> then checks that the implementation's prop surface <em>satisfies</em> the
+  contract — so when the native impl is written and typed the same way, prop-surface drift is a
+  compile error. But <code>tsc</code> checks prop <em>shape</em>, not behavior, and does not by
+  itself forbid a web-only excess prop: a stray <code>className?</code> passthrough can structurally
+  satisfy <code>(props: ButtonProps)</code>. That gap is closed by the second half of the pair.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Conformance = tsc (satisfies) + API-purity lint (does not exceed)</strong> — the phrase
+  "tsc guarantees parity" is deliberately avoided. <code>tsc</code> proves the impl is at least the
+  contract; the <strong>API-purity lint</strong> (below) proves it is at most the contract — no
+  DOM-only props leaked onto the public surface. Together they pin the API to exactly the
+  platform-neutral contract. Behavioral parity is documented in the contract and verified by each
+  component's tests, not claimed by the compiler.
+</aside>
+
+<p>
+  So the native impl is a mechanical translation, the contract fixes a few cross-cutting conventions
+  once: ref forwarding on every component; a single controlled/uncontrolled signature shape (<code
+    >value</code
+  >
+  / <code>defaultValue</code> / <code>onChange</code>) across all inputs; and polymorphism expressed
+  neutrally — a Button-as-Link routes through the <code>Link</code> primitive, never Radix's
+  DOM-coupled <code>asChild</code> (which has no native analog and would fail API-purity).
+  <code>asChild</code> / <code>Slot</code> stays an internal web-impl detail. Contract changes are
+  recorded in <code>client-core/CHANGELOG.md</code> — a breaking change is a deliberate, reviewed
+  event, because a second consumer will implement the same contract later.
+</p>
+
+<h2>The token foundation, relocated</h2>
+
+<p>
+  The <a href="./index.html#design-tokens">design tokens</a> were born in
+  <code>@mythrun/ui</code> (MYT-81). This issue relocates the platform-neutral half of them into
+  <code>client-core</code>: the OKLCH palette generator (<code>generate-palette.mjs</code>, with its
+  <code>culori</code> dependency) and the raw token-scale data (<code>scales.ts</code> — spacing,
+  radius, control/icon sizes, z-index, motion, typography roles, weights, tracking, measure,
+  breakpoints, and the twelve curated avatar pigments). These are exposed as the build-time subpath
+  <code>@mythrun/client-core/tokens</code>. <strong>No CSS moves.</strong>
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Generator moves, web CSS stays</strong> — the token <em>values</em> are platform-neutral
+  data (a native impl emits the same numbers into NativeWind). But the web
+  <code>@theme</code> emission — the <code>:root</code>/<code>.dark</code> flip,
+  <code>@theme inline</code>, <code>semantic.css</code>, <code>base.css</code> — is a web-face
+  concern and must not live in the DOM-free base layer. So only the generator + scale data +
+  manifest (JS/JSON) move; <code>@mythrun/ui</code> imports the generator and runs it at build time
+  (<code>pnpm --filter @mythrun/ui build</code> → <code>build:tokens</code>) to emit
+  <code>colors.generated.css</code> back into its own <code>src/styles/</code>. A round-trip test
+  asserts the relocated generator reproduces the committed CSS byte-for-byte — the real idempotency
+  check that the move changed nothing.
+</aside>
+
+<p>
+  The MYT-82 token work also <em>completes</em> the foundation MYT-81 left partial: it adds the
+  spacing, sizing, border, surface-tier, focus, interaction-state, status-intent, z-index, and
+  motion scales the components consume, and it settles the design language (below) by removing the
+  soft-shadow tokens. Static scales live as typed data in <code>scales.ts</code> and are mirrored
+  into <code>theme.css</code> by hand; a drift-guard test asserts the two never diverge. Theme-aware
+  tokens (focus ring, <code>--border-strong</code>, surface tiers, status intents) stay in
+  <code>semantic.css</code> because they flip per theme.
+</p>
+
+<h2>The design language — flat 1-bit</h2>
+
+<p>
+  The brand's "Parchment &amp; Ink / Obra Dinn" register, taken seriously. This is where the visual
+  identity finally settles, in the brand's favor over the older UX spec's "light, airy, soft
+  shadows."
+</p>
+
+<ul>
+  <li><strong>Radius: 0px everywhere.</strong> Sharp corners match the pixel-art icons.</li>
+  <li>
+    <strong>Depth via borders and paper-tier surfaces, not shadows.</strong> The MYT-81 soft-shadow
+    tokens are removed. Interactive control boundaries use <code>--border-strong</code> (≥3:1
+    contrast); faint <code>--border</code> is reserved for decorative dividers.
+  </li>
+  <li>
+    <strong>Focus ring: 2px hard square outline, 2px offset, no glow</strong> — and theme-aware.
+    <code>--focus-ring-color: var(--accent)</code> resolves to ember-600 in light and ember-400 in
+    dark, so it clears WCAG 3:1 on both surfaces.
+  </li>
+  <li>
+    <strong>Interaction states are token-swaps</strong> (discrete steps), never translucent
+    overlays.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Theme-aware focus ring</strong> — a fixed ember-600 ring fails the 3:1 non-text-contrast
+  floor against dark surfaces. Binding the ring to the <code>--accent</code> alias lets the
+  <code>.dark</code> remap swap in ember-400, which passes. The token-contrast gate (below) checks
+  this claim at the token level, since axe does not verify the ring color against its background.
+</aside>
+
+<h2>The build stack</h2>
+
+<p>
+  The widely-adopted "shadcn pattern," chosen partly because it ports cleanly. Behavior and
+  accessibility come from <strong>Radix</strong> (the unified <code>radix-ui</code> package):
+  unstyled primitives supply focus-trap, focus-return, keyboard navigation, portals, and ARIA
+  wiring; we style them 100% from our tokens. Variants are
+  <strong>CVA</strong> (<code>class-variance-authority</code>) — but the variant→class mapping is
+  internal to the web impl, never crossing the contract. Classes are merged through a single
+  <code>cn()</code> util (<code>clsx</code> + <code>tailwind-merge</code>). Icons are
+  <strong>pixelarticons</strong> per-icon component imports behind a swappable
+  <code>Icon</code> API. The brand's one sanctioned gradient is the <strong>Dither</strong> — a
+  locked 4×4-Bayer two-color band, for committed high-contrast transitions only, never a smooth
+  gradient.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The unified <code>radix-ui</code> package, not individual
+    <code>@radix-ui/react-*</code></strong
+  >
+  — shadcn migrated to the single package in early 2026; the individual packages risk a React-19
+  peer-dependency skew that pnpm's strict resolution hard-fails. The native mirror is
+  <code>rn-primitives</code> (same API) — the seam the native impl swaps behind. CVA is the recorded
+  swap target's predecessor: if it stalls (single-maintainer), <code>tailwind-variants</code> is the
+  pre-chosen replacement, and because CVA never crosses the contract the swap is contained.
+</aside>
+
+<h2>The primitive set</h2>
+
+<p>
+  Each primitive lands in <code>@mythrun/ui/src/components/&lt;Name&gt;/</code> with its web impl, a
+  Storybook story, and a Vitest + RTL + axe test, typed against a contract type in
+  <code>client-core</code>. The set reads as cognitive layers, leaves first:
+</p>
+
+<ul>
+  <li>
+    <strong>Layout</strong> — <code>Stack</code>, <code>Box</code>, <code>Grid</code>,
+    <code>Divider</code>. These expose a token-typed style vocabulary (<code>gap: SpaceToken</code
+    >), so they pass API-purity by construction.
+  </li>
+  <li>
+    <strong>Typography</strong> — <code>Text</code>, <code>Heading</code>,
+    <code>Link</code> (router-aware, i18n), <code>VisuallyHidden</code>.
+  </li>
+  <li>
+    <strong>Leaves</strong> — <code>Icon</code>, <code>Spinner</code> — composed by the controls
+    (Button's loading state, IconButton).
+  </li>
+  <li>
+    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>),
+    <code>IconButton</code> (requires an accessible name), <code>Input</code>,
+    <code>TextArea</code> (autosizing), <code>Select</code>, <code>Checkbox</code>,
+    <code>Radio</code>/<code>RadioGroup</code>, <code>Switch</code>, and
+    <code>SeamlessInput</code> — the borderless ghost field for one-question creation flows.
+  </li>
+  <li>
+    <strong>Forms</strong> — <code>FormField</code> (label + helper + error + required/invalid) and
+    <code>Label</code>. The error string is an i18n key, so the error-rendering contract — including
+    server/LLM-rejection messages routed inline — is designed once, not improvised per field.
+  </li>
+  <li>
+    <strong>Containers &amp; overlays</strong> — <code>Card</code> (header/body/footer slots),
+    <code>Modal</code>, <code>Popover</code>, <code>Tooltip</code>, <code>Tabs</code>,
+    <code>Menu</code>.
+  </li>
+  <li>
+    <strong>Feedback</strong> — <code>Banner</code> (inline, persistent),
+    <code>Toast</code> (transient, global), <code>Spinner</code>.
+  </li>
+  <li>
+    <strong>Display</strong> — <code>Avatar</code>/<code>AvatarGroup</code> (image-with-initials
+    fallback, twelve curated pigments), <code>Badge</code>, <code>Dither</code>.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Banner vs Toast — inline vs subsystem</strong> — a Banner is a leaf: inline, contextual,
+  persistent, rendered where the message belongs. A Toast is a subsystem: an app-root provider and
+  portal, a queue (max-visible + dedupe), <code>aria-live</code> politeness, auto-dismiss that
+  respects <code>prefers-reduced-motion</code>, and an imperative <code>toast()</code> API callable
+  from anywhere. <code>toast()</code> is the one runtime value the library exports that isn't a
+  component — it ships from <code>@mythrun/ui</code>, not the type-only contract barrel.
+</aside>
+
+<p>
+  Feature-specific composites — campaign cards, roll cards, chat messages, the character sheet — are
+  deliberately <strong>out of scope</strong> here. They get built into mythrunUI inside their own
+  feature issues, never ad-hoc, so the system grows with the app rather than ahead of it.
+</p>
+
+<h2>Storybook</h2>
+
+<p>
+  Storybook 9 (Vite builder) is the visual catalogue and the authoring surface. Each component's
+  story follows a doc template the story-coverage gate can assert: an autodocs props table, the
+  all-states matrix (default / hover / active / focus-visible / disabled / loading / invalid /
+  read-only / selected, the relevant subset per component), a11y notes, do/don't, and content/i18n
+  guidance. A <code>foundation</code> story renders the token specimens; a
+  <code>patterns</code> story shows a composed Character-Creation flow. A light/warm-dark toggle
+  exercises both themes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Tailwind v4 needs explicit Storybook wiring</strong> — Storybook builds its preview
+  through its own Vite config, separate from the app's. Without pushing
+  <code>@tailwindcss/vite</code> into that config via <code>viteFinal</code> in
+  <code>.storybook/main.ts</code>, the <code>@import "tailwindcss"</code> never compiles and every
+  story renders unstyled. That one line is load-bearing.
+</aside>
+
+<h2>Enforcement — rules as CI gates</h2>
+
+<p>
+  The methodology rule is that every reusable component lives in mythrunUI and has a story, and that
+  anything the team cares about becomes a CI gate rather than a style note. MYT-82 stands up the
+  gates that keep the system from rotting, each registered in the correct package's config and each
+  shipped with a positive-and-negative wiring test (a rule that silently no-ops is worse than no
+  rule).
+</p>
+
+<h3>API-purity (R2)</h3>
+
+<p>
+  <code>api-purity.js</code> keeps the public <code>*Props</code> surface platform-neutral: it flags
+  a <code>className</code>/<code>style</code> member, a DOM mouse/pointer/drag event handler, a
+  <code>CSSProperties</code>-typed member, or an exported <code>*Props</code> that extends an
+  HTML-attribute base. Pure AST — no type-checker. The rule lives in <code>client-core</code> (the
+  base layer) so both packages can register it without inverting the dependency direction:
+  <code>client-core</code> applies it to the contract types themselves; <code>@mythrun/ui</code>
+  imports the same rule and applies it to component prop-widening (a
+  <code>(props: ButtonProps &amp; { className?: string })</code> that would smuggle a DOM prop past
+  the contract). Only <em>exported</em> <code>*Props</code> are the public surface — a non-exported
+  helper interface is the carve-out for internal Radix plumbing.
+</p>
+
+<h3>no-ad-hoc-color (R3)</h3>
+
+<p>
+  <code>no-ad-hoc-color.js</code> keeps color in the token layer: it flags a raw hex or
+  <code>rgb()</code>/<code>hsl()</code>/<code>oklch()</code> literal, a Tailwind arbitrary-value
+  color utility (<code>bg-[#abc]</code>), and an inline <code>style</code> color. It scans
+  <em>every</em> string literal and template quasi under <code>src/components/**</code>, not just
+  JSX attributes — because in the CVA pattern the color classes live inside
+  <code>cva({...})</code> / <code>cn(...)</code> call arguments, where a
+  <code>JSXAttribute</code>-only matcher would miss them. A <code>var(--…)</code> reference is a
+  token and always passes. Component <code>.css</code> is covered separately by a Stylelint pass
+  (excluding the generated <code>colors.generated.css</code>).
+</p>
+
+<h3>Story-coverage</h3>
+
+<p>
+  <code>story-coverage.mjs</code> globs the immediate child directories of
+  <code>src/components/</code> and fails CI if any lacks a <code>*.stories.tsx</code>. The
+  directory-per-component convention is the discriminator — type-only, util, hook, and foundation
+  files aren't under <code>components/&lt;Name&gt;/</code>, so they are exempt by construction.
+  Alongside it, the CI workflow runs a full Storybook production build, which catches story/MDX
+  breakage the existence check can't.
+</p>
+
+<h3>Import boundary (R5)</h3>
+
+<p>
+  Feature code composes the library's public surface only. A
+  <code>no-restricted-imports</code> path-ban in <code>@mythrun/web</code>'s config forbids feature
+  code from importing the library's internal building blocks (<code>radix-ui</code>, CVA,
+  <code>tailwind-merge</code>/<code>clsx</code>, the icon set) and from deep-importing
+  <code>@mythrun/ui</code>'s source — features import from the package root
+  <code>@mythrun/ui</code> (plus React, client-core, i18n). Reaching for a raw primitive in a
+  feature is a one-off element outside the system, which is un-portable. The
+  <a href="./index.html#rule-2-no-ad-hoc-ui">no-ad-hoc-ui</a> rail (MYT-79) is the companion: it
+  bans raw <code>&lt;div&gt;</code>/<code>className</code>/<code>style</code> in feature code. The
+  cross-feature-component boundary is deferred to MYT-83, since no feature directories exist yet.
+</p>
+
+<h3>Accessibility &amp; token-contrast</h3>
+
+<p>
+  The a11y gate is real assertions, not just the Storybook addon (which is a dev-time aid): each
+  component test runs <code>jest-axe</code> plus explicit keyboard-interaction tests
+  (Tab/Esc/Arrow/Enter/Space), a Modal focus-trap-and-return test, and a Toast/Banner live-region
+  test. A token-level contrast check uses the generator's <code>wcagContrast</code> to verify the
+  focus-ring and interactive-border 3:1 claims that axe does not check. Every interactive control —
+  icon-only ones included — carries a ≥44px hit target and an accessible name.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3>Add a primitive to the library</h3>
+<ol>
+  <li>
+    Add the contract type under <code>frontend/client-core/src/contract/&lt;name&gt;.ts</code> and
+    re-export it (<code>export type</code>) from <code>contract/index.ts</code>.
+  </li>
+  <li>
+    Create <code>frontend/ui/src/components/&lt;Name&gt;/&lt;Name&gt;.tsx</code>, typed
+    <code>(props: &lt;Name&gt;Props)</code>; export it (and its props type) from
+    <code>frontend/ui/src/index.ts</code>.
+  </li>
+  <li>
+    Style from token utilities only (<code>bg-ember-600</code>, never raw hex). Use
+    <code>cn()</code> for class composition and CVA for variants.
+  </li>
+  <li>
+    Add <code>&lt;Name&gt;.stories.tsx</code> following the doc template (autodocs, state matrix,
+    a11y notes, do/don't). The story-coverage gate fails without it.
+  </li>
+  <li>
+    Add <code>&lt;Name&gt;.test.tsx</code> with RTL behavior + <code>jest-axe</code> + the relevant
+    keyboard tests.
+  </li>
+  <li>
+    Run
+    <code>pnpm --filter @mythrun/ui typecheck lint lint:css test test:coverage story-coverage</code>
+    and <code>pnpm --filter @mythrun/client-core typecheck lint test:coverage</code>.
+  </li>
+</ol>
+
+<h3>Add or change a token</h3>
+<ol>
+  <li>
+    For a static scale: edit <code>frontend/client-core/src/tokens/scales.ts</code> and mirror it
+    into <code>frontend/ui/src/styles/theme.css</code> (the drift-guard test asserts they match).
+  </li>
+  <li>
+    For a palette color: edit <code>generate-palette.mjs</code>, then
+    <code>pnpm --filter @mythrun/ui build</code> to regenerate <code>colors.generated.css</code> +
+    <code>tokens.manifest.json</code>; the round-trip test re-asserts idempotency.
+  </li>
+  <li>
+    For a theme-aware semantic alias: edit <code>semantic.css</code> (the <code>:root</code>/<code
+      >.dark</code
+    >
+    pair + the <code>@theme inline</code> surface), and extend the alias list in the token test.
+  </li>
+  <li>Record any contract-affecting change in <code>frontend/client-core/CHANGELOG.md</code>.</li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  This page is the design-system half of the <a href="./index.html">Frontend foundation</a>, which
+  covers the same workspace plus the i18n layer, the no-ad-hoc-UI / no-hardcoded-string rails, and
+  the token primer this page builds on. The MYT-82 gates run in the same
+  <code>frontend-check.yml</code> workflow and pre-push section detailed on the
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page. The portability rules R1–R5
+  that the contract layer and these lints enforce are recorded in the frontend portability
+  architecture decision record (<code>docs/superpowers/specs/</code>); the contract layer and the
+  api-purity / no-ad-hoc-color / import-boundary lints are their in-code embodiment.
+</p>
+
+<h2>Appendix: packages &amp; gates</h2>
+
+<h3>Packages</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Path</th>
+      <th>Role</th>
+      <th>DOM?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@mythrun/client-core</code></td>
+      <td><code>frontend/client-core/</code></td>
+      <td>Component contract (type-only) + token data/generator</td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/ui</code></td>
+      <td><code>frontend/ui/</code></td>
+      <td>Web design system — implements the contract, owns web CSS + Storybook</td>
+      <td>DOM + Radix + Tailwind</td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/web</code></td>
+      <td><code>frontend/</code></td>
+      <td>App — composes the public components</td>
+      <td>app DOM</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Enforcement gates</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Gate</th>
+      <th>Where it lives</th>
+      <th>What it catches</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>api-purity</code> (R2)</td>
+      <td><code>client-core</code> rule; registered in both configs</td>
+      <td>DOM-only prop on the public <code>*Props</code> surface</td>
+    </tr>
+    <tr>
+      <td><code>no-ad-hoc-color</code> (R3)</td>
+      <td><code>client-core</code> rule; registered in <code>@mythrun/ui</code></td>
+      <td>raw color in a class / <code>cva()</code> / inline style</td>
+    </tr>
+    <tr>
+      <td>Stylelint (<code>lint:css</code>)</td>
+      <td><code>@mythrun/ui</code></td>
+      <td>raw color in component <code>.css</code></td>
+    </tr>
+    <tr>
+      <td>story-coverage</td>
+      <td><code>@mythrun/ui</code> script + Storybook build</td>
+      <td>a component directory with no story</td>
+    </tr>
+    <tr>
+      <td>import boundary (R5)</td>
+      <td><code>@mythrun/web</code> <code>no-restricted-imports</code></td>
+      <td>feature reaching past the library's public surface</td>
+    </tr>
+    <tr>
+      <td>tsc conformance</td>
+      <td>each impl <code>(props: ContractProps)</code></td>
+      <td>impl prop surface drifting below the contract</td>
+    </tr>
+    <tr>
+      <td><code>jest-axe</code> + keyboard + token-contrast</td>
+      <td><code>@mythrun/ui</code> tests</td>
+      <td>a11y regressions; sub-3:1 focus ring/border</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/client-core/</code> (<code>@mythrun/client-core</code> —
+  <code>src/contract/</code>, <code>src/tokens/</code>, <code>eslint-rules/api-purity.js</code>,
+  <code>eslint-rules/no-ad-hoc-color.js</code>, <code>CHANGELOG.md</code>),
+  <code>frontend/ui/</code> (<code>@mythrun/ui</code> — <code>src/components/</code>,
+  <code>src/index.ts</code>, <code>src/lib/cn.ts</code>, <code>src/styles/</code>,
+  <code>scripts/story-coverage.mjs</code>, <code>.storybook/main.ts</code>,
+  <code>eslint.config.js</code>), <code>frontend/eslint.config.js</code> (import boundary),
+  <code>.github/workflows/frontend-check.yml</code>.
+</p>

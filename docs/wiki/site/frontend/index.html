@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html" class="active">Overview</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html" class="active">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend</div>
         <article>
@@ -30,12 +30,14 @@
 
 <p class="lead">
   The frontend foundation: the workspace, the lint rails that gate it, the i18n layer every string
-  flows through, and the design tokens every component consumes. Two pnpm packages —
-  <code>@mythrun/web</code> (the React app) and <code>@mythrun/ui</code> (the design system) — plus
-  the "rules of the road" turned into CI lints <em>before</em> any real UI is built. There are still
-  no feature flows or composed components, but the substrate they will be built from is in place and
-  enforced: the rails bite, every string is a typed key, and the brand's Parchment &amp; Ink palette
-  is importable in CSS and Tailwind.
+  flows through, and the design tokens every component consumes. Three pnpm packages —
+  <code>@mythrun/web</code> (the React app), <code>@mythrun/ui</code> (the design system), and
+  <code>@mythrun/client-core</code> (the platform-neutral brain) — plus the "rules of the road"
+  turned into CI lints <em>before</em> any real UI is built. The substrate is in place and enforced:
+  the rails bite, every string is a typed key, and the brand's Parchment &amp; Ink palette is
+  importable in CSS and Tailwind. The component library those rails protect — mythrunUI — is the
+  subject of its own page, the <a href="./design-system.html">Design system</a>; this page is the
+  foundation it stands on.
 </p>
 
 <figure class="wiki-diagram">
@@ -269,13 +271,17 @@
   discipline onto a pile of already-written markup.
 </aside>
 
-<h2 id="the-two-package-workspace">The two-package workspace</h2>
+<h2 id="the-frontend-workspace">The frontend workspace</h2>
 
 <p>
-  <code>pnpm-workspace.yaml</code> lists two new packages alongside the backend and the wiki.
+  <code>pnpm-workspace.yaml</code> lists three frontend packages alongside the backend and the wiki.
   <code>frontend/</code> is <code>@mythrun/web</code> — the React app: routes, features, flows.
-  <code>frontend/ui/</code> is <code>@mythrun/ui</code> — the mythrunUI design system. The app
-  declares <code>"@mythrun/ui": "workspace:*"</code> and pnpm symlinks the package directory.
+  <code>frontend/ui/</code> is <code>@mythrun/ui</code> — the mythrunUI design system.
+  <code>frontend/client-core/</code> is <code>@mythrun/client-core</code> — the platform-neutral
+  brain that holds the component contract and the token data (added in MYT-82; see the
+  <a href="./design-system.html">Design system</a> page). The app declares
+  <code>"@mythrun/ui": "workspace:*"</code> and pnpm symlinks the package directory; the same for
+  client-core, which <code>@mythrun/ui</code> depends on.
 </p>
 
 <p>
@@ -308,8 +314,9 @@
   <code>@import "tailwindcss"</code> then <code>@import "@mythrun/ui/styles.css"</code> to pull in
   the token layer (below). Because Tailwind v4 doesn't scan <code>node_modules</code>, the same file
   adds <code>@source "../ui/src"</code> so utility classes used inside the library are detected. The
-  library today is one trivial <code>&lt;Text&gt;</code> primitive — the boundary anchor that makes
-  the lint rails testable on day one.
+  library began as one trivial <code>&lt;Text&gt;</code> primitive — the boundary anchor that made
+  the lint rails testable on day one — and is now the full mythrunUI component set, documented on
+  the <a href="./design-system.html">Design system</a> page.
 </p>
 
 <aside class="wiki-rationale">
@@ -530,12 +537,16 @@
   The palette is 60 colors: six ten-step ramps (<code>paper</code>, <code>ember</code>, and the
   <code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code> semantics). The
   <code>paper</code> and <code>ember</code> anchors are the brand's hand-picked hexes, copied
-  verbatim. The 36 other steps are <em>generated</em>:
-  <code>scripts/generate-palette.mjs</code> uses <code>culori</code> to read each semantic anchor in
-  OKLCH, then interpolates the rest of the ramp by borrowing <code>ember</code>'s perceptual
-  lightness curve and scaling chroma to the anchor — writing <code>colors.generated.css</code> (a
-  <code>@theme</code> block of <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>,
-  and a <code>tokens.html</code> audit page.
+  verbatim. The 36 other steps are <em>generated</em>: <code>generate-palette.mjs</code> uses
+  <code>culori</code> to read each semantic anchor in OKLCH, then interpolates the rest of the ramp
+  by borrowing <code>ember</code>'s perceptual lightness curve and scaling chroma to the anchor —
+  writing <code>colors.generated.css</code> (a <code>@theme</code> block of
+  <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>, and a
+  <code>tokens.html</code> audit page. MYT-82 relocated the generator (and the raw token-scale data)
+  into <code>@mythrun/client-core/src/tokens/</code> — the platform-neutral home — leaving the web
+  CSS emission in <code>@mythrun/ui</code>, which runs the generator at build time. That relocation
+  and the completed token scales it brought are covered on the
+  <a href="./design-system.html#the-token-foundation-relocated">Design system</a> page.
 </p>
 
 <aside class="wiki-rationale">
@@ -678,17 +689,17 @@
   <code>frontend/ui/eslint.config.js</code>, <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>,
   <code>frontend/eslint-rules/no-untranslated-jsx-text.js</code>, <code>frontend/src/i18n/</code>,
   <code>frontend/scripts/i18n-todo.mjs</code>,
-  <code>frontend/ui/scripts/generate-palette.mjs</code>, <code>frontend/ui/src/styles/</code>,
-  <code>frontend/src/index.css</code>, <code>frontend/src/main.tsx</code>,
-  <code>frontend/vitest.config.ts</code>, <code>pnpm-workspace.yaml</code>,
-  <code>.github/workflows/frontend-check.yml</code>.
+  <code>frontend/client-core/src/tokens/generate-palette.mjs</code>,
+  <code>frontend/ui/src/styles/</code>, <code>frontend/src/index.css</code>,
+  <code>frontend/src/main.tsx</code>, <code>frontend/vitest.config.ts</code>,
+  <code>pnpm-workspace.yaml</code>, <code>.github/workflows/frontend-check.yml</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#the-two-package-workspace">The two-package workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#the-i18n-layer">The i18n layer</a></li><li style="padding-left:0"><a href="#design-tokens">Design tokens</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#the-frontend-workspace">The frontend workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#the-i18n-layer">The i18n layer</a></li><li style="padding-left:0"><a href="#design-tokens">Design tokens</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
