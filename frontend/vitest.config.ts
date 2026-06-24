@@ -11,7 +11,15 @@ export default defineConfig({
     // concurrent runs OOM-crashed this 16GB machine. 3 keeps a full coverage
     // run comfortably under RAM. Kept in lockstep across the 3 frontend configs.
     maxWorkers: 3,
-    environment: 'jsdom',
+    // A jsdom env that keeps Node's NATIVE Fetch-API stack (fetch/Request/
+    // AbortController/AbortSignal/…) instead of jsdom's. Node 24's undici v7
+    // brand-checks `Request`'s abort signal against its own `AbortSignal`, and
+    // jsdom's copies fail that check — which breaks React-Router v7's data
+    // router under jsdom (every navigation builds a `Request`), exactly what
+    // the app-shell router tests drive. A strict superset of jsdom (it only
+    // re-applies natives), safe for the whole suite. See the env module's
+    // header + vitest-dev/vitest#8374 (fixed upstream in vitest 4 / PR #8390).
+    environment: './test/jsdom-native-fetch.ts',
     // @mythrun/web is the root frontend package; `client-core/` and `ui/` are
     // NESTED workspace packages that each own their own vitest config + run.
     // Without these excludes, web's default `frontend/**` discovery would pick

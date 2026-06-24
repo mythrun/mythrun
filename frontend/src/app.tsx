@@ -1,8 +1,15 @@
-import { Text } from '@mythrun/ui'
+import { AppProviders, type AppProvidersConfig } from './app/providers.tsx'
+import { AppRouter } from './app/router.tsx'
 
-// Placeholder root — its only job is to prove the @mythrun/ui import resolves.
-// The real app shell (routing) arrives in MYT-83; i18n'd copy arrives with the
-// i18n runtime in MYT-80. No user-facing string literal until then.
-export function App(): React.JSX.Element {
-  return <Text>{null}</Text>
+// The app shell: the provider stack (QueryClient + ApiContext + i18n) wrapping
+// the router. `main.tsx` builds the concrete `config` from the environment +
+// the web SecureStorage impl and passes it in, so the shell itself stays
+// config-driven (and testable with a fake config). This is the composition the
+// browser entry mounts.
+export function App({ config }: { config: AppProvidersConfig }): React.JSX.Element {
+  return (
+    <AppProviders config={config}>
+      <AppRouter />
+    </AppProviders>
+  )
 }

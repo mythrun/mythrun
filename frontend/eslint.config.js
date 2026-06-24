@@ -34,6 +34,12 @@ export default [
       'vite.config.ts',
       'vitest.config.ts',
       'scripts/**', // node tooling scripts (e.g. i18n-todo.mjs) — outside the TS project
+      // The custom vitest environment (test/jsdom-native-fetch.ts) is test-runtime
+      // tooling that MUST default-export (vitest's Environment contract), the same
+      // shape as vitest.config.ts. It is typechecked via the tsconfig `include`
+      // but eslint-ignored — the default-export ban + type-aware projectService
+      // don't apply to runner config, mirroring the vite/vitest config carve-outs.
+      'test/**',
       'client-core/vitest.config.ts',
       'client-core/src/tokens/generate-palette.mjs',
       // @mythrun/client-core's lint-tooling files (the api-purity rule + its
@@ -121,6 +127,10 @@ export default [
             exclude: [
               'className', 'styleName', 'style', 'type', 'key', 'id', 'width', 'height',
               'data-testid', 'aria-.*', 'role',
+              // `to` is a react-router destination PATH (a URL), not user-facing
+              // prose — `<Navigate to="/auth/signin"/>`, `<Link to=…/>`. Route
+              // paths are not translatable strings.
+              'to',
             ],
           },
         },
