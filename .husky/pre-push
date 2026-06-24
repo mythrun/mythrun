@@ -1,5 +1,8 @@
 #!/usr/bin/env sh
 # Pre-push gate. Refuses the push if ANY of these fail:
+#   0. build @mythrun/contract — the backend (and the frontend consumers)
+#      import its compiled dist/; the typecheck/test gates below resolve the
+#      built output, so it MUST be built first.
 #   1. Auth Lint — mirrors .github/workflows/lint-auth.yml (forbid unsafe
 #      narrowing of request.user outside the auth module + tests).
 #   2. backend typecheck (`tsc --noEmit`)
@@ -33,7 +36,13 @@
 
 set -e
 
-echo "→ pre-push gate (1/6): auth-narrowing pattern check"
+echo "→ pre-push gate (0/7): build @mythrun/contract"
+# The backend's typecheck/lint/coverage gates and the frontend consumers all
+# import @mythrun/contract's compiled dist/. Build it first so every gate
+# below resolves the built output rather than failing on a missing module.
+pnpm --filter @mythrun/contract build
+
+echo "→ pre-push gate (1/7): auth-narrowing pattern check"
 # Mirror of .github/workflows/lint-auth.yml step. grep exits 0 on match,
 # 1 on no-match — invert via `if`. Forbids request.user! / request.user?
 # / request.user as outside backend/src/auth/** and __tests__/**.
@@ -46,23 +55,23 @@ if grep -rEn 'request\.user[!?]\.|request\.user as ' \
   exit 1
 fi
 
-echo "→ pre-push gate (2/6): backend typecheck"
+echo "→ pre-push gate (2/7): backend typecheck"
 pnpm --filter @mythrun/backend typecheck
 
-echo "→ pre-push gate (3/6): backend lint"
+echo "→ pre-push gate (3/7): backend lint"
 pnpm --filter @mythrun/backend lint
 
-echo "→ pre-push gate (4/6): backend vitest suite + 100% coverage threshold"
+echo "→ pre-push gate (4/7): backend vitest suite + 100% coverage threshold"
 pnpm --filter @mythrun/backend test:coverage
 
-echo "→ pre-push gate (5/6): wiki source-hash freshness"
+echo "→ pre-push gate (5/7): wiki source-hash freshness"
 # Source backend/.env.development so DATABASE_URL is set for the schema
 # fragment build. The check itself is a fast hash diff against the live
 # source tree (~2s). Mirrors the wiki CI workflow.
 set -a && . backend/.env.development && set +a
 pnpm wiki:check
 
-echo "→ pre-push gate (6/6): dev-tool verifier"
+echo "→ pre-push gate (6/7): dev-tool verifier"
 # Only run when the diff touches dev-tool subtree or backend contract
 # sources — verify is moderately expensive (JSDOM + per-panel boot) and
 # adds no value when the diff doesn't affect the dev-tool surface.

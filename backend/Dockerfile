@@ -12,8 +12,16 @@ FROM ${BASE_IMAGE_REGISTRY:+${BASE_IMAGE_REGISTRY}/}ecr-public/docker/library/no
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY backend/package.json ./backend/
-RUN corepack enable && pnpm install --frozen-lockfile --filter @mythrun/backend
+# @mythrun/contract is a workspace dep of the backend (workspace:*). Its
+# manifest must be present for the frozen-lockfile install to resolve, and
+# its built dist/ must exist before the backend compiles + deploys.
+COPY frontend/contract/package.json ./frontend/contract/
+RUN corepack enable && pnpm install --frozen-lockfile --filter @mythrun/backend --filter @mythrun/contract
 COPY backend/ ./backend/
+COPY frontend/contract/ ./frontend/contract/
+# Build the contract first — the backend imports its compiled dist/, and
+# `pnpm deploy --prod` below copies that built package into the deploy tree.
+RUN pnpm --filter @mythrun/contract build
 WORKDIR /app/backend
 RUN pnpm build
 RUN pnpm --filter @mythrun/backend deploy --prod /app/deploy
