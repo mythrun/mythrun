@@ -57,6 +57,12 @@ export default [
       // node tooling). Without this, web's `eslint .` globs across the nested
       // dir and the root config's type-aware projectService rejects them.
       'ui/scripts/**',
+      // @mythrun/contract is a NodeNext-built package (W0a): its vitest config and
+      // emitted `dist/**` are outside web's TS project, and the package lints itself.
+      // Same out-of-project carve-out as client-core/ui above — without it, web's
+      // `eslint .` globs the nested dir and the type-aware projectService rejects them.
+      'contract/vitest.config.ts',
+      'contract/dist/**',
     ],
   },
   {
