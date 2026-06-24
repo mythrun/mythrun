@@ -8,6 +8,96 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 import { noAdHocUi } from './eslint-rules/no-ad-hoc-ui.js'
 import { noUntranslatedJsxText } from './eslint-rules/no-untranslated-jsx-text.js'
 
+// The 7 R1 web globals web app code may not touch (the brain + the screens reach
+// platform capability through a client-core `platform/` interface instead). This
+// list is the SINGLE SOURCE for both the W3b `src/**` ban (app-wide) and the W3d
+// `src/routes/**` ban (screens). It MUST be reused in both: ESLint flat config
+// OVERRIDES (does not merge) a prior config object's setting for a given rule
+// when a later object matches the same file — so the routes/ block re-lists these
+// 7 and EXTENDS them with the network globals. Sharing the const keeps the two
+// lists from drifting. (`fetch`/`WebSocket` are deliberately NOT here — they are
+// universal web+RN, allowed app-wide; the routes/ block bans them separately as
+// screen-only.)
+const R1_WEB_GLOBALS = [
+  {
+    name: 'document',
+    message:
+      'DOM-free (R1): web app code may not touch the DOM. Reach platform capability through a client-core platform/ interface (impl under src/platform/web/).',
+  },
+  {
+    name: 'window',
+    message:
+      'DOM-free (R1): web app code may not reference window. Reach platform capability through a client-core platform/ interface (impl under src/platform/web/).',
+  },
+  {
+    name: 'localStorage',
+    message:
+      'DOM-free (R1): web app code may not use localStorage. Reach persistence through a client-core platform/ storage interface (impl under src/platform/web/).',
+  },
+  {
+    name: 'sessionStorage',
+    message:
+      'DOM-free (R1): web app code may not use sessionStorage. Reach persistence through a client-core platform/ storage interface (impl under src/platform/web/).',
+  },
+  {
+    name: 'location',
+    message:
+      'DOM-free (R1): web app code may not reference location. Reach navigation/URL state through a client-core platform/ interface (impl under src/platform/web/).',
+  },
+  {
+    name: 'navigator',
+    message:
+      'DOM-free (R1): web app code may not reference navigator. Reach device/runtime capability through a client-core platform/ interface (impl under src/platform/web/).',
+  },
+  {
+    name: 'EventSource',
+    message:
+      'DOM-free (R1): web app code may not use EventSource. Reach the live-event stream through a client-core platform/ interface (impl under src/platform/web/).',
+  },
+]
+
+// The MYT-82 F0c4 design-system import boundary (R2/R5): the library's internal
+// building blocks are banned in app/feature code — compose the finished
+// `@mythrun/ui` component instead. These two arrays are the SINGLE SOURCE reused
+// by both the app-wide `src/**` ban (below) and the W3d `src/routes/**`
+// `no-restricted-imports` block, which OVERRIDES (does not merge) this rule for
+// screens and so must re-include the primitive bans alongside its own
+// client-core/react-query bans (else the override would silently drop them).
+const UI_PRIMITIVE_PATHS = [
+  {
+    name: 'radix-ui',
+    message:
+      "radix-ui is a design-system primitive. Build with it INSIDE @mythrun/ui; app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+  },
+  {
+    name: 'class-variance-authority',
+    message:
+      "class-variance-authority is a design-system internal. Variants live INSIDE @mythrun/ui; app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+  },
+  {
+    name: 'tailwind-merge',
+    message:
+      "tailwind-merge is a design-system internal. Class merging belongs INSIDE @mythrun/ui (cn()); app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+  },
+  {
+    name: 'clsx',
+    message:
+      "clsx is a design-system internal. Class composition belongs INSIDE @mythrun/ui (cn()); app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+  },
+  {
+    name: 'pixelarticons',
+    message:
+      "pixelarticons is the design-system's icon source. Icons are exposed as @mythrun/ui components; app/feature code imports those from '@mythrun/ui', not the raw icon set. (MYT-82 F0c4 import boundary.)",
+  },
+]
+const UI_PRIMITIVE_PATTERNS = [
+  {
+    group: ['@mythrun/ui/src/*', '@mythrun/ui/src/**'],
+    message:
+      "Deep imports into @mythrun/ui's source bypass the package entry and couple app code to the library's internal layout. Import from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
+  },
+]
+
 export default [
   ...root,
   {
@@ -163,44 +253,11 @@ export default [
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/**/*.test.{ts,tsx}'],
     rules: {
+      // Shared consts (above) so the routes/ block can re-include these when it
+      // OVERRIDES this rule for screens.
       'no-restricted-imports': [
         'error',
-        {
-          paths: [
-            {
-              name: 'radix-ui',
-              message:
-                "radix-ui is a design-system primitive. Build with it INSIDE @mythrun/ui; app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
-            },
-            {
-              name: 'class-variance-authority',
-              message:
-                "class-variance-authority is a design-system internal. Variants live INSIDE @mythrun/ui; app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
-            },
-            {
-              name: 'tailwind-merge',
-              message:
-                "tailwind-merge is a design-system internal. Class merging belongs INSIDE @mythrun/ui (cn()); app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
-            },
-            {
-              name: 'clsx',
-              message:
-                "clsx is a design-system internal. Class composition belongs INSIDE @mythrun/ui (cn()); app/feature code imports the finished component from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
-            },
-            {
-              name: 'pixelarticons',
-              message:
-                "pixelarticons is the design-system's icon source. Icons are exposed as @mythrun/ui components; app/feature code imports those from '@mythrun/ui', not the raw icon set. (MYT-82 F0c4 import boundary.)",
-            },
-          ],
-          patterns: [
-            {
-              group: ['@mythrun/ui/src/*', '@mythrun/ui/src/**'],
-              message:
-                "Deep imports into @mythrun/ui's source bypass the package entry and couple app code to the library's internal layout. Import from '@mythrun/ui'. (MYT-82 F0c4 import boundary.)",
-            },
-          ],
-        },
+        { paths: UI_PRIMITIVE_PATHS, patterns: UI_PRIMITIVE_PATTERNS },
       ],
     },
   },
@@ -220,42 +277,89 @@ export default [
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/platform/web/**', 'src/main.tsx', 'src/**/*.test.{ts,tsx}'],
     rules: {
-      'no-restricted-globals': [
+      // The 7 R1 web globals (shared const). The routes/ block below OVERRIDES
+      // this rule for `src/routes/**` — it re-lists these same 7 (via the same
+      // const) and extends with the network globals, so the override loses none
+      // of the R1 coverage inside screens.
+      'no-restricted-globals': ['error', ...R1_WEB_GLOBALS],
+    },
+  },
+  {
+    // R5 / conformance (W3d) — the `routes/**` feature import boundary. Screens
+    // are the thin presentational shell; they reach the backend ONLY through
+    // `@mythrun/client-core` hooks. Banning `@tanstack/react-query` here means a
+    // screen can never call `useQuery`/`useMutation` directly (that wiring lives
+    // in a client-core hook), and banning deep `@mythrun/client-core/src/*`
+    // forces the package barrel. Together this closes the `defineEndpoint`
+    // bypass: a screen is STRUCTURALLY unable to talk to the backend except via a
+    // client-core hook, so contract conformance is enforced, not reviewed.
+    //
+    // FLAT-CONFIG OVERRIDE (not merge): this object matches `src/routes/**` AFTER
+    // the MYT-82 `src/**` `no-restricted-imports` block above, so for screens it
+    // REPLACES that rule's options entirely. It therefore re-includes the MYT-82
+    // UI-primitive bans (shared consts) alongside the react-query + deep-import
+    // bans — otherwise the override would silently drop the primitive bans inside
+    // screens. Test files are carved out (route test harnesses may use either).
+    files: ['src/routes/**/*.{ts,tsx}'],
+    ignores: ['src/routes/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
         'error',
         {
-          name: 'document',
+          paths: [
+            ...UI_PRIMITIVE_PATHS,
+            {
+              name: '@tanstack/react-query',
+              message:
+                'Screens must not call useQuery directly — import a hook from @mythrun/client-core (R5/conformance). The query wiring lives in a client-core api/ hook.',
+            },
+          ],
+          patterns: [
+            ...UI_PRIMITIVE_PATTERNS,
+            {
+              group: ['@mythrun/client-core/src/*', '@mythrun/client-core/src/**'],
+              message:
+                "Deep imports into @mythrun/client-core's source bypass the package entry and couple screens to the brain's internal layout. Import from '@mythrun/client-core'. (R5/conformance.)",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // R5 / conformance (W3d) — network globals are banned in screens. A screen
+    // physically cannot open its own transport (`fetch`/`XMLHttpRequest`/
+    // `WebSocket`); it consumes a `@mythrun/client-core` hook instead. `fetch`/
+    // `WebSocket` are universal (web + RN) and therefore allowed ELSEWHERE in the
+    // app — the W3b `src/**` block deliberately does not ban them — but inside a
+    // screen they are the `defineEndpoint` bypass, so they are banned here.
+    //
+    // FLAT-CONFIG OVERRIDE (not merge): this matches `src/routes/**` AFTER the
+    // W3b `src/**` `no-restricted-globals` block, so for screens it REPLACES that
+    // rule's options entirely. It therefore re-lists the 7 R1 web globals (the
+    // shared `R1_WEB_GLOBALS` const) and EXTENDS with the 3 network globals — if
+    // it listed only fetch/XHR/WebSocket, the 7 R1 globals would silently stop
+    // firing inside screens. Test files are carved out (jsdom render harnesses).
+    files: ['src/routes/**/*.{ts,tsx}'],
+    ignores: ['src/routes/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        ...R1_WEB_GLOBALS,
+        {
+          name: 'fetch',
           message:
-            'DOM-free (R1): web app code may not touch the DOM. Reach platform capability through a client-core platform/ interface (impl under src/platform/web/).',
+            'R5/conformance: a screen may not open its own transport. Consume a @mythrun/client-core hook (which owns the fetch) instead of calling fetch directly.',
         },
         {
-          name: 'window',
+          name: 'XMLHttpRequest',
           message:
-            'DOM-free (R1): web app code may not reference window. Reach platform capability through a client-core platform/ interface (impl under src/platform/web/).',
+            'R5/conformance: a screen may not open its own transport. Consume a @mythrun/client-core hook instead of XMLHttpRequest.',
         },
         {
-          name: 'localStorage',
+          name: 'WebSocket',
           message:
-            'DOM-free (R1): web app code may not use localStorage. Reach persistence through a client-core platform/ storage interface (impl under src/platform/web/).',
-        },
-        {
-          name: 'sessionStorage',
-          message:
-            'DOM-free (R1): web app code may not use sessionStorage. Reach persistence through a client-core platform/ storage interface (impl under src/platform/web/).',
-        },
-        {
-          name: 'location',
-          message:
-            'DOM-free (R1): web app code may not reference location. Reach navigation/URL state through a client-core platform/ interface (impl under src/platform/web/).',
-        },
-        {
-          name: 'navigator',
-          message:
-            'DOM-free (R1): web app code may not reference navigator. Reach device/runtime capability through a client-core platform/ interface (impl under src/platform/web/).',
-        },
-        {
-          name: 'EventSource',
-          message:
-            'DOM-free (R1): web app code may not use EventSource. Reach the live-event stream through a client-core platform/ interface (impl under src/platform/web/).',
+            'R5/conformance: a screen may not open its own transport. Consume a @mythrun/client-core hook (the live-event stream) instead of WebSocket directly.',
         },
       ],
     },

@@ -72,9 +72,14 @@ describe('no-restricted-globals (R1, web) — fires outside platform/web, silent
   })
 
   it('stays SILENT on `fetch` in a non-carve-out src file (deliberately universal)', async () => {
+    // NB: the fixture path is `src/app/**`, NOT `src/routes/**`. `fetch` is
+    // universal (web + RN) and so is allowed app-wide by THIS (W3b) ban — but
+    // W3d adds a SEPARATE `src/routes/**` ban that bans `fetch` inside screens.
+    // Using a non-routes path keeps this test asserting exactly W3b's claim
+    // (fetch is not one of the 7 R1 globals) without colliding with W3d.
     const ruleIds = await ids(
       'export const get = (u: string) => fetch(u)\n',
-      resolve(packageRoot, 'src/routes/fetch-fixture.ts'),
+      resolve(packageRoot, 'src/app/fetch-fixture.ts'),
     )
     expect(ruleIds).not.toContain('no-restricted-globals')
   })
