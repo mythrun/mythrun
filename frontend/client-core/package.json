@@ -15,14 +15,23 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --exclude '**/*.wiring.test.ts'"
   },
-  "peerDependencies": { "react": "^19.0.0" },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "@tanstack/react-query": "^5.0.0"
+  },
   "dependencies": {
-    "culori": "^4.0.0"
+    "@mythrun/contract": "workspace:*",
+    "culori": "^4.0.0",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "react": "^19.0.0",
     "@types/react": "^19.0.0",
+    "@tanstack/react-query": "^5.0.0",
+    "@testing-library/react": "^16.1.0",
     "eslint": "^9.0.0",
+    "jsdom": "^25.0.0",
+    "msw": "^2.6.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.15.0",
     "vitest": "^3.0.0",

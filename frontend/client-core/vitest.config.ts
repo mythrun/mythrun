@@ -2,6 +2,11 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // jsdom: the data layer (React Query hooks, zustand stores, @testing-library
+    // render harnesses) lands in Wave 1 and needs a DOM for component tests.
+    // The R1 lint keeps client-core's PRODUCTION source DOM-free; jsdom here is
+    // strictly for the TEST environment.
+    environment: 'jsdom',
     // RAM guard (each worker ~1-3GB under v8 coverage; an uncapped pool ×
     // concurrent runs OOM-crashed this 16GB machine). See
     // frontend/vitest.config.ts for the full rationale.
@@ -16,7 +21,19 @@ export default defineConfig({
       // (`src/contract/index.ts`) and the build-time palette generator
       // (`src/tokens/generate-palette.mjs`) carry no runtime logic and are
       // intentionally NOT %-gated.
-      include: ['src/tokens/scales.ts', 'eslint-rules/**/*.js'],
+      //
+      // Wave 1 (MYT-83) adds the data layer: the typed API client (`src/api/**`),
+      // zustand stores (`src/stores/**`), and the platform-capability interfaces
+      // (`src/platform/**`). They join the 100% gate here. The dirs are empty
+      // today (later tasks fill them); empty globs contribute no files and don't
+      // break the gate.
+      include: [
+        'src/tokens/scales.ts',
+        'src/api/**',
+        'src/stores/**',
+        'src/platform/**',
+        'eslint-rules/**/*.js',
+      ],
       exclude: ['**/*.test.ts'],
       thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
       // The `test:coverage` script RUN-excludes `*.wiring.test.ts` (the

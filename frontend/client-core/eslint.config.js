@@ -49,5 +49,58 @@ export default [
     plugins: { 'mythrun-api': { rules: { 'api-purity': apiPurity } } },
     rules: { 'mythrun-api/api-purity': 'error' },
   },
+  {
+    // R1 (DOM-free client brain): client-core is the platform-agnostic client
+    // brain. It must reach every platform capability (storage, navigation,
+    // the live-event stream, etc.) through a `platform/` interface — never a
+    // web global. This is the core ESLint `no-restricted-globals` rule (NOT a
+    // custom plugin): a banned global referenced from `src/**` is a hard
+    // build break, not a style nit. `fetch`/`WebSocket` are deliberately NOT
+    // banned — they are universal (web + React Native), so HTTP and socket
+    // transport may live in the brain. Test files are exempt (they may stand
+    // up a DOM via the jsdom env to exercise render harnesses).
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'document',
+          message:
+            'DOM-free (R1): client-core may not touch the DOM. Reach platform capability through a platform/ interface.',
+        },
+        {
+          name: 'window',
+          message:
+            'DOM-free (R1): client-core may not reference window. Reach platform capability through a platform/ interface.',
+        },
+        {
+          name: 'localStorage',
+          message:
+            'DOM-free (R1): client-core may not use localStorage. Reach persistence through a platform/ storage interface.',
+        },
+        {
+          name: 'sessionStorage',
+          message:
+            'DOM-free (R1): client-core may not use sessionStorage. Reach persistence through a platform/ storage interface.',
+        },
+        {
+          name: 'location',
+          message:
+            'DOM-free (R1): client-core may not reference location. Reach navigation/URL state through a platform/ interface.',
+        },
+        {
+          name: 'navigator',
+          message:
+            'DOM-free (R1): client-core may not reference navigator. Reach device/runtime capability through a platform/ interface.',
+        },
+        {
+          name: 'EventSource',
+          message:
+            'DOM-free (R1): client-core may not use EventSource. Reach the live-event stream through a platform/ interface.',
+        },
+      ],
+    },
+  },
   eslintConfigPrettier,
 ]
