@@ -24,18 +24,23 @@ export type DitherDirection = 'vertical' | 'horizontal'
 /**
  * The brand's ONLY sanctioned gradient: a stepped 4×4-Bayer dither between two
  * colors — NEVER a smooth CSS/SVG gradient. Reference pin: *Return of the Obra
- * Dinn*. It renders a decorative texture band; any `children` layer on top of it
- * stay accessible (the texture itself is `aria-hidden`).
+ * Dinn*. A pure TRANSITION device: it renders ONLY the dithered crossfade band
+ * (decorative, `aria-hidden`). Nothing is ever layered on it — the solid ground
+ * above and the solid accent below are the ADJACENT page sections. The canonical
+ * use is the page→footer break: cream content above, the band, the dark reversed
+ * footer below (brand guidelines → "Footer. The canonical use.").
  *
  * The formula is LOCKED (brand guidelines → "The dither formula"): 4×4 ordered
- * Bayer matrix, an 8px (preview) / 6px (hero) cell, a 20-cell band framed by two
- * solid blocks, 15% pseudorandom chaos / 85% ordered Bayer, two-color
- * ground→accent.
+ * Bayer matrix, an 8px (preview) / 6px (hero) cell, a 20-cell band, 15%
+ * pseudorandom chaos / 85% ordered Bayer, two-color ground→accent. (The math also
+ * defines the two solid framing blocks; the component CROPS to the dithered band
+ * — those solids belong to the adjacent sections, not the texture.)
  *
  * Platform-neutral (§9): the colors come in as a sanctioned token `pairing`
  * (not raw colors), the axis as a neutral enum; no className/style/DOM events.
+ * No `children` — the band is a leaf; nothing composes on top of it.
  */
-export interface DitherProps extends BaseProps {
+export interface DitherProps extends Omit<BaseProps, 'children'> {
   /** Which sanctioned ground→accent token pairing. Default `'light-ember'`. */
   pairing?: DitherPairing
   /** Band axis. Default `'vertical'` (ground above, accent below). */
@@ -43,7 +48,4 @@ export interface DitherProps extends BaseProps {
   /** `'hero'` → 6px cell (full-bleed); `'preview'` → 8px cell (small surface).
    *  Default `'preview'`. The grain must stay visible as grain at display size. */
   scale?: 'hero' | 'preview'
-  /** Content layered OVER the texture — inherited from {@link BaseProps} as
-   *  `children`. The dither sits behind; content stays in the a11y tree. */
-  children?: BaseProps['children']
 }
