@@ -1,6 +1,10 @@
 import { defineConfig, configDefaults } from 'vitest/config'
 
 export default defineConfig({
+  // Mirror of vite.config.ts's dedupe (this config does not extend it). Keeps
+  // the test runtime on a single react / react-dom / react-query copy too, so
+  // the provider stack renders against the same instances the app ships.
+  resolve: { dedupe: ['react', 'react-dom', '@tanstack/react-query'] },
   test: {
     // RAM guard: cap the worker pool. Vitest pools ~1 worker per core (8 here)
     // and each worker is ~1-3GB under jsdom + v8 coverage; an uncapped pool ×

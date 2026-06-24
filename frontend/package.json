@@ -16,13 +16,16 @@
     "@fontsource/ibm-plex-mono": "^5.0.0",
     "@fontsource/source-serif-4": "^5.0.0",
     "@mythrun/ui": "workspace:*",
+    "@tanstack/react-query": "^5.0.0",
     "i18next": "^26.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-i18next": "^17.0.8"
+    "react-i18next": "^17.0.8",
+    "react-router-dom": "^7.0.0"
   },
   "devDependencies": {
     "@mythrun/client-core": "workspace:*",
+    "msw": "^2.6.0",
     "@eslint-community/eslint-plugin-eslint-comments": "^4.4.0",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "^6.6.0",
