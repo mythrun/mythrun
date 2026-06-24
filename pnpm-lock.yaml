@@ -48,6 +48,9 @@ importers:
       '@fastify/websocket':
         specifier: ^11.0.0
         version: 11.2.0
+      '@mythrun/contract':
+        specifier: workspace:*
+        version: link:../frontend/contract
       ai:
         specifier: ^6.0.176
         version: 6.0.176(zod@4.4.3)
