@@ -6,6 +6,8 @@ import { axe } from 'jest-axe'
 import { Switch } from './Switch.tsx'
 
 describe('Switch', () => {
+  // ── Behaviour + a11y (contract-level) ──
+
   it('renders a switch role (Radix button), off by default', () => {
     render(<Switch />)
     const sw = screen.getByRole('switch')
@@ -13,7 +15,6 @@ describe('Switch', () => {
     expect(sw).toHaveAttribute('aria-checked', 'false')
   })
 
-  // KEYBOARD: Space toggles; onChange receives the BOOLEAN (not a DOM event).
   it('keyboard: Space toggles — onChange gets the boolean', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()
@@ -66,47 +67,6 @@ describe('Switch', () => {
     expect(onChange).toHaveBeenCalledWith(true)
   })
 
-  it('carries the flat 1-bit track + theme-aware focus-ring classes', () => {
-    render(<Switch />)
-    expect(screen.getByRole('switch')).toHaveClass(
-      'border',
-      'border-border-strong',
-      'focus-visible:outline-2',
-      'focus-visible:outline-offset-2',
-      'focus-visible:outline-accent',
-    )
-  })
-
-  it('is RECTANGULAR (0px radius) — track and thumb are rounded-none, no pill', () => {
-    render(<Switch defaultChecked />)
-    const sw = screen.getByRole('switch')
-    expect(sw).toHaveClass('rounded-none')
-    expect(sw).not.toHaveClass('rounded-full')
-    // The thumb is the only child element; it stays square + still slides.
-    const thumb = sw.querySelector('span')
-    expect(thumb).not.toBeNull()
-    expect(thumb).toHaveClass('rounded-none')
-    expect(thumb).not.toHaveClass('rounded-full')
-    // The slide transform survives the shape change (position IS the state).
-    expect(thumb).toHaveClass('data-[state=checked]:translate-x-[var(--space-3)]')
-  })
-
-  it('has a VISIBLE thumb in BOTH states — contrasting token color per state', () => {
-    // The round-2 bug: OFF the thumb was `bg-paper-50`, equal to the `--surface`
-    // track → invisible. The thumb must contrast with its track in EACH state, so
-    // the state reads without relying on the slide alone: OFF → `--ink` thumb on
-    // the muted surface track; ON → `--surface` thumb on the `--accent` track.
-    render(<Switch />)
-    const thumb = screen.getByRole('switch').querySelector('span')
-    expect(thumb).not.toBeNull()
-    // OFF resting color = ink (contrasts the surface track).
-    expect(thumb).toHaveClass('bg-ink')
-    // ON color = surface (contrasts the accent track) — token-swapped on checked.
-    expect(thumb).toHaveClass('data-[state=checked]:bg-surface')
-    // The OFF color is NOT the old track-matching paper-50.
-    expect(thumb).not.toHaveClass('bg-paper-50')
-  })
-
   it('forwards its ref to the underlying control', () => {
     const ref = createRef<HTMLButtonElement>()
     render(<Switch ref={ref} />)
@@ -131,5 +91,62 @@ describe('Switch', () => {
       </div>,
     )
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // ── The clean flat-1-bit slider ──
+
+  it('is RECTANGULAR (0px radius) — track + thumb are rounded-none, no pill', () => {
+    render(<Switch defaultChecked />)
+    const sw = screen.getByRole('switch')
+    expect(sw).toHaveClass('rounded-none')
+    expect(sw).not.toHaveClass('rounded-full')
+    const thumb = sw.querySelector('span')
+    expect(thumb).not.toBeNull()
+    expect(thumb).toHaveClass('rounded-none')
+    expect(thumb).not.toHaveClass('rounded-full')
+    // The slide IS the state — position survives the shape.
+    expect(thumb).toHaveClass('translate-x-0', 'data-[state=checked]:translate-x-[24px]')
+  })
+
+  it('matches the form controls: thin border off → ember fill on, theme-aware focus ring', () => {
+    render(<Switch />)
+    expect(screen.getByRole('switch')).toHaveClass(
+      'border-solid',
+      'border-border-strong',
+      'bg-surface',
+      'data-[state=checked]:bg-accent',
+      'data-[state=checked]:border-accent',
+      'focus-visible:outline-2',
+      'focus-visible:outline-offset-2',
+      'focus-visible:outline-accent',
+    )
+  })
+
+  it('has a VISIBLE thumb in BOTH states — contrasting token color per state', () => {
+    // OFF → ink thumb on the surface track; ON → surface thumb on the accent track.
+    // Never the track-matching paper-50 (the old vanish bug).
+    render(<Switch />)
+    const thumb = screen.getByRole('switch').querySelector('span')
+    expect(thumb).not.toBeNull()
+    expect(thumb).toHaveClass('bg-ink')
+    expect(thumb).toHaveClass('data-[state=checked]:bg-surface')
+    expect(thumb).not.toHaveClass('bg-paper-50')
+  })
+
+  it('sizes to a compact toggle with whole-pixel geometry', () => {
+    render(<Switch />)
+    const sw = screen.getByRole('switch')
+    expect(sw.style.width).toBe('48px')
+    expect(sw.style.height).toBe('24px')
+    const thumb = sw.querySelector('span')
+    expect(thumb?.style.width).toBe('18px')
+    expect(thumb?.style.height).toBe('18px')
+  })
+
+  it('uses tokens only — no raw color in the rendered markup', () => {
+    const { container } = render(<Switch defaultChecked />)
+    const html = container.innerHTML
+    expect(html).not.toMatch(/#[0-9a-fA-F]{3,8}/)
+    expect(html).not.toMatch(/(rgba?|hsla?|oklch|oklab)\(/)
   })
 })

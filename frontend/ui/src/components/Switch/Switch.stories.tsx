@@ -7,13 +7,15 @@ import { Switch } from './Switch.tsx'
 // Checkbox, which stages a form value). The neutral `onChange(checked)` hands the
 // consumer the new boolean (§9).
 //
-// Flat 1-bit (§3): 0px radius everywhere — a RECTANGULAR track + a RECTANGULAR
-// thumb (no pill exception). off → `--surface` track + `--border-strong` edge; on
-// → `--accent` fill (token-swap). The thumb SLIDES —
-// but the position IS the state (a control affordance, not decorative motion);
-// the slide is `transform`-only at `--duration-fast`/`--ease-out`, and the global
-// `prefers-reduced-motion` reset neutralises it (the color swap still conveys
-// state, so motion is never the sole signal).
+// Flat 1-bit (§3): 0px radius everywhere — a clean RECTANGULAR slider that matches the
+// rest of the control set. OFF → `--surface` parchment + a thin `--border-strong` edge
+// (the unchecked-checkbox idiom) with an ink thumb resting a gap from the left; ON → a
+// filled `--accent` ember square (the selected-radio idiom) with a parchment thumb that
+// stays legible on the ember, resting the SAME gap from the right (symmetric travel).
+// The thumb SLIDES on a `transform` (position IS the state) at `--duration-base` on a
+// slightly clicky curve (a small overshoot snaps it into place); the global
+// `prefers-reduced-motion` reset neutralises the slide, and the colour + thumb swap
+// still convey state, so motion is never the sole signal.
 //
 // State matrix (§6): off · on · disabled. The optional inline `label` is a
 // convenience; full field labelling is FormField's job. Content/i18n: `label` is
@@ -45,7 +47,7 @@ export const On: Story = {
   args: { id: 'sw-on', label: 'setting.email_notifications', checked: true },
 }
 
-// Disabled — non-interactive + muted token swap (a11y-exempt for contrast).
+// Disabled — non-interactive, dimmed via opacity (a11y-exempt); the boundary stays visible.
 export const Disabled: Story = {
   args: { id: 'sw-disabled', label: 'setting.email_notifications', disabled: true },
 }
