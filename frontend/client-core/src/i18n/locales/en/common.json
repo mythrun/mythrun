@@ -19,6 +19,17 @@
     "contractTitle": "[placeholder for the contract-drift dev headline]",
     "contractBody": "[placeholder for the contract-drift dev explanation]"
   },
+  "home": {
+    "title": "[placeholder for the home hub heading]",
+    "loading": "[placeholder for the home hub loading label]",
+    "empty": "[placeholder for empty campaign hub]",
+    "status": {
+      "setup": "[placeholder for the setup campaign status]",
+      "active": "[placeholder for the active campaign status]",
+      "archived": "[placeholder for the archived campaign status]",
+      "failed": "[placeholder for the failed campaign status]"
+    }
+  },
   "stub": {
     "landing": "[placeholder for the landing screen]",
     "signin": "[placeholder for the sign-in screen]",

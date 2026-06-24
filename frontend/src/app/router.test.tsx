@@ -43,10 +43,16 @@ describe('app router', () => {
     act(() => {
       useSessionStore.getState().setReady('dev-user-1')
     })
-    renderAt('/home')
-    // The quiet brand frame's header is present, wrapping the home stub.
+    // Use a DATA-FREE authed stub (`/settings`) here: this test proves only the
+    // routing contract — <RequireAuth> (ready) → <AppFrame> → the matched authed
+    // screen — under the bare I18nextProvider. The home hub (W3e) is now wired to
+    // `useMyCampaigns` and needs the QueryClient + ApiContext stack, so its
+    // loading → data path is exercised in `routes/home.test.tsx` (full stack +
+    // MSW) instead, keeping this assertion a pure routing check.
+    renderAt('/settings')
+    // The quiet brand frame's header is present, wrapping the settings stub.
     expect(screen.getByTestId('app-frame')).toBeDefined()
-    expect(screen.getByTestId('route-home')).toBeDefined()
+    expect(screen.getByTestId('route-settings')).toBeDefined()
   })
 
   it('renders the dithered 404 for an unknown path', () => {

@@ -4,6 +4,7 @@ import '@fontsource/source-serif-4/400.css'
 import '@fontsource/source-serif-4/600.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
+import { useSessionStore } from '@mythrun/client-core'
 import { App } from './app.tsx'
 import { type AppProvidersConfig } from './app/providers.tsx'
 import { createWebSecureStorage } from './platform/web/secure-storage.ts'
@@ -28,6 +29,17 @@ const config: AppProvidersConfig = import.meta.env.DEV
       authMode: 'jwt',
       secureStorage: createWebSecureStorage(),
     }
+
+// DEV BOOTSTRAP (bypass only): the dev backend's bypass auth seam is always
+// authenticated (it injects `request.user.sub` on every request), so the dev app
+// should land on the authed side of <RequireAuth> rather than bounce to sign-in.
+// Bypass implies an authenticated dev identity, so seed the session store `ready`
+// ONCE at module scope with the dev sub. In `jwt` mode we leave the store at its
+// `unauthenticated` default — MYT-84 owns real token acquisition + the onboarding
+// transition; until then a jwt-mode app correctly redirects to sign-in.
+if (config.authMode === 'bypass') {
+  useSessionStore.getState().setReady(config.devSub)
+}
 
 const rootEl = document.getElementById('root')
 if (rootEl) {

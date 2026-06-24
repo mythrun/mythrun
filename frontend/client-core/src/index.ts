@@ -28,6 +28,12 @@ export {
 export { getMe, useMe } from './api/users.ts'
 export { getMyCampaigns, useMyCampaigns } from './api/campaigns.ts'
 
+// REST domain types (z.infer from the @mythrun/contract response schemas),
+// re-exported so screens read the shape of a hook's data off the SAME barrel
+// they call the hook through — never reaching into @mythrun/contract directly
+// (R5: route/feature code imports @mythrun/client-core, @mythrun/ui, i18n only).
+export type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
+
 // Auth seam — the injected per-request header producer.
 export { getAuthHeaders } from './api/auth.ts'
 export type { AuthHeaderOptions } from './api/auth.ts'
