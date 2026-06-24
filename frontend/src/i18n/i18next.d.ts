@@ -1,5 +1,5 @@
 import 'i18next'
-import type { defaultNS, resources } from './config.ts'
+import type { defaultNS, resources } from '@mythrun/client-core/i18n'
 
 declare module 'i18next' {
   interface CustomTypeOptions {

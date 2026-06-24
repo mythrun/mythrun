@@ -1,9 +1,6 @@
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
-import common from './locales/en/common.json'
-
-export const defaultNS = 'common'
-export const resources = { en: { common } } as const
+import { resources, defaultNS } from '@mythrun/client-core/i18n'
 
 // Synchronous init — load-bearing on TWO conditions: NO init callback (a
 // callback re-triggers i18next's constructor setTimeout deferral) and inline

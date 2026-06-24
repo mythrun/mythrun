@@ -261,6 +261,9 @@ importers:
       culori:
         specifier: ^4.0.0
         version: 4.0.2
+      i18next:
+        specifier: ^26.3.1
+        version: 26.3.1(typescript@5.9.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
