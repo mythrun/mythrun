@@ -261,6 +261,9 @@ importers:
       culori:
         specifier: ^4.0.0
         version: 4.0.2
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
       zustand:
         specifier: ^5.0.0
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
