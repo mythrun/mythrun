@@ -195,6 +195,62 @@ export default [
     },
   },
   {
+    // R1 (web side): `@mythrun/web` is the platform-agnostic app shell, with
+    // ONE exception — `src/platform/web/**`, the place web-specific capability
+    // impls live (storage, navigation, the live-event stream, …). Everywhere
+    // else, a banned web global is a hard build break, not a style nit: the
+    // brain and the routes must reach platform capability through a
+    // `client-core` `platform/` interface (satisfied by an impl under
+    // `platform/web/`), never a raw global. This mirrors client-core's own
+    // `no-restricted-globals` (same 7 globals, same R1 messages). `fetch`/
+    // `WebSocket` are deliberately NOT banned — they are universal (web + React
+    // Native), so HTTP/socket transport may live anywhere. Carve-outs:
+    // `src/platform/web/**` (the impls), `src/main.tsx` (the unavoidable
+    // `document.getElementById` mount), and test files (jsdom render harnesses).
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/platform/web/**', 'src/main.tsx', 'src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'document',
+          message:
+            'DOM-free (R1): web app code may not touch the DOM. Reach platform capability through a client-core platform/ interface (impl under src/platform/web/).',
+        },
+        {
+          name: 'window',
+          message:
+            'DOM-free (R1): web app code may not reference window. Reach platform capability through a client-core platform/ interface (impl under src/platform/web/).',
+        },
+        {
+          name: 'localStorage',
+          message:
+            'DOM-free (R1): web app code may not use localStorage. Reach persistence through a client-core platform/ storage interface (impl under src/platform/web/).',
+        },
+        {
+          name: 'sessionStorage',
+          message:
+            'DOM-free (R1): web app code may not use sessionStorage. Reach persistence through a client-core platform/ storage interface (impl under src/platform/web/).',
+        },
+        {
+          name: 'location',
+          message:
+            'DOM-free (R1): web app code may not reference location. Reach navigation/URL state through a client-core platform/ interface (impl under src/platform/web/).',
+        },
+        {
+          name: 'navigator',
+          message:
+            'DOM-free (R1): web app code may not reference navigator. Reach device/runtime capability through a client-core platform/ interface (impl under src/platform/web/).',
+        },
+        {
+          name: 'EventSource',
+          message:
+            'DOM-free (R1): web app code may not use EventSource. Reach the live-event stream through a client-core platform/ interface (impl under src/platform/web/).',
+        },
+      ],
+    },
+  },
+  {
     // Test files legitimately render raw DOM probes: @testing-library tests
     // assert `textContent` of bare nodes addressed by `data-testid`, and they
     // exercise component-slot rendering (<Trans>) against real intrinsic

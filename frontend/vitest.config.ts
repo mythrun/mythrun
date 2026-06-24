@@ -22,12 +22,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],
-      // Logic only (tiered coverage). Today that is the custom lint rule;
-      // extend with 'src/lib/**', 'src/hooks/**', 'src/api/**',
-      // 'src/transport/**' in later issues as those land. Presentational
-      // components (*.tsx), routes, and stories are intentionally excluded
-      // from the percentage — rendered in tests, not %-gated.
-      include: ['eslint-rules/**/*.js'],
+      // Logic only (tiered coverage): the custom lint rule + the `platform/web`
+      // impls (MYT-83 — the web side of client-core's platform interfaces, e.g.
+      // the SecureStorage localStorage impl). Extend with 'src/api/**' etc. in
+      // later issues as those land. Presentational components (*.tsx), routes,
+      // and stories are intentionally excluded — rendered in tests, not %-gated.
+      // The `*.wiring.test.ts` files are excluded from the `test:coverage` RUN
+      // (in the package.json script, alongside `config-wiring.test.ts`): they
+      // load `eslint.config.js` top-level, which corrupts the v8 coverage map
+      // for the rule files (the documented double-load deflation). They still
+      // run + gate under the plain `test` script.
+      include: ['eslint-rules/**/*.js', 'src/platform/web/**'],
       exclude: ['**/*.test.ts', '**/*.test.tsx'],
       thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
       // The `test:coverage` script excludes `config-wiring.test.ts` from the
