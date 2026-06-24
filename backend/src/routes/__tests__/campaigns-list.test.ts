@@ -189,6 +189,13 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     const body = res.json<{ campaigns: { id: string; name: string }[] }>()
     const ids = body.campaigns.map((c) => c.id).sort()
     expect(ids).toEqual([a.campaignId, b.campaignId].sort())
+    // W0c: each campaign is a CampaignSummary projection — sourceWorldId and
+    // createdBy are OMITTED, and the Date columns serialize to ISO strings.
+    const sample = body.campaigns[0] as Record<string, unknown>
+    expect(sample).not.toHaveProperty('sourceWorldId')
+    expect(sample).not.toHaveProperty('createdBy')
+    expect(typeof sample.createdAt).toBe('string')
+    expect(typeof sample.updatedAt).toBe('string')
   })
 
   it('200 does NOT return campaigns the caller has no relationship to', async () => {

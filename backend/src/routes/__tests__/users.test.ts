@@ -518,9 +518,18 @@ describe('usersRoutes', () => {
         headers: { 'x-test-sub': sub },
       })
       expect(res.statusCode).toBe(200)
-      const body = res.json<{ user: { username: string; displayName: string } }>()
+      const body = res.json<{ user: { username: string; displayName: string; createdAt: string } }>()
       expect(body.user.username).toBe(username)
       expect(body.user.displayName).toBe(displayName)
+      // W0c: /me is a deliberate public projection (MeResponse). The full
+      // user row's cognitoSub / stripeCustomerId / suspendedAt / updatedAt
+      // must NEVER leak over the wire — assert they are absent.
+      expect(body.user).not.toHaveProperty('cognitoSub')
+      expect(body.user).not.toHaveProperty('stripeCustomerId')
+      expect(body.user).not.toHaveProperty('suspendedAt')
+      expect(body.user).not.toHaveProperty('updatedAt')
+      // createdAt is serialized as an ISO string, not a Date.
+      expect(typeof body.user.createdAt).toBe('string')
     })
   })
 })

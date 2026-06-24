@@ -13,6 +13,7 @@
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
+import type { MeResponse } from '@mythrun/contract/rest'
 import { createRepo, type Repo } from '../repo/index.js'
 import { classifyProfanity } from '../llm/profanity.js'
 
@@ -368,6 +369,19 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     if (!user) {
       return reply.code(403).send({ code: 'username_required' })
     }
-    return reply.send({ user })
+    // Public projection (MeResponse): OMIT cognitoSub / stripeCustomerId /
+    // suspendedAt / updatedAt — they must never leak over the wire. The
+    // `Date` createdAt is serialized to its ISO string here because the
+    // contract models the WIRE shape (z.iso.datetime()), not the row.
+    const body: MeResponse = {
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        freeTrialUsed: user.freeTrialUsed,
+        createdAt: user.createdAt.toISOString(),
+      },
+    }
+    return reply.send(body)
   })
 }

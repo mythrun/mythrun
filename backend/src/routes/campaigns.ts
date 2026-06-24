@@ -25,6 +25,7 @@ import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type { Logger as PinoLogger } from 'pino'
 import { z } from 'zod'
+import type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
 import { createRepo, type Repo } from '../repo/index.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
 import { requireCampaignMember } from '../auth/access-control.js'
@@ -825,7 +826,21 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     async (request, reply) => {
       const dbUser = requireDbUser(request)
       const campaigns = await repo.campaigns.listByUser(dbUser.id)
-      return reply.send({ campaigns })
+      // Map each row to the CampaignSummary wire shape: OMIT sourceWorldId /
+      // createdBy (the hub doesn't need them), and serialize the `Date`
+      // created/updated columns to ISO strings (the contract models the wire,
+      // z.iso.datetime(), not the row).
+      const summaries: CampaignSummary[] = campaigns.map((c) => ({
+        id: c.id,
+        worldId: c.worldId,
+        name: c.name,
+        status: c.status,
+        language: c.language,
+        createdAt: c.createdAt.toISOString(),
+        updatedAt: c.updatedAt.toISOString(),
+      }))
+      const body: MyCampaignsResponse = { campaigns: summaries }
+      return reply.send(body)
     },
   )
 
