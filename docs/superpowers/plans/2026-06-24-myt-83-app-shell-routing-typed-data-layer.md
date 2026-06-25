@@ -181,7 +181,7 @@ describe('@mythrun/contract', () => {
 - Produces: `@mythrun/contract/events` re-exporting `ClientFrame, ServerFrame, ParticipantSummary, CLIENT_FRAME_TYPES, SERVER_FRAME_TYPES, classifyClientFrame` and `PipelineEvent, ProseEvent, PipelineSseEvent, PROSE_SSE_EVENTS, PIPELINE_SSE_EVENTS, PipelinePhase, PipelineStageDiagnostic` (verbatim copies — both source files have ZERO internal imports, verified).
 - Consumes: nothing.
 
-- [ ] **Step 1 — Failing test** `events.test.ts`: assert `CLIENT_FRAME_TYPES.includes('player_message')`, `classifyClientFrame('player_message') === true`, and `PROSE_SSE_EVENTS[0] === 'prep-delta'` via `import { ... } from '../events/index.ts'`.
+- [ ] **Step 1 — Failing test** `events.test.ts`: assert `CLIENT_FRAME_TYPES.includes('player_message')`, `classifyClientFrame('player_message') === true`, and `PROSE_SSE_EVENTS[0] === 'prep-delta'` via `import { ... } from '../events/index.js'` (NodeNext `.js` specifier — the repo canon for this package; vitest resolves `.js`→`.ts`).
 - [ ] **Step 2 — Run, watch fail.**
 - [ ] **Step 3 — Copy the two files verbatim** into `frontend/contract/src/events/` (they're self-contained). Add `events/index.ts` re-exporting both with `.js` specifiers (NodeNext). Re-export `./events/index.js` from `src/index.ts`.
 - [ ] **Step 4 — Build + test pass.**
