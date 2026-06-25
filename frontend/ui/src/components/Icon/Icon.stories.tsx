@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Icon } from './Icon.tsx'
 import { GLYPHS } from './glyphs.ts'
+import { Stack } from '../Stack/Stack.tsx'
+import { Text } from '../Text/Text.tsx'
 
 // Icon — a single glyph from the swappable Pixelarticons set, tinted by the
 // current text color (`currentColor`). Two a11y modes (discriminated): a
@@ -84,6 +86,20 @@ export const Catalogue: Story = {
           <span className="font-ui text-xs text-ink-secondary">{name}</span>
         </div>
       ))}
+    </div>
+  ),
+}
+
+export const HoldsSizeBesideShrinkingText: Story = {
+  name: 'Holds size beside shrinking text',
+  render: () => (
+    <div className="max-w-[200px]">
+      <Stack direction="row" align="center" gap={2}>
+        <Icon name="search" decorative />
+        <Text role="ui-label" truncate>
+          A long string that must shrink, not the icon
+        </Text>
+      </Stack>
     </div>
   ),
 }

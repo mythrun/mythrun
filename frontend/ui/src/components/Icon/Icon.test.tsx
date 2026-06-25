@@ -50,6 +50,11 @@ describe('Icon', () => {
     expect(svg).toHaveClass('w-[var(--icon-lg)]', 'h-[var(--icon-lg)]')
   })
 
+  it('opts out of flex-shrink so it never squishes beside shrinking text (shrink-0)', () => {
+    const { container } = render(<Icon name="menu" decorative />)
+    expect(container.querySelector('svg')).toHaveClass('shrink-0')
+  })
+
   it('forwards its ref to the underlying svg', () => {
     const ref = createRef<SVGSVGElement>()
     render(<Icon ref={ref} name="close" decorative />)

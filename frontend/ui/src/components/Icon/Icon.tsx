@@ -1,6 +1,7 @@
 import { forwardRef } from 'react'
 import type { IconProps, IconSize } from '@mythrun/client-core/contract'
 import { GLYPHS } from './glyphs.ts'
+import { cn } from '../../lib/cn.ts'
 
 // A single glyph rendered inline as an SVG, tinted by the current text color
 // (`fill="currentColor"` — tint via `text-*` token utilities, never a raw
@@ -26,6 +27,9 @@ const ICON_SIZE_CLASS: Record<IconSize, string> = {
   lg: 'w-[var(--icon-lg)] h-[var(--icon-lg)]',
 }
 
+// shrink-0 (§4): a bare Icon is a fixed affordance — it opts out of the blanket
+// Stack min-w-0 default so the glyph never squishes beside shrinking text.
+
 export const Icon = forwardRef<SVGSVGElement, IconProps>(function Icon(props, ref) {
   const { name, size = 'md', label } = props
   const glyph = GLYPHS[name]
@@ -43,7 +47,7 @@ export const Icon = forwardRef<SVGSVGElement, IconProps>(function Icon(props, re
       ref={ref}
       viewBox={glyph.viewBox}
       fill="currentColor"
-      className={ICON_SIZE_CLASS[size]}
+      className={cn('shrink-0', ICON_SIZE_CLASS[size])}
       data-testid={props['data-testid']}
       {...a11y}
     >
