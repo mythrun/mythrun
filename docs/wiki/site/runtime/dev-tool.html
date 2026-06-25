@@ -489,8 +489,11 @@
   <code>http://127.0.0.1:5273</code> via <code>pnpm dev:dev-tool</code> and talks to the local
   backend on <code>localhost:3000</code> (or whatever <code>PORT</code> is set in
   <code>backend/.env.development</code>). The browser only sees same-origin requests because Vite's
-  dev server proxies <code>/api/*</code> and <code>/health/*</code> to the local backend process; no
-  CORS plugin sits on the backend.
+  dev server proxies <code>/api/*</code> and <code>/health/*</code> to the local backend process —
+  the dev tool does not rely on backend CORS. (The backend
+  <a href="./index.html#cross-origin-cors">does register <code>@fastify/cors</code></a> now, for the
+  cross-origin production SPA, but its single allowed origin is the SPA — not the dev tool's
+  <code>127.0.0.1:5273</code>, which reaches the API only through the same-origin proxy.)
 </p>
 
 <aside class="wiki-rationale">
@@ -499,7 +502,9 @@
   <a href="../auth-billing/jwt-middleware.html">JWT middleware</a>). A dev tool that could swap
   origins to point at staging would be an internet-exposed surface that mints requests with
   arbitrary <code>x-mythrun-dev-sub</code> identities — a credentialless RCE on auth. There is no
-  env switcher, no staging mode, no CORS plugin. Staging validation goes through
+  env switcher and no staging mode, and the dev tool is not in the backend's
+  <a href="./index.html#cross-origin-cors">CORS allowlist</a> — it reaches the API only through its
+  own same-origin Vite proxy. Staging validation goes through
   <a href="../infra/smoke-testing.html">smoke testing</a> instead.
 </aside>
 

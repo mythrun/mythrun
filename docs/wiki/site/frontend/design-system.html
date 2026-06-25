@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Design system</div>
         <article>
@@ -220,19 +220,25 @@
 
 <p>
   The dependency arrow points one way: <code>client-core ← ui ← web</code>.
-  <code>@mythrun/client-core</code> is the base — born in this issue, it holds only platform-neutral
-  things and imports nothing but <code>react</code> (for <code>ReactNode</code> in a child slot) and
-  <code>culori</code> (in the build-time token generator). <code>@mythrun/ui</code> is the web
-  design system: it implements the contract with DOM, Radix, and Tailwind, and it owns all web CSS.
-  <code>@mythrun/web</code> is the app — it composes the library's public components and never
-  reaches past them.
+  <code>@mythrun/client-core</code> is the base — born in this issue holding only the component
+  contract and token data, it imported nothing but <code>react</code> (for <code>ReactNode</code> in
+  a child slot) and <code>culori</code> (in the build-time token generator). MYT-83 then grew it
+  into the full platform-neutral client brain — the data layer, the three-state session store, the
+  platform interfaces, and the i18n catalog (see
+  <a href="./app-shell.html">App shell &amp; data layer</a>), pulling in <code>zustand</code>,
+  <code>@tanstack/react-query</code>, <code>i18next</code>, and the
+  <code>@mythrun/contract</code> wire types — but it still touches no DOM.
+  <code>@mythrun/ui</code> is the web design system: it implements the contract with DOM, Radix, and
+  Tailwind, and it owns all web CSS. <code>@mythrun/web</code> is the app — it composes the
+  library's public components and never reaches past them.
 </p>
 
 <p>
   <code>@mythrun/ui</code> consumes the contract via <code>import type</code> — erased at compile
-  time, so there is no runtime coupling and no circular import as <code>@mythrun/client-core</code>
-  later grows stores and transport (MYT-83). It invokes the token generator only in its build
-  script, never in shipped component code. The seam stays thin on purpose.
+  time, so there is no runtime coupling and no circular import now that
+  <code>@mythrun/client-core</code> has grown its stores and data layer (MYT-83). It invokes the
+  token generator only in its build script, never in shipped component code. The seam stays thin on
+  purpose.
 </p>
 
 <h2 id="the-contract-a-typed-seam-enforced-as-a-pair">The contract — a typed seam enforced as a pair</h2>
@@ -385,7 +391,10 @@
   <li>
     <strong>Layout</strong> — <code>Stack</code>, <code>Box</code>, <code>Grid</code>,
     <code>Divider</code>. These expose a token-typed style vocabulary (<code>gap: SpaceToken</code
-    >), so they pass API-purity by construction.
+    >), so they pass API-purity by construction. (MYT-83 added two token-typed
+    <code>Box</code> variants — a <code>reversed</code> dark surface and a full-viewport
+    <code>minHeight="screen"</code> floor, on <code>100dvh</code> for mobile — for the dithered 404;
+    see <a href="./app-shell.html">App shell &amp; data layer</a>.)
   </li>
   <li>
     <strong>Typography</strong> — <code>Text</code>, <code>Heading</code>,

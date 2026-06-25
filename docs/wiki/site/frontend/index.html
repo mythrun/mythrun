@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html" class="active">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html" class="active">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend</div>
         <article>
@@ -30,14 +30,16 @@
 
 <p class="lead">
   The frontend foundation: the workspace, the lint rails that gate it, the i18n layer every string
-  flows through, and the design tokens every component consumes. Three pnpm packages —
-  <code>@mythrun/web</code> (the React app), <code>@mythrun/ui</code> (the design system), and
-  <code>@mythrun/client-core</code> (the platform-neutral brain) — plus the "rules of the road"
-  turned into CI lints <em>before</em> any real UI is built. The substrate is in place and enforced:
-  the rails bite, every string is a typed key, and the brand's Parchment &amp; Ink palette is
-  importable in CSS and Tailwind. The component library those rails protect — mythrunUI — is the
-  subject of its own page, the <a href="./design-system.html">Design system</a>; this page is the
-  foundation it stands on.
+  flows through, and the design tokens every component consumes. Four pnpm packages —
+  <code>@mythrun/web</code> (the React app), <code>@mythrun/ui</code> (the design system),
+  <code>@mythrun/client-core</code> (the platform-neutral brain), and
+  <code>@mythrun/contract</code> (the shared Zod wire contract; see
+  <a href="./app-shell.html">App shell &amp; data layer</a>) — plus the "rules of the road" turned
+  into CI lints <em>before</em> any real UI is built. The substrate is in place and enforced: the
+  rails bite, every string is a typed key, and the brand's Parchment &amp; Ink palette is importable
+  in CSS and Tailwind. The component library those rails protect — mythrunUI — is the subject of its
+  own page, the <a href="./design-system.html">Design system</a>; this page is the foundation it
+  stands on.
 </p>
 
 <figure class="wiki-diagram">
@@ -274,12 +276,15 @@
 <h2 id="the-frontend-workspace">The frontend workspace</h2>
 
 <p>
-  <code>pnpm-workspace.yaml</code> lists three frontend packages alongside the backend and the wiki.
+  <code>pnpm-workspace.yaml</code> lists four frontend packages alongside the backend and the wiki.
   <code>frontend/</code> is <code>@mythrun/web</code> — the React app: routes, features, flows.
   <code>frontend/ui/</code> is <code>@mythrun/ui</code> — the mythrunUI design system.
   <code>frontend/client-core/</code> is <code>@mythrun/client-core</code> — the platform-neutral
   brain that holds the component contract and the token data (added in MYT-82; see the
-  <a href="./design-system.html">Design system</a> page). The app declares
+  <a href="./design-system.html">Design system</a> page) and, since MYT-83, the data/state/transport
+  layer. <code>frontend/contract/</code> is <code>@mythrun/contract</code> — the shared Zod wire
+  contract the backend and the client both validate against (a <em>built</em> package; see the
+  <a href="./app-shell.html">App shell &amp; data layer</a> page). The app declares
   <code>"@mythrun/ui": "workspace:*"</code> and pnpm symlinks the package directory; the same for
   client-core, which <code>@mythrun/ui</code> depends on.
 </p>
@@ -474,11 +479,16 @@
   Rule 1 says no hardcoded strings; the i18n layer is where they go instead. It is
   <code>react-i18next</code> on top of <code>i18next</code>, initialized once in
   <code>src/i18n/config.ts</code> and provided at the app root in <code>main.tsx</code> via
-  <code>&lt;I18nextProvider&gt;</code>. Strings live in per-namespace locale files under
-  <code>src/i18n/locales/en/</code> — today a single <code>common</code> namespace — and components
-  read them through <code>t('key')</code>. The config is wired against the diagram's
-  <strong>i18n layer</strong> cluster: <code>config.ts</code> binds the typed-keys augmentation and
-  the locale resources.
+  <code>&lt;I18nextProvider&gt;</code>. The
+  <strong>catalog itself relocated to the client brain</strong> in MYT-83 (R1 — strings are
+  platform-neutral data, not a web concern): the per-namespace locale files (today a single
+  <code>common</code> namespace), the <code>resources</code>/<code>defaultNS</code>
+  module, and the typed-keys augmentation now live under
+  <code>@mythrun/client-core/src/i18n/</code>, and <code>web</code> keeps only the runtime binding —
+  the <code>i18n.init()</code> call and the provider. Components read strings through
+  <code>t('key')</code> as before. This split is part of the
+  <a href="./app-shell.html">App shell &amp; data layer</a> relocation; the mechanics below (typed
+  keys, synchronous init, placeholders) are unchanged by the move.
 </p>
 
 <aside class="wiki-rationale">
@@ -495,11 +505,13 @@
 
 <p>
   Keys are <strong>typed</strong>. <code>src/i18n/i18next.d.ts</code> augments the
-  <code>i18next</code> module's <code>CustomTypeOptions</code> with the actual resource shape, so
-  <code>t('back')</code> compiles and <code>t('not.a.key')</code> is a type error. A guard file
-  (<code>typed-keys.guard.ts</code>) is typechecked but never imported: it holds a
-  <code>@ts-expect-error</code> over a known-bad key, so if typed keys ever regress to plain
-  <code>string</code>, the directive goes unused and <code>pnpm typecheck</code> fails loudly.
+  <code>i18next</code> module's <code>CustomTypeOptions</code> with the actual resource shape —
+  importing <code>resources</code> from the relocated <code>@mythrun/client-core</code> catalog, not
+  from <code>config.ts</code> — so <code>t('back')</code> compiles and
+  <code>t('not.a.key')</code> is a type error. A guard file (<code>typed-keys.guard.ts</code>) is
+  typechecked but never imported: it holds a <code>@ts-expect-error</code> over a known-bad key, so
+  if typed keys ever regress to plain <code>string</code>, the directive goes unused and
+  <code>pnpm typecheck</code> fails loudly.
 </p>
 
 <aside class="wiki-rationale">
@@ -515,9 +527,12 @@
   Prose copy is Miklos's to write, so most values ship as a
   <code>[placeholder for &lt;purpose&gt;]</code> string rather than guessed text — only generic
   chrome (<code>Back</code>, nav labels) gets a real value on day one. The
-  <code>pnpm i18n:todo</code> script JSON-walks every locale file and lists each value still holding
-  a placeholder, so unwritten copy is findable instead of silently shipping a bracketed string. It
-  walks values structurally, so it survives nested keys and <code>_one</code>/<code>_other</code>
+  <code>pnpm i18n:todo</code> script JSON-walks every locale file (now under
+  <code>@mythrun/client-core</code>, where the script was repointed) and lists each value still
+  holding a placeholder, so unwritten copy is findable instead of silently shipping a bracketed
+  string. It walks values structurally, so it survives nested keys and <code>_one</code>/<code
+    >_other</code
+  >
   plural shapes.
 </p>
 

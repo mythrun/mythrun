@@ -17,7 +17,7 @@
 <!-- source: frontend/ui/.storybook/main.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:75d9918f10a5eaed64e24d07408d4fdd9e25e7b55ca9c94287ab8ff615f80562 -->
+<!-- source-hash: sha256:479721581b4fa6da92d51cc4c086a9da96067ca9b36f9280fe81522bd61dbfbc -->
 <!-- last-ticket: MYT-82 -->
 
 <h1>Design system</h1>
@@ -48,19 +48,25 @@
 
 <p>
   The dependency arrow points one way: <code>client-core ← ui ← web</code>.
-  <code>@mythrun/client-core</code> is the base — born in this issue, it holds only platform-neutral
-  things and imports nothing but <code>react</code> (for <code>ReactNode</code> in a child slot) and
-  <code>culori</code> (in the build-time token generator). <code>@mythrun/ui</code> is the web
-  design system: it implements the contract with DOM, Radix, and Tailwind, and it owns all web CSS.
-  <code>@mythrun/web</code> is the app — it composes the library's public components and never
-  reaches past them.
+  <code>@mythrun/client-core</code> is the base — born in this issue holding only the component
+  contract and token data, it imported nothing but <code>react</code> (for <code>ReactNode</code> in
+  a child slot) and <code>culori</code> (in the build-time token generator). MYT-83 then grew it
+  into the full platform-neutral client brain — the data layer, the three-state session store, the
+  platform interfaces, and the i18n catalog (see
+  <a href="./app-shell.html">App shell &amp; data layer</a>), pulling in <code>zustand</code>,
+  <code>@tanstack/react-query</code>, <code>i18next</code>, and the
+  <code>@mythrun/contract</code> wire types — but it still touches no DOM.
+  <code>@mythrun/ui</code> is the web design system: it implements the contract with DOM, Radix, and
+  Tailwind, and it owns all web CSS. <code>@mythrun/web</code> is the app — it composes the
+  library's public components and never reaches past them.
 </p>
 
 <p>
   <code>@mythrun/ui</code> consumes the contract via <code>import type</code> — erased at compile
-  time, so there is no runtime coupling and no circular import as <code>@mythrun/client-core</code>
-  later grows stores and transport (MYT-83). It invokes the token generator only in its build
-  script, never in shipped component code. The seam stays thin on purpose.
+  time, so there is no runtime coupling and no circular import now that
+  <code>@mythrun/client-core</code> has grown its stores and data layer (MYT-83). It invokes the
+  token generator only in its build script, never in shipped component code. The seam stays thin on
+  purpose.
 </p>
 
 <h2>The contract — a typed seam enforced as a pair</h2>
@@ -213,7 +219,10 @@
   <li>
     <strong>Layout</strong> — <code>Stack</code>, <code>Box</code>, <code>Grid</code>,
     <code>Divider</code>. These expose a token-typed style vocabulary (<code>gap: SpaceToken</code
-    >), so they pass API-purity by construction.
+    >), so they pass API-purity by construction. (MYT-83 added two token-typed
+    <code>Box</code> variants — a <code>reversed</code> dark surface and a full-viewport
+    <code>minHeight="screen"</code> floor, on <code>100dvh</code> for mobile — for the dithered 404;
+    see <a href="./app-shell.html">App shell &amp; data layer</a>.)
   </li>
   <li>
     <strong>Typography</strong> — <code>Text</code>, <code>Heading</code>,

@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>App shell & data layer · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="app-shell">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › App shell & data layer</div>
+        <article>
+<h1>App shell &amp; data layer</h1>
+
+<p class="lead">
+  The application skeleton every flow hangs on: a typed REST data layer, a three-state session gate,
+  and the React-Router shell — built so the whole client ports to true-native later without an
+  extraction refactor. A new shared package (<code>@mythrun/contract</code>) is the single typed
+  wire source both the backend and the client validate against; the client brain
+  (<code>@mythrun/client-core</code>) owns every backend call, the session store, and the platform
+  interfaces; the web app (<code>@mythrun/web</code>) is a thin shell of route screens plus the web
+  implementations of those interfaces.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1798pt" height="456pt"
+ viewBox="14.00 14.00 1783.00 441.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 437.4)">
+<title>frontend_app_shell</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-423 1765.01,-423 1765.01,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_contract</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="0,-245 0,-411 405.46,-411 405.46,-245 0,-245"/>
+<text xml:space="preserve" text-anchor="middle" x="202.73" y="-397.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/contract &#160;(BUILT package · zod · the typed wire)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_cc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="555.48,-176 555.48,-329 1223.53,-329 1223.53,-176 555.48,-176"/>
+<text xml:space="preserve" text-anchor="middle" x="889.51" y="-315.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;(the client brain · DOM&#45;free · R1)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_web</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1421.56,-8 1421.56,-223 1761.01,-223 1761.01,-8 1421.56,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1591.29" y="-209.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(THIN: shell + screens + web impls)</text>
+</g>
+<!-- rest -->
+<g id="node1" class="node">
+<title>rest</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="313.79,-315.04 90.68,-315.04 90.68,-244.96 313.79,-244.96 313.79,-315.04"/>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-296.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">REST Zod schemas</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-283.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MeResponse · CampaignSummary</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-270.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ISO&#45;string wire dates ·</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-256.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/me public projection</text>
+</g>
+<!-- backend -->
+<g id="node3" class="node">
+<title>backend</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="861.11,-387.44 624.79,-387.44 624.79,-330.56 861.11,-330.56 861.11,-387.44"/>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-368.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/backend</text>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-355.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">types handler returns (tsc)</text>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-342.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">real CORS · one allowed origin</text>
+</g>
+<!-- rest&#45;&gt;backend -->
+<g id="edge2" class="edge">
+<title>rest&#45;&gt;backend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M314.53,-296.32C402.22,-309.18 524.49,-327.11 615.81,-340.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="615.19,-342.89 622.47,-341.48 615.9,-338.04 615.19,-342.89"/>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-331.9" font-family="Courier,monospace" font-size="10.00">z.infer types (tsc)</text>
+</g>
+<!-- endpoint -->
+<g id="node4" class="node">
+<title>endpoint</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="930.42,-307.44 555.48,-307.44 555.48,-250.56 930.42,-250.56 930.42,-307.44"/>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-288.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">defineEndpoint — the ONLY call path</text>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-275.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">validates response → typed data</text>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-262.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HttpError · ContractValidationError · NetworkError</text>
+</g>
+<!-- rest&#45;&gt;endpoint -->
+<g id="edge3" class="edge">
+<title>rest&#45;&gt;endpoint</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M314.53,-279.79C381.41,-279.67 468.42,-279.51 546.46,-279.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="546.67,-281.81 553.67,-279.35 546.66,-276.91 546.67,-281.81"/>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-294.59" font-family="Courier,monospace" font-size="10.00">validates</text>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-282.59" font-family="Courier,monospace" font-size="10.00">responses</text>
+</g>
+<!-- events -->
+<g id="node2" class="node">
+<title>events</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="297.28,-389.44 107.18,-389.44 107.18,-332.56 297.28,-332.56 297.28,-389.44"/>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-370.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">realtime event unions</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-357.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session · pipeline</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-344.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(TS, not Zod — MYT&#45;85)</text>
+</g>
+<!-- events&#45;&gt;backend -->
+<g id="edge4" class="edge">
+<title>events&#45;&gt;backend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M297.99,-360.65C386.21,-360.32 518.32,-359.83 615.5,-359.47"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="615.39,-361.92 622.38,-359.44 615.37,-357.02 615.39,-361.92"/>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-363.18" font-family="Courier,monospace" font-size="10.00">re&#45;export shim</text>
+</g>
+<!-- hooks -->
+<g id="node5" class="node">
+<title>hooks</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1223.53,-263.84 967.42,-263.84 967.42,-220.16 1223.53,-220.16 1223.53,-263.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-245.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">slice hooks (React&#45;Query suspense)</text>
+<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-232.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useMe · useMyCampaigns</text>
+</g>
+<!-- endpoint&#45;&gt;hooks -->
+<g id="edge1" class="edge">
+<title>endpoint&#45;&gt;hooks</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M931.01,-259.25C940.16,-258.29 949.27,-257.33 958.23,-256.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="958.27,-258.84 964.97,-255.67 957.75,-253.97 958.27,-258.84"/>
+</g>
+<!-- home -->
+<g id="node8" class="node">
+<title>home</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1685.84,-201.84 1495.73,-201.84 1495.73,-158.16 1685.84,-158.16 1685.84,-201.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-183.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">routes/ — thin stubs +</text>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-170.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the wired home hub</text>
+</g>
+<!-- hooks&#45;&gt;home -->
+<g id="edge5" class="edge">
+<title>hooks&#45;&gt;home</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1224.16,-225.95C1281.76,-218.71 1350.74,-210.04 1413.19,-202.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1413.12,-204.67 1419.76,-201.37 1412.51,-199.81 1413.12,-204.67"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.55" y="-238.68" font-family="Courier,monospace" font-size="10.00">screens use</text>
+<text xml:space="preserve" text-anchor="middle" x="1322.55" y="-226.68" font-family="Courier,monospace" font-size="10.00">client&#45;core hooks only (R5)</text>
+</g>
+<!-- brain -->
+<g id="node6" class="node">
+<title>brain</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="857.81,-232.44 628.09,-232.44 628.09,-175.56 857.81,-175.56 857.81,-232.44"/>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-213.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session store (3&#45;state) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-200.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SecureStorage interface ·</text>
+<text xml:space="preserve" text-anchor="middle" x="742.95" y="-187.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getAuthHeaders · i18n catalog</text>
+</g>
+<!-- webimpl -->
+<g id="node9" class="node">
+<title>webimpl</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1705.64,-139.84 1475.93,-139.84 1475.93,-96.16 1705.64,-96.16 1705.64,-139.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-121.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">platform/web</text>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-108.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SecureStorage → localStorage</text>
+</g>
+<!-- brain&#45;&gt;webimpl -->
+<g id="edge6" class="edge">
+<title>brain&#45;&gt;webimpl</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M801.97,-174.87C846.09,-154.42 908.97,-128.86 967.42,-118 1138.37,-86.24 1340.34,-94.41 1466.77,-104.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1466.37,-107.28 1473.55,-105.43 1466.78,-102.4 1466.37,-107.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-133" font-family="Courier,monospace" font-size="10.00">interface ← web impl</text>
+<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-121" font-family="Courier,monospace" font-size="10.00">(injected at provider root)</text>
+</g>
+<!-- shell -->
+<g id="node7" class="node">
+<title>shell</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1718.85,-78.04 1462.73,-78.04 1462.73,-7.96 1718.85,-7.96 1718.85,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app shell</text>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">router · RequireAuth (3&#45;state) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quiet frame · dithered 404 ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typed&#45;error boundary</text>
+</g>
+<!-- home&#45;&gt;backend -->
+<g id="edge7" class="edge">
+<title>home&#45;&gt;backend</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1495.01,-170.63C1330.91,-155.37 1007.5,-129.91 967.42,-162 908.75,-208.97 984.89,-275.22 930.42,-327 913.85,-342.75 892.5,-352.3 870.2,-357.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.68,-355.47 863.39,-359.4 870.76,-360.25 869.68,-355.47"/>
+<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-165" font-family="Courier,monospace" font-size="10.00">fetch · cross&#45;origin → CORS</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<aside class="wiki-rationale">
+  <strong>Everything that isn't a pixel lives in <code>client-core</code></strong> — the
+  load-bearing constraint. The API client, the React-Query hooks, the session store, the platform
+  <em>interfaces</em>, and the i18n catalog all live in the DOM-free brain;
+  <code>@mythrun/web</code> holds only the router shell, thin screens, and the web
+  <em>implementations</em> of those interfaces under <code>platform/web/**</code>. The native port
+  later re-fills <code>platform/web</code> → <code>platform/native</code> and swaps
+  <code>@mythrun/ui</code> → <code>@mythrun/ui-native</code>; <code>client-core</code> and
+  <code>@mythrun/contract</code> are untouched. There is never a later "lift the data layer out of
+  the app" refactor because it was never in the app.
+</aside>
+
+<h2 id="the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</h2>
+
+<p>
+  The frontend now has four packages, and the dependency arrow points one way:
+  <code>contract ← {backend, client-core} ← @mythrun/ui ← @mythrun/web</code>.
+  <code>@mythrun/contract</code> is the typed wire — the only package
+  <a href="../runtime/index.html">the backend</a> consumes. <code>@mythrun/client-core</code> is the
+  platform-agnostic client brain (the
+  <a href="./design-system.html">component contract and token data</a> from MYT-82, now joined by
+  the data/state/transport layer). <code>@mythrun/ui</code> is the web
+  <a href="./design-system.html">design system</a>. <code>@mythrun/web</code> is the app — and it
+  stays thin: a route screen composes <code>client-core</code> hooks, <code>@mythrun/ui</code>
+  components, and i18n keys, nothing else (the
+  <a href="./design-system.html#import-boundary-r5">R5 import boundary</a>).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two different "contracts," one import-path apart</strong> —
+  <code>@mythrun/contract</code> (this new package: Zod <em>wire</em> schemas) is a distinct concept
+  from <code>@mythrun/client-core</code>'s <code>src/contract/</code> (the mythrunUI component
+  <em>prop</em> contracts gated by <a href="./design-system.html#api-purity-r2">api-purity</a>).
+  They sit one import-path apart and the new package carries its own minimal Zod-only ESLint config
+  so the two enforcement scopes never collide.
+</aside>
+
+<h2 id="the-typed-wire-mythrun-contract">The typed wire — <code>@mythrun/contract</code></h2>
+
+<p>
+  The wire contract is the single typed source of truth for what crosses the network. It carries two
+  kinds of artifact, with deliberately different guarantees.
+</p>
+
+<p>
+  <strong>REST schemas are Zod, and they are authored, not extracted.</strong> The two endpoints the
+  home-hub smoke needs had no response schema (both routes <code>reply.send</code>'d a raw repo
+  row), so MYT-83 authors them: <code>MeResponseSchema</code> for <code>GET /api/users/me</code> and
+  <code>CampaignSummarySchema</code> / <code>MyCampaignsResponseSchema</code> for
+  <code>GET /api/campaigns/mine</code>. They model the <strong>over-the-wire</strong> shape, not the
+  in-memory domain type: a <code>Campaign.createdAt</code> is a <code>Date</code> server-side but
+  JSON-serializes to an ISO-8601 string, so the schema types it <code>z.iso.datetime()</code> (a
+  string validator), never <code>z.date()</code>. <code>/me</code> is a deliberate
+  <strong>public projection</strong> — it omits <code>cognitoSub</code>,
+  <code>stripeCustomerId</code>, and <code>suspendedAt</code>, so billing-internal fields can never
+  leak over the wire. The backend types its handler return against the schema's inferred type, and
+  <code>client-core</code> derives its types via <code>z.infer</code> from the same schema and
+  <em>validates the response body at runtime</em>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Zod single source, validated on the client</strong> — the alternative (hand-written client
+  types, or codegen) lets the client's idea of a payload drift silently from the server's until a
+  field is quietly wrong in production. Here a single schema is the contract: the backend's return
+  is <code>tsc</code>-linked to it at compile time, and the client parses every response through it
+  at runtime, so a shape drift fails <em>loudly in dev</em> as a
+  <code>ContractValidationError</code> rather than rendering subtly-wrong data. Backend
+  <em>outbound</em> validation is intentionally out of scope (it would risk a live 5xx on a
+  mismatch); the client-side parse is the drift catch.
+</aside>
+
+<p>
+  <strong>The realtime event unions moved here as-is.</strong> The WebSocket session-transport
+  frames (<code>session-events</code>) and the prep-pipeline SSE event unions
+  (<code>pipeline-events</code>) relocated from <code>backend/src/contract/</code> so the frontend
+  can consume the same frames the backend produces — setting up the realtime client (MYT-85). These
+  are hand-written TypeScript discriminated unions plus runtime <code>classify*</code> helpers,
+  <em>not Zod</em>, so the move gives the client <em>type</em> safety but no runtime frame
+  validation (whether to add that is MYT-85's call). The backend keeps a one-line re-export shim at
+  the old paths so its existing import sites — and the drift-tested route list — don't churn. The
+  <a href="../runtime/session-transport.html">session transport</a> and
+  <a href="../runtime/pipeline-status.html">pipeline status</a> pages tell the protocol stories;
+  this is just where the unions are now authored.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>@mythrun/contract</code> is a <em>built</em> package, not source-<code>.ts</code></strong
+  >
+  — the backend takes its first cross-package runtime dependency here, and it resolves modules with
+  NodeNext, which cannot import a <code>.ts</code> file across a package boundary. A source-only
+  package would typecheck green and then crash the container on <code>import</code> at runtime. So
+  <code>@mythrun/contract</code> emits compiled <code>.js</code> + <code>.d.ts</code> through an
+  <code>exports</code> map, the <a href="../runtime/index.html">backend Dockerfile</a> copies and
+  builds it before the backend, and the
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI workflows</a>
+  and the pre-push hook build it first as their gate 0. (<code>client-core</code>, on Bundler
+  resolution, can consume either source or built; only the backend forces built.)
+</aside>
+
+<h2 id="the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</h2>
+
+<p>
+  Every backend call is built through a single typed primitive, <code>defineEndpoint</code>. It
+  takes a method, a typed path builder, an optional request schema, and a required response schema —
+  all Zod, from the contract — and compiles to a function
+  <code>(input, ctx) =&gt; Promise&lt;Res&gt;</code>. The returned function builds the URL, attaches
+  auth headers, calls universal <code>fetch</code>, maps a non-2xx response to an error, and
+  <strong>parses the body against the response schema</strong> before handing back typed data.
+  Because <code>request</code>/<code>response</code> are typed as Zod schemas, an endpoint
+  <em>cannot</em> be declared without a contract schema — the conformance lever.
+</p>
+
+<p>
+  <code>defineEndpoint</code> throws three <strong>discriminated</strong> error kinds so callers
+  branch on what actually failed instead of parsing a message string:
+</p>
+
+<ul>
+  <li>
+    <code>HttpError</code> (carries <code>status</code>) — a non-2xx response. A
+    <code>401</code> drives the session store + <a href="#the-session-gate">the auth gate</a>, not
+    the generic error screen.
+  </li>
+  <li>
+    <code>ContractValidationError</code> — the response (or a request) failed Zod parse: a backend
+    shape drift, loud in dev.
+  </li>
+  <li><code>NetworkError</code> — <code>fetch</code> itself rejected (a transport failure).</li>
+</ul>
+
+<p>
+  On top of the primitive sit thin <strong>slice hooks</strong> — <code>useMe</code>,
+  <code>useMyCampaigns</code> — each a one-liner that reads the ambient <code>ApiContext</code> from
+  a <code>client-core</code> React context and hands the endpoint to React-Query's
+  <code>useSuspenseQuery</code>. The hooks are React, not DOM, so they stay R1-clean and a native
+  shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract and its slice
+  to <code>client-core/api</code>; the pattern never changes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>fetch</code> directly, no transport interface</strong> — <code>fetch</code> is
+  universal (web and React Native both have it) and is explicitly allowed by R1, so it lives in the
+  brain rather than behind a platform interface. The platform-divergent streaming transports
+  (SSE/WS) are a different matter and are deferred to MYT-85.
+</aside>
+
+<h2 id="the-session-gate">The session gate — three states, now</h2>
+
+<p>
+  The backend distinguishes two rejections the client must tell apart:
+  <code>401 unauthenticated</code> (no/invalid token) and
+  <code>403 username_required</code> (authenticated but not yet
+  <a href="../auth-billing/onboarding.html">onboarded</a>). So the session store — a tiny DOM-free
+  Zustand store in <code>client-core/stores</code> — holds <strong>three</strong> states:
+  <code>unauthenticated</code>, <code>onboarding-required</code>, and <code>ready</code>. The
+  <code>&lt;RequireAuth&gt;</code> gate reads only that status and resolves it to one of three
+  outcomes — bounce to sign-in, bounce to onboarding, or render the matched route — with no token
+  parsing, no backend call, no local intelligence.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Three states now, not a two-state retrofit later</strong> — the auth gate is the boundary
+  the whole authed tree hangs on. A two-state model would force MYT-84 to rewrite it the moment the
+  <code>403 username_required</code> path needs its own redirect. Baking the right shape in now
+  means MYT-84 fills the <em>acquisition</em> (OAuth, token refresh) and the onboarding
+  <em>screen</em> behind redirects that already exist, rather than reshaping the gate. The redirect
+  itself is proven client-side: the store starts <code>unauthenticated</code>, so the gate redirects
+  regardless of the always-authenticated dev bypass backend.
+</aside>
+
+<p>
+  Auth headers ride an injected <code>getAuthHeaders()</code> built once from a mode flag and the
+  secure-storage handle, then invoked per request: <strong>dev</strong> (bypass) sends a static
+  <code>x-mythrun-dev-sub</code> header; <strong>prod</strong> (jwt) reads a Bearer token from
+  secure storage on every call (so a token persisted after construction is still picked up, and an
+  unacquired token is simply an empty header set until MYT-84 fills acquisition). The mode is a
+  build/runtime config flag, not request-time logic.
+</p>
+
+<h2 id="conformance-by-construction">Conformance by construction</h2>
+
+<p>
+  The pattern can't be quietly skipped — it is structural, enforced by three rails working together.
+  The <code>defineEndpoint</code> type signature forces a contract schema on every endpoint. The
+  <a href="./design-system.html#import-boundary-r5">R5 feature import boundary</a> bans bare
+  <code>fetch</code> and <code>@tanstack/react-query</code> inside <code>routes/**</code>, so a
+  screen can't sidestep the primitive by calling <code>useQuery</code>/<code>fetch</code> directly —
+  it imports hooks from <code>client-core</code> only. And the
+  <strong>R1 <code>no-restricted-globals</code></strong> lint bans <code>document</code>,
+  <code>window</code>, <code>localStorage</code>, <code>location</code>, <code>navigator</code>,
+  <code>EventSource</code> in <code>client-core</code> and in <code>web</code> outside
+  <code>platform/web/**</code>, keeping the brain DOM-free. Each ships with positive-and-negative
+  wiring tests (a banned global fails; a <code>platform/web</code> use and the lint-exempt app entry
+  pass).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The one allowed DOM touch</strong> — <code>frontend/src/main.tsx</code>'s
+  <code>document.getElementById('root')</code> mount is the single unavoidable web-only global, and
+  it is lint-exempt the same way <code>vite.config.ts</code> is. The native entry is entirely
+  different, so the exemption is on the entry file, not a pattern that could spread.
+</aside>
+
+<h2 id="platform-interfaces-the-native-seam">Platform interfaces — the native seam</h2>
+
+<p>
+  A platform-capability interface lets the brain reach a device capability through a contract rather
+  than a web global. MYT-83 defines exactly one — <code>SecureStorage</code> (the token store), an
+  all-async <code>get</code>/<code>set</code>/<code>remove</code> interface in
+  <code>client-core/platform</code> — and its first web implementation, a
+  <code>localStorage</code> adapter under <code>frontend/src/platform/web/</code>. That single
+  interface-plus-impl establishes the <code>platform/web</code> convention: the brain declares the
+  capability, the web layer realizes it, and the provider root injects the impl so the brain never
+  touches a web global itself. A later native impl (Keychain/Keystore) satisfies the same surface.
+  Other interfaces (<code>StreamingFetch</code>, <code>Share</code>, <code>Push</code>, …) are
+  deferred — we do not define an interface with no consumer.
+</p>
+
+<h2 id="the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</h2>
+
+<p>
+  The route tree is a plain <code>RouteObject[]</code> (so tests drive the same array through a
+  memory router) with two branches under one error boundary. The <strong>public</strong> branch
+  resolves pre-auth — landing, the auth screens, the invite-join link, the shareable recap. The
+  <strong>authed</strong> branch sits behind <code>&lt;RequireAuth&gt;</code> and renders inside the
+  <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
+  · credits · settings) wrapping the content <code>&lt;Outlet/&gt;</code>, composed from
+  <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the narrative/combat
+  content is the focus. Every screen is a thin i18n'd stub the flow tickets fill — except the
+  <strong>home hub</strong>, wired end-to-end (<code>useMyCampaigns</code> → real backend → Suspense
+  loading → Cards or empty state) as the done-when smoke.
+</p>
+
+<p>
+  A route-level <strong>error boundary</strong> catches any thrown render/loader failure and
+  branches on the typed errors above: a <code>401 HttpError</code> resets the session to
+  <code>unauthenticated</code> and bounces to sign-in; a <code>ContractValidationError</code> shows
+  a dev-facing "contract drift" message; everything else falls through to a generic retryable screen
+  with a retry affordance. The <strong>404</strong> is the brand's stepped Bayer
+  <a href="./design-system.html">Dither</a> in its first product use — a full-screen dark dead end
+  where the Dither is a real transition (the cream page-top grading down into a reversed dark
+  surface that fills the viewport), not decoration.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The 404 floor uses <code>100dvh</code>, not <code>100vh</code></strong> — a mobile-audit
+  fix. The full-screen dark surface is a reversed <code>Box</code> with a new
+  <code>minHeight="screen"</code> variant that maps to <code>min-h-dvh</code> (the
+  <em>dynamic</em> viewport), deliberately not <code>100vh</code>. On mobile, <code>100vh</code> is
+  the height with the URL bar retracted, so a <code>100vh</code> root is shorter than the page once
+  the bar hides on scroll and leaves a strip of the cream page canvas showing below the dark field.
+  <code>dvh</code> tracks the actually-visible viewport, so the surface fills the screen on mobile
+  and desktop alike. The reversed dark surface itself is the other new <code>Box</code> variant
+  (<code>surface="reversed"</code>); both are mythrunUI additions documented on the
+  <a href="./design-system.html">Design system</a> page.
+</aside>
+
+<p>
+  The <strong>provider stack</strong> is the web shell's one composition root: a single
+  <code>QueryClient</code>, the resolved <code>ApiContext</code> (base URL + the injected
+  <code>getAuthHeaders</code>), and the i18n runtime, in that nesting order. It is config-driven —
+  <code>main.tsx</code> builds the concrete config from the environment and the web
+  <code>SecureStorage</code> impl once at module scope and passes it in — so the shell is testable
+  with a fake storage and an explicit auth mode. In dev (bypass) <code>main.tsx</code> also seeds
+  the session store <code>ready</code> once, so the dev app lands on the authed side of the gate
+  against the always-authenticated bypass backend.
+</p>
+
+<h2 id="talking-to-the-api-cross-origin">Talking to the API cross-origin</h2>
+
+<p>
+  The SPA and the API are separate origins — <code>app.mythrun.com</code> calling
+  <code>api.mythrun.com</code> in prod, <code>localhost:5173</code> calling
+  <code>localhost:3030</code> in dev — so the data layer's <code>fetch</code> calls are cross-origin
+  and the browser preflights them. The backend answers with a real
+  <a href="../runtime/index.html#cross-origin-cors">CORS plugin</a> whose single allowed origin is
+  the already-validated frontend origin; that is a backend concern and the topology (and why the dev
+  proxy pattern stays confined to the internal dev tool) lives on the
+  <a href="../runtime/index.html#cross-origin-cors">Backend</a> page.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</h3>
+<ol>
+  <li>
+    Author the response (and any request) Zod schema in
+    <code>frontend/contract/src/rest/</code>, modeling the <strong>wire</strong> shape (ISO strings
+    for dates, an explicit public projection — never a raw row mirror). Export it from the
+    <code>rest</code> barrel.
+  </li>
+  <li>
+    Type the backend handler's return against the schema's inferred type (<code>z.infer</code>), so
+    <code>tsc</code> links the two sides.
+  </li>
+  <li>
+    Add the slice in <code>frontend/client-core/src/api/</code>: a <code>defineEndpoint</code> with
+    the schema, plus a thin <code>useSuspenseQuery</code> hook. Re-export both (and any domain type)
+    from the <code>client-core</code> barrel.
+  </li>
+  <li>
+    Render it from a screen through the hook only — never a bare <code>fetch</code> or
+    <code>useQuery</code> (the R5 boundary fails the lint otherwise).
+  </li>
+  <li>
+    Build the contract first (<code>pnpm --filter @mythrun/contract build</code>), then run the
+    <a href="../infra/ci-cd.html#the-frontend-check-gate">frontend-check</a> chain. A fresh tree
+    can't resolve <code>@mythrun/contract/rest</code> until <code>dist/</code> exists.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  This page is the data/shell half of the frontend; the
+  <a href="./index.html">Frontend foundation</a> covers the workspace, the lint rails, the i18n
+  layer, and the design tokens, and the <a href="./design-system.html">Design system</a> covers
+  mythrunUI (including the two new <code>Box</code> variants the 404 uses and the component-<em
+    >prop</em
+  >
+  contract that shares the word "contract" with this page's wire contract). The cross-origin CORS
+  topology, the plugin-registration order it slots into, and the Dockerfile step that builds
+  <code>@mythrun/contract</code> into the image all live on the
+  <a href="../runtime/index.html">Backend</a> page. The realtime unions this package now hosts feed
+  the <a href="../runtime/session-transport.html">session transport</a> and
+  <a href="../runtime/pipeline-status.html">pipeline status</a> surfaces. The three-state gate maps
+  onto the <a href="../auth-billing/onboarding.html">onboarding</a> 401/403 split. The
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page details the frontend-check
+  gate and the contract build step.
+</p>
+
+<h2 id="appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</h2>
+
+<h3 id="packages-touched-or-added">Packages touched or added</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Path</th>
+      <th>Role in MYT-83</th>
+      <th>Built?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@mythrun/contract</code></td>
+      <td><code>frontend/contract/</code></td>
+      <td>New — Zod REST schemas + the relocated realtime event unions; the typed wire</td>
+      <td>yes (<code>.js</code> + <code>.d.ts</code>, consumed by backend + frontend)</td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/client-core</code></td>
+      <td><code>frontend/client-core/</code></td>
+      <td>
+        Gained <code>api/</code>, <code>stores/</code>, <code>platform/</code>, the i18n catalog
+      </td>
+      <td>no (source-consumed)</td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/web</code></td>
+      <td><code>frontend/</code></td>
+      <td>The router shell, thin screens, <code>platform/web</code> impls, the wired home hub</td>
+      <td>via Vite</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="the-data-layer-surface-client-core-api">The data-layer surface (<code>client-core/api</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Export</th>
+      <th>What it is</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>defineEndpoint</code></td>
+      <td>
+        The only sanctioned backend-call path; validates the response against a contract schema.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>HttpError</code> / <code>ContractValidationError</code> / <code>NetworkError</code>
+      </td>
+      <td>
+        The three discriminated failure kinds, each with an <code>instanceof</code> type guard.
+      </td>
+    </tr>
+    <tr>
+      <td><code>useMe</code> / <code>useMyCampaigns</code></td>
+      <td>Thin React-Query suspense hooks over the endpoint slices.</td>
+    </tr>
+    <tr>
+      <td><code>getAuthHeaders</code></td>
+      <td>
+        The injected per-request header producer (dev <code>x-mythrun-dev-sub</code> / prod Bearer).
+      </td>
+    </tr>
+    <tr>
+      <td><code>useSessionStore</code></td>
+      <td>The three-state Zustand session store the auth gate reads.</td>
+    </tr>
+    <tr>
+      <td><code>SecureStorage</code></td>
+      <td>
+        The platform-capability interface; web impl lives under
+        <code>frontend/src/platform/web/</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/contract/</code> (<code>@mythrun/contract</code> — <code>src/rest/</code>,
+  <code>src/events/</code>), <code>frontend/client-core/src/api/</code>,
+  <code>frontend/client-core/src/stores/session.ts</code>,
+  <code>frontend/client-core/src/platform/secure-storage.ts</code>,
+  <code>frontend/client-core/src/index.ts</code>, <code>frontend/src/app/</code>,
+  <code>frontend/src/routes/home.tsx</code>,
+  <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — three states, now</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#talking-to-the-api-cross-origin">Talking to the API cross-origin</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

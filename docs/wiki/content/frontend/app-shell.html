@@ -1,0 +1,455 @@
+<!-- source: frontend/contract/ -->
+<!-- source: frontend/contract/package.json -->
+<!-- source: frontend/contract/src/ -->
+<!-- source: frontend/client-core/src/api/ -->
+<!-- source: frontend/client-core/src/stores/session.ts -->
+<!-- source: frontend/client-core/src/platform/secure-storage.ts -->
+<!-- source: frontend/client-core/src/index.ts -->
+<!-- source: frontend/src/app/ -->
+<!-- source: frontend/src/routes/home.tsx -->
+<!-- source: frontend/src/platform/web/secure-storage.ts -->
+<!-- source: frontend/src/main.tsx -->
+<!-- source-hash: sha256:8363a5154c48fcfe525d231a9ab08e05024e59db313a8fa6ae2443e274b65b60 -->
+<!-- source-hash: sha256:auto -->
+<!-- last-ticket: MYT-83 -->
+
+<h1>App shell &amp; data layer</h1>
+
+<p class="lead">
+  The application skeleton every flow hangs on: a typed REST data layer, a three-state session gate,
+  and the React-Router shell — built so the whole client ports to true-native later without an
+  extraction refactor. A new shared package (<code>@mythrun/contract</code>) is the single typed
+  wire source both the backend and the client validate against; the client brain
+  (<code>@mythrun/client-core</code>) owns every backend call, the session store, and the platform
+  interfaces; the web app (<code>@mythrun/web</code>) is a thin shell of route screens plus the web
+  implementations of those interfaces.
+</p>
+
+<!-- @diagram: frontend/app-shell -->
+
+<aside class="wiki-rationale">
+  <strong>Everything that isn't a pixel lives in <code>client-core</code></strong> — the
+  load-bearing constraint. The API client, the React-Query hooks, the session store, the platform
+  <em>interfaces</em>, and the i18n catalog all live in the DOM-free brain;
+  <code>@mythrun/web</code> holds only the router shell, thin screens, and the web
+  <em>implementations</em> of those interfaces under <code>platform/web/**</code>. The native port
+  later re-fills <code>platform/web</code> → <code>platform/native</code> and swaps
+  <code>@mythrun/ui</code> → <code>@mythrun/ui-native</code>; <code>client-core</code> and
+  <code>@mythrun/contract</code> are untouched. There is never a later "lift the data layer out of
+  the app" refactor because it was never in the app.
+</aside>
+
+<h2>The shape — four packages, the brain in the middle</h2>
+
+<p>
+  The frontend now has four packages, and the dependency arrow points one way:
+  <code>contract ← {backend, client-core} ← @mythrun/ui ← @mythrun/web</code>.
+  <code>@mythrun/contract</code> is the typed wire — the only package
+  <a href="../runtime/index.html">the backend</a> consumes. <code>@mythrun/client-core</code> is the
+  platform-agnostic client brain (the
+  <a href="./design-system.html">component contract and token data</a> from MYT-82, now joined by
+  the data/state/transport layer). <code>@mythrun/ui</code> is the web
+  <a href="./design-system.html">design system</a>. <code>@mythrun/web</code> is the app — and it
+  stays thin: a route screen composes <code>client-core</code> hooks, <code>@mythrun/ui</code>
+  components, and i18n keys, nothing else (the
+  <a href="./design-system.html#import-boundary-r5">R5 import boundary</a>).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two different "contracts," one import-path apart</strong> —
+  <code>@mythrun/contract</code> (this new package: Zod <em>wire</em> schemas) is a distinct concept
+  from <code>@mythrun/client-core</code>'s <code>src/contract/</code> (the mythrunUI component
+  <em>prop</em> contracts gated by <a href="./design-system.html#api-purity-r2">api-purity</a>).
+  They sit one import-path apart and the new package carries its own minimal Zod-only ESLint config
+  so the two enforcement scopes never collide.
+</aside>
+
+<h2>The typed wire — <code>@mythrun/contract</code></h2>
+
+<p>
+  The wire contract is the single typed source of truth for what crosses the network. It carries two
+  kinds of artifact, with deliberately different guarantees.
+</p>
+
+<p>
+  <strong>REST schemas are Zod, and they are authored, not extracted.</strong> The two endpoints the
+  home-hub smoke needs had no response schema (both routes <code>reply.send</code>'d a raw repo
+  row), so MYT-83 authors them: <code>MeResponseSchema</code> for <code>GET /api/users/me</code> and
+  <code>CampaignSummarySchema</code> / <code>MyCampaignsResponseSchema</code> for
+  <code>GET /api/campaigns/mine</code>. They model the <strong>over-the-wire</strong> shape, not the
+  in-memory domain type: a <code>Campaign.createdAt</code> is a <code>Date</code> server-side but
+  JSON-serializes to an ISO-8601 string, so the schema types it <code>z.iso.datetime()</code> (a
+  string validator), never <code>z.date()</code>. <code>/me</code> is a deliberate
+  <strong>public projection</strong> — it omits <code>cognitoSub</code>,
+  <code>stripeCustomerId</code>, and <code>suspendedAt</code>, so billing-internal fields can never
+  leak over the wire. The backend types its handler return against the schema's inferred type, and
+  <code>client-core</code> derives its types via <code>z.infer</code> from the same schema and
+  <em>validates the response body at runtime</em>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Zod single source, validated on the client</strong> — the alternative (hand-written client
+  types, or codegen) lets the client's idea of a payload drift silently from the server's until a
+  field is quietly wrong in production. Here a single schema is the contract: the backend's return
+  is <code>tsc</code>-linked to it at compile time, and the client parses every response through it
+  at runtime, so a shape drift fails <em>loudly in dev</em> as a
+  <code>ContractValidationError</code> rather than rendering subtly-wrong data. Backend
+  <em>outbound</em> validation is intentionally out of scope (it would risk a live 5xx on a
+  mismatch); the client-side parse is the drift catch.
+</aside>
+
+<p>
+  <strong>The realtime event unions moved here as-is.</strong> The WebSocket session-transport
+  frames (<code>session-events</code>) and the prep-pipeline SSE event unions
+  (<code>pipeline-events</code>) relocated from <code>backend/src/contract/</code> so the frontend
+  can consume the same frames the backend produces — setting up the realtime client (MYT-85). These
+  are hand-written TypeScript discriminated unions plus runtime <code>classify*</code> helpers,
+  <em>not Zod</em>, so the move gives the client <em>type</em> safety but no runtime frame
+  validation (whether to add that is MYT-85's call). The backend keeps a one-line re-export shim at
+  the old paths so its existing import sites — and the drift-tested route list — don't churn. The
+  <a href="../runtime/session-transport.html">session transport</a> and
+  <a href="../runtime/pipeline-status.html">pipeline status</a> pages tell the protocol stories;
+  this is just where the unions are now authored.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>@mythrun/contract</code> is a <em>built</em> package, not source-<code>.ts</code></strong
+  >
+  — the backend takes its first cross-package runtime dependency here, and it resolves modules with
+  NodeNext, which cannot import a <code>.ts</code> file across a package boundary. A source-only
+  package would typecheck green and then crash the container on <code>import</code> at runtime. So
+  <code>@mythrun/contract</code> emits compiled <code>.js</code> + <code>.d.ts</code> through an
+  <code>exports</code> map, the <a href="../runtime/index.html">backend Dockerfile</a> copies and
+  builds it before the backend, and the
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI workflows</a>
+  and the pre-push hook build it first as their gate 0. (<code>client-core</code>, on Bundler
+  resolution, can consume either source or built; only the backend forces built.)
+</aside>
+
+<h2>The data layer — one seam to the backend</h2>
+
+<p>
+  Every backend call is built through a single typed primitive, <code>defineEndpoint</code>. It
+  takes a method, a typed path builder, an optional request schema, and a required response schema —
+  all Zod, from the contract — and compiles to a function
+  <code>(input, ctx) =&gt; Promise&lt;Res&gt;</code>. The returned function builds the URL, attaches
+  auth headers, calls universal <code>fetch</code>, maps a non-2xx response to an error, and
+  <strong>parses the body against the response schema</strong> before handing back typed data.
+  Because <code>request</code>/<code>response</code> are typed as Zod schemas, an endpoint
+  <em>cannot</em> be declared without a contract schema — the conformance lever.
+</p>
+
+<p>
+  <code>defineEndpoint</code> throws three <strong>discriminated</strong> error kinds so callers
+  branch on what actually failed instead of parsing a message string:
+</p>
+
+<ul>
+  <li>
+    <code>HttpError</code> (carries <code>status</code>) — a non-2xx response. A
+    <code>401</code> drives the session store + <a href="#the-session-gate">the auth gate</a>, not
+    the generic error screen.
+  </li>
+  <li>
+    <code>ContractValidationError</code> — the response (or a request) failed Zod parse: a backend
+    shape drift, loud in dev.
+  </li>
+  <li><code>NetworkError</code> — <code>fetch</code> itself rejected (a transport failure).</li>
+</ul>
+
+<p>
+  On top of the primitive sit thin <strong>slice hooks</strong> — <code>useMe</code>,
+  <code>useMyCampaigns</code> — each a one-liner that reads the ambient <code>ApiContext</code> from
+  a <code>client-core</code> React context and hands the endpoint to React-Query's
+  <code>useSuspenseQuery</code>. The hooks are React, not DOM, so they stay R1-clean and a native
+  shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract and its slice
+  to <code>client-core/api</code>; the pattern never changes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>fetch</code> directly, no transport interface</strong> — <code>fetch</code> is
+  universal (web and React Native both have it) and is explicitly allowed by R1, so it lives in the
+  brain rather than behind a platform interface. The platform-divergent streaming transports
+  (SSE/WS) are a different matter and are deferred to MYT-85.
+</aside>
+
+<h2 id="the-session-gate">The session gate — three states, now</h2>
+
+<p>
+  The backend distinguishes two rejections the client must tell apart:
+  <code>401 unauthenticated</code> (no/invalid token) and
+  <code>403 username_required</code> (authenticated but not yet
+  <a href="../auth-billing/onboarding.html">onboarded</a>). So the session store — a tiny DOM-free
+  Zustand store in <code>client-core/stores</code> — holds <strong>three</strong> states:
+  <code>unauthenticated</code>, <code>onboarding-required</code>, and <code>ready</code>. The
+  <code>&lt;RequireAuth&gt;</code> gate reads only that status and resolves it to one of three
+  outcomes — bounce to sign-in, bounce to onboarding, or render the matched route — with no token
+  parsing, no backend call, no local intelligence.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Three states now, not a two-state retrofit later</strong> — the auth gate is the boundary
+  the whole authed tree hangs on. A two-state model would force MYT-84 to rewrite it the moment the
+  <code>403 username_required</code> path needs its own redirect. Baking the right shape in now
+  means MYT-84 fills the <em>acquisition</em> (OAuth, token refresh) and the onboarding
+  <em>screen</em> behind redirects that already exist, rather than reshaping the gate. The redirect
+  itself is proven client-side: the store starts <code>unauthenticated</code>, so the gate redirects
+  regardless of the always-authenticated dev bypass backend.
+</aside>
+
+<p>
+  Auth headers ride an injected <code>getAuthHeaders()</code> built once from a mode flag and the
+  secure-storage handle, then invoked per request: <strong>dev</strong> (bypass) sends a static
+  <code>x-mythrun-dev-sub</code> header; <strong>prod</strong> (jwt) reads a Bearer token from
+  secure storage on every call (so a token persisted after construction is still picked up, and an
+  unacquired token is simply an empty header set until MYT-84 fills acquisition). The mode is a
+  build/runtime config flag, not request-time logic.
+</p>
+
+<h2>Conformance by construction</h2>
+
+<p>
+  The pattern can't be quietly skipped — it is structural, enforced by three rails working together.
+  The <code>defineEndpoint</code> type signature forces a contract schema on every endpoint. The
+  <a href="./design-system.html#import-boundary-r5">R5 feature import boundary</a> bans bare
+  <code>fetch</code> and <code>@tanstack/react-query</code> inside <code>routes/**</code>, so a
+  screen can't sidestep the primitive by calling <code>useQuery</code>/<code>fetch</code> directly —
+  it imports hooks from <code>client-core</code> only. And the
+  <strong>R1 <code>no-restricted-globals</code></strong> lint bans <code>document</code>,
+  <code>window</code>, <code>localStorage</code>, <code>location</code>, <code>navigator</code>,
+  <code>EventSource</code> in <code>client-core</code> and in <code>web</code> outside
+  <code>platform/web/**</code>, keeping the brain DOM-free. Each ships with positive-and-negative
+  wiring tests (a banned global fails; a <code>platform/web</code> use and the lint-exempt app entry
+  pass).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The one allowed DOM touch</strong> — <code>frontend/src/main.tsx</code>'s
+  <code>document.getElementById('root')</code> mount is the single unavoidable web-only global, and
+  it is lint-exempt the same way <code>vite.config.ts</code> is. The native entry is entirely
+  different, so the exemption is on the entry file, not a pattern that could spread.
+</aside>
+
+<h2>Platform interfaces — the native seam</h2>
+
+<p>
+  A platform-capability interface lets the brain reach a device capability through a contract rather
+  than a web global. MYT-83 defines exactly one — <code>SecureStorage</code> (the token store), an
+  all-async <code>get</code>/<code>set</code>/<code>remove</code> interface in
+  <code>client-core/platform</code> — and its first web implementation, a
+  <code>localStorage</code> adapter under <code>frontend/src/platform/web/</code>. That single
+  interface-plus-impl establishes the <code>platform/web</code> convention: the brain declares the
+  capability, the web layer realizes it, and the provider root injects the impl so the brain never
+  touches a web global itself. A later native impl (Keychain/Keystore) satisfies the same surface.
+  Other interfaces (<code>StreamingFetch</code>, <code>Share</code>, <code>Push</code>, …) are
+  deferred — we do not define an interface with no consumer.
+</p>
+
+<h2>The shell — routing, the quiet frame, and the dithered 404</h2>
+
+<p>
+  The route tree is a plain <code>RouteObject[]</code> (so tests drive the same array through a
+  memory router) with two branches under one error boundary. The <strong>public</strong> branch
+  resolves pre-auth — landing, the auth screens, the invite-join link, the shareable recap. The
+  <strong>authed</strong> branch sits behind <code>&lt;RequireAuth&gt;</code> and renders inside the
+  <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
+  · credits · settings) wrapping the content <code>&lt;Outlet/&gt;</code>, composed from
+  <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the narrative/combat
+  content is the focus. Every screen is a thin i18n'd stub the flow tickets fill — except the
+  <strong>home hub</strong>, wired end-to-end (<code>useMyCampaigns</code> → real backend → Suspense
+  loading → Cards or empty state) as the done-when smoke.
+</p>
+
+<p>
+  A route-level <strong>error boundary</strong> catches any thrown render/loader failure and
+  branches on the typed errors above: a <code>401 HttpError</code> resets the session to
+  <code>unauthenticated</code> and bounces to sign-in; a <code>ContractValidationError</code> shows
+  a dev-facing "contract drift" message; everything else falls through to a generic retryable screen
+  with a retry affordance. The <strong>404</strong> is the brand's stepped Bayer
+  <a href="./design-system.html">Dither</a> in its first product use — a full-screen dark dead end
+  where the Dither is a real transition (the cream page-top grading down into a reversed dark
+  surface that fills the viewport), not decoration.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The 404 floor uses <code>100dvh</code>, not <code>100vh</code></strong> — a mobile-audit
+  fix. The full-screen dark surface is a reversed <code>Box</code> with a new
+  <code>minHeight="screen"</code> variant that maps to <code>min-h-dvh</code> (the
+  <em>dynamic</em> viewport), deliberately not <code>100vh</code>. On mobile, <code>100vh</code> is
+  the height with the URL bar retracted, so a <code>100vh</code> root is shorter than the page once
+  the bar hides on scroll and leaves a strip of the cream page canvas showing below the dark field.
+  <code>dvh</code> tracks the actually-visible viewport, so the surface fills the screen on mobile
+  and desktop alike. The reversed dark surface itself is the other new <code>Box</code> variant
+  (<code>surface="reversed"</code>); both are mythrunUI additions documented on the
+  <a href="./design-system.html">Design system</a> page.
+</aside>
+
+<p>
+  The <strong>provider stack</strong> is the web shell's one composition root: a single
+  <code>QueryClient</code>, the resolved <code>ApiContext</code> (base URL + the injected
+  <code>getAuthHeaders</code>), and the i18n runtime, in that nesting order. It is config-driven —
+  <code>main.tsx</code> builds the concrete config from the environment and the web
+  <code>SecureStorage</code> impl once at module scope and passes it in — so the shell is testable
+  with a fake storage and an explicit auth mode. In dev (bypass) <code>main.tsx</code> also seeds
+  the session store <code>ready</code> once, so the dev app lands on the authed side of the gate
+  against the always-authenticated bypass backend.
+</p>
+
+<h2>Talking to the API cross-origin</h2>
+
+<p>
+  The SPA and the API are separate origins — <code>app.mythrun.com</code> calling
+  <code>api.mythrun.com</code> in prod, <code>localhost:5173</code> calling
+  <code>localhost:3030</code> in dev — so the data layer's <code>fetch</code> calls are cross-origin
+  and the browser preflights them. The backend answers with a real
+  <a href="../runtime/index.html#cross-origin-cors">CORS plugin</a> whose single allowed origin is
+  the already-validated frontend origin; that is a backend concern and the topology (and why the dev
+  proxy pattern stays confined to the internal dev tool) lives on the
+  <a href="../runtime/index.html#cross-origin-cors">Backend</a> page.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3>Add a REST endpoint to the data layer</h3>
+<ol>
+  <li>
+    Author the response (and any request) Zod schema in
+    <code>frontend/contract/src/rest/</code>, modeling the <strong>wire</strong> shape (ISO strings
+    for dates, an explicit public projection — never a raw row mirror). Export it from the
+    <code>rest</code> barrel.
+  </li>
+  <li>
+    Type the backend handler's return against the schema's inferred type (<code>z.infer</code>), so
+    <code>tsc</code> links the two sides.
+  </li>
+  <li>
+    Add the slice in <code>frontend/client-core/src/api/</code>: a <code>defineEndpoint</code> with
+    the schema, plus a thin <code>useSuspenseQuery</code> hook. Re-export both (and any domain type)
+    from the <code>client-core</code> barrel.
+  </li>
+  <li>
+    Render it from a screen through the hook only — never a bare <code>fetch</code> or
+    <code>useQuery</code> (the R5 boundary fails the lint otherwise).
+  </li>
+  <li>
+    Build the contract first (<code>pnpm --filter @mythrun/contract build</code>), then run the
+    <a href="../infra/ci-cd.html#the-frontend-check-gate">frontend-check</a> chain. A fresh tree
+    can't resolve <code>@mythrun/contract/rest</code> until <code>dist/</code> exists.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  This page is the data/shell half of the frontend; the
+  <a href="./index.html">Frontend foundation</a> covers the workspace, the lint rails, the i18n
+  layer, and the design tokens, and the <a href="./design-system.html">Design system</a> covers
+  mythrunUI (including the two new <code>Box</code> variants the 404 uses and the component-<em
+    >prop</em
+  >
+  contract that shares the word "contract" with this page's wire contract). The cross-origin CORS
+  topology, the plugin-registration order it slots into, and the Dockerfile step that builds
+  <code>@mythrun/contract</code> into the image all live on the
+  <a href="../runtime/index.html">Backend</a> page. The realtime unions this package now hosts feed
+  the <a href="../runtime/session-transport.html">session transport</a> and
+  <a href="../runtime/pipeline-status.html">pipeline status</a> surfaces. The three-state gate maps
+  onto the <a href="../auth-billing/onboarding.html">onboarding</a> 401/403 split. The
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page details the frontend-check
+  gate and the contract build step.
+</p>
+
+<h2>Appendix: packages &amp; the data-layer surface</h2>
+
+<h3>Packages touched or added</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Path</th>
+      <th>Role in MYT-83</th>
+      <th>Built?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@mythrun/contract</code></td>
+      <td><code>frontend/contract/</code></td>
+      <td>New — Zod REST schemas + the relocated realtime event unions; the typed wire</td>
+      <td>yes (<code>.js</code> + <code>.d.ts</code>, consumed by backend + frontend)</td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/client-core</code></td>
+      <td><code>frontend/client-core/</code></td>
+      <td>
+        Gained <code>api/</code>, <code>stores/</code>, <code>platform/</code>, the i18n catalog
+      </td>
+      <td>no (source-consumed)</td>
+    </tr>
+    <tr>
+      <td><code>@mythrun/web</code></td>
+      <td><code>frontend/</code></td>
+      <td>The router shell, thin screens, <code>platform/web</code> impls, the wired home hub</td>
+      <td>via Vite</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>The data-layer surface (<code>client-core/api</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Export</th>
+      <th>What it is</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>defineEndpoint</code></td>
+      <td>
+        The only sanctioned backend-call path; validates the response against a contract schema.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>HttpError</code> / <code>ContractValidationError</code> / <code>NetworkError</code>
+      </td>
+      <td>
+        The three discriminated failure kinds, each with an <code>instanceof</code> type guard.
+      </td>
+    </tr>
+    <tr>
+      <td><code>useMe</code> / <code>useMyCampaigns</code></td>
+      <td>Thin React-Query suspense hooks over the endpoint slices.</td>
+    </tr>
+    <tr>
+      <td><code>getAuthHeaders</code></td>
+      <td>
+        The injected per-request header producer (dev <code>x-mythrun-dev-sub</code> / prod Bearer).
+      </td>
+    </tr>
+    <tr>
+      <td><code>useSessionStore</code></td>
+      <td>The three-state Zustand session store the auth gate reads.</td>
+    </tr>
+    <tr>
+      <td><code>SecureStorage</code></td>
+      <td>
+        The platform-capability interface; web impl lives under
+        <code>frontend/src/platform/web/</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/contract/</code> (<code>@mythrun/contract</code> — <code>src/rest/</code>,
+  <code>src/events/</code>), <code>frontend/client-core/src/api/</code>,
+  <code>frontend/client-core/src/stores/session.ts</code>,
+  <code>frontend/client-core/src/platform/secure-storage.ts</code>,
+  <code>frontend/client-core/src/index.ts</code>, <code>frontend/src/app/</code>,
+  <code>frontend/src/routes/home.tsx</code>,
+  <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>.
+</p>
