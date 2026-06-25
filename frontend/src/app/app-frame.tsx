@@ -14,19 +14,20 @@ import { useTranslation } from 'react-i18next'
 // The frame is presentational — the W3c router test asserts its `app-frame`
 // testid renders for a `ready` session; W3e/W4a wire the live identity data.
 //
-// Responsiveness (MYT-97): the header is a single quiet row at 375px — the
-// display-name Text ellipsizes (truncate), the Stack children shrink (min-w-0),
-// and the settings affordance is an icon-only gear IconButton (a small, fixed
-// shrink-0 box, not a wide text label) — so neither a long display name nor the
-// affordance itself shoves anything off-screen at 375px.
+// Responsiveness (MYT-97): the header is a single quiet row at 375px. The
+// display-name Text is the ONLY flexible item — it ellipsizes (truncate) and
+// absorbs the row's shrink; the wordmark + credits hold their width (noShrink),
+// and the settings affordance is an icon-only gear IconButton (shrink-0). So a
+// long display name truncates instead of squeezing the fixed labels into a spill.
 export function AppFrame(): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Stack data-testid="app-frame">
       <Box padding={4} surface="base" border data-testid="app-frame-header">
         <Stack direction="row" justify="between" align="center" gap={5}>
-          {/* The wordmark — the frame's quiet anchor (left). */}
-          <Text role="ui-label" data-testid="frame-logo">
+          {/* The wordmark — the frame's quiet anchor (left). Fixed: it holds its
+              width (noShrink) so a long display name can't squeeze it into a spill. */}
+          <Text role="ui-label" noShrink data-testid="frame-logo">
             {t('frame.logo')}
           </Text>
           {/* Identity + balance + settings affordance (right). */}
@@ -34,7 +35,7 @@ export function AppFrame(): React.JSX.Element {
             <Text role="ui-label" truncate data-testid="frame-display-name">
               {t('frame.displayName')}
             </Text>
-            <Text role="data" data-testid="frame-credits">
+            <Text role="data" noShrink data-testid="frame-credits">
               {t('frame.credits')}
             </Text>
             <IconButton

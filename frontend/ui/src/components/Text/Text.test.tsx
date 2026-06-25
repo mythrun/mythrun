@@ -56,6 +56,20 @@ describe('Text', () => {
     expect(getByTestId('t')).not.toHaveClass('whitespace-nowrap')
   })
 
+  it('holds its width (shrink-0) when noShrink is set', () => {
+    const { getByTestId } = render(
+      <Text data-testid="t" noShrink>
+        fixed
+      </Text>,
+    )
+    expect(getByTestId('t')).toHaveClass('shrink-0')
+  })
+
+  it('does not set shrink-0 by default', () => {
+    const { getByTestId } = render(<Text data-testid="t">x</Text>)
+    expect(getByTestId('t')).not.toHaveClass('shrink-0')
+  })
+
   it('forwards its ref to the underlying element', () => {
     const ref = createRef<HTMLElement>()
     render(

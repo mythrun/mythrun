@@ -63,11 +63,29 @@ const config: TestRunnerConfig = {
       )
       await page.waitForTimeout(50)
 
-      const { maxScroll, innerWidth } = await page.evaluate(() => {
+      const { maxScroll, innerWidth, spills } = await page.evaluate(() => {
         const root = document.querySelector('#storybook-root')
         const candidates = [root, document.body].filter((el): el is Element => el !== null)
         const max = Math.max(...candidates.map((el) => el.scrollWidth))
-        return { maxScroll: max, innerWidth: window.innerWidth }
+        // Intra-row collision: a FIXED item squeezed below its own text spills it
+        // (content wider than the box while overflow stays VISIBLE — not a clean
+        // truncate clip). The container needn't scroll, so the width check above
+        // misses it; flag the spilling element directly.
+        const scope = root ?? document.body
+        const spilled: string[] = []
+        for (const el of Array.from(scope.querySelectorAll('*'))) {
+          if (getComputedStyle(el).overflowX !== 'visible') continue
+          if (el.scrollWidth <= el.clientWidth + 1) continue
+          const ownsText = Array.from(el.childNodes).some(
+            (n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim() !== '',
+          )
+          if (ownsText) {
+            spilled.push(
+              `${el.textContent.trim().slice(0, 24)} (${String(el.scrollWidth)}>${String(el.clientWidth)})`,
+            )
+          }
+        }
+        return { maxScroll: max, innerWidth: window.innerWidth, spills: spilled }
       })
 
       if (maxScroll > innerWidth + 1) {
@@ -76,6 +94,14 @@ const config: TestRunnerConfig = {
             `content scrollWidth ${String(maxScroll)} > viewport ${String(innerWidth)} (+1px tolerance). ` +
             `Give shrinkable content intrinsic shrink (Stack min-w-0 child / Text truncate / Stack wrap), ` +
             `fixed affordances shrink-0, or use a breakpoint collapse.`,
+        )
+      }
+
+      if (spills.length > 0) {
+        throw new Error(
+          `[overflow-gate] "${context.title} / ${context.name}" intra-row collision at ${String(width)}px: ` +
+            `a fixed item is squeezed below its own text and spills its box into its neighbour — ` +
+            `${JSON.stringify(spills)}. Give that Text \`noShrink\` (hold its width) or \`truncate\` (clip it).`,
         )
       }
     }
