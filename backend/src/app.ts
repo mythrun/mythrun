@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Server, IncomingMessage, ServerResponse } from 'node:http'
 import Fastify, { type FastifyInstance } from 'fastify'
+import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 import fastifyWebsocket from '@fastify/websocket'
 import type { Pool } from 'pg'
@@ -205,6 +206,28 @@ export const buildApp = async (
           `route with the marker or remove the entry from PIPELINE_ROUTES.`,
       )
     }
+  })
+
+  // CORS (cross-origin SPA → API). The prod topology is a SEPARATE api.mythrun.com
+  // with real CORS — NOT a dev proxy (that pattern stays confined to the internal
+  // dev-tool). The SPA (app.mythrun.com / dev localhost:5173) calls this API on a
+  // different origin, so the browser preflights non-simple requests and the API
+  // must echo an explicit Access-Control-Allow-Origin. The one allowed origin IS
+  // the frontend SPA origin — config.env.frontendBaseUrl, already validated +
+  // host-allowlisted by loadEnv (dev http://localhost:5173; staging/prod the
+  // deployed SPA host). Reusing it keeps ONE source of truth for "where the
+  // frontend lives" — no parallel CORS allowlist to drift.
+  //
+  // Registered HERE, ahead of registerAuth, so the cors onRequest hook runs first:
+  // a preflight OPTIONS short-circuits (204) before the auth hook would reject the
+  // un-credentialed preflight. credentials:false — auth rides the Authorization /
+  // x-mythrun-dev-sub HEADERS, not cookies (the data-layer fetch sends none); if a
+  // cookie-based refresh lands (MYT-84), flip to true with the origin kept explicit.
+  await app.register(cors, {
+    origin: [config.env.frontendBaseUrl],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-mythrun-dev-sub'],
+    credentials: false,
   })
 
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' })) // liveness

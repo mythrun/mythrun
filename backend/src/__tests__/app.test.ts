@@ -108,6 +108,47 @@ describe('buildApp', () => {
     expect(app).toBeDefined()
   })
 
+  // CORS (cross-origin SPA → API). Prod topology is a separate api.mythrun.com
+  // with real CORS (not a proxy), so the browser preflights non-simple requests
+  // and the API must echo Access-Control-Allow-Origin for the SPA origin. That
+  // origin IS config.frontendBaseUrl (stubConfig → http://localhost:5173) — the
+  // same validated value loadEnv host-allowlists; no parallel CORS allowlist.
+  it('reflects the frontend origin (config.frontendBaseUrl) on a simple request', async () => {
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, stubConfig())
+    const res = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { origin: 'http://localhost:5173' },
+    })
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+  })
+
+  it('answers a CORS preflight (OPTIONS) for an API route', async () => {
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, stubConfig())
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/campaigns/mine',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization',
+      },
+    })
+    expect(res.statusCode).toBe(204)
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+    expect(res.headers['access-control-allow-methods']).toContain('GET')
+  })
+
+  it('does not authorize a foreign origin', async () => {
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, stubConfig())
+    const res = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { origin: 'http://evil.example.com' },
+    })
+    expect(res.headers['access-control-allow-origin']).not.toBe('http://evil.example.com')
+  })
+
   it('/health returns {status:"ok"}', async () => {
     app = await buildApp(makeStubDeps(), { mode: 'bypass' }, stubConfig())
     const res = await app.inject({ method: 'GET', url: '/health' })
