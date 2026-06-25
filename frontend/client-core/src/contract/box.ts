@@ -23,9 +23,10 @@ export interface BoxProps extends BaseProps {
   /** Draw a 1px `--border-strong` boundary on all sides. */
   border?: boolean
   /**
-   * Minimum block size. `screen` floors the box at the full viewport height
-   * (`100vh`) — a full-screen root, e.g. the dithered 404, where the surface
-   * must fill the viewport with no other surface showing below it.
+   * Minimum block size. `screen` floors the box at the full *dynamic* viewport
+   * height (`100dvh` — fills the mobile screen where `100vh` leaves a white gap
+   * under the browser chrome) — a full-screen root, e.g. the dithered 404, where
+   * the surface must fill the viewport with no other surface showing below it.
    */
   minHeight?: 'screen'
 }
