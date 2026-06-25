@@ -1,5 +1,5 @@
 import { Outlet } from 'react-router-dom'
-import { Box, Stack, Text, Button } from '@mythrun/ui'
+import { Box, Stack, Text, IconButton } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 
 // The quiet brand frame (brand decisions.md — "the brand is the frame, not the
@@ -13,6 +13,12 @@ import { useTranslation } from 'react-i18next'
 //
 // The frame is presentational — the W3c router test asserts its `app-frame`
 // testid renders for a `ready` session; W3e/W4a wire the live identity data.
+//
+// Responsiveness (MYT-97): the header is a single quiet row at 375px — the
+// display-name Text ellipsizes (truncate), the Stack children shrink (min-w-0),
+// and the settings affordance is an icon-only gear IconButton (a small, fixed
+// shrink-0 box, not a wide text label) — so neither a long display name nor the
+// affordance itself shoves anything off-screen at 375px.
 export function AppFrame(): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -25,15 +31,19 @@ export function AppFrame(): React.JSX.Element {
           </Text>
           {/* Identity + balance + settings affordance (right). */}
           <Stack direction="row" align="center" gap={5}>
-            <Text role="ui-label" data-testid="frame-display-name">
+            <Text role="ui-label" truncate data-testid="frame-display-name">
               {t('frame.displayName')}
             </Text>
             <Text role="data" data-testid="frame-credits">
               {t('frame.credits')}
             </Text>
-            <Button variant="ghost" size="sm" data-testid="frame-settings">
-              {t('frame.settings')}
-            </Button>
+            <IconButton
+              icon="settings"
+              label={t('frame.settings')}
+              variant="ghost"
+              size="sm"
+              data-testid="frame-settings"
+            />
           </Stack>
         </Stack>
       </Box>

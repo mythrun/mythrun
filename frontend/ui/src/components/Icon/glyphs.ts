@@ -81,6 +81,17 @@ export const GLYPHS: Record<IconName, Glyph> = {
       'M21 3h-8v2h8V3Z',
     ],
   },
+  // The app-frame settings gear (MYT-97). Path data copied VERBATIM from
+  // pixelarticons/svg/settings-cog-2.svg (the gear cog; keyed `settings`).
+  settings: {
+    viewBox: VIEWBOX_24,
+    paths: [
+      'M18 2h2v2h-2zM4 2h2v2H4zm16 20h-2v-2h2zM4 22h2v-2H4zM20 4h2v2h-2zM6 4h4v2H6zm12 16h-4v-2h4zM6 20h4v-2H6zM18 6h2v4h-2zM4 6h2v4H4zm16 12h-2v-4h2zM4 18h2v-4H4zM14 4h4v2h-4zM2 4h2v2H2zm20 16h-2v-2h2zM2 20h2v-2H2z',
+      'M8 2h2v4H8zm0 20h2v-4H8z',
+      'M8 2h8v2H8zm0 20h8v-2H8zM2 8h2v8H2zm20 8h-2V8h2z',
+      'M20 8h2v4h-2zM10 8h4v2h-4zm-2 2h2v4H8zm2 4h4v2h-4zm4-4h2v4h-2z',
+    ],
+  },
   // Status-intent severity glyphs (MYT-82 W3c). `info` = info-box, `warning-diamond`
   // = warning, `square-alert` = danger. Success reuses `check` (above). Path data
   // copied VERBATIM from pixelarticons/svg/<name>.svg (all viewBox="0 0 24 24").

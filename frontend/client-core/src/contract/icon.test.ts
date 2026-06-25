@@ -20,6 +20,7 @@ describe('IconProps contract', () => {
       | 'menu'
       | 'search'
       | 'external-link'
+      | 'settings'
       | 'info'
       | 'warning-diamond'
       | 'square-alert'

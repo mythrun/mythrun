@@ -19,6 +19,9 @@ export type IconName =
   | 'menu'
   | 'search'
   | 'external-link'
+  // Chrome affordance (MYT-97) — the app-frame settings gear (an icon-only
+  // IconButton, so a long display name can't shove a text label off-screen).
+  | 'settings'
   // Status-intent severities (MYT-82 W3c — Banner / Toast). `check` (above)
   // doubles as the success glyph; these add the other three severities.
   | 'info'
