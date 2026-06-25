@@ -76,3 +76,17 @@ export const CenterAligned: Story = {
     </Stack>
   ),
 }
+
+export const Wrapping: Story = {
+  name: 'Row · wrap',
+  args: { direction: 'row', gap: 3, wrap: true },
+  render: (args) => (
+    <div className="max-w-full">
+      <Stack {...args}>
+        {['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'].map((label) => (
+          <Cell key={label} label={label} />
+        ))}
+      </Stack>
+    </div>
+  ),
+}

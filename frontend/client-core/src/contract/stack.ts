@@ -15,4 +15,6 @@ export interface StackProps extends BaseProps {
   align?: 'start' | 'center' | 'end' | 'stretch'
   /** Main-axis distribution of children. */
   justify?: 'start' | 'center' | 'end' | 'between'
+  /** Allow children to wrap onto multiple main-axis lines when they overflow. */
+  wrap?: boolean
 }

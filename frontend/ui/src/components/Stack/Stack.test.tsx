@@ -59,6 +59,25 @@ describe('Stack', () => {
     expect(getByTestId('stack').classList.contains('justify-between')).toBe(true)
   })
 
+  it('applies min-w-0 to its children so they can shrink under constraint', () => {
+    const { getByTestId } = render(<Stack data-testid="stack">x</Stack>)
+    expect(getByTestId('stack').classList.contains('[&>*]:min-w-0')).toBe(true)
+  })
+
+  it('wraps children onto multiple lines when wrap is set', () => {
+    const { getByTestId } = render(
+      <Stack data-testid="stack" direction="row" wrap>
+        x
+      </Stack>,
+    )
+    expect(getByTestId('stack').classList.contains('flex-wrap')).toBe(true)
+  })
+
+  it('does not wrap by default', () => {
+    const { getByTestId } = render(<Stack data-testid="stack">x</Stack>)
+    expect(getByTestId('stack').classList.contains('flex-wrap')).toBe(false)
+  })
+
   it('forwards its ref to the underlying div', () => {
     const ref = createRef<HTMLDivElement>()
     render(
