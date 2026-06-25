@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Text } from './Text.tsx'
+import { Stack } from '../Stack/Stack.tsx'
 
 // Text — the body-altitude typography primitive. Applies a typographic ROLE
 // (family + size + weight + tracking) from the token scale; `as` picks the
@@ -47,4 +48,16 @@ export const UiCaption: Story = {
 export const Data: Story = {
   args: { role: 'data' },
   render: (args) => <Text {...args}>HP 24 / 30 · AC 16</Text>,
+}
+
+export const Truncated: Story = {
+  name: 'Truncated (single line)',
+  args: { role: 'ui-label', truncate: true },
+  render: (args) => (
+    <div className="max-w-[220px]">
+      <Stack direction="row">
+        <Text {...args}>A display name that is far too long to fit on one comfortable line</Text>
+      </Stack>
+    </div>
+  ),
 }

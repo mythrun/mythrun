@@ -42,6 +42,20 @@ describe('Text', () => {
     },
   )
 
+  it('truncates to a single line with an ellipsis when truncate is set', () => {
+    const { getByTestId } = render(
+      <Text data-testid="t" truncate>
+        a very long label that cannot fit on one line
+      </Text>,
+    )
+    expect(getByTestId('t')).toHaveClass('overflow-hidden', 'text-ellipsis', 'whitespace-nowrap')
+  })
+
+  it('does not truncate by default (wraps)', () => {
+    const { getByTestId } = render(<Text data-testid="t">x</Text>)
+    expect(getByTestId('t')).not.toHaveClass('whitespace-nowrap')
+  })
+
   it('forwards its ref to the underlying element', () => {
     const ref = createRef<HTMLElement>()
     render(

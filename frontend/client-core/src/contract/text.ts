@@ -19,4 +19,6 @@ export interface TextProps extends BaseProps {
   role?: TextRole
   /** Semantic element. `span` (inline, default) or `p` (block paragraph). */
   as?: 'span' | 'p'
+  /** Truncate to a single line with a trailing ellipsis when the text overflows its container. */
+  truncate?: boolean
 }
