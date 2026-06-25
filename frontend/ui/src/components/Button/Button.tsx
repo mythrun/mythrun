@@ -59,8 +59,9 @@ const SIZE_CLASS: Record<ButtonSize, string> = {
 const button = cva(
   cn(
     // Layout: label + (optional) spinner sit on one row, centered, never wrapping.
-    // The gap is per-size (see SIZE_CLASS) — tuned to the spinner that sits there.
-    'inline-flex items-center justify-center whitespace-nowrap',
+    // shrink-0 (§4): the fixed action affordance opts OUT of the blanket Stack
+    // min-w-0 default so a button never spills or squishes beside shrinking text.
+    'inline-flex items-center justify-center whitespace-nowrap shrink-0',
     'font-ui font-medium select-none cursor-pointer',
     // Flat 1-bit corners.
     'rounded-none',

@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Button } from './Button.tsx'
+import { Stack } from '../Stack/Stack.tsx'
+import { Text } from '../Text/Text.tsx'
 
 // Button — the text/label action control. A REAL <button> (native keyboard
 // activation + a11y), flat 1-bit (0px radius), with TOKEN-SWAP states (no
@@ -119,6 +121,20 @@ export const Loading: Story = {
       <Button variant="ghost" loading>
         Saving
       </Button>
+    </div>
+  ),
+}
+
+export const HoldsSizeBesideShrinkingText: Story = {
+  name: 'Holds size beside shrinking text',
+  render: () => (
+    <div className="max-w-[260px]">
+      <Stack direction="row" align="center" justify="between" gap={3}>
+        <Text role="ui-label" truncate>
+          A long identity label that must give way to the action
+        </Text>
+        <Button>Settings</Button>
+      </Stack>
     </div>
   ),
 }

@@ -158,6 +158,11 @@ describe('Button', () => {
     }
   })
 
+  it('opts out of flex-shrink so it keeps its size beside shrinking content (shrink-0)', () => {
+    const { getByRole } = render(<Button>Settings</Button>)
+    expect(getByRole('button')).toHaveClass('shrink-0')
+  })
+
   it('renders distinct visual heights per size (--control-sm/md/lg, not a blanket floor)', () => {
     const heights: Record<'sm' | 'md' | 'lg', string> = {
       sm: 'h-[var(--control-sm)]',
