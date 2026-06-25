@@ -15,8 +15,11 @@ import { FormField } from '../FormField/FormField.tsx'
 // `check` on the selected) · disabled · invalid (danger border + `aria-invalid`).
 // Sizes sm/md/lg track `--control-*`.
 //
-// Labelling is FormField's job in the real app. Content/i18n: each option's
-// `label` (and `placeholder`) is an i18n key the consumer resolves.
+// Labelling is FormField's job in the real app, so every state swatch is shown
+// in its FormField context — that supplies the associated <Label> (the trigger's
+// accessible NAME) the now-ENFORCED a11y gate requires (a bare combobox trigger
+// has no placeholder fallback). Content/i18n: each option's `label`, the
+// `placeholder`, and the FormField `label` are i18n keys the consumer resolves.
 
 const OPTIONS = [
   { value: 'human', label: 'race.human' },
@@ -44,34 +47,62 @@ export default meta
 type Story = StoryObj<typeof Select>
 
 // Default — nothing selected, the placeholder (an i18n key) shows muted.
-export const Default: Story = {}
+export const Default: Story = {
+  render: (args) => (
+    <FormField label="field.choose_race">
+      <Select {...args} />
+    </FormField>
+  ),
+}
 
 // Selected — a controlled value renders that option's label in the trigger.
 export const Selected: Story = {
   args: { defaultValue: 'elf' },
+  render: (args) => (
+    <FormField label="field.choose_race">
+      <Select {...args} />
+    </FormField>
+  ),
 }
 
-// The size axis — sm/md/lg trigger height (32/40/48px).
+// The size axis — sm/md/lg trigger height (32/40/48px). Each trigger gets its
+// own FormField so it carries an accessible name.
 export const Sizes: Story = {
   render: (args) => (
     <div className="flex flex-col gap-[var(--space-3)] w-80">
-      <Select {...args} size="sm" />
-      <Select {...args} size="md" />
-      <Select {...args} size="lg" />
+      <FormField label="control.sm">
+        <Select {...args} size="sm" />
+      </FormField>
+      <FormField label="control.md">
+        <Select {...args} size="md" />
+      </FormField>
+      <FormField label="control.lg">
+        <Select {...args} size="lg" />
+      </FormField>
     </div>
   ),
 }
 
 // Invalid — danger border token + a danger focus ring; the impl also sets
-// `aria-invalid` on the trigger so the state reaches assistive tech.
+// `aria-invalid` on the trigger so the state reaches assistive tech. `invalid`
+// rides on the FormField (authoritative), which forwards it to the trigger.
 export const Invalid: Story = {
-  args: { invalid: true },
+  render: (args) => (
+    <FormField label="field.choose_race" invalid>
+      <Select {...args} />
+    </FormField>
+  ),
 }
 
 // Disabled — a non-interactive trigger + muted token swap (a11y-exempt for
 // contrast).
 export const Disabled: Story = {
   args: { disabled: true, defaultValue: 'human' },
+  render: (args) => (
+    <FormField label="field.choose_race">
+      <Select {...args} />
+    </FormField>
+  ),
 }
 
 // Open — the play clicks the trigger so the catalogue shows the OPEN listbox, and

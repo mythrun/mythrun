@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { TextArea } from './TextArea.tsx'
+import { FormField } from '../FormField/FormField.tsx'
 
 // TextArea — the multi-line text control. A REAL native <textarea> (form
 // control + a11y), the multi-line sibling of Input: same flat 1-bit register
@@ -11,8 +12,12 @@ import { TextArea } from './TextArea.tsx'
 // `aria-invalid` + danger focus ring) · disabled · read-only. Sizes sm/md/lg set
 // the per-control min-height from `--control-*`.
 //
-// Labelling is FormField's job in the real app. Content/i18n: `placeholder` is
-// an i18n key the consumer resolves.
+// Labelling is FormField's job in the real app, so the single-control state
+// swatches are shown in their FormField context — that supplies the associated
+// <Label> (the control's accessible NAME) the now-ENFORCED a11y gate requires.
+// The placeholder-only specimens (Sizes / With placeholder) and the Auto-grow
+// composer (own bound <label>) carry their name another way and stay bare.
+// Content/i18n: `label` / `placeholder` are i18n keys the consumer resolves.
 
 const meta: Meta<typeof TextArea> = {
   title: 'Controls/TextArea',
@@ -39,6 +44,11 @@ type Story = StoryObj<typeof TextArea>
 
 export const Default: Story = {
   args: { rows: 4, defaultValue: 'The road to Stonehollow winds through the fog.' },
+  render: (args) => (
+    <FormField label="field.session_notes">
+      <TextArea {...args} />
+    </FormField>
+  ),
 }
 
 // The size axis — sm/md/lg set the per-control min-height (32/40/48px).
@@ -53,21 +63,37 @@ export const Sizes: Story = {
 }
 
 // Invalid — the danger border token + a danger-colored focus ring; the impl
-// also sets `aria-invalid` so the state reaches assistive tech.
+// also sets `aria-invalid` so the state reaches assistive tech. `invalid` rides
+// on the FormField (authoritative), which forwards it to the wrapped TextArea.
 export const Invalid: Story = {
-  args: { invalid: true, rows: 4, defaultValue: 'Too short.' },
+  args: { rows: 4, defaultValue: 'Too short.' },
+  render: (args) => (
+    <FormField label="field.session_notes" invalid>
+      <TextArea {...args} />
+    </FormField>
+  ),
 }
 
 // Disabled — the native disabled attribute + muted token swap (a11y-exempt for
 // contrast). Non-interactive.
 export const Disabled: Story = {
   args: { disabled: true, rows: 4, defaultValue: "Can't edit this." },
+  render: (args) => (
+    <FormField label="field.session_notes">
+      <TextArea {...args} />
+    </FormField>
+  ),
 }
 
 // Read-only — value visible but not editable (native readOnly). Still focusable.
 export const ReadOnly: Story = {
   name: 'Read-only',
   args: { readOnly: true, rows: 4, defaultValue: 'Locked narration.' },
+  render: (args) => (
+    <FormField label="field.session_notes">
+      <TextArea {...args} />
+    </FormField>
+  ),
 }
 
 // Placeholder — an i18n key the consumer resolves (shown muted).
