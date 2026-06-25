@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+@import '@mythrun/ui/styles.css';
+
+/* Tailwind v4 scans only what we point it at. Register BOTH the design-system
+   source (token utilities used in component stories) and the app-shell source
+   (utilities used in screens + the gate's demo wrappers). */
+@source "../ui/src";
+@source "../src";

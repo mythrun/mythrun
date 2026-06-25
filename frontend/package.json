@@ -11,7 +11,12 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --exclude '**/config-wiring.test.ts' --exclude '**/*.wiring.test.ts'",
     "i18n:todo": "node scripts/i18n-todo.mjs",
-    "smoke:home-hub": "tsx src/smoke/home-hub.smoke.ts"
+    "smoke:home-hub": "tsx src/smoke/home-hub.smoke.ts",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "test-storybook": "test-storybook --url http://127.0.0.1:6006",
+    "test-storybook:ci": "concurrently -k -s first -n SB,TEST -c magenta,blue \"http-server storybook-static --port 6006 --silent\" \"wait-on tcp:127.0.0.1:6006 && pnpm test-storybook\"",
+    "screen-story-coverage": "node scripts/screen-story-coverage.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.0.0",
@@ -27,6 +32,13 @@
   },
   "devDependencies": {
     "@mythrun/client-core": "workspace:*",
+    "@storybook/addon-a11y": "^9.1.20",
+    "@storybook/react-vite": "^9.1.20",
+    "@storybook/test-runner": ">=0.19.0 <0.24.0",
+    "concurrently": "^9.1.0",
+    "http-server": "^14.1.1",
+    "storybook": "^9.1.20",
+    "wait-on": "^8.0.1",
     "msw": "^2.6.0",
     "@eslint-community/eslint-plugin-eslint-comments": "^4.4.0",
     "@tailwindcss/vite": "^4.0.0",

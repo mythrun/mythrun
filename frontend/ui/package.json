@@ -16,9 +16,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "build:tokens": "node ../client-core/src/tokens/generate-palette.mjs ./src/styles",
-    "build": "pnpm build:tokens",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "build": "pnpm build:tokens"
   },
   "peerDependencies": {
     "react": "^19.0.0",

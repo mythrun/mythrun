@@ -146,6 +146,7 @@ export default [
       // auto-skipped by `eslint .`; its configs are linted within @mythrun/ui.)
       'ui/vitest.config.ts',
       'ui/storybook-static/**', // Storybook build output (gitignored artifact) — never lint it
+      'storybook-static/**', // web Storybook build output (gitignored artifact) — never lint it
       // @mythrun/ui's node tooling scripts (e.g. the story-coverage gate + its
       // vitest test) live in `ui/scripts/**`, outside web's TS project — same
       // out-of-project carve-out as web's own `scripts/**` above. ui lints them
