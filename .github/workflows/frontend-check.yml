@@ -19,7 +19,15 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile --filter @mythrun/web... --filter @mythrun/ui... --filter @mythrun/client-core...
+      - run: pnpm install --frozen-lockfile --filter @mythrun/web... --filter @mythrun/ui... --filter @mythrun/client-core... --filter @mythrun/contract...
+
+      # @mythrun/contract — the shared Zod wire contract, and the ONLY frontend
+      # package that ships compiled output (NodeNext dist, consumed by both the
+      # backend and the Bundler frontend). dist/ is gitignored, so it must be
+      # built before any consumer typecheck/test — exactly like .husky/pre-push
+      # gate 0 and the backend Dockerfile. Without this, a fresh runner fails to
+      # resolve `@mythrun/contract/rest` even though local trees stay warm.
+      - run: pnpm --filter @mythrun/contract build
 
       # @mythrun/client-core — the platform-neutral client brain (contract +
       # tokens). Logic-tested + 100% coverage gated (its own tiered config).

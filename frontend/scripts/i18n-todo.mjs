@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-const ROOT = new URL('../src/i18n/locales/', import.meta.url).pathname
+const ROOT = new URL('../client-core/src/i18n/locales/', import.meta.url).pathname
 
 function* jsonFiles(dir) {
   for (const name of readdirSync(dir)) {

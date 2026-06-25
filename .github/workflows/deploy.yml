@@ -90,7 +90,12 @@ jobs:
       # Scope install to backend + transitive workspace deps so sibling
       # workspace issues (e.g., @mythrun/wiki) don't red-light a backend
       # deploy. --frozen-lockfile still validates the full lockfile.
-      - run: pnpm install --frozen-lockfile --filter @mythrun/backend...
+      - run: pnpm install --frozen-lockfile --filter @mythrun/backend... --filter @mythrun/contract...
+
+      # The backend imports @mythrun/contract (NodeNext dist, gitignored) — build
+      # it before the backend lint/typecheck/test, same as .husky/pre-push gate 0.
+      # (The Docker build below rebuilds it inside the image independently.)
+      - run: pnpm --filter @mythrun/contract build
 
       - run: pnpm --filter @mythrun/backend lint
       - run: pnpm --filter @mythrun/backend typecheck

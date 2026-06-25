@@ -32,6 +32,10 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile --filter @mythrun/backend...
+      - run: pnpm install --frozen-lockfile --filter @mythrun/backend... --filter @mythrun/contract...
+
+      # dev-tool:check resolves backend sources that re-export @mythrun/contract
+      # (NodeNext dist, gitignored) — build it first, same as .husky/pre-push gate 0.
+      - run: pnpm --filter @mythrun/contract build
 
       - run: pnpm dev-tool:check
