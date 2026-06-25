@@ -42,7 +42,7 @@ export const WithSlots: Story = {
   name: 'Header · body · footer',
   args: { surface: 'base' },
   render: (args) => (
-    <div className="w-96">
+    <div className="w-96 max-w-full">
       <Card {...args}>
         <CardHeader>
           <Text role={UI_LABEL}>card.header</Text>
@@ -62,8 +62,8 @@ export const WithSlots: Story = {
 export const Surfaces: Story = {
   name: 'Surface · base vs raised',
   render: () => (
-    <div className="flex gap-[var(--space-4)]">
-      <div className="w-72">
+    <div className="flex flex-wrap gap-[var(--space-4)]">
+      <div className="w-72 max-w-full">
         <Card surface="base">
           <CardHeader>
             <Text role={UI_LABEL}>card.surface.base</Text>
@@ -73,7 +73,7 @@ export const Surfaces: Story = {
           </CardBody>
         </Card>
       </div>
-      <div className="w-72">
+      <div className="w-72 max-w-full">
         <Card surface="raised">
           <CardHeader>
             <Text role={UI_LABEL}>card.surface.raised</Text>
@@ -92,7 +92,7 @@ export const Surfaces: Story = {
 export const Composed: Story = {
   name: 'Realistic · titled card with footer action',
   render: () => (
-    <div className="w-96">
+    <div className="w-96 max-w-full">
       <Card surface="base">
         <CardHeader>
           <Heading level={2} role={TITLE}>

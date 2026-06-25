@@ -33,7 +33,14 @@ export default [
     files: ['src/**/*.{ts,tsx}'],
     plugins: { 'jsx-a11y': jsxA11y },
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
-    rules: { ...jsxA11y.configs.recommended.rules },
+    rules: {
+      ...jsxA11y.configs.recommended.rules,
+      // Text/Heading expose a TYPOGRAPHIC `role` prop (ui-label, prose-body, …),
+      // NOT an ARIA role; aria-role's default flags `<Text role="ui-label">` as an
+      // invalid ARIA role. ignoreNonDOM scopes the rule to intrinsic DOM elements
+      // (where `role` IS aria), so the design-system `role` prop is allowed.
+      'jsx-a11y/aria-role': ['error', { ignoreNonDOM: true }],
+    },
   },
   {
     // R2 (portability): catch a component that WIDENS its public *Props with a

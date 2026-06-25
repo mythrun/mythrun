@@ -88,7 +88,7 @@ export const WithPlaceholder: Story = {
 export const AutoGrow: Story = {
   name: 'Auto-grow (chat composer)',
   render: () => (
-    <div className="flex flex-col gap-[var(--space-1)] w-96">
+    <div className="flex flex-col gap-[var(--space-1)] w-96 max-w-full">
       <label htmlFor="autogrow-composer" className="font-ui text-xs text-ink-secondary">
         Message
       </label>

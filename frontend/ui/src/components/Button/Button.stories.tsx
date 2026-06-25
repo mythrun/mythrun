@@ -81,7 +81,7 @@ export const Focus: Story = {
 export const HoverAndActive: Story = {
   name: 'Hover · Active (pointer states — hover/press to see the token swap)',
   render: () => (
-    <div className="flex items-center gap-[var(--space-4)]">
+    <div className="flex flex-wrap items-center gap-[var(--space-4)]">
       <Button variant="primary">Hover / press me</Button>
       <Button variant="secondary">Hover / press me</Button>
       <Button variant="ghost">Hover / press me</Button>

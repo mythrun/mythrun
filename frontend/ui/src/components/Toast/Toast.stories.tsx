@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, userEvent } from 'storybook/test'
 import { ToastProvider } from './Toast.tsx'
 import { toast } from './toast-store.ts'
 import { Button } from '../Button/Button.tsx'
@@ -35,8 +36,14 @@ export default meta
 type Story = StoryObj<typeof ToastProvider>
 
 // Interactive — one button per severity fires `toast()`. The provider renders the
-// queue in the bottom-right viewport; toasts auto-dismiss and can be closed.
+// queue in the bottom-right viewport; toasts auto-dismiss and can be closed. The
+// play fires one toast so the catalogue shows an OPEN toast and the overflow gate
+// measures the portalled `[role="status"]` live region at 375/1280.
 export const Interactive: Story = {
+  parameters: { overflowGate: { openSelector: '[role="status"]' } },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button', { name: 'toast.fire.success' }))
+  },
   render: (args) => (
     <div className="flex flex-wrap gap-[var(--space-2)] p-[var(--space-4)]">
       <Button

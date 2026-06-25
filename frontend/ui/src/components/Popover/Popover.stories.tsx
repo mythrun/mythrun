@@ -48,7 +48,7 @@ export const Default: Story = {
 // Side — the content can prefer a different side; Radix flips it when there's no room.
 export const Sides: Story = {
   render: (args) => (
-    <div className="flex gap-[var(--space-6)] p-[var(--space-9)]">
+    <div className="flex flex-wrap gap-[var(--space-6)] p-[var(--space-9)]">
       <Popover {...args} side="top" trigger={<Button variant="secondary">side.top</Button>}>
         <Text>[placeholder for popover copy]</Text>
       </Popover>
@@ -63,7 +63,10 @@ export const Sides: Story = {
 }
 
 // Open by default — shows the open state in the catalogue without interaction.
+// The overflow gate asserts the portalled content (Radix wraps popover content in
+// `[data-radix-popper-content-wrapper]`) is attached, then measures it at 375/1280.
 export const OpenByDefault: Story = {
+  parameters: { overflowGate: { openSelector: '[data-radix-popper-content-wrapper]' } },
   args: {
     defaultOpen: true,
     children: <Text>[placeholder for popover copy]</Text>,

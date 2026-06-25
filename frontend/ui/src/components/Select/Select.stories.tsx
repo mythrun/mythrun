@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, userEvent } from 'storybook/test'
 import { Select } from './Select.tsx'
+import { FormField } from '../FormField/FormField.tsx'
 
 // Select — the single-select dropdown. Wraps the unstyled Radix `Select`
 // primitive (focus management, type-ahead, ArrowKey nav, ARIA listbox, a
@@ -70,4 +72,30 @@ export const Invalid: Story = {
 // contrast).
 export const Disabled: Story = {
   args: { disabled: true, defaultValue: 'human' },
+}
+
+// Open — the play clicks the trigger so the catalogue shows the OPEN listbox, and
+// the overflow gate measures the portalled `[role="listbox"]` at 375/1280 (a
+// closed trigger would pass trivially without exercising the overlay). Wrapped in
+// FormField so the trigger has an accessible name (labelling is FormField's job,
+// not the bare Select's — see FormField/With Select).
+//
+// a11y carve-out: a Radix Select is MODAL — opening it aria-hides the background
+// (incl. the trigger) while focus moves into the listbox. axe's `aria-hidden-focus`
+// rule flags the still-tabbable background trigger, a by-design transient state
+// (Radix Dialog/Popover suppress the same flag; Select never got the fix). We
+// disable ONLY that one rule here — every other axe rule stays enforced.
+export const Open: Story = {
+  parameters: {
+    overflowGate: { openSelector: '[role="listbox"]' },
+    a11y: { config: { rules: [{ id: 'aria-hidden-focus', enabled: false }] } },
+  },
+  render: (args) => (
+    <FormField label="field.choose_race">
+      <Select {...args} />
+    </FormField>
+  ),
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('combobox'))
+  },
 }

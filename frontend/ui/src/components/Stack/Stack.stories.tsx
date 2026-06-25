@@ -57,7 +57,7 @@ export const SpacedBetween: Story = {
   name: 'Row · justify between',
   args: { direction: 'row', justify: 'between' },
   render: (args) => (
-    <div className="w-96">
+    <div className="w-96 max-w-full">
       <Stack {...args}>
         <Cell label="Left" />
         <Cell label="Right" />

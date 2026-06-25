@@ -66,7 +66,10 @@ export const NoScrimDismiss: Story = {
 }
 
 // Open by default — shows the open state in the catalogue without interaction.
+// The overflow gate asserts the portalled dialog is attached, then measures the
+// OPEN panel at 375/1280 (so a vw-sized panel that overflows fails loud).
 export const OpenByDefault: Story = {
+  parameters: { overflowGate: { openSelector: '[role="dialog"]' } },
   args: {
     defaultOpen: true,
     trigger: <Button>action.open</Button>,

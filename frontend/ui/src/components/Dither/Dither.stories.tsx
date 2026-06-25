@@ -114,6 +114,11 @@ export const Scale: Story = {
 // three; nothing stretches horizontally.
 export const SquarePixelsHoldAsWidthGrows: Story = {
   name: 'Square pixels (widening box)',
+  // Wide-by-design specimen: the middle figure is a fixed 448px (`w-[28rem]`) box —
+  // the WHOLE point is to prove the cells stay square as the host WIDENS past mobile
+  // (224 → 448 → full). Shrinking it to max-w-full would defeat the "tiles ×2" claim,
+  // so the overflow gate skips this story (§5 opt-out).
+  parameters: { overflowGate: false },
   render: () => (
     <div className="flex flex-col gap-[var(--space-4)]">
       <figure className="flex w-56 flex-col gap-[var(--space-2)]">

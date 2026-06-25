@@ -46,6 +46,10 @@ export const FixedColumns: Story = {
 
 export const AutoFit: Story = {
   name: 'Auto-fit track',
+  // Wide-by-design specimen: a fixed 480px host so the auto-fit track demonstrably
+  // fills MULTIPLE columns. Deliberately wider than the 375px mobile budget — the
+  // responsive behaviour is the point, so the overflow gate skips it (§5 opt-out).
+  parameters: { overflowGate: false },
   args: { columns: 'auto-fit', minColumnWidth: 9, gap: 3 },
   render: (args) => (
     <div className="w-[480px]">

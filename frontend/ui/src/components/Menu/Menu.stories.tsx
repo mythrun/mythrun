@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within, userEvent } from 'storybook/test'
 import { Menu } from './Menu.tsx'
 import { Button } from '../Button/Button.tsx'
 import { IconButton } from '../IconButton/IconButton.tsx'
@@ -52,5 +53,25 @@ export const WithDisabledItem: Story = {
       { value: 'duplicate', label: 'menu.duplicate', disabled: true },
       { value: 'delete', label: 'menu.delete' },
     ],
+  },
+}
+
+// Open — the play activates the trigger so the catalogue shows the menu content,
+// and the overflow gate measures the portalled `[role="menu"]` list at 375/1280 (a
+// closed-trigger-only story would pass trivially without exercising the overlay).
+//
+// a11y carve-out: a Radix DropdownMenu is MODAL — opening it aria-hides the
+// background (incl. the trigger) while Radix moves focus INTO the menu. axe's
+// `aria-hidden-focus` rule flags the still-tabbable background trigger, but that is
+// a by-design transient state (Radix Dialog/Popover suppress the same flag; the
+// equivalent fix never landed for DropdownMenu). We disable ONLY that one rule for
+// this open specimen — every other axe rule stays enforced.
+export const Open: Story = {
+  parameters: {
+    overflowGate: { openSelector: '[role="menu"]' },
+    a11y: { config: { rules: [{ id: 'aria-hidden-focus', enabled: false }] } },
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button'))
   },
 }

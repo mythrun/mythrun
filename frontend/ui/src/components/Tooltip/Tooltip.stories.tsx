@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { within } from 'storybook/test'
 import { Tooltip, TooltipProvider } from './Tooltip.tsx'
 import { IconButton } from '../IconButton/IconButton.tsx'
 import { Button } from '../Button/Button.tsx'
@@ -52,6 +53,19 @@ export const OnTextButton: Story = {
   args: {
     trigger: <Button variant="secondary">action.save</Button>,
     content: 'tip.save_keyboard_hint',
+  },
+}
+
+// Open — the play focuses the trigger so Radix shows the bubble (keyboard focus
+// opens it immediately, no hover delay), and the overflow gate measures the
+// portalled `[role="tooltip"]` at 375/1280.
+export const Open: Story = {
+  parameters: { overflowGate: { openSelector: '[role="tooltip"]' } },
+  args: {
+    trigger: <IconButton icon="check" label="action.save" />,
+  },
+  play: ({ canvasElement }) => {
+    within(canvasElement).getByRole('button').focus()
   },
 }
 
