@@ -220,8 +220,10 @@ export default [
               'data-testid', 'aria-.*', 'role',
               // `to` is a react-router destination PATH (a URL), not user-facing
               // prose — `<Navigate to="/auth/signin"/>`, `<Link to=…/>`. Route
-              // paths are not translatable strings.
-              'to',
+              // paths are not translatable strings. `entry` is the same class:
+              // the `ScreenHarness` (storybook) prop seeding a MemoryRouter
+              // initial route path — `<ScreenHarness entry="/home" />`.
+              'to', 'entry',
             ],
           },
         },
