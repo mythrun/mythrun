@@ -54,12 +54,12 @@ describe('Box', () => {
         x
       </Box>,
     )
-    expect(getByTestId('box').classList.contains('min-h-screen')).toBe(true)
+    expect(getByTestId('box').classList.contains('min-h-dvh')).toBe(true)
   })
 
   it('has no viewport floor by default', () => {
     const { getByTestId } = render(<Box data-testid="box">x</Box>)
-    expect(getByTestId('box').classList.contains('min-h-screen')).toBe(false)
+    expect(getByTestId('box').classList.contains('min-h-dvh')).toBe(false)
   })
 
   it('applies the padding token class for the given SpaceToken', () => {

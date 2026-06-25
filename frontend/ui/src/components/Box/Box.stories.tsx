@@ -74,9 +74,11 @@ export const Reversed: Story = {
   ),
 }
 
-// Full-viewport floor. `minHeight="screen"` floors the Box at 100vh — a
-// full-screen root (e.g. the dithered 404). Shown here on the reversed surface,
-// the combination the 404 uses: the dark surface fills the whole viewport.
+// Full-viewport floor. `minHeight="screen"` floors the Box at 100dvh (the
+// DYNAMIC viewport — fills the screen on mobile and desktop alike, where 100vh
+// would leave a strip of canvas at the bottom on mobile once the URL bar hides)
+// — a full-screen root (e.g. the dithered 404). Shown here on the reversed
+// surface, the combination the 404 uses: the dark surface fills the whole viewport.
 export const FullScreen: Story = {
   name: 'Full-screen root (minHeight=screen)',
   args: { padding: 6, surface: 'reversed', minHeight: 'screen' },

@@ -29,11 +29,16 @@ const box = cva('', {
       true: 'border border-border-strong',
       false: '',
     },
-    // Full-viewport floor: `min-h-screen` = `min-height: 100vh`. A non-color
-    // arbitrary-free utility (R3-clean, like Button's `min-h-[44px]`). The
-    // literal string appears in source so the Tailwind v4 scanner generates it.
+    // Full-viewport floor. Uses `min-h-dvh` (`min-height: 100dvh`, the DYNAMIC
+    // viewport) — deliberately NOT `100vh`: on mobile `100vh` is the height with
+    // the URL bar RETRACTED, so a `100vh` full-screen root is shorter than the
+    // page once the bar hides on scroll, leaving a strip of the page canvas
+    // showing at the bottom. `dvh` tracks the actually-visible viewport, so the
+    // surface fills the screen on mobile and desktop alike (on desktop dvh == vh).
+    // A non-color arbitrary-free utility (R3-clean, like Button's `min-h-[44px]`);
+    // the literal string appears in source so the Tailwind v4 scanner generates it.
     minHeight: {
-      screen: 'min-h-screen',
+      screen: 'min-h-dvh',
     },
   },
   defaultVariants: {
