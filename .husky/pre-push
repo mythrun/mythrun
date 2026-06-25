@@ -86,8 +86,9 @@ echo "→ pre-push gate (frontend): lint rails + tests + coverage (diff-scoped)"
 # Three-dot range = commits being pushed vs the merge-base with origin/main.
 # Mirrors .github/workflows/frontend-check.yml exactly: client-core (contract +
 # tokens) → ui (design system: typecheck/lint/css-lint/test/coverage/
-# story-coverage/storybook build) → web (app shell). When any gate fails here,
-# fix the underlying issue — do NOT bypass with `git push --no-verify`.
+# story-coverage) → web (app shell + screen-coverage + storybook build). The
+# Playwright overflow sweep stays CI-only. When any gate fails here, fix the
+# underlying issue — do NOT bypass with `git push --no-verify`.
 fe_files=$(git diff --name-only origin/main...HEAD 2>/dev/null || true)
 if echo "$fe_files" | grep -qE '^(frontend/|\.github/workflows/frontend-check\.yml)'; then
   pnpm --filter @mythrun/client-core typecheck
@@ -100,7 +101,11 @@ if echo "$fe_files" | grep -qE '^(frontend/|\.github/workflows/frontend-check\.y
   pnpm --filter @mythrun/ui test
   pnpm --filter @mythrun/ui test:coverage
   pnpm --filter @mythrun/ui story-coverage
-  pnpm --filter @mythrun/ui build-storybook
+  pnpm --filter @mythrun/web screen-story-coverage
+  # build-storybook catches story/MDX breakage cheaply; the Playwright overflow
+  # sweep (test-storybook) is CI-only — too slow + heavy for pre-push (pushes
+  # are expensive). frontend-check.yml runs the full 375/1280 gate.
+  pnpm --filter @mythrun/web build-storybook
   pnpm --filter @mythrun/web typecheck
   pnpm --filter @mythrun/web lint
   pnpm --filter @mythrun/web test

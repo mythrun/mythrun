@@ -8,7 +8,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -20,6 +20,12 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile --filter @mythrun/web... --filter @mythrun/ui... --filter @mythrun/client-core... --filter @mythrun/contract...
+
+      # Cache the Playwright Chromium download for the @mythrun/web overflow gate.
+      - uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       # @mythrun/contract — the shared Zod wire contract, and the ONLY frontend
       # package that ships compiled output (NodeNext dist, consumed by both the
@@ -37,15 +43,14 @@ jobs:
       - run: pnpm --filter @mythrun/client-core test:coverage
 
       # @mythrun/ui — the design system. typecheck/lint + CSS lint, behavior
-      # tests + tiered coverage, the story-coverage gate (every component ships
-      # a story), and a Storybook production build (catches story/MDX breakage).
+      # tests + tiered coverage, and the story-coverage gate (every component
+      # ships a story). The unified Storybook now lives in @mythrun/web.
       - run: pnpm --filter @mythrun/ui typecheck
       - run: pnpm --filter @mythrun/ui lint
       - run: pnpm --filter @mythrun/ui lint:css
       - run: pnpm --filter @mythrun/ui test
       - run: pnpm --filter @mythrun/ui test:coverage
       - run: pnpm --filter @mythrun/ui story-coverage
-      - run: pnpm --filter @mythrun/ui build-storybook
 
       # @mythrun/web — the app shell (consumes @mythrun/ui).
       - run: pnpm --filter @mythrun/web typecheck
@@ -53,3 +58,11 @@ jobs:
       - run: pnpm --filter @mythrun/web test
       - run: pnpm --filter @mythrun/web test:coverage
       - run: pnpm --filter @mythrun/web build
+      # Screen-story-coverage forcing function (every screen ships a story).
+      - run: pnpm --filter @mythrun/web screen-story-coverage
+      # The 375/1280 mobile-viewport overflow gate (Playwright/Chromium). Build the
+      # unified Storybook once, then run the test-runner sweep against the static
+      # build. Browser is cached above; --with-deps installs OS libs on a cache miss.
+      - run: pnpm --filter @mythrun/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @mythrun/web build-storybook
+      - run: pnpm --filter @mythrun/web test-storybook:ci
