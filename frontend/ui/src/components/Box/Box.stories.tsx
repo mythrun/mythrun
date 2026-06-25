@@ -1,9 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Box } from './Box.tsx'
 
-// Box — the generic surface container. A token-padded panel on one of the three
-// elevation surfaces (base / raised / overlay), optionally bordered with the
-// interactive-grade --border-strong. The building block for cards and panels.
+// Box — the generic surface container. A token-padded panel on one of the
+// elevation surfaces (base / raised / overlay) OR the reversed (dark) surface,
+// optionally bordered with the interactive-grade --border-strong, optionally
+// floored to the full viewport (minHeight="screen"). The building block for
+// cards, panels, and full-screen roots.
 
 const meta: Meta<typeof Box> = {
   title: 'Layout/Box',
@@ -11,8 +13,9 @@ const meta: Meta<typeof Box> = {
   tags: ['autodocs'],
   argTypes: {
     padding: { control: 'select', options: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
-    surface: { control: 'inline-radio', options: ['base', 'raised', 'overlay'] },
+    surface: { control: 'inline-radio', options: ['base', 'raised', 'overlay', 'reversed'] },
     border: { control: 'boolean' },
+    minHeight: { control: 'inline-radio', options: [undefined, 'screen'] },
   },
 }
 
@@ -53,5 +56,35 @@ export const Surfaces: Story = {
         <span className="font-ui text-sm text-ink">overlay · --surface-overlay (modal)</span>
       </Box>
     </div>
+  ),
+}
+
+// The reversed (dark) surface. `surface="reversed"` makes the Box a `.dark`
+// region: its bg flips to dark paper-900 and inherited text flips to the light
+// `--ink` (paper-100) — the same inversion the page→footer break uses. NO
+// explicit text color on the child: it INHERITS the flipped light ink (a
+// hardcoded `text-ink` would resolve to the frozen dark value and go invisible).
+export const Reversed: Story = {
+  name: 'Reversed (dark) surface',
+  args: { padding: 4, surface: 'reversed' },
+  render: (args) => (
+    <Box {...args}>
+      <span className="font-ui text-sm">reversed · dark paper-900, light-on-dark text</span>
+    </Box>
+  ),
+}
+
+// Full-viewport floor. `minHeight="screen"` floors the Box at 100vh — a
+// full-screen root (e.g. the dithered 404). Shown here on the reversed surface,
+// the combination the 404 uses: the dark surface fills the whole viewport.
+export const FullScreen: Story = {
+  name: 'Full-screen root (minHeight=screen)',
+  args: { padding: 6, surface: 'reversed', minHeight: 'screen' },
+  render: (args) => (
+    <Box {...args}>
+      <span className="font-ui text-sm">
+        minHeight=&quot;screen&quot; · fills the viewport (dark, full-bleed)
+      </span>
+    </Box>
   ),
 }

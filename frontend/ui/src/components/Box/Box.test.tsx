@@ -35,6 +35,33 @@ describe('Box', () => {
     expect(getByTestId('box').classList.contains('bg-surface-overlay')).toBe(true)
   })
 
+  it('maps surface=reversed to the dark reversed surface', () => {
+    const { getByTestId } = render(
+      <Box data-testid="box" surface="reversed">
+        x
+      </Box>,
+    )
+    const el = getByTestId('box')
+    // `.dark` re-establishes the reversed surface (base.css flips --bg/--ink);
+    // `bg-bg` paints the flipped dark fill.
+    expect(el.classList.contains('dark')).toBe(true)
+    expect(el.classList.contains('bg-bg')).toBe(true)
+  })
+
+  it('floors the box at the viewport height when minHeight=screen', () => {
+    const { getByTestId } = render(
+      <Box data-testid="box" minHeight="screen">
+        x
+      </Box>,
+    )
+    expect(getByTestId('box').classList.contains('min-h-screen')).toBe(true)
+  })
+
+  it('has no viewport floor by default', () => {
+    const { getByTestId } = render(<Box data-testid="box">x</Box>)
+    expect(getByTestId('box').classList.contains('min-h-screen')).toBe(false)
+  })
+
   it('applies the padding token class for the given SpaceToken', () => {
     const { getByTestId } = render(
       <Box data-testid="box" padding={5}>
