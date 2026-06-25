@@ -1,45 +1,45 @@
 {
   "back": "Back",
-  "appGreeting": "[placeholder for app greeting] {{name}}",
-  "richSample": "[placeholder for rich-text sample with a <1>link</1>]",
+  "appGreeting": "[ph_greeting] {{name}}",
+  "richSample": "[ph_rich-text with a <1>link</1>]",
   "frame": {
-    "logo": "[placeholder for the Mythrun wordmark]",
-    "displayName": "[placeholder for the player's display name]",
-    "credits": "[placeholder for the player's credit balance]",
-    "settings": "[placeholder for the settings affordance]"
+    "logo": "[ph_logo]",
+    "displayName": "[ph_name]",
+    "credits": "[ph_bal]",
+    "settings": "[ph_settings]"
   },
   "notFound": {
-    "title": "[placeholder for the 404 headline]",
-    "body": "[placeholder for the 404 explanation]"
+    "title": "[ph_404_title]",
+    "body": "[ph_404_body: about a sentence explaining this]"
   },
   "error": {
-    "title": "[placeholder for the generic error headline]",
-    "body": "[placeholder for the generic error explanation]",
-    "retry": "[placeholder for the retry affordance]",
-    "contractTitle": "[placeholder for the contract-drift dev headline]",
-    "contractBody": "[placeholder for the contract-drift dev explanation]"
+    "title": "[ph_error_title]",
+    "body": "[ph_error_body: about a sentence on the error]",
+    "retry": "[ph_retry]",
+    "contractTitle": "[ph_contract_title]",
+    "contractBody": "[ph_contract_body: a dev note on the drift]"
   },
   "home": {
-    "title": "[placeholder for the home hub heading]",
-    "loading": "[placeholder for the home hub loading label]",
-    "empty": "[placeholder for empty campaign hub]",
+    "title": "[ph_home_title]",
+    "loading": "[ph_loading]",
+    "empty": "[ph_empty_hub: a short nudge here]",
     "status": {
-      "setup": "[placeholder for the setup campaign status]",
-      "active": "[placeholder for the active campaign status]",
-      "archived": "[placeholder for the archived campaign status]",
-      "failed": "[placeholder for the failed campaign status]"
+      "setup": "[ph_setup]",
+      "active": "[ph_active]",
+      "archived": "[ph_archived]",
+      "failed": "[ph_failed]"
     }
   },
   "stub": {
-    "landing": "[placeholder for the landing screen]",
-    "signin": "[placeholder for the sign-in screen]",
-    "callback": "[placeholder for the OAuth callback screen]",
-    "onboard": "[placeholder for the onboarding screen]",
-    "join": "[placeholder for the invite-join screen]",
-    "recap": "[placeholder for the session-recap screen]",
-    "campaignNew": "[placeholder for the campaign-create screen]",
-    "characterNew": "[placeholder for the character-create screen]",
-    "play": "[placeholder for the play screen]",
-    "settings": "[placeholder for the settings screen]"
+    "landing": "[ph_landing_screen]",
+    "signin": "[ph_signin_screen]",
+    "callback": "[ph_callback_screen]",
+    "onboard": "[ph_onboard_screen]",
+    "join": "[ph_join_screen]",
+    "recap": "[ph_recap_screen]",
+    "campaignNew": "[ph_campaign_new_screen]",
+    "characterNew": "[ph_character_new_screen]",
+    "play": "[ph_play_screen]",
+    "settings": "[ph_settings_screen]"
   }
 }
