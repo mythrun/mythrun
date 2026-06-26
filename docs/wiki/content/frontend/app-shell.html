@@ -7,11 +7,13 @@
 <!-- source: frontend/client-core/src/index.ts -->
 <!-- source: frontend/src/app/ -->
 <!-- source: frontend/src/routes/home.tsx -->
+<!-- source: frontend/src/storybook/screen-harness.tsx -->
+<!-- source: frontend/scripts/screen-story-coverage.mjs -->
 <!-- source: frontend/src/platform/web/secure-storage.ts -->
 <!-- source: frontend/src/main.tsx -->
-<!-- source-hash: sha256:8363a5154c48fcfe525d231a9ab08e05024e59db313a8fa6ae2443e274b65b60 -->
+<!-- source-hash: sha256:4e7542dc8b7849f70cd05a747905092d4cb8c990936fd9e9f77e8578a58f819c -->
 <!-- source-hash: sha256:auto -->
-<!-- last-ticket: MYT-83 -->
+<!-- last-ticket: MYT-97 -->
 
 <h1>App shell &amp; data layer</h1>
 
@@ -254,12 +256,25 @@
   resolves pre-auth — landing, the auth screens, the invite-join link, the shareable recap. The
   <strong>authed</strong> branch sits behind <code>&lt;RequireAuth&gt;</code> and renders inside the
   <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
-  · credits · settings) wrapping the content <code>&lt;Outlet/&gt;</code>, composed from
-  <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the narrative/combat
-  content is the focus. Every screen is a thin i18n'd stub the flow tickets fill — except the
-  <strong>home hub</strong>, wired end-to-end (<code>useMyCampaigns</code> → real backend → Suspense
-  loading → Cards or empty state) as the done-when smoke.
+  · credit balance · a gear settings affordance) wrapping the content <code>&lt;Outlet/&gt;</code>,
+  composed from <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the
+  narrative/combat content is the focus. Every screen is a thin i18n'd stub the flow tickets fill —
+  except the <strong>home hub</strong>, wired end-to-end (<code>useMyCampaigns</code> → real backend
+  → Suspense loading → Cards or empty state) as the done-when smoke.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The header stays one quiet row at phone width</strong> — MYT-83's mobile audit deferred a
+  real bug: at 375px the header overflowed sideways and shoved the settings affordance off-screen,
+  because the layout had no shrink/wrap/truncate to fall back on. MYT-97 fixed it without breaking
+  the brand's single-row frame. The display name is the only flexible item — it
+  <code>truncate</code>s and absorbs the row's shrink; the wordmark and credit balance are
+  <code>noShrink</code> so they hold their width instead of squeezing into a spill; and the settings
+  affordance became an icon-only gear <code>IconButton</code> (<code>shrink-0</code>) so a long
+  display name can never push a text label past the edge. Every piece is a
+  <a href="./design-system.html#responsive-by-construction">responsive mythrunUI primitive</a>, so
+  the fix lives in the design system, not in raw CSS on the frame.
+</aside>
 
 <p>
   A route-level <strong>error boundary</strong> catches any thrown render/loader failure and
@@ -295,6 +310,36 @@
   the session store <code>ready</code> once, so the dev app lands on the authed side of the gate
   against the always-authenticated bypass backend.
 </p>
+
+<h2>Gating the screens at phone width</h2>
+
+<p>
+  The app-frame header bug lived in the <em>composition</em> layer — not in any one primitive, but
+  in how a screen assembles them — so isolated component stories could never have caught it. MYT-97
+  closes that gap with a screen-level arm of the
+  <a href="./design-system.html#mobile-viewport-overflow-gate">mobile-viewport overflow gate</a>:
+  every player-facing screen ships a Storybook story that renders the
+  <strong>real route tree</strong> through a seeded <code>ScreenHarness</code>, so the 375/1280
+  sweep measures assembled screens, not just leaves. The harness mounts the actual
+  <code>routes</code> array in a memory router at a seeded entry, pre-seeds the session store to
+  <code>ready</code> (so authed screens clear <code>&lt;RequireAuth&gt;</code>) and the React-Query
+  cache (so a suspense hook resolves without a network call), and can override an i18n key to feed
+  an adversarial-length display name. A <code>screen-story-coverage</code> forcing function
+  (<code>frontend/scripts/screen-story-coverage.mjs</code>) fails CI if any <code>routes/*</code>
+  screen — or the assembled app-frame / 404 screen — lacks a co-located story, so a new screen can't
+  dodge the gate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A router-bearing seeded harness, not an isolated render</strong> — the bug was a
+  composition bug, so the gate has to drive the composition. Seeding the session and cache up front
+  means the authed screens actually render their content; a bad seed shape would hang a suspense
+  query forever, so each story's <code>play</code> asserts the screen's root testid and fails loud
+  instead of timing out as a flake. And because the display name is an i18n key rather than a prop,
+  the only way to exercise a too-long name is to override the key — which is exactly what the
+  adversarial home-hub story does, reproducing the original overflow and proving the gate would have
+  caught it.
+</aside>
 
 <h2>Talking to the API cross-origin</h2>
 
@@ -336,6 +381,26 @@
     Build the contract first (<code>pnpm --filter @mythrun/contract build</code>), then run the
     <a href="../infra/ci-cd.html#the-frontend-check-gate">frontend-check</a> chain. A fresh tree
     can't resolve <code>@mythrun/contract/rest</code> until <code>dist/</code> exists.
+  </li>
+</ol>
+
+<h3>Add a player-facing screen</h3>
+<ol>
+  <li>
+    Add the screen (<code>frontend/src/routes/&lt;name&gt;.tsx</code>, or an assembled
+    <code>src/app/</code> screen) and wire it into the <code>routes</code> array.
+  </li>
+  <li>
+    Add a co-located <code>&lt;name&gt;.stories.tsx</code> that renders it through
+    <code>ScreenHarness</code> — seed the session status, and the
+    <code>['campaigns','mine']</code> cache if it reads a suspense hook — with an
+    <code>expectScreen</code> <code>play</code> that asserts the root testid. The
+    <code>screen-story-coverage</code> gate fails without the story.
+  </li>
+  <li>
+    Compose mythrunUI primitives and i18n keys only (R5 + no-ad-hoc-ui), then
+    <code>pnpm --filter @mythrun/web build-storybook</code> and <code>test-storybook</code> so the
+    screen clears the 375/1280 overflow gate.
   </li>
 </ol>
 
@@ -450,6 +515,7 @@
   <code>frontend/client-core/src/stores/session.ts</code>,
   <code>frontend/client-core/src/platform/secure-storage.ts</code>,
   <code>frontend/client-core/src/index.ts</code>, <code>frontend/src/app/</code>,
-  <code>frontend/src/routes/home.tsx</code>,
+  <code>frontend/src/routes/home.tsx</code>, <code>frontend/src/storybook/screen-harness.tsx</code>,
+  <code>frontend/scripts/screen-story-coverage.mjs</code>,
   <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>.
 </p>

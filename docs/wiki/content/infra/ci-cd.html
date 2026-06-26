@@ -8,8 +8,8 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:a491028156cf5129796126f4fe4a504967542d0303376cca346e3ec5ab55b699 -->
-<!-- last-ticket: MYT-79 -->
+<!-- source-hash: sha256:a40a259a3cd7782336f143c7d05282e760ab4145f92d2986ffea4bc8621e2d52 -->
+<!-- last-ticket: MYT-97 -->
 
 <h1>CI/CD</h1>
 
@@ -351,13 +351,20 @@
   every consumer's typecheck/test resolves <code>@mythrun/contract/rest</code> from it, so a fresh
   runner fails without this step. <code>@mythrun/client-core</code> (the platform-neutral client
   brain) gets typecheck → lint → test → coverage. <code>@mythrun/ui</code> (the
-  <a href="../frontend/design-system.html">design system</a>) adds
-  <code>lint:css</code> (Stylelint), the <code>story-coverage</code> gate, and a full Storybook
-  production build on top. The lint steps are where the
-  <a href="../frontend/index.html">frontend lint rails</a> bite — a hardcoded JSX string or a raw
-  <code>&lt;div&gt;</code> in feature code, a DOM prop on a public contract, or a raw hex in a
-  <code>cva()</code> block all fail here. There are no Postgres, Redis, or secrets dependencies; the
-  job is fast and self-contained.
+  <a href="../frontend/design-system.html">design system</a>) adds <code>lint:css</code> (Stylelint)
+  and the <code>story-coverage</code> gate. <code>@mythrun/web</code> (the app shell) closes the
+  chain with typecheck → lint → test → coverage → build, then the responsiveness gates MYT-97 added:
+  a <code>screen-story-coverage</code> forcing function, and the
+  <strong>mobile-viewport overflow sweep</strong> — it installs Playwright's Chromium (cached across
+  runs), builds the now-unified Storybook (which scans both the ui and web stories, and catches the
+  story/MDX breakage the retired ui Storybook build used to) and runs the
+  <a href="../frontend/design-system.html#mobile-viewport-overflow-gate">test-runner</a> that
+  renders every story at 375px and 1280px and fails on horizontal overflow. The lint steps are where
+  the <a href="../frontend/index.html">frontend lint rails</a> bite — a hardcoded JSX string or a
+  raw <code>&lt;div&gt;</code> in feature code, a DOM prop on a public contract, or a raw hex in a
+  <code>cva()</code> block all fail here. The one external dependency is the cached Playwright
+  browser download; there are no Postgres, Redis, or secrets dependencies, so the job stays
+  self-contained (its timeout was raised 8 → 15 minutes to absorb the Chromium sweep).
 </p>
 
 <aside class="wiki-rationale">
@@ -443,10 +450,13 @@
     <strong>Frontend rails.</strong> Conditional — runs only when the commits being pushed touch
     <code>frontend/**</code> or <code>frontend-check.yml</code>. The diff is computed with the
     three-dot range <code>git diff --name-only origin/main...HEAD</code> (the commits relative to
-    the merge-base with <code>origin/main</code>), then the section runs both packages' typecheck +
-    lint and the <code>@mythrun/web</code> test + coverage — the same chain
-    <a href="#the-frontend-check-gate">frontend-check</a> runs in CI. Added with MYT-79 alongside
-    the frontend workspace.
+    the merge-base with <code>origin/main</code>), then the section mirrors the CI chain across the
+    frontend packages — the contract build, client-core, the <code>@mythrun/ui</code> typecheck /
+    lint / css-lint / test / coverage / story-coverage, and the <code>@mythrun/web</code>
+    screen-story-coverage + Storybook build + typecheck / lint / test / coverage. The one CI step it
+    deliberately omits is the Playwright 375/1280 overflow sweep — too slow and heavy for a hook
+    (pushes are expensive), so it stays CI-only while the cheap Storybook build still catches
+    story/MDX breakage locally. Added with MYT-79; extended with the MYT-97 responsiveness gates.
   </li>
 </ol>
 

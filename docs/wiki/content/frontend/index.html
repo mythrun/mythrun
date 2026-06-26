@@ -20,8 +20,8 @@
 <!-- source: frontend/ui/src/styles/index.css -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:643908a2d6f8a5da6fcd2e5ff379fd60390c61451dd30bf72d2b57ed5cd31551 -->
-<!-- last-ticket: MYT-81 -->
+<!-- source-hash: sha256:40398062b658fe16117b681b38d343121a047181a28db8e6e751edea71dafe73 -->
+<!-- last-ticket: MYT-97 -->
 
 <h1>Frontend</h1>
 
@@ -299,17 +299,30 @@
 </aside>
 
 <p>
-  Prose copy is Miklos's to write, so most values ship as a
-  <code>[placeholder for &lt;purpose&gt;]</code> string rather than guessed text — only generic
-  chrome (<code>Back</code>, nav labels) gets a real value on day one. The
-  <code>pnpm i18n:todo</code> script JSON-walks every locale file (now under
-  <code>@mythrun/client-core</code>, where the script was repointed) and lists each value still
-  holding a placeholder, so unwritten copy is findable instead of silently shipping a bracketed
-  string. It walks values structurally, so it survives nested keys and <code>_one</code>/<code
-    >_other</code
-  >
-  plural shapes.
+  Prose copy is Miklos's to write, so most values ship as a placeholder rather than guessed text —
+  only generic chrome (<code>Back</code>, nav labels) gets a real value on day one. MYT-97 reshaped
+  the placeholders into short, <strong>length-matched</strong> <code>[ph_*]</code> tokens: a
+  credit-balance slot like <code>120</code> ships as <code>[ph_bal]</code>, a one-sentence body
+  keeps roughly a sentence. The full authoring context for each key moved into a separate
+  <code>descriptions.ts</code> — what the key stands for and the rough shape/length of the real
+  string — keyed by the catalog's dotted path and <em>not</em> bundled at runtime (i18next serves
+  only the catalog). A drift test pins <code>descriptions.ts</code> and the catalog to exactly the
+  same key set: every key documented, no orphans. A companion <code>pnpm i18n:todo</code> script
+  JSON-walks every locale file (now under <code>@mythrun/client-core</code>, where it was repointed)
+  and lists the values still holding a placeholder, so unwritten copy is findable; it walks values
+  structurally, so it survives nested keys and <code>_one</code>/<code>_other</code> plural shapes.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Length-matched placeholders, so the layout reads true before the copy lands</strong> — the
+  old <code>[placeholder for the player's credit balance]</code> string was many times longer than
+  the <code>120</code> it stands in for, which makes a frame render wider than it ever will in
+  production and can false-trigger the new
+  <a href="./design-system.html#mobile-viewport-overflow-gate">mobile-viewport gate</a>. A
+  length-matched <code>[ph_bal]</code> occupies roughly the real slot, so the responsiveness work
+  measures honest geometry. <code>descriptions.ts</code> is where the verbose intent went — out of
+  the runtime catalog, into a drift-tested authoring reference.
+</aside>
 
 <h2 id="design-tokens">Design tokens</h2>
 

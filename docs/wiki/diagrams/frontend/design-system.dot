@@ -47,7 +47,8 @@ digraph frontend_design_system {
     apipurity [label="api-purity lint (R2)\nno DOM props on the\npublic *Props surface"];
     nocolor   [label="no-ad-hoc-color (R3)\ncolor from tokens only\n(scans cva()/cn() args)\n+ Stylelint on .css"];
     storycov  [label="story-coverage gate\nevery component dir\nhas a *.stories.tsx"];
-    a11y      [label="jest-axe + keyboard\n+ token-contrast (3:1)"];
+    overflow  [label="overflow gate (375/1280)\nStorybook test-runner\nno sideways scroll /\nintra-row collision"];
+    a11y      [label="jest-axe + keyboard\n+ token-contrast (3:1)\n+ Storybook axe (error)"];
     boundary  [label="import boundary (R5)\nfeatures import @mythrun/ui\nroot only — not radix/cva"];
   }
 

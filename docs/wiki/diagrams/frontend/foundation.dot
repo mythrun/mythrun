@@ -30,7 +30,7 @@ digraph frontend_foundation {
 
     cfg  [label="i18n/config.ts\nsync init · no Suspense\ninline resources"];
     keys [label="typed keys\n(CustomTypeOptions\naugmentation)"];
-    loc  [label="locales/en/*.json\nreal chrome +\n[placeholder for …]"];
+    loc  [label="locales/en/*.json\nreal chrome +\nlength-matched [ph_*]\n(descriptions.ts: per-key intent)"];
     cfg -> keys [style="dotted"];
     cfg -> loc  [style="dotted"];
   }

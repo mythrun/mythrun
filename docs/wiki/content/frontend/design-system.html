@@ -14,19 +14,22 @@
 <!-- source: frontend/ui/src/styles/semantic.css -->
 <!-- source: frontend/ui/eslint.config.js -->
 <!-- source: frontend/ui/scripts/story-coverage.mjs -->
-<!-- source: frontend/ui/.storybook/main.ts -->
+<!-- source: frontend/.storybook/main.ts -->
+<!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:479721581b4fa6da92d51cc4c086a9da96067ca9b36f9280fe81522bd61dbfbc -->
-<!-- last-ticket: MYT-82 -->
+<!-- source-hash: sha256:664ae87c8b01bece86baefeb81707fe426795a1914462c7052be6ec9b6d45997 -->
+<!-- last-ticket: MYT-97 -->
 
 <h1>Design system</h1>
 
 <p class="lead">
   mythrunUI — the brand-aligned, token-driven component library the whole app composes. The system
   before the app: ~27 primitives (layout, type, controls, overlays, feedback, display) each typed
-  against a platform-neutral contract, styled from a single token vocabulary, documented in
-  Storybook, and held in place by lint and CI gates. Two packages carry it —
+  against a platform-neutral contract, styled from a single token vocabulary, responsive by
+  construction (they shrink, wrap, and truncate so nothing spills a phone-width row), documented in
+  one frontend-level Storybook, and held in place by lint, accessibility, and mobile-viewport CI
+  gates. Two packages carry it —
   <code>@mythrun/client-core</code> (the platform-neutral brain: the component contract + the token
   data) and <code>@mythrun/ui</code> (the web implementation that turns the contract into DOM).
 </p>
@@ -274,24 +277,75 @@
   feature issues, never ad-hoc, so the system grows with the app rather than ahead of it.
 </p>
 
+<h2>Responsive by construction</h2>
+
+<p>
+  Responsiveness is part of the contract, not a per-screen afterthought (MYT-97). The layout and
+  text primitives shrink, wrap, and truncate on their own, so a row composed from them fits a
+  phone-width viewport without the feature author hand-managing flex. The contract grew four
+  intrinsic affordances: <code>Stack</code> gains a <code>wrap</code> flag (flow children onto a
+  second main-axis line); <code>Text</code> gains <code>truncate</code> (single-line ellipsis) for
+  the flexible item that should absorb a row's shrink, and <code>noShrink</code> for a short fixed
+  label or value that must hold its width; <code>Button</code> and <code>Icon</code> carry
+  <code>shrink-0</code> by construction — a fixed affordance never squishes beside shrinking text.
+  Underneath, the <code>Stack</code> web impl sets <code>min-width: 0</code> on every direct child
+  by default — flex's <code>min-width: auto</code> floors a child at its content width and forces
+  overflow otherwise, so this blanket unblocker is what lets a long child shrink at all; the fixed
+  primitives opt back out of it with <code>shrink-0</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Intrinsic-first, not breakpoint-first</strong> — the primitive fixes itself at any width
+  rather than every consumer reaching for a media query. A <code>Stack</code> of a flexible
+  <code>truncate</code> Text plus a couple of <code>noShrink</code> labels resolves a constrained
+  row by itself; breakpoint collapse stays available for the cases that genuinely need it, but the
+  default is that a component simply doesn't spill. This is the half MYT-97 made first-class after
+  the <a href="./app-shell.html">app-frame header</a> overflowed at phone width because the
+  primitives had no shrink/wrap/truncate to reach for. The behavior is contract-level, so the future
+  native impl honors it the same way — <code>truncate</code> maps to <code>numberOfLines={1}</code>,
+  <code>noShrink</code> to <code>flexShrink: 0</code>; only the web's <code>min-w-0</code> mechanism
+  is a DOM detail.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>noShrink</code> for a fixed label, not <code>truncate</code> everywhere</strong> — a
+  single-token label (a wordmark, a credit balance) squeezed below its own width doesn't truncate
+  cleanly; it spills its box and collides with the next item. So fixed-width text opts out of the
+  row's shrink and the one flexible sibling — the <code>truncate</code> Text — absorbs all of it.
+  The overflow gate (below) catches both the sideways-scroll case and this intra-row collision.
+</aside>
+
 <h2>Storybook</h2>
 
 <p>
-  Storybook 9 (Vite builder) is the visual catalogue and the authoring surface. Each component's
-  story follows a doc template the story-coverage gate can assert: an autodocs props table, the
-  all-states matrix (default / hover / active / focus-visible / disabled / loading / invalid /
-  read-only / selected, the relevant subset per component), a11y notes, do/don't, and content/i18n
-  guidance. A <code>foundation</code> story renders the token specimens; a
-  <code>patterns</code> story shows a composed Character-Creation flow. A light/warm-dark toggle
-  exercises both themes.
+  Storybook 9 (Vite builder) is the visual catalogue and the authoring surface. MYT-97 consolidated
+  it to
+  <strong>one frontend-level Storybook hosted in <code>@mythrun/web</code></strong>
+  (<code>frontend/.storybook/</code>) that scans <em>both</em> the design-system stories
+  (<code>../ui/src/**</code>) and the app-shell screen stories (<code>../src/**</code>); the ui
+  package's own Storybook was retired. Each component's story still follows a doc template the
+  story-coverage gate can assert: an autodocs props table, the all-states matrix (default / hover /
+  active / focus-visible / disabled / loading / invalid / read-only / selected, the relevant subset
+  per component), a11y notes, do/don't, and content/i18n guidance. A <code>foundation</code> story
+  renders the token specimens; a <code>patterns</code> story shows a composed Character-Creation
+  flow. A light/warm-dark toggle exercises both themes.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>One Storybook, hosted in web, not ui</strong> — the mobile-viewport gate has to render
+  both the primitives and the assembled screens, so a single catalogue is simplest. It lives in
+  <code>@mythrun/web</code> because web already depends on ui: hosting the web screen stories inside
+  the ui package's Storybook would point ui at web and invert the dependency arrow into a cycle.
+  Stories themselves stay co-located with their code (<code>ui/src/components/&lt;Name&gt;</code>,
+  <code>src/routes</code>); only the Storybook <em>host</em> moved up a level.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Tailwind v4 needs explicit Storybook wiring</strong> — Storybook builds its preview
   through its own Vite config, separate from the app's. Without pushing
   <code>@tailwindcss/vite</code> into that config via <code>viteFinal</code> in
-  <code>.storybook/main.ts</code>, the <code>@import "tailwindcss"</code> never compiles and every
-  story renders unstyled. That one line is load-bearing.
+  <code>frontend/.storybook/main.ts</code>, the <code>@import "tailwindcss"</code> never compiles
+  and every story renders unstyled. That one line is load-bearing.
 </aside>
 
 <h2>Enforcement — rules as CI gates</h2>
@@ -344,6 +398,35 @@
   breakage the existence check can't.
 </p>
 
+<h3>Mobile-viewport overflow gate</h3>
+
+<p>
+  The durable half of MYT-97: a <code>@storybook/test-runner</code> <code>postVisit</code> hook
+  (<code>frontend/.storybook/test-runner.ts</code>) renders <em>every</em> story in real Chromium at
+  <strong>375px</strong> and <strong>1280px</strong> and fails the build if anything scrolls
+  sideways. It is <strong>outcome-based</strong> — it doesn't care <em>how</em> a story fits
+  (intrinsic shrink or a breakpoint collapse), only that the rendered width never exceeds the
+  viewport (measured as the larger of <code>#storybook-root</code> and <code>document.body</code>,
+  so portaled overlays count too). It also catches the subtler <strong>intra-row collision</strong>:
+  a fixed item squeezed below its own text spills its box — content wider than the box while
+  overflow stays visible — without the container ever scrolling. A story that is wide by design
+  (<code>Grid</code>, <code>Dither</code>) opts out with
+  <code>parameters.overflowGate: false</code>; an overlay story declares an
+  <code>openSelector</code> so a portal that silently failed to open fails loud instead of measuring
+  an empty root.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A gate, because the absence of one is why the gap shipped</strong> — a primitive with no
+  shrink/wrap/truncate passes every unit test, because nothing ever renders it at phone width.
+  Making "no horizontal overflow at 375px" a CI gate is the same move as story-coverage and the lint
+  rails: the property the team cares about becomes a build failure on regression, not a style note a
+  reviewer has to remember to check. The gate runs from
+  <a href="./app-shell.html">@mythrun/web</a> — it measures both the component stories and the
+  app-shell screen stories — inside the
+  <a href="../infra/ci-cd.html#the-frontend-check-gate">frontend-check</a> sweep.
+</aside>
+
 <h3>Import boundary (R5)</h3>
 
 <p>
@@ -362,12 +445,18 @@
 <h3>Accessibility &amp; token-contrast</h3>
 
 <p>
-  The a11y gate is real assertions, not just the Storybook addon (which is a dev-time aid): each
-  component test runs <code>jest-axe</code> plus explicit keyboard-interaction tests
-  (Tab/Esc/Arrow/Enter/Space), a Modal focus-trap-and-return test, and a Toast/Banner live-region
-  test. A token-level contrast check uses the generator's <code>wcagContrast</code> to verify the
-  focus-ring and interactive-border 3:1 claims that axe does not check. Every interactive control —
-  icon-only ones included — carries a ≥44px hit target and an accessible name.
+  The a11y gate is real assertions: each component test runs <code>jest-axe</code> plus explicit
+  keyboard-interaction tests (Tab/Esc/Arrow/Enter/Space), a Modal focus-trap-and-return test, and a
+  Toast/Banner live-region test. A token-level contrast check uses the generator's
+  <code>wcagContrast</code> to verify the focus-ring and interactive-border 3:1 claims that axe does
+  not check. Every interactive control — icon-only ones included — carries a ≥44px hit target and an
+  accessible name. MYT-97 added a second surface: standing up the Storybook test-runner activated
+  the <code>@storybook/addon-a11y</code> axe pass as <code>error</code> on every component story, so
+  an accessibility violation in a real-Chromium render now fails CI too (the addon stopped being
+  merely a dev-time aid). The app-shell screen stories set a11y to <code>off</code> — their
+  accessibility belongs to the flow tickets that build them — and the few Radix overlay specimens
+  carry a documented per-story carve-out for one known <code>aria-hidden-focus</code>
+  false-positive.
 </p>
 
 <h2>Operating this piece</h2>
@@ -399,6 +488,13 @@
     Run
     <code>pnpm --filter @mythrun/ui typecheck lint lint:css test test:coverage story-coverage</code>
     and <code>pnpm --filter @mythrun/client-core typecheck lint test:coverage</code>.
+  </li>
+  <li>
+    Run the mobile-viewport sweep —
+    <code>pnpm --filter @mythrun/web build-storybook</code> then
+    <code>pnpm --filter @mythrun/web test-storybook</code> — so the new story passes the 375/1280
+    overflow gate. If the component is wide by design, opt the story out with
+    <code>parameters: { overflowGate: false }</code> rather than papering over a real overflow.
   </li>
 </ol>
 
@@ -496,8 +592,15 @@
     </tr>
     <tr>
       <td>story-coverage</td>
-      <td><code>@mythrun/ui</code> script + Storybook build</td>
+      <td>
+        <code>@mythrun/ui</code> script + the unified <code>@mythrun/web</code> Storybook build
+      </td>
       <td>a component directory with no story</td>
+    </tr>
+    <tr>
+      <td>overflow gate (375 / 1280)</td>
+      <td><code>@mythrun/web</code> Storybook test-runner (Playwright/Chromium)</td>
+      <td>a story that scrolls sideways or collides intra-row at phone/desktop width</td>
     </tr>
     <tr>
       <td>import boundary (R5)</td>
@@ -510,8 +613,8 @@
       <td>impl prop surface drifting below the contract</td>
     </tr>
     <tr>
-      <td><code>jest-axe</code> + keyboard + token-contrast</td>
-      <td><code>@mythrun/ui</code> tests</td>
+      <td><code>jest-axe</code> + keyboard + token-contrast + Storybook axe</td>
+      <td><code>@mythrun/ui</code> tests + the <code>@mythrun/web</code> test-runner</td>
       <td>a11y regressions; sub-3:1 focus ring/border</td>
     </tr>
   </tbody>
@@ -525,7 +628,8 @@
   <code>eslint-rules/no-ad-hoc-color.js</code>, <code>CHANGELOG.md</code>),
   <code>frontend/ui/</code> (<code>@mythrun/ui</code> — <code>src/components/</code>,
   <code>src/index.ts</code>, <code>src/lib/cn.ts</code>, <code>src/styles/</code>,
-  <code>scripts/story-coverage.mjs</code>, <code>.storybook/main.ts</code>,
-  <code>eslint.config.js</code>), <code>frontend/eslint.config.js</code> (import boundary),
-  <code>.github/workflows/frontend-check.yml</code>.
+  <code>scripts/story-coverage.mjs</code>, <code>eslint.config.js</code>),
+  <code>frontend/.storybook/</code> (the unified Storybook + <code>test-runner.ts</code> overflow
+  gate, hosted in <code>@mythrun/web</code>), <code>frontend/eslint.config.js</code> (import
+  boundary), <code>.github/workflows/frontend-check.yml</code>.
 </p>
