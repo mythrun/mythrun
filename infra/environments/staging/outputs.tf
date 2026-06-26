@@ -98,3 +98,25 @@ output "bootstrap_db_run_task_seed_smoke_credits" {
   value       = module.bootstrap_db.run_task_seed_smoke_credits
   description = "Paste-ready (MYT-55): grant 1M world_gen + 1M session credits to the four staging smoke users. Idempotent — re-runs are no-ops. Requires the smoke users' `users` rows to already exist (smoke materializes them on first POST /api/users/register). Invoke via `eval`."
 }
+
+# ======== MYT-96 frontend-hosting outputs ========
+
+output "frontend_bucket_name" {
+  value       = module.frontend_hosting.bucket_name
+  description = "SPA artifact bucket. Set as GitHub Actions var STAGING_FRONTEND_BUCKET (see MYT-96 §5 bring-up)."
+}
+
+output "frontend_distribution_id" {
+  value       = module.frontend_hosting.distribution_id
+  description = "CloudFront distribution ID. Set as GitHub Actions var STAGING_FRONTEND_DISTRIBUTION_ID."
+}
+
+output "frontend_url" {
+  value       = module.frontend_hosting.url
+  description = "Public URL of the gated staging SPA (https://staging.mythrun.com)."
+}
+
+output "frontend_kvs_arn" {
+  value       = module.frontend_hosting.kvs_arn
+  description = "Basic-Auth KeyValueStore ARN — used by the out-of-band put-key password set/rotate (see MYT-96 §5). Null when the gate is disabled."
+}

@@ -202,6 +202,22 @@ module "bootstrap_db" {
   }
 }
 
+# ======== Frontend Hosting Module (MYT-96) ========
+# Private S3 + CloudFront at staging.mythrun.com behind a Basic-Auth CloudFront
+# Function. Reuses the shared *.mythrun.com wildcard cert + dns_zone_id (both
+# already exported by shared/outputs.tf) — no new cert, no new shared outputs.
+# Environment-parameterized: production reuses this module at Launch with the
+# apex domain and enable_basic_auth = false.
+module "frontend_hosting" {
+  source = "../../modules/frontend-hosting"
+
+  environment         = var.environment
+  site_domain         = "staging.mythrun.com"
+  acm_certificate_arn = data.terraform_remote_state.shared.outputs.wildcard_cert_arn
+  hosted_zone_id      = data.terraform_remote_state.shared.outputs.dns_zone_id
+  enable_basic_auth   = true
+}
+
 # ======== Smoke Prep-Pipeline Task Family (MYT-55) ========
 # Provisions the one-shot ECS task family `mythrun-staging-smoke-prep-pipeline`
 # for running the prep-pipeline end-to-end smoke (backend/scripts/smoke/prep-pipeline.ts)
@@ -331,9 +347,9 @@ resource "aws_ecs_task_definition" "smoke_prep_pipeline" {
   task_role_arn      = aws_iam_role.smoke_prep_pipeline_task_role.arn
 
   container_definitions = jsonencode([{
-    name             = "smoke"
-    image            = "${data.terraform_remote_state.shared.outputs.ecr_repository_url}:placeholder"
-    essential        = true
+    name      = "smoke"
+    image     = "${data.terraform_remote_state.shared.outputs.ecr_repository_url}:placeholder"
+    essential = true
     # The production runtime image places the pnpm-deployed payload at
     # /app (Dockerfile WORKDIR), so scripts/smoke and node_modules sit at
     # /app/scripts and /app/node_modules. Invoke tsx via its node_modules
@@ -668,6 +684,33 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     resources = [
       "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun",
     ]
+  }
+
+  # MYT-96: frontend deploy — additive S3 sync + index.html cp + trailing prune
+  # to the SPA bucket. Resource-scoped to the new bucket (ListBucket on the
+  # bucket arn; object actions on /*). S3 ARNs are partition-global, so
+  # constructing from bucket_name is exact — no new module output needed.
+  statement {
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      "arn:aws:s3:::${module.frontend_hosting.bucket_name}",
+      "arn:aws:s3:::${module.frontend_hosting.bucket_name}/*",
+    ]
+  }
+
+  # MYT-96: CloudFront /index.html invalidation after each deploy.
+  # Resource-scoped to the new distribution.
+  statement {
+    actions = [
+      "cloudfront:CreateInvalidation",
+      "cloudfront:GetInvalidation",
+    ]
+    resources = [module.frontend_hosting.distribution_arn]
   }
 
   # rds:CreateDBSnapshot intentionally omitted. Infra §5.5 specifies pre-deploy
