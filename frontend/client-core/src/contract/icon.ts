@@ -27,6 +27,9 @@ export type IconName =
   | 'info'
   | 'warning-diamond'
   | 'square-alert'
+  // Theme toggle (MYT-84) — the FAB's sun (light) / moon (dark) glyphs.
+  | 'sun'
+  | 'moon'
 
 /** Token icon size → `--icon-sm/md/lg` (16 / 20 / 24px). Default `md`. */
 export type IconSize = 'sm' | 'md' | 'lg'

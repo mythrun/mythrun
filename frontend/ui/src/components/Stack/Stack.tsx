@@ -38,6 +38,16 @@ const stack = cva('flex [&>*]:min-w-0', {
       true: 'flex-wrap',
       false: '',
     },
+    // Full dynamic-viewport floor (mirrors Box's minHeight="screen" — `dvh`, not
+    // `vh`, so mobile chrome doesn't leave a gap). Full literal so the v4 scanner emits it.
+    minHeight: {
+      screen: 'min-h-dvh',
+    },
+    // flex-1 fill for the body region of a fixed-crown column.
+    grow: {
+      true: 'grow',
+      false: '',
+    },
   },
   defaultVariants: {
     direction: 'column',
@@ -45,14 +55,14 @@ const stack = cva('flex [&>*]:min-w-0', {
 })
 
 export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
-  { direction = 'column', gap, align, justify, wrap, children, ...rest },
+  { direction = 'column', gap, align, justify, wrap, minHeight, grow = false, children, ...rest },
   ref,
 ) {
   return (
     <div
       ref={ref}
       className={cn(
-        stack({ direction, align, justify, wrap }),
+        stack({ direction, align, justify, wrap, grow, ...(minHeight !== undefined && { minHeight }) }),
         gap !== undefined && GAP_CLASS[gap],
       )}
       {...rest}

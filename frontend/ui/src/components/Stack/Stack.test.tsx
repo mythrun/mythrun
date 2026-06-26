@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createRef } from 'react'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { Stack } from './Stack.tsx'
 
@@ -86,6 +86,16 @@ describe('Stack', () => {
       </Stack>,
     )
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
+  })
+
+  it('applies the dvh floor when minHeight="screen"', () => {
+    render(<Stack minHeight="screen" data-testid="s" />)
+    expect(screen.getByTestId('s').className).toContain('min-h-dvh')
+  })
+
+  it('applies flex-grow when grow', () => {
+    render(<Stack grow data-testid="s" />)
+    expect(screen.getByTestId('s').className).toContain('grow')
   })
 
   it('has no axe violations', async () => {

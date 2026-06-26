@@ -90,3 +90,20 @@ export const Wrapping: Story = {
     </div>
   ),
 }
+
+// The full-screen genesis-screen shape (MYT-84): a `minHeight="screen"` column
+// with a fixed-height top band (the crown slot) and a `grow` body that centers
+// its content in the remaining space. `min-h-dvh` floors the column at the
+// dynamic viewport; the body's `grow` (flex-1) eats the leftover height.
+export const FullHeightCentered: Story = {
+  name: 'Full-height · fixed band + grow body',
+  render: () => (
+    <Stack minHeight="screen">
+      <div className="h-[var(--space-9)] bg-surface border-b border-border-strong" />
+      <Stack grow justify="center" align="center" gap={3}>
+        <Cell label="Centered" />
+        <Cell label="in the grow body" />
+      </Stack>
+    </Stack>
+  ),
+}

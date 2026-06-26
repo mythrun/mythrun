@@ -106,3 +106,8 @@ export type { ToastOptions, ToastProviderProps } from './toast.ts'
 export type { AvatarProps, AvatarGroupProps, AvatarSize, AvatarColor } from './avatar.ts'
 export type { BadgeProps, BadgeVariant } from './badge.ts'
 export type { DitherProps, DitherPairing, DitherDirection } from './dither.ts'
+
+// Theme contract (MYT-84) — the theme union, the `useTheme()` context value, and
+// the ThemeToggle FAB props. DOM-free types; the runtime (the `<html>.dark` +
+// localStorage side effects) lives in the web UI package (@mythrun/ui).
+export type { Theme, ThemeContextValue, ThemeToggleProps } from './theme.ts'

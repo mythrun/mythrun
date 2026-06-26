@@ -79,6 +79,11 @@ export { AvatarGroup } from './components/Avatar/AvatarGroup.tsx'
 export { Badge } from './components/Badge/Badge.tsx'
 export { Dither } from './components/Dither/Dither.tsx'
 
+// Theme runtime (MYT-84) — the root ThemeProvider + the useTheme hook live in the
+// web UI package so the ThemeToggle (and screens) can consume them.
+export { ThemeProvider, useTheme } from './theme/theme-provider.tsx'
+export { ThemeToggle } from './components/ThemeToggle/ThemeToggle.tsx'
+
 export type {
   StackProps,
   BoxProps,
@@ -143,4 +148,7 @@ export type {
   DitherProps,
   DitherPairing,
   DitherDirection,
+  Theme,
+  ThemeContextValue,
+  ThemeToggleProps,
 } from '@mythrun/client-core/contract'

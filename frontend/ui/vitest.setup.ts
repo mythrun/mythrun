@@ -57,3 +57,43 @@ if (!('ResizeObserver' in globalThis)) {
     }
   }
 }
+
+// localStorage shim (Node 25 vs jsdom). Node 25 ships the experimental Web
+// Storage API on by default, installing a NON-functional built-in `localStorage`
+// on `globalThis` (no getItem/setItem/clear — it requires `--localstorage-file`)
+// that SHADOWS the real `Storage` jsdom would provide. The ThemeProvider (and any
+// future theme/persistence test) legitimately uses the browser's real
+// `localStorage`, which works in a real browser; here we install a functional
+// in-memory `Storage` onto the global so those tests exercise the impl through
+// the same global the browser uses. ENVIRONMENT shim (test scope only), mirroring
+// the @mythrun/web `secure-storage.test.ts` precedent — never a production branch.
+class MemStorage {
+  private readonly store = new Map<string, string>()
+  getItem(key: string): string | null {
+    return this.store.has(key) ? (this.store.get(key) ?? null) : null
+  }
+  setItem(key: string, value: string): void {
+    this.store.set(key, value)
+  }
+  removeItem(key: string): void {
+    this.store.delete(key)
+  }
+  clear(): void {
+    this.store.clear()
+  }
+  key(index: number): string | null {
+    return [...this.store.keys()][index] ?? null
+  }
+  get length(): number {
+    return this.store.size
+  }
+}
+
+// Installed unconditionally (no guard) — mirrors @mythrun/web's secure-storage
+// precedent. No @mythrun/ui test relies on the shadowed built-in, so replacing it
+// with a functional in-memory store is purely additive.
+Object.defineProperty(globalThis, 'localStorage', {
+  value: new MemStorage(),
+  configurable: true,
+  writable: true,
+})

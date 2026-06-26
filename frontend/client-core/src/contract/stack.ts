@@ -17,4 +17,8 @@ export interface StackProps extends BaseProps {
   justify?: 'start' | 'center' | 'end' | 'between'
   /** Allow children to wrap onto multiple main-axis lines when they overflow. */
   wrap?: boolean
+  /** Floor the stack at the full dynamic viewport height (`100dvh`) — a full-screen flex column (e.g. a genesis screen / a centered splash). */
+  minHeight?: 'screen'
+  /** Grow to fill the available main-axis space of a flex parent (`flex: 1`). Use on the body region of a column whose sibling (a crown band) is fixed-height. */
+  grow?: boolean
 }

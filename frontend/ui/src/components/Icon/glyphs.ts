@@ -109,4 +109,16 @@ export const GLYPHS: Record<IconName, Glyph> = {
     viewBox: VIEWBOX_24,
     paths: ['M4 2h16v2H4zm0 18h16v2H4zM20 4h2v16h-2zM2 4h2v16H2zm9 2h2v8h-2zm0 10h2v2h-2z'],
   },
+  // Theme-toggle glyphs (MYT-84). Pixel sun (centre square + 8 rays) and a
+  // crescent moon, authored on the 24-grid to read at --icon-sm (16px).
+  sun: {
+    viewBox: VIEWBOX_24,
+    paths: [
+      'M10 10h4v4h-4zM11 3h2v3h-2zM11 18h2v3h-2zM3 11h3v2H3zM18 11h3v2h-3zM5 5h2v2H5zM17 5h2v2h-2zM5 17h2v2H5zM17 17h2v2h-2z',
+    ],
+  },
+  moon: {
+    viewBox: VIEWBOX_24,
+    paths: ['M13 2h-2v2H9v2H7v2H5v2H3v4h2v2h2v2h2v2h2v2h2v-2H9v-2H7v-2H5v-4h2V8h2V6h2V4h2V2z', 'M13 2h2v2h-2zM15 4h2v2h-2zM13 18h2v2h-2zM15 16h2v2h-2z'],
+  },
 }

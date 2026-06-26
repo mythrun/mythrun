@@ -12,6 +12,7 @@ import {
   type AuthHeaderOptions,
   type SecureStorage,
 } from '@mythrun/client-core'
+import { ThemeProvider } from '@mythrun/ui'
 import { i18n } from '../i18n/config.ts'
 
 // `AppProviders` is the web shell's one composition root: it stands up the
@@ -89,10 +90,12 @@ export function AppProviders({
   }, [apiContext])
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <ApiClientProvider value={apiContext}>
-        <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
-      </ApiClientProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ApiClientProvider value={apiContext}>
+          <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
+        </ApiClientProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   )
 }
