@@ -2,7 +2,7 @@
 
 **Goal:** Wire the real sign-in flow — Google/Discord OAuth via Cognito Hosted UI → an **in-memory access token + an httpOnly-cookie refresh** → protected-route enforcement → a one-input display-name onboarding → the Hub. Carries the small backend `session`/`refresh`/`logout` endpoints the token model needs. This lights up the authed app on the live staging site (MYT-96), where authed routes currently redirect to sign-in.
 
-**Status:** approved in brainstorm (MYT-84); refined by a 4-lens blind review (security / backend / frontend / UX). Two user-facing decisions made with Miklos: the token model (in-memory access + httpOnly-cookie refresh) and the onboarding shape (one input — display name, derive the username). Google/Discord OAuth secrets are configured (Miklos).
+**Status:** approved in brainstorm (MYT-84); refined by a 4-lens blind review (security / backend / frontend / UX). Two user-facing decisions made with Miklos: the token model (in-memory access + httpOnly-cookie refresh) and the onboarding shape (one input — display name, derive the username). Visual design (the genesis-crown title-screen composition + theme mode) approved via the visual companion — see §11. Google/Discord OAuth secrets are configured (Miklos).
 
 ---
 
@@ -94,6 +94,7 @@ LOGOUT:  POST /api/auth/logout → backend revokes (Cognito) + clears the cookie
 - **Session adapter** (`client-core/src/auth/session-adapter.ts`) — the `/me` → state mapping, applied IDENTICALLY on the callback path AND the on-load bootstrap: `200`→`setReady`; `403 && code==='username_required'`→`setOnboardingRequired`; `403 && code==='account_suspended'`→`setUnauthenticated`+suspended screen. `useMe` is NEVER the onboarding-discovery seam — the adapter settles the store before the Hub's `useMe` runs.
 - **Session store + RequireAuth** — add the `initializing` state (§3); `RequireAuth` renders a splash while `initializing` (no redirect). The QueryClient gets a retry predicate that **skips `HttpError` 4xx** (so the auth retry is the only retry and a 4xx doesn't double-fire).
 - **Logout action** — settings/header → `POST /api/auth/logout` (credentials:'include') → clear token → `setUnauthenticated` → landing.
+- **Theme mode + auth-screen chrome** — a root `ThemeProvider`, a canonical `ThemeToggle` FAB (new mythrunUI component), and the genesis-crown title-screen composition for the sign-in/onboard screens. Full treatment in §11.
 
 ### Backend (`@mythrun/backend`, co-designed in this ticket)
 - **`@fastify/cookie`** added as a dependency and registered before the auth routes; the cookie helper uses `setCookie`/`clearCookie` with the §3 attributes (clear MUST mirror `Path=/api/auth` + Secure/SameSite, no Domain).
@@ -151,7 +152,7 @@ The contract mirrors username **structure** only; a local `ContractValidationErr
 
 ## 8. Done when / deferred
 
-**Done when:** a real **Google** AND a real **Discord** sign-in each land on the Hub with a valid session; a page reload persists the session (the `initializing` splash → on-load refresh → straight to Hub, no sign-in bounce); protected routes gate (unauthenticated → sign-in, onboarding-required → onboard); logout returns to the landing page and clears the server cookie; the onboarding moment captures the display name (a regex-valid username derived, even for edge display names); a first-time invitee lands back at `/join/:code`. Verified on `staging.mythrun.com` (the authed app reachable behind the gate).
+**Done when:** a real **Google** AND a real **Discord** sign-in each land on the Hub with a valid session; a page reload persists the session (the `initializing` splash → on-load refresh → straight to Hub, no sign-in bounce); protected routes gate (unauthenticated → sign-in, onboarding-required → onboard); logout returns to the landing page and clears the server cookie; the onboarding moment captures the display name (a regex-valid username derived, even for edge display names); a first-time invitee lands back at `/join/:code`; the theme toggle switches light/dark and the choice persists across reload with no flash on load. Verified on `staging.mythrun.com` (the authed app reachable behind the gate).
 
 **Deferred (out of scope):** prod callback URLs / the prod-auth compose; the custom auth domain `auth.mythrun.com` (cosmetic — the SPA uses the cognito-managed Hosted UI domain); email/password (OAuth-only per UX §3); a user-facing handle-change surface; instant access-token revocation (denylist).
 
@@ -170,6 +171,26 @@ The contract mirrors username **structure** only; a local `ContractValidationErr
 
 - **Unit (frontend):** the PKCE/state helper (CSPRNG, validation); `isLocalPath` (`//evil.com`, `https://evil.com`, `javascript:`, `/\evil.com`, valid `/join/x`); the token manager (in-memory hold + single-flight `refreshPromise` coalescing concurrent 401s + one retry + rebuild-init); `defineEndpoint` (error-body `code` on `HttpError`; `skipAuthRetry` exemption; 4xx-skip retry predicate); the session adapter (`/me` 200→ready, 403 username_required→onboarding, account_suspended→suspended, on BOTH callback and on-load); the username derivation edge matrix (`Bo`→valid, `_bob`/`bob_`→trimmed-valid, `___`→`player_*`, CJK/emoji→`player_*`, 40-char clamp); the `initializing`-state bootstrap (no `RequireAuth` bounce while initializing).
 - **Backend integration:** `session`/`refresh`/`logout` against a mocked Cognito `/oauth2/token` — the code+`redirect_uri` exchange, the cookie set with full attrs + clear mirroring them, the ROTATED-refresh re-set, the 401-on-bad-refresh + cookie clear, **415 on non-JSON** (login-CSRF), the allowlist boot (app `ready()` doesn't throw), the per-IP rate limit, CORS credentials.
-- **Frontend gates:** typecheck + lint + test + the Storybook overflow gate on the sign-in/onboard screens + a Miklos visual audit (HOLD the push for it).
+- **Theme:** `ThemeProvider` (initial resolve from storage ?? system, `.dark` application on `<html>`, persistence on change), `ThemeToggle` (toggle + `prefers-reduced-motion`), the `index.html` pre-paint script (no FOUC); the `ThemeToggle` Storybook story.
+- **Frontend gates:** typecheck + lint + test + the Storybook overflow gate on the sign-in/onboard screens + a Miklos visual audit, in BOTH light and dark mode (HOLD the push for it).
 - **E2E (the done-when):** a real **Google** AND a real **Discord** sign-in → the Hub, against staging Cognito (needs GAP-A's callback URL); assert **reload re-hydrates over the wire** (not a mock); verify the `name` pre-fill populates for both providers (Google emits `name` directly; confirm the Cognito mapping yields non-empty, else the moment gracefully no-ops); a first-time-invitee path lands at `/join/:code`. This is the real-credential smoke that proves the wire, not a mock.
+
+---
+
+## 11. Visual design + theme mode
+
+The two auth screens are **genesis screens** — the first moments of "something beginning" — and share one composition in the mythrunUI flat-1-bit parchment-&-ink language (Source Serif 4 + IBM Plex Mono, 0px radius, borders-not-shadows, the single ember accent). Approved via the visual companion (mockups persist in `.superpowers/brainstorm/`).
+
+**The genesis crown.** Both screens are crowned by the **Dither** component (`frontend/ui/src/components/Dither`) as a top transition band — the `light-ember` pairing in light mode, `dark-cream` in dark — grading into the page field. It reads as a sunrise: *this screen is a beginning.* **Hard rule: nothing is ever laid over the dither** — it is a transition band, and content on it is unreadable. The crown is **genesis-only** (login, account creation, building flows), **never** the `AppFrame`/home/play. No `AppFrame` change in this ticket.
+
+**Sign-in screen** (`signin.tsx`) — the title-screen composition: the genesis crown, a quiet `Mythrun` wordmark (`Text role="ui-label"`, uppercase mono), a terse at-the-table line (placeholder copy), then the two provider actions stacked — `secondary` (bordered) Buttons "Continue with Google" / "Continue with Discord", each with a small provider mark. *Production uses the official Google/Discord marks per their sign-in branding guidelines; the pixel keycaps in the mockup are a stand-in.* Centered, theme-driven.
+
+**Onboard screen** (`onboard.tsx`) — quieter and more intimate: the genesis crown, the serif **"What should we call you?"** as the question-that-is-the-label (no uppercase form chrome — deliberately gentler than a form), ONE pre-filled `Input` (from the `id_token name`), a single ember **primary** Button. The question + input fade in gently (the "ethereal" beat, respecting `prefers-reduced-motion`).
+
+**Theme mode (NEW infrastructure).** Dark mode exists at the token level (`semantic.css` `:root`/`.dark`, `Box surface="reversed"`, the dither pairings) but is **never activated in the running app** — no provider, toggle, persistence, or `.dark` on the root; every screen renders light today. This ticket builds it:
+- **`ThemeProvider`** (root) — resolves the initial theme from `localStorage('mythrun-theme')` ?? `prefers-color-scheme`; applies/removes `.dark` on `document.documentElement`; exposes `{theme, toggle, setTheme}`; persists on change. A tiny **inline pre-paint script in `index.html`** applies the class before React mounts (no flash-of-wrong-theme).
+- **`ThemeToggle`** — a canonical mythrunUI component: a square FAB with its **own solid `surface` + `border-strong`** (so it floats cleanly *above* the dither, occluding it — never embedded in it), the pixel sun/moon `Icon`, 0px radius, ≥44px touch target, a `prefers-reduced-motion`-aware cross-fade. Storybook story like every component. **Universal-capable but placed only on the login/onboard screens in this ticket** (top-right, floating above the crown) — home/`AppFrame` placement is a later ticket.
+- **Tailwind v4 `@theme inline` gotcha** (`[[reference_theme_inline_color_var_frozen]]`): utilities (`bg-bg`, `text-ink`) flip under `.dark`, but `var(--color-*)` is frozen at the light value. The auth-screen + FAB custom CSS must use the semantic vars (`var(--ink)`, `var(--bg)`, `var(--surface)`), never `var(--color-*)`, or dark mode won't invert.
+
+**Responsive + i18n:** both screens pass the 375/1280 overflow gate; all text is i18n (`[ph_*]` placeholders for the prose/taglines — yours to write; the provider/button labels are functional). Miklos visually audits both screens in **both modes** before the push.
 ```
