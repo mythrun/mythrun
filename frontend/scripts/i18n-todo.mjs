@@ -1,4 +1,4 @@
-// Lists every locale value still holding a `[placeholder for …]` so unwritten
+// Lists every locale value still holding a `[ph_…]` placeholder so unwritten
 // copy is findable. JSON-walks values (not a line-grep) so it survives nested +
 // `_one`/`_other` plural key shapes.
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -16,7 +16,7 @@ function* jsonFiles(dir) {
 
 function* placeholders(value, path) {
   if (typeof value === 'string') {
-    if (value.startsWith('[placeholder for')) yield `${path} = ${value}`
+    if (value.startsWith('[ph_')) yield `${path} = ${value}`
   } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) yield* placeholders(v, `${path}.${k}`)
   }
