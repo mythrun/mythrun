@@ -9,14 +9,23 @@
 // an `instanceof`-backed type guard so the React Query / api layers can map a
 // caught `unknown` to user-facing behaviour without local intelligence.
 
-/** A non-2xx HTTP response. Carries the status the server returned. */
+/** A non-2xx HTTP response. Carries the status + (for typed error bodies) the
+ *  server `code` and the raw parsed `body`. `code` is the contract-blessed
+ *  discriminator (`{ code: '...' }`); `body` is the whole payload for richer
+ *  taxonomies (e.g. register's `currentUsername`). Both are
+ *  conditionally set so neither is ever present as an explicit `undefined`
+ *  (exactOptionalPropertyTypes). */
 export class HttpError extends Error {
   readonly status: number
+  readonly code?: string
+  readonly body?: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string, body?: unknown) {
     super(message)
     this.name = 'HttpError'
     this.status = status
+    if (code !== undefined) this.code = code
+    if (body !== undefined) this.body = body
   }
 }
 

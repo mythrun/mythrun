@@ -1,16 +1,16 @@
 import type { ZodType } from 'zod'
 import { ContractValidationError, HttpError, NetworkError } from './errors.ts'
+import { runRefresh } from '../auth/token-manager.ts'
 
 // `defineEndpoint` is the load-bearing primitive of the client brain: the ONLY
 // sanctioned way the app reaches the backend. Every endpoint is declared with a
-// method, a typed path builder, and Zod request/response schemas — so contract
-// conformance is structural, not a convention. A later lint bans bare `fetch`
-// and react-query in screens, which leaves this as the single seam through
-// which a request can leave the app. The schemas come from `@mythrun/contract`
-// in real use; here they are plain `ZodType`s so the primitive stays agnostic.
+// method, a typed path builder, and Zod request/response schemas — contract
+// conformance is structural, not a convention.
 //
-// `fetch` is universal (web + React Native) and explicitly allowed by R1, so it
-// lives directly in the brain rather than behind a platform interface.
+// MYT-84 adds the cookie-auth seam: `credentials:'include'` (threaded into the
+// fetch init) + `skipAuthRetry` (the auth endpoints exempt themselves from the
+// 401 refresh), and the refresh-on-401 retry itself — which lives HERE because
+// it observes the RESPONSE status, which `getAuthHeaders` cannot.
 
 /** Per-call ambient state: where the backend lives + how to authenticate. */
 export interface ApiContext {
@@ -19,8 +19,8 @@ export interface ApiContext {
 }
 
 /**
- * A declarative endpoint. `In` is the caller-supplied input (defaults to
- * `void` for endpoints that take none); `Res` is the validated response type.
+ * A declarative endpoint. `In` is the caller-supplied input (defaults to `void`);
+ * `Res` is the validated response type.
  */
 export interface EndpointSpec<Res, In> {
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
@@ -30,28 +30,29 @@ export interface EndpointSpec<Res, In> {
   request?: ZodType
   /** Required response schema. The parsed body is what the caller receives. */
   response: ZodType<Res>
+  /** When set, threaded into the fetch RequestInit (the cookie-bearing auth calls). */
+  credentials?: 'include'
+  /** When true, a 401 is NOT retried via the single-flight refresh. The auth
+   *  endpoints (session/refresh/logout) MUST set this — else a failed refresh
+   *  would recurse through the refresh call itself. */
+  skipAuthRetry?: boolean
 }
 
-/**
- * Builds the `RequestInit` for a call: auth headers plus, when the endpoint
- * declares a request schema, a validated JSON body (throwing
- * `ContractValidationError` BEFORE any network call if the input is malformed).
- */
 async function buildInit<Res, In>(
   spec: EndpointSpec<Res, In>,
   input: In,
   ctx: ApiContext,
 ): Promise<RequestInit> {
   const headers = await ctx.getAuthHeaders()
-  if (spec.request === undefined) {
-    return { method: spec.method, headers }
-  }
+  const base: RequestInit = { method: spec.method, headers }
+  if (spec.credentials !== undefined) base.credentials = spec.credentials
+  if (spec.request === undefined) return base
   const validated = spec.request.safeParse(input)
   if (!validated.success) {
     throw new ContractValidationError('request did not match contract', validated.error)
   }
   return {
-    method: spec.method,
+    ...base,
     headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify(validated.data),
   }
@@ -66,26 +67,48 @@ async function send(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
+/** Reads the typed `code` (+ raw body) off a non-2xx response. Never throws — a
+ *  non-JSON / empty error body yields `{}` so the HttpError still carries status. */
+async function readErrorPayload(res: Response): Promise<{ code?: string; body?: unknown }> {
+  try {
+    const body: unknown = await res.json()
+    if (typeof body === 'object' && body !== null && 'code' in body) {
+      const code = (body as { code?: unknown }).code
+      return typeof code === 'string' ? { body, code } : { body }
+    }
+    return { body }
+  } catch {
+    return {}
+  }
+}
+
+function parseResponse<Res>(response: ZodType<Res>, json: unknown): Res {
+  const parsed = response.safeParse(json)
+  if (!parsed.success) {
+    throw new ContractValidationError('response did not match contract', parsed.error)
+  }
+  return parsed.data
+}
+
 /**
- * Compiles an `EndpointSpec` into a caller `(input, ctx) => Promise<Res>`. The
- * returned function validates the request (if schema'd), performs the fetch,
- * maps a non-2xx response to `HttpError`, and validates the response body
- * against the contract — handing back the parsed, typed data.
+ * Compiles an `EndpointSpec` into a caller `(input, ctx) => Promise<Res>`.
  */
 export function defineEndpoint<Res, In = void>(
   spec: EndpointSpec<Res, In>,
 ): (input: In, ctx: ApiContext) => Promise<Res> {
   return async (input, ctx) => {
-    const init = await buildInit(spec, input, ctx)
-    const res = await send(ctx.baseUrl + spec.path(input), init)
+    const url = ctx.baseUrl + spec.path(input)
+    let res = await send(url, await buildInit(spec, input, ctx))
+    if (res.status === 401 && spec.skipAuthRetry !== true && (await runRefresh())) {
+      // Refresh succeeded → rebuild the init so getAuthHeaders re-reads the
+      // FRESH access token (a stale init would resend the dead Bearer), retry once.
+      res = await send(url, await buildInit(spec, input, ctx))
+    }
     if (!res.ok) {
-      throw new HttpError(res.status, res.statusText || `HTTP ${String(res.status)}`)
+      const { code, body } = await readErrorPayload(res)
+      throw new HttpError(res.status, res.statusText || `HTTP ${String(res.status)}`, code, body)
     }
-    const json: unknown = await res.json()
-    const parsed = spec.response.safeParse(json)
-    if (!parsed.success) {
-      throw new ContractValidationError('response did not match contract', parsed.error)
-    }
-    return parsed.data
+    if (res.status === 204) return parseResponse(spec.response, undefined)
+    return parseResponse(spec.response, await res.json())
   }
 }

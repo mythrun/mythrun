@@ -5,6 +5,7 @@ import { I18nextProvider } from 'react-i18next'
 import {
   ApiClientProvider,
   getAuthHeaders,
+  isHttpError,
   type ApiContext,
   type AuthHeaderOptions,
   type SecureStorage,
@@ -54,7 +55,18 @@ export function AppProviders({
   const queryClient = useMemo(
     () =>
       new QueryClient({
-        defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+        defaultOptions: {
+          queries: {
+            // A 4xx is the server's terminal answer — never retry it (the only
+            // legitimate retry is the auth refresh, which defineEndpoint owns).
+            // Other failures (network blips, 5xx) keep the single retry.
+            retry: (failureCount, error) => {
+              if (isHttpError(error) && error.status >= 400 && error.status < 500) return false
+              return failureCount < 1
+            },
+            refetchOnWindowFocus: false,
+          },
+        },
       }),
     [],
   )

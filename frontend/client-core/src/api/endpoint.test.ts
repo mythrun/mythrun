@@ -4,10 +4,16 @@ import { setupServer } from 'msw/node'
 import { z } from 'zod'
 import { defineEndpoint, type ApiContext } from './endpoint.ts'
 import {
+  HttpError,
   isContractValidationError,
   isHttpError,
   isNetworkError,
 } from './errors.ts'
+import {
+  configureTokenRefresh,
+  resetTokenManager,
+  getAccessToken,
+} from '../auth/token-manager.ts'
 
 // `defineEndpoint` is the ONLY way the app makes a backend call: it binds a
 // method + typed path builder + Zod request/response schemas into a single
@@ -206,5 +212,157 @@ describe('defineEndpoint', () => {
     ).rejects.toSatisfy(isContractValidationError)
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
+  })
+})
+
+describe('defineEndpoint — MYT-84 transport', () => {
+  afterEach(() => {
+    resetTokenManager()
+  })
+
+  it('threads credentials:"include" into the request init', async () => {
+    let seenCredentials: RequestCredentials | undefined
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+      seenCredentials = init?.credentials
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    })
+    const ep = defineEndpoint({
+      method: 'POST',
+      path: () => '/x',
+      response: z.object({ ok: z.boolean() }),
+      credentials: 'include',
+      skipAuthRetry: true,
+    })
+    await ep(undefined, ctx)
+    expect(seenCredentials).toBe('include')
+    fetchSpy.mockRestore()
+  })
+
+  it('attaches the server `code` + raw `body` to HttpError on a typed 4xx', async () => {
+    server.use(
+      http.post(`${BASE_URL}/reg`, () =>
+        HttpResponse.json({ code: 'username_taken', suggestion: 'bob123' }, { status: 409 }),
+      ),
+    )
+    const ep = defineEndpoint({
+      method: 'POST',
+      path: () => '/reg',
+      response: z.object({ ok: z.boolean() }),
+      skipAuthRetry: true,
+    })
+    await expect(ep(undefined, ctx)).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof HttpError &&
+        e.status === 409 &&
+        e.code === 'username_taken' &&
+        (e.body as { suggestion?: string }).suggestion === 'bob123',
+    )
+  })
+
+  it('leaves code undefined for a non-string code, an absent code, a non-object body, and a non-JSON body', async () => {
+    const cases: { path: string; res: () => Response }[] = [
+      { path: '/e1', res: () => HttpResponse.json({ code: 123 }, { status: 400 }) },
+      { path: '/e2', res: () => HttpResponse.json({ message: 'x' }, { status: 400 }) },
+      { path: '/e3', res: () => HttpResponse.json(42, { status: 400 }) },
+      { path: '/e4', res: () => new HttpResponse('not json', { status: 500 }) },
+    ]
+    for (const c of cases) {
+      server.use(http.post(`${BASE_URL}${c.path}`, c.res))
+      const ep = defineEndpoint({
+        method: 'POST',
+        path: () => c.path,
+        response: z.object({ ok: z.boolean() }),
+        skipAuthRetry: true,
+      })
+      await expect(ep(undefined, ctx)).rejects.toSatisfy(
+        (e: unknown) => e instanceof HttpError && e.code === undefined,
+      )
+    }
+  })
+
+  it('on a 401 (non-skip): refreshes, rebuilds the init with a FRESH Bearer, retries once → resolves', async () => {
+    const seenAuth: (string | null)[] = []
+    let call = 0
+    server.use(
+      http.get(`${BASE_URL}/guarded`, ({ request }) => {
+        seenAuth.push(request.headers.get('authorization'))
+        call += 1
+        return call === 1
+          ? HttpResponse.json({ code: 'unauthenticated' }, { status: 401 })
+          : HttpResponse.json({ ok: true })
+      }),
+    )
+    configureTokenRefresh(() => Promise.resolve({ accessToken: 'fresh', expiresIn: 3600 }))
+    const refreshCtx: ApiContext = {
+      baseUrl: BASE_URL,
+      getAuthHeaders: () => {
+        const t = getAccessToken()
+        return Promise.resolve(t === null ? {} : { authorization: `Bearer ${t}` })
+      },
+    }
+    const ep = defineEndpoint({
+      method: 'GET',
+      path: () => '/guarded',
+      response: z.object({ ok: z.boolean() }),
+    })
+    await expect(ep(undefined, refreshCtx)).resolves.toEqual({ ok: true })
+    expect(seenAuth[0]).toBeNull()
+    expect(seenAuth[1]).toBe('Bearer fresh')
+  })
+
+  it('on a 401 (non-skip) where refresh FAILS: does not retry, throws the 401', async () => {
+    let calls = 0
+    server.use(
+      http.get(`${BASE_URL}/guarded2`, () => {
+        calls += 1
+        return HttpResponse.json({ code: 'unauthenticated' }, { status: 401 })
+      }),
+    )
+    configureTokenRefresh(() => Promise.reject(new Error('no cookie')))
+    const ep = defineEndpoint({
+      method: 'GET',
+      path: () => '/guarded2',
+      response: z.object({ ok: z.boolean() }),
+    })
+    await expect(ep(undefined, ctx)).rejects.toSatisfy(
+      (e: unknown) => e instanceof HttpError && e.status === 401,
+    )
+    expect(calls).toBe(1)
+  })
+
+  it('on a 401 from a skipAuthRetry endpoint: never refreshes, throws immediately', async () => {
+    let refreshCalls = 0
+    server.use(
+      http.post(`${BASE_URL}/auth/refresh`, () =>
+        HttpResponse.json({ code: 'no_refresh_token' }, { status: 401 }),
+      ),
+    )
+    configureTokenRefresh(() => {
+      refreshCalls += 1
+      return Promise.resolve({ accessToken: 'x', expiresIn: 1 })
+    })
+    const ep = defineEndpoint({
+      method: 'POST',
+      path: () => '/auth/refresh',
+      response: z.object({ ok: z.boolean() }),
+      credentials: 'include',
+      skipAuthRetry: true,
+    })
+    await expect(ep(undefined, ctx)).rejects.toSatisfy(
+      (e: unknown) => e instanceof HttpError && e.status === 401,
+    )
+    expect(refreshCalls).toBe(0)
+  })
+
+  it('resolves void on a 204 (no body) response', async () => {
+    server.use(http.post(`${BASE_URL}/logout`, () => new HttpResponse(null, { status: 204 })))
+    const ep = defineEndpoint({
+      method: 'POST',
+      path: () => '/logout',
+      response: z.void(),
+      credentials: 'include',
+      skipAuthRetry: true,
+    })
+    await expect(ep(undefined, ctx)).resolves.toBeUndefined()
   })
 })

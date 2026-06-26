@@ -120,3 +120,18 @@ describe('isNetworkError', () => {
     expect(isNetworkError({})).toBe(false)
   })
 })
+
+describe('HttpError — code + body', () => {
+  it('carries the parsed code + raw body when provided', () => {
+    const e = new HttpError(409, 'Conflict', 'username_taken', { code: 'username_taken', suggestion: 'bob123' })
+    expect(e.status).toBe(409)
+    expect(e.code).toBe('username_taken')
+    expect(e.body).toEqual({ code: 'username_taken', suggestion: 'bob123' })
+  })
+
+  it('leaves code/body undefined when omitted (back-compat 2-arg construction)', () => {
+    const e = new HttpError(503, 'HTTP 503')
+    expect(e.code).toBeUndefined()
+    expect(e.body).toBeUndefined()
+  })
+})
