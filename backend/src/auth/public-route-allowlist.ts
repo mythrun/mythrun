@@ -25,6 +25,15 @@ export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
   // consumes + binds the ticket to the path's sessionId and re-checks campaign
   // membership against the loaded session row. See routes/ws-session.ts.
   'GET /ws/session/:sessionId',
+  // MYT-84: the BFF session endpoints. They are `public` (no JWT) because the
+  // caller has no access token yet on /session, and /refresh + /logout
+  // authenticate via the httpOnly refresh cookie (validated server-side by the
+  // Cognito grant), NOT a Bearer. Login-CSRF on /session is bounded by
+  // application/json-only (415 otherwise) + no form-body parser + CORS preflight.
+  // SECURITY REVIEW REQUIRED on any change to these three entries.
+  'POST /api/auth/session',
+  'POST /api/auth/refresh',
+  'POST /api/auth/logout',
 ])
 
 /**

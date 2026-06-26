@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Server, IncomingMessage, ServerResponse } from 'node:http'
 import Fastify, { type FastifyInstance } from 'fastify'
+import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 import fastifyWebsocket from '@fastify/websocket'
@@ -20,6 +21,8 @@ import { sessionsRoutes } from './routes/sessions.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
+import { authRoutes } from './routes/auth.js'
+import { createCognitoOAuthClient } from './auth/cognito-oauth-client.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
 import { sessionPrepsPlugin } from './routes/session-preps.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
@@ -220,14 +223,15 @@ export const buildApp = async (
   //
   // Registered HERE, ahead of registerAuth, so the cors onRequest hook runs first:
   // a preflight OPTIONS short-circuits (204) before the auth hook would reject the
-  // un-credentialed preflight. credentials:false — auth rides the Authorization /
-  // x-mythrun-dev-sub HEADERS, not cookies (the data-layer fetch sends none); if a
-  // cookie-based refresh lands (MYT-84), flip to true with the origin kept explicit.
+  // un-credentialed preflight.
   await app.register(cors, {
     origin: [config.env.frontendBaseUrl],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-mythrun-dev-sub'],
-    credentials: false,
+    // MYT-84: cookie-based refresh has landed — credentials:true so the browser
+    // sends the httpOnly mythrun_refresh cookie on the credentialed /api/auth/*
+    // fetches. Origin stays the single explicit frontendBaseUrl (never '*').
+    credentials: true,
   })
 
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' })) // liveness
@@ -293,6 +297,25 @@ export const buildApp = async (
   // Registered AFTER requireOnboarded so the allowlist's onRoute hook
   // sees every subsequent route registration.
   await app.register(accessControlAllowlist)
+
+  // MYT-84 BFF session endpoints (GAP-B). jwt-mode only: the cookie/refresh model
+  // is staging/prod; dev runs bypass and never hits these. Registered after the
+  // rate-limit plugin (so config.rateLimit applies) and after the public-route
+  // allowlist hook (top of buildApp), which validates their config.auth:'public'.
+  if (config.env.authMode === 'real') {
+    const { cognitoHostedUiDomain, cognitoAppClientId } = config.env
+    if (cognitoHostedUiDomain === undefined || cognitoAppClientId === undefined) {
+      throw new Error('buildApp: authMode=real requires cognitoHostedUiDomain + cognitoAppClientId')
+    }
+    await app.register(cookie)
+    await app.register(authRoutes, {
+      cognito: createCognitoOAuthClient({
+        hostedUiDomain: cognitoHostedUiDomain,
+        clientId: cognitoAppClientId,
+      }),
+      frontendBaseUrl: config.frontendBaseUrl,
+    })
+  }
 
   // Webhook plugin (MYT-42 Task 15). Registered BEFORE any sibling JSON
   // route the parent scope cares about, so the encapsulated raw-body
