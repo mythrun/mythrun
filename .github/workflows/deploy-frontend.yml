@@ -1,0 +1,139 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  # Separate group from the backend api/worker/smoke deploys: a frontend deploy
+  # must not queue behind (or be cancelled by) a backend roll, and two
+  # near-simultaneous main pushes must not interleave the bucket sync.
+  group: deploy-mythrun-staging-frontend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  SITE_URL: https://staging.mythrun.com
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    steps:
+      - name: Pre-flight — verify required vars are set
+        run: |
+          if [[ -z "${{ vars.AWS_ACCOUNT_ID }}" ]]; then
+            echo "::error::vars.AWS_ACCOUNT_ID is not set. Configure at Settings → Environments → staging → Environment variables."
+            exit 1
+          fi
+          if [[ -z "${{ vars.STAGING_FRONTEND_BUCKET }}" ]]; then
+            echo "::error::vars.STAGING_FRONTEND_BUCKET is not set. Run 'terraform output -raw frontend_bucket_name' and set it at Settings → Environments → staging → Environment variables (see MYT-96 §5 bring-up order)."
+            exit 1
+          fi
+          if [[ -z "${{ vars.STAGING_FRONTEND_DISTRIBUTION_ID }}" ]]; then
+            echo "::error::vars.STAGING_FRONTEND_DISTRIBUTION_ID is not set. Run 'terraform output -raw frontend_distribution_id' and set it at Settings → Environments → staging → Environment variables."
+            exit 1
+          fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: pnpm/action-setup@903f9c1a6ebcba6cf41d87230be49611ac97822e # v6.0.3
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Scope install to the web app + its transitive workspace deps (same
+      # filter set as frontend-check.yml). --frozen-lockfile validates the
+      # full lockfile.
+      - run: pnpm install --frozen-lockfile --filter @mythrun/web... --filter @mythrun/ui... --filter @mythrun/client-core... --filter @mythrun/contract...
+
+      # @mythrun/contract — the shared Zod wire contract, the only frontend
+      # package that ships compiled output (NodeNext dist, gitignored).
+      # @mythrun/web reaches it transitively (client-core/src/api/*.ts import the
+      # Zod schemas from @mythrun/contract/rest), so a fresh runner fails to
+      # resolve it without this. (Exactly what frontend-check.yml does.)
+      - run: pnpm --filter @mythrun/contract build
+
+      # No shortcuts on deploy: vite build strips types and runs no tests, so
+      # the deploy verifies before it ships. frontend-check is a separate
+      # workflow that does NOT gate this one (we push directly to main).
+      - run: pnpm --filter @mythrun/web typecheck
+      - run: pnpm --filter @mythrun/web test
+
+      # Production build → JWT auth seam (import.meta.env.PROD). Vite reads
+      # VITE_-prefixed env at build time; point the SPA at the staging API
+      # origin (cross-origin; CORS already allows it).
+      - run: pnpm --filter @mythrun/web build
+        env:
+          VITE_API_BASE_URL: https://staging-api.mythrun.com
+
+      - name: Assume AWS role via OIDC
+        # Load-bearing: pnpm install above runs BEFORE OIDC assume so npm
+        # lifecycle scripts cannot exfiltrate AWS creds (mirrors deploy.yml).
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/mythrun-github-actions-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload assets (additive) + index.html (no-cache) + invalidate
+        env:
+          BUCKET: ${{ vars.STAGING_FRONTEND_BUCKET }}
+          DIST: ${{ vars.STAGING_FRONTEND_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+          # Additive — no --delete in the hot path, so the new index never
+          # references a not-yet-uploaded or just-deleted asset. dist/ is
+          # index.html + content-hashed assets/, so blanket-immutable is safe.
+          aws s3 sync frontend/dist/ "s3://$BUCKET/" --exclude index.html \
+            --cache-control "public,max-age=31536000,immutable"
+          # index.html is the mutable entry point — never cache it.
+          aws s3 cp frontend/dist/index.html "s3://$BUCKET/index.html" \
+            --cache-control "no-cache" --content-type "text/html"
+          # Under CachingOptimized (minTTL 1s) the invalidation is the
+          # load-bearing guarantee that the new deploy is picked up.
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/index.html"
+
+      - name: Prune stale hashed assets (out of the hot path)
+        env:
+          BUCKET: ${{ vars.STAGING_FRONTEND_BUCKET }}
+        run: |
+          set -euo pipefail
+          # Runs AFTER the additive upload + invalidation, so the new index is
+          # already live and edge-cached old chunks survive their max-age.
+          # --exclude index.html keeps the no-cache index intact (a plain
+          # --delete sync would otherwise re-PUT it with the immutable header).
+          aws s3 sync frontend/dist/ "s3://$BUCKET/" --delete --exclude index.html \
+            --cache-control "public,max-age=31536000,immutable"
+
+      - name: Smoke test (distribution live + gate on → 401)
+        run: |
+          set -euo pipefail
+          attempts=5
+          for attempt in $(seq 1 "$attempts"); do
+            echo "Smoke test attempt $attempt of $attempts..."
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${SITE_URL}/" || echo "000")
+            echo "HTTP $CODE"
+            # 401 proves the distribution resolves AND the Basic-Auth gate is on.
+            # Secret-free: a 401 also matches "password never set" — the aws s3
+            # step succeeding is the real upload guard (MYT-96 §4.3).
+            if [[ "$CODE" == "401" ]]; then
+              echo "Smoke passed."
+              exit 0
+            fi
+            if [[ "$attempt" -lt "$attempts" ]]; then
+              sleep 15
+            fi
+          done
+          echo "::error::Smoke did not observe 401 after $attempts attempts (CloudFront/Route53 propagation, or the gate is off)."
+          exit 1
