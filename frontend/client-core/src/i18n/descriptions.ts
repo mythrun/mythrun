@@ -17,6 +17,7 @@ export const descriptions: Record<string, string> = {
   'frame.displayName': "The signed-in player's display name in the header. A name (~10-15 chars); truncates when long.",
   'frame.credits': 'The player\'s credit balance in the header. A short number like "120" or "1,250".',
   'frame.settings': 'Accessible name for the gear settings IconButton in the header (aria-label, not visible text). A short verb/noun, e.g. "Settings".',
+  'splash.loading': 'Accessible loading label on the boot splash shown while the on-load session refresh settles. Short (~2-4 words).',
   'notFound.title': 'Headline on the 404 screen. Short (~2-4 words).',
   'notFound.body': 'Explanation on the 404 screen. ~1 sentence: what happened, plus a nudge back home.',
   'error.title': 'Headline on the generic error screen. Short (~2-4 words).',

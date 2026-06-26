@@ -8,7 +8,7 @@ import { i18n } from '../i18n/config.ts'
 
 // The shell's routing contract, proven through `createMemoryRouter` over the
 // SAME `routes` array the app ships (so the test exercises the real tree, not a
-// parallel one). Each case drives the three-state `<RequireAuth>` gate by
+// parallel one). Each case drives the four-state `<RequireAuth>` gate by
 // seeding the module-level Zustand session store, then asserts the screen that
 // the gate + route tree resolve to.
 //
@@ -32,7 +32,12 @@ function renderAt(initialPath: string): void {
 
 describe('app router', () => {
   it('redirects a protected route to the sign-in stub when unauthenticated', () => {
-    // Default state is `unauthenticated`; <RequireAuth> must bounce /home → /auth/signin.
+    // The store default is now `initializing` (jwt boot), which renders the
+    // splash — so seed `unauthenticated` explicitly to exercise the redirect:
+    // <RequireAuth> must bounce /home → /auth/signin.
+    act(() => {
+      useSessionStore.getState().setUnauthenticated()
+    })
     renderAt('/home')
     expect(screen.getByTestId('route-signin')).toBeDefined()
     // The authed frame must NOT have rendered.
