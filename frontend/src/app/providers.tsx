@@ -1,11 +1,13 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nextProvider } from 'react-i18next'
 import {
   ApiClientProvider,
+  configureTokenRefresh,
   getAuthHeaders,
   isHttpError,
+  refreshSession,
   type ApiContext,
   type AuthHeaderOptions,
   type SecureStorage,
@@ -77,6 +79,14 @@ export function AppProviders({
     () => ({ baseUrl: config.baseUrl, getAuthHeaders: getAuthHeaders(toAuthHeaderOptions(config)) }),
     [config],
   )
+
+  // Wire the token manager's single-flight refresh to the real /api/auth/refresh
+  // call (bound to the resolved ApiContext). defineEndpoint's 401 retry + the
+  // on-load bootstrap both reach this via runRefresh(). Dormant in bypass mode
+  // (bypass never 401s through the refresh path).
+  useEffect(() => {
+    configureTokenRefresh(() => refreshSession(undefined, apiContext))
+  }, [apiContext])
 
   return (
     <QueryClientProvider client={queryClient}>

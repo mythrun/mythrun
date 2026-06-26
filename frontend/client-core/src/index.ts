@@ -25,14 +25,23 @@ export {
 } from './api/errors.ts'
 
 // Endpoint slices + the thin React-Query suspense hooks the screens render against.
-export { getMe, useMe } from './api/users.ts'
+export { getMe, useMe, register, checkUsername } from './api/users.ts'
 export { getMyCampaigns, useMyCampaigns } from './api/campaigns.ts'
+export { createSession, refreshSession, logout } from './api/session.ts'
 
 // REST domain types (z.infer from the @mythrun/contract response schemas),
 // re-exported so screens read the shape of a hook's data off the SAME barrel
 // they call the hook through — never reaching into @mythrun/contract directly
 // (R5: route/feature code imports @mythrun/client-core, @mythrun/ui, i18n only).
 export type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
+export type {
+  RegisterRequest,
+  RegisterResponse,
+  CheckUsernameResponse,
+  SessionRequest,
+  SessionResponse,
+  RefreshResponse,
+} from '@mythrun/contract/rest'
 
 // Auth seam — the injected per-request header producer.
 export { getAuthHeaders } from './api/auth.ts'

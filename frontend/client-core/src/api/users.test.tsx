@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ApiContext } from './endpoint.ts'
 import { ApiClientProvider } from './client-context.tsx'
-import { getMe, useMe } from './users.ts'
+import { getMe, useMe, register, checkUsername } from './users.ts'
 
 // `useMe` wires `getMe` (GET /api/users/me, response validated against the
 // contract's MeResponseSchema) into a TanStack suspense query keyed `['me']`.
@@ -75,5 +75,34 @@ describe('getMe', () => {
   it('fetches and validates /api/users/me directly', async () => {
     server.use(http.get(`${BASE_URL}/api/users/me`, () => HttpResponse.json(validUser)))
     await expect(getMe(undefined, testCtx)).resolves.toEqual(validUser)
+  })
+})
+
+describe('register / checkUsername endpoints', () => {
+  it('register POSTs the validated body and returns the parsed RegisterResponse', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/users/register`, () =>
+        HttpResponse.json({
+          user: { id: 'u', username: 'bob', displayName: 'Bob', freeTrialUsed: true, createdAt: '2026-01-01T00:00:00.000Z' },
+          created: true,
+        }, { status: 201 }),
+      ),
+    )
+    const res = await register({ username: 'bob', displayName: 'Bob' }, testCtx)
+    expect(res.created).toBe(true)
+    expect(res.user.username).toBe('bob')
+  })
+
+  it('checkUsername encodes the username into the query and returns availability', async () => {
+    let seenUrl = ''
+    server.use(
+      http.get(`${BASE_URL}/api/users/check-username`, ({ request }) => {
+        seenUrl = request.url
+        return HttpResponse.json({ available: false, reason: 'taken' })
+      }),
+    )
+    const res = await checkUsername('bo b', testCtx)
+    expect(res).toEqual({ available: false, reason: 'taken' })
+    expect(seenUrl).toContain('username=bo%20b')
   })
 })

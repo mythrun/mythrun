@@ -1,5 +1,14 @@
 import { useSuspenseQuery } from '@tanstack/react-query'
-import { MeResponseSchema, type MeResponse } from '@mythrun/contract/rest'
+import {
+  MeResponseSchema,
+  type MeResponse,
+  RegisterRequestSchema,
+  RegisterResponseSchema,
+  type RegisterRequest,
+  type RegisterResponse,
+  CheckUsernameResponseSchema,
+  type CheckUsernameResponse,
+} from '@mythrun/contract/rest'
 import { defineEndpoint } from './endpoint.ts'
 import { useApiContext } from './client-context.tsx'
 
@@ -23,3 +32,19 @@ export function useMe() {
     queryFn: () => getMe(undefined, ctx),
   })
 }
+
+/** POST /api/users/register — first-login onboarding. Normal jwt path (Bearer +
+ *  401-refresh retry); the auth endpoints are the only `skipAuthRetry` ones. */
+export const register = defineEndpoint<RegisterResponse, RegisterRequest>({
+  method: 'POST',
+  path: () => '/api/users/register',
+  request: RegisterRequestSchema,
+  response: RegisterResponseSchema,
+})
+
+/** GET /api/users/check-username — advisory availability probe. */
+export const checkUsername = defineEndpoint<CheckUsernameResponse, string>({
+  method: 'GET',
+  path: (username) => `/api/users/check-username?username=${encodeURIComponent(username)}`,
+  response: CheckUsernameResponseSchema,
+})

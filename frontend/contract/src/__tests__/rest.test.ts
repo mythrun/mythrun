@@ -3,6 +3,13 @@ import {
   MeResponseSchema,
   CampaignSummarySchema,
   MyCampaignsResponseSchema,
+  RegisterRequestSchema,
+  RegisterResponseSchema,
+  CheckUsernameResponseSchema,
+  SessionRequestSchema,
+  SessionResponseSchema,
+  RefreshResponseSchema,
+  USERNAME_REGEX,
 } from '../rest/index.js'
 
 describe('@mythrun/contract/rest', () => {
@@ -156,5 +163,67 @@ describe('@mythrun/contract/rest', () => {
       expect(parsed.campaigns).toHaveLength(1)
       expect(parsed.campaigns[0]?.id).toBe('c')
     })
+  })
+})
+
+describe('RegisterRequestSchema', () => {
+  it('accepts a regex-valid username + 1..40 display name', () => {
+    const ok = RegisterRequestSchema.parse({ username: 'bob_the_brave', displayName: 'Bob' })
+    expect(ok.username).toBe('bob_the_brave')
+  })
+  it('rejects a length-2, a leading underscore, and an over-20 username', () => {
+    for (const u of ['ab', '_bob', 'a'.repeat(21)]) {
+      expect(() => RegisterRequestSchema.parse({ username: u, displayName: 'X' })).toThrow()
+    }
+  })
+  it('rejects an empty and an over-40 display name', () => {
+    expect(() => RegisterRequestSchema.parse({ username: 'bobby', displayName: '' })).toThrow()
+    expect(() => RegisterRequestSchema.parse({ username: 'bobby', displayName: 'x'.repeat(41) })).toThrow()
+  })
+  it('exports the canonical USERNAME_REGEX', () => {
+    expect(USERNAME_REGEX.test('bob')).toBe(true)
+    expect(USERNAME_REGEX.test('_bob')).toBe(false)
+  })
+})
+
+describe('RegisterResponseSchema', () => {
+  it('parses { user (public projection), created } and strips leaked row fields', () => {
+    const parsed = RegisterResponseSchema.parse({
+      user: {
+        id: 'u', username: 'a', displayName: 'A', freeTrialUsed: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        cognitoSub: 'leak', stripeCustomerId: 'leak', suspendedAt: null, updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      created: true,
+    })
+    expect(parsed.created).toBe(true)
+    expect(parsed.user).not.toHaveProperty('cognitoSub')
+    expect(parsed.user).not.toHaveProperty('stripeCustomerId')
+  })
+})
+
+describe('CheckUsernameResponseSchema', () => {
+  it('parses available with and without a reason', () => {
+    expect(CheckUsernameResponseSchema.parse({ available: true }).available).toBe(true)
+    expect(CheckUsernameResponseSchema.parse({ available: false, reason: 'taken' }).reason).toBe('taken')
+  })
+  it('rejects a non-boolean available', () => {
+    expect(() => CheckUsernameResponseSchema.parse({ available: 'yes' })).toThrow()
+  })
+})
+
+describe('SessionRequestSchema / SessionResponseSchema / RefreshResponseSchema', () => {
+  it('SessionRequest requires non-empty code + codeVerifier', () => {
+    expect(SessionRequestSchema.parse({ code: 'c', codeVerifier: 'v' }).code).toBe('c')
+    expect(() => SessionRequestSchema.parse({ code: '', codeVerifier: 'v' })).toThrow()
+  })
+  it('SessionResponse accepts a string OR null name + positive int expiresIn', () => {
+    expect(SessionResponseSchema.parse({ accessToken: 't', expiresIn: 3600, name: 'Ada' }).name).toBe('Ada')
+    expect(SessionResponseSchema.parse({ accessToken: 't', expiresIn: 3600, name: null }).name).toBeNull()
+    expect(() => SessionResponseSchema.parse({ accessToken: 't', expiresIn: 0, name: null })).toThrow()
+    expect(() => SessionResponseSchema.parse({ accessToken: 't', expiresIn: 1.5, name: null })).toThrow()
+  })
+  it('RefreshResponse accepts { accessToken, expiresIn }', () => {
+    expect(RefreshResponseSchema.parse({ accessToken: 't', expiresIn: 60 }).expiresIn).toBe(60)
   })
 })
