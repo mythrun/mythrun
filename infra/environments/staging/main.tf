@@ -691,16 +691,16 @@ data "aws_iam_policy_document" "gh_actions_staging" {
   # bucket arn; object actions on /*). S3 ARNs are partition-global, so
   # constructing from bucket_name is exact — no new module output needed.
   statement {
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${module.frontend_hosting.bucket_name}"]
+  }
+  statement {
     actions = [
       "s3:PutObject",
       "s3:GetObject",
       "s3:DeleteObject",
-      "s3:ListBucket",
     ]
-    resources = [
-      "arn:aws:s3:::${module.frontend_hosting.bucket_name}",
-      "arn:aws:s3:::${module.frontend_hosting.bucket_name}/*",
-    ]
+    resources = ["arn:aws:s3:::${module.frontend_hosting.bucket_name}/*"]
   }
 
   # MYT-96: CloudFront /index.html invalidation after each deploy.

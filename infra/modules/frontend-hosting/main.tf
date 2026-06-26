@@ -157,12 +157,26 @@ resource "aws_s3_bucket_policy" "site" {
   policy = data.aws_iam_policy_document.site_bucket.json
 }
 
-# ======== Route 53 A-alias ========
+# ======== Route 53 A + AAAA aliases ========
 # CloudFront's hosted zone id is the fixed global constant Z2FDTNDATAQYW2.
+# The distribution is dual-stack (is_ipv6_enabled = true), so it gets BOTH an A
+# and an AAAA alias — an IPv6-only client must be able to resolve the name.
 resource "aws_route53_record" "site" {
   zone_id = var.hosted_zone_id
   name    = var.site_domain
   type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.site.domain_name
+    zone_id                = "Z2FDTNDATAQYW2"
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "site_ipv6" {
+  zone_id = var.hosted_zone_id
+  name    = var.site_domain
+  type    = "AAAA"
 
   alias {
     name                   = aws_cloudfront_distribution.site.domain_name
