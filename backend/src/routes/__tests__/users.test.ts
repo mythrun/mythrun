@@ -141,6 +141,38 @@ describe('usersRoutes', () => {
       expect(Number(ledger.rows[0]?.amount)).toBe(1)
     })
 
+    it('201 + 200 responses omit cognitoSub / stripeCustomerId / suspendedAt / updatedAt (public projection)', async () => {
+      const sub = scope.userSub(0)
+      const username = scope.username(0)
+      const LEAKED = ['cognitoSub', 'stripeCustomerId', 'suspendedAt', 'updatedAt'] as const
+
+      // 201 created.
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/users/register',
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username, displayName: scope.displayName(0) },
+      })
+      expect(created.statusCode).toBe(201)
+      const createdUser = created.json<{ user: Record<string, unknown> }>().user
+      for (const f of LEAKED) expect(createdUser).not.toHaveProperty(f)
+      // The public fields ARE present.
+      expect(createdUser).toHaveProperty('id')
+      expect(createdUser).toHaveProperty('username')
+      expect(createdUser).toHaveProperty('createdAt')
+
+      // 200 already_onboarded_same — same sub + same username.
+      const same = await app.inject({
+        method: 'POST',
+        url: '/api/users/register',
+        headers: { 'x-test-sub': sub, 'content-type': 'application/json' },
+        payload: { username, displayName: scope.displayName(1) },
+      })
+      expect(same.statusCode).toBe(200)
+      const sameUser = same.json<{ user: Record<string, unknown> }>().user
+      for (const f of LEAKED) expect(sameUser).not.toHaveProperty(f)
+    })
+
     it('401 unauthenticated when no auth header is set', async () => {
       const res = await app.inject({
         method: 'POST',

@@ -115,7 +115,11 @@ interface UniqueViolationCtx {
 type UniqueViolationResolution =
   | {
       readonly code: 'already_onboarded_same'
-      readonly user: Awaited<ReturnType<Repo['users']['getByCognitoSub']>>
+      // Non-null by construction: the `!existing` guard above returns the
+      // inconsistent_state arm first, so reaching this arm proves the row
+      // exists. Restating that lets `toPublicUser` accept it without an
+      // assertion (it needs the non-null `createdAt: Date`).
+      readonly user: NonNullable<Awaited<ReturnType<Repo['users']['getByCognitoSub']>>>
     }
   | {
       readonly code: 'already_onboarded_different' | 'username_taken' | 'inconsistent_state'
@@ -265,14 +269,15 @@ async function handleRegister(
     }
     /* c8 ignore stop */
 
-    // Stitch the post-COMMIT free_trial_used into the response shape so
-    // the body reflects state-at-end-of-tx. Re-reading is wasted I/O —
-    // the only column we just changed is the flag.
+    // Stitch the post-COMMIT free_trial_used into the response shape so the
+    // body reflects state-at-end-of-tx, then narrow to the public projection
+    // (never leak cognitoSub / stripeCustomerId / suspendedAt / updatedAt).
+    // Re-reading is wasted I/O — the only column we just changed is the flag.
     const userResponse = { ...user, freeTrialUsed: true }
     return await reply
       .header('Location', '/api/users/me')
       .code(201)
-      .send({ user: userResponse, created: true })
+      .send({ user: toPublicUser(userResponse), created: true })
   } catch (err) {
     // repo.transaction has already rolled back + released the client. The
     // 23505 recovery re-fetch runs on the POOL-bound repo (ctx.repo.users),
@@ -293,9 +298,30 @@ async function handleRegister(
       return await reply
         .header('Content-Location', '/api/users/me')
         .code(200)
-        .send({ user: conflict.user, created: false })
+        .send({ user: toPublicUser(conflict.user), created: false })
     }
     return await reply.code(conflict.status).send(conflict.body)
+  }
+}
+
+// The public user projection (MeResponse['user']): the ONLY user shape that goes
+// over the wire. OMITS cognitoSub / stripeCustomerId / suspendedAt / updatedAt —
+// they must never leak. `/me` AND register both render through this so the two can
+// never drift (register previously sent the full row — MYT-84 leak fix). The
+// `Date` createdAt is serialized to its ISO string (the contract models the wire).
+function toPublicUser(user: {
+  readonly id: string
+  readonly username: string
+  readonly displayName: string
+  readonly freeTrialUsed: boolean
+  readonly createdAt: Date
+}): MeResponse['user'] {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    freeTrialUsed: user.freeTrialUsed,
+    createdAt: user.createdAt.toISOString(),
   }
 }
 
@@ -370,18 +396,9 @@ export const usersRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return reply.code(403).send({ code: 'username_required' })
     }
     // Public projection (MeResponse): OMIT cognitoSub / stripeCustomerId /
-    // suspendedAt / updatedAt — they must never leak over the wire. The
-    // `Date` createdAt is serialized to its ISO string here because the
-    // contract models the WIRE shape (z.iso.datetime()), not the row.
-    const body: MeResponse = {
-      user: {
-        id: user.id,
-        username: user.username,
-        displayName: user.displayName,
-        freeTrialUsed: user.freeTrialUsed,
-        createdAt: user.createdAt.toISOString(),
-      },
-    }
+    // suspendedAt / updatedAt — they must never leak over the wire. Shared
+    // with register via toPublicUser so the two projections can never drift.
+    const body: MeResponse = { user: toPublicUser(user) }
     return reply.send(body)
   })
 }
