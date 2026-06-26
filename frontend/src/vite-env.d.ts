@@ -10,6 +10,13 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string
   /** The dev-bypass `sub` sent as `x-mythrun-dev-sub`. Defaults to `dev-user-1`. */
   readonly VITE_DEV_SUB?: string
+  /** Cognito Hosted UI host (PUBLIC build value), e.g.
+   *  `mythrun-staging.auth.us-east-1.amazoncognito.com`. Read in `main.tsx`'s jwt
+   *  branch only; typed required `string` so the `configureOAuth` call is type-clean. */
+  readonly VITE_COGNITO_HOSTED_UI_DOMAIN: string
+  /** Cognito SPA app-client id (PUBLIC — PKCE means no client secret). Read in
+   *  `main.tsx`'s jwt branch only; typed required `string` for the same reason. */
+  readonly VITE_COGNITO_APP_CLIENT_ID: string
 }
 
 interface ImportMeta {

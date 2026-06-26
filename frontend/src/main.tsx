@@ -4,10 +4,11 @@ import '@fontsource/source-serif-4/400.css'
 import '@fontsource/source-serif-4/600.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
-import { useSessionStore } from '@mythrun/client-core'
+import { useSessionStore, configureOAuth } from '@mythrun/client-core'
 import { App } from './app.tsx'
 import { type AppProvidersConfig } from './app/providers.tsx'
 import { createWebSecureStorage } from './platform/web/secure-storage.ts'
+import { createWebOAuthStateStore } from './platform/web/oauth-state-store.ts'
 import './index.css'
 
 // The web entry — the ONE place a web-only DOM touch is allowed (the
@@ -39,6 +40,21 @@ const config: AppProvidersConfig = import.meta.env.DEV
 // transition; until then a jwt-mode app correctly redirects to sign-in.
 if (config.authMode === 'bypass') {
   useSessionStore.getState().setReady(config.devSub)
+} else {
+  // jwt mode: wire the OAuth helper ONCE at boot — the single-use state store + the
+  // Cognito Hosted UI config (PUBLIC build values, safe in the bundle). The
+  // redirect_uri is derived from THIS origin and MUST exact-match the backend's
+  // server-derived `${frontendBaseUrl}/auth/callback` AND the Cognito app-client
+  // callback URL (Task 1). `window` is allowed here (the web entry).
+  configureOAuth({
+    store: createWebOAuthStateStore(),
+    cognito: {
+      domain: import.meta.env.VITE_COGNITO_HOSTED_UI_DOMAIN,
+      clientId: import.meta.env.VITE_COGNITO_APP_CLIENT_ID,
+      redirectUri: `${window.location.origin}/auth/callback`,
+      scopes: ['openid', 'email', 'profile'],
+    },
+  })
 }
 
 const rootEl = document.getElementById('root')

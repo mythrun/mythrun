@@ -64,3 +64,24 @@ export type { SessionStatus, SessionState } from './stores/session.ts'
 
 // Platform-capability contracts the brain reaches through (impls are per-platform).
 export type { SecureStorage } from './platform/secure-storage.ts'
+
+// OAuth/PKCE helpers (MYT-84) — the canonical oauth API consumed by the sign-in +
+// callback screens. State persistence + the Cognito Hosted UI config are injected
+// once at boot via configureOAuth; the web store impl (sessionStorage) lives in
+// @mythrun/web.
+export {
+  createPkce,
+  createAuthState,
+  consumeAuthState,
+  configureOAuth,
+  isLocalPath,
+  buildAuthorizeUrl,
+  parseCallback,
+} from './auth/oauth.ts'
+export type {
+  OAuthProvider,
+  PkcePair,
+  AuthStateData,
+  OAuthCognitoConfig,
+} from './auth/oauth.ts'
+export type { OAuthStateStore } from './platform/oauth-state-store.ts'

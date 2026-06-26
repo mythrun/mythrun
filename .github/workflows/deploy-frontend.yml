@@ -77,6 +77,11 @@ jobs:
       - run: pnpm --filter @mythrun/web build
         env:
           VITE_API_BASE_URL: https://staging-api.mythrun.com
+          # PUBLIC Cognito Hosted UI values (a domain + a public SPA client id —
+          # PKCE means there is NO client secret), sourced from staging `vars`
+          # (NOT `secrets`). Bundled into the SPA at build time.
+          VITE_COGNITO_HOSTED_UI_DOMAIN: ${{ vars.VITE_COGNITO_HOSTED_UI_DOMAIN }}
+          VITE_COGNITO_APP_CLIENT_ID: ${{ vars.VITE_COGNITO_APP_CLIENT_ID }}
 
       - name: Assume AWS role via OIDC
         # Load-bearing: pnpm install above runs BEFORE OIDC assume so npm
