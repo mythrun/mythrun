@@ -1,38 +1,26 @@
-import type { SecureStorage } from '../platform/secure-storage.ts'
+import { getAccessToken } from '../auth/token-manager.ts'
 
 // `getAuthHeaders` is the auth seam between the client brain and the backend:
 // `defineEndpoint`'s `ApiContext.getAuthHeaders` is exactly the producer this
-// factory returns. It is built once (with the mode + storage handle) and
-// invoked per request, so a token persisted AFTER construction is still picked
-// up — the factory closes over the storage, not over a snapshotted token.
-
-/** Where the backend stores the JWT inside the platform's secure storage. */
-const AUTH_TOKEN_KEY = 'auth_token'
+// factory returns. Built once (with the mode), invoked per request, so a token
+// stored AFTER construction is still picked up — the jwt producer reads the
+// in-memory token manager on every call (MYT-84: the access token lives in
+// memory, never secure storage).
 
 /**
  * `bypass` — local/dev: the backend trusts an `x-mythrun-dev-sub` header; no
- * real auth. `jwt` — the live path: a Bearer token read from secure storage.
+ * real auth. `jwt` — the live path: a Bearer token read from the in-memory
+ * token manager (empty headers before one is acquired).
  */
-export type AuthHeaderOptions =
-  | { mode: 'bypass'; devSub: string; secureStorage: SecureStorage }
-  | { mode: 'jwt'; secureStorage: SecureStorage }
+export type AuthHeaderOptions = { mode: 'bypass'; devSub: string } | { mode: 'jwt' }
 
-/**
- * Builds the per-request header producer for `ApiContext`. In `bypass` mode it
- * resolves the dev-sub header synchronously; in `jwt` mode it reads the token
- * from secure storage on every call, returning a Bearer header when a token is
- * present and an empty object before one has been acquired (MYT-84 fills
- * acquisition). Optional headers are conditionally built so no key is ever
- * present with an explicit `undefined` value (`exactOptionalPropertyTypes`).
- */
 export function getAuthHeaders(opts: AuthHeaderOptions): () => Promise<Record<string, string>> {
   if (opts.mode === 'bypass') {
     const headers: Record<string, string> = { 'x-mythrun-dev-sub': opts.devSub }
     return () => Promise.resolve(headers)
   }
-  const { secureStorage } = opts
-  return async () => {
-    const token = await secureStorage.get(AUTH_TOKEN_KEY)
-    return token === null ? {} : { Authorization: `Bearer ${token}` }
+  return () => {
+    const token = getAccessToken()
+    return Promise.resolve(token === null ? {} : { Authorization: `Bearer ${token}` })
   }
 }

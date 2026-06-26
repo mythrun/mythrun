@@ -38,6 +38,17 @@ export type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/res
 export { getAuthHeaders } from './api/auth.ts'
 export type { AuthHeaderOptions } from './api/auth.ts'
 
+// In-memory access-token manager (MYT-84). The jwt getAuthHeaders + the
+// defineEndpoint 401-retry read this; the app bootstrap wires configureTokenRefresh.
+export {
+  getAccessToken,
+  setAccessToken,
+  clearAccessToken,
+  getAccessTokenExpiresAtMs,
+  runRefresh,
+  configureTokenRefresh,
+} from './auth/token-manager.ts'
+
 // Three-state session store (Zustand, module-level global hook).
 export { useSessionStore } from './stores/session.ts'
 export type { SessionStatus, SessionState } from './stores/session.ts'

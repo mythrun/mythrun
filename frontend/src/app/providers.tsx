@@ -36,9 +36,9 @@ export type AppProvidersConfig = { baseUrl: string; secureStorage: SecureStorage
 /** Maps the flat app config to `getAuthHeaders`' discriminated-union options. */
 function toAuthHeaderOptions(config: AppProvidersConfig): AuthHeaderOptions {
   if (config.authMode === 'bypass') {
-    return { mode: 'bypass', devSub: config.devSub, secureStorage: config.secureStorage }
+    return { mode: 'bypass', devSub: config.devSub }
   }
-  return { mode: 'jwt', secureStorage: config.secureStorage }
+  return { mode: 'jwt' }
 }
 
 export function AppProviders({

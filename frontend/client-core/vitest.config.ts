@@ -30,6 +30,7 @@ export default defineConfig({
       include: [
         'src/tokens/scales.ts',
         'src/api/**',
+        'src/auth/**',
         'src/stores/**',
         'src/platform/**',
         'eslint-rules/**/*.js',
