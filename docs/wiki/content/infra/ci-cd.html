@@ -1,6 +1,7 @@
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/db-migrate.yml -->
 <!-- source: .github/workflows/frontend-check.yml -->
+<!-- source: .github/workflows/deploy-frontend.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
 <!-- source: .github/dependabot.yml -->
 <!-- source: .husky/pre-push -->
@@ -8,8 +9,8 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:a40a259a3cd7782336f143c7d05282e760ab4145f92d2986ffea4bc8621e2d52 -->
-<!-- last-ticket: MYT-97 -->
+<!-- source-hash: sha256:b1acdb6fec718fad5fea2d553790208920eb8ee0844a8621b670f7f607ddceaf -->
+<!-- last-ticket: MYT-96 -->
 
 <h1>CI/CD</h1>
 
@@ -337,6 +338,82 @@
     </tr>
   </tbody>
 </table>
+
+<h2 id="the-deploy-frontend-workflow">The deploy-frontend workflow</h2>
+
+<p>
+  <code>.github/workflows/deploy-frontend.yml</code> is the frontend's counterpart to
+  <code>deploy.yml</code> — it ships the built SPA to the
+  <a href="frontend-hosting.html">frontend-hosting</a> S3 bucket and invalidates the CloudFront
+  edge. It triggers on pushes to <code>main</code> touching <code>frontend/**</code> (or the
+  workflow file itself), plus manual <code>workflow_dispatch</code>, and runs in its own concurrency
+  group (<code>deploy-mythrun-staging-frontend</code>) so a frontend deploy never queues behind a
+  backend roll and two near-simultaneous pushes can't interleave the bucket sync.
+</p>
+
+<p>
+  A pre-flight step fails loudly if any of <code>AWS_ACCOUNT_ID</code>,
+  <code>STAGING_FRONTEND_BUCKET</code>, or <code>STAGING_FRONTEND_DISTRIBUTION_ID</code> is unset —
+  the latter two come from the
+  <a href="frontend-hosting.html#stand-up-the-gated-staging-site">frontend-hosting bring-up</a>. The
+  job then installs the four frontend packages, builds <code>@mythrun/contract</code> first (its
+  gitignored <code>dist/</code> is what the app resolves
+  <code>@mythrun/contract/rest</code> against), and runs the web package's typecheck and tests
+  <em>before</em> the build.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Verify before build, even though the build strips types</strong> —
+  <code>vite build</code> transpiles without type-checking and runs no tests, so the deploy would
+  happily ship a type-broken or test-failing bundle. <code>frontend-check.yml</code> is a separate
+  workflow that does not gate this one (we push directly to <code>main</code>), so the deploy
+  carries its own typecheck + test rather than trusting an upstream check that may not have run on
+  this SHA.
+</aside>
+
+<p>
+  The build runs with <code>VITE_API_BASE_URL=https://staging-api.mythrun.com</code> — Vite inlines
+  the <code>VITE_</code>-prefixed value at build time, pointing the SPA at the staging API origin
+  (cross-origin, already allowed by CORS). As in <code>deploy.yml</code>, the OIDC role assume comes
+  <em>after</em> <code>pnpm install</code>, so an npm lifecycle script can't exfiltrate the deploy
+  role's credentials.
+</p>
+
+<p>
+  Publishing is a three-step, additive sequence designed so the live <code>index.html</code> never
+  points at an asset that isn't there yet. First, <code>aws s3 sync</code> uploads the
+  content-hashed <code>assets/</code> with a one-year <code>immutable</code> cache header,
+  <em>without</em> <code>--delete</code> — purely additive. Then <code>index.html</code> is copied
+  up with <code>no-cache</code>, because it's the mutable entry point. Then a CloudFront
+  invalidation on <code>/index.html</code> forces the edge to refetch it. Only after that does a
+  final <code>--delete</code> sync prune stale hashed assets, out of the hot path.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Additive upload first, prune last</strong> — the new <code>index.html</code> references
+  freshly content-hashed asset filenames. If the prune ran first (or the upload used
+  <code>--delete</code> in one shot), there would be a window where the just-published index points
+  at chunks that were deleted before they were re-uploaded, or vice versa. Uploading the new assets,
+  swapping the index, invalidating, and only then deleting orphans means every referenced asset is
+  present the entire time. Immutable caching on hashed assets makes the blanket one-year header
+  safe; the never-cached index is the single mutable pointer.
+</aside>
+
+<p>
+  The final step is a smoke test that retries up to five times for an HTTP <code>401</code> from
+  <code>https://staging.mythrun.com/</code>. A 401 proves two things at once: the distribution
+  resolves end-to-end, and the
+  <a href="frontend-hosting.html#the-basic-auth-gate">Basic-Auth gate</a>
+  is on.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The smoke asserts 401, and stays secret-free</strong> — the workflow never holds the
+  Basic-Auth password, so it can't prove a <code>200</code>. It asserts the gate is closed (401)
+  rather than open, which is the safe thing to verify in CI; the real upload guarantee is the
+  <code>aws s3</code> step succeeding. A 401 also matches "password never set," so the smoke is a
+  liveness-plus-gate check, not an end-to-end content check.
+</aside>
 
 <h2 id="the-frontend-check-gate">The frontend-check gate</h2>
 
@@ -694,7 +771,10 @@
   shared-workspace resource — see the Serving page's shared-platform section. Post-launch, a sibling
   prod job will be appended to this same workflow, assuming a separate
   <code>mythrun-github-actions-production</code> role (<a href="serving.html">Serving</a>, follow-up
-  bead).
+  bead). The separate <code>deploy-frontend</code> workflow consumes the
+  <a href="frontend-hosting.html">frontend-hosting</a> module's S3 bucket and CloudFront
+  distribution through the same GitHub Actions role, which carries the scoped S3 and
+  CloudFront-invalidation grants for them.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -798,7 +878,8 @@
 
 <p>
   <code>.github/workflows/deploy.yml</code>, <code>.github/workflows/db-migrate.yml</code>,
-  <code>.github/workflows/frontend-check.yml</code>, <code>.github/workflows/lint-auth.yml</code>,
+  <code>.github/workflows/frontend-check.yml</code>,
+  <code>.github/workflows/deploy-frontend.yml</code>, <code>.github/workflows/lint-auth.yml</code>,
   <code>.github/dependabot.yml</code>, <code>.husky/pre-push</code>,
   <code>backend/vitest.config.ts</code>, <code>backend/src/boot/migrations-current.ts</code>,
   <code>backend/src/db/migrate.ts</code>, <code>infra/modules/serving/migrate.tf</code>.

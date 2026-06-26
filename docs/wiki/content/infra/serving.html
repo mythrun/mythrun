@@ -4,8 +4,8 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/environments/staging/outputs.tf -->
 <!-- source: infra/environments/staging/variables.tf -->
-<!-- source-hash: sha256:6edfe61dd34523c899329deaa56db6273dc8f6fef33b29ad421069dd2d09ad68 -->
-<!-- last-ticket: MYT-71 -->
+<!-- source-hash: sha256:818769911fcc4a6fef8b8a46b5165035ef8275063b2650f4b8253dd8e453c3e6 -->
+<!-- last-ticket: MYT-96 -->
 
 <h1>Serving</h1>
 
@@ -349,9 +349,12 @@
   the <code>mythrun</code> cluster, <code>RegisterTaskDefinition</code> and
   <code>DeregisterTaskDefinition</code> scoped to the <code>mythrun-staging-*</code> family, and
   <code>iam:PassRole</code> on the two task roles conditioned on
-  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Production snapshot permissions
-  (<code>rds:CreateDBSnapshot</code>) are deliberately absent; they belong to the future production
-  role.
+  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Two further statements (added with the
+  <a href="frontend-hosting.html">frontend-hosting</a> module) let the same role drive the frontend
+  deploy: S3 object verbs scoped to the <code>mythrun-staging-frontend</code> bucket ARN and its
+  <code>/*</code>, and <code>cloudfront:Create/GetInvalidation</code> scoped to the distribution
+  ARN. Production snapshot permissions (<code>rds:CreateDBSnapshot</code>) are deliberately absent;
+  they belong to the future production role.
 </p>
 
 <aside class="wiki-rationale">

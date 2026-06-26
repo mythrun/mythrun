@@ -1,0 +1,50 @@
+digraph frontend_hosting {
+  // Gated static SPA hosting at staging.mythrun.com. A laptop hits Route 53,
+  // which aliases (A + AAAA) to a CloudFront distribution. CloudFront runs a
+  // viewer-request Basic-Auth function BEFORE the cache — it reads the expected
+  // header from a KeyValueStore and fails closed to 401. On a match the request
+  // flows through the cache to a PRIVATE S3 bucket over Origin Access Control
+  // (SigV4). A 403/404 from the bucket maps to /index.html for SPA deep links.
+  // The Deploy Frontend workflow syncs the built dist/ into the bucket and
+  // invalidates index.html.
+  rankdir=LR;
+  compound=true;
+
+  laptop [label="laptop\nBasic-Auth\nuser : pass", color="ember", fontcolor="ember"];
+  dns    [label="Route 53\nstaging.mythrun.com\nA + AAAA alias"];
+  cert   [label="*.mythrun.com\nwildcard cert\n(DNS module)"];
+
+  subgraph cluster_cf {
+    label="CloudFront distribution  (PriceClass_100)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    gate  [label="viewer-request fn\nBasic-Auth gate\nfail-closed → 401", color="ember", fontcolor="ember"];
+    kvs   [label="KeyValueStore\nstaging-basic-auth\n(set out-of-band)"];
+    cache [label="CachingOptimized\n(Authorization not\nin cache key)"];
+    err   [label="403 & 404\n→ /index.html (200)\nSPA fallback"];
+  }
+
+  oac   [label="Origin Access Control\nSigV4, signing=always"];
+
+  subgraph cluster_s3 {
+    label="private S3  mythrun-staging-frontend";
+    style="dotted";
+
+    bucket [label="public-access-block\nbucket policy:\nGetObject only,\nSourceArn = distribution"];
+  }
+
+  deploy [label="Deploy Frontend\nworkflow", color="ember", fontcolor="ember"];
+
+  laptop -> dns    [label="https"];
+  dns    -> gate   [label="alias"];
+  cert   -> dns    [label="TLS", style=dashed];
+  gate   -> kvs    [label="kvs.get()"];
+  gate   -> cache  [label="match → pass"];
+  cache  -> oac;
+  oac    -> bucket [label="GetObject\nSigV4"];
+  bucket -> err    [label="403 / 404"];
+  deploy -> bucket [label="s3 sync dist/"];
+  deploy -> cache  [label="invalidate\n/index.html", style=dashed];
+}

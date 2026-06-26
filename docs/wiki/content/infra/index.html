@@ -1,7 +1,7 @@
 <!-- source: infra/ -->
 <!-- source: infra/scripts/bootstrap.sh -->
-<!-- source-hash: sha256:d512ffb89f32b34403eeb9c940566b8ff11ba0ec67d663cd3d5832988bc79c02 -->
-<!-- last-ticket: MYT-28 -->
+<!-- source-hash: sha256:22582fd4712a625ef5c8bbc0f77f73830c0c9243dc91123b62ab9a76a2e36ef1 -->
+<!-- last-ticket: MYT-96 -->
 
 <h1>Infra</h1>
 
@@ -38,9 +38,13 @@
     rule, DNS A-alias, IAM task roles, and the GitHub Actions deploy role.
   </li>
   <li>
+    <a href="frontend-hosting.html">Frontend hosting</a> — private S3 + CloudFront serving the SPA
+    at <code>staging.mythrun.com</code> behind a fail-closed Basic-Auth gate.
+  </li>
+  <li>
     <a href="ci-cd.html">CI/CD</a> — the push-to-deploy pipeline: two-job GitHub Actions workflow,
-    ECR pull-through cache, digest-pinned task-def revisions, rollout verification, and Dependabot
-    for SHA-pinned actions.
+    ECR pull-through cache, digest-pinned task-def revisions, rollout verification, a separate
+    frontend deploy workflow, and Dependabot for SHA-pinned actions.
   </li>
 </ul>
 
@@ -159,7 +163,8 @@
       <td><code>staging</code></td>
       <td><code>environments/staging/terraform.tfstate</code></td>
       <td>
-        Serving module + per-env secret shells + GH Actions role + SNS alerts (reads shared state)
+        Serving + frontend-hosting modules + per-env secret shells + GH Actions role + SNS alerts
+        (reads shared state)
       </td>
     </tr>
   </tbody>

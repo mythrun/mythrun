@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html" class="active">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html" class="active">Serving</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html">Smoke testing</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html" class="active">Serving</a></li><li><a href="../infra/frontend-hosting.html">Frontend hosting</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html">Smoke testing</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra › Serving</div>
         <article>
@@ -652,9 +652,12 @@
   the <code>mythrun</code> cluster, <code>RegisterTaskDefinition</code> and
   <code>DeregisterTaskDefinition</code> scoped to the <code>mythrun-staging-*</code> family, and
   <code>iam:PassRole</code> on the two task roles conditioned on
-  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Production snapshot permissions
-  (<code>rds:CreateDBSnapshot</code>) are deliberately absent; they belong to the future production
-  role.
+  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Two further statements (added with the
+  <a href="frontend-hosting.html">frontend-hosting</a> module) let the same role drive the frontend
+  deploy: S3 object verbs scoped to the <code>mythrun-staging-frontend</code> bucket ARN and its
+  <code>/*</code>, and <code>cloudfront:Create/GetInvalidation</code> scoped to the distribution
+  ARN. Production snapshot permissions (<code>rds:CreateDBSnapshot</code>) are deliberately absent;
+  they belong to the future production role.
 </p>
 
 <aside class="wiki-rationale">

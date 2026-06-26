@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Frontend hosting · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="infra" data-page="frontend-hosting">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html" class="active">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html">Serving</a></li><li><a href="../infra/frontend-hosting.html" class="active">Frontend hosting</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html">Smoke testing</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra › Frontend hosting</div>
+        <article>
+<h1>Frontend hosting</h1>
+
+<p class="lead">
+  Where the built React app lands in staging: a private S3 bucket behind a CloudFront distribution
+  at
+  <code>staging.mythrun.com</code>, with a fail-closed HTTP Basic-Auth gate that keeps the
+  pre-launch site off the open internet while still reachable from any network.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1248pt" height="305pt"
+ viewBox="14.00 14.00 1233.00 291.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 286.84)">
+<title>frontend_hosting</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-272.44 1214.87,-272.44 1214.87,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_cf</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="406.6,-99 406.6,-252 898.49,-252 898.49,-99 406.6,-99"/>
+<text xml:space="preserve" text-anchor="middle" x="652.55" y="-238.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CloudFront distribution &#160;(PriceClass_100)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_s3</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="696.92,-8 696.92,-99 950.56,-99 950.56,-8 696.92,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="823.74" y="-85.1" font-family="Courier,monospace" font-size="11.00">private S3 &#160;mythrun&#45;staging&#45;frontend</text>
+</g>
+<!-- laptop -->
+<g id="node1" class="node">
+<title>laptop</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="110.89,-268.44 6.6,-268.44 6.6,-211.56 110.89,-211.56 110.89,-268.44"/>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-249.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">laptop</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-236.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Basic&#45;Auth</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-223.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">user : pass</text>
+</g>
+<!-- dns -->
+<g id="node2" class="node">
+<title>dns</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="340.6,-230.44 183.5,-230.44 183.5,-173.56 340.6,-173.56 340.6,-230.44"/>
+<text xml:space="preserve" text-anchor="middle" x="262.05" y="-211.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Route 53</text>
+<text xml:space="preserve" text-anchor="middle" x="262.05" y="-198.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="262.05" y="-185.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">A + AAAA alias</text>
+</g>
+<!-- laptop&#45;&gt;dns -->
+<g id="edge1" class="edge">
+<title>laptop&#45;&gt;dns</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M111.59,-230.21C130.72,-226.6 152.95,-222.41 174.33,-218.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="174.57,-220.82 181,-217.11 173.67,-216 174.57,-220.82"/>
+<text xml:space="preserve" text-anchor="middle" x="150.5" y="-228.52" font-family="Courier,monospace" font-size="10.00">https</text>
+</g>
+<!-- gate -->
+<g id="node4" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="570.31,-230.44 413.21,-230.44 413.21,-173.56 570.31,-173.56 570.31,-230.44"/>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-211.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">viewer&#45;request fn</text>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-198.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Basic&#45;Auth gate</text>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-185.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fail&#45;closed → 401</text>
+</g>
+<!-- dns&#45;&gt;gate -->
+<g id="edge2" class="edge">
+<title>dns&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M341.09,-202C361.37,-202 383.34,-202 404.03,-202"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="404,-204.45 411,-202 404,-199.55 404,-204.45"/>
+<text xml:space="preserve" text-anchor="middle" x="373.6" y="-205" font-family="Courier,monospace" font-size="10.00">alias</text>
+</g>
+<!-- cert -->
+<g id="node3" class="node">
+<title>cert</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="117.49,-193.44 0,-193.44 0,-136.56 117.49,-136.56 117.49,-193.44"/>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-174.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">*.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-161.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wildcard cert</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-148.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(DNS module)</text>
+</g>
+<!-- cert&#45;&gt;dns -->
+<g id="edge3" class="edge">
+<title>cert&#45;&gt;dns</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M118.24,-175.75C135.76,-178.97 155.35,-182.57 174.28,-186.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="173.81,-188.46 181.13,-187.31 174.69,-183.64 173.81,-188.46"/>
+<text xml:space="preserve" text-anchor="middle" x="150.5" y="-186.5" font-family="Courier,monospace" font-size="10.00">TLS</text>
+</g>
+<!-- kvs -->
+<g id="node5" class="node">
+<title>kvs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="898.49,-230.44 747.99,-230.44 747.99,-173.56 898.49,-173.56 898.49,-230.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-211.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">KeyValueStore</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-198.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;basic&#45;auth</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-185.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(set out&#45;of&#45;band)</text>
+</g>
+<!-- gate&#45;&gt;kvs -->
+<g id="edge4" class="edge">
+<title>gate&#45;&gt;kvs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M570.84,-202C621.3,-202 686.92,-202 738.47,-202"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="738.45,-204.45 745.45,-202 738.45,-199.55 738.45,-204.45"/>
+<text xml:space="preserve" text-anchor="middle" x="636.91" y="-205" font-family="Courier,monospace" font-size="10.00">kvs.get()</text>
+</g>
+<!-- cache -->
+<g id="node6" class="node">
+<title>cache</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="898.49,-155.44 747.99,-155.44 747.99,-98.56 898.49,-98.56 898.49,-155.44"/>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-136.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CachingOptimized</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-123.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Authorization not</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-110.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in cache key)</text>
+</g>
+<!-- gate&#45;&gt;cache -->
+<g id="edge5" class="edge">
+<title>gate&#45;&gt;cache</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M570.84,-184.23C621.4,-172.72 687.19,-157.74 738.79,-146"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="739.21,-148.41 745.5,-144.47 738.13,-143.63 739.21,-148.41"/>
+<text xml:space="preserve" text-anchor="middle" x="636.91" y="-180.74" font-family="Courier,monospace" font-size="10.00">match → pass</text>
+</g>
+<!-- oac -->
+<g id="node8" class="node">
+<title>oac</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1210.87,-111.84 1040.57,-111.84 1040.57,-68.16 1210.87,-68.16 1210.87,-111.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1125.72" y="-93.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Origin Access Control</text>
+<text xml:space="preserve" text-anchor="middle" x="1125.72" y="-80.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SigV4, signing=always</text>
+</g>
+<!-- cache&#45;&gt;oac -->
+<g id="edge6" class="edge">
+<title>cache&#45;&gt;oac</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M898.9,-117.81C938.9,-112.88 988.57,-106.76 1031.13,-101.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1031.37,-103.96 1038.02,-100.68 1030.77,-99.1 1031.37,-103.96"/>
+</g>
+<!-- err -->
+<g id="node7" class="node">
+<title>err</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="576.91,-155.44 406.6,-155.44 406.6,-98.56 576.91,-98.56 576.91,-155.44"/>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-136.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">403 &amp; 404</text>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-123.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ /index.html (200)</text>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-110.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SPA fallback</text>
+</g>
+<!-- bucket -->
+<g id="node9" class="node">
+<title>bucket</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="918.29,-78.04 728.19,-78.04 728.19,-7.96 918.29,-7.96 918.29,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">public&#45;access&#45;block</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bucket policy:</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GetObject only,</text>
+<text xml:space="preserve" text-anchor="middle" x="823.24" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SourceArn = distribution</text>
+</g>
+<!-- oac&#45;&gt;bucket -->
+<g id="edge7" class="edge">
+<title>oac&#45;&gt;bucket</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1039.95,-76.74C1004.89,-71.26 963.92,-64.85 927.16,-59.1"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.99,-56.75 920.7,-58.09 927.23,-61.59 927.99,-56.75"/>
+<text xml:space="preserve" text-anchor="middle" x="995.56" y="-88.46" font-family="Courier,monospace" font-size="10.00">GetObject</text>
+<text xml:space="preserve" text-anchor="middle" x="995.56" y="-76.46" font-family="Courier,monospace" font-size="10.00">SigV4</text>
+</g>
+<!-- bucket&#45;&gt;err -->
+<g id="edge8" class="edge">
+<title>bucket&#45;&gt;err</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M733.92,-78.73C721.44,-84.05 708.81,-89.57 696.92,-95 688.78,-98.72 687.48,-101.41 678.92,-104 649.28,-112.95 615.99,-118.42 585.84,-121.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="585.93,-119.3 579.23,-122.47 586.44,-124.17 585.93,-119.3"/>
+<text xml:space="preserve" text-anchor="middle" x="636.91" y="-123.26" font-family="Courier,monospace" font-size="10.00">403 / 404</text>
+</g>
+<!-- deploy -->
+<g id="node10" class="node">
+<title>deploy</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="557.1,-72.84 426.41,-72.84 426.41,-29.16 557.1,-29.16 557.1,-72.84"/>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-54.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Deploy Frontend</text>
+<text xml:space="preserve" text-anchor="middle" x="491.76" y="-41.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">workflow</text>
+</g>
+<!-- deploy&#45;&gt;cache -->
+<g id="edge10" class="edge">
+<title>deploy&#45;&gt;cache</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M557.57,-57.38C602.41,-62.5 657.68,-70.4 678.92,-80 688.41,-84.29 687.65,-90.26 696.92,-95 709.96,-101.66 724.48,-107.01 738.89,-111.27"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="738.2,-113.62 745.61,-113.17 739.54,-108.91 738.2,-113.62"/>
+<text xml:space="preserve" text-anchor="middle" x="636.91" y="-95" font-family="Courier,monospace" font-size="10.00">invalidate</text>
+<text xml:space="preserve" text-anchor="middle" x="636.91" y="-83" font-family="Courier,monospace" font-size="10.00">/index.html</text>
+</g>
+<!-- deploy&#45;&gt;bucket -->
+<g id="edge9" class="edge">
+<title>deploy&#45;&gt;bucket</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M557.85,-46.69C570.16,-46.01 582.92,-45.4 594.91,-45 635.43,-43.63 680.04,-43.04 718.93,-42.82"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="718.85,-45.27 725.83,-42.79 718.82,-40.37 718.85,-45.27"/>
+<text xml:space="preserve" text-anchor="middle" x="636.91" y="-48" font-family="Courier,monospace" font-size="10.00">s3 sync dist/</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  <code>frontend-hosting</code> is a single reusable Terraform module composed by the
+  <code>staging/</code> workspace. It owns four pieces of AWS surface: a private S3 bucket that
+  holds the compiled SPA, a CloudFront distribution that fronts it, a CloudFront Function that gates
+  access, and the Route 53 records that point the domain at the distribution. The
+  <a href="ci-cd.html#the-deploy-frontend-workflow">Deploy Frontend workflow</a> is what fills the
+  bucket; this module is the standing infrastructure that serves it.
+</p>
+
+<h2 id="the-private-bucket-and-origin-access-control">The private bucket and Origin Access Control</h2>
+
+<p>
+  The artifact bucket (<code>mythrun-staging-frontend</code>) is private end-to-end: all four
+  public-access-block controls are on, and the only principal allowed to read it is CloudFront. The
+  bucket policy grants <code>s3:GetObject</code> (and nothing else) to the
+  <code>cloudfront.amazonaws.com</code> service principal, conditioned on
+  <code>AWS:SourceArn</code> equal to this exact distribution. CloudFront reaches the origin through
+  an Origin Access Control with <code>signing_behavior = "always"</code>, so every origin request is
+  SigV4-signed and the bucket never needs a public path.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>OAC overwrites the viewer's <code>Authorization</code> header</strong> — the Basic-Auth
+  gate (below) sends an <code>Authorization: Basic …</code> header. With
+  <code>signing_behavior = "always"</code>, CloudFront replaces that header with its own SigV4
+  signature on the origin request, so the Basic credential never reaches S3 and origin signing still
+  works. The managed <code>CachingOptimized</code> policy is load-bearing here too: it does not
+  forward <code>Authorization</code> into the cache key or the origin request. Attaching an
+  origin-request policy that forwarded it would break SigV4 signing — a module invariant.
+</aside>
+
+<h2 id="the-cloudfront-distribution">The CloudFront distribution</h2>
+
+<p>
+  The distribution serves a single alias, <code>staging.mythrun.com</code>, over the shared
+  <code>*.mythrun.com</code> wildcard cert from the <a href="dns.html">DNS module</a> — no new
+  certificate. It is dual-stack (<code>is_ipv6_enabled</code>), compresses responses, redirects
+  <code>http</code> to <code>https</code>, allows only <code>GET</code>/<code>HEAD</code>, and uses
+  the AWS-managed <code>CachingOptimized</code> cache policy. <code>PriceClass_100</code> limits the
+  edge footprint to North America and Europe.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reuse the wildcard cert, not a per-distribution cert</strong> — CloudFront requires its
+  ACM cert in <code>us-east-1</code>, which the whole Mythrun stack already is. The shared
+  <code>*.mythrun.com</code> cert already covers <code>staging.mythrun.com</code>, so the module
+  takes the cert ARN as an input rather than minting and validating its own.
+</aside>
+
+<p>
+  Two custom error responses map both <code>403</code> and <code>404</code> from the origin to
+  <code>/index.html</code> with a <code>200</code> — the SPA fallback that lets client-side routes
+  resolve on a deep link or a hard refresh.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>403 → index.html, not just 404</strong> — a private OAC bucket with
+  <code>GetObject</code>-only (no <code>ListBucket</code>) returns <code>403 Forbidden</code>, not
+  <code>404</code>, for a key that doesn't exist. A missing deep-link path like
+  <code>/campaigns/abc</code> is a non-existent key, so without the 403 mapping every client-side
+  route would surface as Access Denied. The Basic-Auth 401 is emitted by the gate function
+  <em>before</em> the origin is ever consulted, so it is unaffected by these origin-error rules.
+</aside>
+
+<h2 id="the-basic-auth-gate">The Basic-Auth gate</h2>
+
+<p>
+  The site must not be publicly reachable before launch, but it must be reachable from Miklos's
+  laptop on any network. The mechanism is a CloudFront Function bound to the distribution's
+  <strong>viewer-request</strong> event. It reads a single expected value — the literal
+  <code>Basic &lt;base64(user:pass)&gt;</code> header — from an associated KeyValueStore and
+  compares it to the request's <code>Authorization</code> header. Only the exact-match path returns
+  the request; every other branch returns a <code>401</code> with a
+  <code>WWW-Authenticate: Basic</code> challenge, so the browser shows its native login prompt.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A CloudFront Function, not WAF or Lambda@Edge</strong> — a WAF IP-allowlist ties access to
+  a network location, which breaks the moment Miklos is on mobile, a café, or a VPN; a shared
+  password works from anywhere. Lambda@Edge would do the job but is heavier and pricier — a full
+  Lambda replicated to every edge, with cold starts — for what is a single string comparison. A
+  CloudFront Function runs in sub-millisecond edge compute, costs a fraction, and its one real
+  limitation (no general network calls) doesn't bite because the only state it needs is the KVS,
+  which Functions can read natively.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The password lives in the KVS, set out-of-band — never in git or state</strong> —
+  Terraform creates the KeyValueStore <em>empty</em>. The expected header is written afterward with
+  the AWS CLI (see the runbook below). Threading the password through a Terraform variable would
+  persist it plaintext in the state bucket and almost certainly in git history; keeping it in the
+  KVS means rotation never touches Terraform and the secret never lands in version control.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fail closed in every branch</strong> — the function denies by default: a missing
+  <code>Authorization</code> header, a KVS read that throws, an unset key (the value comes back
+  <code>null</code>), or a mismatch all return <code>401</code>. The only path that passes traffic
+  through is a present-and-equal comparison. So a half-finished bring-up — distribution live but
+  password not yet set — denies access rather than briefly exposing the site. A
+  <code>node:test</code> suite in the module exercises all four deny branches plus the pass-through.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The gate is a perimeter, not the app's auth</strong> — behind the Basic-Auth wall the SPA
+  still runs its real <a href="../auth-billing/jwt-middleware.html">JWT login flow</a> against the
+  staging API. Gating at the edge means no part of the pre-launch app is exposed — not the login
+  page, not static assets, not unauthenticated routes — while the staging experience stays
+  realistic: you still sign in with a real account. At launch the gate is removed and the app's own
+  auth is the only boundary.
+</aside>
+
+<h2 id="route-53-and-environment-parameterization">Route 53 and environment parameterization</h2>
+
+<p>
+  Two alias records — an <code>A</code> and an <code>AAAA</code> — point
+  <code>staging.mythrun.com</code> at the distribution. Both are needed: the distribution is
+  dual-stack, so an IPv6-only client must be able to resolve the name. The aliases target
+  CloudFront's fixed global hosted-zone ID (<code>Z2FDTNDATAQYW2</code>), not the Route 53 zone ID.
+</p>
+
+<p>
+  The module is environment-parameterized so production can reuse it unchanged at Launch. The
+  <code>site_domain</code> input is a bare FQDN (so the prod apex <code>mythrun.com</code> is
+  expressible, not just a subdomain), and <code>enable_basic_auth</code> toggles the whole gate —
+  the Function, the KeyValueStore, and the viewer-request association are all
+  <code>count</code>-gated on it. Production reuses the module with the apex domain and
+  <code>enable_basic_auth = false</code>; staging passes <code>true</code>.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="stand-up-the-gated-staging-site">Stand up the gated staging site</h3>
+<ol>
+  <li>
+    <code>terraform apply</code> in <code>infra/environments/staging/</code>. This creates the
+    bucket, the distribution, the empty KeyValueStore, the Function, and the Route 53 aliases.
+    CloudFront propagation takes a few minutes.
+  </li>
+  <li>
+    Read the deploy identifiers Terraform now exports:
+    <code>terraform output -raw frontend_bucket_name</code> and
+    <code>terraform output -raw frontend_distribution_id</code>.
+  </li>
+  <li>
+    Set them as GitHub Environment variables on the <code>staging</code> environment —
+    <code>STAGING_FRONTEND_BUCKET</code> and <code>STAGING_FRONTEND_DISTRIBUTION_ID</code>. The
+    <a href="ci-cd.html#the-deploy-frontend-workflow">Deploy Frontend workflow</a> pre-flight fails
+    loudly if either is missing.
+  </li>
+  <li>
+    Set the Basic-Auth password (next runbook). Until it is set, the gate fails closed and the site
+    answers <code>401</code> to everyone.
+  </li>
+  <li>
+    Push a <code>frontend/**</code> change to <code>main</code> (or run the workflow by hand) to
+    publish the first build.
+  </li>
+</ol>
+
+<h3 id="set-or-rotate-the-basic-auth-password">Set or rotate the Basic-Auth password</h3>
+<ol>
+  <li>Grab the KeyValueStore ARN: <code>terraform output -raw frontend_kvs_arn</code>.</li>
+  <li>
+    Compute the expected header from the chosen credentials:
+    <code>printf 'Basic %s' "$(printf 'user:pass' | base64)"</code>.
+  </li>
+  <li>
+    The data-plane API needs the current ETag for a conditional write:
+    <code>aws cloudfront-keyvaluestore describe-key-value-store --kvs-arn &lt;arn&gt;</code> and
+    read <code>ETag</code>.
+  </li>
+  <li>
+    Write the value under the fixed key the function reads:
+    <code
+      >aws cloudfront-keyvaluestore put-key --kvs-arn &lt;arn&gt; --key staging-basic-auth --value
+      "&lt;Basic header&gt;" --if-match &lt;ETag&gt;</code
+    >. The change is live at the edge within seconds — no redeploy.
+  </li>
+  <li>
+    Verify: <code>curl -s -o /dev/null -w '%{http_code}' https://staging.mythrun.com/</code> returns
+    <code>401</code> with no header and <code>200</code> with <code>-u user:pass</code>.
+  </li>
+</ol>
+
+<h3 id="open-the-site-at-launch">Open the site at launch</h3>
+<ol>
+  <li>
+    Set <code>enable_basic_auth = false</code> on the module block and <code>terraform apply</code>.
+    This destroys the Function, the KeyValueStore, and the viewer-request association; the
+    distribution stays up and now serves the SPA to the public.
+  </li>
+  <li>
+    Confirm the app's own JWT auth is now the only boundary — every protected route should still
+    require a real login.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The distribution serves the SPA built by the
+  <a href="../frontend/app-shell.html">frontend app</a> and reuses the wildcard cert and hosted zone
+  from the <a href="dns.html">DNS module</a>. The
+  <a href="ci-cd.html#the-deploy-frontend-workflow">Deploy Frontend workflow</a> uploads each build
+  and invalidates <code>/index.html</code>; the
+  <a href="serving.html#the-github-actions-deploy-role">GitHub Actions deploy role</a> carries the
+  scoped S3 and CloudFront-invalidation grants that workflow uses. The built app points at the
+  <a href="serving.html#alb-routing-and-dns">staging API</a> at
+  <code>staging-api.mythrun.com</code>.
+</p>
+
+<h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
+
+<h3 id="module-inputs">Module inputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Default</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>site_domain</code></td>
+      <td>—</td>
+      <td>Bare FQDN. Drives the CloudFront alias, the Route 53 record name, and the URL output.</td>
+    </tr>
+    <tr>
+      <td><code>acm_certificate_arn</code></td>
+      <td>—</td>
+      <td>us-east-1 cert covering <code>site_domain</code>. The shared wildcard cert.</td>
+    </tr>
+    <tr>
+      <td><code>hosted_zone_id</code></td>
+      <td>—</td>
+      <td>Route 53 zone for <code>mythrun.com</code> (shared <code>dns_zone_id</code>).</td>
+    </tr>
+    <tr>
+      <td><code>environment</code></td>
+      <td>—</td>
+      <td>One of <code>staging</code>, <code>production</code>. Naming and tags only.</td>
+    </tr>
+    <tr>
+      <td><code>enable_basic_auth</code></td>
+      <td><code>true</code></td>
+      <td>Toggles the whole gate (Function + KVS + association). <code>false</code> at launch.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="module-outputs">Module outputs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Output</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>bucket_name</code></td>
+      <td>Set as GH var <code>STAGING_FRONTEND_BUCKET</code>.</td>
+    </tr>
+    <tr>
+      <td><code>distribution_id</code></td>
+      <td>Set as GH var <code>STAGING_FRONTEND_DISTRIBUTION_ID</code>; used for invalidation.</td>
+    </tr>
+    <tr>
+      <td><code>distribution_arn</code></td>
+      <td>Consumed by the OIDC role's <code>cloudfront:CreateInvalidation</code> grant.</td>
+    </tr>
+    <tr>
+      <td><code>url</code></td>
+      <td><code>https://staging.mythrun.com</code>.</td>
+    </tr>
+    <tr>
+      <td><code>kvs_arn</code></td>
+      <td>
+        Basic-Auth KeyValueStore ARN for the out-of-band password set/rotate. Null when disabled.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p><code>infra/modules/frontend-hosting/</code></p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-private-bucket-and-origin-access-control">The private bucket and Origin Access Control</a></li><li style="padding-left:0"><a href="#the-cloudfront-distribution">The CloudFront distribution</a></li><li style="padding-left:0"><a href="#the-basic-auth-gate">The Basic-Auth gate</a></li><li style="padding-left:0"><a href="#route-53-and-environment-parameterization">Route 53 and environment parameterization</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#stand-up-the-gated-staging-site">Stand up the gated staging site</a></li><li style="padding-left:12px"><a href="#set-or-rotate-the-basic-auth-password">Set or rotate the Basic-Auth password</a></li><li style="padding-left:12px"><a href="#open-the-site-at-launch">Open the site at launch</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#module-inputs">Module inputs</a></li><li style="padding-left:12px"><a href="#module-outputs">Module outputs</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>
