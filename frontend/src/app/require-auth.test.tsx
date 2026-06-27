@@ -1,8 +1,9 @@
 import { render, screen, act, cleanup } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
+import { ThemeProvider } from '@mythrun/ui'
 import { useSessionStore } from '@mythrun/client-core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { routes } from './router.tsx'
 import { i18n } from '../i18n/config.ts'
 
@@ -26,12 +27,56 @@ afterEach(() => {
   })
 })
 
+// ENVIRONMENT shim (Node 25 vs jsdom), not production code. `renderAt` now wraps
+// the route tree in @mythrun/ui's <ThemeProvider> (the unauthenticated bounce
+// resolves to SigninRoute, which consumes `useTheme` for its theme-driven Dither
+// crown — MYT-84), which reads `localStorage` on mount to resolve the initial
+// theme. Node 25 ships the experimental Web Storage API on by default, installing
+// a non-functional builtin `localStorage` (no getItem) that SHADOWS the real
+// `Storage` jsdom would provide. Install a functional in-memory `Storage` so the
+// stack renders. Mirrors the `providers.test.tsx` / `secure-storage.test.ts`
+// precedent in this package.
+class MemStorage {
+  private readonly store = new Map<string, string>()
+  getItem(key: string): string | null {
+    return this.store.has(key) ? (this.store.get(key) ?? null) : null
+  }
+  setItem(key: string, value: string): void {
+    this.store.set(key, value)
+  }
+  removeItem(key: string): void {
+    this.store.delete(key)
+  }
+  clear(): void {
+    this.store.clear()
+  }
+  key(index: number): string | null {
+    return [...this.store.keys()][index] ?? null
+  }
+  get length(): number {
+    return this.store.size
+  }
+}
+
+beforeAll(() => {
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: new MemStorage(),
+    configurable: true,
+    writable: true,
+  })
+})
+
+// The harness mirrors the real composition root (AppProviders → ThemeProvider →
+// the router): the sign-in screen the gate bounces to consumes `useTheme`, so the
+// provider must be present, the same way the shipped app supplies it.
 function renderAt(path: string): void {
   const router = createMemoryRouter(routes, { initialEntries: [path] })
   render(
-    <I18nextProvider i18n={i18n}>
-      <RouterProvider router={router} />
-    </I18nextProvider>,
+    <ThemeProvider>
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>
+    </ThemeProvider>,
   )
 }
 

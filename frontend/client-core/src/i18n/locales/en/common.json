@@ -37,9 +37,19 @@
       "failed": "[ph_failed]"
     }
   },
+  "theme": {
+    "toggle": "Theme"
+  },
+  "signin": {
+    "wordmark": "Mythrun",
+    "tagline": "[ph_signin_tagline: a terse at-the-table line, ~1 sentence — the door into a session]",
+    "google": "Continue with Google",
+    "discord": "Continue with Discord",
+    "legal": "[ph_signin_legal: a short Terms · Privacy line]",
+    "suspended": "[ph_signin_suspended: ~1 sentence — this account is suspended, with a contact nudge]"
+  },
   "stub": {
     "landing": "[ph_landing_screen]",
-    "signin": "[ph_signin_screen]",
     "onboard": "[ph_onboard_screen]",
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
