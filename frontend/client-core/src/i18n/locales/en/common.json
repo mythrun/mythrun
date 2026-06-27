@@ -48,9 +48,18 @@
     "legal": "[ph_signin_legal: a short Terms · Privacy line]",
     "suspended": "[ph_signin_suspended: ~1 sentence — this account is suspended, with a contact nudge]"
   },
+  "onboard": {
+    "prompt": "[ph_onboard_prompt: the gentle 'what should we call you?' question, serif]",
+    "nameLabel": "Display name",
+    "continue": "Continue",
+    "hint": "[ph_onboard_hint: a reassuring 'you can change this later' line]",
+    "errors": {
+      "displayNameInvalid": "[ph_onboard_err_display: ~1 sentence — that display name can't be used, try another]",
+      "generic": "[ph_onboard_err_generic: ~1 sentence — something went wrong, please try again]"
+    }
+  },
   "stub": {
     "landing": "[ph_landing_screen]",
-    "onboard": "[ph_onboard_screen]",
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
     "campaignNew": "[ph_campaign_new_screen]",

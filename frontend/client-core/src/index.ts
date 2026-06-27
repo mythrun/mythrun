@@ -66,6 +66,11 @@ export type { SessionStatus, SessionState } from './stores/session.ts'
 export { applyMe, bootstrapSession } from './auth/session-adapter.ts'
 export { readSubClaim } from './auth/jwt-claims.ts'
 
+// Onboarding helper — derive a regex-valid-by-construction `username` from the
+// player's display name (the onboarding moment, MYT-84). The handle is a system
+// id, never shown; the screen registers with it and re-derives only on collision.
+export { deriveUsername } from './auth/derive-username.ts'
+
 // Platform-capability contracts the brain reaches through (impls are per-platform).
 export type { SecureStorage } from './platform/secure-storage.ts'
 
