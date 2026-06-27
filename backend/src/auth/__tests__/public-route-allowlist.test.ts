@@ -6,14 +6,18 @@ import {
 } from '../public-route-allowlist.js'
 
 describe('public-route allowlist', () => {
-  it('contains the expected 6 entries', () => {
-    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(6)
+  it('contains the expected 9 entries', () => {
+    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(9)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /health')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /webhooks/stripe')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/billing/skus')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/invites/:inviteCode/preview')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /health/ready')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /ws/session/:sessionId')).toBe(true)
+    // MYT-84: the three BFF auth routes.
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/session')).toBe(true)
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/refresh')).toBe(true)
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/logout')).toBe(true)
   })
 
   it('allowlisted public route registers cleanly', async () => {

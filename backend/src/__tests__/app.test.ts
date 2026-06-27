@@ -229,7 +229,14 @@ describe('buildApp', () => {
       { mode: 'bypass' }, // RegisterAuthOptions still bypass for boot ease
       {
         frontendBaseUrl: 'http://localhost:5173',
-        env: makeStubEnv({ authMode: 'real' }),
+        // authMode='real' also drives the MYT-84 auth-route registration, which
+        // needs Cognito config (buildApp fail-loud guards undefined); stubs suffice
+        // — no network at construction, and this test only checks /api/dev/credits.
+        env: makeStubEnv({
+          authMode: 'real',
+          cognitoHostedUiDomain: 'stub.auth.us-east-1.amazoncognito.com',
+          cognitoAppClientId: 'stub-client-id',
+        }),
       },
     )
     const res = await app.inject({ method: 'POST', url: '/api/dev/credits' })
@@ -237,6 +244,25 @@ describe('buildApp', () => {
     // dev-credits plugin's `app.post('/api/dev/credits', ...)` block
     // didn't run at all in this configuration.
     expect(res.statusCode).toBe(404)
+  })
+
+  it('fails loud when authMode="real" but Cognito config is absent (app.ts:307-309)', async () => {
+    // The real-mode BFF session block requires hostedUiDomain + clientId to
+    // construct the CognitoOAuthClient. makeStubEnv defaults authMode='bypass'
+    // and never sets the cognito fields, so `{ authMode: 'real' }` alone leaves
+    // both undefined and trips the fail-loud guard before any registration.
+    await expect(
+      buildApp(
+        makeStubDeps(),
+        { mode: 'bypass' },
+        {
+          frontendBaseUrl: 'http://localhost:5173',
+          env: makeStubEnv({ authMode: 'real' }),
+        },
+      ),
+    ).rejects.toThrow(
+      'buildApp: authMode=real requires cognitoHostedUiDomain + cognitoAppClientId',
+    )
   })
 
   it('public-route allowlist hook rejects non-allowlisted public routes', async () => {

@@ -151,6 +151,65 @@ describe('routes/auth', () => {
       })
       expect(res.statusCode).toBe(502)
     })
+
+    it('400 on a JSON `null` body (parseSessionBody body===null guard, auth.ts:33)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/session',
+        headers: { 'content-type': 'application/json' },
+        payload: 'null',
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({ code: 'invalid_request' })
+      expect(cognito.exchangeCode).not.toHaveBeenCalled()
+    })
+
+    it('400 on an empty `code` string (parseSessionBody length guard, auth.ts:36)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/session',
+        headers: { 'content-type': 'application/json' },
+        payload: { code: '', codeVerifier: 'VER' },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({ code: 'invalid_request' })
+      expect(cognito.exchangeCode).not.toHaveBeenCalled()
+    })
+
+    it('415 when NO content-type header is present (isJsonRequest `?? \'\'` fallback, auth.ts:42)', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/auth/session' })
+      expect(res.statusCode).toBe(415)
+      expect(res.json()).toEqual({ code: 'unsupported_media_type' })
+    })
+
+    it('401 with errorClass Unknown when exchangeCode rejects a NON-Error (errClass :Unknown, auth.ts:47)', async () => {
+      vi.mocked(cognito.exchangeCode).mockRejectedValueOnce('plain string failure')
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/session',
+        headers: { 'content-type': 'application/json' },
+        payload: { code: 'CODE', codeVerifier: 'VER' },
+      })
+      expect(res.statusCode).toBe(401)
+      expect(res.json()).toEqual({ code: 'code_exchange_failed' })
+    })
+
+    it('200 with name:null when Cognito returns a token set with no id_token (auth.ts:77)', async () => {
+      vi.mocked(cognito.exchangeCode).mockResolvedValueOnce({
+        accessToken: 'access-no-id',
+        expiresIn: 3600,
+        refreshToken: 'refresh-no-id',
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/session',
+        headers: { 'content-type': 'application/json' },
+        payload: { code: 'CODE', codeVerifier: 'VER' },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ accessToken: 'access-no-id', expiresIn: 3600, name: null })
+      expect(setCookieHeader(res)).toContain('mythrun_refresh=refresh-no-id')
+    })
   })
 
   describe('POST /api/auth/refresh', () => {

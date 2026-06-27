@@ -109,7 +109,12 @@ export function extractIdTokenName(idToken: string): string | null {
   const parts = idToken.split('.')
   if (parts.length !== 3) return null
   try {
+    // `parts[1]` is a defined string here (the split produced exactly 3 parts,
+    // guarded at line 110); the `?? ''` exists only to satisfy
+    // noUncheckedIndexedAccess and is unreachable at runtime — mirrors
+    // jwt-claims.ts's readSubClaim. The branch is excluded from coverage.
     const payload = JSON.parse(
+      /* v8 ignore next */
       Buffer.from(parts[1] ?? '', 'base64url').toString('utf8'),
     ) as { name?: unknown }
     return typeof payload.name === 'string' && payload.name.length > 0 ? payload.name : null

@@ -35,9 +35,9 @@ const config: AppProvidersConfig = import.meta.env.DEV
 // authenticated (it injects `request.user.sub` on every request), so the dev app
 // should land on the authed side of <RequireAuth> rather than bounce to sign-in.
 // Bypass implies an authenticated dev identity, so seed the session store `ready`
-// ONCE at module scope with the dev sub. In `jwt` mode we leave the store at its
-// `unauthenticated` default — MYT-84 owns real token acquisition + the onboarding
-// transition; until then a jwt-mode app correctly redirects to sign-in.
+// ONCE at module scope with the dev sub. In `jwt` mode (the else branch below) we
+// instead wire the OAuth helper + kick the on-load refresh → /me bootstrap, leaving
+// the store `initializing` until it settles (RequireAuth shows the splash meanwhile).
 if (config.authMode === 'bypass') {
   useSessionStore.getState().setReady(config.devSub)
 } else {

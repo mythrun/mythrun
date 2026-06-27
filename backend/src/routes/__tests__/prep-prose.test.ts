@@ -221,7 +221,16 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
         { mode: 'bypass' },
         {
           frontendBaseUrl: FRONTEND_BASE_URL,
-          env: makeStubEnv({ frontendBaseUrl: FRONTEND_BASE_URL, authMode: 'real' }),
+          // authMode='real' also drives the MYT-84 auth-route registration, which
+          // requires Cognito config (buildApp throws without it). Stub values suffice:
+          // the OAuth client does no network at construction, and this test never
+          // exercises /api/auth — it only asserts the /api/dev block is absent.
+          env: makeStubEnv({
+            frontendBaseUrl: FRONTEND_BASE_URL,
+            authMode: 'real',
+            cognitoHostedUiDomain: 'stub.auth.us-east-1.amazoncognito.com',
+            cognitoAppClientId: 'stub-client-id',
+          }),
         },
       )
       await app.ready()
