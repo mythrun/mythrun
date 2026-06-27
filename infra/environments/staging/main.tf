@@ -148,11 +148,12 @@ module "auth" {
   environment  = var.environment
   idps_enabled = var.cognito_idps_enabled
 
-  # Staging is intentionally local-frontend-only per MYT-36 spec §6.
-  # Production composition (myth-prod-auth-compose follow-up bead) adds the
-  # production mythrun.com URLs onto a separate prod App Client.
-  callback_urls = ["http://localhost:5173/auth/callback"]
-  logout_urls   = ["http://localhost:5173"]
+  # Staging App Client points at the deployed staging frontend (MYT-96 hosting,
+  # wired in MYT-84). The localhost callback from the MYT-36 buildout is dropped:
+  # real OAuth is staging-only; local dev uses the auth bypass seam, never Cognito.
+  # Production composition adds the mythrun.com URLs onto a separate prod App Client.
+  callback_urls = ["https://staging.mythrun.com/auth/callback"]
+  logout_urls   = ["https://staging.mythrun.com"]
 
   # Four native Cognito test users for staging smoke testing (one owner +
   # three players, per MYT-55). Generated passwords live in Secrets Manager
