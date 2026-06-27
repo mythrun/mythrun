@@ -47,11 +47,24 @@ function errClass(err: unknown): string {
   return err instanceof Error ? err.constructor.name : 'Unknown'
 }
 
+// CSRF guard for the SameSite=None cookie-authed routes (refresh-cookie.ts is
+// None for the split-origin SPA↔API). A browser ALWAYS sends Origin on these
+// cross-origin POSTs, so a present-but-mismatched Origin is a forged cross-site
+// request — reject it. Absent Origin (a non-browser, which can't hold the
+// victim's httpOnly cookie anyway) is allowed.
+function isForgedOrigin(request: FastifyRequest, frontendBaseUrl: string): boolean {
+  const origin = request.headers.origin
+  return origin !== undefined && origin !== frontendBaseUrl
+}
+
 async function handleSession(
   request: FastifyRequest,
   reply: FastifyReply,
   opts: AuthRoutesOpts,
 ): Promise<FastifyReply> {
+  if (isForgedOrigin(request, opts.frontendBaseUrl)) {
+    return reply.code(403).send({ code: 'forbidden_origin' })
+  }
   if (!isJsonRequest(request)) {
     return reply.code(415).send({ code: 'unsupported_media_type' })
   }
@@ -83,6 +96,9 @@ async function handleRefresh(
   reply: FastifyReply,
   opts: AuthRoutesOpts,
 ): Promise<FastifyReply> {
+  if (isForgedOrigin(request, opts.frontendBaseUrl)) {
+    return reply.code(403).send({ code: 'forbidden_origin' })
+  }
   const token = request.cookies[REFRESH_COOKIE_NAME]
   if (!token) {
     clearRefreshCookie(reply)
@@ -106,6 +122,9 @@ async function handleLogout(
   reply: FastifyReply,
   opts: AuthRoutesOpts,
 ): Promise<FastifyReply> {
+  if (isForgedOrigin(request, opts.frontendBaseUrl)) {
+    return reply.code(403).send({ code: 'forbidden_origin' })
+  }
   const token = request.cookies[REFRESH_COOKIE_NAME]
   if (token) {
     try {

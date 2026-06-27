@@ -14,6 +14,7 @@ import { registerPublicRouteAllowlistHook } from '../../auth/public-route-allowl
 import { authRoutes } from '../auth.js'
 
 const FRONTEND = 'https://staging.mythrun.com'
+const FORGED = 'https://evil.example.com'
 
 // Property-style stub (NOT the method-signature CognitoOAuthClient interface):
 // `expect(mock.method)` on a method-signature type trips @typescript-eslint/
@@ -76,10 +77,12 @@ describe('routes/auth', () => {
 
   describe('POST /api/auth/session', () => {
     it('200: exchanges code (derived redirect_uri), sets the refresh cookie, returns access token + name', async () => {
+      // Sends the matching FRONTEND Origin: covers isForgedOrigin's allowed branch
+      // (origin PRESENT and === frontendBaseUrl → not forged → proceed).
       const res = await app.inject({
         method: 'POST',
         url: '/api/auth/session',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: FRONTEND },
         payload: { code: 'CODE', codeVerifier: 'VER' },
       })
       expect(res.statusCode).toBe(200)
@@ -93,10 +96,23 @@ describe('routes/auth', () => {
       expect(sc).toContain('mythrun_refresh=refresh-1')
       expect(sc).toContain('HttpOnly')
       expect(sc).toContain('Secure')
-      expect(sc).toContain('SameSite=Lax')
+      expect(sc).toContain('SameSite=None')
       expect(sc).toContain('Path=/api/auth')
       expect(sc).toContain('Max-Age=2592000')
       expect(sc).not.toContain('Domain')
+    })
+
+    it('403 forbidden_origin on a FORGED Origin (CSRF guard precedes everything; Cognito not called)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/session',
+        headers: { 'content-type': 'application/json', origin: FORGED },
+        payload: { code: 'CODE', codeVerifier: 'VER' },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ code: 'forbidden_origin' })
+      expect(cognito.exchangeCode).not.toHaveBeenCalled()
+      expect(res.headers['set-cookie']).toBeUndefined()
     })
 
     it('415 on a text/plain content type (login-CSRF invariant: no form-body parser)', async () => {
@@ -225,6 +241,18 @@ describe('routes/auth', () => {
       expect(setCookieHeader(res)).toContain('mythrun_refresh=refresh-rotated')
     })
 
+    it('403 forbidden_origin on a FORGED Origin even with a valid cookie (refresh not called)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/refresh',
+        headers: { cookie: 'mythrun_refresh=refresh-1', origin: FORGED },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ code: 'forbidden_origin' })
+      expect(cognito.refresh).not.toHaveBeenCalled()
+      expect(res.headers['set-cookie']).toBeUndefined()
+    })
+
     it('401 + clears the cookie when no refresh cookie is present', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/auth/refresh' })
       expect(res.statusCode).toBe(401)
@@ -267,6 +295,18 @@ describe('routes/auth', () => {
       expect(res.statusCode).toBe(204)
       expect(cognito.revoke).toHaveBeenCalledWith({ token: 'refresh-1' })
       expect(setCookieHeader(res)).toMatch(/Max-Age=0|Expires=/)
+    })
+
+    it('403 forbidden_origin on a FORGED Origin even with a valid cookie (revoke not called, cookie not cleared)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/logout',
+        headers: { cookie: 'mythrun_refresh=refresh-1', origin: FORGED },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ code: 'forbidden_origin' })
+      expect(cognito.revoke).not.toHaveBeenCalled()
+      expect(res.headers['set-cookie']).toBeUndefined()
     })
 
     it('204 + clears the cookie even with no cookie present (revoke not called)', async () => {
