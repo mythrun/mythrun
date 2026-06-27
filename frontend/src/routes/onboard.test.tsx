@@ -43,8 +43,21 @@ beforeAll(() => {
   })
 })
 
-const checkUsername = vi.fn()
-const register = vi.fn()
+// Typed off the REAL module so each wrapper forwards a properly-typed value, not
+// `any` (no-unsafe-return). `register` therefore resolves a full RegisterResponse.
+type ClientCore = typeof import('@mythrun/client-core')
+const checkUsername = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['checkUsername']>>()
+const register = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['register']>>()
+
+// A complete PublicUser fixture (the contract requires all five fields); the
+// suite only asserts on call args / navigation, never on these values.
+const dbUser = {
+  id: 'db1',
+  username: 'ariathorne',
+  displayName: 'Aria Thorne',
+  freeTrialUsed: false,
+  createdAt: '2026-01-01T00:00:00.000Z',
+}
 
 vi.mock('@mythrun/client-core', async (orig) => {
   const actual = await orig<typeof import('@mythrun/client-core')>()
@@ -89,7 +102,7 @@ beforeEach(() => {
   setMatch(); localStorage.clear()
   useSessionStore.setState({ status: 'onboarding-required', sub: 'cognito-1', suspended: false })
   checkUsername.mockReset().mockResolvedValue({ available: true })
-  register.mockReset().mockResolvedValue({ user: { id: 'db1' }, created: true })
+  register.mockReset().mockResolvedValue({ user: dbUser, created: true })
 })
 // Web's vitest config sets no `globals`, so testing-library's auto-cleanup is not
 // registered — `cleanup()` must UNMOUNT the prior render (mirrors signin.test).
@@ -129,7 +142,7 @@ describe('OnboardRoute', () => {
   it('username_taken (409) → re-probe + register again, bounded', async () => {
     register
       .mockRejectedValueOnce(new HttpError(409, 'Conflict', 'username_taken'))
-      .mockResolvedValueOnce({ user: { id: 'db1' }, created: true })
+      .mockResolvedValueOnce({ user: dbUser, created: true })
     renderOnboard({ name: 'Aria', returnTo: '/home' })
     act(() => { screen.getByRole('button', { name: /continue/i }).click() })
     await waitFor(() => { expect(screen.getByTestId('at-home')).toBeDefined() })

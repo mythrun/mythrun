@@ -5,11 +5,14 @@ import { I18nextProvider } from 'react-i18next'
 import { ApiClientProvider, useSessionStore, type ApiContext } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
 
-const parseCallback = vi.fn()
-const consumeAuthState = vi.fn()
-const isLocalPath = vi.fn()
-const createSession = vi.fn()
-const setAccessToken = vi.fn()
+// The mocked client-core members are typed off the REAL module (`ReturnType<…>`)
+// so each wrapper forwards a properly-typed value, not `any` (no-unsafe-return).
+type ClientCore = typeof import('@mythrun/client-core')
+const parseCallback = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['parseCallback']>>()
+const consumeAuthState = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['consumeAuthState']>>()
+const isLocalPath = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['isLocalPath']>>()
+const createSession = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['createSession']>>()
+const setAccessToken = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['setAccessToken']>>()
 const applyMe = vi.fn<(ctx: ApiContext) => Promise<void>>()
 
 vi.mock('@mythrun/client-core', async (orig) => {
@@ -23,7 +26,7 @@ vi.mock('@mythrun/client-core', async (orig) => {
     // `applyMe` is the one typed mock (`vi.fn<(ctx) => Promise<void>>`), so forward
     // its single fixed arg — an `unknown[]` rest-spread can't satisfy that signature.
     applyMe: (ctx: ApiContext) => applyMe(ctx),
-    setAccessToken: (...a: unknown[]) => setAccessToken(...a),
+    setAccessToken: (...a: unknown[]) => { setAccessToken(...a) },
   }
 })
 

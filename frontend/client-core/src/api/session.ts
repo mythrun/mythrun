@@ -30,7 +30,7 @@ export const refreshSession = defineEndpoint<RefreshResponse>({
   skipAuthRetry: true,
 })
 
-export const logout = defineEndpoint<void>({
+export const logout = defineEndpoint({
   method: 'POST',
   path: () => '/api/auth/logout',
   response: z.void(),

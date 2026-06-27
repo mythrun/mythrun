@@ -59,9 +59,9 @@ export function CallbackRoute(): React.JSX.Element {
       await applyMe(ctx)
       const status = useSessionStore.getState().status
       if (status === 'ready') {
-        navigate(returnTo, { replace: true })
+        void navigate(returnTo, { replace: true })
       } else if (status === 'onboarding-required') {
-        navigate('/auth/onboard', { replace: true, state: { name: session.name, returnTo } })
+        void navigate('/auth/onboard', { replace: true, state: { name: session.name, returnTo } })
       } else {
         setErrored(true)
       }

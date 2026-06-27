@@ -15,7 +15,7 @@ import type { OAuthStateStore } from '../platform/oauth-state-store.ts'
 // jsdom does not implement crypto.subtle; ensure the Web Crypto API is present
 // (Node's webcrypto) so createPkce's S256 digest works in the test env.
 beforeAll(async () => {
-  if (typeof globalThis.crypto?.subtle === 'undefined') {
+  if (typeof globalThis.crypto.subtle === 'undefined') {
     const { webcrypto } = await import('node:crypto')
     Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
   }

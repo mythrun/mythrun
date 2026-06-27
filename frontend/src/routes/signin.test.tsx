@@ -45,9 +45,12 @@ beforeAll(() => {
   })
 })
 
-const createAuthState = vi.fn()
-const buildAuthorizeUrl = vi.fn()
-const redirectTo = vi.fn()
+// Typed off the REAL module so each wrapper forwards a properly-typed value, not
+// `any` (no-unsafe-return).
+type ClientCore = typeof import('@mythrun/client-core')
+const createAuthState = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['createAuthState']>>()
+const buildAuthorizeUrl = vi.fn<(...a: unknown[]) => ReturnType<ClientCore['buildAuthorizeUrl']>>()
+const redirectTo = vi.fn<(...a: unknown[]) => void>()
 
 vi.mock('@mythrun/client-core', async (orig) => {
   const actual = await orig<typeof import('@mythrun/client-core')>()
@@ -58,7 +61,7 @@ vi.mock('@mythrun/client-core', async (orig) => {
     isLocalPath: () => true,
   }
 })
-vi.mock('../platform/web/navigation.ts', () => ({ redirectTo: (...a: unknown[]) => redirectTo(...a) }))
+vi.mock('../platform/web/navigation.ts', () => ({ redirectTo: (...a: unknown[]) => { redirectTo(...a) } }))
 
 const { SigninRoute } = await import('./signin.tsx')
 
@@ -88,7 +91,7 @@ describe('SigninRoute', () => {
   it('Google button → createAuthState + buildAuthorizeUrl(google) + redirect', async () => {
     renderSignin()
     // `begin` is async (awaits createAuthState); the async act flushes the chain.
-    await act(async () => { screen.getByRole('button', { name: /google/i }).click() })
+    await act(() => { screen.getByRole('button', { name: /google/i }).click(); return Promise.resolve() })
     expect(createAuthState).toHaveBeenCalledWith({ provider: 'google', returnTo: '/home' })
     expect(buildAuthorizeUrl).toHaveBeenCalledWith({ provider: 'google', state: 'st', challenge: 'ch' })
     expect(redirectTo).toHaveBeenCalledWith('https://cognito/authorize?x=1')
@@ -96,13 +99,13 @@ describe('SigninRoute', () => {
 
   it('Discord button passes provider=discord', async () => {
     renderSignin()
-    await act(async () => { screen.getByRole('button', { name: /discord/i }).click() })
+    await act(() => { screen.getByRole('button', { name: /discord/i }).click(); return Promise.resolve() })
     expect(createAuthState).toHaveBeenCalledWith({ provider: 'discord', returnTo: '/home' })
   })
 
   it('threads a validated ?returnTo into the auth state', async () => {
     renderSignin('/auth/signin?returnTo=/join/abc')
-    await act(async () => { screen.getByRole('button', { name: /google/i }).click() })
+    await act(() => { screen.getByRole('button', { name: /google/i }).click(); return Promise.resolve() })
     expect(createAuthState).toHaveBeenCalledWith({ provider: 'google', returnTo: '/join/abc' })
   })
 

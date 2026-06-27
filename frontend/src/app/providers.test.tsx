@@ -83,10 +83,10 @@ function Probe(): React.JSX.Element {
   const retry = queryClient.getDefaultOptions().queries?.retry
   const ok =
     typeof retry === 'function' &&
-    retry(0, new HttpError(404, 'not found')) === false &&
-    retry(0, new HttpError(500, 'boom')) === true &&
-    retry(0, new Error('network')) === true &&
-    retry(1, new Error('network')) === false
+    !retry(0, new HttpError(404, 'not found')) &&
+    retry(0, new HttpError(500, 'boom')) &&
+    retry(0, new Error('network')) &&
+    !retry(1, new Error('network'))
   return (
     <>
       <span data-testid={`retry-ok-${String(ok)}`} />
