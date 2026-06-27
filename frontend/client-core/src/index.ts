@@ -62,6 +62,10 @@ export {
 export { useSessionStore } from './stores/session.ts'
 export type { SessionStatus, SessionState } from './stores/session.ts'
 
+// Session adapter — the /me → store mapping + the on-load bootstrap (MYT-84).
+export { applyMe, bootstrapSession } from './auth/session-adapter.ts'
+export { readSubClaim } from './auth/jwt-claims.ts'
+
 // Platform-capability contracts the brain reaches through (impls are per-platform).
 export type { SecureStorage } from './platform/secure-storage.ts'
 

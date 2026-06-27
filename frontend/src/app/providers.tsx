@@ -45,6 +45,11 @@ function toAuthHeaderOptions(config: AppProvidersConfig): AuthHeaderOptions {
   return { mode: 'jwt' }
 }
 
+/** The resolved ApiContext for a config — shared by AppProviders + the boot bootstrap. */
+export function toApiContext(config: AppProvidersConfig): ApiContext {
+  return { baseUrl: config.baseUrl, getAuthHeaders: getAuthHeaders(toAuthHeaderOptions(config)) }
+}
+
 export function AppProviders({
   config,
   children,
@@ -76,10 +81,7 @@ export function AppProviders({
 
   // The resolved ApiContext: where the backend lives + how to authenticate.
   // Rebuilt only when the config changes (stable across normal re-renders).
-  const apiContext = useMemo<ApiContext>(
-    () => ({ baseUrl: config.baseUrl, getAuthHeaders: getAuthHeaders(toAuthHeaderOptions(config)) }),
-    [config],
-  )
+  const apiContext = useMemo<ApiContext>(() => toApiContext(config), [config])
 
   // Wire the token manager's single-flight refresh to the real /api/auth/refresh
   // call (bound to the resolved ApiContext). defineEndpoint's 401 retry + the

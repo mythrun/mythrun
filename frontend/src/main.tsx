@@ -4,9 +4,9 @@ import '@fontsource/source-serif-4/400.css'
 import '@fontsource/source-serif-4/600.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
-import { useSessionStore, configureOAuth } from '@mythrun/client-core'
+import { useSessionStore, configureOAuth, bootstrapSession } from '@mythrun/client-core'
 import { App } from './app.tsx'
-import { type AppProvidersConfig } from './app/providers.tsx'
+import { type AppProvidersConfig, toApiContext } from './app/providers.tsx'
 import { createWebSecureStorage } from './platform/web/secure-storage.ts'
 import { createWebOAuthStateStore } from './platform/web/oauth-state-store.ts'
 import './index.css'
@@ -55,6 +55,11 @@ if (config.authMode === 'bypass') {
       scopes: ['openid', 'email', 'profile'],
     },
   })
+  // … then kick the on-load refresh → /me mapping. The store stays `initializing`
+  // (its default) until this settles — RequireAuth shows the splash meanwhile.
+  // Transitions to ready / onboarding-required / unauthenticated. Fire-and-forget:
+  // it must NOT block first paint (spec §3) — the splash covers the gap.
+  void bootstrapSession(toApiContext(config))
 }
 
 const rootEl = document.getElementById('root')
