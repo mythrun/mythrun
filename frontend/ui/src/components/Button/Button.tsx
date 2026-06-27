@@ -4,6 +4,15 @@ import type { ButtonProps, ButtonVariant, ButtonSize } from '@mythrun/client-cor
 import { cn } from '../../lib/cn.ts'
 import { Spinner } from '../Spinner/Spinner.tsx'
 
+// Leading-icon slot spacing (the contained-button-with-icon convention, e.g.
+// Material): a ~18-20px icon sits before the label with an 8px gap. The size-tuned
+// `gap` in SIZE_CLASS below is calibrated for the loading SPINNER (a tighter 6px on
+// sm/md so the small spinner reads as one unit with the label); a leading ICON is
+// larger and wants the canonical 8px, so when an `icon` is present we override the
+// gap to `--space-2` (tailwind-merge lets the later class win). The whole icon+label
+// group is centered by `justify-center`, which optically centers the label.
+const ICON_GAP = 'gap-[var(--space-2)]'
+
 // Text/label action button — a REAL <button> (native keyboard activation +
 // a11y), never a div-button. `onPress` is the platform-neutral activation
 // callback; the web impl maps it to onClick.
@@ -100,6 +109,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     disabled = false,
     onPress,
     type = 'button',
+    icon,
     children,
     ...rest
   },
@@ -116,9 +126,17 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       onClick={isInactive ? undefined : onPress}
       disabled={isInactive}
       aria-busy={loading || undefined}
-      className={cn(button({ variant, size }))}
+      className={cn(button({ variant, size }), icon !== undefined && ICON_GAP)}
       {...rest}
     >
+      {/* Leading-icon slot — decorative (the label is the accessible name), fixed
+          (shrink-0) so it never squishes beside the label. Sits before the spinner
+          + label; the ICON_GAP override gives it the canonical 8px gap. */}
+      {icon !== undefined && (
+        <span aria-hidden="true" className="inline-flex shrink-0 items-center">
+          {icon}
+        </span>
+      )}
       {/* tone="inherit": the spinner pixels take the button's text color (paper on
           the ember primary, ink on secondary/ghost) over a transparent ground — so
           it reads against the fill instead of vanishing ember-on-ember. */}

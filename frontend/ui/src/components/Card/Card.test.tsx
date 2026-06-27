@@ -46,6 +46,60 @@ describe('Card', () => {
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
+  describe('collapse (responsive: native on mweb, bordered card at sm+)', () => {
+    it('drops the border + surface + padding below sm (flush, full-width)', () => {
+      const { getByTestId } = render(
+        <Card collapse data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      // mweb: explicit border-0, full width, and NO base border / surface / padding.
+      expect(el.classList.contains('border-0')).toBe(true)
+      expect(el.classList.contains('w-full')).toBe(true)
+      expect(el.classList.contains('border')).toBe(false)
+      expect(el.classList.contains('border-border-strong')).toBe(false)
+      expect(el.classList.contains('bg-surface')).toBe(false)
+      expect(el.classList.contains('p-[var(--space-6)]')).toBe(false)
+    })
+
+    it('restores the bordered card + centered ~420px max-width + padding at sm and up', () => {
+      const { getByTestId } = render(
+        <Card collapse data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      expect(el.classList.contains('sm:border')).toBe(true)
+      expect(el.classList.contains('sm:border-border-strong')).toBe(true)
+      expect(el.classList.contains('sm:bg-surface')).toBe(true)
+      expect(el.classList.contains('sm:p-[var(--space-6)]')).toBe(true)
+      expect(el.classList.contains('sm:max-w-[420px]')).toBe(true)
+      expect(el.classList.contains('sm:mx-auto')).toBe(true)
+    })
+
+    it('maps collapse + surface=raised to the raised surface at sm+', () => {
+      const { getByTestId } = render(
+        <Card collapse surface="raised" data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      expect(el.classList.contains('sm:bg-surface-raised')).toBe(true)
+      expect(el.classList.contains('bg-surface-raised')).toBe(false)
+    })
+
+    it('leaves the non-collapse card bordered at every width (no responsive collapse classes)', () => {
+      const { getByTestId } = render(<Card data-testid="card">x</Card>)
+      const el = getByTestId('card')
+      expect(el.classList.contains('border')).toBe(true)
+      expect(el.classList.contains('bg-surface')).toBe(true)
+      expect(el.classList.contains('w-full')).toBe(false)
+      expect(el.classList.contains('border-0')).toBe(false)
+      expect(el.classList.contains('sm:max-w-[420px]')).toBe(false)
+    })
+  })
+
   it('has no axe violations', async () => {
     const { container } = render(
       <Card surface="raised">

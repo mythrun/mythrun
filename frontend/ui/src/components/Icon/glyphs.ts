@@ -109,16 +109,22 @@ export const GLYPHS: Record<IconName, Glyph> = {
     viewBox: VIEWBOX_24,
     paths: ['M4 2h16v2H4zm0 18h16v2H4zM20 4h2v16h-2zM2 4h2v16H2zm9 2h2v8h-2zm0 10h2v2h-2z'],
   },
-  // Theme-toggle glyphs (MYT-84). Pixel sun (centre square + 8 rays) and a
-  // crescent moon, authored on the 24-grid to read at --icon-sm (16px).
+  // Theme-toggle glyphs (MYT-84). Path data copied VERBATIM from Pixelarticons
+  // 24-grid SVGs (the prior sun/moon were HAND-AUTHORED — not allowed). `moon` =
+  // pixelarticons/svg/moon.svg (the crescent). The free MIT set (npm) has NO bare
+  // `sun.svg`, so `sun` comes from the licensed Pixelarticons PRO set:
+  // ../../Design/mythrun-design/brand/icons/pixelarticons-pro-2/svg/sun.svg — the
+  // base-style sun (centre disc + 8 rays). Pro is a superset of the MIT base.
   sun: {
     viewBox: VIEWBOX_24,
     paths: [
-      'M10 10h4v4h-4zM11 3h2v3h-2zM11 18h2v3h-2zM3 11h3v2H3zM18 11h3v2h-3zM5 5h2v2H5zM17 5h2v2h-2zM5 17h2v2H5zM17 17h2v2h-2z',
+      'M13 22h-2v-3h2v3Zm-6-3H5v-2h2v2Zm12 0h-2v-2h2v2Zm-4-2H9v-2h6v2Zm-6-2H7V9h2v6Zm8 0h-2V9h2v6ZM5 13H2v-2h3v2Zm17 0h-3v-2h3v2Zm-7-4H9V7h6v2ZM7 7H5V5h2v2Zm12 0h-2V5h2v2Zm-6-2h-2V2h2v3Z',
     ],
   },
   moon: {
     viewBox: VIEWBOX_24,
-    paths: ['M13 2h-2v2H9v2H7v2H5v2H3v4h2v2h2v2h2v2h2v2h2v-2H9v-2H7v-2H5v-4h2V8h2V6h2V4h2V2z', 'M13 2h2v2h-2zM15 4h2v2h-2zM13 18h2v2h-2zM15 16h2v2h-2z'],
+    paths: [
+      'M18 22H8v-2h10v2ZM8 20H6v-2h2v2Zm12 0h-2v-2h2v2ZM6 18H4v-2h2v2Zm16 0h-2v-4h-2v-2h2v-2h2v8ZM4 16H2V6h2v10Zm14 0h-6v-2h6v2Zm-6-2h-2v-2h2v2Zm-2-2H8V6h2v6ZM6 6H4V4h2v2Zm8-2h-2v2h-2V4H6V2h8v2Z',
+    ],
   },
 }

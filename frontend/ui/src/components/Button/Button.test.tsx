@@ -233,6 +233,46 @@ describe('Button', () => {
     }
   })
 
+  it('renders a leading icon slot before the label, hidden from assistive tech', () => {
+    const { getByRole, getByTestId } = render(
+      <Button icon={<svg data-testid="lead-icon" />}>Continue</Button>,
+    )
+    const btn = getByRole('button', { name: 'Continue' })
+    const icon = getByTestId('lead-icon')
+    expect(btn).toContainElement(icon)
+    // The slot wraps the icon in an aria-hidden span (the label carries the name)…
+    const slot = icon.parentElement
+    expect(slot).toHaveAttribute('aria-hidden', 'true')
+    // …and it sits BEFORE the label (first child of the button).
+    expect(btn.firstElementChild).toBe(slot)
+  })
+
+  it('applies the canonical 8px gap (--space-2) for an icon button, overriding the spinner gap', () => {
+    const withIcon = render(<Button icon={<svg />}>Go</Button>)
+    const cls = withIcon.getByRole('button').getAttribute('class') ?? ''
+    // tailwind-merge resolves the gap conflict to the icon override (8px), dropping 6px.
+    expect(cls).toContain('gap-[var(--space-2)]')
+    expect(cls).not.toContain('gap-[6px]')
+    withIcon.unmount()
+    // Default md WITHOUT an icon keeps the spinner-tuned 6px gap (no override).
+    const plain = render(<Button>Go</Button>)
+    const plainCls = plain.getByRole('button').getAttribute('class') ?? ''
+    expect(plainCls).toContain('gap-[6px]')
+    expect(plainCls).not.toContain('gap-[var(--space-2)]')
+  })
+
+  it('omits the icon slot entirely when no icon is given', () => {
+    const { getByRole } = render(<Button>Plain</Button>)
+    expect(getByRole('button').querySelector('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it('has no axe violations with a leading icon', async () => {
+    const { container } = render(
+      <Button icon={<svg aria-hidden="true" />}>Continue with Provider</Button>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('forwards its ref to the underlying button', () => {
     const ref = createRef<HTMLButtonElement>()
     render(<Button ref={ref}>x</Button>)

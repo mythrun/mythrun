@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Button } from './Button.tsx'
 import { Stack } from '../Stack/Stack.tsx'
 import { Text } from '../Text/Text.tsx'
+import { Icon } from '../Icon/Icon.tsx'
 
 // Button — the text/label action control. A REAL <button> (native keyboard
 // activation + a11y), flat 1-bit (0px radius), with TOKEN-SWAP states (no
@@ -120,6 +121,24 @@ export const Loading: Story = {
       </Button>
       <Button variant="ghost" loading>
         Saving
+      </Button>
+    </div>
+  ),
+}
+
+// Leading icon — the native `icon` slot (the contained-button-with-icon convention):
+// a ~18-20px decorative mark/glyph before the label with the canonical 8px gap. This
+// is how the sign-in provider buttons carry the Google / Discord marks — pass the mark
+// to `icon`, never hand-place it as a child (which wouldn't get the slot's spacing).
+export const WithIcon: Story = {
+  name: 'With a leading icon',
+  render: () => (
+    <div className="flex flex-col items-stretch gap-[var(--space-3)]">
+      <Button variant="secondary" icon={<Icon name="arrow-right" decorative />}>
+        Continue with Provider
+      </Button>
+      <Button variant="primary" icon={<Icon name="plus" decorative />}>
+        New campaign
       </Button>
     </div>
   ),

@@ -3,7 +3,7 @@ import { createRef } from 'react'
 import { render } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { Dither } from './Dither.tsx'
-import { CELL_PX } from './bayer.ts'
+import { BAND_CELLS, CELL_PX } from './bayer.ts'
 
 // The exact pixels are hard to unit-test (jsdom has no layout), so these assert
 // STRUCTURE: the decorative texture layer exists, it is built from the design TOKEN
@@ -59,8 +59,9 @@ describe('Dither', () => {
     expect(cellRects.length).toBeGreaterThan(0)
   })
 
-  it('paints cells with the design TOKEN colors, never raw hex', () => {
-    const { container } = render(<Dither pairing="light-ember" />)
+  it('defaults to the canonical light→ember palette tokens, never raw hex', () => {
+    // Default from/to = paper-100 (ground) → ember-600 (accent), as `var(--color-*)`.
+    const { container } = render(<Dither />)
     const html = container.innerHTML
     expect(html).toContain('var(--color-paper-100)')
     expect(html).toContain('var(--color-ember-600)')
@@ -68,14 +69,21 @@ describe('Dither', () => {
     expect(html).not.toMatch(/\b(?:rgba?|hsla?|oklch|oklab)\(/)
   })
 
-  it('uses the locked pairings (light-ink, dark-cream)', () => {
-    const ink = render(<Dither pairing="light-ink" />)
+  it('maps from/to palette token names to var(--color-{name}) refs', () => {
+    // Any palette token resolves to its `--color-{name}` var — ink crossfade…
+    const ink = render(<Dither from="paper-100" to="paper-900" />)
     expect(ink.container.innerHTML).toContain('var(--color-paper-100)')
     expect(ink.container.innerHTML).toContain('var(--color-paper-900)')
     ink.unmount()
-    const reverse = render(<Dither pairing="dark-cream" />)
+    // …the reverse (dark→cream)…
+    const reverse = render(<Dither from="paper-900" to="paper-100" />)
     expect(reverse.container.innerHTML).toContain('var(--color-paper-900)')
     expect(reverse.container.innerHTML).toContain('var(--color-paper-100)')
+    reverse.unmount()
+    // …and an arbitrary non-preset pick from the palette (the point of from/to).
+    const custom = render(<Dither from="paper-100" to="ember-400" />)
+    expect(custom.container.innerHTML).toContain('var(--color-paper-100)')
+    expect(custom.container.innerHTML).toContain('var(--color-ember-400)')
   })
 
   it('honours the locked cell size: 8px preview (default), 6px hero', () => {
@@ -118,6 +126,36 @@ describe('Dither', () => {
     expect(root?.style.inlineSize).toBe('120px')
     expect(root?.style.blockSize).toBe('100%')
     expect(root?.style.minBlockSize).toBe('144px')
+  })
+
+  it('flip REVERSES the transition: every accent cell mirrors to the opposite end of the band', () => {
+    // Accent cells are square `cellPx` rects positioned by their row (`y` attr =
+    // step × cellPx); the full-tile GROUND backdrop rect is excluded by filtering
+    // to the cellPx-square rects. A flipped band mirrors each accent cell's row
+    // across the band: a cell at step `i` (y = i × cellPx) moves to step
+    // `BAND_CELLS-1-i` (y = (BAND_CELLS-1-i) × cellPx). So mapping every flipped
+    // `y` back through that mirror must reproduce the default band's multiset of
+    // `y` values exactly (same grain, inverted ramp).
+    const cellPx = CELL_PX.preview // default scale
+    const span = (BAND_CELLS - 1) * cellPx
+    const cellYs = (container: HTMLElement): number[] =>
+      Array.from(container.querySelectorAll('[data-dither-pattern] rect'))
+        .filter((r) => r.getAttribute('width') === String(cellPx))
+        .map((r) => Number(r.getAttribute('y')))
+
+    const base = render(<Dither />)
+    const baseYs = cellYs(base.container).sort((a, b) => a - b)
+    base.unmount()
+
+    const flipped = render(<Dither flip />)
+    const flippedYs = cellYs(flipped.container)
+    const flippedMirrored = flippedYs.map((y) => span - y).sort((a, b) => a - b)
+
+    expect(flippedMirrored).toEqual(baseYs)
+    // And the orientation actually changed: the TOP row (y === 0) is SPARSE in the
+    // default band and DENSE when flipped — the crown now hangs from the top edge.
+    const topRow = (ys: number[]): number => ys.filter((y) => y === 0).length
+    expect(topRow(flippedYs)).toBeGreaterThan(topRow(baseYs))
   })
 
   it('forwards its ref to the underlying element', () => {

@@ -79,6 +79,21 @@ export { AvatarGroup } from './components/Avatar/AvatarGroup.tsx'
 export { Badge } from './components/Badge/Badge.tsx'
 export { Dither } from './components/Dither/Dither.tsx'
 
+// Brand identity suite (MYT-84 visual audit) — the four first-class brand-art
+// components, each inlining its locked SVG export, theme-driven (ink on light, cream
+// on dark): `Logomark` (the pixel-art mark, crisp-scaled, ink/ember tone), `Wordmark`
+// (the Tyma Garamont logotype), `Lockup` (PRIMARY / stacked), `HorizontalLockup`
+// (SECONDARY / mark-on-right). PLUS the OFFICIAL third-party provider marks (Google's
+// 4-color "G", the Discord mark) — external brand assets (provider-mandated colors,
+// not design tokens), so they live in `src/brand-marks/`, outside the token zone, but
+// ship through the one package barrel like every other UI element.
+export { Logomark } from './components/Logomark/Logomark.tsx'
+export { Wordmark } from './components/Wordmark/Wordmark.tsx'
+export { Lockup } from './components/Lockup/Lockup.tsx'
+export { HorizontalLockup } from './components/HorizontalLockup/HorizontalLockup.tsx'
+export { GoogleMark } from './brand-marks/GoogleMark.tsx'
+export { DiscordMark } from './brand-marks/DiscordMark.tsx'
+
 // Theme runtime (MYT-84) — the root ThemeProvider + the useTheme hook live in the
 // web UI package so the ThemeToggle (and screens) can consume them.
 export { ThemeProvider, useTheme } from './theme/theme-provider.tsx'
@@ -146,8 +161,15 @@ export type {
   BadgeProps,
   BadgeVariant,
   DitherProps,
-  DitherPairing,
   DitherDirection,
+  PaletteColor,
+  PaletteRamp,
+  PaletteStep,
+  LogomarkProps,
+  LogomarkTone,
+  WordmarkProps,
+  LockupProps,
+  HorizontalLockupProps,
   Theme,
   ThemeContextValue,
   ThemeToggleProps,

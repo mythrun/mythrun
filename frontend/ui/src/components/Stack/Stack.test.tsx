@@ -98,6 +98,25 @@ describe('Stack', () => {
     expect(screen.getByTestId('s').className).toContain('grow')
   })
 
+  it('applies a NUMERIC grow as an explicit flex-grow weight (no grow class)', () => {
+    // A numeric grow is a proportional-spacer weight → inline flexGrow, not the
+    // boolean `grow` (flex:1) class. (Two such spacers, grow={2}/grow={3}, seat
+    // content optically above center.)
+    render(<Stack grow={3} data-testid="s" />)
+    const el = screen.getByTestId('s')
+    expect(el.style.flexGrow).toBe('3')
+    // The boolean fill class must NOT be present for the numeric case.
+    expect(el.className.split(/\s+/)).not.toContain('grow')
+  })
+
+  it('does not set an inline flexGrow when grow is boolean/absent', () => {
+    const withBool = render(<Stack grow data-testid="b" />)
+    expect(withBool.getByTestId('b').style.flexGrow).toBe('')
+    withBool.unmount()
+    const none = render(<Stack data-testid="n" />)
+    expect(none.getByTestId('n').style.flexGrow).toBe('')
+  })
+
   it('has no axe violations', async () => {
     const { container } = render(
       <Stack gap={3} align="center" justify="between">

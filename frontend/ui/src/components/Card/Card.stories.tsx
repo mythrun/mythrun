@@ -4,6 +4,7 @@ import { Card, CardHeader, CardBody, CardFooter } from './Card.tsx'
 import { Heading } from '../Heading/Heading.tsx'
 import { Text } from '../Text/Text.tsx'
 import { Button } from '../Button/Button.tsx'
+import { Stack } from '../Stack/Stack.tsx'
 
 // Card — the flat container (§3). Depth is a paper surface tier + a 1px
 // `--border-strong` edge, NOT a shadow; corners are square (0px radius). Compose
@@ -22,6 +23,7 @@ const meta: Meta<typeof Card> = {
   tags: ['autodocs'],
   argTypes: {
     surface: { control: 'inline-radio', options: ['base', 'raised'] },
+    collapse: { control: 'boolean' },
   },
 }
 
@@ -84,6 +86,31 @@ export const Surfaces: Story = {
         </Card>
       </div>
     </div>
+  ),
+}
+
+// The GENERAL "card collapses to native on mweb" responsive pattern. RESIZE the
+// preview across the `sm` breakpoint (640px) to see it switch: BELOW 640px the card
+// drops its border, surface, and padding — content sits inline, full-width, on the
+// bare page (the native-mweb feel); AT 640px+ it becomes the normal bordered card
+// with a centered ~420px max-width and its own padding. Reused by the sign-in /
+// onboarding screens (the content below the dither crown rides one of these).
+export const CollapseResponsive: Story = {
+  name: 'Responsive (collapses to native on mweb)',
+  // The point is the breakpoint switch; the overflow gate's 375/1280 widths exercise
+  // both states (flush full-width at 375, centered ~420 card at 1280), no overflow.
+  render: () => (
+    <Card collapse>
+      <Stack align="center" gap={3}>
+        <Heading level={2} role={TITLE}>
+          card.collapse.title
+        </Heading>
+        <Text as="p" role={PROSE}>
+          card.collapse.body
+        </Text>
+        <Button variant="primary">card.collapse.action</Button>
+      </Stack>
+    </Card>
   ),
 }
 

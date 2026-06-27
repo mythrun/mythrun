@@ -7,12 +7,12 @@ import { useTranslation } from 'react-i18next'
 //
 // The Dither is a real TRANSITION here, its canonical use (a crossfade between
 // two genuinely different-colored sections), NOT decoration: it sits flush at
-// the TOP of the page, its `light-ink` pairing grading the cream page-top DOWN
-// into the dark reversed surface that fills the rest of the viewport — the band's
-// cream top (paper-100 ground) meets the page edge, its ink bottom (paper-900
-// accent) resolves seamlessly into the reversed surface's `--bg` (also paper-900)
-// below. The headline + body then carry the meaning as light-on-dark text (both
-// i18n placeholders the copy pass fills).
+// the TOP of the page, its `paper-100` → `paper-900` from/to grading the cream
+// page-top DOWN into the dark reversed surface that fills the rest of the viewport —
+// the band's cream top (paper-100 `from`) meets the page edge, its ink bottom
+// (paper-900 `to`) resolves seamlessly into the reversed surface's `--bg` (also
+// paper-900) below. The headline + body then carry the meaning as light-on-dark text
+// (both i18n placeholders the copy pass fills).
 //
 // Composed from @mythrun/ui primitives only (R5, no-ad-hoc-ui): the root is a
 // reversed (dark) Box floored to the full viewport (`minHeight="screen"`), so the
@@ -21,10 +21,13 @@ import { useTranslation } from 'react-i18next'
 // path.
 export function NotFound(): React.JSX.Element {
   const { t } = useTranslation()
+  // cream page-top → ink, grading into the dark reversed surface below. Held as a const
+  // so the palette token names aren't JSX string literals (the i18n rule).
+  const dither = { from: 'paper-100', to: 'paper-900' } as const
   return (
     <Box surface="reversed" minHeight="screen" data-testid="not-found">
       <Stack align="stretch" gap={8}>
-        <Dither pairing="light-ink" data-testid="not-found-dither" />
+        <Dither from={dither.from} to={dither.to} data-testid="not-found-dither" />
         {/* The content region carries only padding — `surface="reversed"` keeps it
             the SAME uniform dark paper-900 as the root (a base surface would paint
             the lighter paper-800 panel tone and break the single-tone dark field). */}

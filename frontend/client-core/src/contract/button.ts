@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { BaseProps } from './index.ts'
 
 /** Visual emphasis tier. `primary` = the page's main action (accent fill);
@@ -21,12 +22,24 @@ export type ButtonType = 'button' | 'submit'
  * `loading` shows a Spinner alongside the (still-visible) label, sets
  * `aria-busy`, and makes the control non-interactive. `disabled` does the same
  * minus the spinner, with token-swap muted styling.
+ *
+ * `icon` is a native LEADING-icon slot (the contained-button-with-icon
+ * convention): a ~18-20px decorative element rendered before the label with the
+ * canonical 8px gap. Use it for provider sign-in marks (Google/Discord) or a
+ * leading glyph — never hand-place an icon as a child, which doesn't get the
+ * slot's spacing.
  */
 export interface ButtonProps extends BaseProps {
   /** Visual emphasis tier. Default `primary`. */
   variant?: ButtonVariant
   /** Token control size. Default `md`. */
   size?: ButtonSize
+  /**
+   * Leading-icon slot — a ~18-20px element rendered before the label with the
+   * canonical 8px gap (the contained-button-with-icon convention). Decorative
+   * (the label carries the meaning); supply an already-sized mark/glyph.
+   */
+  icon?: ReactNode
   /** Busy state: Spinner + `aria-busy`, label stays visible, non-interactive. */
   loading?: boolean
   /** Disabled state: the native `disabled` attribute + muted token styling. */

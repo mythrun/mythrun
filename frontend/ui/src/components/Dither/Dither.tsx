@@ -1,5 +1,5 @@
 import { forwardRef, useId } from 'react'
-import type { DitherProps, DitherPairing } from '@mythrun/client-core/contract'
+import type { DitherProps } from '@mythrun/client-core/contract'
 import { BAND_CELLS, CELL_PX, CROSS_CELLS, buildBand } from './bayer.ts'
 
 // Dither — the brand's ONLY sanctioned gradient, and a pure TRANSITION device. NEVER a
@@ -23,22 +23,20 @@ import { BAND_CELLS, CELL_PX, CROSS_CELLS, buildBand } from './bayer.ts'
 // size. The transition axis is the fixed band length; the CROSS axis tiles to fill the host,
 // so a wider host gets MORE identical-width columns, never wider cells.
 //
-// Color is TOKEN-driven (R3 / no-ad-hoc-color): the sanctioned `pairing` maps to two
-// `var(--color-…)` refs (never raw hex). The SVG is INLINE in the host document, so those
-// vars resolve against the page's token layer. a11y: the band is decoration → `aria-hidden`.
-
-// Sanctioned token pairings (ground → accent), as `var(--color-…)` references.
-const PAIRINGS: Record<DitherPairing, { ground: string; accent: string }> = {
-  'light-ember': { ground: 'var(--color-paper-100)', accent: 'var(--color-ember-600)' },
-  'light-ink': { ground: 'var(--color-paper-100)', accent: 'var(--color-paper-900)' },
-  'dark-cream': { ground: 'var(--color-paper-900)', accent: 'var(--color-paper-100)' },
-}
+// Color is TOKEN-driven (R3 / no-ad-hoc-color): `from`/`to` are PALETTE TOKEN NAMES
+// (the closed `PaletteColor` set) mapped to `var(--color-{name})` refs (never raw
+// hex). `from` is the GROUND the band emerges from; `to` is the ACCENT it resolves
+// into. The SVG is INLINE in the host document, so those vars resolve against the
+// page's token layer. a11y: the band is decoration → `aria-hidden`.
 
 export const Dither = forwardRef<HTMLDivElement, DitherProps>(function Dither(
-  { pairing = 'light-ember', direction = 'vertical', scale = 'preview', 'data-testid': dataTestId },
+  { from = 'paper-100', to = 'ember-600', direction = 'vertical', scale = 'preview', flip = false, 'data-testid': dataTestId },
   ref,
 ) {
-  const { ground, accent } = PAIRINGS[pairing]
+  // Palette token names → CSS var references (the only sanctioned way to name color
+  // here). `var(--color-{name})` resolves against the page token layer at render.
+  const ground = `var(--color-${from})`
+  const accent = `var(--color-${to})`
   const cellPx = CELL_PX[scale]
   const cells = buildBand(CROSS_CELLS)
   // A per-instance pattern id so multiple Dithers on one page don't collide on the
@@ -98,7 +96,11 @@ export const Dither = forwardRef<HTMLDivElement, DitherProps>(function Dither(
             {cells
               .filter((c) => c.accent)
               .map((c) => {
-                const step = c.y
+                // `flip` reverses the transition step so the band runs accent→ground
+                // along the axis (the genesis CROWN: dense at the top edge, fading
+                // DOWN). Mirroring the row index of each accent cell flips the whole
+                // ground→accent ramp without touching the (unit-tested) Bayer math.
+                const step = flip ? BAND_CELLS - 1 - c.y : c.y
                 const col = c.x
                 const px = vertical ? col : step
                 const py = vertical ? step : col

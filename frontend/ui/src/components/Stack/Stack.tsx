@@ -43,7 +43,10 @@ const stack = cva('flex [&>*]:min-w-0', {
     minHeight: {
       screen: 'min-h-dvh',
     },
-    // flex-1 fill for the body region of a fixed-crown column.
+    // flex-1 fill for the body region of a fixed-crown column. `grow={true}` →
+    // this class; a NUMERIC weight is applied via inline `flexGrow` instead (an
+    // arbitrary weight can't be a static Tailwind class — the v4 scanner only emits
+    // literals it sees, so a dynamic `grow-[n]` would never generate).
     grow: {
       true: 'grow',
       false: '',
@@ -58,13 +61,18 @@ export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
   { direction = 'column', gap, align, justify, wrap, minHeight, grow = false, children, ...rest },
   ref,
 ) {
+  // A numeric grow is an explicit flex-grow WEIGHT (proportional spacers); the
+  // boolean `true` is the `flex:1` fill class. Map the number to `flexGrow` inline
+  // (platform-neutral contract → web flex-grow; native Yoga maps the same field).
+  const growStyle = typeof grow === 'number' ? { flexGrow: grow } : undefined
   return (
     <div
       ref={ref}
       className={cn(
-        stack({ direction, align, justify, wrap, grow, ...(minHeight !== undefined && { minHeight }) }),
+        stack({ direction, align, justify, wrap, grow: grow === true, ...(minHeight !== undefined && { minHeight }) }),
         gap !== undefined && GAP_CLASS[gap],
       )}
+      {...(growStyle !== undefined && { style: growStyle })}
       {...rest}
     >
       {children}

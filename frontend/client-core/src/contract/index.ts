@@ -105,7 +105,21 @@ export type { ToastOptions, ToastProviderProps } from './toast.ts'
 // colors. All DOM-free (§9): no className/style/raw DOM events.
 export type { AvatarProps, AvatarGroupProps, AvatarSize, AvatarColor } from './avatar.ts'
 export type { BadgeProps, BadgeVariant } from './badge.ts'
-export type { DitherProps, DitherPairing, DitherDirection } from './dither.ts'
+// Dither now takes its two colors as `from`/`to` PALETTE TOKEN names (the closed
+// `PaletteColor` set), replacing the old fixed `pairing` presets — a consumer can
+// match any adjacent section's exact palette color, still constrained to the tokens.
+export type { DitherProps, DitherDirection, PaletteColor, PaletteRamp, PaletteStep } from './dither.ts'
+
+// Brand identity suite (MYT-84 visual audit) — the four brand-art components, each
+// inlining its locked SVG export, theme-driven via `currentColor`/the `--ink` token
+// (ink on light, cream on dark). DOM-free (§9): a neutral `size` height + an i18n
+// `aria-label`, no className/style. `Lockup` = PRIMARY (stacked); `HorizontalLockup`
+// = SECONDARY (mark-on-right); `Wordmark` = the logotype; `Logomark` = the pixel-art
+// mark (crisp-scaled), with an ink/ember `tone`.
+export type { LockupProps } from './lockup.ts'
+export type { HorizontalLockupProps } from './horizontal-lockup.ts'
+export type { WordmarkProps } from './wordmark.ts'
+export type { LogomarkProps, LogomarkTone } from './logomark.ts'
 
 // Theme contract (MYT-84) — the theme union, the `useTheme()` context value, and
 // the ThemeToggle FAB props. DOM-free types; the runtime (the `<html>.dark` +

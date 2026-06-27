@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Box, Stack, Heading, Text, Input, Button, Dither, ThemeToggle, useTheme } from '@mythrun/ui'
+import { Stack, Card, Heading, Text, Input, Button, Dither, ThemeToggle, useTheme } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import {
   useSessionStore,
@@ -12,7 +12,8 @@ import {
   isHttpError,
 } from '@mythrun/client-core'
 
-// The onboarding moment (§11, matches onboard-modes.html): the genesis crown, the
+// The onboarding moment (§11, matches onboard-modes.html): the genesis crown (the
+// `flip`ped Dither, accent-dense at the top edge fading down into the page), the
 // serif "What should we call you?" as the question-that-IS-the-label (gentler than
 // a form), ONE pre-filled Input, a single ember PRIMARY Button, the theme FAB. The
 // pre-fill name + return-to ride the callback→onboard router location state (the
@@ -108,12 +109,21 @@ export function OnboardRoute(): React.JSX.Element {
     }
   }
 
+  // The crown palette (from/to PALETTE tokens, same as sign-in): light dithers the
+  // parchment field → ember; dark dithers the reversed ground → cream. `flip` hangs the
+  // accent DENSE at the top edge. Held as a const so the token names aren't JSX literals.
+  const crown = theme === 'dark' ? ({ from: 'paper-900', to: 'paper-100' } as const) : ({ from: 'paper-100', to: 'ember-600' } as const)
+
   return (
     <Stack minHeight="screen" data-testid="route-onboard">
       <ThemeToggle label={t('theme.toggle')} data-testid="onboard-theme-toggle" />
-      <Dither pairing={theme === 'dark' ? 'dark-cream' : 'light-ember'} data-testid="onboard-crown" />
-      <Stack grow justify="center" align="center" gap={6}>
-        <Box padding={6}>
+      <Dither from={crown.from} to={crown.to} flip data-testid="onboard-crown" />
+      {/* Same below-crown layout as sign-in: content seated OPTICALLY ABOVE center on
+          desktop via the 1/4 spacer Stacks (seated high, more quiet space below than above), and the
+          card collapses to native/inline on mweb (`Card collapse`). */}
+      <Stack grow align="center">
+        <Stack grow={1} />
+        <Card collapse data-testid="onboard-card">
           <Stack align="center" gap={5}>
             <Heading level={1} role="title" data-testid="onboard-prompt">
               {t('onboard.prompt')}
@@ -145,7 +155,8 @@ export function OnboardRoute(): React.JSX.Element {
               {t('onboard.hint')}
             </Text>
           </Stack>
-        </Box>
+        </Card>
+        <Stack grow={4} />
       </Stack>
     </Stack>
   )

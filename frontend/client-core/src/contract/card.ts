@@ -18,6 +18,20 @@ export interface CardProps extends BaseProps {
    * `--border-strong` edge, never a shadow.
    */
   surface?: 'base' | 'raised'
+  /**
+   * Responsive "collapse to native on mweb" mode. Default `false` (a bordered card
+   * at every width). When `true`, the card adapts to the viewport — the general
+   * pattern for a panel that should feel like a CARD on desktop but NATIVE/inline
+   * on a phone:
+   *  - BELOW the `sm` breakpoint (<640px): drops its border, surface, AND padding
+   *    entirely — the content sits inline, full-width, on the bare page (no surface
+   *    change — the native-mweb feel).
+   *  - AT `sm` and up (≥640px): the normal bordered card — surface + `--border-strong`
+   *    edge + padding — with a centered ~420px max-width.
+   * In collapse mode the Card carries its OWN padding (at sm+); the header/body/footer
+   * slot pattern is not used with it.
+   */
+  collapse?: boolean
 }
 
 /**

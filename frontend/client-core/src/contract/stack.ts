@@ -19,6 +19,14 @@ export interface StackProps extends BaseProps {
   wrap?: boolean
   /** Floor the stack at the full dynamic viewport height (`100dvh`) — a full-screen flex column (e.g. a genesis screen / a centered splash). */
   minHeight?: 'screen'
-  /** Grow to fill the available main-axis space of a flex parent (`flex: 1`). Use on the body region of a column whose sibling (a crown band) is fixed-height. */
-  grow?: boolean
+  /**
+   * Grow to fill / WEIGHT the available main-axis space of a flex parent.
+   * `true` → `flex: 1` (fill — the common body-region case, e.g. the region below a
+   * fixed-height crown band). A NUMBER → an explicit flex-grow WEIGHT, for
+   * proportional SPACERS that place content with a deliberate vertical rhythm — e.g.
+   * a `grow={2}` spacer above content and a `grow={3}` spacer below seats it
+   * optically ABOVE center (more quiet space below than above). Platform-neutral:
+   * web maps it to `flex-grow`, native to Yoga's `flexGrow`.
+   */
+  grow?: boolean | number
 }
