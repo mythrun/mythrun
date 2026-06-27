@@ -29,158 +29,164 @@
 <h1>App shell &amp; data layer</h1>
 
 <p class="lead">
-  The application skeleton every flow hangs on: a typed REST data layer, a three-state session gate,
-  and the React-Router shell — built so the whole client ports to true-native later without an
-  extraction refactor. A new shared package (<code>@mythrun/contract</code>) is the single typed
-  wire source both the backend and the client validate against; the client brain
-  (<code>@mythrun/client-core</code>) owns every backend call, the session store, and the platform
-  interfaces; the web app (<code>@mythrun/web</code>) is a thin shell of route screens plus the web
-  implementations of those interfaces.
+  The application skeleton every flow hangs on: a typed REST data layer, a four-state session gate,
+  the live OAuth sign-in flow, and the React-Router shell — built so the whole client ports to
+  true-native later without an extraction refactor. A new shared package
+  (<code>@mythrun/contract</code>) is the single typed wire source both the backend and the client
+  validate against; the client brain (<code>@mythrun/client-core</code>) owns every backend call,
+  the session store, and the platform interfaces; the web app (<code>@mythrun/web</code>) is a thin
+  shell of route screens plus the web implementations of those interfaces.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1798pt" height="456pt"
- viewBox="14.00 14.00 1783.00 441.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 437.4)">
+<svg width="1828pt" height="510pt"
+ viewBox="14.00 14.00 1814.00 495.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 491.4)">
 <title>frontend_app_shell</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-423 1765.01,-423 1765.01,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-477 1795.29,-477 1795.29,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_contract</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="0,-245 0,-411 405.46,-411 405.46,-245 0,-245"/>
-<text xml:space="preserve" text-anchor="middle" x="202.73" y="-397.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/contract &#160;(BUILT package · zod · the typed wire)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="0,-299 0,-465 405.46,-465 405.46,-299 0,-299"/>
+<text xml:space="preserve" text-anchor="middle" x="202.73" y="-451.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/contract &#160;(BUILT package · zod · the typed wire)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_cc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="555.48,-176 555.48,-329 1223.53,-329 1223.53,-176 555.48,-176"/>
-<text xml:space="preserve" text-anchor="middle" x="889.51" y="-315.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;(the client brain · DOM&#45;free · R1)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="562.08,-187 562.08,-380 1236.74,-380 1236.74,-187 562.08,-187"/>
+<text xml:space="preserve" text-anchor="middle" x="899.41" y="-366.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;(the client brain · DOM&#45;free · R1)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_web</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1421.56,-8 1421.56,-223 1761.01,-223 1761.01,-8 1421.56,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="1591.29" y="-209.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(THIN: shell + screens + web impls)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1434.76,-8 1434.76,-249 1783.29,-249 1783.29,-8 1434.76,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-235.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(THIN: shell + screens + web impls)</text>
 </g>
 <!-- rest -->
 <g id="node1" class="node">
 <title>rest</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="313.79,-315.04 90.68,-315.04 90.68,-244.96 313.79,-244.96 313.79,-315.04"/>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-296.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">REST Zod schemas</text>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-283.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MeResponse · CampaignSummary</text>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-270.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ISO&#45;string wire dates ·</text>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-256.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/me public projection</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="313.79,-369.04 90.68,-369.04 90.68,-298.96 313.79,-298.96 313.79,-369.04"/>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-350.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">REST Zod schemas</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-337.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MeResponse · CampaignSummary</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-324.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ISO&#45;string wire dates ·</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-310.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/me public projection</text>
 </g>
 <!-- backend -->
 <g id="node3" class="node">
 <title>backend</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="861.11,-387.44 624.79,-387.44 624.79,-330.56 861.11,-330.56 861.11,-387.44"/>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-368.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/backend</text>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-355.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">types handler returns (tsc)</text>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-342.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">real CORS · one allowed origin</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="943.62,-450.04 555.48,-450.04 555.48,-379.96 943.62,-379.96 943.62,-450.04"/>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-431.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/backend</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-418.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">types handler returns (tsc) · real CORS · one origin</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-405.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BFF: /auth/session + /auth/refresh</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-391.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(access token + httpOnly mythrun_refresh cookie)</text>
 </g>
 <!-- rest&#45;&gt;backend -->
 <g id="edge2" class="edge">
 <title>rest&#45;&gt;backend</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M314.53,-296.32C402.22,-309.18 524.49,-327.11 615.81,-340.5"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="615.19,-342.89 622.47,-341.48 615.9,-338.04 615.19,-342.89"/>
-<text xml:space="preserve" text-anchor="middle" x="480.47" y="-331.9" font-family="Courier,monospace" font-size="10.00">z.infer types (tsc)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M314.24,-350.49C380.95,-360.4 467.85,-373.31 546.38,-384.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="545.85,-387.37 553.13,-385.97 546.57,-382.52 545.85,-387.37"/>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-384.76" font-family="Courier,monospace" font-size="10.00">z.infer types (tsc)</text>
 </g>
 <!-- endpoint -->
 <g id="node4" class="node">
 <title>endpoint</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="930.42,-307.44 555.48,-307.44 555.48,-250.56 930.42,-250.56 930.42,-307.44"/>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-288.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">defineEndpoint — the ONLY call path</text>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-275.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">validates response → typed data</text>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-262.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HttpError · ContractValidationError · NetworkError</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="937.02,-359.04 562.08,-359.04 562.08,-288.96 937.02,-288.96 937.02,-359.04"/>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-340.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">defineEndpoint — the ONLY call path</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-327.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">validates response → typed data</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-314.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">401 → single&#45;flight refresh → retry once</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-300.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HttpError · ContractValidationError · NetworkError</text>
 </g>
 <!-- rest&#45;&gt;endpoint -->
 <g id="edge3" class="edge">
 <title>rest&#45;&gt;endpoint</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M314.53,-279.79C381.41,-279.67 468.42,-279.51 546.46,-279.36"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="546.67,-281.81 553.67,-279.35 546.66,-276.91 546.67,-281.81"/>
-<text xml:space="preserve" text-anchor="middle" x="480.47" y="-294.59" font-family="Courier,monospace" font-size="10.00">validates</text>
-<text xml:space="preserve" text-anchor="middle" x="480.47" y="-282.59" font-family="Courier,monospace" font-size="10.00">responses</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M314.24,-331.96C382.75,-330.71 472.56,-329.06 552.73,-327.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="553.31,-330.03 560.27,-327.46 553.23,-325.13 553.31,-330.03"/>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-344.9" font-family="Courier,monospace" font-size="10.00">validates</text>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-332.9" font-family="Courier,monospace" font-size="10.00">responses</text>
 </g>
 <!-- events -->
 <g id="node2" class="node">
 <title>events</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="297.28,-389.44 107.18,-389.44 107.18,-332.56 297.28,-332.56 297.28,-389.44"/>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-370.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">realtime event unions</text>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-357.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session · pipeline</text>
-<text xml:space="preserve" text-anchor="middle" x="202.23" y="-344.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(TS, not Zod — MYT&#45;85)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="297.28,-443.44 107.18,-443.44 107.18,-386.56 297.28,-386.56 297.28,-443.44"/>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-424.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">realtime event unions</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-411.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session · pipeline</text>
+<text xml:space="preserve" text-anchor="middle" x="202.23" y="-398.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(TS, not Zod — MYT&#45;85)</text>
 </g>
 <!-- events&#45;&gt;backend -->
 <g id="edge4" class="edge">
 <title>events&#45;&gt;backend</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M297.99,-360.65C386.21,-360.32 518.32,-359.83 615.5,-359.47"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="615.39,-361.92 622.38,-359.44 615.37,-357.02 615.39,-361.92"/>
-<text xml:space="preserve" text-anchor="middle" x="480.47" y="-363.18" font-family="Courier,monospace" font-size="10.00">re&#45;export shim</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M297.91,-415C366.24,-415 461.07,-415 546.11,-415"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="546.02,-417.45 553.02,-415 546.02,-412.55 546.02,-417.45"/>
+<text xml:space="preserve" text-anchor="middle" x="480.47" y="-418" font-family="Courier,monospace" font-size="10.00">re&#45;export shim</text>
 </g>
 <!-- hooks -->
 <g id="node5" class="node">
 <title>hooks</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1223.53,-263.84 967.42,-263.84 967.42,-220.16 1223.53,-220.16 1223.53,-263.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-245.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">slice hooks (React&#45;Query suspense)</text>
-<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-232.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useMe · useMyCampaigns</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1236.74,-295.84 980.62,-295.84 980.62,-252.16 1236.74,-252.16 1236.74,-295.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1108.68" y="-277.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">slice hooks (React&#45;Query suspense)</text>
+<text xml:space="preserve" text-anchor="middle" x="1108.68" y="-264.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useMe · useMyCampaigns</text>
 </g>
 <!-- endpoint&#45;&gt;hooks -->
 <g id="edge1" class="edge">
 <title>endpoint&#45;&gt;hooks</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M931.01,-259.25C940.16,-258.29 949.27,-257.33 958.23,-256.38"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="958.27,-258.84 964.97,-255.67 957.75,-253.97 958.27,-258.84"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M937.74,-297.79C949.16,-296.19 960.53,-294.6 971.67,-293.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="971.75,-295.51 978.34,-292.11 971.07,-290.65 971.75,-295.51"/>
 </g>
 <!-- home -->
 <g id="node8" class="node">
 <title>home</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1685.84,-201.84 1495.73,-201.84 1495.73,-158.16 1685.84,-158.16 1685.84,-201.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-183.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">routes/ — thin stubs +</text>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-170.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the wired home hub</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1737.09,-227.44 1480.97,-227.44 1480.97,-170.56 1737.09,-170.56 1737.09,-227.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-208.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">routes/ — OAuth auth screens</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-195.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(signin · callback · onboard) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-182.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">thin stubs + the wired home hub</text>
 </g>
 <!-- hooks&#45;&gt;home -->
 <g id="edge5" class="edge">
 <title>hooks&#45;&gt;home</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1224.16,-225.95C1281.76,-218.71 1350.74,-210.04 1413.19,-202.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1413.12,-204.67 1419.76,-201.37 1412.51,-199.81 1413.12,-204.67"/>
-<text xml:space="preserve" text-anchor="middle" x="1322.55" y="-238.68" font-family="Courier,monospace" font-size="10.00">screens use</text>
-<text xml:space="preserve" text-anchor="middle" x="1322.55" y="-226.68" font-family="Courier,monospace" font-size="10.00">client&#45;core hooks only (R5)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1237.37,-254.78C1294.82,-246.14 1363.67,-235.78 1426.36,-226.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1426.41,-228.81 1432.97,-225.35 1425.68,-223.97 1426.41,-228.81"/>
+<text xml:space="preserve" text-anchor="middle" x="1335.75" y="-266.84" font-family="Courier,monospace" font-size="10.00">screens use</text>
+<text xml:space="preserve" text-anchor="middle" x="1335.75" y="-254.84" font-family="Courier,monospace" font-size="10.00">client&#45;core hooks only (R5)</text>
 </g>
 <!-- brain -->
 <g id="node6" class="node">
 <title>brain</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="857.81,-232.44 628.09,-232.44 628.09,-175.56 857.81,-175.56 857.81,-232.44"/>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-213.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session store (3&#45;state) ·</text>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-200.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SecureStorage interface ·</text>
-<text xml:space="preserve" text-anchor="middle" x="742.95" y="-187.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getAuthHeaders · i18n catalog</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="890.81,-270.64 608.29,-270.64 608.29,-187.36 890.81,-187.36 890.81,-270.64"/>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-252.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session store (4&#45;state + suspended) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-238.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in&#45;memory token mgr + runRefresh ·</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-225.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">OAuth/PKCE helper + session adapter ·</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-212.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SecureStorage · OAuthStateStore ·</text>
+<text xml:space="preserve" text-anchor="middle" x="749.55" y="-199.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getAuthHeaders · i18n catalog</text>
 </g>
 <!-- webimpl -->
 <g id="node9" class="node">
 <title>webimpl</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1705.64,-139.84 1475.93,-139.84 1475.93,-96.16 1705.64,-96.16 1705.64,-139.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-121.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">platform/web</text>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-108.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SecureStorage → localStorage</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1783.29,-152.44 1434.76,-152.44 1434.76,-95.56 1783.29,-95.56 1783.29,-152.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-133.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">platform/web</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-120.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SecureStorage → localStorage ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-107.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">OAuthStateStore → sessionStorage · redirectTo</text>
 </g>
 <!-- brain&#45;&gt;webimpl -->
 <g id="edge6" class="edge">
 <title>brain&#45;&gt;webimpl</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M801.97,-174.87C846.09,-154.42 908.97,-128.86 967.42,-118 1138.37,-86.24 1340.34,-94.41 1466.77,-104.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1466.37,-107.28 1473.55,-105.43 1466.78,-102.4 1466.37,-107.28"/>
-<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-133" font-family="Courier,monospace" font-size="10.00">interface ← web impl</text>
-<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-121" font-family="Courier,monospace" font-size="10.00">(injected at provider root)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M826.75,-186.64C870.37,-164.79 926.94,-140.39 980.62,-129 1128.01,-97.74 1299.3,-98.8 1425.62,-106.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1425.31,-108.82 1432.45,-106.8 1425.61,-103.93 1425.31,-108.82"/>
+<text xml:space="preserve" text-anchor="middle" x="1108.68" y="-144" font-family="Courier,monospace" font-size="10.00">interface ← web impl</text>
+<text xml:space="preserve" text-anchor="middle" x="1108.68" y="-132" font-family="Courier,monospace" font-size="10.00">(injected at provider root)</text>
 </g>
 <!-- shell -->
 <g id="node7" class="node">
 <title>shell</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1718.85,-78.04 1462.73,-78.04 1462.73,-7.96 1718.85,-7.96 1718.85,-78.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app shell</text>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">router · RequireAuth (3&#45;state) ·</text>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quiet frame · dithered 404 ·</text>
-<text xml:space="preserve" text-anchor="middle" x="1590.79" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typed&#45;error boundary</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1773.39,-78.04 1444.66,-78.04 1444.66,-7.96 1773.39,-7.96 1773.39,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">app shell</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">router · RequireAuth (4&#45;state → splash) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quiet frame · dithered 404 ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1609.03" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typed&#45;error boundary</text>
 </g>
 <!-- home&#45;&gt;backend -->
 <g id="edge7" class="edge">
 <title>home&#45;&gt;backend</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1495.01,-170.63C1330.91,-155.37 1007.5,-129.91 967.42,-162 908.75,-208.97 984.89,-275.22 930.42,-327 913.85,-342.75 892.5,-352.3 870.2,-357.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.68,-355.47 863.39,-359.4 870.76,-360.25 869.68,-355.47"/>
-<text xml:space="preserve" text-anchor="middle" x="1095.48" y="-165" font-family="Courier,monospace" font-size="10.00">fetch · cross&#45;origin → CORS</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1480.25,-184.69C1307.87,-166.74 1017.95,-141.86 980.62,-173 912.4,-229.91 1001.91,-305.63 946.18,-372.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="944.42,-371.04 941.54,-377.87 948.06,-374.33 944.42,-371.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1108.68" y="-176" font-family="Courier,monospace" font-size="10.00">fetch · cross&#45;origin → CORS</text>
 </g>
 </g>
 </svg>
@@ -310,9 +316,12 @@
 
 <ul>
   <li>
-    <code>HttpError</code> (carries <code>status</code>) — a non-2xx response. A
-    <code>401</code> drives the session store + <a href="#the-session-gate">the auth gate</a>, not
-    the generic error screen.
+    <code>HttpError</code> (carries <code>status</code>) — a non-2xx response. A <code>401</code> is
+    special-cased: <code>defineEndpoint</code> first awaits the
+    <a href="#the-token-in-memory">single-flight token refresh</a> and retries the call once. Only a
+    <code>401</code> that survives the refresh surfaces as an <code>HttpError</code> — which then
+    drives the session store + <a href="#the-session-gate">the auth gate</a>, not the generic error
+    screen.
   </li>
   <li>
     <code>ContractValidationError</code> — the response (or a request) failed Zod parse: a backend
@@ -337,38 +346,184 @@
   (SSE/WS) are a different matter and are deferred to MYT-85.
 </aside>
 
-<h2 id="the-session-gate">The session gate — three states, now</h2>
+<h2 id="the-session-gate">The session gate — four states</h2>
 
 <p>
-  The backend distinguishes two rejections the client must tell apart:
+  The backend distinguishes two authenticated rejections the client must tell apart:
   <code>401 unauthenticated</code> (no/invalid token) and
   <code>403 username_required</code> (authenticated but not yet
-  <a href="../auth-billing/onboarding.html">onboarded</a>). So the session store — a tiny DOM-free
-  Zustand store in <code>client-core/stores</code> — holds <strong>three</strong> states:
-  <code>unauthenticated</code>, <code>onboarding-required</code>, and <code>ready</code>. The
-  <code>&lt;RequireAuth&gt;</code> gate reads only that status and resolves it to one of three
-  outcomes — bounce to sign-in, bounce to onboarding, or render the matched route — with no token
-  parsing, no backend call, no local intelligence.
+  <a href="../auth-billing/onboarding.html">onboarded</a>). The session store — a tiny DOM-free
+  Zustand store in <code>client-core/stores</code> — resolves those into the player's auth
+  lifecycle, now <strong>four</strong> states in lifecycle order:
+</p>
+
+<ul>
+  <li>
+    <code>initializing</code> — the boot state. The on-load token refresh has not settled yet (jwt
+    mode), so the client does not yet know who the player is. <code>&lt;RequireAuth&gt;</code> shows
+    a neutral <strong>splash</strong> here, not a redirect.
+  </li>
+  <li><code>unauthenticated</code> — no identity (logged out, pre-login, or a failed refresh).</li>
+  <li><code>onboarding-required</code> — identity known, profile not yet finalized.</li>
+  <li><code>ready</code> — fully provisioned; the app is playable.</li>
+</ul>
+
+<p>
+  A separate <code>suspended</code> boolean rides alongside the status: an
+  <code>account_suspended</code> rejection lands the player back at <code>unauthenticated</code> but
+  raises the flag, so the sign-in screen can surface a suspension notice instead of silently
+  bouncing. The <code>&lt;RequireAuth&gt;</code> gate reads only the status and resolves it to one
+  of four outcomes — render the splash, bounce to sign-in, bounce to onboarding, or render the
+  matched route — with no token parsing, no backend call, no local intelligence.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Three states now, not a two-state retrofit later</strong> — the auth gate is the boundary
-  the whole authed tree hangs on. A two-state model would force MYT-84 to rewrite it the moment the
-  <code>403 username_required</code> path needs its own redirect. Baking the right shape in now
-  means MYT-84 fills the <em>acquisition</em> (OAuth, token refresh) and the onboarding
-  <em>screen</em> behind redirects that already exist, rather than reshaping the gate. The redirect
-  itself is proven client-side: the store starts <code>unauthenticated</code>, so the gate redirects
-  regardless of the always-authenticated dev bypass backend.
+  <strong>A pre-decision <code>initializing</code> state, not a redirect-flash</strong> — the three
+  auth-<em>decision</em> states (<code>unauthenticated</code> / <code>onboarding-required</code> /
+  <code>ready</code>) were baked in early so the gate never needed reshaping when acquisition
+  landed. MYT-84 adds the fourth as a distinct <em>pre-</em>decision state. On a fresh load the
+  access token is gone (it lives in memory; see below) and the refresh round-trip is in flight, so
+  the gate has no answer yet. A two-bucket "authed or not" model would read that gap as
+  <code>unauthenticated</code>
+  and flash the player to sign-in for the split second before the refresh resolves them back to
+  <code>ready</code>. <code>initializing</code> plus a splash holds the gate until the boot
+  bootstrap settles it, so a redirect only ever fires on a real answer. (The dev bypass seam, always
+  authenticated, seeds <code>ready</code> directly at boot and never passes through
+  <code>initializing</code>.)
+</aside>
+
+<h2 id="the-token-in-memory">The access token, in memory</h2>
+
+<p>
+  Auth headers ride an injected <code>getAuthHeaders()</code> built once from a mode flag, then
+  invoked per request: <strong>dev</strong> (bypass) sends a static
+  <code>x-mythrun-dev-sub</code> header; <strong>prod</strong> (jwt) reads the current Cognito
+  access token and sends it as a <code>Bearer</code> (an empty header set before one is acquired).
+  The token itself lives in a module-scoped <strong>token manager</strong> in
+  <code>client-core/auth</code> — held in a plain variable, in memory only. It is never written to
+  <code>localStorage</code> or <code>sessionStorage</code>, so it is lost on reload and re-acquired
+  from the refresh cookie.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Access token in memory, refresh token in an httpOnly cookie</strong> — the standard SPA
+  defense against token theft. A token in <code>localStorage</code> is readable by any script on the
+  page, so a single XSS payload can exfiltrate it; an in-memory variable is not reachable that way
+  and evaporates when the tab closes. The durable half — the long-lived <em>refresh</em> token — is
+  the backend's httpOnly <code>mythrun_refresh</code> cookie, which JavaScript cannot read at all;
+  the client only ever asks the backend to spend it. That server side (the BFF that mints the cookie
+  and the access token) is the <a href="../auth-billing/identity.html">Identity</a> page's story;
+  this page covers the client half.
 </aside>
 
 <p>
-  Auth headers ride an injected <code>getAuthHeaders()</code> built once from a mode flag and the
-  secure-storage handle, then invoked per request: <strong>dev</strong> (bypass) sends a static
-  <code>x-mythrun-dev-sub</code> header; <strong>prod</strong> (jwt) reads a Bearer token from
-  secure storage on every call (so a token persisted after construction is still picked up, and an
-  unacquired token is simply an empty header set until MYT-84 fills acquisition). The mode is a
-  build/runtime config flag, not request-time logic.
+  Because the access token is short-lived and lost on reload, a backend call routinely meets a
+  <code>401</code>. <code>defineEndpoint</code> handles it in one place: on a <code>401</code> it
+  awaits <code>runRefresh()</code>, and if the refresh succeeds it
+  <strong>rebuilds the request init</strong> — so <code>getAuthHeaders</code> re-reads the now-fresh
+  token rather than resending the dead <code>Bearer</code> — and retries the call exactly once. Only
+  if the refresh fails does the <code>401</code> fall through to the typed
+  <code>HttpError</code> that resets the session. <code>runRefresh</code> is
+  <strong>single-flight</strong>: one in-flight <code>POST /api/auth/refresh</code> coalesces N
+  concurrent 401s, so a burst of parallel calls triggers exactly one refresh round-trip and every
+  call retries behind it.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The refresh transport is injected, not imported</strong> — the token manager performs the
+  refresh through a function handed to it at boot (<code>configureTokenRefresh</code>), never by
+  importing the <code>session</code> API slice. The 401 retry lives in <code>defineEndpoint</code>,
+  which the auth slices are built from, so a direct import would close the loop
+  <code>endpoint → session → endpoint</code>. Injection keeps the import graph acyclic. The auth
+  endpoints themselves carry <code>skipAuthRetry</code> so a failing refresh cannot recurse through
+  the refresh call, and <code>credentials:'include'</code> is threaded into those cookie-bearing
+  fetches so the browser actually sends and receives the <code>mythrun_refresh</code> cookie
+  cross-origin.
+</aside>
+
+<h2 id="oauth-flow">Acquiring identity — the OAuth sign-in flow</h2>
+
+<p>
+  Sign-in is a Cognito Hosted-UI OAuth flow with PKCE, driven entirely from the client brain's
+  <code>auth</code> module and realized by three screens. The <strong>sign-in screen</strong>
+  (<code>routes/signin.tsx</code>) is the genesis title composition: the stacked brand
+  <a href="./design-system.html">Lockup</a> over a dithered crown, with two
+  <code>secondary</code> Buttons — Continue with Google, Continue with Discord — each carrying its
+  provider mark in the native icon slot. It reads the session store's <code>suspended</code> flag to
+  show an account-suspended notice when one is pending.
+</p>
+
+<p>
+  Pressing a provider button begins the flow through the OAuth helper (<code>auth/oauth.ts</code>),
+  the canonical PKCE API: <code>createPkce</code> draws a 256-bit verifier from the platform CSPRNG
+  and S256-hashes it into a challenge; <code>createAuthState</code> mints a random opaque
+  <code>state</code> and persists the <code>{provider, returnTo, verifier}</code> triple single-use,
+  returning <code>{state, challenge}</code>; <code>buildAuthorizeUrl</code> assembles the Hosted-UI
+  authorize URL; and the screen redirects the browser to it through the
+  <code>platform/web</code> navigation helper (screens never touch
+  <code>window.location</code> themselves). The <code>returnTo</code> — the invite hand-off target —
+  is run through an <code>isLocalPath</code>
+  open-redirect guard before it ever rides the round-trip.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The OAuth <code>state</code> store is a platform port</strong> — the single-use
+  <code>state</code> triple has to survive the full-page redirect to Cognito and back, but the
+  DOM-free brain cannot reach <code>sessionStorage</code> itself (R1). So
+  <code>OAuthStateStore</code> is a platform-capability interface in
+  <code>client-core/platform</code> — the same pattern as <code>SecureStorage</code> — with a
+  sessionStorage-backed web impl under <code>platform/web</code>, injected at boot via
+  <code>configureOAuth</code> alongside the Cognito config. Its <code>take</code> is a single-use
+  read-and-delete: spending the <code>state</code> exactly once is the CSRF + replay defense. The
+  Cognito config is the <em>public</em> <code>VITE_COGNITO_*</code>
+  build env (the Hosted-UI domain + the public app-client id) bundled into the SPA — PKCE means
+  there is no client secret to hide.
+</aside>
+
+<p>
+  Cognito returns to the <strong>callback screen</strong> (<code>routes/callback.tsx</code>), which
+  parses <code>code</code> + <code>state</code> (a parse-only step — it never consumes the store
+  itself), verifies the <code>state</code> against the stashed triple, exchanges
+  <code>{code, codeVerifier}</code> for a session by POSTing to the backend BFF (<code
+    >POST /api/auth/session</code
+  >, an <a href="../auth-billing/identity.html">Identity</a> endpoint), sets the returned access
+  token in the in-memory token manager, and runs the session adapter. A <code>ready</code> result
+  navigates to the <code>returnTo</code>; an <code>onboarding-required</code> result detours to the
+  onboard screen carrying the pre-fill name.
+</p>
+
+<p>
+  The <strong>onboard screen</strong> (<code>routes/onboard.tsx</code>) is the display-name moment:
+  one serif question, one pre-filled Input, one primary Button. <code>deriveUsername</code> turns
+  the provider-supplied name into a backend-valid handle candidate (regex-valid by construction),
+  and a small register error taxonomy maps the backend's 409s —
+  <code>already_onboarded</code> (treat as done), <code>username_taken</code> (re-mutate the
+  candidate and retry, bounded) — plus a <code>400 display_name_invalid</code> to an inline field
+  error, so a collision resolves without bouncing the player.
+</p>
+
+<p>
+  Both the callback and the on-load boot funnel through one
+  <strong>session adapter</strong> (<code>auth/session-adapter.ts</code>). <code>applyMe</code> does
+  a single <code>GET /me</code> and maps the result to the store: <code>200</code> →
+  <code>ready</code>, <code>403 username_required</code> → <code>onboarding-required</code>,
+  <code>403 account_suspended</code> → <code>suspended</code>, anything else →
+  <code>unauthenticated</code>. <code>bootstrapSession</code> is the boot path: it runs the on-load
+  refresh, then <code>applyMe</code> on success or <code>unauthenticated</code> on failure. The
+  <code>sub</code> the store records is read structurally from the access token's
+  <code>sub</code> claim (<code>jwt-claims.ts</code> — a mechanical base64url decode, no
+  verification; the backend is the verifier).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The adapter settles the store before the Hub's <code>useMe</code> runs</strong> —
+  onboarding status is discovered once, at the seam that already knows it (the callback / the boot
+  bootstrap), not lazily inside the first authed screen. By the time
+  <code>&lt;RequireAuth&gt;</code> clears and the home hub's <code>useMe</code> fires, the store is
+  already <code>ready</code> or <code>onboarding-required</code> — so <code>useMe</code> is never
+  the place a player discovers they still need to onboard, and the gate never has to unwind a
+  half-rendered authed tree.
+</aside>
 
 <h2 id="conformance-by-construction">Conformance by construction</h2>
 
@@ -419,9 +574,11 @@
   <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
   · credit balance · a gear settings affordance) wrapping the content <code>&lt;Outlet/&gt;</code>,
   composed from <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the
-  narrative/combat content is the focus. Every screen is a thin i18n'd stub the flow tickets fill —
-  except the <strong>home hub</strong>, wired end-to-end (<code>useMyCampaigns</code> → real backend
-  → Suspense loading → Cards or empty state) as the done-when smoke.
+  narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
+  now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
+  screens are thin i18n'd stubs the flow tickets fill, except the <strong>home hub</strong>, wired
+  end-to-end (<code>useMyCampaigns</code> → real backend → Suspense loading → Cards or empty state)
+  as the done-when smoke.
 </p>
 
 <aside class="wiki-rationale">
@@ -462,14 +619,20 @@
 </aside>
 
 <p>
-  The <strong>provider stack</strong> is the web shell's one composition root: a single
-  <code>QueryClient</code>, the resolved <code>ApiContext</code> (base URL + the injected
-  <code>getAuthHeaders</code>), and the i18n runtime, in that nesting order. It is config-driven —
-  <code>main.tsx</code> builds the concrete config from the environment and the web
-  <code>SecureStorage</code> impl once at module scope and passes it in — so the shell is testable
-  with a fake storage and an explicit auth mode. In dev (bypass) <code>main.tsx</code> also seeds
-  the session store <code>ready</code> once, so the dev app lands on the authed side of the gate
-  against the always-authenticated bypass backend.
+  The <strong>provider stack</strong> is the web shell's one composition root: the
+  <code>ThemeProvider</code>, a single <code>QueryClient</code>, the resolved
+  <code>ApiContext</code> (base URL + the injected <code>getAuthHeaders</code>), and the i18n
+  runtime, in that nesting order. It also stands up the auth seams at boot:
+  <code>configureTokenRefresh</code> binds the token manager's single-flight refresh to the real
+  <code>POST /api/auth/refresh</code> call, and (jwt mode) <code>main.tsx</code> calls
+  <code>configureOAuth</code> with the web state-store impl + the Cognito config and kicks off
+  <code>bootstrapSession</code> on load — so the store starts <code>initializing</code> and the
+  splash covers the gap until the refresh settles it. It is config-driven —
+  <code>main.tsx</code> builds the concrete config from the environment and the web platform impls
+  once at module scope and passes it in — so the shell is testable with fakes and an explicit auth
+  mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
+  <code>ready</code> once, so the dev app lands on the authed side of the gate against the
+  always-authenticated bypass backend.
 </p>
 
 <h2 id="gating-the-screens-at-phone-width">Gating the screens at phone width</h2>
@@ -565,22 +728,51 @@
   </li>
 </ol>
 
+<h3 id="trace-a-sign-in-end-to-end">Trace a sign-in end-to-end</h3>
+<ol>
+  <li>
+    Open the sign-in screen and press a provider button. The browser leaves for the Cognito Hosted
+    UI — confirm the authorize URL carries <code>code_challenge_method=S256</code>, the expected
+    <code>identity_provider</code>, and an opaque <code>state</code>.
+  </li>
+  <li>
+    After the provider, the callback lands at <code>/auth/callback?code=…&amp;state=…</code>. In
+    DevTools, watch <code>POST /api/auth/session</code> succeed and set the
+    <code>mythrun_refresh</code> cookie (httpOnly — visible in the Network response, never in
+    <code>document.cookie</code>). The access token never appears in storage; it lives in memory.
+  </li>
+  <li>
+    A first-time identity routes to <code>/auth/onboard</code>; an existing one lands on the
+    return-to (the home hub). Reload the page: the store starts <code>initializing</code>, the
+    splash shows, <code>POST /api/auth/refresh</code> fires once, and the session resolves back to
+    <code>ready</code> without a sign-in bounce.
+  </li>
+  <li>
+    To exercise the refresh-retry, let an access token expire (or clear it) and trigger an authed
+    call: one <code>401</code> → one coalesced <code>POST /api/auth/refresh</code> → the call
+    retried once with the fresh <code>Bearer</code>. The server side (the BFF endpoints + the
+    cookie) is covered on the <a href="../auth-billing/identity.html">Identity</a> page.
+  </li>
+</ol>
+
 <h2 id="integration-points">Integration points</h2>
 
 <p>
   This page is the data/shell half of the frontend; the
   <a href="./index.html">Frontend foundation</a> covers the workspace, the lint rails, the i18n
   layer, and the design tokens, and the <a href="./design-system.html">Design system</a> covers
-  mythrunUI (including the two new <code>Box</code> variants the 404 uses and the component-<em
-    >prop</em
-  >
+  mythrunUI (including the two new <code>Box</code> variants the 404 uses, the brand Lockup, the
+  provider marks, and the theme runtime the auth screens compose, and the component-<em>prop</em>
   contract that shares the word "contract" with this page's wire contract). The cross-origin CORS
   topology, the plugin-registration order it slots into, and the Dockerfile step that builds
   <code>@mythrun/contract</code> into the image all live on the
   <a href="../runtime/index.html">Backend</a> page. The realtime unions this package now hosts feed
   the <a href="../runtime/session-transport.html">session transport</a> and
-  <a href="../runtime/pipeline-status.html">pipeline status</a> surfaces. The three-state gate maps
-  onto the <a href="../auth-billing/onboarding.html">onboarding</a> 401/403 split. The
+  <a href="../runtime/pipeline-status.html">pipeline status</a> surfaces. The four-state gate and
+  the OAuth client flow map onto the
+  <a href="../auth-billing/onboarding.html">onboarding</a> 401/403 split, and the BFF that exchanges
+  the code, mints the access token, and sets the httpOnly <code>mythrun_refresh</code> cookie is the
+  <a href="../auth-billing/identity.html">Identity</a> page. The
   <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page details the frontend-check
   gate and the contract build step.
 </p>
@@ -651,17 +843,48 @@
     <tr>
       <td><code>getAuthHeaders</code></td>
       <td>
-        The injected per-request header producer (dev <code>x-mythrun-dev-sub</code> / prod Bearer).
+        The injected per-request header producer — dev <code>x-mythrun-dev-sub</code> / prod
+        <code>Bearer</code> read from the in-memory token manager.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>getAccessToken</code> / <code>runRefresh</code> / <code>configureTokenRefresh</code>
+      </td>
+      <td>
+        The in-memory access-token manager: read the current token, run the single-flight refresh,
+        inject the refresh transport at boot.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>createAuthState</code> / <code>buildAuthorizeUrl</code> / <code>parseCallback</code> /
+        <code>consumeAuthState</code> / <code>configureOAuth</code>
+      </td>
+      <td>
+        The OAuth/PKCE helper — Hosted-UI authorize URL, single-use <code>state</code>, parse-only
+        callback, boot-time config.
+      </td>
+    </tr>
+    <tr>
+      <td><code>applyMe</code> / <code>bootstrapSession</code> / <code>deriveUsername</code></td>
+      <td>
+        The session adapter (<code>/me</code> → store; on-load boot) and the display-name → handle
+        derivation.
       </td>
     </tr>
     <tr>
       <td><code>useSessionStore</code></td>
-      <td>The three-state Zustand session store the auth gate reads.</td>
+      <td>
+        The four-state Zustand session store (<code>initializing</code> /
+        <code>unauthenticated</code> / <code>onboarding-required</code> / <code>ready</code>, plus a
+        <code>suspended</code> flag) the auth gate reads.
+      </td>
     </tr>
     <tr>
-      <td><code>SecureStorage</code></td>
+      <td><code>SecureStorage</code> / <code>OAuthStateStore</code></td>
       <td>
-        The platform-capability interface; web impl lives under
+        The platform-capability interfaces; web impls live under
         <code>frontend/src/platform/web/</code>.
       </td>
     </tr>
@@ -678,14 +901,21 @@
   <code>frontend/client-core/src/index.ts</code>, <code>frontend/src/app/</code>,
   <code>frontend/src/routes/home.tsx</code>, <code>frontend/src/storybook/screen-harness.tsx</code>,
   <code>frontend/scripts/screen-story-coverage.mjs</code>,
-  <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>.
+  <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>,
+  <code>frontend/client-core/src/auth/</code> (the token manager, the OAuth/PKCE helper, the session
+  adapter, <code>jwt-claims</code>, <code>derive-username</code>),
+  <code>frontend/client-core/src/platform/oauth-state-store.ts</code>,
+  <code>frontend/src/routes/signin.tsx</code>, <code>frontend/src/routes/callback.tsx</code>,
+  <code>frontend/src/routes/onboard.tsx</code>,
+  <code>frontend/src/platform/web/oauth-state-store.ts</code>,
+  <code>frontend/src/platform/web/navigation.ts</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — three states, now</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#gating-the-screens-at-phone-width">Gating the screens at phone width</a></li><li style="padding-left:0"><a href="#talking-to-the-api-cross-origin">Talking to the API cross-origin</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:12px"><a href="#add-a-player-facing-screen">Add a player-facing screen</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — four states</a></li><li style="padding-left:0"><a href="#the-token-in-memory">The access token, in memory</a></li><li style="padding-left:0"><a href="#oauth-flow">Acquiring identity — the OAuth sign-in flow</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#gating-the-screens-at-phone-width">Gating the screens at phone width</a></li><li style="padding-left:0"><a href="#talking-to-the-api-cross-origin">Talking to the API cross-origin</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:12px"><a href="#add-a-player-facing-screen">Add a player-facing screen</a></li><li style="padding-left:12px"><a href="#trace-a-sign-in-end-to-end">Trace a sign-in end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

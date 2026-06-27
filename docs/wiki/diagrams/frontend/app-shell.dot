@@ -3,11 +3,14 @@ digraph frontend_app_shell {
   // contract (@mythrun/contract — Zod REST schemas) is the SINGLE typed source:
   // the backend types its handler returns against it; the client brain VALIDATES
   // responses against it at runtime. @mythrun/client-core (DOM-free) owns every
-  // backend call (defineEndpoint → suspense hooks), the three-state session
-  // store, the platform-capability interfaces, and the i18n catalog.
-  // @mythrun/web is THIN: the router shell, the quiet frame, thin route stubs +
-  // the one wired home hub, and the web IMPLEMENTATIONS of the platform
-  // interfaces. The SPA is cross-origin to the API (real CORS, not a dev proxy).
+  // backend call (defineEndpoint → suspense hooks), the four-state session store,
+  // the in-memory access-token manager + single-flight 401 refresh-retry, the
+  // OAuth/PKCE sign-in helper + session adapter, the platform-capability
+  // interfaces, and the i18n catalog. @mythrun/web is THIN: the router shell, the
+  // quiet frame, the live OAuth auth screens (signin · callback · onboard) + thin
+  // route stubs + the wired home hub, and the web IMPLEMENTATIONS of the platform
+  // interfaces. The SPA is cross-origin to the API (real CORS, not a dev proxy);
+  // the backend BFF mints the access token + the httpOnly mythrun_refresh cookie.
   // Dependency direction: contract ← {backend, client-core} ← ui ← web.
   compound=true;
 
@@ -21,7 +24,7 @@ digraph frontend_app_shell {
     events [label="realtime event unions\nsession · pipeline\n(TS, not Zod — MYT-85)"];
   }
 
-  backend [label="@mythrun/backend\ntypes handler returns (tsc)\nreal CORS · one allowed origin", color="ember", fontcolor="ember"];
+  backend [label="@mythrun/backend\ntypes handler returns (tsc) · real CORS · one origin\nBFF: /auth/session + /auth/refresh\n(access token + httpOnly mythrun_refresh cookie)", color="ember", fontcolor="ember"];
 
   subgraph cluster_cc {
     label="@mythrun/client-core  (the client brain · DOM-free · R1)";
@@ -29,9 +32,9 @@ digraph frontend_app_shell {
     color="ember";
     fontcolor="ember";
 
-    endpoint [label="defineEndpoint — the ONLY call path\nvalidates response → typed data\nHttpError · ContractValidationError · NetworkError"];
+    endpoint [label="defineEndpoint — the ONLY call path\nvalidates response → typed data\n401 → single-flight refresh → retry once\nHttpError · ContractValidationError · NetworkError"];
     hooks [label="slice hooks (React-Query suspense)\nuseMe · useMyCampaigns"];
-    brain [label="session store (3-state) ·\nSecureStorage interface ·\ngetAuthHeaders · i18n catalog"];
+    brain [label="session store (4-state + suspended) ·\nin-memory token mgr + runRefresh ·\nOAuth/PKCE helper + session adapter ·\nSecureStorage · OAuthStateStore ·\ngetAuthHeaders · i18n catalog"];
     endpoint -> hooks [style="dotted"];
   }
 
@@ -41,9 +44,9 @@ digraph frontend_app_shell {
     color="ember";
     fontcolor="ember";
 
-    shell [label="app shell\nrouter · RequireAuth (3-state) ·\nquiet frame · dithered 404 ·\ntyped-error boundary"];
-    home [label="routes/ — thin stubs +\nthe wired home hub"];
-    webimpl [label="platform/web\nSecureStorage → localStorage"];
+    shell [label="app shell\nrouter · RequireAuth (4-state → splash) ·\nquiet frame · dithered 404 ·\ntyped-error boundary"];
+    home [label="routes/ — OAuth auth screens\n(signin · callback · onboard) ·\nthin stubs + the wired home hub"];
+    webimpl [label="platform/web\nSecureStorage → localStorage ·\nOAuthStateStore → sessionStorage · redirectTo"];
   }
 
   rest -> backend [label="z.infer types (tsc)"];

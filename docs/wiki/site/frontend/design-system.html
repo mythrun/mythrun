@@ -30,11 +30,11 @@
 
 <p class="lead">
   mythrunUI — the brand-aligned, token-driven component library the whole app composes. The system
-  before the app: ~27 primitives (layout, type, controls, overlays, feedback, display) each typed
-  against a platform-neutral contract, styled from a single token vocabulary, responsive by
-  construction (they shrink, wrap, and truncate so nothing spills a phone-width row), documented in
-  one frontend-level Storybook, and held in place by lint, accessibility, and mobile-viewport CI
-  gates. Two packages carry it —
+  before the app: ~32 primitives (layout, type, controls, overlays, feedback, display, brand) each
+  typed against a platform-neutral contract, styled from a single token vocabulary, responsive by
+  construction (they shrink, wrap, and truncate so nothing spills a phone-width row), light/dark at
+  runtime, documented in one frontend-level Storybook, and held in place by lint, accessibility, and
+  mobile-viewport CI gates. Two packages carry it —
   <code>@mythrun/client-core</code> (the platform-neutral brain: the component contract + the token
   data) and <code>@mythrun/ui</code> (the web implementation that turns the contract into DOM).
 </p>
@@ -235,10 +235,9 @@
   <code>@mythrun/client-core</code> is the base — born in this issue holding only the component
   contract and token data, it imported nothing but <code>react</code> (for <code>ReactNode</code> in
   a child slot) and <code>culori</code> (in the build-time token generator). MYT-83 then grew it
-  into the full platform-neutral client brain — the data layer, the three-state session store, the
-  platform interfaces, and the i18n catalog (see
-  <a href="./app-shell.html">App shell &amp; data layer</a>), pulling in <code>zustand</code>,
-  <code>@tanstack/react-query</code>, <code>i18next</code>, and the
+  into the full platform-neutral client brain — the data layer, the session store, the platform
+  interfaces, and the i18n catalog (see <a href="./app-shell.html">App shell &amp; data layer</a>),
+  pulling in <code>zustand</code>, <code>@tanstack/react-query</code>, <code>i18next</code>, and the
   <code>@mythrun/contract</code> wire types — but it still touches no DOM.
   <code>@mythrun/ui</code> is the web design system: it implements the contract with DOM, Radix, and
   Tailwind, and it owns all web CSS. <code>@mythrun/web</code> is the app — it composes the
@@ -363,6 +362,39 @@
   this claim at the token level, since axe does not verify the ring color against its background.
 </aside>
 
+<h2 id="theme-mode">Theme mode</h2>
+
+<p>
+  The token layer keys light and dark off a single <code>.dark</code> class on the document root
+  (the <code>:root</code>/<code>.dark</code> flip above); MYT-84 adds the runtime that toggles it. A
+  <code>ThemeProvider</code> (in <code>@mythrun/ui</code>, the DOM-capable package) holds the active
+  theme, applies or removes <code>.dark</code> on <code>&lt;html&gt;</code>, and persists the choice
+  to <code>localStorage</code>. Its default is the stored value, falling back to the OS
+  <code>prefers-color-scheme</code>. A <code>useTheme()</code> hook exposes
+  <code>{ theme, toggle, setTheme }</code> — the contract type lives in
+  <code>client-core/contract/theme.ts</code>, DOM-free, so only the side-effecting impl is
+  web-bound.
+</p>
+
+<p>
+  The visible control is the <code>ThemeToggle</code> — a square FAB fixed to the top-right that
+  flips the theme, carrying the sun glyph in light and the moon in dark. It is self-positioning, so
+  a screen renders a bare <code>&lt;ThemeToggle/&gt;</code> over the genesis crown without reaching
+  for raw layout. Its sun/moon come from the real Pixelarticons glyphs added to the swappable
+  <code>Icon</code> map (<code>glyphs.ts</code>) and to the closed <code>IconName</code> union —
+  replacing the hand-authored placeholders the set is not allowed to ship.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A pre-paint inline script, not a React effect</strong> — if the <code>.dark</code> class
+  were applied only once the <code>ThemeProvider</code> mounts, a dark-mode reload would paint one
+  light frame before React hydrated and corrected it: a flash of the wrong theme. So a tiny inline
+  script in <code>index.html</code> resolves the same value (stored <code>mythrun-theme</code> ?? OS
+  preference) and sets the class <em>before first paint</em>; the provider reconciles to the
+  identical value on mount, so there is no flip on hydrate. The script is the one place this logic
+  is deliberately duplicated — it must run before any bundle does.
+</aside>
+
 <h2 id="the-build-stack">The build stack</h2>
 
 <p>
@@ -375,8 +407,9 @@
   <code>cn()</code> util (<code>clsx</code> + <code>tailwind-merge</code>). Icons are
   <strong>pixelarticons</strong> per-icon component imports behind a swappable
   <code>Icon</code> API. The brand's one sanctioned gradient is the <strong>Dither</strong> — a
-  locked 4×4-Bayer two-color band, for committed high-contrast transitions only, never a smooth
-  gradient.
+  locked 4×4-Bayer band between two <em>palette</em> colors (<code>from</code>→<code>to</code>, R3 —
+  never a raw color), for committed high-contrast transitions only, never a smooth gradient; a
+  <code>flip</code> hangs the dense end at the top edge for the genesis-screen crown.
 </p>
 
 <aside class="wiki-rationale">
@@ -406,7 +439,9 @@
     >), so they pass API-purity by construction. (MYT-83 added two token-typed
     <code>Box</code> variants — a <code>reversed</code> dark surface and a full-viewport
     <code>minHeight="screen"</code> floor, on <code>100dvh</code> for mobile — for the dithered 404;
-    see <a href="./app-shell.html">App shell &amp; data layer</a>.)
+    see <a href="./app-shell.html">App shell &amp; data layer</a>. MYT-84 added a numeric
+    <code>Stack</code> <code>grow</code> weight — proportional flex spacers that seat content with a
+    deliberate vertical rhythm, e.g. the genesis screens' optically-above-center card.)
   </li>
   <li>
     <strong>Typography</strong> — <code>Text</code>, <code>Heading</code>,
@@ -417,7 +452,9 @@
     (Button's loading state, IconButton).
   </li>
   <li>
-    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>),
+    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>, plus a native
+    leading-<code>icon</code> slot — a platform-neutral icon prop, not an <code>asChild</code> DOM
+    trick, carrying the Google/Discord provider marks on the sign-in buttons),
     <code>IconButton</code> (requires an accessible name), <code>Input</code>,
     <code>TextArea</code> (autosizing), <code>Select</code>, <code>Checkbox</code>,
     <code>Radio</code>/<code>RadioGroup</code>, <code>Switch</code>, and
@@ -429,8 +466,10 @@
     server/LLM-rejection messages routed inline — is designed once, not improvised per field.
   </li>
   <li>
-    <strong>Containers &amp; overlays</strong> — <code>Card</code> (header/body/footer slots),
-    <code>Modal</code>, <code>Popover</code>, <code>Tooltip</code>, <code>Tabs</code>,
+    <strong>Containers &amp; overlays</strong> — <code>Card</code> (header/body/footer slots, plus a
+    responsive <code>collapse</code> mode — a bordered card at <code>sm</code> and up, dropping its
+    border/surface/padding to sit native and inline below the breakpoint, the genesis screens'
+    card), <code>Modal</code>, <code>Popover</code>, <code>Tooltip</code>, <code>Tabs</code>,
     <code>Menu</code>.
   </li>
   <li>
@@ -441,7 +480,30 @@
     <strong>Display</strong> — <code>Avatar</code>/<code>AvatarGroup</code> (image-with-initials
     fallback, twelve curated pigments), <code>Badge</code>, <code>Dither</code>.
   </li>
+  <li>
+    <strong>Brand</strong> — <code>Logomark</code> (the 64-px pixel-art mark, crisp-scaled,
+    <code>ink</code>/<code>ember</code> tone), <code>Wordmark</code> (the Tyma Garamont logotype),
+    <code>Lockup</code> (primary / stacked) and <code>HorizontalLockup</code> (secondary). Each
+    takes a neutral <code>size</code> + a required <code>aria-label</code> and paints in monochrome
+    <code>currentColor</code>, so it flips ink↔cream with the theme. The provider marks
+    <code>GoogleMark</code> + <code>DiscordMark</code> are kept apart in
+    <code>src/brand-marks/</code> (not <code>src/components/</code>) and ride the
+    <code>Button</code> icon slot on the
+    <a href="./app-shell.html#oauth-flow">OAuth sign-in screen</a>.
+  </li>
 </ul>
+
+<aside class="wiki-rationale">
+  <strong>Provider marks live outside <code>src/components/</code></strong> — the Google "G" is four
+  locked brand colors and the Discord mark is locked blurple; the providers' sign-in guidelines
+  mandate them, so they cannot be design tokens. But
+  <a href="#no-ad-hoc-color-r3">no-ad-hoc-color</a> scans every string under
+  <code>src/components/**</code> and would (correctly) reject those hex literals. So the two
+  provider marks sit in <code>src/brand-marks/</code>, outside the token zone — an external-asset
+  carve-out, not a hole in the rule. The Mythrun marks
+  (<code>Logomark</code>/<code>Wordmark</code>/<code>Lockup</code>) are token-clean (monochrome
+  <code>currentColor</code>) and stay under <code>src/components/</code>.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Banner vs Toast — inline vs subsystem</strong> — a Banner is a leaf: inline, contextual,
@@ -704,8 +766,10 @@
 <p>
   This page is the design-system half of the <a href="./index.html">Frontend foundation</a>, which
   covers the same workspace plus the i18n layer, the no-ad-hoc-UI / no-hardcoded-string rails, and
-  the token primer this page builds on. The MYT-82 gates run in the same
-  <code>frontend-check.yml</code> workflow and pre-push section detailed on the
+  the token primer this page builds on. The OAuth sign-in, callback, and onboard screens on the
+  <a href="./app-shell.html#oauth-flow">App shell</a> compose these brand marks, the
+  <code>Dither</code> crown, the provider-marked Buttons, and the theme toggle. The MYT-82 gates run
+  in the same <code>frontend-check.yml</code> workflow and pre-push section detailed on the
   <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page. The portability rules R1–R5
   that the contract layer and these lints enforce are recorded in the frontend portability
   architecture decision record (<code>docs/superpowers/specs/</code>); the contract layer and the
@@ -808,18 +872,19 @@
   <code>src/contract/</code>, <code>src/tokens/</code>, <code>eslint-rules/api-purity.js</code>,
   <code>eslint-rules/no-ad-hoc-color.js</code>, <code>CHANGELOG.md</code>),
   <code>frontend/ui/</code> (<code>@mythrun/ui</code> — <code>src/components/</code>,
-  <code>src/index.ts</code>, <code>src/lib/cn.ts</code>, <code>src/styles/</code>,
-  <code>scripts/story-coverage.mjs</code>, <code>eslint.config.js</code>),
-  <code>frontend/.storybook/</code> (the unified Storybook + <code>test-runner.ts</code> overflow
-  gate, hosted in <code>@mythrun/web</code>), <code>frontend/eslint.config.js</code> (import
-  boundary), <code>.github/workflows/frontend-check.yml</code>.
+  <code>src/brand-marks/</code>, <code>src/theme/</code>, <code>src/index.ts</code>,
+  <code>src/lib/cn.ts</code>, <code>src/styles/</code>, <code>scripts/story-coverage.mjs</code>,
+  <code>eslint.config.js</code>), <code>frontend/.storybook/</code> (the unified Storybook +
+  <code>test-runner.ts</code> overflow gate, hosted in <code>@mythrun/web</code>),
+  <code>frontend/eslint.config.js</code> (import boundary),
+  <code>.github/workflows/frontend-check.yml</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#three-packages-one-direction">Three packages, one direction</a></li><li style="padding-left:0"><a href="#the-contract-a-typed-seam-enforced-as-a-pair">The contract — a typed seam enforced as a pair</a></li><li style="padding-left:0"><a href="#the-token-foundation-relocated">The token foundation, relocated</a></li><li style="padding-left:0"><a href="#the-design-language-flat-1-bit">The design language — flat 1-bit</a></li><li style="padding-left:0"><a href="#the-build-stack">The build stack</a></li><li style="padding-left:0"><a href="#the-primitive-set">The primitive set</a></li><li style="padding-left:0"><a href="#responsive-by-construction">Responsive by construction</a></li><li style="padding-left:0"><a href="#storybook">Storybook</a></li><li style="padding-left:0"><a href="#enforcement-rules-as-ci-gates">Enforcement — rules as CI gates</a></li><li style="padding-left:12px"><a href="#api-purity-r2">API-purity (R2)</a></li><li style="padding-left:12px"><a href="#no-ad-hoc-color-r3">no-ad-hoc-color (R3)</a></li><li style="padding-left:12px"><a href="#story-coverage">Story-coverage</a></li><li style="padding-left:12px"><a href="#mobile-viewport-overflow-gate">Mobile-viewport overflow gate</a></li><li style="padding-left:12px"><a href="#import-boundary-r5">Import boundary (R5)</a></li><li style="padding-left:12px"><a href="#accessibility-amp-token-contrast">Accessibility &amp; token-contrast</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-primitive-to-the-library">Add a primitive to the library</a></li><li style="padding-left:12px"><a href="#add-or-change-a-token">Add or change a token</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-gates">Appendix: packages &amp; gates</a></li><li style="padding-left:12px"><a href="#packages">Packages</a></li><li style="padding-left:12px"><a href="#enforcement-gates">Enforcement gates</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#three-packages-one-direction">Three packages, one direction</a></li><li style="padding-left:0"><a href="#the-contract-a-typed-seam-enforced-as-a-pair">The contract — a typed seam enforced as a pair</a></li><li style="padding-left:0"><a href="#the-token-foundation-relocated">The token foundation, relocated</a></li><li style="padding-left:0"><a href="#the-design-language-flat-1-bit">The design language — flat 1-bit</a></li><li style="padding-left:0"><a href="#theme-mode">Theme mode</a></li><li style="padding-left:0"><a href="#the-build-stack">The build stack</a></li><li style="padding-left:0"><a href="#the-primitive-set">The primitive set</a></li><li style="padding-left:0"><a href="#responsive-by-construction">Responsive by construction</a></li><li style="padding-left:0"><a href="#storybook">Storybook</a></li><li style="padding-left:0"><a href="#enforcement-rules-as-ci-gates">Enforcement — rules as CI gates</a></li><li style="padding-left:12px"><a href="#api-purity-r2">API-purity (R2)</a></li><li style="padding-left:12px"><a href="#no-ad-hoc-color-r3">no-ad-hoc-color (R3)</a></li><li style="padding-left:12px"><a href="#story-coverage">Story-coverage</a></li><li style="padding-left:12px"><a href="#mobile-viewport-overflow-gate">Mobile-viewport overflow gate</a></li><li style="padding-left:12px"><a href="#import-boundary-r5">Import boundary (R5)</a></li><li style="padding-left:12px"><a href="#accessibility-amp-token-contrast">Accessibility &amp; token-contrast</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-primitive-to-the-library">Add a primitive to the library</a></li><li style="padding-left:12px"><a href="#add-or-change-a-token">Add or change a token</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-gates">Appendix: packages &amp; gates</a></li><li style="padding-left:12px"><a href="#packages">Packages</a></li><li style="padding-left:12px"><a href="#enforcement-gates">Enforcement gates</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -11,20 +11,27 @@
 <!-- source: frontend/scripts/screen-story-coverage.mjs -->
 <!-- source: frontend/src/platform/web/secure-storage.ts -->
 <!-- source: frontend/src/main.tsx -->
-<!-- source-hash: sha256:4e7542dc8b7849f70cd05a747905092d4cb8c990936fd9e9f77e8578a58f819c -->
+<!-- source: frontend/client-core/src/auth/ -->
+<!-- source: frontend/client-core/src/platform/oauth-state-store.ts -->
+<!-- source: frontend/src/routes/signin.tsx -->
+<!-- source: frontend/src/routes/onboard.tsx -->
+<!-- source: frontend/src/routes/callback.tsx -->
+<!-- source: frontend/src/platform/web/oauth-state-store.ts -->
+<!-- source: frontend/src/platform/web/navigation.ts -->
+<!-- source-hash: sha256:58b315418335910e21201152d13d4ccce02cea29ddba450153cb9bdf07e303b9 -->
 <!-- source-hash: sha256:auto -->
-<!-- last-ticket: MYT-97 -->
+<!-- last-ticket: MYT-84 -->
 
 <h1>App shell &amp; data layer</h1>
 
 <p class="lead">
-  The application skeleton every flow hangs on: a typed REST data layer, a three-state session gate,
-  and the React-Router shell — built so the whole client ports to true-native later without an
-  extraction refactor. A new shared package (<code>@mythrun/contract</code>) is the single typed
-  wire source both the backend and the client validate against; the client brain
-  (<code>@mythrun/client-core</code>) owns every backend call, the session store, and the platform
-  interfaces; the web app (<code>@mythrun/web</code>) is a thin shell of route screens plus the web
-  implementations of those interfaces.
+  The application skeleton every flow hangs on: a typed REST data layer, a four-state session gate,
+  the live OAuth sign-in flow, and the React-Router shell — built so the whole client ports to
+  true-native later without an extraction refactor. A new shared package
+  (<code>@mythrun/contract</code>) is the single typed wire source both the backend and the client
+  validate against; the client brain (<code>@mythrun/client-core</code>) owns every backend call,
+  the session store, and the platform interfaces; the web app (<code>@mythrun/web</code>) is a thin
+  shell of route screens plus the web implementations of those interfaces.
 </p>
 
 <!-- @diagram: frontend/app-shell -->
@@ -149,9 +156,12 @@
 
 <ul>
   <li>
-    <code>HttpError</code> (carries <code>status</code>) — a non-2xx response. A
-    <code>401</code> drives the session store + <a href="#the-session-gate">the auth gate</a>, not
-    the generic error screen.
+    <code>HttpError</code> (carries <code>status</code>) — a non-2xx response. A <code>401</code> is
+    special-cased: <code>defineEndpoint</code> first awaits the
+    <a href="#the-token-in-memory">single-flight token refresh</a> and retries the call once. Only a
+    <code>401</code> that survives the refresh surfaces as an <code>HttpError</code> — which then
+    drives the session store + <a href="#the-session-gate">the auth gate</a>, not the generic error
+    screen.
   </li>
   <li>
     <code>ContractValidationError</code> — the response (or a request) failed Zod parse: a backend
@@ -176,38 +186,184 @@
   (SSE/WS) are a different matter and are deferred to MYT-85.
 </aside>
 
-<h2 id="the-session-gate">The session gate — three states, now</h2>
+<h2 id="the-session-gate">The session gate — four states</h2>
 
 <p>
-  The backend distinguishes two rejections the client must tell apart:
+  The backend distinguishes two authenticated rejections the client must tell apart:
   <code>401 unauthenticated</code> (no/invalid token) and
   <code>403 username_required</code> (authenticated but not yet
-  <a href="../auth-billing/onboarding.html">onboarded</a>). So the session store — a tiny DOM-free
-  Zustand store in <code>client-core/stores</code> — holds <strong>three</strong> states:
-  <code>unauthenticated</code>, <code>onboarding-required</code>, and <code>ready</code>. The
-  <code>&lt;RequireAuth&gt;</code> gate reads only that status and resolves it to one of three
-  outcomes — bounce to sign-in, bounce to onboarding, or render the matched route — with no token
-  parsing, no backend call, no local intelligence.
+  <a href="../auth-billing/onboarding.html">onboarded</a>). The session store — a tiny DOM-free
+  Zustand store in <code>client-core/stores</code> — resolves those into the player's auth
+  lifecycle, now <strong>four</strong> states in lifecycle order:
+</p>
+
+<ul>
+  <li>
+    <code>initializing</code> — the boot state. The on-load token refresh has not settled yet (jwt
+    mode), so the client does not yet know who the player is. <code>&lt;RequireAuth&gt;</code> shows
+    a neutral <strong>splash</strong> here, not a redirect.
+  </li>
+  <li><code>unauthenticated</code> — no identity (logged out, pre-login, or a failed refresh).</li>
+  <li><code>onboarding-required</code> — identity known, profile not yet finalized.</li>
+  <li><code>ready</code> — fully provisioned; the app is playable.</li>
+</ul>
+
+<p>
+  A separate <code>suspended</code> boolean rides alongside the status: an
+  <code>account_suspended</code> rejection lands the player back at <code>unauthenticated</code> but
+  raises the flag, so the sign-in screen can surface a suspension notice instead of silently
+  bouncing. The <code>&lt;RequireAuth&gt;</code> gate reads only the status and resolves it to one
+  of four outcomes — render the splash, bounce to sign-in, bounce to onboarding, or render the
+  matched route — with no token parsing, no backend call, no local intelligence.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Three states now, not a two-state retrofit later</strong> — the auth gate is the boundary
-  the whole authed tree hangs on. A two-state model would force MYT-84 to rewrite it the moment the
-  <code>403 username_required</code> path needs its own redirect. Baking the right shape in now
-  means MYT-84 fills the <em>acquisition</em> (OAuth, token refresh) and the onboarding
-  <em>screen</em> behind redirects that already exist, rather than reshaping the gate. The redirect
-  itself is proven client-side: the store starts <code>unauthenticated</code>, so the gate redirects
-  regardless of the always-authenticated dev bypass backend.
+  <strong>A pre-decision <code>initializing</code> state, not a redirect-flash</strong> — the three
+  auth-<em>decision</em> states (<code>unauthenticated</code> / <code>onboarding-required</code> /
+  <code>ready</code>) were baked in early so the gate never needed reshaping when acquisition
+  landed. MYT-84 adds the fourth as a distinct <em>pre-</em>decision state. On a fresh load the
+  access token is gone (it lives in memory; see below) and the refresh round-trip is in flight, so
+  the gate has no answer yet. A two-bucket "authed or not" model would read that gap as
+  <code>unauthenticated</code>
+  and flash the player to sign-in for the split second before the refresh resolves them back to
+  <code>ready</code>. <code>initializing</code> plus a splash holds the gate until the boot
+  bootstrap settles it, so a redirect only ever fires on a real answer. (The dev bypass seam, always
+  authenticated, seeds <code>ready</code> directly at boot and never passes through
+  <code>initializing</code>.)
+</aside>
+
+<h2 id="the-token-in-memory">The access token, in memory</h2>
+
+<p>
+  Auth headers ride an injected <code>getAuthHeaders()</code> built once from a mode flag, then
+  invoked per request: <strong>dev</strong> (bypass) sends a static
+  <code>x-mythrun-dev-sub</code> header; <strong>prod</strong> (jwt) reads the current Cognito
+  access token and sends it as a <code>Bearer</code> (an empty header set before one is acquired).
+  The token itself lives in a module-scoped <strong>token manager</strong> in
+  <code>client-core/auth</code> — held in a plain variable, in memory only. It is never written to
+  <code>localStorage</code> or <code>sessionStorage</code>, so it is lost on reload and re-acquired
+  from the refresh cookie.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Access token in memory, refresh token in an httpOnly cookie</strong> — the standard SPA
+  defense against token theft. A token in <code>localStorage</code> is readable by any script on the
+  page, so a single XSS payload can exfiltrate it; an in-memory variable is not reachable that way
+  and evaporates when the tab closes. The durable half — the long-lived <em>refresh</em> token — is
+  the backend's httpOnly <code>mythrun_refresh</code> cookie, which JavaScript cannot read at all;
+  the client only ever asks the backend to spend it. That server side (the BFF that mints the cookie
+  and the access token) is the <a href="../auth-billing/identity.html">Identity</a> page's story;
+  this page covers the client half.
 </aside>
 
 <p>
-  Auth headers ride an injected <code>getAuthHeaders()</code> built once from a mode flag and the
-  secure-storage handle, then invoked per request: <strong>dev</strong> (bypass) sends a static
-  <code>x-mythrun-dev-sub</code> header; <strong>prod</strong> (jwt) reads a Bearer token from
-  secure storage on every call (so a token persisted after construction is still picked up, and an
-  unacquired token is simply an empty header set until MYT-84 fills acquisition). The mode is a
-  build/runtime config flag, not request-time logic.
+  Because the access token is short-lived and lost on reload, a backend call routinely meets a
+  <code>401</code>. <code>defineEndpoint</code> handles it in one place: on a <code>401</code> it
+  awaits <code>runRefresh()</code>, and if the refresh succeeds it
+  <strong>rebuilds the request init</strong> — so <code>getAuthHeaders</code> re-reads the now-fresh
+  token rather than resending the dead <code>Bearer</code> — and retries the call exactly once. Only
+  if the refresh fails does the <code>401</code> fall through to the typed
+  <code>HttpError</code> that resets the session. <code>runRefresh</code> is
+  <strong>single-flight</strong>: one in-flight <code>POST /api/auth/refresh</code> coalesces N
+  concurrent 401s, so a burst of parallel calls triggers exactly one refresh round-trip and every
+  call retries behind it.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The refresh transport is injected, not imported</strong> — the token manager performs the
+  refresh through a function handed to it at boot (<code>configureTokenRefresh</code>), never by
+  importing the <code>session</code> API slice. The 401 retry lives in <code>defineEndpoint</code>,
+  which the auth slices are built from, so a direct import would close the loop
+  <code>endpoint → session → endpoint</code>. Injection keeps the import graph acyclic. The auth
+  endpoints themselves carry <code>skipAuthRetry</code> so a failing refresh cannot recurse through
+  the refresh call, and <code>credentials:'include'</code> is threaded into those cookie-bearing
+  fetches so the browser actually sends and receives the <code>mythrun_refresh</code> cookie
+  cross-origin.
+</aside>
+
+<h2 id="oauth-flow">Acquiring identity — the OAuth sign-in flow</h2>
+
+<p>
+  Sign-in is a Cognito Hosted-UI OAuth flow with PKCE, driven entirely from the client brain's
+  <code>auth</code> module and realized by three screens. The <strong>sign-in screen</strong>
+  (<code>routes/signin.tsx</code>) is the genesis title composition: the stacked brand
+  <a href="./design-system.html">Lockup</a> over a dithered crown, with two
+  <code>secondary</code> Buttons — Continue with Google, Continue with Discord — each carrying its
+  provider mark in the native icon slot. It reads the session store's <code>suspended</code> flag to
+  show an account-suspended notice when one is pending.
+</p>
+
+<p>
+  Pressing a provider button begins the flow through the OAuth helper (<code>auth/oauth.ts</code>),
+  the canonical PKCE API: <code>createPkce</code> draws a 256-bit verifier from the platform CSPRNG
+  and S256-hashes it into a challenge; <code>createAuthState</code> mints a random opaque
+  <code>state</code> and persists the <code>{provider, returnTo, verifier}</code> triple single-use,
+  returning <code>{state, challenge}</code>; <code>buildAuthorizeUrl</code> assembles the Hosted-UI
+  authorize URL; and the screen redirects the browser to it through the
+  <code>platform/web</code> navigation helper (screens never touch
+  <code>window.location</code> themselves). The <code>returnTo</code> — the invite hand-off target —
+  is run through an <code>isLocalPath</code>
+  open-redirect guard before it ever rides the round-trip.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The OAuth <code>state</code> store is a platform port</strong> — the single-use
+  <code>state</code> triple has to survive the full-page redirect to Cognito and back, but the
+  DOM-free brain cannot reach <code>sessionStorage</code> itself (R1). So
+  <code>OAuthStateStore</code> is a platform-capability interface in
+  <code>client-core/platform</code> — the same pattern as <code>SecureStorage</code> — with a
+  sessionStorage-backed web impl under <code>platform/web</code>, injected at boot via
+  <code>configureOAuth</code> alongside the Cognito config. Its <code>take</code> is a single-use
+  read-and-delete: spending the <code>state</code> exactly once is the CSRF + replay defense. The
+  Cognito config is the <em>public</em> <code>VITE_COGNITO_*</code>
+  build env (the Hosted-UI domain + the public app-client id) bundled into the SPA — PKCE means
+  there is no client secret to hide.
+</aside>
+
+<p>
+  Cognito returns to the <strong>callback screen</strong> (<code>routes/callback.tsx</code>), which
+  parses <code>code</code> + <code>state</code> (a parse-only step — it never consumes the store
+  itself), verifies the <code>state</code> against the stashed triple, exchanges
+  <code>{code, codeVerifier}</code> for a session by POSTing to the backend BFF (<code
+    >POST /api/auth/session</code
+  >, an <a href="../auth-billing/identity.html">Identity</a> endpoint), sets the returned access
+  token in the in-memory token manager, and runs the session adapter. A <code>ready</code> result
+  navigates to the <code>returnTo</code>; an <code>onboarding-required</code> result detours to the
+  onboard screen carrying the pre-fill name.
+</p>
+
+<p>
+  The <strong>onboard screen</strong> (<code>routes/onboard.tsx</code>) is the display-name moment:
+  one serif question, one pre-filled Input, one primary Button. <code>deriveUsername</code> turns
+  the provider-supplied name into a backend-valid handle candidate (regex-valid by construction),
+  and a small register error taxonomy maps the backend's 409s —
+  <code>already_onboarded</code> (treat as done), <code>username_taken</code> (re-mutate the
+  candidate and retry, bounded) — plus a <code>400 display_name_invalid</code> to an inline field
+  error, so a collision resolves without bouncing the player.
+</p>
+
+<p>
+  Both the callback and the on-load boot funnel through one
+  <strong>session adapter</strong> (<code>auth/session-adapter.ts</code>). <code>applyMe</code> does
+  a single <code>GET /me</code> and maps the result to the store: <code>200</code> →
+  <code>ready</code>, <code>403 username_required</code> → <code>onboarding-required</code>,
+  <code>403 account_suspended</code> → <code>suspended</code>, anything else →
+  <code>unauthenticated</code>. <code>bootstrapSession</code> is the boot path: it runs the on-load
+  refresh, then <code>applyMe</code> on success or <code>unauthenticated</code> on failure. The
+  <code>sub</code> the store records is read structurally from the access token's
+  <code>sub</code> claim (<code>jwt-claims.ts</code> — a mechanical base64url decode, no
+  verification; the backend is the verifier).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The adapter settles the store before the Hub's <code>useMe</code> runs</strong> —
+  onboarding status is discovered once, at the seam that already knows it (the callback / the boot
+  bootstrap), not lazily inside the first authed screen. By the time
+  <code>&lt;RequireAuth&gt;</code> clears and the home hub's <code>useMe</code> fires, the store is
+  already <code>ready</code> or <code>onboarding-required</code> — so <code>useMe</code> is never
+  the place a player discovers they still need to onboard, and the gate never has to unwind a
+  half-rendered authed tree.
+</aside>
 
 <h2>Conformance by construction</h2>
 
@@ -258,9 +414,11 @@
   <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
   · credit balance · a gear settings affordance) wrapping the content <code>&lt;Outlet/&gt;</code>,
   composed from <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the
-  narrative/combat content is the focus. Every screen is a thin i18n'd stub the flow tickets fill —
-  except the <strong>home hub</strong>, wired end-to-end (<code>useMyCampaigns</code> → real backend
-  → Suspense loading → Cards or empty state) as the done-when smoke.
+  narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
+  now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
+  screens are thin i18n'd stubs the flow tickets fill, except the <strong>home hub</strong>, wired
+  end-to-end (<code>useMyCampaigns</code> → real backend → Suspense loading → Cards or empty state)
+  as the done-when smoke.
 </p>
 
 <aside class="wiki-rationale">
@@ -301,14 +459,20 @@
 </aside>
 
 <p>
-  The <strong>provider stack</strong> is the web shell's one composition root: a single
-  <code>QueryClient</code>, the resolved <code>ApiContext</code> (base URL + the injected
-  <code>getAuthHeaders</code>), and the i18n runtime, in that nesting order. It is config-driven —
-  <code>main.tsx</code> builds the concrete config from the environment and the web
-  <code>SecureStorage</code> impl once at module scope and passes it in — so the shell is testable
-  with a fake storage and an explicit auth mode. In dev (bypass) <code>main.tsx</code> also seeds
-  the session store <code>ready</code> once, so the dev app lands on the authed side of the gate
-  against the always-authenticated bypass backend.
+  The <strong>provider stack</strong> is the web shell's one composition root: the
+  <code>ThemeProvider</code>, a single <code>QueryClient</code>, the resolved
+  <code>ApiContext</code> (base URL + the injected <code>getAuthHeaders</code>), and the i18n
+  runtime, in that nesting order. It also stands up the auth seams at boot:
+  <code>configureTokenRefresh</code> binds the token manager's single-flight refresh to the real
+  <code>POST /api/auth/refresh</code> call, and (jwt mode) <code>main.tsx</code> calls
+  <code>configureOAuth</code> with the web state-store impl + the Cognito config and kicks off
+  <code>bootstrapSession</code> on load — so the store starts <code>initializing</code> and the
+  splash covers the gap until the refresh settles it. It is config-driven —
+  <code>main.tsx</code> builds the concrete config from the environment and the web platform impls
+  once at module scope and passes it in — so the shell is testable with fakes and an explicit auth
+  mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
+  <code>ready</code> once, so the dev app lands on the authed side of the gate against the
+  always-authenticated bypass backend.
 </p>
 
 <h2>Gating the screens at phone width</h2>
@@ -404,22 +568,51 @@
   </li>
 </ol>
 
+<h3>Trace a sign-in end-to-end</h3>
+<ol>
+  <li>
+    Open the sign-in screen and press a provider button. The browser leaves for the Cognito Hosted
+    UI — confirm the authorize URL carries <code>code_challenge_method=S256</code>, the expected
+    <code>identity_provider</code>, and an opaque <code>state</code>.
+  </li>
+  <li>
+    After the provider, the callback lands at <code>/auth/callback?code=…&amp;state=…</code>. In
+    DevTools, watch <code>POST /api/auth/session</code> succeed and set the
+    <code>mythrun_refresh</code> cookie (httpOnly — visible in the Network response, never in
+    <code>document.cookie</code>). The access token never appears in storage; it lives in memory.
+  </li>
+  <li>
+    A first-time identity routes to <code>/auth/onboard</code>; an existing one lands on the
+    return-to (the home hub). Reload the page: the store starts <code>initializing</code>, the
+    splash shows, <code>POST /api/auth/refresh</code> fires once, and the session resolves back to
+    <code>ready</code> without a sign-in bounce.
+  </li>
+  <li>
+    To exercise the refresh-retry, let an access token expire (or clear it) and trigger an authed
+    call: one <code>401</code> → one coalesced <code>POST /api/auth/refresh</code> → the call
+    retried once with the fresh <code>Bearer</code>. The server side (the BFF endpoints + the
+    cookie) is covered on the <a href="../auth-billing/identity.html">Identity</a> page.
+  </li>
+</ol>
+
 <h2>Integration points</h2>
 
 <p>
   This page is the data/shell half of the frontend; the
   <a href="./index.html">Frontend foundation</a> covers the workspace, the lint rails, the i18n
   layer, and the design tokens, and the <a href="./design-system.html">Design system</a> covers
-  mythrunUI (including the two new <code>Box</code> variants the 404 uses and the component-<em
-    >prop</em
-  >
+  mythrunUI (including the two new <code>Box</code> variants the 404 uses, the brand Lockup, the
+  provider marks, and the theme runtime the auth screens compose, and the component-<em>prop</em>
   contract that shares the word "contract" with this page's wire contract). The cross-origin CORS
   topology, the plugin-registration order it slots into, and the Dockerfile step that builds
   <code>@mythrun/contract</code> into the image all live on the
   <a href="../runtime/index.html">Backend</a> page. The realtime unions this package now hosts feed
   the <a href="../runtime/session-transport.html">session transport</a> and
-  <a href="../runtime/pipeline-status.html">pipeline status</a> surfaces. The three-state gate maps
-  onto the <a href="../auth-billing/onboarding.html">onboarding</a> 401/403 split. The
+  <a href="../runtime/pipeline-status.html">pipeline status</a> surfaces. The four-state gate and
+  the OAuth client flow map onto the
+  <a href="../auth-billing/onboarding.html">onboarding</a> 401/403 split, and the BFF that exchanges
+  the code, mints the access token, and sets the httpOnly <code>mythrun_refresh</code> cookie is the
+  <a href="../auth-billing/identity.html">Identity</a> page. The
   <a href="../infra/ci-cd.html#the-frontend-check-gate">CI/CD</a> page details the frontend-check
   gate and the contract build step.
 </p>
@@ -490,17 +683,48 @@
     <tr>
       <td><code>getAuthHeaders</code></td>
       <td>
-        The injected per-request header producer (dev <code>x-mythrun-dev-sub</code> / prod Bearer).
+        The injected per-request header producer — dev <code>x-mythrun-dev-sub</code> / prod
+        <code>Bearer</code> read from the in-memory token manager.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>getAccessToken</code> / <code>runRefresh</code> / <code>configureTokenRefresh</code>
+      </td>
+      <td>
+        The in-memory access-token manager: read the current token, run the single-flight refresh,
+        inject the refresh transport at boot.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>createAuthState</code> / <code>buildAuthorizeUrl</code> / <code>parseCallback</code> /
+        <code>consumeAuthState</code> / <code>configureOAuth</code>
+      </td>
+      <td>
+        The OAuth/PKCE helper — Hosted-UI authorize URL, single-use <code>state</code>, parse-only
+        callback, boot-time config.
+      </td>
+    </tr>
+    <tr>
+      <td><code>applyMe</code> / <code>bootstrapSession</code> / <code>deriveUsername</code></td>
+      <td>
+        The session adapter (<code>/me</code> → store; on-load boot) and the display-name → handle
+        derivation.
       </td>
     </tr>
     <tr>
       <td><code>useSessionStore</code></td>
-      <td>The three-state Zustand session store the auth gate reads.</td>
+      <td>
+        The four-state Zustand session store (<code>initializing</code> /
+        <code>unauthenticated</code> / <code>onboarding-required</code> / <code>ready</code>, plus a
+        <code>suspended</code> flag) the auth gate reads.
+      </td>
     </tr>
     <tr>
-      <td><code>SecureStorage</code></td>
+      <td><code>SecureStorage</code> / <code>OAuthStateStore</code></td>
       <td>
-        The platform-capability interface; web impl lives under
+        The platform-capability interfaces; web impls live under
         <code>frontend/src/platform/web/</code>.
       </td>
     </tr>
@@ -517,5 +741,12 @@
   <code>frontend/client-core/src/index.ts</code>, <code>frontend/src/app/</code>,
   <code>frontend/src/routes/home.tsx</code>, <code>frontend/src/storybook/screen-harness.tsx</code>,
   <code>frontend/scripts/screen-story-coverage.mjs</code>,
-  <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>.
+  <code>frontend/src/platform/web/secure-storage.ts</code>, <code>frontend/src/main.tsx</code>,
+  <code>frontend/client-core/src/auth/</code> (the token manager, the OAuth/PKCE helper, the session
+  adapter, <code>jwt-claims</code>, <code>derive-username</code>),
+  <code>frontend/client-core/src/platform/oauth-state-store.ts</code>,
+  <code>frontend/src/routes/signin.tsx</code>, <code>frontend/src/routes/callback.tsx</code>,
+  <code>frontend/src/routes/onboard.tsx</code>,
+  <code>frontend/src/platform/web/oauth-state-store.ts</code>,
+  <code>frontend/src/platform/web/navigation.ts</code>.
 </p>

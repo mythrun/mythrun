@@ -3,15 +3,20 @@
 <!-- source: infra/modules/auth/variables.tf -->
 <!-- source: infra/modules/auth/outputs.tf -->
 <!-- source: infra/environments/staging/main.tf -->
-<!-- source-hash: sha256:46a90532e759bc8bfa5f47624ff8fb65c12fb12a29cc422a66330151d2c8b3a7 -->
-<!-- last-ticket: MYT-36 -->
+<!-- source: backend/src/routes/auth.ts -->
+<!-- source: backend/src/auth/cognito-oauth-client.ts -->
+<!-- source: backend/src/auth/refresh-cookie.ts -->
+<!-- source-hash: sha256:d36bfa2092a7aad4427b892ae9d878b94cb115b98a398c8d1229a5861b409848 -->
+<!-- last-ticket: MYT-84 -->
 
 <h1>Identity</h1>
 
 <p class="lead">
   The Cognito User Pool every player signs in to, fronted by the Hosted UI, federated to Google and
-  Discord, and consumed by the API container as four env vars. Federated only — no email/password,
-  no client secret, no Cognito-managed credentials anywhere.
+  Discord, consumed by the API container as four env vars, and brokered by a thin
+  backend-for-frontend that trades the OAuth code for tokens and parks the refresh token in an
+  httpOnly cookie. Federated only — no email/password, no client secret, no Cognito-managed
+  credentials anywhere.
 </p>
 
 <!-- @diagram: auth-billing/identity -->
@@ -108,11 +113,23 @@
 <p>
   <code>callback_urls</code> and <code>logout_urls</code> are non-empty allowlists Cognito enforces
   at the <code>/oauth2/authorize</code> redirect. Staging carries
-  <code>http://localhost:5173/auth/callback</code> only — the production composition (see
+  <code>https://staging.mythrun.com/auth/callback</code> only — the production composition (see
   <code>myth-8pcx</code>) will add the real <code>mythrun.com</code> URLs onto a separate prod App
   Client. <code>prevent_user_existence_errors = "ENABLED"</code> stops Cognito's default
   error-response shapes from leaking whether a given email is registered.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>One real callback, not a localhost convenience entry</strong> — the MYT-36 buildout
+  pointed the staging App Client at <code>http://localhost:5173/auth/callback</code> so a developer
+  could click the flow through before any frontend was deployed. Once the
+  <a href="../infra/frontend-hosting.html">staging frontend</a> shipped and the SPA's OAuth flow was
+  wired (MYT-84), the localhost entry was dropped for the deployed origin. Real OAuth is
+  staging-only; local dev never touches Cognito — it runs the
+  <a href="./jwt-middleware.html#enable-bypass-mode-locally">auth bypass seam</a> instead. Keeping
+  the allowlist to exactly the one origin in use means a stolen authorization code can't be replayed
+  against a developer's loopback.
+</aside>
 
 <h2>The Hosted UI domain and the /login vs /oauth2/authorize choice</h2>
 
@@ -253,6 +270,95 @@
   auth flow.
 </aside>
 
+<h2 id="the-bff-token-exchange">The BFF token exchange</h2>
+
+<p>
+  The pool and the App Client are only half the sign-in. The other half is a thin
+  backend-for-frontend (BFF) — three routes under <code>backend/src/routes/auth.ts</code> — that
+  stands between the SPA and Cognito's token endpoint so the long-lived refresh token never enters
+  JavaScript. The SPA runs the PKCE
+  <a href="../frontend/app-shell.html">authorize redirect</a> itself and comes back holding a
+  one-shot <code>code</code> plus the matching <code>code_verifier</code>; from there the backend
+  takes over.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why a BFF and not a pure-SPA token exchange</strong> — a public SPA client
+  <em>can</em> complete the PKCE exchange itself, but then the <code>refresh_token</code> lives in
+  the browser, and any place a SPA can store it (localStorage, an in-JS variable) an XSS payload can
+  read it — a 30-day credential exfiltrated in one line. Moving the exchange server-side lets the
+  backend keep the refresh token in an <strong>httpOnly</strong> cookie that script cannot touch;
+  the SPA only ever holds the short-lived access token, in memory. The cost is one backend hop per
+  sign-in and per token refresh, which is cheap against the blast-radius reduction.
+</aside>
+
+<p>
+  All Cognito HTTP in the BFF goes through one abstraction,
+  <code>backend/src/auth/cognito-oauth-client.ts</code> — the same "one layer for one external API"
+  convention the <a href="../runtime/llm.html">LLM client</a> follows. It wraps Cognito's
+  <code>/oauth2/token</code> and <code>/oauth2/revoke</code> form-encoded endpoints behind
+  <code>exchangeCode</code> / <code>refresh</code> / <code>revoke</code>; there is no inline
+  <code>fetch</code> in the route handlers. Because the client is public, every call carries the
+  <code>client_id</code> and no secret. The three routes:
+</p>
+
+<ul>
+  <li>
+    <strong><code>POST /api/auth/session</code></strong> — the SPA posts
+    <code>{ code, codeVerifier }</code>. The backend derives the <code>redirect_uri</code> itself
+    from <code>FRONTEND_BASE_URL</code> (never trusting a client-supplied value), runs the
+    authorization-code grant, sets the refresh cookie, and returns
+    <code>{ accessToken, expiresIn, name }</code> — where <code>name</code> is the
+    <code>id_token</code>'s <code>name</code> claim, the prefill for the
+    <a href="./onboarding.html">display-name onboarding moment</a>. A missing
+    <code>refresh_token</code> in Cognito's response is a 502, not a half-built session.
+  </li>
+  <li>
+    <strong><code>POST /api/auth/refresh</code></strong> — reads the cookie, runs the refresh-token
+    grant, and re-sets the <em>rotated</em> token (rotation is on, so the prior one is now dead). No
+    cookie, or a rejected grant, clears the cookie and answers 401 — the SPA falls back to sign-in.
+  </li>
+  <li>
+    <strong><code>POST /api/auth/logout</code></strong> — best-effort revoke at Cognito, then clear
+    the cookie and answer 204. The revoke is best-effort because the already-issued access JWT stays
+    valid until its ≤1h expiry regardless; clearing the cookie is the part that must always happen.
+  </li>
+</ul>
+
+<p>
+  The refresh cookie (<code>backend/src/auth/refresh-cookie.ts</code>) is named
+  <code>mythrun_refresh</code> and carries <code>HttpOnly</code> + <code>Secure</code> +
+  <code>SameSite=Lax</code>, a <code>Path=/api/auth</code> scope, and a 30-day max-age. It is
+  <strong>host-only</strong> — no <code>Domain</code> attribute — so it never broadens to sibling
+  subdomains, and it rides only the <code>/api/auth/*</code> fetches, which the SPA makes with
+  <code>credentials: 'include'</code> against the single
+  <a href="../runtime/index.html#cross-origin-cors">CORS-allowed origin</a>.
+  <code>clearCookie</code>
+  mirrors the same attributes so the browser clears the same cookie it set.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>/session</code> is JSON-only, with no form-body parser</strong> — the route rejects
+  anything but <code>application/json</code> with a 415. A browser can auto-submit a cross-site
+  <em>form</em> POST without a preflight, but it cannot send
+  <code>application/json</code> cross-origin without tripping CORS first — so refusing form bodies
+  (and registering no form parser at all) is the login-CSRF / session-fixation defense: an attacker
+  can't silently plant a session cookie from another origin. The three routes are also
+  <code>public</code> in the
+  <a href="./jwt-middleware.html#the-public-route-allowlist">route allowlist</a> — the caller has no
+  access token yet on <code>/session</code>, and <code>/refresh</code> + <code>/logout</code>
+  authenticate by the cookie, not a Bearer — and each is per-IP rate-limited.
+</aside>
+
+<p>
+  The BFF registers only when <code>AUTH_MODE=real</code> (it needs the Hosted UI domain + App
+  Client id, and it pulls in <code>@fastify/cookie</code>). Local dev runs
+  <a href="./jwt-middleware.html#enable-bypass-mode-locally">bypass</a> and never reaches these
+  routes — which is why the staging App Client's callback list no longer carries a localhost entry.
+  Server-side, pino redacts the <code>cookie</code> and <code>set-cookie</code> headers from logs so
+  the refresh token never lands in CloudWatch.
+</p>
+
 <h2>Operating this piece</h2>
 
 <h3 id="rotate-an-oauth-client-secret">Rotate an OAuth client secret</h3>
@@ -323,7 +429,7 @@
   &amp;response_type=code
   &amp;scope=openid+email+profile
   &amp;identity_provider=Google
-  &amp;redirect_uri=http://localhost:5173/auth/callback
+  &amp;redirect_uri=https://staging.mythrun.com/auth/callback
   &amp;code_challenge=&lt;sha256(code_verifier), base64url&gt;
   &amp;code_challenge_method=S256</code></pre>
   </li>
@@ -333,19 +439,22 @@
   </li>
   <li>
     Sign in with a Google account. Expect a redirect back to
-    <code>http://localhost:5173/auth/callback?code=…&amp;state=…</code>. The local frontend (running
-    on Vite) doesn't have to handle the code yet — copy the <code>code</code> parameter from the URL
-    bar.
+    <code>https://staging.mythrun.com/auth/callback?code=…&amp;state=…</code>. The deployed SPA now
+    handles this leg itself — it posts the <code>code</code> to the
+    <a href="#the-bff-token-exchange">BFF's <code>/api/auth/session</code></a> and lands you on the
+    Hub — so the simplest end-to-end check is just "did I reach the Hub?". To isolate a Cognito-side
+    problem from a SPA-side one, grab the <code>code</code> from the redirect in DevTools' network
+    tab before the SPA consumes it (the code is single-use) and run the manual exchange below.
   </li>
   <li>
-    Exchange the code for tokens manually:
+    Exchange the code against Cognito directly — the same grant the BFF runs server-side:
     <pre><code>curl -X POST https://mythrun-staging.auth.us-east-1.amazoncognito.com/oauth2/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=authorization_code" \
   -d "client_id=&lt;COGNITO_APP_CLIENT_ID&gt;" \
   -d "code=&lt;code from the redirect&gt;" \
   -d "code_verifier=&lt;the verifier from step 1&gt;" \
-  -d "redirect_uri=http://localhost:5173/auth/callback"</code></pre>
+  -d "redirect_uri=https://staging.mythrun.com/auth/callback"</code></pre>
     Expect a JSON response with <code>id_token</code>, <code>access_token</code>, and
     <code>refresh_token</code>. Decode the <code>id_token</code> at jwt.io and check that
     <code>iss</code> matches <code>COGNITO_ISSUER_URL</code> and that the
@@ -362,13 +471,16 @@
   staging uses for <code>BOOT_GATE_ENABLED</code>. The
   <a href="./jwt-middleware.html">JWT middleware</a> consumes them on every API boot — verifying
   tokens against <code>issuer_url</code>'s JWKS and refusing to start in bypass mode if any of the
-  four are populated. The <code>/api/auth/refresh</code> route and the user-bootstrap-on-first-login
-  flow are the next layers that build on this surface. The OAuth client credentials live in
-  <a href="../infra/data.html#secrets">Secrets Manager</a> alongside the other per-env secrets the
-  platform owns. Discord's OIDC userinfo endpoint and Google's OAuth flow are the two external
-  integration points; both are pinned in <code>provider_details</code> rather than autodiscovered,
-  so a Discord <code>/.well-known/openid-configuration</code> outage doesn't stop sign-ins on a cold
-  <code>terraform apply</code>.
+  four are populated. The same vars feed the
+  <a href="#the-bff-token-exchange">BFF token exchange</a> above, whose access token then carries
+  the verified <code>sub</code> the <a href="./onboarding.html">onboarding flow</a> turns into a
+  user row on first sign-in; the <a href="../frontend/app-shell.html">SPA app shell</a> is the
+  client half that runs the PKCE redirect and stores the access token in memory. The OAuth client
+  credentials live in <a href="../infra/data.html#secrets">Secrets Manager</a> alongside the other
+  per-env secrets the platform owns. Discord's OIDC userinfo endpoint and Google's OAuth flow are
+  the two external integration points; both are pinned in <code>provider_details</code> rather than
+  autodiscovered, so a Discord <code>/.well-known/openid-configuration</code> outage doesn't stop
+  sign-ins on a cold <code>terraform apply</code>.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -400,12 +512,12 @@
     <tr>
       <td><code>callback_urls</code></td>
       <td>—</td>
-      <td>Non-empty allowlist. Staging: <code>http://localhost:5173/auth/callback</code>.</td>
+      <td>Non-empty allowlist. Staging: <code>https://staging.mythrun.com/auth/callback</code>.</td>
     </tr>
     <tr>
       <td><code>logout_urls</code></td>
       <td>—</td>
-      <td>Non-empty allowlist. Staging: <code>http://localhost:5173</code>.</td>
+      <td>Non-empty allowlist. Staging: <code>https://staging.mythrun.com</code>.</td>
     </tr>
   </tbody>
 </table>
@@ -475,5 +587,8 @@
 <h2>Source</h2>
 
 <p>
-  <code>infra/modules/auth/</code>, composed at <code>infra/environments/staging/main.tf</code>.
+  <code>infra/modules/auth/</code>, composed at <code>infra/environments/staging/main.tf</code>. The
+  BFF token exchange is <code>backend/src/routes/auth.ts</code>,
+  <code>backend/src/auth/cognito-oauth-client.ts</code>, and
+  <code>backend/src/auth/refresh-cookie.ts</code>.
 </p>

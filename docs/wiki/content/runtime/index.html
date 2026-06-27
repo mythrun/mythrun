@@ -15,8 +15,8 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:970dac6424d4206af73838dd53fdf2c5a58af4d4011a9332f5f87df8f3da90d9 -->
-<!-- last-ticket: MYT-74b -->
+<!-- source-hash: sha256:fe6f6a9df596a98a9b7568dece1752b22a4186fdf3fa1b94357ecdccd2f43e78 -->
+<!-- last-ticket: MYT-84 -->
 
 <h1>Backend</h1>
 
@@ -126,7 +126,9 @@
   <a href="../auth-billing/access-control-ws-ticket.html">access-control allowlist plugin</a>
   installs the boot-time gate that fails <code>app.ready()</code> if any later route wires
   <code>requireCampaignMember</code> / <code>requireWorldCreator</code> onto a public or
-  <code>jwt-no-db</code> route;
+  <code>jwt-no-db</code> route; in <code>real</code> auth mode the
+  <a href="../auth-billing/identity.html#the-bff-token-exchange">BFF session routes</a> register
+  here behind <code>@fastify/cookie</code> (skipped under dev bypass, which never touches Cognito);
   <a href="../auth-billing/billing-webhook.html">the encapsulated webhook plugin</a> registers next
   so its child-scope raw-body parser is isolated; then <code>usersRoutes</code> and
   <code>invitesRoutes</code> register the
@@ -145,13 +147,15 @@
 
 <aside class="wiki-rationale">
   <strong>Public-route allowlist as an <code>onRoute</code> hook, not a per-route review</strong>
-  — Fastify lets a route opt out of authentication via <code>config.auth: 'public'</code>. Five
+  — Fastify lets a route opt out of authentication via <code>config.auth: 'public'</code>. Several
   routes in the system today legitimately need it (the two health checks, the invite preview, the
-  SKU listing, and the Stripe webhook); a sixth public route shipped by mistake would be a security
-  incident. The hook iterates every registered route at boot and throws if one is marked public but
-  not in the allowlist — the <code>app.ready()</code> call propagates the throw and the deploy
-  fails. Adding a public route is now a deliberate code change in two places (the route file and the
-  allowlist), which forces a security-review touchpoint into the diff.
+  SKU listing, the Stripe webhook, the <a href="./session-transport.html">WebSocket upgrade</a>, and
+  the three <a href="../auth-billing/identity.html#the-bff-token-exchange">BFF session routes</a>);
+  the next public route shipped by mistake would be a security incident. The hook iterates every
+  registered route at boot and throws if one is marked public but not in the allowlist — the
+  <code>app.ready()</code> call propagates the throw and the deploy fails. Adding a public route is
+  now a deliberate code change in two places (the route file and the allowlist), which forces a
+  security-review touchpoint into the diff.
 </aside>
 
 <h2 id="cross-origin-cors">Cross-origin CORS for the SPA</h2>
@@ -166,21 +170,25 @@
   host-allowlisted frontend origin <code>loadEnv</code> produces. Reusing it keeps one source of
   truth for "where the frontend lives" — there is no parallel CORS allowlist to drift. It allows the
   <code>Authorization</code> and <code>x-mythrun-dev-sub</code> auth headers and the standard verbs,
-  with <code>credentials: false</code>.
+  with <code>credentials: true</code>.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Real CORS, not a dev proxy</strong> — the production topology is a genuinely separate API
   host, so the cross-origin handshake is real and the plugin is mandatory. The
   <a href="./dev-tool.html">internal dev tool</a> keeps its Vite same-origin proxy (it is not the
-  production website and is not in this allowlist); that proxy pattern stays confined to it.
-  <code>credentials: false</code> because auth rides the <code>Authorization</code> /
-  <code>x-mythrun-dev-sub</code> <em>headers</em>, not cookies — the data-layer
-  <code>fetch</code> sends none. If a cookie-based refresh lands (MYT-84), this flips to
-  <code>true</code> with the origin kept explicit (a wildcard origin is incompatible with
-  credentials). And it registers <em>ahead of</em> <code>registerAuth</code> so the CORS
-  <code>onRequest</code> hook runs first: an un-credentialed preflight
-  <code>OPTIONS</code> short-circuits with a 204 before the auth hook would reject it.
+  production website and is not in this allowlist); that proxy pattern stays confined to it. Most
+  auth rides the <code>Authorization</code> / <code>x-mythrun-dev-sub</code> <em>headers</em>, but
+  MYT-84's cookie-based refresh landed, so <code>credentials: true</code> — the browser sends the
+  httpOnly
+  <a href="../auth-billing/identity.html#the-bff-token-exchange"
+    ><code>mythrun_refresh</code> cookie</a
+  >
+  on the credentialed <code>/api/auth/*</code> fetches. The origin stays the single explicit
+  <code>frontendBaseUrl</code> (a wildcard origin is incompatible with credentials). And it
+  registers <em>ahead of</em> <code>registerAuth</code> so the CORS <code>onRequest</code> hook runs
+  first: an un-credentialed preflight <code>OPTIONS</code> short-circuits with a 204 before the auth
+  hook would reject it.
 </aside>
 
 <p>

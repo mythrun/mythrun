@@ -13,8 +13,8 @@
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:e50172499c829e9191769e1d29fdf395fc1ba63c8725c90c3d07f6d0da414d2c -->
-<!-- last-ticket: MYT-65 -->
+<!-- source-hash: sha256:b909e7848d40f4705f91df8cde29e7fd6147ec2c7490138ee402d98ebe04aaf3 -->
+<!-- last-ticket: MYT-84 -->
 
 <h1>JWT middleware</h1>
 
@@ -111,10 +111,14 @@
   <li>
     <code>config: { auth: 'public' }</code> — skip validation entirely; no
     <code>request.user</code> attached. Used by <code>/health</code>, <code>/health/ready</code>,
-    the invite preview, the SKU listing, the Stripe webhook, and the
+    the invite preview, the SKU listing, the Stripe webhook, the
     <a href="../runtime/session-transport.html">WebSocket session-transport upgrade</a> (which
     authenticates via its ws-ticket preHandler, not the JWT chain — a browser WS can't send a
-    header). Pinned by the <a href="#the-public-route-allowlist">public-route allowlist hook</a>.
+    header), and the three
+    <a href="./identity.html#the-bff-token-exchange">BFF session routes</a> (the caller has no
+    access token yet on <code>/session</code>; <code>/refresh</code> and
+    <code>/logout</code> authenticate by the refresh cookie). Pinned by the
+    <a href="#the-public-route-allowlist">public-route allowlist hook</a>.
   </li>
   <li>
     <code>config: { auth: 'jwt-no-db' }</code> — verify the JWT, attach the claims, do not look up
@@ -153,10 +157,14 @@
   every <code>config: { auth: 'public' }</code> introduction is fragile: a public route that ships
   by mistake is a security incident, and code review fatigue makes the omission plausible. A
   boot-time hook fails the deploy on the first run; the deploy can't ship a public route that wasn't
-  authored alongside the allowlist entry. The six entries today cover the two health probes, the
-  invite preview, the SKU listing, the Stripe webhook, and the WebSocket session-transport upgrade
+  authored alongside the allowlist entry. The nine entries today cover the two health probes, the
+  invite preview, the SKU listing, the Stripe webhook, the WebSocket session-transport upgrade
   (<code>GET /ws/session/:sessionId</code>, authenticated by its ws-ticket preHandler rather than
-  the JWT chain) — adding a seventh is two file edits in the same PR, both visible in the diff.
+  the JWT chain), and the three
+  <a href="./identity.html#the-bff-token-exchange">BFF session routes</a> (<code
+    >POST /api/auth/{session,refresh,logout}</code
+  >, which carry the further reviewer note that any change to those three is security-sensitive) —
+  adding a tenth is two file edits in the same PR, both visible in the diff.
 </aside>
 
 <aside class="wiki-rationale">
@@ -716,6 +724,17 @@
     <tr>
       <td><code>backend/src/auth/constants.ts</code></td>
       <td>Shared <code>REGISTERED_DECORATOR</code> sentinel.</td>
+    </tr>
+    <tr>
+      <td>
+        <code>backend/src/auth/cognito-oauth-client.ts</code>,
+        <code>backend/src/auth/refresh-cookie.ts</code>
+      </td>
+      <td>
+        The sign-in BFF's Cognito client + httpOnly refresh cookie. Live alongside the middleware
+        but narrated on <a href="./identity.html#the-bff-token-exchange">Identity</a> (the
+        token-exchange story, not the token-validation one).
+      </td>
     </tr>
     <tr>
       <td><code>backend/src/config/env.ts</code></td>

@@ -2,9 +2,12 @@ digraph identity {
   // The identity layer: a Cognito User Pool with two federated IdPs (Google
   // OIDC, Discord OIDC). The SPA goes through Hosted UI's /oauth2/authorize
   // path (NOT /login — which would surface the IdP picker) and lands back at
-  // the callback URL with a one-shot code. OAuth client_id+client_secret JSON
-  // for each IdP lives in Secrets Manager; Cognito reads them via a TF data
-  // source on apply 2 of the two-pass.
+  // the callback URL with a one-shot code. The code exchange is brokered by a
+  // backend-for-frontend: the SPA hands { code, verifier } to the API, which
+  // runs /oauth2/token server-side and parks the refresh token in an httpOnly
+  // cookie (JS never sees it). OAuth client_id+client_secret JSON for each IdP
+  // lives in Secrets Manager; Cognito reads them via a TF data source on apply
+  // 2 of the two-pass.
   rankdir=LR;
   compound=true;
 
@@ -14,7 +17,7 @@ digraph identity {
     color="ember";
     fontcolor="ember";
 
-    spa [label="SPA\nlocalhost:5173\n+ PKCE code_verifier"];
+    spa [label="SPA\nstaging.mythrun.com\n+ PKCE code_verifier"];
   }
 
   subgraph cluster_cognito {
@@ -52,15 +55,19 @@ digraph identity {
 
   ecs [label="ECS task def\nCOGNITO_USER_POOL_ID\nCOGNITO_APP_CLIENT_ID\nCOGNITO_HOSTED_UI_DOMAIN\nCOGNITO_ISSUER_URL", color="ember", fontcolor="ember"];
 
-  // Sign-in flow
+  bff [label="API BFF  (ECS)\nPOST /api/auth/session\n· refresh · logout\nsets httpOnly\nmythrun_refresh cookie", color="ember", fontcolor="ember"];
+
+  // Sign-in flow — authorize redirect at the browser, code exchange at the BFF
   spa    -> domain  [label="GET /oauth2/authorize\n?identity_provider=Google\n+ code_challenge"];
   domain -> idp_g   [label="federate"];
   domain -> idp_d   [label="federate"];
   idp_g  -> google  [label="OAuth2"];
   idp_d  -> discord [label="OIDC"];
-  domain -> spa     [label="redirect ?code=…\nto callback_urls"];
-  spa    -> domain  [label="POST /oauth2/token\n+ code_verifier"];
-  domain -> spa     [label="id+access+refresh"];
+  domain -> spa     [label="redirect ?code=…\nto /auth/callback"];
+  spa    -> bff     [label="POST /api/auth/session\n{ code, code_verifier }"];
+  bff    -> domain  [label="POST /oauth2/token\n(server-side)"];
+  domain -> bff     [label="id+access+refresh"];
+  bff    -> spa     [label="access token + name\n+ Set-Cookie (refresh)"];
 
   // Wiring
   client -> pool   [label="belongs to"];
