@@ -42,7 +42,7 @@ export const routes: RouteObject[] = [
       // ---- Public branch ----
       { index: true, element: <LandingRoute /> },
       { path: 'auth/signin', element: <SigninRoute /> },
-      { path: 'auth/callback/:provider', element: <CallbackRoute /> },
+      { path: 'auth/callback', element: <CallbackRoute /> },
       { path: 'auth/onboard', element: <OnboardRoute /> },
       { path: 'join/:code', element: <JoinRoute /> },
       { path: 'campaigns/:id/recap', element: <RecapRoute /> },

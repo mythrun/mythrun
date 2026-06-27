@@ -11,6 +11,10 @@
   "splash": {
     "loading": "[ph_splash_loading: a brief 'getting things ready' line]"
   },
+  "callback": {
+    "loading": "[ph_callback_loading: a brief 'signing you in' line]",
+    "error": "[ph_callback_error: ~1 sentence — sign-in couldn't complete, plus a nudge to try again]"
+  },
   "notFound": {
     "title": "[ph_404_title]",
     "body": "[ph_404_body: about a sentence explaining this]"
@@ -36,7 +40,6 @@
   "stub": {
     "landing": "[ph_landing_screen]",
     "signin": "[ph_signin_screen]",
-    "callback": "[ph_callback_screen]",
     "onboard": "[ph_onboard_screen]",
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",

@@ -11,6 +11,6 @@ export default meta
 type Story = StoryObj<typeof ScreenHarness>
 
 export const Default: Story = {
-  render: () => <ScreenHarness entry="/auth/callback/google" session="unauthenticated" />,
-  play: expectScreen('route-callback'),
+  render: () => <ScreenHarness entry="/auth/callback" session="unauthenticated" />,
+  play: expectScreen('callback-error'),
 }
