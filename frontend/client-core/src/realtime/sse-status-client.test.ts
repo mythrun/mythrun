@@ -328,3 +328,274 @@ describe('reconnect actually re-fetches', () => {
     expect(client.connectionState.getState().status).toBe('connected')
   })
 })
+
+// ─── frame-parser edges + transport-fault routing ────────────────────────────
+// These pin the parse branches the happy-path tests don't reach (a colon-less
+// line, a no-leading-space value, a multi-`data:` join, an explicit `event: close`
+// frame, an event-with-empty-data frame) and the fault/abort routing (the open
+// fetch rejecting, the chunk stream throwing mid-read, close() racing an in-flight
+// await), plus the onSnapshot unsubscribe.
+
+describe('frame-parser edges', () => {
+  it('drops a colon-less line + a no-leading-space value, still frames the valid frame', async () => {
+    const fake = makeFake([
+      {
+        status: 200,
+        keepOpen: true,
+        chunks: [
+          'weirdlinewithnocolon\n\n', // colon === -1 → name=the line, value '' (no leading space)
+          'data:{"type":"cost-update","cumulativeUsd":1}\n\n', // no space after the colon
+        ],
+      },
+    ])
+    configureStreamingFetch(fake.fn)
+    const events: PipelineEvent[] = []
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+    client.onEvent((e) => events.push(e))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events).toEqual([{ type: 'cost-update', cumulativeUsd: 1 }])
+  })
+
+  it('joins multiple data: lines in one frame with \\n', async () => {
+    const fake = makeFake([
+      {
+        status: 200,
+        keepOpen: true,
+        chunks: ['data: {"type":"cost-update",\ndata: "cumulativeUsd":7}\n\n'],
+      },
+    ])
+    configureStreamingFetch(fake.fn)
+    const events: PipelineEvent[] = []
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+    client.onEvent((e) => events.push(e))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events).toEqual([{ type: 'cost-update', cumulativeUsd: 7 }])
+  })
+
+  it('treats an explicit event: close frame as a transient drop (reconnect)', async () => {
+    const fake = makeFake([
+      { status: 200, chunks: ['event: close\ndata: {"reason":"idle-timeout"}\n\n'] },
+    ])
+    configureStreamingFetch(fake.fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    await vi.waitFor(() => {
+      expect(client.connectionState.getState().status).toBe('reconnecting')
+    })
+  })
+
+  it('skips a frame that has an event but empty data', async () => {
+    const fake = makeFake([
+      {
+        status: 200,
+        keepOpen: true,
+        chunks: [
+          'event: ping\n\n', // event present, data === '' → routed nowhere
+          'data: {"type":"cost-update","cumulativeUsd":1}\n\n',
+        ],
+      },
+    ])
+    configureStreamingFetch(fake.fn)
+    const events: PipelineEvent[] = []
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+    client.onEvent((e) => events.push(e))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+    expect(events).toEqual([{ type: 'cost-update', cumulativeUsd: 1 }])
+  })
+})
+
+describe('transport faults', () => {
+  it('reconnects when the open fetch rejects (transient)', async () => {
+    const fn: StreamingFetch = () => Promise.reject(new Error('boom'))
+    configureStreamingFetch(fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    await vi.waitFor(() => {
+      expect(client.connectionState.getState().status).toBe('reconnecting')
+    })
+  })
+
+  it('reconnects when the chunk stream throws mid-read (was connected)', async () => {
+    const fn: StreamingFetch = () => {
+      const chunks = (async function* (): AsyncGenerator<string> {
+        await Promise.resolve()
+        throw new Error('stream boom')
+      })()
+      return Promise.resolve({ status: 200, chunks })
+    }
+    configureStreamingFetch(fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    // It opened (200 → connected) then the read threw → transient reconnect.
+    await vi.waitFor(() => {
+      expect(client.connectionState.getState().status).toBe('reconnecting')
+    })
+  })
+
+  it('aborts the in-flight stream when open() is called again (re-open)', async () => {
+    const fake = makeFake([
+      { status: 200, keepOpen: true },
+      { status: 200, keepOpen: true },
+    ])
+    configureStreamingFetch(fake.fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream')
+    await vi.waitFor(() => { expect(fake.calls).toHaveLength(1) })
+
+    client.open('/api/campaigns/c2/status/stream') // controller?.abort() the live stream
+    await vi.waitFor(() => { expect(fake.calls).toHaveLength(2) })
+    expect(fake.calls[1]?.url).toContain('/c2/')
+  })
+})
+
+describe('close() racing an in-flight await', () => {
+  it('ignores a connect superseded during the pre-flight refresh', async () => {
+    let releaseRefresh = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseRefresh = resolve })
+    configureTokenRefresh(() =>
+      gate.then(() => ({ accessToken: 't', expiresIn: 3600 })),
+    )
+    const fake = makeFake([{ status: 200, keepOpen: true }])
+    configureStreamingFetch(fake.fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream') // parks at await runRefresh()
+    client.close() // closed = true → the post-refresh staleness guard returns
+    releaseRefresh()
+    await vi.waitFor(() => {
+      expect(client.connectionState.getState().status).toBe('closed')
+    })
+    expect(fake.calls).toHaveLength(0) // returned before the fetch
+  })
+
+  it('ignores a connect superseded during the open fetch', async () => {
+    let releaseFetch = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseFetch = resolve })
+    const calls: string[] = []
+    const fn: StreamingFetch = (url, init) => {
+      calls.push(url)
+      return gate.then(() => {
+        const chunks = (async function* (): AsyncGenerator<string> {
+          await new Promise<void>((resolve) => {
+            init.signal.addEventListener('abort', () => { resolve() }, { once: true })
+          })
+        })()
+        return { status: 200, chunks }
+      })
+    }
+    configureStreamingFetch(fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream') // parks at await getStreamingFetch()(...)
+    await vi.waitFor(() => { expect(calls).toHaveLength(1) })
+    client.close() // closed = true → the post-fetch staleness guard returns
+    releaseFetch()
+    // The post-fetch guard returns BEFORE onOpenSuccess(), so the state stays
+    // `closed` rather than flipping to `connected`.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(client.connectionState.getState()).toEqual({ status: 'closed', attempt: 0 })
+  })
+
+  it('stops reading + does not reconnect when closed mid-stream', async () => {
+    let releaseSecond = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseSecond = resolve })
+    const fn: StreamingFetch = () => {
+      const chunks = (async function* (): AsyncGenerator<string> {
+        yield 'data: {"type":"cost-update","cumulativeUsd":1}\n\n'
+        await gate
+        yield 'data: {"type":"cost-update","cumulativeUsd":2}\n\n'
+      })()
+      return Promise.resolve({ status: 200, chunks })
+    }
+    configureStreamingFetch(fn)
+    const events: PipelineEvent[] = []
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+    client.onEvent((e) => events.push(e))
+
+    client.open('/api/campaigns/c1/status/stream')
+    await vi.waitFor(() => { expect(events).toHaveLength(1) })
+
+    client.close()
+    releaseSecond() // the next chunk arrives stale → readStream returns, no reconnect
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(events).toHaveLength(1) // the post-close chunk was NOT emitted
+    expect(client.connectionState.getState()).toEqual({ status: 'closed', attempt: 0 })
+  })
+})
+
+describe('ceiling exhaustion', () => {
+  it('reaches failed{exhausted} after the reconnect ceiling (recordDrop returns false)', async () => {
+    vi.useFakeTimers()
+    const fn: StreamingFetch = () => {
+      const chunks = (async function* (): AsyncGenerator<string> {
+        // never yields — status 503 routes before the body is read
+      })()
+      return Promise.resolve({ status: 503, chunks })
+    }
+    configureStreamingFetch(fn)
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    // Each 503 drops again; the backoff caps at 30s, so advance generously past
+    // the ceiling (10). The final drop's recordDrop() returns false → exhausted.
+    for (let i = 0; i < 12; i += 1) await vi.advanceTimersByTimeAsync(35_000)
+    expect(client.connectionState.getState()).toEqual({
+      status: 'failed',
+      attempt: 10,
+      failedReason: 'exhausted',
+    })
+  })
+})
+
+describe('onSnapshot unsubscribe', () => {
+  it('stops further snapshot delivery once unsubscribed', async () => {
+    let releaseSecond = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseSecond = resolve })
+    const fn: StreamingFetch = (_url, init) => {
+      const chunks = (async function* (): AsyncGenerator<string> {
+        yield 'event: snapshot\ndata: {"n":1}\n\n'
+        await gate
+        yield 'event: snapshot\ndata: {"n":2}\n\n'
+        await new Promise<void>((resolve) => {
+          init.signal.addEventListener('abort', () => { resolve() }, { once: true })
+        })
+      })()
+      return Promise.resolve({ status: 200, chunks })
+    }
+    configureStreamingFetch(fn)
+    const offSnaps: unknown[] = []
+    const barrier: unknown[] = []
+    const client = newClient(ctxWith({ authorization: 'Bearer tok' }))
+    const off = client.onSnapshot((s) => offSnaps.push(s))
+    client.onSnapshot((s) => barrier.push(s))
+
+    client.open('/api/campaigns/c1/status/stream')
+
+    await vi.waitFor(() => { expect(barrier).toHaveLength(1) })
+    expect(offSnaps).toHaveLength(1)
+    off()
+    releaseSecond()
+
+    await vi.waitFor(() => { expect(barrier).toHaveLength(2) })
+    expect(offSnaps).toHaveLength(1) // the unsubscribed listener saw none of the second
+  })
+})

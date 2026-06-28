@@ -86,6 +86,10 @@ const JITTER_RATIO = 0.1
 
 function defaultBackoff(attempt: number): number {
   const safe = Math.max(1, attempt)
+  // The `?? MAX_BACKOFF_MS` fallback is a noUncheckedIndexedAccess artifact: a
+  // 1..4 index into BACKOFF_STEPS_MS is never `undefined`, so the nullish arm is
+  // structurally unreachable (the ternary's two real arms ARE exercised).
+  /* v8 ignore next 3 */
   const base =
     (safe <= BACKOFF_STEPS_MS.length ? BACKOFF_STEPS_MS[safe - 1] : MAX_BACKOFF_MS) ??
     MAX_BACKOFF_MS

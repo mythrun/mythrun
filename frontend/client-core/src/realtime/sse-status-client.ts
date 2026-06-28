@@ -164,6 +164,10 @@ export function createSseStatusClient(ctx: ApiContext): SseStatusClient {
 
   async function runConnect(): Promise<void> {
     const generation = conn.nextGeneration()
+    // Defensive: runConnect is entered only from open() (path set, closed=false)
+    // or the reconnect timer (cleared by close() before it can fire post-close),
+    // so this guard is unreachable — it documents the precondition.
+    /* v8 ignore next */
     if (closed || path === null) return
     await runRefresh() // pre-flight; lossy boolean intentionally ignored (see header)
     if (isStale(generation)) return

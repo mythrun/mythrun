@@ -34,12 +34,19 @@ import { isHttpError } from '../api/errors.ts'
 
 // `import.meta.env.DEV` is the bundler-injected dev flag — Vite statically
 // replaces it with a literal so the `__simulateDrop` body dead-code-eliminates
-// from the prod bundle. client-core is platform-neutral and deliberately carries
-// no `vite/client` ambient types (that would couple the client brain to Vite), so
-// we declare just the single field this module reads.
+// from the prod bundle. client-core carries no `vite/client` ambient types (that
+// would couple the client brain to Vite), so it declares the single field this
+// module reads — but with the EXACT shape vite/client uses (`DEV: boolean`
+// non-readonly; `readonly env: ImportMetaEnv`). That lets the declaration MERGE
+// cleanly when the web shell (which DOES carry vite/client) consumes this module
+// through the @mythrun/client-core barrel, instead of conflicting on `DEV`'s
+// modifier or `ImportMeta.env`.
 declare global {
+  interface ImportMetaEnv {
+    DEV: boolean
+  }
   interface ImportMeta {
-    readonly env?: { readonly DEV?: boolean }
+    readonly env: ImportMetaEnv
   }
 }
 
@@ -316,7 +323,11 @@ export function createWsSessionClient(ctx: ApiContext): WsSessionClient {
   }
 
   function __simulateDrop(): void {
-    if (import.meta.env?.DEV !== true) return
+    // DEV-only: this guard dead-code-eliminates from the prod bundle (Vite inlines
+    // `import.meta.env.DEV`). Vitest runs with DEV=true, so the guard's prod arm
+    // (the early return) is unreachable here.
+    /* v8 ignore next */
+    if (!import.meta.env.DEV) return
     socket?.close() // its onclose routes the drop → reconnecting
   }
 

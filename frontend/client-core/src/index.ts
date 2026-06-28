@@ -74,6 +74,30 @@ export { deriveUsername } from './auth/derive-username.ts'
 // Platform-capability contracts the brain reaches through (impls are per-platform).
 export type { SecureStorage } from './platform/secure-storage.ts'
 
+// Streamed-HTTP seam (MYT-85): the SSE status client's one platform-divergent
+// dependency. The interface is DOM-free here; the web impl (fetch + ReadableStream
+// + TextDecoder) lives in @mythrun/web and is wired UNCONDITIONALLY at boot via
+// configureStreamingFetch (both auth modes — unlike the jwt-only token refresh).
+export { configureStreamingFetch } from './platform/streaming-fetch.ts'
+export type { StreamingFetch } from './platform/streaming-fetch.ts'
+
+// Realtime transport (MYT-85): the WS session client + the SSE status client over
+// the shared connection primitive (+ the React read seam useConnectionState). The
+// flows + the /dev/transport harness consume these through the package root.
+export {
+  createWsSessionClient,
+  createSseStatusClient,
+  useConnectionState,
+} from './realtime/index.ts'
+export type {
+  WsSessionClient,
+  WsSessionConnectOptions,
+  SseStatusClient,
+  ConnectionState,
+  ConnectionStatus,
+  ConnectionFailureReason,
+} from './realtime/index.ts'
+
 // OAuth/PKCE helpers (MYT-84) — the canonical oauth API consumed by the sign-in +
 // callback screens. State persistence + the Cognito Hosted UI config are injected
 // once at boot via configureOAuth; the web store impl (sessionStorage) lives in

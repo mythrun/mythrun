@@ -8,6 +8,7 @@ import {
   useSessionStore,
   configureOAuth,
   configureTokenRefresh,
+  configureStreamingFetch,
   refreshSession,
   bootstrapSession,
 } from '@mythrun/client-core'
@@ -15,6 +16,7 @@ import { App } from './app.tsx'
 import { type AppProvidersConfig, toApiContext } from './app/providers.tsx'
 import { createWebSecureStorage } from './platform/web/secure-storage.ts'
 import { createWebOAuthStateStore } from './platform/web/oauth-state-store.ts'
+import { createWebStreamingFetch } from './platform/web/streaming-fetch.ts'
 import './index.css'
 
 // The web entry — the ONE place a web-only DOM touch is allowed (the
@@ -36,6 +38,13 @@ const config: AppProvidersConfig = import.meta.env.DEV
       authMode: 'jwt',
       secureStorage: createWebSecureStorage(),
     }
+
+// Wire the SSE streaming-fetch seam UNCONDITIONALLY (both auth modes), at module
+// scope. It is the realtime transport's one platform-divergent dependency; unlike
+// configureTokenRefresh (jwt-only, in the else branch below), the DEV/bypass build
+// still opens SSE/WS — the /dev/transport harness runs in DEV — so this must NOT
+// be fenced inside either auth branch.
+configureStreamingFetch(createWebStreamingFetch())
 
 // DEV BOOTSTRAP (bypass only): the dev backend's bypass auth seam is always
 // authenticated (it injects `request.user.sub` on every request), so the dev app

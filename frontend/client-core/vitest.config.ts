@@ -33,9 +33,15 @@ export default defineConfig({
         'src/auth/**',
         'src/stores/**',
         'src/platform/**',
+        // The realtime transport (MYT-85): the connection primitive + the WS/SSE
+        // clients + the ws-ticket endpoint. Production-grade reconnection logic —
+        // 100%-gated. The `*.fixtures.ts` test-double (a MockWebSocket + frame
+        // builders + a reference reducer) is test infra, not production code, so
+        // it is excluded below alongside the `*.test.ts` files.
+        'src/realtime/**/*.ts',
         'eslint-rules/**/*.js',
       ],
-      exclude: ['**/*.test.ts'],
+      exclude: ['**/*.test.ts', '**/*.fixtures.ts'],
       thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
       // The `test:coverage` script RUN-excludes `*.wiring.test.ts` (the
       // vitest-v8 double-load gotcha: an integration test that loads a rule

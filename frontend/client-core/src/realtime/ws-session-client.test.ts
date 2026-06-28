@@ -444,6 +444,125 @@ describe('createWsSessionClient — Task 6 close routing (readable signals only)
   })
 })
 
+describe('createWsSessionClient — Task 6 reconnect lastSeq when nothing was seen', () => {
+  it('sends lastSeq=0 on a reconnect that follows a drop with no frames seen', async () => {
+    let n = 0
+    server.use(
+      http.post(`${BASE_URL}/api/sessions/s1/ws-ticket`, () => {
+        n += 1
+        return HttpResponse.json({ ticket: `tk-${String(n)}` })
+      }),
+    )
+    const client = newClient(ctx)
+    const ws1 = await connectOpen(client)
+    // No frame is emitted → the high-water mark stays null; the reconnect must
+    // still send lastSeq, defaulting to 0 (a reconnect ALWAYS sends it).
+    ws1.close(1006)
+    await vi.waitFor(() => { expect(MockWebSocket.instances.length).toBe(2) }, { timeout: 3000 })
+    expect(MockWebSocket.last().url).toBe('ws://api.test/ws/session/s1?ticket=tk-2&lastSeq=0')
+  })
+})
+
+describe('createWsSessionClient — single-flight superseded guards', () => {
+  it('a superseded socket self-ignores inbound frames (a later connect bumped the generation)', async () => {
+    mockTicket('s1')
+    const client = newClient(ctx)
+    const received: ServerFrame[] = []
+    client.onFrame((f) => received.push(f))
+    const ws1 = await connectOpen(client)
+
+    // A second connect mints a fresh generation synchronously (nextGeneration in
+    // openSocket), superseding ws1; a frame on the OLD socket must be ignored.
+    client.connect('s1')
+    ws1.emit(pm(9))
+
+    expect(received).toEqual([])
+    // Let gen-2's ticket POST + socket settle so its request is handled inside the
+    // test (not after afterEach resets the MSW handlers).
+    await vi.waitFor(() => { expect(MockWebSocket.instances.length).toBe(2) })
+  })
+
+  it('ignores an openSocket superseded while awaiting the pre-flight refresh', async () => {
+    mockTicket('s1')
+    let releaseRefresh = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseRefresh = resolve })
+    let ticketCalls = 0
+    server.use(
+      http.post(`${BASE_URL}/api/sessions/s1/ws-ticket`, () => {
+        ticketCalls += 1
+        return HttpResponse.json({ ticket: `tk-${String(ticketCalls)}` })
+      }),
+    )
+    configureTokenRefresh(() => gate.then(() => ({ accessToken: 't', expiresIn: 3600 })))
+    const client = newClient(ctx)
+
+    client.connect('s1') // gen 1 → parks at await runRefresh()
+    client.connect('s1') // gen 2 → coalesced onto the same single-flight refresh
+    releaseRefresh()
+
+    // gen-1's openSocket finds itself stale post-refresh and returns BEFORE the
+    // ticket POST, so exactly one ticket is minted and one socket opens.
+    await vi.waitFor(() => { expect(MockWebSocket.instances.length).toBe(1) })
+    await Promise.resolve()
+    expect(ticketCalls).toBe(1)
+    expect(MockWebSocket.instances.length).toBe(1)
+  })
+
+  it('ignores an openSocket superseded while awaiting the ticket POST', async () => {
+    let releaseTicket = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseTicket = resolve })
+    let ticketCalls = 0
+    server.use(
+      http.post(`${BASE_URL}/api/sessions/s1/ws-ticket`, async () => {
+        ticketCalls += 1
+        if (ticketCalls === 1) await gate // gen-1 parks here
+        return HttpResponse.json({ ticket: `tk-${String(ticketCalls)}` })
+      }),
+    )
+    configureTokenRefresh(() => Promise.resolve({ accessToken: 't', expiresIn: 3600 }))
+    const client = newClient(ctx)
+
+    client.connect('s1') // gen 1 → parks at await mintWsTicket()
+    await vi.waitFor(() => { expect(ticketCalls).toBe(1) })
+    client.connect('s1') // gen 2 → its own ticket resolves + opens a socket
+    await vi.waitFor(() => { expect(MockWebSocket.instances.length).toBe(1) })
+
+    releaseTicket() // gen-1's ticket finally resolves; it is stale → no second socket
+    await vi.waitFor(() => { expect(ticketCalls).toBe(2) })
+    await Promise.resolve()
+    expect(MockWebSocket.instances.length).toBe(1)
+  })
+
+  it('ignores an openSocket superseded while a failing ticket POST is in flight', async () => {
+    let releaseTicket = (): void => undefined
+    const gate = new Promise<void>((resolve) => { releaseTicket = resolve })
+    let ticketCalls = 0
+    server.use(
+      http.post(`${BASE_URL}/api/sessions/s1/ws-ticket`, async () => {
+        ticketCalls += 1
+        if (ticketCalls === 1) {
+          await gate
+          return HttpResponse.json({ code: 'transient' }, { status: 500 }) // gen-1 rejects late
+        }
+        return HttpResponse.json({ ticket: 'tk-2' })
+      }),
+    )
+    configureTokenRefresh(() => Promise.resolve({ accessToken: 't', expiresIn: 3600 }))
+    const client = newClient(ctx)
+
+    client.connect('s1') // gen 1 → parks at the (soon-rejecting) ticket POST
+    await vi.waitFor(() => { expect(ticketCalls).toBe(1) })
+    client.connect('s1') // gen 2 → opens a socket (connecting)
+    await vi.waitFor(() => { expect(MockWebSocket.instances.length).toBe(1) })
+
+    releaseTicket() // gen-1's POST rejects; the catch sees it is stale → no reconnect/fail
+    await vi.waitFor(() => { expect(ticketCalls).toBe(2) })
+    await Promise.resolve()
+    // The state reflects gen-2 (connecting, attempt 0), NOT a gen-1 transient drop.
+    expect(client.connectionState.getState()).toEqual({ status: 'connecting', attempt: 0 })
+  })
+})
+
 describe('createWsSessionClient — Task 6 ceiling exhaustion is re-armable', () => {
   it('(g) reaches failed{exhausted} after the ceiling, then a connect() re-arms', async () => {
     vi.useFakeTimers()
