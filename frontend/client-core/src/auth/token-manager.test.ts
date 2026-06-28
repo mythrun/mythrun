@@ -75,4 +75,11 @@ describe('token-manager — runRefresh single-flight', () => {
     await expect(runRefresh()).resolves.toBe(false)
     expect(getAccessToken()).toBeNull()
   })
+
+  it('returns false and clears the token when the refresh fn returns a null token (200 no-session)', async () => {
+    setAccessToken('stale', 3600)
+    configureTokenRefresh(() => Promise.resolve({ accessToken: null, expiresIn: null }))
+    await expect(runRefresh()).resolves.toBe(false)
+    expect(getAccessToken()).toBeNull()
+  })
 })

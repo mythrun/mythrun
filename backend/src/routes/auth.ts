@@ -100,16 +100,21 @@ async function handleRefresh(
   }
   const token = request.cookies[REFRESH_COOKIE_NAME]
   if (!token) {
+    // No session. 200 with a null token (NOT 401): this endpoint is the SPA's on-load
+    // session probe, and a 401 logs a console error on the sign-in screen for a
+    // non-error "no session" condition (canonical BFF "anonymous -> 200" pattern).
     clearRefreshCookie(reply)
-    return reply.code(401).send({ code: 'no_refresh_token' })
+    return reply.send({ accessToken: null, expiresIn: null })
   }
   let tokens
   try {
     tokens = await opts.cognito.refresh({ refreshToken: token })
   } catch (err) {
+    // The session ended (refresh token revoked/expired). Still 200 null — logged-out is
+    // not an error to the probe; the failure is recorded server-side for monitoring.
     request.log.warn({ event: 'auth.refresh_failed', errorClass: errClass(err) }, 'refresh failed')
     clearRefreshCookie(reply)
-    return reply.code(401).send({ code: 'refresh_failed' })
+    return reply.send({ accessToken: null, expiresIn: null })
   }
   // Rotation enabled → re-set the ROTATED token; the prior one is now invalid.
   if (tokens.refreshToken) setRefreshCookie(reply, tokens.refreshToken)

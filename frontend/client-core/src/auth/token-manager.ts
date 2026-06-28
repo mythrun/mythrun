@@ -10,8 +10,12 @@
 // has no import of api/session.ts — keeping the import graph acyclic
 // (endpoint.ts → token-manager.ts is the only edge).
 
-/** Injected by the app bootstrap: performs the actual /api/auth/refresh call. */
-type RefreshFn = () => Promise<{ accessToken: string; expiresIn: number }>
+/** Injected by the app bootstrap: performs the actual /api/auth/refresh call. The null
+ *  variant is the "no session" answer — /api/auth/refresh returns 200 (not 401) with a
+ *  null token so the on-load probe doesn't log console noise (see the BFF contract). */
+type RefreshFn = () => Promise<
+  { accessToken: string; expiresIn: number } | { accessToken: null; expiresIn: null }
+>
 
 let accessToken: string | null = null
 let accessTokenExpiresAtMs: number | null = null
@@ -47,6 +51,11 @@ async function performRefresh(): Promise<boolean> {
   }
   try {
     const res = await refreshFn()
+    if (res.accessToken === null) {
+      // 200 with a null token = no session. Not an error; just unauthenticated.
+      clearAccessToken()
+      return false
+    }
     setAccessToken(res.accessToken, res.expiresIn)
     return true
   } catch {

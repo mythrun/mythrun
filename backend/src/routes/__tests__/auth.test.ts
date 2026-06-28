@@ -253,23 +253,29 @@ describe('routes/auth', () => {
       expect(res.headers['set-cookie']).toBeUndefined()
     })
 
-    it('401 + clears the cookie when no refresh cookie is present', async () => {
+    it('200 + null token (NOT 401) + clears the cookie when no refresh cookie is present', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/auth/refresh' })
-      expect(res.statusCode).toBe(401)
+      // 200, not 401: this is the SPA's on-load session probe; a 401 logs console noise
+      // on the sign-in screen for a non-error "no session" condition.
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ accessToken: null, expiresIn: null })
       const sc = setCookieHeader(res)
       expect(sc).toContain('mythrun_refresh=')
       expect(sc).toContain('Path=/api/auth')
       expect(sc).toMatch(/Max-Age=0|Expires=/)
     })
 
-    it('401 + clears the cookie when the refresh grant fails', async () => {
+    it('200 + null token + clears the cookie when the refresh grant fails', async () => {
       vi.mocked(cognito.refresh).mockRejectedValueOnce(new Error('expired'))
       const res = await app.inject({
         method: 'POST',
         url: '/api/auth/refresh',
         headers: { cookie: 'mythrun_refresh=dead' },
       })
-      expect(res.statusCode).toBe(401)
+      // The session ended (revoked/expired) → 200 null, not 401, for the same
+      // console-noise reason; the failure is logged server-side (auth.refresh_failed).
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ accessToken: null, expiresIn: null })
       expect(setCookieHeader(res)).toMatch(/Max-Age=0|Expires=/)
     })
 

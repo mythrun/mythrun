@@ -17,8 +17,19 @@ export const SessionResponseSchema = z.object({
 })
 export type SessionResponse = z.infer<typeof SessionResponseSchema>
 
-export const RefreshResponseSchema = z.object({
-  accessToken: z.string(),
-  expiresIn: z.number().int().positive(),
-})
+// The SPA's on-load session probe. The token-bearing variant on a live session; the
+// null variant when there is no (valid) session — returned with HTTP 200, NOT 401, so
+// the SPA bootstrap doesn't log a console error on the sign-in screen (canonical BFF
+// "anonymous -> 200" pattern). The token manager treats a null accessToken as "no
+// session" → unauthenticated.
+export const RefreshResponseSchema = z.union([
+  z.object({
+    accessToken: z.string(),
+    expiresIn: z.number().int().positive(),
+  }),
+  z.object({
+    accessToken: z.null(),
+    expiresIn: z.null(),
+  }),
+])
 export type RefreshResponse = z.infer<typeof RefreshResponseSchema>

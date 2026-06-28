@@ -223,7 +223,11 @@ describe('SessionRequestSchema / SessionResponseSchema / RefreshResponseSchema',
     expect(() => SessionResponseSchema.parse({ accessToken: 't', expiresIn: 0, name: null })).toThrow()
     expect(() => SessionResponseSchema.parse({ accessToken: 't', expiresIn: 1.5, name: null })).toThrow()
   })
-  it('RefreshResponse accepts { accessToken, expiresIn }', () => {
-    expect(RefreshResponseSchema.parse({ accessToken: 't', expiresIn: 60 }).expiresIn).toBe(60)
+  it('RefreshResponse accepts a live { accessToken, expiresIn } OR the null no-session variant', () => {
+    expect(RefreshResponseSchema.parse({ accessToken: 't', expiresIn: 60 }).accessToken).toBe('t')
+    expect(RefreshResponseSchema.parse({ accessToken: null, expiresIn: null }).accessToken).toBeNull()
+    // A token without an expiry (or an expiry without a token) is not a valid variant.
+    expect(() => RefreshResponseSchema.parse({ accessToken: 't', expiresIn: null })).toThrow()
+    expect(() => RefreshResponseSchema.parse({ accessToken: null, expiresIn: 60 })).toThrow()
   })
 })
