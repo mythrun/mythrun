@@ -58,6 +58,31 @@
       "generic": "[ph_onboard_err_generic: ~1 sentence — something went wrong, please try again]"
     }
   },
+  "devTransport": {
+    "title": "Realtime transport",
+    "ws": {
+      "title": "WebSocket session",
+      "statusLabel": "Status",
+      "attemptLabel": "Attempt",
+      "sessionIdLabel": "Session ID",
+      "messageLabel": "Message",
+      "connect": "Connect",
+      "send": "Send",
+      "simulateDrop": "Simulate drop",
+      "close": "Close",
+      "framesLabel": "Inbound frames",
+      "noFrames": "No frames yet"
+    },
+    "sse": {
+      "title": "SSE status stream",
+      "statusLabel": "Status",
+      "pathLabel": "Stream path",
+      "open": "Open stream",
+      "close": "Close",
+      "eventsLabel": "Events",
+      "noEvents": "No events yet"
+    }
+  },
   "stub": {
     "landing": "[ph_landing_screen]",
     "join": "[ph_join_screen]",
