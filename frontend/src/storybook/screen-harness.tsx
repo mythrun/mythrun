@@ -9,6 +9,7 @@ import {
   type ApiContext,
   type CampaignSummary,
 } from '@mythrun/client-core'
+import { ThemeProvider } from '@mythrun/ui'
 import { defaultNS } from '@mythrun/client-core/i18n'
 import { routes } from '../app/router.tsx'
 import { i18n } from '../i18n/config.ts'
@@ -79,14 +80,20 @@ export function ScreenHarness({
     return { client: queryClient, router: createMemoryRouter(routes, { initialEntries: [entry] }) }
   })
 
+  // ThemeProvider mirrors the real app shell (AppProviders) so theme-aware screens —
+  // e.g. the auth screens' ThemeToggle FAB calling useTheme — have their context in
+  // stories. Without it the screen stories throw "useTheme must be used within a
+  // ThemeProvider" under the test-runner.
   return (
-    <QueryClientProvider client={client}>
-      <ApiClientProvider value={STORYBOOK_CTX}>
-        <I18nextProvider i18n={i18n}>
-          <RouterProvider router={router} />
-        </I18nextProvider>
-      </ApiClientProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={client}>
+        <ApiClientProvider value={STORYBOOK_CTX}>
+          <I18nextProvider i18n={i18n}>
+            <RouterProvider router={router} />
+          </I18nextProvider>
+        </ApiClientProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   )
 }
 
