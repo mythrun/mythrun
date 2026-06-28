@@ -96,7 +96,7 @@ describe('routes/auth', () => {
       expect(sc).toContain('mythrun_refresh=refresh-1')
       expect(sc).toContain('HttpOnly')
       expect(sc).toContain('Secure')
-      expect(sc).toContain('SameSite=None')
+      expect(sc).toContain('SameSite=Lax')
       expect(sc).toContain('Path=/api/auth')
       expect(sc).toContain('Max-Age=2592000')
       expect(sc).not.toContain('Domain')

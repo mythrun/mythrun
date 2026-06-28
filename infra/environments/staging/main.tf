@@ -214,6 +214,7 @@ module "frontend_hosting" {
 
   environment         = var.environment
   site_domain         = "staging.mythrun.com"
+  api_origin_domain   = "${var.environment}-api.mythrun.com"
   acm_certificate_arn = data.terraform_remote_state.shared.outputs.wildcard_cert_arn
   hosted_zone_id      = data.terraform_remote_state.shared.outputs.dns_zone_id
   enable_basic_auth   = true

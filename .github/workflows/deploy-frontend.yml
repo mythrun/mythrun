@@ -72,11 +72,12 @@ jobs:
       - run: pnpm --filter @mythrun/web test
 
       # Production build → JWT auth seam (import.meta.env.PROD). Vite reads
-      # VITE_-prefixed env at build time; point the SPA at the staging API
-      # origin (cross-origin; CORS already allows it).
+      # VITE_-prefixed env at build time. SAME-ORIGIN: the SPA calls
+      # staging.mythrun.com/api/*, which CloudFront proxies to the API origin — so the
+      # BFF refresh cookie is first-party (Safari refuses cross-origin Set-Cookie, MYT-84).
       - run: pnpm --filter @mythrun/web build
         env:
-          VITE_API_BASE_URL: https://staging-api.mythrun.com
+          VITE_API_BASE_URL: https://staging.mythrun.com
           # PUBLIC Cognito Hosted UI values (a domain + a public SPA client id —
           # PKCE means there is NO client secret), sourced from staging `vars`
           # (NOT `secrets`). Bundled into the SPA at build time.

@@ -15,6 +15,18 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
+# Dynamic API responses must never be cached. The /api/* behavior uses this.
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+# Forwards ALL viewer headers (Cookie, Authorization, Origin, Content-Type) + query
+# + cookies to the API origin, EXCEPT Host — so the ALB/API sees its own host, not
+# the SPA's staging.mythrun.com. The /api/* behavior uses this.
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
 # ======== Private S3 bucket (SPA artifact store) ========
 resource "aws_s3_bucket" "site" {
   bucket = local.bucket_name
@@ -80,6 +92,21 @@ resource "aws_cloudfront_distribution" "site" {
     origin_access_control_id = aws_cloudfront_origin_access_control.site.id
   }
 
+  # Same-origin API proxy origin (MYT-84). The SPA calls staging.mythrun.com/api/*
+  # so the BFF refresh cookie is set FIRST-PARTY; CloudFront forwards to the API ALB
+  # (reached via its public FQDN). https-only — the ALB terminates the wildcard cert.
+  origin {
+    origin_id   = "api"
+    domain_name = var.api_origin_domain
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
   default_cache_behavior {
     target_origin_id       = "s3-${aws_s3_bucket.site.id}"
     viewer_protocol_policy = "redirect-to-https"
@@ -89,7 +116,9 @@ resource "aws_cloudfront_distribution" "site" {
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
 
     # MODULE INVARIANT: if ordered cache behaviors are ever added, each must
-    # carry the same viewer-request association, or it is a gate bypass path.
+    # carry the same viewer-request association, or it is a gate bypass path —
+    # EXCEPT the /api/* behavior below, a DELIBERATE exemption (the API self-auths
+    # and carries a Bearer / refresh cookie, not the Basic gate header; see there).
     dynamic "function_association" {
       for_each = var.enable_basic_auth ? [1] : []
       content {
@@ -97,6 +126,27 @@ resource "aws_cloudfront_distribution" "site" {
         function_arn = aws_cloudfront_function.basic_auth[0].arn
       }
     }
+  }
+
+  # Same-origin API proxy (MYT-84 cookie fix). The SPA calls staging.mythrun.com/api/*
+  # so the BFF refresh cookie is FIRST-PARTY — Safari refuses to store a cookie set via
+  # a cross-origin fetch to the api subdomain. Caching disabled (dynamic); all viewer
+  # headers + cookies forwarded (except Host).
+  ordered_cache_behavior {
+    path_pattern             = "/api/*"
+    target_origin_id         = "api"
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+
+    # DELIBERATE gate exemption (see the default_cache_behavior invariant): /api/*
+    # carries a Bearer / the httpOnly refresh cookie, NOT the Basic gate header, so the
+    # gate function can't apply. The API self-authenticates (JWT + the public-route
+    # allowlist) and is already reachable at var.api_origin_domain — this proxy changes
+    # the cookie's ORIGIN, not the API's exposure. So it is NOT an SPA-content bypass.
   }
 
   # SPA fallback. The 403 mapping is load-bearing: a private OAC bucket

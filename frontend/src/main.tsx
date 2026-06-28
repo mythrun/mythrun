@@ -4,7 +4,13 @@ import '@fontsource/source-serif-4/400.css'
 import '@fontsource/source-serif-4/600.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
-import { useSessionStore, configureOAuth, bootstrapSession } from '@mythrun/client-core'
+import {
+  useSessionStore,
+  configureOAuth,
+  configureTokenRefresh,
+  refreshSession,
+  bootstrapSession,
+} from '@mythrun/client-core'
 import { App } from './app.tsx'
 import { type AppProvidersConfig, toApiContext } from './app/providers.tsx'
 import { createWebSecureStorage } from './platform/web/secure-storage.ts'
@@ -55,11 +61,19 @@ if (config.authMode === 'bypass') {
       scopes: ['openid', 'email', 'profile'],
     },
   })
+  // Wire the refresh transport BEFORE kicking the on-load bootstrap. CRITICAL
+  // ORDERING: bootstrapSession's refresh is a silent no-op if the token manager's
+  // refreshFn isn't set yet — performRefresh returns false WITHOUT calling
+  // /api/auth/refresh. refreshFn was previously configured ONLY in an AppProviders
+  // useEffect, which runs AFTER this module-scope bootstrap, so on every reload the
+  // on-load refresh never fired and the user bounced to sign-in. Set it here, first.
+  const apiContext = toApiContext(config)
+  configureTokenRefresh(() => refreshSession(undefined, apiContext))
   // … then kick the on-load refresh → /me mapping. The store stays `initializing`
   // (its default) until this settles — RequireAuth shows the splash meanwhile.
   // Transitions to ready / onboarding-required / unauthenticated. Fire-and-forget:
   // it must NOT block first paint (spec §3) — the splash covers the gap.
-  void bootstrapSession(toApiContext(config))
+  void bootstrapSession(apiContext)
 }
 
 const rootEl = document.getElementById('root')

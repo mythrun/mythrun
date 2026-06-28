@@ -33,3 +33,13 @@ variable "enable_basic_auth" {
   type        = bool
   default     = true
 }
+
+variable "api_origin_domain" {
+  description = "The API's public FQDN (e.g. 'staging-api.mythrun.com'). CloudFront proxies /api/* to this origin so the BFF refresh cookie is set SAME-ORIGIN with the SPA — Safari refuses to STORE a cookie set via a cross-origin fetch (MYT-84). Bare FQDN, no scheme."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9.-]+\\.[a-z]{2,}$", var.api_origin_domain))
+    error_message = "api_origin_domain must be a bare FQDN with no scheme or path, e.g. 'staging-api.mythrun.com'."
+  }
+}

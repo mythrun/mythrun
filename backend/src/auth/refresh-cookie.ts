@@ -1,16 +1,15 @@
 // backend/src/auth/refresh-cookie.ts
 //
-// The refresh-token cookie: HttpOnly + Secure + SameSite=None + Path=/api/auth +
+// The refresh-token cookie: HttpOnly + Secure + SameSite=Lax + Path=/api/auth +
 // host-only (NO Domain — never broadens to sibling subdomains). 30-day Max-Age.
 //
-// SameSite=None (NOT Lax): the SPA (staging.mythrun.com) and the API
-// (staging-api.mythrun.com) are split ORIGINS. Safari REFUSES TO STORE a Lax
-// cookie returned by a cross-origin fetch — even same-registrable-domain — so the
-// cookie silently never persisted and every reload bounced to sign-in. None+Secure
-// is the split-origin requirement. The CSRF surface None opens on the cookie-authed
-// routes is closed by: httpOnly (JS can't read it) + the CORS allowlist (a cross-
-// site caller can't READ /refresh's response) + an Origin check on /refresh+/logout
-// (routes/auth.ts) + /session's JSON-only gate.
+// SameSite=Lax is safe because the SPA and the API are SAME-ORIGIN: CloudFront proxies
+// staging.mythrun.com/api/* to the API, so the cookie is set first-party under the
+// SPA's own origin. (The earlier split-origin staging-api.mythrun.com setup failed in
+// Safari, which refuses to STORE a cookie set via a cross-origin fetch — MYT-84.) Lax
+// is the stricter choice now: the cookie is never sent on a cross-site request. CSRF
+// defense-in-depth: the Origin check on /session+/refresh+/logout (routes/auth.ts) +
+// /session's JSON-only gate.
 //
 // clearRefreshCookie MUST mirror path/secure/sameSite/httpOnly so the browser
 // clears the SAME cookie.
@@ -23,7 +22,7 @@ const REFRESH_COOKIE_MAX_AGE_S = 30 * 24 * 60 * 60
 const BASE_ATTRS = {
   httpOnly: true,
   secure: true,
-  sameSite: 'none',
+  sameSite: 'lax',
   path: '/api/auth',
 } as const
 

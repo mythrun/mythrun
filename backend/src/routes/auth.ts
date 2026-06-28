@@ -47,11 +47,10 @@ function errClass(err: unknown): string {
   return err instanceof Error ? err.constructor.name : 'Unknown'
 }
 
-// CSRF guard for the SameSite=None cookie-authed routes (refresh-cookie.ts is
-// None for the split-origin SPA↔API). A browser ALWAYS sends Origin on these
-// cross-origin POSTs, so a present-but-mismatched Origin is a forged cross-site
-// request — reject it. Absent Origin (a non-browser, which can't hold the
-// victim's httpOnly cookie anyway) is allowed.
+// CSRF defense-in-depth on the cookie-authed routes. With the same-origin proxy +
+// SameSite=Lax the cookie isn't sent cross-site, but we ALSO reject a forged Origin:
+// a present-but-mismatched Origin header is a cross-site request. Absent Origin (a
+// non-browser, which can't hold the victim's httpOnly cookie anyway) is allowed.
 function isForgedOrigin(request: FastifyRequest, frontendBaseUrl: string): boolean {
   const origin = request.headers.origin
   return origin !== undefined && origin !== frontendBaseUrl
