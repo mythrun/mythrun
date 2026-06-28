@@ -1,5 +1,5 @@
 <!-- source: infra/modules/frontend-hosting/ -->
-<!-- source-hash: sha256:5b0a0337610d54d66b7f333730e3fd3600451f02042e37a1e5143ef767a8b941 -->
+<!-- source-hash: sha256:0e0a136fa718c8056563e1329662130755cadb27a86b8ac4c754e9ef7bdc363c -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>Frontend hosting</h1>
@@ -21,7 +21,8 @@
   <code>frontend-hosting</code> is a single reusable Terraform module composed by the
   <code>staging/</code> workspace. It owns four pieces of AWS surface: a private S3 bucket that
   holds the compiled SPA, a CloudFront distribution that fronts it, a CloudFront Function that gates
-  access, and the Route 53 records that point the domain at the distribution. The
+  access (and routes SPA deep links), and the Route 53 records that point the domain at the
+  distribution. The
   <a href="ci-cd.html#the-deploy-frontend-workflow">Deploy Frontend workflow</a> is what fills the
   bucket; this module is the standing infrastructure that serves it.
 </p>
@@ -69,21 +70,14 @@
 </aside>
 
 <p>
-  Two custom error responses map both <code>403</code> and <code>404</code> from the origin to
-  <code>/index.html</code> with a <code>200</code> — the SPA fallback that lets client-side routes
-  resolve on a deep link or a hard refresh.
+  The distribution carries <em>no</em> distribution-wide error mapping. SPA deep-link fallback —
+  letting a client-side route resolve on a hard refresh or a shared link — is handled inside the
+  <a href="#the-basic-auth-gate">gate function</a> instead, deliberately scoped there so it can't
+  touch the <a href="#the-same-origin-api-proxy"><code>/api/*</code> proxy</a>'s real API errors
+  (both covered below).
 </p>
 
-<aside class="wiki-rationale">
-  <strong>403 → index.html, not just 404</strong> — a private OAC bucket with
-  <code>GetObject</code>-only (no <code>ListBucket</code>) returns <code>403 Forbidden</code>, not
-  <code>404</code>, for a key that doesn't exist. A missing deep-link path like
-  <code>/campaigns/abc</code> is a non-existent key, so without the 403 mapping every client-side
-  route would surface as Access Denied. The Basic-Auth 401 is emitted by the gate function
-  <em>before</em> the origin is ever consulted, so it is unaffected by these origin-error rules.
-</aside>
-
-<h2>The Basic-Auth gate</h2>
+<h2 id="the-basic-auth-gate">The Basic-Auth gate</h2>
 
 <p>
   The site must not be publicly reachable before launch, but it must be reachable from Miklos's
@@ -94,6 +88,43 @@
   the request; every other branch returns a <code>401</code> with a
   <code>WWW-Authenticate: Basic</code> challenge, so the browser shows its native login prompt.
 </p>
+
+<p>
+  The exact-match path does one more thing before it returns the request:
+  <strong>SPA deep-link routing</strong>. A client-side route like <code>/campaigns/abc</code> has
+  no matching object in the bucket, so a hard refresh or a shared deep link would otherwise 404. The
+  function inspects the URI's final path segment — if it has no <code>.</code> it is a client route,
+  not a static asset, so the function rewrites the URI to <code>/index.html</code> and the SPA's own
+  router takes over; a path ending in an extension (<code>/assets/app.js</code>) passes through to
+  S3 untouched. The rewrite happens at the viewer-request stage, before the origin is consulted, so
+  the bucket only ever sees a real asset key or <code>/index.html</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>SPA routing in the gate function, not a distribution-wide error mapping</strong> — the
+  obvious place for SPA fallback is a CloudFront <code>custom_error_response</code> that maps
+  <code>403</code>/<code>404</code> to <code>/index.html</code>, and the module did exactly that at
+  first. But a <code>custom_error_response</code> is <em>distribution-wide</em>: it also caught the
+  <a href="#the-same-origin-api-proxy"><code>/api/*</code> proxy</a>'s real API responses and
+  rewrote them into the SPA shell. The sign-in callback's <code>GET /api/users/me</code>
+  <code>403</code> — the
+  <a href="../auth-billing/onboarding.html">username-required onboarding signal</a> — came back as a
+  <code>200</code> of HTML, the SPA couldn't read it, and the callback threw a generic error.
+  Scoping the rewrite into the gate function fixes that by construction: the
+  <code>/api/*</code> behavior carries no function association, so it never reaches this code and
+  its real <code>403</code>/<code>404</code>s pass through verbatim (MYT-84).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>PROD PRECONDITION — the gate function is also the SPA router</strong> — because deep-link
+  routing now lives inside the Basic-Auth function, it disappears the moment the gate does.
+  Production reuses the module with <code>enable_basic_auth = false</code> (see
+  <a href="#open-the-site-at-launch">Open the site at launch</a>), which <code>count</code>-destroys
+  the function and, with it, SPA routing. Before launch the routing must be re-provisioned as an
+  always-on router function (the same URI rewrite, with no Basic-Auth branch) bound to the default
+  behavior independent of the gate. This is flagged in the module and tracked for the
+  prod-auth-compose follow-up.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A CloudFront Function, not WAF or Lambda@Edge</strong> — a WAF IP-allowlist ties access to
@@ -175,7 +206,10 @@
   public-route allowlist) and is already reachable at <code>staging-api.mythrun.com</code> on its
   own — this proxy changes where the cookie's origin <em>appears</em>, not whether the API is
   exposed. So it is not an SPA-content bypass: no static asset or pre-launch page is reachable
-  through <code>/api/*</code>.
+  through <code>/api/*</code>. The same gate-skip is also what keeps the
+  <a href="#the-basic-auth-gate">function's SPA-routing rewrite</a> off the proxy: because
+  <code>/api/*</code> never reaches the function, its real API <code>403</code>/<code>404</code>s
+  are never rewritten into the SPA shell.
 </aside>
 
 <h2>Route 53 and environment parameterization</h2>
@@ -253,6 +287,13 @@
 
 <h3 id="open-the-site-at-launch">Open the site at launch</h3>
 <ol>
+  <li>
+    <strong>Precondition — re-provision SPA routing first.</strong> Deep-link routing lives in the
+    gate function, so disabling the gate removes it. Before this step, provision an always-on router
+    function (the same extension-less &rarr; <code>/index.html</code> rewrite, with no Basic-Auth
+    branch) bound to the default behavior, so deep links keep resolving once the gate is gone.
+    Tracked for the prod-auth-compose follow-up.
+  </li>
   <li>
     Set <code>enable_basic_auth = false</code> on the module block and <code>terraform apply</code>.
     This destroys the Function, the KeyValueStore, and the viewer-request association; the

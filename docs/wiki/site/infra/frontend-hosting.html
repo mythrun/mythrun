@@ -39,205 +39,191 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1296pt" height="453pt"
- viewBox="14.00 14.00 1281.00 438.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 434.4)">
+<svg width="1620pt" height="347pt"
+ viewBox="14.00 14.00 1605.00 333.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 328.68)">
 <title>frontend_hosting</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-420 1262.88,-420 1262.88,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-314.28 1586.8,-314.28 1586.8,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_cf</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="454.61,-155 454.61,-408 946.5,-408 946.5,-155 454.61,-155"/>
-<text xml:space="preserve" text-anchor="middle" x="700.55" y="-394.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CloudFront distribution &#160;(PriceClass_100)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="454.61,-60.84 454.61,-253.84 938.33,-253.84 938.33,-60.84 454.61,-60.84"/>
+<text xml:space="preserve" text-anchor="middle" x="696.47" y="-239.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CloudFront distribution &#160;(PriceClass_100)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_s3</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="744.93,-8 744.93,-99 998.57,-99 998.57,-8 744.93,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="871.75" y="-85.1" font-family="Courier,monospace" font-size="11.00">private S3 &#160;mythrun&#45;staging&#45;frontend</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1329.16,-8.84 1329.16,-99.84 1582.8,-99.84 1582.8,-8.84 1329.16,-8.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1455.98" y="-85.94" font-family="Courier,monospace" font-size="11.00">private S3 &#160;mythrun&#45;staging&#45;frontend</text>
 </g>
 <!-- laptop -->
 <g id="node1" class="node">
 <title>laptop</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="110.89,-373.44 6.6,-373.44 6.6,-316.56 110.89,-316.56 110.89,-373.44"/>
-<text xml:space="preserve" text-anchor="middle" x="58.75" y="-354.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">laptop</text>
-<text xml:space="preserve" text-anchor="middle" x="58.75" y="-341.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Basic&#45;Auth</text>
-<text xml:space="preserve" text-anchor="middle" x="58.75" y="-328.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">user : pass</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="110.89,-216.28 6.6,-216.28 6.6,-159.4 110.89,-159.4 110.89,-216.28"/>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-197.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">laptop</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-184.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Basic&#45;Auth</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-171.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">user : pass</text>
 </g>
 <!-- dns -->
 <g id="node2" class="node">
 <title>dns</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="340.6,-335.44 183.5,-335.44 183.5,-278.56 340.6,-278.56 340.6,-335.44"/>
-<text xml:space="preserve" text-anchor="middle" x="262.05" y="-316.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Route 53</text>
-<text xml:space="preserve" text-anchor="middle" x="262.05" y="-303.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging.mythrun.com</text>
-<text xml:space="preserve" text-anchor="middle" x="262.05" y="-290.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">A + AAAA alias</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="340.6,-178.28 183.5,-178.28 183.5,-121.4 340.6,-121.4 340.6,-178.28"/>
+<text xml:space="preserve" text-anchor="middle" x="262.05" y="-159.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Route 53</text>
+<text xml:space="preserve" text-anchor="middle" x="262.05" y="-146.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="262.05" y="-133.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">A + AAAA alias</text>
 </g>
 <!-- laptop&#45;&gt;dns -->
 <g id="edge1" class="edge">
 <title>laptop&#45;&gt;dns</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M111.59,-335.21C130.72,-331.6 152.95,-327.41 174.33,-323.37"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="174.57,-325.82 181,-322.11 173.67,-321 174.57,-325.82"/>
-<text xml:space="preserve" text-anchor="middle" x="150.5" y="-333.52" font-family="Courier,monospace" font-size="10.00">https</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M111.59,-178.05C130.72,-174.44 152.95,-170.25 174.33,-166.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="174.57,-168.66 181,-164.95 173.67,-163.84 174.57,-168.66"/>
+<text xml:space="preserve" text-anchor="middle" x="150.5" y="-176.36" font-family="Courier,monospace" font-size="10.00">https</text>
 </g>
 <!-- gate -->
 <g id="node4" class="node">
 <title>gate</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="618.31,-387.04 461.21,-387.04 461.21,-316.96 618.31,-316.96 618.31,-387.04"/>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-368.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">default behavior</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-355.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">viewer&#45;request fn</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-342.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Basic&#45;Auth gate</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-328.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fail&#45;closed → 401</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="651.32,-144.48 454.61,-144.48 454.61,-61.2 651.32,-61.2 651.32,-144.48"/>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-125.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">default behavior</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-112.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">viewer&#45;request fn</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-99.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Basic&#45;Auth gate (→ 401)</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-86.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ SPA route rewrite</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-73.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ext&#45;less → /index.html</text>
 </g>
 <!-- dns&#45;&gt;gate -->
 <g id="edge2" class="edge">
 <title>dns&#45;&gt;gate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M341.32,-319.77C375.96,-325.43 416.81,-332.1 452.34,-337.89"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="451.68,-340.27 458.98,-338.98 452.47,-335.43 451.68,-340.27"/>
-<text xml:space="preserve" text-anchor="middle" x="397.61" y="-349.85" font-family="Courier,monospace" font-size="10.00">default</text>
-<text xml:space="preserve" text-anchor="middle" x="397.61" y="-337.85" font-family="Courier,monospace" font-size="10.00">(gated)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M341.23,-137.12C373.28,-131.91 410.88,-125.79 445.38,-120.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="445.77,-122.6 452.28,-119.06 444.98,-117.76 445.77,-122.6"/>
+<text xml:space="preserve" text-anchor="middle" x="397.61" y="-148.3" font-family="Courier,monospace" font-size="10.00">default</text>
+<text xml:space="preserve" text-anchor="middle" x="397.61" y="-136.3" font-family="Courier,monospace" font-size="10.00">(gated)</text>
 </g>
 <!-- apibehav -->
-<g id="node8" class="node">
+<g id="node7" class="node">
 <title>apibehav</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="618.31,-299.04 461.21,-299.04 461.21,-228.96 618.31,-228.96 618.31,-299.04"/>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-280.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/api/* behavior</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-267.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CachingDisabled</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-254.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AllViewerExceptHost</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-240.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">NO gate fn</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="631.52,-232.88 474.42,-232.88 474.42,-162.8 631.52,-162.8 631.52,-232.88"/>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-214.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/api/* behavior</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-201.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CachingDisabled</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-187.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AllViewerExceptHost</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-174.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">NO gate fn</text>
 </g>
 <!-- dns&#45;&gt;apibehav -->
 <g id="edge3" class="edge">
 <title>dns&#45;&gt;apibehav</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M341.32,-294.79C375.96,-289.39 416.81,-283.02 452.34,-277.48"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="452.44,-279.94 458.98,-276.44 451.69,-275.1 452.44,-279.94"/>
-<text xml:space="preserve" text-anchor="middle" x="397.61" y="-306.86" font-family="Courier,monospace" font-size="10.00">/api/*</text>
-<text xml:space="preserve" text-anchor="middle" x="397.61" y="-294.86" font-family="Courier,monospace" font-size="10.00">(gate&#45;exempt)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M341.23,-162.83C379.61,-169.21 425.96,-176.91 465.41,-183.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="464.62,-185.81 471.93,-184.54 465.42,-180.98 464.62,-185.81"/>
+<text xml:space="preserve" text-anchor="middle" x="397.61" y="-193.14" font-family="Courier,monospace" font-size="10.00">/api/*</text>
+<text xml:space="preserve" text-anchor="middle" x="397.61" y="-181.14" font-family="Courier,monospace" font-size="10.00">(gate&#45;exempt)</text>
 </g>
 <!-- cert -->
 <g id="node3" class="node">
 <title>cert</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="117.49,-298.44 0,-298.44 0,-241.56 117.49,-241.56 117.49,-298.44"/>
-<text xml:space="preserve" text-anchor="middle" x="58.75" y="-279.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">*.mythrun.com</text>
-<text xml:space="preserve" text-anchor="middle" x="58.75" y="-266.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wildcard cert</text>
-<text xml:space="preserve" text-anchor="middle" x="58.75" y="-253.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(DNS module)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="117.49,-141.28 0,-141.28 0,-84.4 117.49,-84.4 117.49,-141.28"/>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-122.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">*.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-109.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wildcard cert</text>
+<text xml:space="preserve" text-anchor="middle" x="58.75" y="-96.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(DNS module)</text>
 </g>
 <!-- cert&#45;&gt;dns -->
 <g id="edge4" class="edge">
 <title>cert&#45;&gt;dns</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M118.24,-280.75C135.76,-283.97 155.35,-287.57 174.28,-291.05"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="173.81,-293.46 181.13,-292.31 174.69,-288.64 173.81,-293.46"/>
-<text xml:space="preserve" text-anchor="middle" x="150.5" y="-291.5" font-family="Courier,monospace" font-size="10.00">TLS</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M118.24,-123.59C135.76,-126.81 155.35,-130.41 174.28,-133.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="173.81,-136.3 181.13,-135.15 174.69,-131.48 173.81,-136.3"/>
+<text xml:space="preserve" text-anchor="middle" x="150.5" y="-134.34" font-family="Courier,monospace" font-size="10.00">TLS</text>
 </g>
 <!-- kvs -->
 <g id="node5" class="node">
 <title>kvs</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="946.5,-380.44 796,-380.44 796,-323.56 946.5,-323.56 946.5,-380.44"/>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-361.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">KeyValueStore</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-348.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;basic&#45;auth</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-335.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(set out&#45;of&#45;band)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="938.33,-192.28 787.84,-192.28 787.84,-135.4 938.33,-135.4 938.33,-192.28"/>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-173.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">KeyValueStore</text>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-160.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;basic&#45;auth</text>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-147.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(set out&#45;of&#45;band)</text>
 </g>
 <!-- gate&#45;&gt;kvs -->
 <g id="edge5" class="edge">
 <title>gate&#45;&gt;kvs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M618.85,-352C669.31,-352 734.93,-352 786.48,-352"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="786.46,-354.45 793.46,-352 786.46,-349.55 786.46,-354.45"/>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-355" font-family="Courier,monospace" font-size="10.00">kvs.get()</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M651.88,-122.22C692.84,-130.33 739.94,-139.66 779.16,-147.42"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="778.28,-149.75 785.62,-148.7 779.23,-144.94 778.28,-149.75"/>
+<text xml:space="preserve" text-anchor="middle" x="711.33" y="-143.6" font-family="Courier,monospace" font-size="10.00">kvs.get()</text>
 </g>
 <!-- cache -->
 <g id="node6" class="node">
 <title>cache</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="946.5,-230.44 796,-230.44 796,-173.56 946.5,-173.56 946.5,-230.44"/>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-211.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CachingOptimized</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-198.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Authorization not</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-185.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in cache key)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="938.33,-117.28 787.84,-117.28 787.84,-60.4 938.33,-60.4 938.33,-117.28"/>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-98.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CachingOptimized</text>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-85.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Authorization not</text>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-72.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in cache key)</text>
 </g>
 <!-- gate&#45;&gt;cache -->
 <g id="edge6" class="edge">
 <title>gate&#45;&gt;cache</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M618.85,-316.45C673.24,-291.69 745.25,-258.91 798.26,-234.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="799.26,-237.01 804.61,-231.88 797.23,-232.55 799.26,-237.01"/>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-306.48" font-family="Courier,monospace" font-size="10.00">match → pass</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M651.88,-98.39C692.67,-96.54 739.55,-94.41 778.67,-92.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="778.71,-95.08 785.59,-92.32 778.49,-90.19 778.71,-95.08"/>
+<text xml:space="preserve" text-anchor="middle" x="711.33" y="-100.51" font-family="Courier,monospace" font-size="10.00">match → pass</text>
 </g>
 <!-- oac -->
-<g id="node9" class="node">
+<g id="node8" class="node">
 <title>oac</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1258.88,-158.84 1088.58,-158.84 1088.58,-115.16 1258.88,-115.16 1258.88,-158.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1173.73" y="-140.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Origin Access Control</text>
-<text xml:space="preserve" text-anchor="middle" x="1173.73" y="-127.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SigV4, signing=always</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1239.15,-102.68 1068.85,-102.68 1068.85,-59 1239.15,-59 1239.15,-102.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1154" y="-84.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Origin Access Control</text>
+<text xml:space="preserve" text-anchor="middle" x="1154" y="-70.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SigV4, signing=always</text>
 </g>
 <!-- cache&#45;&gt;oac -->
 <g id="edge7" class="edge">
 <title>cache&#45;&gt;oac</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M946.91,-185.85C986.99,-177.18 1036.79,-166.41 1079.4,-157.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1079.73,-159.62 1086.05,-155.75 1078.69,-154.83 1079.73,-159.62"/>
-</g>
-<!-- err -->
-<g id="node7" class="node">
-<title>err</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="624.91,-211.44 454.61,-211.44 454.61,-154.56 624.91,-154.56 624.91,-211.44"/>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-192.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">403 &amp; 404</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-179.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ /index.html (200)</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-166.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SPA fallback</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M938.86,-86.77C975.7,-85.75 1020.49,-84.51 1059.57,-83.43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1059.58,-85.88 1066.51,-83.23 1059.45,-80.98 1059.58,-85.88"/>
 </g>
 <!-- api -->
-<g id="node10" class="node">
+<g id="node9" class="node">
 <title>api</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="963,-155.44 779.5,-155.44 779.5,-98.56 963,-98.56 963,-155.44"/>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-136.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API origin</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-123.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging&#45;api.mythrun.com</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-110.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">self&#45;auths (JWT)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="954.84,-310.28 771.33,-310.28 771.33,-253.4 954.84,-253.4 954.84,-310.28"/>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-291.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API origin</text>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-278.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging&#45;api.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="863.08" y="-265.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">self&#45;auths (JWT)</text>
 </g>
 <!-- apibehav&#45;&gt;api -->
-<g id="edge10" class="edge">
+<g id="edge9" class="edge">
 <title>apibehav&#45;&gt;api</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M609.31,-228.29C665.8,-198.92 737.78,-161.71 744.93,-159 753.12,-155.89 761.73,-152.99 770.44,-150.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="771.06,-152.67 777.06,-148.31 769.65,-147.98 771.06,-152.67"/>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-225.11" font-family="Courier,monospace" font-size="10.00">proxy</text>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-213.11" font-family="Courier,monospace" font-size="10.00">Host rewritten</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M632.12,-219.15C671.65,-229.92 720.06,-243.12 762.26,-254.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="761.46,-256.95 768.86,-256.42 762.75,-252.22 761.46,-256.95"/>
+<text xml:space="preserve" text-anchor="middle" x="711.33" y="-264.83" font-family="Courier,monospace" font-size="10.00">proxy</text>
+<text xml:space="preserve" text-anchor="middle" x="711.33" y="-252.83" font-family="Courier,monospace" font-size="10.00">Host rewritten</text>
 </g>
 <!-- bucket -->
-<g id="node11" class="node">
+<g id="node10" class="node">
 <title>bucket</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="966.3,-78.04 776.19,-78.04 776.19,-7.96 966.3,-7.96 966.3,-78.04"/>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">public&#45;access&#45;block</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bucket policy:</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GetObject only,</text>
-<text xml:space="preserve" text-anchor="middle" x="871.25" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SourceArn = distribution</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1550.53,-78.88 1360.43,-78.88 1360.43,-8.8 1550.53,-8.8 1550.53,-78.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1455.48" y="-60.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">public&#45;access&#45;block</text>
+<text xml:space="preserve" text-anchor="middle" x="1455.48" y="-47.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bucket policy:</text>
+<text xml:space="preserve" text-anchor="middle" x="1455.48" y="-33.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GetObject only,</text>
+<text xml:space="preserve" text-anchor="middle" x="1455.48" y="-20.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SourceArn = distribution</text>
 </g>
 <!-- oac&#45;&gt;bucket -->
 <g id="edge8" class="edge">
 <title>oac&#45;&gt;bucket</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1100.94,-114.54C1063.3,-102.77 1016.54,-88.14 975.12,-75.18"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="976.05,-72.91 968.64,-73.16 974.59,-77.58 976.05,-72.91"/>
-<text xml:space="preserve" text-anchor="middle" x="1043.57" y="-118.91" font-family="Courier,monospace" font-size="10.00">GetObject</text>
-<text xml:space="preserve" text-anchor="middle" x="1043.57" y="-106.91" font-family="Courier,monospace" font-size="10.00">SigV4</text>
-</g>
-<!-- bucket&#45;&gt;err -->
-<g id="edge9" class="edge">
-<title>bucket&#45;&gt;err</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M775.56,-53.7C718.29,-60.84 654.19,-70.31 642.91,-78 629.75,-86.98 635.03,-96.69 624.91,-109 613.35,-123.08 598.98,-136.76 585.4,-148.46"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="583.97,-146.46 580.21,-152.86 587.13,-150.2 583.97,-146.46"/>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-81" font-family="Courier,monospace" font-size="10.00">403 / 404</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1239.62,-70.39C1274.29,-66.1 1314.74,-61.1 1351.13,-56.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1351.35,-59.05 1358,-55.76 1350.75,-54.19 1351.35,-59.05"/>
+<text xml:space="preserve" text-anchor="middle" x="1284.16" y="-82.82" font-family="Courier,monospace" font-size="10.00">GetObject</text>
+<text xml:space="preserve" text-anchor="middle" x="1284.16" y="-70.82" font-family="Courier,monospace" font-size="10.00">SigV4</text>
 </g>
 <!-- deploy -->
-<g id="node12" class="node">
+<g id="node11" class="node">
 <title>deploy</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="605.11,-99.84 474.42,-99.84 474.42,-56.16 605.11,-56.16 605.11,-99.84"/>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-81.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Deploy Frontend</text>
-<text xml:space="preserve" text-anchor="middle" x="539.76" y="-68.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">workflow</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="618.31,-43.68 487.62,-43.68 487.62,0 618.31,0 618.31,-43.68"/>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Deploy Frontend</text>
+<text xml:space="preserve" text-anchor="middle" x="552.97" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">workflow</text>
 </g>
 <!-- deploy&#45;&gt;cache -->
-<g id="edge12" class="edge">
+<g id="edge11" class="edge">
 <title>deploy&#45;&gt;cache</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M605.76,-87.35C655.66,-95.06 717.58,-106 726.93,-114 744.87,-129.36 727.81,-147.73 744.93,-164 756.72,-175.2 771.7,-183.11 787.18,-188.69"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="786.16,-190.94 793.58,-190.83 787.71,-186.29 786.16,-190.94"/>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-129" font-family="Courier,monospace" font-size="10.00">invalidate</text>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-117" font-family="Courier,monospace" font-size="10.00">/index.html</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M618.93,-35.97C665.42,-46.07 728.39,-59.77 778.6,-70.69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="778.04,-73.07 785.4,-72.17 779.08,-68.28 778.04,-73.07"/>
+<text xml:space="preserve" text-anchor="middle" x="711.33" y="-78.31" font-family="Courier,monospace" font-size="10.00">invalidate</text>
+<text xml:space="preserve" text-anchor="middle" x="711.33" y="-66.31" font-family="Courier,monospace" font-size="10.00">/index.html</text>
 </g>
 <!-- deploy&#45;&gt;bucket -->
-<g id="edge11" class="edge">
+<g id="edge10" class="edge">
 <title>deploy&#45;&gt;bucket</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M598.03,-55.41C612.46,-50.71 628.07,-46.44 642.91,-44 683.1,-37.4 727.83,-35.95 766.91,-36.59"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="766.81,-39.03 773.86,-36.73 766.91,-34.13 766.81,-39.03"/>
-<text xml:space="preserve" text-anchor="middle" x="684.92" y="-47" font-family="Courier,monospace" font-size="10.00">s3 sync dist/</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M618.73,-23.42C773.05,-27.19 1163.56,-36.73 1350.99,-41.31"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1350.89,-43.76 1357.95,-41.48 1351.01,-38.86 1350.89,-43.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1011.84" y="-36.85" font-family="Courier,monospace" font-size="10.00">s3 sync dist/</text>
 </g>
 </g>
 </svg>
@@ -253,7 +239,8 @@
   <code>frontend-hosting</code> is a single reusable Terraform module composed by the
   <code>staging/</code> workspace. It owns four pieces of AWS surface: a private S3 bucket that
   holds the compiled SPA, a CloudFront distribution that fronts it, a CloudFront Function that gates
-  access, and the Route 53 records that point the domain at the distribution. The
+  access (and routes SPA deep links), and the Route 53 records that point the domain at the
+  distribution. The
   <a href="ci-cd.html#the-deploy-frontend-workflow">Deploy Frontend workflow</a> is what fills the
   bucket; this module is the standing infrastructure that serves it.
 </p>
@@ -301,19 +288,12 @@
 </aside>
 
 <p>
-  Two custom error responses map both <code>403</code> and <code>404</code> from the origin to
-  <code>/index.html</code> with a <code>200</code> — the SPA fallback that lets client-side routes
-  resolve on a deep link or a hard refresh.
+  The distribution carries <em>no</em> distribution-wide error mapping. SPA deep-link fallback —
+  letting a client-side route resolve on a hard refresh or a shared link — is handled inside the
+  <a href="#the-basic-auth-gate">gate function</a> instead, deliberately scoped there so it can't
+  touch the <a href="#the-same-origin-api-proxy"><code>/api/*</code> proxy</a>'s real API errors
+  (both covered below).
 </p>
-
-<aside class="wiki-rationale">
-  <strong>403 → index.html, not just 404</strong> — a private OAC bucket with
-  <code>GetObject</code>-only (no <code>ListBucket</code>) returns <code>403 Forbidden</code>, not
-  <code>404</code>, for a key that doesn't exist. A missing deep-link path like
-  <code>/campaigns/abc</code> is a non-existent key, so without the 403 mapping every client-side
-  route would surface as Access Denied. The Basic-Auth 401 is emitted by the gate function
-  <em>before</em> the origin is ever consulted, so it is unaffected by these origin-error rules.
-</aside>
 
 <h2 id="the-basic-auth-gate">The Basic-Auth gate</h2>
 
@@ -326,6 +306,43 @@
   the request; every other branch returns a <code>401</code> with a
   <code>WWW-Authenticate: Basic</code> challenge, so the browser shows its native login prompt.
 </p>
+
+<p>
+  The exact-match path does one more thing before it returns the request:
+  <strong>SPA deep-link routing</strong>. A client-side route like <code>/campaigns/abc</code> has
+  no matching object in the bucket, so a hard refresh or a shared deep link would otherwise 404. The
+  function inspects the URI's final path segment — if it has no <code>.</code> it is a client route,
+  not a static asset, so the function rewrites the URI to <code>/index.html</code> and the SPA's own
+  router takes over; a path ending in an extension (<code>/assets/app.js</code>) passes through to
+  S3 untouched. The rewrite happens at the viewer-request stage, before the origin is consulted, so
+  the bucket only ever sees a real asset key or <code>/index.html</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>SPA routing in the gate function, not a distribution-wide error mapping</strong> — the
+  obvious place for SPA fallback is a CloudFront <code>custom_error_response</code> that maps
+  <code>403</code>/<code>404</code> to <code>/index.html</code>, and the module did exactly that at
+  first. But a <code>custom_error_response</code> is <em>distribution-wide</em>: it also caught the
+  <a href="#the-same-origin-api-proxy"><code>/api/*</code> proxy</a>'s real API responses and
+  rewrote them into the SPA shell. The sign-in callback's <code>GET /api/users/me</code>
+  <code>403</code> — the
+  <a href="../auth-billing/onboarding.html">username-required onboarding signal</a> — came back as a
+  <code>200</code> of HTML, the SPA couldn't read it, and the callback threw a generic error.
+  Scoping the rewrite into the gate function fixes that by construction: the
+  <code>/api/*</code> behavior carries no function association, so it never reaches this code and
+  its real <code>403</code>/<code>404</code>s pass through verbatim (MYT-84).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>PROD PRECONDITION — the gate function is also the SPA router</strong> — because deep-link
+  routing now lives inside the Basic-Auth function, it disappears the moment the gate does.
+  Production reuses the module with <code>enable_basic_auth = false</code> (see
+  <a href="#open-the-site-at-launch">Open the site at launch</a>), which <code>count</code>-destroys
+  the function and, with it, SPA routing. Before launch the routing must be re-provisioned as an
+  always-on router function (the same URI rewrite, with no Basic-Auth branch) bound to the default
+  behavior independent of the gate. This is flagged in the module and tracked for the
+  prod-auth-compose follow-up.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A CloudFront Function, not WAF or Lambda@Edge</strong> — a WAF IP-allowlist ties access to
@@ -407,7 +424,10 @@
   public-route allowlist) and is already reachable at <code>staging-api.mythrun.com</code> on its
   own — this proxy changes where the cookie's origin <em>appears</em>, not whether the API is
   exposed. So it is not an SPA-content bypass: no static asset or pre-launch page is reachable
-  through <code>/api/*</code>.
+  through <code>/api/*</code>. The same gate-skip is also what keeps the
+  <a href="#the-basic-auth-gate">function's SPA-routing rewrite</a> off the proxy: because
+  <code>/api/*</code> never reaches the function, its real API <code>403</code>/<code>404</code>s
+  are never rewritten into the SPA shell.
 </aside>
 
 <h2 id="route-53-and-environment-parameterization">Route 53 and environment parameterization</h2>
@@ -485,6 +505,13 @@
 
 <h3 id="open-the-site-at-launch">Open the site at launch</h3>
 <ol>
+  <li>
+    <strong>Precondition — re-provision SPA routing first.</strong> Deep-link routing lives in the
+    gate function, so disabling the gate removes it. Before this step, provision an always-on router
+    function (the same extension-less &rarr; <code>/index.html</code> rewrite, with no Basic-Auth
+    branch) bound to the default behavior, so deep links keep resolving once the gate is gone.
+    Tracked for the prod-auth-compose follow-up.
+  </li>
   <li>
     Set <code>enable_basic_auth = false</code> on the module block and <code>terraform apply</code>.
     This destroys the Function, the KeyValueStore, and the viewer-request association; the

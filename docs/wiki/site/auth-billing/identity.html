@@ -618,8 +618,12 @@
     <strong><code>POST /api/auth/refresh</code></strong> — reads the cookie, runs the refresh-token
     grant, and re-sets the <em>rotated</em> token (rotation is on, so the prior one is retired —
     after the <a href="#the-app-client-and-pkce">60-second grace</a> that lets a reload-race
-    resolve). No cookie, or a rejected grant, clears the cookie and answers 401 — the SPA falls back
-    to sign-in.
+    resolve). No cookie, or a rejected grant, clears the cookie and answers <code>200</code> with a
+    <strong>null token</strong> (<code>{ accessToken: null, expiresIn: null }</code>) —
+    <em>not</em> a <code>401</code>. The SPA's
+    <a href="../frontend/app-shell.html#the-token-in-memory">token manager</a> reads a null token as
+    "no session" and falls back to sign-in; a rejected grant still logs
+    <code>auth.refresh_failed</code> server-side for monitoring.
   </li>
   <li>
     <strong><code>POST /api/auth/logout</code></strong> — best-effort revoke at Cognito, then clear
@@ -627,6 +631,24 @@
     valid until its ≤1h expiry regardless; clearing the cookie is the part that must always happen.
   </li>
 </ul>
+
+<aside class="wiki-rationale">
+  <strong
+    >Why <code>/refresh</code> answers <code>200</code> for "no session," not
+    <code>401</code></strong
+  >
+  — the <a href="../frontend/app-shell.html">SPA</a> probes <code>/refresh</code> once on every page
+  load to restore a session, before it knows whether the player is even signed in. On the sign-in
+  screen there is no cookie, so the honest answer is just "no session" — but a
+  <code>401</code> makes the browser log a red console error for that non-error condition, on the
+  one screen a logged-out visitor is meant to see. So <code>/refresh</code> follows the canonical
+  BFF pattern (Duende's <code>/bff/user</code> returns <code>200</code> for an anonymous probe
+  rather than a <code>401</code>) and answers <code>200</code> with a null token; the client treats
+  the null as unauthenticated. This is the on-load probe contract only — the rotated-token re-set
+  and the <a href="#the-app-client-and-pkce">60-second grace</a> are unchanged, a forged
+  <code>Origin</code> still hard-fails <code>403</code> (the guard below runs first), and the per-IP
+  rate limit still answers <code>429</code>.
+</aside>
 
 <p>
   The refresh cookie (<code>backend/src/auth/refresh-cookie.ts</code>) is named

@@ -3,12 +3,13 @@ digraph frontend_hosting {
   // which aliases (A + AAAA) to a CloudFront distribution. The DEFAULT behavior
   // runs a viewer-request Basic-Auth function BEFORE the cache — it reads the
   // expected header from a KeyValueStore and fails closed to 401. On a match the
-  // request flows through the cache to a PRIVATE S3 bucket over Origin Access
-  // Control (SigV4). A 403/404 from the bucket maps to /index.html for SPA deep
-  // links. The /api/* behavior is the same-origin API proxy (MYT-84): it skips
-  // the gate (the API self-auths) and forwards to the API origin with Host
-  // rewritten, so the BFF refresh cookie is first-party. The Deploy Frontend
-  // workflow syncs the built dist/ into the bucket and invalidates index.html.
+  // function ALSO rewrites extension-less paths to /index.html so SPA deep links
+  // resolve, then the request flows through the cache to a PRIVATE S3 bucket over
+  // Origin Access Control (SigV4). The /api/* behavior is the same-origin API
+  // proxy (MYT-84): it skips the gate (the API self-auths) — so its real API
+  // 403/404s are never rewritten into the SPA shell — and forwards to the API
+  // origin with Host rewritten, so the BFF refresh cookie is first-party. The
+  // Deploy Frontend workflow syncs the built dist/ in and invalidates index.html.
   rankdir=LR;
   compound=true;
 
@@ -22,10 +23,9 @@ digraph frontend_hosting {
     color="ember";
     fontcolor="ember";
 
-    gate  [label="default behavior\nviewer-request fn\nBasic-Auth gate\nfail-closed → 401", color="ember", fontcolor="ember"];
+    gate  [label="default behavior\nviewer-request fn\nBasic-Auth gate (→ 401)\n+ SPA route rewrite\next-less → /index.html", color="ember", fontcolor="ember"];
     kvs   [label="KeyValueStore\nstaging-basic-auth\n(set out-of-band)"];
     cache [label="CachingOptimized\n(Authorization not\nin cache key)"];
-    err   [label="403 & 404\n→ /index.html (200)\nSPA fallback"];
     apibehav [label="/api/* behavior\nCachingDisabled\nAllViewerExceptHost\nNO gate fn"];
   }
 
@@ -49,7 +49,6 @@ digraph frontend_hosting {
   gate   -> cache  [label="match → pass"];
   cache  -> oac;
   oac    -> bucket [label="GetObject\nSigV4"];
-  bucket -> err    [label="403 / 404"];
   apibehav -> api  [label="proxy\nHost rewritten"];
   deploy -> bucket [label="s3 sync dist/"];
   deploy -> cache  [label="invalidate\n/index.html", style=dashed];

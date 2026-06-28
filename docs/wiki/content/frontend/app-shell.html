@@ -18,7 +18,7 @@
 <!-- source: frontend/src/routes/callback.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:eb03e2ac01ec9f94114d3473168119d2a676c270fc943bbac086a850e8c0ee57 -->
+<!-- source-hash: sha256:9cb4393acb54a9213f890ab38b3c8a416c442e5f6749a248a14461f48895ae0f -->
 <!-- source-hash: sha256:auto -->
 <!-- last-ticket: MYT-84 -->
 
@@ -350,6 +350,11 @@
   <code>403 account_suspended</code> → <code>suspended</code>, anything else →
   <code>unauthenticated</code>. <code>bootstrapSession</code> is the boot path: it runs the on-load
   refresh, then <code>applyMe</code> on success or <code>unauthenticated</code> on failure. The
+  on-load probe is the reason
+  <a href="../auth-billing/identity.html#the-bff-token-exchange"><code>/api/auth/refresh</code></a>
+  answers <code>200</code> with a null token (not a <code>401</code>) when there is no session: the
+  token manager reads that null as "no session" and the boot settles to
+  <code>unauthenticated</code> without logging a console error on the sign-in screen. The
   <code>sub</code> the store records is read structurally from the access token's
   <code>sub</code> claim (<code>jwt-claims.ts</code> — a mechanical base64url decode, no
   verification; the backend is the verifier).
