@@ -104,6 +104,13 @@ resource "aws_cloudfront_distribution" "site" {
       https_port             = 443
       origin_protocol_policy = "https-only"
       origin_ssl_protocols   = ["TLSv1.2"]
+
+      # 60s (default 30s) so an actively-streaming /ws/* upgrade isn't cut at 30s.
+      # origin_read_timeout is the load-bearing one; the keepalive bump is harmless.
+      # SHARED with /api/*: every REST call's origin-response timeout goes 30s→60s
+      # (a hung backend now surfaces a 504 after 60s, not 30s — benign for the fast API).
+      origin_read_timeout      = 60
+      origin_keepalive_timeout = 60
     }
   }
 
@@ -117,8 +124,14 @@ resource "aws_cloudfront_distribution" "site" {
 
     # MODULE INVARIANT: if ordered cache behaviors are ever added, each must
     # carry the same viewer-request association, or it is a gate bypass path —
-    # EXCEPT the /api/* behavior below, a DELIBERATE exemption (the API self-auths
-    # and carries a Bearer / refresh cookie, not the Basic gate header; see there).
+    # EXCEPT two DELIBERATE exemptions below:
+    #   1. /api/* — the API self-auths and carries a Bearer / refresh cookie, not
+    #      the Basic gate header (see there).
+    #   2. /ws/* — the single-use ws-ticket self-authenticates the upgrade pre-handshake
+    #      via wsSessionAuth, not the Basic gate header (see there). PRECONDITION: this
+    #      exemption is safe ONLY while /ws/* on the API serves exclusively the
+    #      ticket-gated upgrade — a future unauthenticated /ws/* route would inherit
+    #      the bypass and must re-add the gate (or carry its own auth).
     dynamic "function_association" {
       for_each = var.enable_basic_auth ? [1] : []
       content {
@@ -147,6 +160,29 @@ resource "aws_cloudfront_distribution" "site" {
     # gate function can't apply. The API self-authenticates (JWT + the public-route
     # allowlist) and is already reachable at var.api_origin_domain — this proxy changes
     # the cookie's ORIGIN, not the API's exposure. So it is NOT an SPA-content bypass.
+  }
+
+  # WebSocket upgrade proxy (MYT-85 realtime transport). The SPA opens
+  # wss://staging.mythrun.com/ws/session/:id?ticket — CloudFront forwards the upgrade
+  # to the API origin. Mirrors /api/* (caching disabled, all viewer headers + query
+  # forwarded except Host) but GET/HEAD only (the upgrade is a GET) and compress=false
+  # (no gzip on a streaming connection). The 60s origin_read_timeout on the `api` origin
+  # above keeps an actively-streaming socket alive past the 30s default.
+  ordered_cache_behavior {
+    path_pattern             = "/ws/*"
+    target_origin_id         = "api"
+    viewer_protocol_policy   = "redirect-to-https"
+    allowed_methods          = ["GET", "HEAD"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = false
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+
+    # DELIBERATE gate exemption (see the default_cache_behavior invariant): /ws/* carries
+    # a single-use ws-ticket that self-authenticates the upgrade pre-handshake via
+    # wsSessionAuth, NOT the Basic gate header, so the gate function can't apply.
+    # PRECONDITION: safe ONLY while /ws/* serves exclusively the ticket-gated upgrade —
+    # a future unauthenticated /ws/* route would inherit this bypass.
   }
 
   # SPA deep-link routing is handled by the gate CloudFront Function
