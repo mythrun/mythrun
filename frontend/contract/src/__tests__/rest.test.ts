@@ -9,6 +9,7 @@ import {
   SessionRequestSchema,
   SessionResponseSchema,
   RefreshResponseSchema,
+  WsTicketResponseSchema,
   USERNAME_REGEX,
 } from '../rest/index.js'
 
@@ -229,5 +230,14 @@ describe('SessionRequestSchema / SessionResponseSchema / RefreshResponseSchema',
     // A token without an expiry (or an expiry without a token) is not a valid variant.
     expect(() => RefreshResponseSchema.parse({ accessToken: 't', expiresIn: null })).toThrow()
     expect(() => RefreshResponseSchema.parse({ accessToken: null, expiresIn: 60 })).toThrow()
+  })
+})
+
+describe('WsTicketResponseSchema', () => {
+  it('parses a non-empty ticket', () => {
+    expect(WsTicketResponseSchema.parse({ ticket: 'abc' }).ticket).toBe('abc')
+  })
+  it('rejects an empty ticket', () => {
+    expect(() => WsTicketResponseSchema.parse({ ticket: '' })).toThrow()
   })
 })
