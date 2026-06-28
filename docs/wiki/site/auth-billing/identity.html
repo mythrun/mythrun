@@ -631,37 +631,44 @@
 <p>
   The refresh cookie (<code>backend/src/auth/refresh-cookie.ts</code>) is named
   <code>mythrun_refresh</code> and carries <code>HttpOnly</code> + <code>Secure</code> +
-  <code>SameSite=None</code>, a <code>Path=/api/auth</code> scope, and a 30-day max-age. It is
+  <code>SameSite=Lax</code>, a <code>Path=/api/auth</code> scope, and a 30-day max-age. It is
   <strong>host-only</strong> — no <code>Domain</code> attribute — so it never broadens to sibling
   subdomains, and it rides only the <code>/api/auth/*</code> fetches, which the SPA makes with
-  <code>credentials: 'include'</code> against the single
-  <a href="../runtime/index.html#cross-origin-cors">CORS-allowed origin</a>.
-  <code>clearCookie</code>
+  <code>credentials: 'include'</code> against its <em>own</em> origin: the API is reached through
+  the
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    >same-origin CloudFront <code>/api/*</code> proxy</a
+  >, so a <code>Set-Cookie</code> on a refresh response is first-party. <code>clearCookie</code>
   mirrors the same attributes so the browser clears the same cookie it set.
 </p>
 
 <aside class="wiki-rationale">
-  <strong><code>SameSite=None</code>, not <code>Lax</code> — the split-origin requirement</strong> —
-  the SPA (<code>staging.mythrun.com</code>) and the API (<code>staging-api.mythrun.com</code>) are
-  separate origins. Safari refuses to <em>store</em> a <code>SameSite=Lax</code> cookie that comes
-  back on a cross-origin fetch — even when both hosts share the <code>mythrun.com</code> registrable
-  domain — so the cookie silently never persisted and every reload bounced the user to sign-in: the
-  on-load <code>/refresh</code> reached the BFF with no cookie and 401'd. <code>None</code> plus the
-  already-present <code>Secure</code> is the one attribute pair a browser will both store and send
-  across split origins. The catch is that <code>None</code> also makes the cookie
-  <em>cross-site-sendable</em>, which re-opens the CSRF surface that <code>Lax</code> had closed for
-  free — so the cookie-authed routes earn an explicit Origin check, below.
+  <strong
+    ><code>SameSite=Lax</code> under a same-origin proxy, not <code>SameSite=None</code></strong
+  >
+  — because CloudFront proxies <code>staging.mythrun.com/api/*</code> straight to the API, the SPA
+  and its backend present as <em>one</em> origin, and the refresh cookie is set first-party. That
+  lets it be <code>Lax</code> — the stricter choice, never sent on a cross-site request. The earlier
+  attempt served the API split-origin (SPA at <code>staging.mythrun.com</code>, API at
+  <code>staging-api.mythrun.com</code>) and reached for <code>SameSite=None</code> to bridge the two
+  origins — and still failed: Safari's ITP refuses to <em>store</em> a cookie set via a cross-origin
+  fetch at all, even when both hosts share the <code>mythrun.com</code> registrable domain. So the
+  cookie silently never persisted and every reload bounced the user to sign-in (the on-load
+  <code>/refresh</code> reached the BFF with no cookie and 401'd). Collapsing to one origin removes
+  the cross-origin <code>Set-Cookie</code> entirely; <code>Lax</code> is then both correct and the
+  tighter default (MYT-84).
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>The Origin-CSRF guard, plus <code>/session</code>'s JSON-only gate</strong> — every
-  browser sends an <code>Origin</code> header on a cross-origin POST, so all three routes reject a
-  present-but-mismatched <code>Origin</code> (anything other than <code>FRONTEND_BASE_URL</code>)
-  with <code>403 forbidden_origin</code>. That is the defense that replaces what
-  <code>SameSite=Lax</code> used to give for free, now that <code>None</code> lets the cookie ride
-  cross-site requests. An absent <code>Origin</code> is allowed — that's a non-browser caller, which
-  can't hold a victim's <code>httpOnly</code> cookie anyway. On top of the Origin check,
-  <code>/session</code> stays JSON-only with no form-body parser: it rejects anything but
+  <strong>The Origin-CSRF guard, plus <code>/session</code>'s JSON-only gate</strong> — with the
+  cookie back to <code>SameSite=Lax</code> the browser already withholds it from cross-site
+  requests, so CSRF is largely closed for free. The Origin check stays as
+  <strong>defense-in-depth</strong>: every browser sends an <code>Origin</code> header on a
+  state-changing POST, so all three routes reject a present-but-mismatched
+  <code>Origin</code> (anything other than <code>FRONTEND_BASE_URL</code>) with
+  <code>403 forbidden_origin</code>. An absent <code>Origin</code> is allowed — that's a non-browser
+  caller, which can't hold a victim's <code>httpOnly</code> cookie anyway. On top of the Origin
+  check, <code>/session</code> stays JSON-only with no form-body parser: it rejects anything but
   <code>application/json</code> with a 415, and a browser can auto-submit a cross-site
   <em>form</em> POST without a preflight but cannot send <code>application/json</code> cross-origin
   without tripping CORS first — so an attacker can't silently plant a session cookie from another

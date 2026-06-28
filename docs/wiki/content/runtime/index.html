@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:1d24f9d3a25ed3c05ba48de48ff9ecfbc76e138772f7551ce9af8d7645e79ba7 -->
+<!-- source-hash: sha256:7d41837a7b557e93d99f5d05740eb6a77d96347a2b05b95bf246a97e9a078e83 -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>Backend</h1>
@@ -158,13 +158,17 @@
   security-review touchpoint into the diff.
 </aside>
 
-<h2 id="cross-origin-cors">Cross-origin CORS for the SPA</h2>
+<h2 id="cross-origin-cors">CORS for the SPA</h2>
 
 <p>
-  The <a href="../frontend/app-shell.html">frontend SPA</a> is a <em>separate origin</em> from this
-  API — <code>app.mythrun.com</code> calling <code>api.mythrun.com</code> in production,
-  <code>localhost:5173</code> calling <code>localhost:3030</code> in dev — so the browser preflights
-  the SPA's non-simple requests and the API must echo an explicit
+  In the deployed build the <a href="../frontend/app-shell.html">frontend SPA</a> and this API share
+  <em>one</em> origin: CloudFront proxies
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    ><code>staging.mythrun.com/api/*</code></a
+  >
+  to the API, so the browser's requests are same-origin and never preflight. Local dev is the
+  cross-origin case — <code>localhost:5173</code> calling <code>localhost:3030</code> — where the
+  browser preflights the SPA's non-simple requests and the API must echo an explicit
   <code>Access-Control-Allow-Origin</code>. <code>@fastify/cors</code> registers with a single
   allowed origin: <code>config.env.frontendBaseUrl</code>, the same already-validated,
   host-allowlisted frontend origin <code>loadEnv</code> produces. Reusing it keeps one source of
@@ -174,21 +178,23 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Real CORS, not a dev proxy</strong> — the production topology is a genuinely separate API
-  host, so the cross-origin handshake is real and the plugin is mandatory. The
-  <a href="./dev-tool.html">internal dev tool</a> keeps its Vite same-origin proxy (it is not the
-  production website and is not in this allowlist); that proxy pattern stays confined to it. Most
-  auth rides the <code>Authorization</code> / <code>x-mythrun-dev-sub</code> <em>headers</em>, but
-  MYT-84's cookie-based refresh landed, so <code>credentials: true</code> — the browser sends the
-  httpOnly
+  <strong>Same-origin in the deployed build, cross-origin only in dev</strong> — MYT-84 moved the
+  deployed SPA behind a same-origin CloudFront <code>/api/*</code> proxy precisely so the BFF's
+  refresh cookie is first-party (Safari refuses to store a cross-origin <code>Set-Cookie</code>). On
+  that path the browser never enforces CORS, so the plugin is effectively defense-in-depth. It stays
+  mandatory for local dev, where <code>localhost:5173</code> → <code>localhost:3030</code> is a
+  genuine cross-origin handshake; the <a href="./dev-tool.html">internal dev tool</a> keeps its Vite
+  same-origin proxy (not the production website, not in this allowlist).
+  <code>credentials: true</code>
+  carries the httpOnly
   <a href="../auth-billing/identity.html#the-bff-token-exchange"
     ><code>mythrun_refresh</code> cookie</a
   >
-  on the credentialed <code>/api/auth/*</code> fetches. The origin stays the single explicit
-  <code>frontendBaseUrl</code> (a wildcard origin is incompatible with credentials). And it
-  registers <em>ahead of</em> <code>registerAuth</code> so the CORS <code>onRequest</code> hook runs
-  first: an un-credentialed preflight <code>OPTIONS</code> short-circuits with a 204 before the auth
-  hook would reject it.
+  on the <code>/api/auth/*</code> fetches, the origin stays the single explicit
+  <code>frontendBaseUrl</code> (a wildcard origin is incompatible with credentials), and CORS
+  registers <em>ahead of</em> <code>registerAuth</code> so the <code>onRequest</code> hook runs
+  first — an un-credentialed preflight <code>OPTIONS</code> short-circuits with a 204 before the
+  auth hook would reject it.
 </aside>
 
 <p>

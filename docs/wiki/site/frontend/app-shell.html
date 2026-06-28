@@ -437,8 +437,8 @@
   <code>endpoint → session → endpoint</code>. Injection keeps the import graph acyclic. The auth
   endpoints themselves carry <code>skipAuthRetry</code> so a failing refresh cannot recurse through
   the refresh call, and <code>credentials:'include'</code> is threaded into those cookie-bearing
-  fetches so the browser actually sends and receives the <code>mythrun_refresh</code> cookie
-  cross-origin.
+  fetches so the browser actually sends and receives the <code>mythrun_refresh</code> cookie on the
+  same-origin <code>/api/auth/*</code> calls.
 </aside>
 
 <h2 id="oauth-flow">Acquiring identity — the OAuth sign-in flow</h2>
@@ -622,18 +622,38 @@
   The <strong>provider stack</strong> is the web shell's one composition root: the
   <code>ThemeProvider</code>, a single <code>QueryClient</code>, the resolved
   <code>ApiContext</code> (base URL + the injected <code>getAuthHeaders</code>), and the i18n
-  runtime, in that nesting order. It also stands up the auth seams at boot:
-  <code>configureTokenRefresh</code> binds the token manager's single-flight refresh to the real
-  <code>POST /api/auth/refresh</code> call, and (jwt mode) <code>main.tsx</code> calls
-  <code>configureOAuth</code> with the web state-store impl + the Cognito config and kicks off
-  <code>bootstrapSession</code> on load — so the store starts <code>initializing</code> and the
-  splash covers the gap until the refresh settles it. It is config-driven —
-  <code>main.tsx</code> builds the concrete config from the environment and the web platform impls
-  once at module scope and passes it in — so the shell is testable with fakes and an explicit auth
-  mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
+  runtime, in that nesting order. An effect inside it re-binds the token manager's refresh transport
+  to the resolved <code>ApiContext</code> whenever that context changes — the steady-state 401-retry
+  path reaches <code>configureTokenRefresh</code> through here.
+</p>
+
+<p>
+  The on-load boot, though, runs <em>before</em> any of that renders — at module scope in
+  <code>main.tsx</code>, in a fixed order. In jwt mode it calls <code>configureOAuth</code> (web
+  state-store impl + Cognito config), then <code>configureTokenRefresh</code> to bind the refresh
+  transport, and only then kicks off <code>bootstrapSession</code> — so the store starts
+  <code>initializing</code> and the splash covers the gap until the refresh settles it. It is
+  config-driven — <code>main.tsx</code> builds the concrete config from the environment and the web
+  platform impls once at module scope and passes it in — so the shell is testable with fakes and an
+  explicit auth mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
   <code>ready</code> once, so the dev app lands on the authed side of the gate against the
   always-authenticated bypass backend.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The refresh transport is wired at module scope, before <code>bootstrapSession</code></strong
+  >
+  — the on-load refresh is the token manager's single-flight call, and that call is a silent no-op
+  until its transport is injected: with no <code>refreshFn</code> set,
+  <code>performRefresh</code> returns <code>false</code> <em>without</em> ever hitting
+  <code>/api/auth/refresh</code>. The transport used to be wired only in the provider effect above,
+  which runs <em>after</em> the module-scope <code>bootstrapSession</code> — so on every reload the
+  boot refresh fired against a null transport, silently failed, and bounced the user to sign-in,
+  with no <code>/refresh</code> ever reaching the server. Wiring it in <code>main.tsx</code> ahead
+  of the bootstrap is what makes a reload actually re-hydrate the session; the provider effect still
+  re-binds it for the in-app lifecycle (MYT-84).
+</aside>
 
 <h2 id="gating-the-screens-at-phone-width">Gating the screens at phone width</h2>
 
@@ -665,16 +685,21 @@
   caught it.
 </aside>
 
-<h2 id="talking-to-the-api-cross-origin">Talking to the API cross-origin</h2>
+<h2 id="talking-to-the-api">Talking to the API</h2>
 
 <p>
-  The SPA and the API are separate origins — <code>app.mythrun.com</code> calling
-  <code>api.mythrun.com</code> in prod, <code>localhost:5173</code> calling
-  <code>localhost:3030</code> in dev — so the data layer's <code>fetch</code> calls are cross-origin
-  and the browser preflights them. The backend answers with a real
-  <a href="../runtime/index.html#cross-origin-cors">CORS plugin</a> whose single allowed origin is
-  the already-validated frontend origin; that is a backend concern and the topology (and why the dev
-  proxy pattern stays confined to the internal dev tool) lives on the
+  In the deployed build the SPA and the API share <em>one</em> origin: the data layer fetches
+  <code>staging.mythrun.com/api/*</code> — the SPA's own host — and the
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    >CloudFront <code>/api/*</code> proxy</a
+  >
+  forwards those to the API. Same-origin is what lets the BFF's refresh cookie be first-party
+  (Safari refuses to store a cross-origin <code>Set-Cookie</code>). Local dev is the one
+  cross-origin case — <code>localhost:5173</code> calling <code>localhost:3030</code>, which the
+  browser preflights — and the backend's
+  <a href="../runtime/index.html#cross-origin-cors">CORS plugin</a> (single allowed origin = the
+  already-validated frontend origin) stays as defense-in-depth either way. That topology, and why
+  the dev proxy pattern stays confined to the internal dev tool, lives on the
   <a href="../runtime/index.html#cross-origin-cors">Backend</a> page.
 </p>
 
@@ -915,7 +940,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — four states</a></li><li style="padding-left:0"><a href="#the-token-in-memory">The access token, in memory</a></li><li style="padding-left:0"><a href="#oauth-flow">Acquiring identity — the OAuth sign-in flow</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#gating-the-screens-at-phone-width">Gating the screens at phone width</a></li><li style="padding-left:0"><a href="#talking-to-the-api-cross-origin">Talking to the API cross-origin</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:12px"><a href="#add-a-player-facing-screen">Add a player-facing screen</a></li><li style="padding-left:12px"><a href="#trace-a-sign-in-end-to-end">Trace a sign-in end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — four states</a></li><li style="padding-left:0"><a href="#the-token-in-memory">The access token, in memory</a></li><li style="padding-left:0"><a href="#oauth-flow">Acquiring identity — the OAuth sign-in flow</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#gating-the-screens-at-phone-width">Gating the screens at phone width</a></li><li style="padding-left:0"><a href="#talking-to-the-api">Talking to the API</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:12px"><a href="#add-a-player-facing-screen">Add a player-facing screen</a></li><li style="padding-left:12px"><a href="#trace-a-sign-in-end-to-end">Trace a sign-in end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -445,13 +445,17 @@
   security-review touchpoint into the diff.
 </aside>
 
-<h2 id="cross-origin-cors">Cross-origin CORS for the SPA</h2>
+<h2 id="cross-origin-cors">CORS for the SPA</h2>
 
 <p>
-  The <a href="../frontend/app-shell.html">frontend SPA</a> is a <em>separate origin</em> from this
-  API — <code>app.mythrun.com</code> calling <code>api.mythrun.com</code> in production,
-  <code>localhost:5173</code> calling <code>localhost:3030</code> in dev — so the browser preflights
-  the SPA's non-simple requests and the API must echo an explicit
+  In the deployed build the <a href="../frontend/app-shell.html">frontend SPA</a> and this API share
+  <em>one</em> origin: CloudFront proxies
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    ><code>staging.mythrun.com/api/*</code></a
+  >
+  to the API, so the browser's requests are same-origin and never preflight. Local dev is the
+  cross-origin case — <code>localhost:5173</code> calling <code>localhost:3030</code> — where the
+  browser preflights the SPA's non-simple requests and the API must echo an explicit
   <code>Access-Control-Allow-Origin</code>. <code>@fastify/cors</code> registers with a single
   allowed origin: <code>config.env.frontendBaseUrl</code>, the same already-validated,
   host-allowlisted frontend origin <code>loadEnv</code> produces. Reusing it keeps one source of
@@ -461,21 +465,23 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Real CORS, not a dev proxy</strong> — the production topology is a genuinely separate API
-  host, so the cross-origin handshake is real and the plugin is mandatory. The
-  <a href="./dev-tool.html">internal dev tool</a> keeps its Vite same-origin proxy (it is not the
-  production website and is not in this allowlist); that proxy pattern stays confined to it. Most
-  auth rides the <code>Authorization</code> / <code>x-mythrun-dev-sub</code> <em>headers</em>, but
-  MYT-84's cookie-based refresh landed, so <code>credentials: true</code> — the browser sends the
-  httpOnly
+  <strong>Same-origin in the deployed build, cross-origin only in dev</strong> — MYT-84 moved the
+  deployed SPA behind a same-origin CloudFront <code>/api/*</code> proxy precisely so the BFF's
+  refresh cookie is first-party (Safari refuses to store a cross-origin <code>Set-Cookie</code>). On
+  that path the browser never enforces CORS, so the plugin is effectively defense-in-depth. It stays
+  mandatory for local dev, where <code>localhost:5173</code> → <code>localhost:3030</code> is a
+  genuine cross-origin handshake; the <a href="./dev-tool.html">internal dev tool</a> keeps its Vite
+  same-origin proxy (not the production website, not in this allowlist).
+  <code>credentials: true</code>
+  carries the httpOnly
   <a href="../auth-billing/identity.html#the-bff-token-exchange"
     ><code>mythrun_refresh</code> cookie</a
   >
-  on the credentialed <code>/api/auth/*</code> fetches. The origin stays the single explicit
-  <code>frontendBaseUrl</code> (a wildcard origin is incompatible with credentials). And it
-  registers <em>ahead of</em> <code>registerAuth</code> so the CORS <code>onRequest</code> hook runs
-  first: an un-credentialed preflight <code>OPTIONS</code> short-circuits with a 204 before the auth
-  hook would reject it.
+  on the <code>/api/auth/*</code> fetches, the origin stays the single explicit
+  <code>frontendBaseUrl</code> (a wildcard origin is incompatible with credentials), and CORS
+  registers <em>ahead of</em> <code>registerAuth</code> so the <code>onRequest</code> hook runs
+  first — an un-credentialed preflight <code>OPTIONS</code> short-circuits with a 204 before the
+  auth hook would reject it.
 </aside>
 
 <p>
@@ -1504,7 +1510,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</a></li><li style="padding-left:0"><a href="#cross-origin-cors">Cross-origin CORS for the SPA</a></li><li style="padding-left:0"><a href="#two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</a></li><li style="padding-left:0"><a href="#the-boot-gate-on-in-staging">The boot gate, on in staging</a></li><li style="padding-left:0"><a href="#the-pg-pool-and-its-sslmode-trick">The pg pool and its sslmode trick</a></li><li style="padding-left:0"><a href="#the-redis-client-and-its-retry-policy">The redis client and its retry policy</a></li><li style="padding-left:0"><a href="#the-worker-entrypoint">The worker entrypoint</a></li><li style="padding-left:0"><a href="#the-env-loader-accepts-two-shapes">The env loader accepts two shapes</a></li><li style="padding-left:0"><a href="#the-local-dev-loop">The local dev loop</a></li><li style="padding-left:0"><a href="#typescript-lint-and-the-container-image">TypeScript, lint, and the container image</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#reset-the-local-data-stack">Reset the local data stack</a></li><li style="padding-left:12px"><a href="#remap-local-ports">Remap local ports when something on the host conflicts</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-boot-gate">Diagnose a failed boot gate</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#local-docker-compose-stack">Local docker-compose stack</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-app-factory-and-the-dependency-injection-shape">The app factory and the dependency-injection shape</a></li><li style="padding-left:0"><a href="#cross-origin-cors">CORS for the SPA</a></li><li style="padding-left:0"><a href="#two-health-endpoints-two-different-consumers">Two health endpoints, two different consumers</a></li><li style="padding-left:0"><a href="#the-boot-gate-on-in-staging">The boot gate, on in staging</a></li><li style="padding-left:0"><a href="#the-pg-pool-and-its-sslmode-trick">The pg pool and its sslmode trick</a></li><li style="padding-left:0"><a href="#the-redis-client-and-its-retry-policy">The redis client and its retry policy</a></li><li style="padding-left:0"><a href="#the-worker-entrypoint">The worker entrypoint</a></li><li style="padding-left:0"><a href="#the-env-loader-accepts-two-shapes">The env loader accepts two shapes</a></li><li style="padding-left:0"><a href="#the-local-dev-loop">The local dev loop</a></li><li style="padding-left:0"><a href="#typescript-lint-and-the-container-image">TypeScript, lint, and the container image</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-backend-locally">Run the backend locally</a></li><li style="padding-left:12px"><a href="#reset-the-local-data-stack">Reset the local data stack</a></li><li style="padding-left:12px"><a href="#remap-local-ports">Remap local ports when something on the host conflicts</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-boot-gate">Diagnose a failed boot gate</a></li><li style="padding-left:12px"><a href="#run-the-full-verification-suite">Run the full verification suite</a></li><li style="padding-left:12px"><a href="#build-and-run-the-container-image-locally">Build and run the container image locally</a></li><li style="padding-left:12px"><a href="#add-a-new-workspace-package">Add a new workspace package</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#runtime-configuration">Runtime configuration</a></li><li style="padding-left:12px"><a href="#source-tree">Source tree</a></li><li style="padding-left:12px"><a href="#http-surface">HTTP surface</a></li><li style="padding-left:12px"><a href="#local-docker-compose-stack">Local docker-compose stack</a></li><li style="padding-left:12px"><a href="#toolchain-pins">Toolchain pins</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

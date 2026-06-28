@@ -9,7 +9,7 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:1c01dca4f695506499673c6ca5b3e1dda08f0369d3ffadf660c779d14f40306d -->
+<!-- source-hash: sha256:9917d269ab853b8ac7a54f7cad58e2e7097dc4823358d783d5242d2514500b7c -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>CI/CD</h1>
@@ -372,16 +372,20 @@
 </aside>
 
 <p>
-  The build runs with <code>VITE_API_BASE_URL=https://staging-api.mythrun.com</code> — Vite inlines
-  the <code>VITE_</code>-prefixed value at build time, pointing the SPA at the staging API origin
-  (cross-origin, already allowed by CORS). MYT-84 adds two more inlined values,
-  <code>VITE_COGNITO_HOSTED_UI_DOMAIN</code> and <code>VITE_COGNITO_APP_CLIENT_ID</code>, which the
-  SPA needs to build the <a href="../auth-billing/identity.html">Cognito authorize URL</a>. Both are
-  sourced from the staging environment's <code>vars</code> (not <code>secrets</code>): they are
-  public values — a hosted-UI domain and a public PKCE client id with no client secret — so baking
-  them into the bundle leaks nothing. As in <code>deploy.yml</code>, the OIDC role assume comes
-  <em>after</em> <code>pnpm install</code>, so an npm lifecycle script can't exfiltrate the deploy
-  role's credentials.
+  The build runs with <code>VITE_API_BASE_URL=https://staging.mythrun.com</code> — Vite inlines the
+  <code>VITE_</code>-prefixed value at build time, pointing the SPA at its <em>own</em> origin,
+  where the
+  <a href="frontend-hosting.html#the-same-origin-api-proxy">CloudFront <code>/api/*</code> proxy</a>
+  forwards to the API. Same-origin (rather than the API subdomain) is what makes the BFF refresh
+  cookie first-party, since Safari refuses to store a cross-origin <code>Set-Cookie</code> (MYT-84).
+  MYT-84 adds two more inlined values, <code>VITE_COGNITO_HOSTED_UI_DOMAIN</code> and
+  <code>VITE_COGNITO_APP_CLIENT_ID</code>, which the SPA needs to build the
+  <a href="../auth-billing/identity.html">Cognito authorize URL</a>. Both are sourced from the
+  staging environment's <code>vars</code> (not <code>secrets</code>): they are public values — a
+  hosted-UI domain and a public PKCE client id with no client secret — so baking them into the
+  bundle leaks nothing. As in <code>deploy.yml</code>, the OIDC role assume comes <em>after</em>
+  <code>pnpm install</code>, so an npm lifecycle script can't exfiltrate the deploy role's
+  credentials.
 </p>
 
 <p>

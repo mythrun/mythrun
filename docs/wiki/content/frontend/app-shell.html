@@ -18,7 +18,7 @@
 <!-- source: frontend/src/routes/callback.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:c8b31eb0f6fe1106f3da8c0f2c2aa33babfd148efbc598a1c4b68d8eaf268750 -->
+<!-- source-hash: sha256:eb03e2ac01ec9f94114d3473168119d2a676c270fc943bbac086a850e8c0ee57 -->
 <!-- source-hash: sha256:auto -->
 <!-- last-ticket: MYT-84 -->
 
@@ -277,8 +277,8 @@
   <code>endpoint → session → endpoint</code>. Injection keeps the import graph acyclic. The auth
   endpoints themselves carry <code>skipAuthRetry</code> so a failing refresh cannot recurse through
   the refresh call, and <code>credentials:'include'</code> is threaded into those cookie-bearing
-  fetches so the browser actually sends and receives the <code>mythrun_refresh</code> cookie
-  cross-origin.
+  fetches so the browser actually sends and receives the <code>mythrun_refresh</code> cookie on the
+  same-origin <code>/api/auth/*</code> calls.
 </aside>
 
 <h2 id="oauth-flow">Acquiring identity — the OAuth sign-in flow</h2>
@@ -462,18 +462,38 @@
   The <strong>provider stack</strong> is the web shell's one composition root: the
   <code>ThemeProvider</code>, a single <code>QueryClient</code>, the resolved
   <code>ApiContext</code> (base URL + the injected <code>getAuthHeaders</code>), and the i18n
-  runtime, in that nesting order. It also stands up the auth seams at boot:
-  <code>configureTokenRefresh</code> binds the token manager's single-flight refresh to the real
-  <code>POST /api/auth/refresh</code> call, and (jwt mode) <code>main.tsx</code> calls
-  <code>configureOAuth</code> with the web state-store impl + the Cognito config and kicks off
-  <code>bootstrapSession</code> on load — so the store starts <code>initializing</code> and the
-  splash covers the gap until the refresh settles it. It is config-driven —
-  <code>main.tsx</code> builds the concrete config from the environment and the web platform impls
-  once at module scope and passes it in — so the shell is testable with fakes and an explicit auth
-  mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
+  runtime, in that nesting order. An effect inside it re-binds the token manager's refresh transport
+  to the resolved <code>ApiContext</code> whenever that context changes — the steady-state 401-retry
+  path reaches <code>configureTokenRefresh</code> through here.
+</p>
+
+<p>
+  The on-load boot, though, runs <em>before</em> any of that renders — at module scope in
+  <code>main.tsx</code>, in a fixed order. In jwt mode it calls <code>configureOAuth</code> (web
+  state-store impl + Cognito config), then <code>configureTokenRefresh</code> to bind the refresh
+  transport, and only then kicks off <code>bootstrapSession</code> — so the store starts
+  <code>initializing</code> and the splash covers the gap until the refresh settles it. It is
+  config-driven — <code>main.tsx</code> builds the concrete config from the environment and the web
+  platform impls once at module scope and passes it in — so the shell is testable with fakes and an
+  explicit auth mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
   <code>ready</code> once, so the dev app lands on the authed side of the gate against the
   always-authenticated bypass backend.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The refresh transport is wired at module scope, before <code>bootstrapSession</code></strong
+  >
+  — the on-load refresh is the token manager's single-flight call, and that call is a silent no-op
+  until its transport is injected: with no <code>refreshFn</code> set,
+  <code>performRefresh</code> returns <code>false</code> <em>without</em> ever hitting
+  <code>/api/auth/refresh</code>. The transport used to be wired only in the provider effect above,
+  which runs <em>after</em> the module-scope <code>bootstrapSession</code> — so on every reload the
+  boot refresh fired against a null transport, silently failed, and bounced the user to sign-in,
+  with no <code>/refresh</code> ever reaching the server. Wiring it in <code>main.tsx</code> ahead
+  of the bootstrap is what makes a reload actually re-hydrate the session; the provider effect still
+  re-binds it for the in-app lifecycle (MYT-84).
+</aside>
 
 <h2>Gating the screens at phone width</h2>
 
@@ -505,16 +525,21 @@
   caught it.
 </aside>
 
-<h2>Talking to the API cross-origin</h2>
+<h2 id="talking-to-the-api">Talking to the API</h2>
 
 <p>
-  The SPA and the API are separate origins — <code>app.mythrun.com</code> calling
-  <code>api.mythrun.com</code> in prod, <code>localhost:5173</code> calling
-  <code>localhost:3030</code> in dev — so the data layer's <code>fetch</code> calls are cross-origin
-  and the browser preflights them. The backend answers with a real
-  <a href="../runtime/index.html#cross-origin-cors">CORS plugin</a> whose single allowed origin is
-  the already-validated frontend origin; that is a backend concern and the topology (and why the dev
-  proxy pattern stays confined to the internal dev tool) lives on the
+  In the deployed build the SPA and the API share <em>one</em> origin: the data layer fetches
+  <code>staging.mythrun.com/api/*</code> — the SPA's own host — and the
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    >CloudFront <code>/api/*</code> proxy</a
+  >
+  forwards those to the API. Same-origin is what lets the BFF's refresh cookie be first-party
+  (Safari refuses to store a cross-origin <code>Set-Cookie</code>). Local dev is the one
+  cross-origin case — <code>localhost:5173</code> calling <code>localhost:3030</code>, which the
+  browser preflights — and the backend's
+  <a href="../runtime/index.html#cross-origin-cors">CORS plugin</a> (single allowed origin = the
+  already-validated frontend origin) stays as defense-in-depth either way. That topology, and why
+  the dev proxy pattern stays confined to the internal dev tool, lives on the
   <a href="../runtime/index.html#cross-origin-cors">Backend</a> page.
 </p>
 
