@@ -149,23 +149,14 @@ resource "aws_cloudfront_distribution" "site" {
     # the cookie's ORIGIN, not the API's exposure. So it is NOT an SPA-content bypass.
   }
 
-  # SPA fallback. The 403 mapping is load-bearing: a private OAC bucket
-  # (GetObject only, no ListBucket) returns 403 — not 404 — for missing
-  # deep-link keys. The Basic-Auth 401 is emitted by the function BEFORE the
-  # origin, so it is unaffected by these origin-error rules.
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
+  # SPA deep-link routing is handled by the gate CloudFront Function
+  # (functions/basic-auth.js rewrites extension-less paths -> /index.html), NOT a
+  # distribution-level custom_error_response. custom_error_response was removed
+  # because 403/404 mapping is distribution-WIDE and mangled the /api/* proxy's real
+  # API errors (e.g. the callback's /me 403 onboarding signal) into the SPA shell
+  # (MYT-84). PROD PRECONDITION: with enable_basic_auth=false the gate function is
+  # absent, so SPA routing must be re-provisioned (an always-on router function)
+  # before launch — tracked for the prod-auth-compose follow-up.
 
   viewer_certificate {
     acm_certificate_arn      = var.acm_certificate_arn
