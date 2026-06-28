@@ -1,0 +1,64 @@
+digraph frontend_realtime_transport {
+  // The realtime transport CLIENT half (MYT-85): two dumb typed pipes — the
+  // bidirectional WS session client and the unidirectional SSE status client —
+  // built on ONE shared connection primitive (per-instance backoff/ceiling +
+  // single-flight generation token). Production-grade reconnection lives entirely
+  // in the DOM-free brain; the one platform-divergent dependency (a streamed HTTP
+  // read) crosses the StreamingFetch seam to the web impl, because EventSource is
+  // banned by R1. A fresh ws-ticket is minted per (re)connect — the ticket, not a
+  // header, gates the CloudFront /ws/* upgrade. The backend WS server + SSE
+  // producer are other pages (Session transport · Pipeline status); this is the
+  // client + the same-origin proxy it rides.
+  compound=true;
+
+  subgraph cluster_cc {
+    label="@mythrun/client-core  (the brain · DOM-free · R1)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    conn [label="connection primitive\nper-instance state · single-flight generation ·\nbackoff 1→2→4→8→30s · ceiling≈10\n→ reconnecting{n} → failed{exhausted}"];
+    ws [label="WS session client\nmint ticket → wss upgrade ·\nseq dedup + whole-turn replay ·\nclose-routing · send() / __simulateDrop"];
+    sse [label="SSE status client\nfetch-stream framing · snapshot +\nPipelineEvent · non-200 routing ·\nnever auto-closes on a data frame"];
+    ticket [label="mintWsTicket\ndefineEndpoint POST .../ws-ticket\n(inherits the 401 refresh-retry)"];
+    seam [label="StreamingFetch seam\ninjected · configureStreamingFetch"];
+
+    ws -> conn [style="dotted"];
+    sse -> conn [style="dotted"];
+    ws -> ticket [style="dotted"];
+    sse -> seam [style="dotted"];
+  }
+
+  subgraph cluster_web {
+    label="@mythrun/web  (platform/web · web-globals carve-out)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    webimpl [label="createWebStreamingFetch\nfetch + ReadableStream + TextDecoder"];
+    wsglobal [label="WebSocket (web global)"];
+    harness [label="/dev/transport\nDEV-only manual rig (lazy chunk)"];
+  }
+
+  subgraph cluster_edge {
+    label="CloudFront  staging.mythrun.com  (same origin)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    wsbeh [label="/ws/* behavior\nupgrade proxy · GET/HEAD · no cache ·\n60s origin_read_timeout · gate-exempt"];
+    apibeh [label="/api/* behavior\nticket mint · SSE status"];
+  }
+
+  api [label="API origin\nstaging-api.mythrun.com\n(ws-ticket handshake + SessionHub)", color="ember", fontcolor="ember"];
+
+  seam -> webimpl [label="injected impl", style="dotted"];
+  ws -> wsglobal [label="new WebSocket(wss…?ticket)"];
+  wsglobal -> wsbeh [label="101 upgrade"];
+  ticket -> apibeh [label="POST ws-ticket"];
+  webimpl -> apibeh [label="GET (SSE read)"];
+  wsbeh -> api;
+  apibeh -> api;
+  harness -> ws [label="drives by hand", style="dotted"];
+  harness -> sse [style="dotted"];
+}

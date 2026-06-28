@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Realtime transport · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="realtime-transport">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/realtime-transport.html" class="active">Realtime transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Realtime transport</div>
+        <article>
+<h1>Realtime transport</h1>
+
+<p class="lead">
+  The client half of the live wire: a bidirectional WebSocket session client and a unidirectional
+  SSE status client, both <strong>dumb typed pipes</strong> with production-grade reconnection,
+  built on one shared connection primitive in the DOM-free brain. The flows (play, world-gen,
+  session-prep) consume frames and a connection-state surface; the transport carries bytes and
+  reconnects — it never interprets a frame or decides a flow's lifecycle. The matching server halves
+  are the <a href="../runtime/session-transport.html">Session transport</a> and
+  <a href="../runtime/pipeline-status.html">Pipeline status</a> pages; this is what the SPA runs
+  against them.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1612pt" height="461pt"
+ viewBox="14.00 14.00 1598.00 446.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 442.4)">
+<title>frontend_realtime_transport</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-428 1579.66,-428 1579.66,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_cc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-189 8,-416 862.88,-416 862.88,-189 8,-189"/>
+<text xml:space="preserve" text-anchor="middle" x="435.44" y="-402.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;(the brain · DOM&#45;free · R1)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_web</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="502.89,-8 502.89,-189 868.75,-189 868.75,-8 502.89,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="685.82" y="-175.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(platform/web · web&#45;globals carve&#45;out)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_edge</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="972.9,-50 972.9,-189 1292.55,-189 1292.55,-50 972.9,-50"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.72" y="-175.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CloudFront &#160;staging.mythrun.com &#160;(same origin)</text>
+</g>
+<!-- conn -->
+<g id="node1" class="node">
+<title>conn</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="862.88,-333.04 507.75,-333.04 507.75,-262.96 862.88,-262.96 862.88,-333.04"/>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-314.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connection primitive</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-301.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;instance state · single&#45;flight generation ·</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-288.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backoff 1→2→4→8→30s · ceiling≈10</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-274.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ reconnecting{n} → failed{exhausted}</text>
+</g>
+<!-- ws -->
+<g id="node2" class="node">
+<title>ws</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="303.72,-259.04 8,-259.04 8,-188.96 303.72,-188.96 303.72,-259.04"/>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-240.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WS session client</text>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-227.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mint ticket → wss upgrade ·</text>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">seq dedup + whole&#45;turn replay ·</text>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-200.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">close&#45;routing · send() / __simulateDrop</text>
+</g>
+<!-- ws&#45;&gt;conn -->
+<g id="edge1" class="edge">
+<title>ws&#45;&gt;conn</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M304.18,-252.21C310.1,-253.19 315.97,-254.12 321.72,-255 379.09,-263.78 441.8,-271.79 498.69,-278.44"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="498.36,-280.87 505.6,-279.24 498.93,-276 498.36,-280.87"/>
+</g>
+<!-- ticket -->
+<g id="node4" class="node">
+<title>ticket</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="810.07,-245.44 560.56,-245.44 560.56,-188.56 810.07,-188.56 810.07,-245.44"/>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-226.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mintWsTicket</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-213.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">defineEndpoint POST .../ws&#45;ticket</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-200.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(inherits the 401 refresh&#45;retry)</text>
+</g>
+<!-- ws&#45;&gt;ticket -->
+<g id="edge3" class="edge">
+<title>ws&#45;&gt;ticket</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M304.14,-222.05C381.76,-221.02 476.23,-219.76 551.58,-218.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="551.42,-221.21 558.39,-218.67 551.36,-216.31 551.42,-221.21"/>
+</g>
+<!-- wsglobal -->
+<g id="node7" class="node">
+<title>wsglobal</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="773.77,-44 596.86,-44 596.86,-8 773.77,-8 773.77,-44"/>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-22.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WebSocket (web global)</text>
+</g>
+<!-- ws&#45;&gt;wsglobal -->
+<g id="edge6" class="edge">
+<title>ws&#45;&gt;wsglobal</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M193.43,-188.48C224.98,-159.75 273.02,-120.36 321.72,-97 406.09,-56.52 512.05,-39.12 587.59,-31.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="587.64,-34.1 594.38,-30.99 587.18,-29.22 587.64,-34.1"/>
+<text xml:space="preserve" text-anchor="middle" x="405.74" y="-100" font-family="Courier,monospace" font-size="10.00">new WebSocket(wss…?ticket)</text>
+</g>
+<!-- sse -->
+<g id="node3" class="node">
+<title>sse</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="287.22,-347.04 24.5,-347.04 24.5,-276.96 287.22,-276.96 287.22,-347.04"/>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-328.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE status client</text>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-315.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch&#45;stream framing · snapshot +</text>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-302.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PipelineEvent · non&#45;200 routing ·</text>
+<text xml:space="preserve" text-anchor="middle" x="155.86" y="-288.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">never auto&#45;closes on a data frame</text>
+</g>
+<!-- sse&#45;&gt;conn -->
+<g id="edge2" class="edge">
+<title>sse&#45;&gt;conn</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M287.92,-308.52C351.54,-306.83 429.09,-304.77 498.67,-302.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="498.37,-305.39 505.3,-302.75 498.24,-300.49 498.37,-305.39"/>
+</g>
+<!-- seam -->
+<g id="node5" class="node">
+<title>seam</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="816.68,-394.84 553.96,-394.84 553.96,-351.16 816.68,-351.16 816.68,-394.84"/>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-376.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">StreamingFetch seam</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-363.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">injected · configureStreamingFetch</text>
+</g>
+<!-- sse&#45;&gt;seam -->
+<g id="edge4" class="edge">
+<title>sse&#45;&gt;seam</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M287.92,-327.16C366.08,-336.2 465.26,-347.67 544.85,-356.87"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="544.44,-359.29 551.67,-357.66 545,-354.42 544.44,-359.29"/>
+</g>
+<!-- apibeh -->
+<g id="node10" class="node">
+<title>apibeh</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1230.57,-167.84 1033.87,-167.84 1033.87,-124.16 1230.57,-124.16 1230.57,-167.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-149.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/api/* behavior</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ticket mint · SSE status</text>
+</g>
+<!-- ticket&#45;&gt;apibeh -->
+<g id="edge8" class="edge">
+<title>ticket&#45;&gt;apibeh</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M810.54,-197.18C877.96,-186.42 960.44,-173.25 1024.86,-162.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1025.11,-165.41 1031.64,-161.89 1024.34,-160.58 1025.11,-165.41"/>
+<text xml:space="preserve" text-anchor="middle" x="922.89" y="-188.75" font-family="Courier,monospace" font-size="10.00">POST ws&#45;ticket</text>
+</g>
+<!-- webimpl -->
+<g id="node6" class="node">
+<title>webimpl</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="819.98,-167.84 550.66,-167.84 550.66,-124.16 819.98,-124.16 819.98,-167.84"/>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-149.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createWebStreamingFetch</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch + ReadableStream + TextDecoder</text>
+</g>
+<!-- seam&#45;&gt;webimpl -->
+<g id="edge5" class="edge">
+<title>seam&#45;&gt;webimpl</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M553.64,-356.5C466.93,-339.28 375.77,-305.13 413.16,-239 439.23,-192.88 490.43,-169.02 541.46,-156.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="541.92,-159.29 548.21,-155.36 540.84,-154.51 541.92,-159.29"/>
+<text xml:space="preserve" text-anchor="middle" x="405.74" y="-242" font-family="Courier,monospace" font-size="10.00">injected impl</text>
+</g>
+<!-- webimpl&#45;&gt;apibeh -->
+<g id="edge9" class="edge">
+<title>webimpl&#45;&gt;apibeh</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M820.71,-146C886.06,-146 963.51,-146 1024.71,-146"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1024.42,-148.45 1031.42,-146 1024.42,-143.55 1024.42,-148.45"/>
+<text xml:space="preserve" text-anchor="middle" x="922.89" y="-149" font-family="Courier,monospace" font-size="10.00">GET (SSE read)</text>
+</g>
+<!-- wsbeh -->
+<g id="node9" class="node">
+<title>wsbeh</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1280.08,-106.44 984.36,-106.44 984.36,-49.56 1280.08,-49.56 1280.08,-106.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-87.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/ws/* behavior</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-74.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">upgrade proxy · GET/HEAD · no cache ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-61.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">60s origin_read_timeout · gate&#45;exempt</text>
+</g>
+<!-- wsglobal&#45;&gt;wsbeh -->
+<g id="edge7" class="edge">
+<title>wsglobal&#45;&gt;wsbeh</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M774.48,-36.3C831.69,-42.99 907.84,-51.89 975.09,-59.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="974.63,-62.16 981.86,-60.54 975.2,-57.3 974.63,-62.16"/>
+<text xml:space="preserve" text-anchor="middle" x="922.89" y="-61.19" font-family="Courier,monospace" font-size="10.00">101 upgrade</text>
+</g>
+<!-- harness -->
+<g id="node8" class="node">
+<title>harness</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="806.77,-105.84 563.86,-105.84 563.86,-62.16 806.77,-62.16 806.77,-105.84"/>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-87.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/dev/transport</text>
+<text xml:space="preserve" text-anchor="middle" x="685.32" y="-74.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DEV&#45;only manual rig (lazy chunk)</text>
+</g>
+<!-- harness&#45;&gt;ws -->
+<g id="edge12" class="edge">
+<title>harness&#45;&gt;ws</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M563.36,-100.15C492.02,-111.44 400.57,-129.02 321.72,-154 294.72,-162.55 266.07,-173.88 240.35,-184.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="239.59,-182.59 234.14,-187.62 241.54,-187.08 239.59,-182.59"/>
+<text xml:space="preserve" text-anchor="middle" x="405.74" y="-157" font-family="Courier,monospace" font-size="10.00">drives by hand</text>
+</g>
+<!-- harness&#45;&gt;sse -->
+<g id="edge13" class="edge">
+<title>harness&#45;&gt;sse</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M563.17,-85.1C540.97,-90.41 519.58,-99.64 502.89,-115 485.67,-130.85 505.12,-148.35 489.75,-166 436.72,-226.87 381.85,-181.13 321.72,-235 309.28,-246.15 316.7,-257.48 303.72,-268 300.93,-270.26 298.03,-272.41 295.03,-274.45"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="293.99,-272.2 289.4,-278.03 296.62,-276.34 293.99,-272.2"/>
+</g>
+<!-- api -->
+<g id="node11" class="node">
+<title>api</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1575.66,-139.44 1319.55,-139.44 1319.55,-82.56 1575.66,-82.56 1575.66,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1447.6" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API origin</text>
+<text xml:space="preserve" text-anchor="middle" x="1447.6" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging&#45;api.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="1447.6" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(ws&#45;ticket handshake + SessionHub)</text>
+</g>
+<!-- wsbeh&#45;&gt;api -->
+<g id="edge10" class="edge">
+<title>wsbeh&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1280.74,-93.53C1290.68,-94.58 1300.68,-95.63 1310.56,-96.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1310.19,-99.1 1317.41,-97.4 1310.7,-94.23 1310.19,-99.1"/>
+</g>
+<!-- apibeh&#45;&gt;api -->
+<g id="edge11" class="edge">
+<title>apibeh&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1231.09,-135.07C1256.21,-132.26 1283.68,-129.2 1310.36,-126.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1310.5,-128.67 1317.18,-125.45 1309.95,-123.8 1310.5,-128.67"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<aside class="wiki-rationale">
+  <strong>Dumb typed pipe, not a frame interpreter</strong> — the transport's whole job is delivery:
+  carry frames in order, survive a drop, expose "connecting / reconnecting / failed" for the UI. It
+  deliberately holds <em>no</em> flow knowledge — no turn state, no pipeline state, no idea what a
+  <code>session_end</code> or a <code>finalized</code> frame <em>means</em>. That lives in the flow
+  reducers a later ticket builds. Keeping the seam here a pure pipe is what lets three different
+  flows (play, world-gen, session-prep) reuse the same two clients unchanged, and what keeps the
+  reconnection logic testable in isolation from any one flow's semantics.
+</aside>
+
+<h2 id="two-clients-one-connection-primitive">Two clients, one connection primitive</h2>
+
+<p>
+  Both clients are built on <code>connection.ts</code> — the shared backoff/ceiling state machine.
+  The rule it enforces is <strong>shared code, per-instance state</strong>: the machine lives once,
+  but each client factory mints its <em>own</em> store via <code>createConnection()</code>, never a
+  module-level singleton, so a live play session and a world-gen status stream hold independent
+  connection state. It owns three things the WS and SSE clients both lean on: the
+  <code>ConnectionState</code> store (<code>connecting → connected → reconnecting{n} → closed</code
+  >, or <code>failed{denied|exhausted}</code>), the backoff schedule (1s → 2s → 4s → 8s → 30s
+  capped, ±10% jitter), and a monotonic <strong>generation token</strong> for single-flight
+  connects.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The generation token is how a superseded socket self-ignores</strong> — every connect
+  attempt takes <code>nextGeneration()</code> and captures the number. A socket's late
+  <code>onclose</code>/<code>onmessage</code> callback compares its captured token to the current
+  <code>generation()</code> and bails if it has been superseded — by a newer reconnect, or by an
+  explicit <code>close()</code>. Without it, a backoff reopen racing a slow close handler could
+  double-open, or a torn-down client could still route a stale frame. The counter is the one place
+  that race is resolved, so neither client re-implements it.
+</aside>
+
+<p>
+  The attempt counter resets on a successful open, so cumulative drops over a long session never
+  trip the ceiling — only <em>consecutive</em> failures do. At the ceiling (≈10 straight), the next
+  drop yields <code>failed{exhausted}</code>, which is <strong>re-armable</strong>: a flow may call
+  the client's <code>connect()</code>/<code>open()</code> again to start a fresh cycle. The React
+  read seam is <code>useConnectionState(client)</code> — it subscribes a component to the client's
+  store so flows and the harness render "Reconnecting…" without importing
+  <code>zustand</code> directly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The backoff timer lives in the client, not the primitive</strong> — the connection module
+  defines the <em>schedule</em> (<code>nextDelayMs()</code>) and the ceiling decision
+  (<code>recordDrop()</code>), but the actual <code>setTimeout</code> handle is owned by each
+  client. That client MUST clear it before any <code>markClosed()</code>/<code>reset()</code> and in
+  <code>close()</code>, so a pending reopen can never fire into a torn-down client. The primitive
+  documents the contract; the client holds the timer it has to be able to cancel.
+</aside>
+
+<h2 id="the-websocket-session-client-the-bidirectional-play-pipe">The WebSocket session client — the bidirectional play pipe</h2>
+
+<p>
+  <code>createWsSessionClient(ctx)</code> is the play transport. A
+  <code>connect(sessionId)</code> runs a fixed sequence: a pre-flight
+  <code>runRefresh()</code> (refresh the access token before anything), then
+  <code>mintWsTicket</code> — <code>POST /api/sessions/:id/ws-ticket</code> — then
+  <code>new WebSocket(wss://…/ws/session/:id?ticket=…)</code>. The access token never rides in the
+  WS URL; the single-use ticket gates the upgrade instead. Inbound frames are JSON-decoded and
+  dispatched to <code>onFrame</code> subscribers; <code>send(frame)</code> writes a client frame
+  back but returns <code>false</code> (no write, no throw) unless the live socket is
+  <code>OPEN</code>, so a flow can retry an unsent frame rather than lose it silently.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >A ticket in the URL, because a browser WebSocket can't send an
+    <code>Authorization</code> header</strong
+  >
+  — the native <code>WebSocket</code> constructor takes a URL and (optionally) a subprotocol,
+  nothing else; there is no header API. So auth can't ride the upgrade as a Bearer. The SPA mints a
+  short-lived single-use ticket over authenticated REST first (the mint inherits
+  <code>defineEndpoint</code>'s 401 refresh-retry), then passes it as the <code>?ticket</code> query
+  param. The <a href="../runtime/session-transport.html">server handshake</a> consumes it atomically
+  pre-upgrade. A fresh ticket is minted on <em>every</em> (re)connect — tickets are single-use, so a
+  reconnect can't replay the last one.
+</aside>
+
+<p>
+  The reconnection is the production-grade part, and it has two moving pieces beyond the shared
+  primitive: <strong>seq dedup</strong> and <strong>whole-turn replay</strong>. The client tracks a
+  <code>lastSeenSeq</code> high-water mark, advanced per emitted seq-bearing frame in seq order
+  (never batch-set to the max). On a transient drop, the backoff reopen connects with
+  <code>?lastSeq=&lt;high-water&gt;</code>, and the server replies with a
+  <code>session_reconnect</code> replay batch. The client filters that batch — discarding any row at
+  or below the high-water mark (the load-bearing <em>register-before-replay</em> overlap) — and
+  emits the filtered batch. It does <strong>not</strong> interpret the batch further: the whole-turn
+  (<code>turnId</code>) replace over those rows is the flow reducer's job downstream. The transport
+  does the mechanical seq filter and nothing more.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Close-routing is on readable signals only — every socket close is transient</strong> — the
+  client treats <em>every</em> WebSocket close code (1006 abnormal, 1011 any reason) as a transient
+  drop that earns a backoff reconnect, because the readable terminal signals live elsewhere: a
+  <code>session_end</code> <em>data</em> frame self-closes the client to <code>closed</code>, and a
+  ticket-POST <code>403</code>/<code>404</code> (no session / not a member) routes straight to
+  <code>failed{denied}</code>. A 401/429/503 or a network error on the ticket POST is transient, not
+  terminal — a 401 has already exhausted <code>defineEndpoint</code>'s own refresh-retry, and the
+  lossy refresh boolean must not be allowed to strand a recoverable hiccup as a permanent failure.
+  So the only two ways to leave the reconnect loop for good are an explicit denial or a data-frame
+  end — a dropped tunnel always retries.
+</aside>
+
+<p>
+  A DEV-only <code>__simulateDrop()</code> closes the live socket to exercise the reconnect-replay
+  path by hand; its body dead-code-eliminates from the production bundle (Vite inlines
+  <code>import.meta.env.DEV</code>), so it ships nothing to players. It is what the
+  <a href="#operating-this-piece">/dev/transport harness</a> drives.
+</p>
+
+<h2 id="the-sse-status-client-the-unidirectional-status-pipe">The SSE status client — the unidirectional status pipe</h2>
+
+<p>
+  <code>createSseStatusClient(ctx)</code> drives a status UI — world-gen and session-prep both
+  stream their pipeline progress as Server-Sent Events. <code>open(path)</code> starts the cycle;
+  subscribers attach via <code>onEvent</code> (decoded <code>PipelineEvent</code>s) and
+  <code>onSnapshot</code> (the raw first-frame snapshot, which is <em>not</em> a
+  <code>PipelineEvent</code>). All the framing, decoding, and reconnection lives in the brain: it
+  reassembles blank-line-delimited SSE frames across chunk boundaries, strips the
+  leading-space-after-colon, joins multi-line <code>data:</code> fields, and skips comment
+  keepalives. The transport never auto-closes on a data frame — a <code>finalized</code> event is
+  per-entity, not terminal — so the consuming flow calls <code>close()</code> on its own terminal
+  event.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>fetch</code> + a <code>ReadableStream</code>, never <code>EventSource</code></strong
+  >
+  — the native <code>EventSource</code> has the same blind spot as the raw WebSocket: it can't set
+  an <code>Authorization</code> header, so it can't carry the SPA's Bearer. The SSE stream therefore
+  rides an authenticated <code>fetch</code> whose body is read as a stream.
+  <code>EventSource</code> is a banned global in the brain (R1) precisely so this can't be quietly
+  reintroduced. This mirrors the dev tool's own <code>sse-client.ts</code> <code>openSse()</code>,
+  which solved the same problem the same way.
+</aside>
+
+<p>
+  Open-status routing is the only observable signal the client branches on: a <code>403</code>/
+  <code>404</code> is terminal <code>failed{denied}</code> (no session / not a member); any other
+  non-200 (401, 429, 503, or a CloudFront-generated 502/504) is transient and earns a backoff
+  reconnect; and a stream that simply <em>ends</em> — a clean end, an
+  <code>event: close</code> frame, or a mid-read error (the wifi-drop case) — is also transient. The
+  ceiling bounds the retries to <code>failed{exhausted}</code>, re-armable by a fresh
+  <code>open()</code>.
+</p>
+
+<h2 id="the-streamingfetch-seam-the-one-platform-divergent-piece">The StreamingFetch seam — the one platform-divergent piece</h2>
+
+<p>
+  Everything above is platform-neutral and lives in <code>@mythrun/client-core</code>. The single
+  exception is the actual streamed HTTP read, which needs <code>fetch</code> +
+  <code>ReadableStream</code> + a streaming <code>TextDecoder</code>. The brain reaches it through a
+  one-method port, <code>StreamingFetch</code>: given a URL and <code>{ headers, signal }</code>, it
+  resolves <em>once the response head is available</em> (not once the body completes) with
+  <code>{ status, chunks }</code> — the open <code>status</code> so the brain's non-200 routing is
+  observable, and an async-iterable of raw decoded text <code>chunks</code> (the SSE client owns the
+  framing). The web implementation, <code>createWebStreamingFetch</code>, lives under
+  <code>frontend/src/platform/web/</code> — the sanctioned web-globals carve-out — and is
+  <code>ctx</code>-free: the brain computes auth and hands it mode-correct <code>headers</code>; the
+  impl just applies them.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Injected at boot, unconditionally, both auth modes</strong> — the seam is wired with
+  <code>configureStreamingFetch()</code> at module scope in <code>main.tsx</code>, the same
+  injection pattern as <code>configureTokenRefresh</code> — so the brain never imports the web impl
+  and the import graph stays acyclic. Unlike the token-refresh seam (jwt-mode only), this wiring is
+  unconditional: a streamed read is the same shape in dev-bypass and jwt mode, only the headers
+  differ. <code>getStreamingFetch()</code> throws if the boot wiring never ran — a wiring bug should
+  fail loud, not be a runtime condition the brain branches on.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The frames are typed, but not Zod-validated at runtime</strong> — the relocated
+  <a href="./app-shell.html">contract event unions</a> give the client compile-time
+  <code>ServerFrame</code>/<code>PipelineEvent</code> types, but the transport does
+  <em>not</em> parse each frame through a runtime schema (unlike a <code>defineEndpoint</code> REST
+  response, which always does). A dumb typed pipe trusts the wire: the backend validates every
+  outbound frame against the contract before it sends, so a second client-side parse on a hot
+  streaming path would buy little and cost per-frame CPU. The one Zod schema here is
+  <code>WsTicketResponse</code> — a single short REST body on the cold connect path, where the
+  validation is cheap and the contract guarantee is worth it.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="drive-the-realtime-transport-by-hand-dev-transport">Drive the realtime transport by hand (/dev/transport)</h3>
+<ol>
+  <li>
+    Run the SPA in dev (<code>pnpm --filter @mythrun/web dev</code>) and open
+    <code>/dev/transport</code>. The route is registered <code>React.lazy</code> over a DEV-only
+    import, so the harness chunk is excluded from the production bundle entirely — it is not a
+    player-facing screen.
+  </li>
+  <li>
+    In the WebSocket panel, enter an active session id and press <strong>Connect</strong>. Watch the
+    status chip go <code>connecting → connected</code> and a <code>session_ready</code> frame land
+    in the inbound log. <strong>Send</strong> a <code>player_message</code>; it round-trips back.
+  </li>
+  <li>
+    Press <strong>Simulate drop</strong> to fire <code>__simulateDrop()</code>. The chip flips to
+    <code>reconnecting</code> with a climbing attempt count, then back to <code>connected</code>,
+    and a <code>session_reconnect</code> replay batch arrives — the production reconnection path,
+    exercised against the real wire.
+  </li>
+  <li>
+    In the SSE panel, open a status path (a world-gen or session-prep stream) and watch decoded
+    events accrue in its log; <strong>Close</strong> tears the stream down to <code>closed</code>.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The server halves this client talks to are the
+  <a href="../runtime/session-transport.html">Session transport</a> (the ticket handshake, the
+  <code>SessionHub</code> fan-out, the <code>session_reconnect</code> replay this client dedups) and
+  the <a href="../runtime/pipeline-status.html">Pipeline status</a> SSE subscriber. The ticket
+  itself is minted on the
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> route.
+  The wire <code>ServerFrame</code>/<code>ClientFrame</code> and <code>PipelineEvent</code> unions,
+  plus the <code>WsTicketResponse</code> REST schema, are authored in
+  <a href="./app-shell.html">@mythrun/contract</a>, and the <code>mintWsTicket</code> endpoint is a
+  <code>defineEndpoint</code> slice from that page's data layer (inheriting its 401 refresh-retry).
+  In the deployed build the ticket mint rides the
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    >CloudFront <code>/api/*</code> behavior</a
+  >
+  and the WS upgrade rides the
+  <a href="../infra/frontend-hosting.html#the-websocket-upgrade-proxy"
+    ><code>/ws/*</code> behavior</a
+  >
+  — both on the SPA's own origin — which is also where the 60s origin-read timeout that keeps an
+  idle socket alive past the heartbeat lives. The whole transport is verified against staging by the
+  <a href="../infra/smoke-testing.html#the-ws-transport-smoke">WS-transport smoke</a>.
+</p>
+
+<h2 id="appendix-the-transport-surface">Appendix: the transport surface</h2>
+
+<h3 id="barrel-exports-mythrun-client-core">Barrel exports (<code>@mythrun/client-core</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Export</th>
+      <th>What it is</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>createWsSessionClient</code></td>
+      <td>
+        The bidirectional play client: <code>connect</code> / <code>onFrame</code> /
+        <code>send</code> / <code>close</code> / <code>seedLastSeen</code> + DEV
+        <code>__simulateDrop</code>, plus a <code>connectionState</code> store.
+      </td>
+    </tr>
+    <tr>
+      <td><code>createSseStatusClient</code></td>
+      <td>
+        The unidirectional status client: <code>open</code> / <code>onEvent</code> /
+        <code>onSnapshot</code> / <code>close</code>, plus a <code>connectionState</code> store.
+      </td>
+    </tr>
+    <tr>
+      <td><code>useConnectionState</code></td>
+      <td>
+        The React read seam over a client's connection store (no direct
+        <code>zustand</code> import).
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>ConnectionState</code> / <code>ConnectionStatus</code> /
+        <code>ConnectionFailureReason</code>
+      </td>
+      <td>
+        The connection-state types the UI renders (<code>denied</code> terminal,
+        <code>exhausted</code> re-armable).
+      </td>
+    </tr>
+    <tr>
+      <td><code>StreamingFetch</code> / <code>configureStreamingFetch</code></td>
+      <td>
+        The streamed-read platform seam and its boot injector (web impl under
+        <code>platform/web</code>).
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="reconnection-knobs">Reconnection knobs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Knob</th>
+      <th>Value</th>
+      <th>Where</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Reconnect ceiling</td>
+      <td>≈10 consecutive attempts → <code>failed{exhausted}</code></td>
+      <td><code>connection.ts</code> (per-client <code>RECONNECT_CEILING</code>)</td>
+    </tr>
+    <tr>
+      <td>Backoff schedule</td>
+      <td>1s → 2s → 4s → 8s → 30s (capped), ±10% jitter</td>
+      <td><code>connection.ts</code> (<code>defaultBackoff</code>; test-injectable)</td>
+    </tr>
+    <tr>
+      <td>WS reconnect param</td>
+      <td>
+        <code>?lastSeq=&lt;high-water&gt;</code> (a reconnect always sends it; a fresh connect omits
+        it unless seeded)
+      </td>
+      <td><code>ws-session-client.ts</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/client-core/src/realtime/</code> (the connection primitive, the WS session client,
+  the SSE status client, the <code>mintWsTicket</code> endpoint),
+  <code>frontend/client-core/src/platform/streaming-fetch.ts</code> (the seam),
+  <code>frontend/src/platform/web/streaming-fetch.ts</code> (the web impl),
+  <code>frontend/contract/src/rest/ws-ticket.ts</code> (the <code>WsTicketResponse</code> schema),
+  <code>frontend/src/routes/dev-transport.tsx</code> (the DEV harness).
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#two-clients-one-connection-primitive">Two clients, one connection primitive</a></li><li style="padding-left:0"><a href="#the-websocket-session-client-the-bidirectional-play-pipe">The WebSocket session client — the bidirectional play pipe</a></li><li style="padding-left:0"><a href="#the-sse-status-client-the-unidirectional-status-pipe">The SSE status client — the unidirectional status pipe</a></li><li style="padding-left:0"><a href="#the-streamingfetch-seam-the-one-platform-divergent-piece">The StreamingFetch seam — the one platform-divergent piece</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#drive-the-realtime-transport-by-hand-dev-transport">Drive the realtime transport by hand (/dev/transport)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-transport-surface">Appendix: the transport surface</a></li><li style="padding-left:12px"><a href="#barrel-exports-mythrun-client-core">Barrel exports (@mythrun/client-core)</a></li><li style="padding-left:12px"><a href="#reconnection-knobs">Reconnection knobs</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

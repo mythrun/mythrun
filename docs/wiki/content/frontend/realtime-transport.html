@@ -1,0 +1,359 @@
+<!-- source: frontend/client-core/src/realtime/ -->
+<!-- source: frontend/client-core/src/platform/streaming-fetch.ts -->
+<!-- source: frontend/src/platform/web/streaming-fetch.ts -->
+<!-- source: frontend/contract/src/rest/ws-ticket.ts -->
+<!-- source: frontend/src/routes/dev-transport.tsx -->
+<!-- source-hash: sha256:156ab84c169c3186808714e17d5efbbfa622877373bdbbb9ba9511091eb55325 -->
+<!-- last-ticket: MYT-85 -->
+
+<h1>Realtime transport</h1>
+
+<p class="lead">
+  The client half of the live wire: a bidirectional WebSocket session client and a unidirectional
+  SSE status client, both <strong>dumb typed pipes</strong> with production-grade reconnection,
+  built on one shared connection primitive in the DOM-free brain. The flows (play, world-gen,
+  session-prep) consume frames and a connection-state surface; the transport carries bytes and
+  reconnects — it never interprets a frame or decides a flow's lifecycle. The matching server halves
+  are the <a href="../runtime/session-transport.html">Session transport</a> and
+  <a href="../runtime/pipeline-status.html">Pipeline status</a> pages; this is what the SPA runs
+  against them.
+</p>
+
+<!-- @diagram: frontend/realtime-transport -->
+
+<aside class="wiki-rationale">
+  <strong>Dumb typed pipe, not a frame interpreter</strong> — the transport's whole job is delivery:
+  carry frames in order, survive a drop, expose "connecting / reconnecting / failed" for the UI. It
+  deliberately holds <em>no</em> flow knowledge — no turn state, no pipeline state, no idea what a
+  <code>session_end</code> or a <code>finalized</code> frame <em>means</em>. That lives in the flow
+  reducers a later ticket builds. Keeping the seam here a pure pipe is what lets three different
+  flows (play, world-gen, session-prep) reuse the same two clients unchanged, and what keeps the
+  reconnection logic testable in isolation from any one flow's semantics.
+</aside>
+
+<h2>Two clients, one connection primitive</h2>
+
+<p>
+  Both clients are built on <code>connection.ts</code> — the shared backoff/ceiling state machine.
+  The rule it enforces is <strong>shared code, per-instance state</strong>: the machine lives once,
+  but each client factory mints its <em>own</em> store via <code>createConnection()</code>, never a
+  module-level singleton, so a live play session and a world-gen status stream hold independent
+  connection state. It owns three things the WS and SSE clients both lean on: the
+  <code>ConnectionState</code> store (<code>connecting → connected → reconnecting{n} → closed</code
+  >, or <code>failed{denied|exhausted}</code>), the backoff schedule (1s → 2s → 4s → 8s → 30s
+  capped, ±10% jitter), and a monotonic <strong>generation token</strong> for single-flight
+  connects.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The generation token is how a superseded socket self-ignores</strong> — every connect
+  attempt takes <code>nextGeneration()</code> and captures the number. A socket's late
+  <code>onclose</code>/<code>onmessage</code> callback compares its captured token to the current
+  <code>generation()</code> and bails if it has been superseded — by a newer reconnect, or by an
+  explicit <code>close()</code>. Without it, a backoff reopen racing a slow close handler could
+  double-open, or a torn-down client could still route a stale frame. The counter is the one place
+  that race is resolved, so neither client re-implements it.
+</aside>
+
+<p>
+  The attempt counter resets on a successful open, so cumulative drops over a long session never
+  trip the ceiling — only <em>consecutive</em> failures do. At the ceiling (≈10 straight), the next
+  drop yields <code>failed{exhausted}</code>, which is <strong>re-armable</strong>: a flow may call
+  the client's <code>connect()</code>/<code>open()</code> again to start a fresh cycle. The React
+  read seam is <code>useConnectionState(client)</code> — it subscribes a component to the client's
+  store so flows and the harness render "Reconnecting…" without importing
+  <code>zustand</code> directly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The backoff timer lives in the client, not the primitive</strong> — the connection module
+  defines the <em>schedule</em> (<code>nextDelayMs()</code>) and the ceiling decision
+  (<code>recordDrop()</code>), but the actual <code>setTimeout</code> handle is owned by each
+  client. That client MUST clear it before any <code>markClosed()</code>/<code>reset()</code> and in
+  <code>close()</code>, so a pending reopen can never fire into a torn-down client. The primitive
+  documents the contract; the client holds the timer it has to be able to cancel.
+</aside>
+
+<h2>The WebSocket session client — the bidirectional play pipe</h2>
+
+<p>
+  <code>createWsSessionClient(ctx)</code> is the play transport. A
+  <code>connect(sessionId)</code> runs a fixed sequence: a pre-flight
+  <code>runRefresh()</code> (refresh the access token before anything), then
+  <code>mintWsTicket</code> — <code>POST /api/sessions/:id/ws-ticket</code> — then
+  <code>new WebSocket(wss://…/ws/session/:id?ticket=…)</code>. The access token never rides in the
+  WS URL; the single-use ticket gates the upgrade instead. Inbound frames are JSON-decoded and
+  dispatched to <code>onFrame</code> subscribers; <code>send(frame)</code> writes a client frame
+  back but returns <code>false</code> (no write, no throw) unless the live socket is
+  <code>OPEN</code>, so a flow can retry an unsent frame rather than lose it silently.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >A ticket in the URL, because a browser WebSocket can't send an
+    <code>Authorization</code> header</strong
+  >
+  — the native <code>WebSocket</code> constructor takes a URL and (optionally) a subprotocol,
+  nothing else; there is no header API. So auth can't ride the upgrade as a Bearer. The SPA mints a
+  short-lived single-use ticket over authenticated REST first (the mint inherits
+  <code>defineEndpoint</code>'s 401 refresh-retry), then passes it as the <code>?ticket</code> query
+  param. The <a href="../runtime/session-transport.html">server handshake</a> consumes it atomically
+  pre-upgrade. A fresh ticket is minted on <em>every</em> (re)connect — tickets are single-use, so a
+  reconnect can't replay the last one.
+</aside>
+
+<p>
+  The reconnection is the production-grade part, and it has two moving pieces beyond the shared
+  primitive: <strong>seq dedup</strong> and <strong>whole-turn replay</strong>. The client tracks a
+  <code>lastSeenSeq</code> high-water mark, advanced per emitted seq-bearing frame in seq order
+  (never batch-set to the max). On a transient drop, the backoff reopen connects with
+  <code>?lastSeq=&lt;high-water&gt;</code>, and the server replies with a
+  <code>session_reconnect</code> replay batch. The client filters that batch — discarding any row at
+  or below the high-water mark (the load-bearing <em>register-before-replay</em> overlap) — and
+  emits the filtered batch. It does <strong>not</strong> interpret the batch further: the whole-turn
+  (<code>turnId</code>) replace over those rows is the flow reducer's job downstream. The transport
+  does the mechanical seq filter and nothing more.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Close-routing is on readable signals only — every socket close is transient</strong> — the
+  client treats <em>every</em> WebSocket close code (1006 abnormal, 1011 any reason) as a transient
+  drop that earns a backoff reconnect, because the readable terminal signals live elsewhere: a
+  <code>session_end</code> <em>data</em> frame self-closes the client to <code>closed</code>, and a
+  ticket-POST <code>403</code>/<code>404</code> (no session / not a member) routes straight to
+  <code>failed{denied}</code>. A 401/429/503 or a network error on the ticket POST is transient, not
+  terminal — a 401 has already exhausted <code>defineEndpoint</code>'s own refresh-retry, and the
+  lossy refresh boolean must not be allowed to strand a recoverable hiccup as a permanent failure.
+  So the only two ways to leave the reconnect loop for good are an explicit denial or a data-frame
+  end — a dropped tunnel always retries.
+</aside>
+
+<p>
+  A DEV-only <code>__simulateDrop()</code> closes the live socket to exercise the reconnect-replay
+  path by hand; its body dead-code-eliminates from the production bundle (Vite inlines
+  <code>import.meta.env.DEV</code>), so it ships nothing to players. It is what the
+  <a href="#operating-this-piece">/dev/transport harness</a> drives.
+</p>
+
+<h2>The SSE status client — the unidirectional status pipe</h2>
+
+<p>
+  <code>createSseStatusClient(ctx)</code> drives a status UI — world-gen and session-prep both
+  stream their pipeline progress as Server-Sent Events. <code>open(path)</code> starts the cycle;
+  subscribers attach via <code>onEvent</code> (decoded <code>PipelineEvent</code>s) and
+  <code>onSnapshot</code> (the raw first-frame snapshot, which is <em>not</em> a
+  <code>PipelineEvent</code>). All the framing, decoding, and reconnection lives in the brain: it
+  reassembles blank-line-delimited SSE frames across chunk boundaries, strips the
+  leading-space-after-colon, joins multi-line <code>data:</code> fields, and skips comment
+  keepalives. The transport never auto-closes on a data frame — a <code>finalized</code> event is
+  per-entity, not terminal — so the consuming flow calls <code>close()</code> on its own terminal
+  event.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>fetch</code> + a <code>ReadableStream</code>, never <code>EventSource</code></strong
+  >
+  — the native <code>EventSource</code> has the same blind spot as the raw WebSocket: it can't set
+  an <code>Authorization</code> header, so it can't carry the SPA's Bearer. The SSE stream therefore
+  rides an authenticated <code>fetch</code> whose body is read as a stream.
+  <code>EventSource</code> is a banned global in the brain (R1) precisely so this can't be quietly
+  reintroduced. This mirrors the dev tool's own <code>sse-client.ts</code> <code>openSse()</code>,
+  which solved the same problem the same way.
+</aside>
+
+<p>
+  Open-status routing is the only observable signal the client branches on: a <code>403</code>/
+  <code>404</code> is terminal <code>failed{denied}</code> (no session / not a member); any other
+  non-200 (401, 429, 503, or a CloudFront-generated 502/504) is transient and earns a backoff
+  reconnect; and a stream that simply <em>ends</em> — a clean end, an
+  <code>event: close</code> frame, or a mid-read error (the wifi-drop case) — is also transient. The
+  ceiling bounds the retries to <code>failed{exhausted}</code>, re-armable by a fresh
+  <code>open()</code>.
+</p>
+
+<h2>The StreamingFetch seam — the one platform-divergent piece</h2>
+
+<p>
+  Everything above is platform-neutral and lives in <code>@mythrun/client-core</code>. The single
+  exception is the actual streamed HTTP read, which needs <code>fetch</code> +
+  <code>ReadableStream</code> + a streaming <code>TextDecoder</code>. The brain reaches it through a
+  one-method port, <code>StreamingFetch</code>: given a URL and <code>{ headers, signal }</code>, it
+  resolves <em>once the response head is available</em> (not once the body completes) with
+  <code>{ status, chunks }</code> — the open <code>status</code> so the brain's non-200 routing is
+  observable, and an async-iterable of raw decoded text <code>chunks</code> (the SSE client owns the
+  framing). The web implementation, <code>createWebStreamingFetch</code>, lives under
+  <code>frontend/src/platform/web/</code> — the sanctioned web-globals carve-out — and is
+  <code>ctx</code>-free: the brain computes auth and hands it mode-correct <code>headers</code>; the
+  impl just applies them.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Injected at boot, unconditionally, both auth modes</strong> — the seam is wired with
+  <code>configureStreamingFetch()</code> at module scope in <code>main.tsx</code>, the same
+  injection pattern as <code>configureTokenRefresh</code> — so the brain never imports the web impl
+  and the import graph stays acyclic. Unlike the token-refresh seam (jwt-mode only), this wiring is
+  unconditional: a streamed read is the same shape in dev-bypass and jwt mode, only the headers
+  differ. <code>getStreamingFetch()</code> throws if the boot wiring never ran — a wiring bug should
+  fail loud, not be a runtime condition the brain branches on.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The frames are typed, but not Zod-validated at runtime</strong> — the relocated
+  <a href="./app-shell.html">contract event unions</a> give the client compile-time
+  <code>ServerFrame</code>/<code>PipelineEvent</code> types, but the transport does
+  <em>not</em> parse each frame through a runtime schema (unlike a <code>defineEndpoint</code> REST
+  response, which always does). A dumb typed pipe trusts the wire: the backend validates every
+  outbound frame against the contract before it sends, so a second client-side parse on a hot
+  streaming path would buy little and cost per-frame CPU. The one Zod schema here is
+  <code>WsTicketResponse</code> — a single short REST body on the cold connect path, where the
+  validation is cheap and the contract guarantee is worth it.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3>Drive the realtime transport by hand (/dev/transport)</h3>
+<ol>
+  <li>
+    Run the SPA in dev (<code>pnpm --filter @mythrun/web dev</code>) and open
+    <code>/dev/transport</code>. The route is registered <code>React.lazy</code> over a DEV-only
+    import, so the harness chunk is excluded from the production bundle entirely — it is not a
+    player-facing screen.
+  </li>
+  <li>
+    In the WebSocket panel, enter an active session id and press <strong>Connect</strong>. Watch the
+    status chip go <code>connecting → connected</code> and a <code>session_ready</code> frame land
+    in the inbound log. <strong>Send</strong> a <code>player_message</code>; it round-trips back.
+  </li>
+  <li>
+    Press <strong>Simulate drop</strong> to fire <code>__simulateDrop()</code>. The chip flips to
+    <code>reconnecting</code> with a climbing attempt count, then back to <code>connected</code>,
+    and a <code>session_reconnect</code> replay batch arrives — the production reconnection path,
+    exercised against the real wire.
+  </li>
+  <li>
+    In the SSE panel, open a status path (a world-gen or session-prep stream) and watch decoded
+    events accrue in its log; <strong>Close</strong> tears the stream down to <code>closed</code>.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The server halves this client talks to are the
+  <a href="../runtime/session-transport.html">Session transport</a> (the ticket handshake, the
+  <code>SessionHub</code> fan-out, the <code>session_reconnect</code> replay this client dedups) and
+  the <a href="../runtime/pipeline-status.html">Pipeline status</a> SSE subscriber. The ticket
+  itself is minted on the
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a> route.
+  The wire <code>ServerFrame</code>/<code>ClientFrame</code> and <code>PipelineEvent</code> unions,
+  plus the <code>WsTicketResponse</code> REST schema, are authored in
+  <a href="./app-shell.html">@mythrun/contract</a>, and the <code>mintWsTicket</code> endpoint is a
+  <code>defineEndpoint</code> slice from that page's data layer (inheriting its 401 refresh-retry).
+  In the deployed build the ticket mint rides the
+  <a href="../infra/frontend-hosting.html#the-same-origin-api-proxy"
+    >CloudFront <code>/api/*</code> behavior</a
+  >
+  and the WS upgrade rides the
+  <a href="../infra/frontend-hosting.html#the-websocket-upgrade-proxy"
+    ><code>/ws/*</code> behavior</a
+  >
+  — both on the SPA's own origin — which is also where the 60s origin-read timeout that keeps an
+  idle socket alive past the heartbeat lives. The whole transport is verified against staging by the
+  <a href="../infra/smoke-testing.html#the-ws-transport-smoke">WS-transport smoke</a>.
+</p>
+
+<h2>Appendix: the transport surface</h2>
+
+<h3>Barrel exports (<code>@mythrun/client-core</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Export</th>
+      <th>What it is</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>createWsSessionClient</code></td>
+      <td>
+        The bidirectional play client: <code>connect</code> / <code>onFrame</code> /
+        <code>send</code> / <code>close</code> / <code>seedLastSeen</code> + DEV
+        <code>__simulateDrop</code>, plus a <code>connectionState</code> store.
+      </td>
+    </tr>
+    <tr>
+      <td><code>createSseStatusClient</code></td>
+      <td>
+        The unidirectional status client: <code>open</code> / <code>onEvent</code> /
+        <code>onSnapshot</code> / <code>close</code>, plus a <code>connectionState</code> store.
+      </td>
+    </tr>
+    <tr>
+      <td><code>useConnectionState</code></td>
+      <td>
+        The React read seam over a client's connection store (no direct
+        <code>zustand</code> import).
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>ConnectionState</code> / <code>ConnectionStatus</code> /
+        <code>ConnectionFailureReason</code>
+      </td>
+      <td>
+        The connection-state types the UI renders (<code>denied</code> terminal,
+        <code>exhausted</code> re-armable).
+      </td>
+    </tr>
+    <tr>
+      <td><code>StreamingFetch</code> / <code>configureStreamingFetch</code></td>
+      <td>
+        The streamed-read platform seam and its boot injector (web impl under
+        <code>platform/web</code>).
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Reconnection knobs</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Knob</th>
+      <th>Value</th>
+      <th>Where</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Reconnect ceiling</td>
+      <td>≈10 consecutive attempts → <code>failed{exhausted}</code></td>
+      <td><code>connection.ts</code> (per-client <code>RECONNECT_CEILING</code>)</td>
+    </tr>
+    <tr>
+      <td>Backoff schedule</td>
+      <td>1s → 2s → 4s → 8s → 30s (capped), ±10% jitter</td>
+      <td><code>connection.ts</code> (<code>defaultBackoff</code>; test-injectable)</td>
+    </tr>
+    <tr>
+      <td>WS reconnect param</td>
+      <td>
+        <code>?lastSeq=&lt;high-water&gt;</code> (a reconnect always sends it; a fresh connect omits
+        it unless seeded)
+      </td>
+      <td><code>ws-session-client.ts</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/client-core/src/realtime/</code> (the connection primitive, the WS session client,
+  the SSE status client, the <code>mintWsTicket</code> endpoint),
+  <code>frontend/client-core/src/platform/streaming-fetch.ts</code> (the seam),
+  <code>frontend/src/platform/web/streaming-fetch.ts</code> (the web impl),
+  <code>frontend/contract/src/rest/ws-ticket.ts</code> (the <code>WsTicketResponse</code> schema),
+  <code>frontend/src/routes/dev-transport.tsx</code> (the DEV harness).
+</p>

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › App shell & data layer</div>
         <article>
@@ -274,11 +274,14 @@
   can consume the same frames the backend produces — setting up the realtime client (MYT-85). These
   are hand-written TypeScript discriminated unions plus runtime <code>classify*</code> helpers,
   <em>not Zod</em>, so the move gives the client <em>type</em> safety but no runtime frame
-  validation (whether to add that is MYT-85's call). The backend keeps a one-line re-export shim at
-  the old paths so its existing import sites — and the drift-tested route list — don't churn. The
+  validation — and MYT-85's <a href="./realtime-transport.html">realtime clients</a> consume them
+  exactly that way, as a dumb typed pipe (type-safe, deliberately not re-parsed per frame on the hot
+  streaming path). The backend keeps a one-line re-export shim at the old paths so its existing
+  import sites — and the drift-tested route list — don't churn. The
   <a href="../runtime/session-transport.html">session transport</a> and
-  <a href="../runtime/pipeline-status.html">pipeline status</a> pages tell the protocol stories;
-  this is just where the unions are now authored.
+  <a href="../runtime/pipeline-status.html">pipeline status</a> pages tell the server-side protocol
+  stories, and the <a href="./realtime-transport.html">realtime transport</a> page the client that
+  consumes them; this is just where the unions are now authored.
 </p>
 
 <aside class="wiki-rationale">
@@ -343,7 +346,9 @@
   <strong><code>fetch</code> directly, no transport interface</strong> — <code>fetch</code> is
   universal (web and React Native both have it) and is explicitly allowed by R1, so it lives in the
   brain rather than behind a platform interface. The platform-divergent streaming transports
-  (SSE/WS) are a different matter and are deferred to MYT-85.
+  (SSE/WS) are a different matter, and ship in MYT-85: the SSE read crosses a
+  <code>StreamingFetch</code> platform seam and the WebSocket is a web global, both on the
+  <a href="./realtime-transport.html">realtime transport</a> page.
 </aside>
 
 <h2 id="the-session-gate">The session gate — four states</h2>
@@ -565,8 +570,10 @@
   interface-plus-impl establishes the <code>platform/web</code> convention: the brain declares the
   capability, the web layer realizes it, and the provider root injects the impl so the brain never
   touches a web global itself. A later native impl (Keychain/Keystore) satisfies the same surface.
-  Other interfaces (<code>StreamingFetch</code>, <code>Share</code>, <code>Push</code>, …) are
-  deferred — we do not define an interface with no consumer.
+  MYT-85 adds the second one, <code>StreamingFetch</code> — the SSE status client's streamed-read
+  seam (see <a href="./realtime-transport.html">realtime transport</a>); further interfaces
+  (<code>Share</code>, <code>Push</code>, …) stay deferred — we do not define an interface with no
+  consumer.
 </p>
 
 <h2 id="the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</h2>
@@ -637,12 +644,14 @@
   <code>main.tsx</code>, in a fixed order. In jwt mode it calls <code>configureOAuth</code> (web
   state-store impl + Cognito config), then <code>configureTokenRefresh</code> to bind the refresh
   transport, and only then kicks off <code>bootstrapSession</code> — so the store starts
-  <code>initializing</code> and the splash covers the gap until the refresh settles it. It is
-  config-driven — <code>main.tsx</code> builds the concrete config from the environment and the web
-  platform impls once at module scope and passes it in — so the shell is testable with fakes and an
-  explicit auth mode. In dev (bypass) <code>main.tsx</code> instead seeds the session store
-  <code>ready</code> once, so the dev app lands on the authed side of the gate against the
-  always-authenticated bypass backend.
+  <code>initializing</code> and the splash covers the gap until the refresh settles it.
+  <code>configureStreamingFetch</code> is wired here too — unconditionally, in both auth modes —
+  binding the SSE transport seam the <a href="./realtime-transport.html">realtime transport</a> page
+  covers. It is config-driven — <code>main.tsx</code> builds the concrete config from the
+  environment and the web platform impls once at module scope and passes it in — so the shell is
+  testable with fakes and an explicit auth mode. In dev (bypass) <code>main.tsx</code> instead seeds
+  the session store <code>ready</code> once, so the dev app lands on the authed side of the gate
+  against the always-authenticated bypass backend.
 </p>
 
 <aside class="wiki-rationale">

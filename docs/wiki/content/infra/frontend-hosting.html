@@ -1,6 +1,6 @@
 <!-- source: infra/modules/frontend-hosting/ -->
-<!-- source-hash: sha256:0e0a136fa718c8056563e1329662130755cadb27a86b8ac4c754e9ef7bdc363c -->
-<!-- last-ticket: MYT-84 -->
+<!-- source-hash: sha256:63f4f3280b31c9c1e09cc20148ef8dc5b63eb640f2ac0bb06efe5c6f2f167fec -->
+<!-- last-ticket: MYT-85 -->
 
 <h1>Frontend hosting</h1>
 
@@ -9,8 +9,9 @@
   at
   <code>staging.mythrun.com</code>, with a fail-closed HTTP Basic-Auth gate that keeps the
   pre-launch site off the open internet while still reachable from any network. The same
-  distribution also proxies <code>/api/*</code> to the API origin, so the SPA and its backend share
-  one origin and the auth cookie is first-party.
+  distribution also proxies <code>/api/*</code> to the API origin — so the SPA and its backend share
+  one origin and the auth cookie is first-party — and carries a <code>/ws/*</code> behavior that
+  forwards the WebSocket session upgrade to that same origin.
 </p>
 
 <!-- @diagram: infra/frontend-hosting -->
@@ -58,8 +59,10 @@
   <code>http</code> to <code>https</code>, and on its default (static-content) behavior allows only
   <code>GET</code>/<code>HEAD</code> over the AWS-managed <code>CachingOptimized</code> cache
   policy. <code>PriceClass_100</code> limits the edge footprint to North America and Europe. A
-  second origin and a <a href="#the-same-origin-api-proxy"><code>/api/*</code> behavior</a> —
-  covered below — make the same distribution double as the SPA's same-origin API proxy.
+  second origin and two ordered behaviors — a
+  <a href="#the-same-origin-api-proxy"><code>/api/*</code> behavior</a> and a
+  <a href="#the-websocket-upgrade-proxy"><code>/ws/*</code> behavior</a>, both covered below — make
+  the same distribution double as the SPA's same-origin API and WebSocket proxy.
 </p>
 
 <aside class="wiki-rationale">
@@ -199,17 +202,62 @@
 <aside class="wiki-rationale">
   <strong>The <code>/api/*</code> behavior deliberately skips the Basic-Auth gate</strong> — every
   ordered cache behavior is normally required to carry the same viewer-request function association,
-  or it is a hole in the perimeter. This one is the documented exception. The gate authenticates by
-  a <code>Basic</code> header the human's browser supplies; an API call instead carries a Bearer
-  access token or the <code>httpOnly</code> refresh cookie, so the gate function could never match
-  it. The API <a href="../auth-billing/jwt-middleware.html">self-authenticates</a> (JWT plus the
-  public-route allowlist) and is already reachable at <code>staging-api.mythrun.com</code> on its
-  own — this proxy changes where the cookie's origin <em>appears</em>, not whether the API is
-  exposed. So it is not an SPA-content bypass: no static asset or pre-launch page is reachable
-  through <code>/api/*</code>. The same gate-skip is also what keeps the
+  or it is a hole in the perimeter. This is one of two documented exceptions (the other is the
+  <a href="#the-websocket-upgrade-proxy"><code>/ws/*</code> upgrade proxy</a> below). The gate
+  authenticates by a <code>Basic</code> header the human's browser supplies; an API call instead
+  carries a Bearer access token or the <code>httpOnly</code> refresh cookie, so the gate function
+  could never match it. The API
+  <a href="../auth-billing/jwt-middleware.html">self-authenticates</a> (JWT plus the public-route
+  allowlist) and is already reachable at <code>staging-api.mythrun.com</code> on its own — this
+  proxy changes where the cookie's origin <em>appears</em>, not whether the API is exposed. So it is
+  not an SPA-content bypass: no static asset or pre-launch page is reachable through
+  <code>/api/*</code>. The same gate-skip is also what keeps the
   <a href="#the-basic-auth-gate">function's SPA-routing rewrite</a> off the proxy: because
   <code>/api/*</code> never reaches the function, its real API <code>403</code>/<code>404</code>s
   are never rewritten into the SPA shell.
+</aside>
+
+<h2 id="the-websocket-upgrade-proxy">The WebSocket upgrade proxy</h2>
+
+<p>
+  A third behavior, <code>/ws/*</code>, carries the live play transport. The SPA opens
+  <code>wss://staging.mythrun.com/ws/session/:id?ticket=…</code> — its own host — and CloudFront
+  forwards the upgrade to the same API origin the <code>/api/*</code> behavior uses. It is shaped
+  like the API proxy: the managed <code>CachingDisabled</code> policy and the
+  <code>AllViewerExceptHostHeader</code> origin-request policy (every viewer header and the query
+  forwarded, <code>Host</code> rewritten to the API's hostname), so the <code>?ticket</code> query
+  and the upgrade headers reach the backend intact. Two things differ from <code>/api/*</code>: it
+  allows <code>GET</code>/<code>HEAD</code> only (a WebSocket upgrade is a <code>GET</code>), and
+  <code>compress</code> is <code>false</code> — there is no gzip on a streaming connection.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A 60s origin-read timeout, shared with <code>/api/*</code></strong> — CloudFront's default
+  <code>origin_read_timeout</code> is 30 seconds, and an idle but healthy WebSocket would be reaped
+  at that mark even though the backend heartbeats it every 30 seconds. The <code>api</code> origin's
+  timeout is raised to 60s (with a matching keepalive bump) so an actively-streaming or
+  heartbeat-only socket survives. The timeout is an <em>origin</em> property, so the change is
+  shared with the <code>/api/*</code> behavior on the same origin: every REST call's origin-response
+  window also goes 30s → 60s, which is benign for the fast API (a hung backend now surfaces a
+  <code>504</code> after 60s rather than 30s). This is the prod-only reaping risk the
+  <a href="smoke-testing.html#the-ws-transport-smoke">WS-transport smoke</a> exists to catch — it
+  holds a socket silent across two heartbeats and asserts it is still open.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The <code>/ws/*</code> behavior skips the Basic-Auth gate too — the second documented
+    exemption</strong
+  >
+  — like <code>/api/*</code>, it carries no viewer-request function association. A browser-native
+  WebSocket can't send the <code>Basic</code> gate header anyway, and the upgrade authenticates
+  differently: a single-use <code>ws-ticket</code> in the query gates it, consumed pre-handshake by
+  the API's <code>wsSessionAuth</code> (the
+  <a href="../runtime/session-transport.html">Session transport</a> handshake), not the gate
+  function. The exemption carries a <strong>precondition</strong> written into the module: it is
+  safe <em>only</em> while <code>/ws/*</code> on the API serves exclusively the ticket-gated upgrade
+  — a future unauthenticated <code>/ws/*</code> route would inherit this bypass and must re-add the
+  gate or carry its own auth.
 </aside>
 
 <h2>Route 53 and environment parameterization</h2>
@@ -319,7 +367,10 @@
   <code>/api/*</code> proxy at <code>staging.mythrun.com/api/*</code>, which CloudFront forwards to
   the API origin at <code>staging-api.mythrun.com</code> — so the
   <a href="../auth-billing/identity.html#the-bff-token-exchange">BFF refresh cookie</a> is
-  first-party.
+  first-party. The <code>/ws/*</code> behavior carries the
+  <a href="../frontend/realtime-transport.html">realtime transport</a>'s WebSocket session upgrade
+  to the same origin; the API's <a href="../runtime/session-transport.html">session transport</a>
+  terminates it.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>

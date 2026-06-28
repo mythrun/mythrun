@@ -29,12 +29,14 @@
 <h1>Smoke testing</h1>
 
 <p class="lead">
-  How we exercise the deployed staging API end-to-end. Two smokes today: the narrow
+  How we exercise the deployed staging API end-to-end. Three smokes today: the narrow
   <code>check-username</code> smoke (one bash script, one Cognito user) that proves the cognitive
-  stack is reachable; and the multi-campaign prep-pipeline smoke (one TypeScript driver, four
-  Cognito users, one in-VPC ECS task family) that exercises the full prep flow under burst
-  concurrency. Both share the same provisioning shape: native Cognito users created by Terraform,
-  credentials in Secrets Manager, and an operator-facing one-command entry point.
+  stack is reachable; the multi-campaign prep-pipeline smoke (one TypeScript driver, four Cognito
+  users, one in-VPC ECS task family) that exercises the full prep flow under burst concurrency; and
+  the <a href="#the-ws-transport-smoke">WS-transport smoke</a> (a laptop-runnable script that
+  round-trips the live WebSocket session through the CloudFront <code>/ws/*</code> proxy). All three
+  share the same provisioning shape: native Cognito users created by Terraform, credentials in
+  Secrets Manager, and an operator-facing one-command entry point.
 </p>
 
 <h2 id="how-it-fits-together">How it fits together</h2>
@@ -269,6 +271,48 @@
   first auth materializes the users in the application DB.
 </p>
 
+<h2 id="the-ws-transport-smoke">The WS-transport smoke (MYT-85)</h2>
+
+<p>
+  The WS-transport smoke proves the live multiplayer wire end-to-end, against the things unit tests
+  and a dev forced-disconnect cannot reach: a real <code>101</code> WebSocket upgrade
+  <em>through</em> the
+  <a href="frontend-hosting.html#the-websocket-upgrade-proxy">CloudFront <code>/ws/*</code> proxy</a
+  >, the first-frame contract (a <code>session_ready</code> on a fresh connect, a
+  <code>session_reconnect</code> on a <code>lastSeq</code> reconnect), and — the reason it exists —
+  <strong>idle-survival across at least two heartbeats</strong>. It mirrors the browser: REST and WS
+  both ride <code>staging.mythrun.com</code> (the <code>/api/*</code> and
+  <code>/ws/*</code> behaviors), so the same-origin path the SPA uses is the path under test. The
+  client half it exercises is the
+  <a href="../frontend/realtime-transport.html">realtime transport</a>; the server half is the
+  <a href="../runtime/session-transport.html">session transport</a> handshake and
+  <code>SessionHub</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>It exists to catch a prod-only CloudFront reaping risk</strong> — the backend heartbeats a
+  socket every 30 seconds, and CloudFront's default origin-read timeout is also 30 seconds, so a
+  healthy idle tunnel could be reaped right at the heartbeat boundary. The
+  <a href="frontend-hosting.html#the-websocket-upgrade-proxy"
+    >60s <code>origin_read_timeout</code></a
+  >
+  on the <code>api</code> origin is the fix, but it is invisible to a local test — only a real
+  socket held open through the live CloudFront distribution can prove it. So the smoke holds a
+  session silent for 75 seconds (past two heartbeats) and asserts the socket is still
+  <code>OPEN</code>, failing loud (<code>CloudFront reaped the idle tunnel</code>) if the timeout
+  ever regresses.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Cheap and rerunnable — no turn, no credit, one persistent session</strong> — the smoke
+  drives no DM turn, so it makes no LLM call and spends no credit. On close it deliberately sends
+  <em>no</em> <code>end_session</code>, so the backend's ~5-minute suspend grace keeps the session
+  active and a single persistent staging session is reusable indefinitely (the wrapper bakes in a
+  default campaign id; override with <code>SMOKE_CAMPAIGN_ID</code>). It auths as the same Cognito
+  smoke owner the narrow smoke uses, so it needs no new provisioning — just the one-time setup of a
+  persistent active session for its campaign.
+</aside>
+
 <h2 id="bootstrap-db-seed-smoke-credits-mode">Bootstrap-db <code>--seed-smoke-credits</code> mode</h2>
 
 <p>
@@ -349,6 +393,28 @@
   </li>
 </ol>
 
+<h3 id="run-the-ws-transport-smoke">Run the WS-transport smoke</h3>
+
+<ol>
+  <li>
+    One-time setup: ensure the smoke campaign has a persistent <code>active</code> session (start
+    one once; the smoke never ends it, so it stays reusable). The wrapper defaults to the MYT-85
+    staging smoke campaign; point at a different one with
+    <code>SMOKE_CAMPAIGN_ID=&lt;campaign-id&gt;</code>.
+  </li>
+  <li>
+    From the repo root, run <code>pnpm smoke:ws-transport</code> (with AWS creds that can read the
+    smoke-owner secret and call <code>cognito-idp:InitiateAuth</code>). It auths, then walks
+    <code>session_ready</code> → a 75-second idle hold → <code>session_reconnect</code>, printing a
+    <code>✓</code> line per check and a final <code>WS transport smoke PASSED</code>.
+  </li>
+  <li>
+    On failure it exits non-zero with the failing assertion — most diagnostically,
+    <code>CloudFront reaped the idle tunnel</code> if the socket dropped during the idle hold, which
+    points at the <code>/ws/*</code> origin-read timeout.
+  </li>
+</ol>
+
 <h3 id="seed-smoke-user-credits-once-per-cognito-user-materialization">Seed smoke-user credits (once per Cognito user materialization)</h3>
 
 <ol>
@@ -404,7 +470,11 @@
   the <a href="../runtime/llm.html#concurrency-and-rate-limits">concurrency-ceilings section</a>
   on the LLM client page explains why the prep-pipeline smoke's absence of
   <code>LlmRateLimitedError</code> is also the running proof that our caps + Anthropic's Tier 2
-  limits survive a real burst.
+  limits survive a real burst. The WS-transport smoke instead exercises the
+  <a href="../frontend/realtime-transport.html">realtime transport</a> client and the
+  <a href="../runtime/session-transport.html">session transport</a> server through the
+  <a href="frontend-hosting.html#the-websocket-upgrade-proxy">CloudFront <code>/ws/*</code> proxy</a
+  >.
 </p>
 
 <h2 id="appendix-configuration">Appendix: configuration</h2>
@@ -482,14 +552,16 @@
   <code>infra/modules/bootstrap-db/</code> &middot;
   <code>infra/scripts/bootstrap-databases.sh</code> &middot;
   <code>backend/scripts/smoke/staging.sh</code> &middot;
-  <code>backend/scripts/smoke/prep-pipeline.ts</code>
+  <code>backend/scripts/smoke/prep-pipeline.ts</code> &middot;
+  <code>backend/scripts/smoke/ws-transport.ts</code> &middot;
+  <code>backend/scripts/smoke/ws-transport.sh</code>
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#what-the-narrow-smoke-verifies">What the narrow smoke verifies</a></li><li style="padding-left:0"><a href="#the-prep-pipeline-smoke-myt-55">The prep-pipeline smoke (MYT-55)</a></li><li style="padding-left:12px"><a href="#what-the-prep-pipeline-smoke-verifies">What the prep-pipeline smoke verifies</a></li><li style="padding-left:0"><a href="#bootstrap-db-seed-smoke-credits-mode">Bootstrap-db --seed-smoke-credits mode</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-narrow-staging-smoke">Run the narrow staging smoke</a></li><li style="padding-left:12px"><a href="#run-the-prep-pipeline-smoke">Run the prep-pipeline smoke</a></li><li style="padding-left:12px"><a href="#seed-smoke-user-credits-once-per-cognito-user-materialization">Seed smoke-user credits (once per Cognito user materialization)</a></li><li style="padding-left:12px"><a href="#rotate-the-smoke-test-credentials">Rotate the smoke-test credentials</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-configuration">Appendix: configuration</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#what-the-narrow-smoke-verifies">What the narrow smoke verifies</a></li><li style="padding-left:0"><a href="#the-prep-pipeline-smoke-myt-55">The prep-pipeline smoke (MYT-55)</a></li><li style="padding-left:12px"><a href="#what-the-prep-pipeline-smoke-verifies">What the prep-pipeline smoke verifies</a></li><li style="padding-left:0"><a href="#the-ws-transport-smoke">The WS-transport smoke (MYT-85)</a></li><li style="padding-left:0"><a href="#bootstrap-db-seed-smoke-credits-mode">Bootstrap-db --seed-smoke-credits mode</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-narrow-staging-smoke">Run the narrow staging smoke</a></li><li style="padding-left:12px"><a href="#run-the-prep-pipeline-smoke">Run the prep-pipeline smoke</a></li><li style="padding-left:12px"><a href="#run-the-ws-transport-smoke">Run the WS-transport smoke</a></li><li style="padding-left:12px"><a href="#seed-smoke-user-credits-once-per-cognito-user-materialization">Seed smoke-user credits (once per Cognito user materialization)</a></li><li style="padding-left:12px"><a href="#rotate-the-smoke-test-credentials">Rotate the smoke-test credentials</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-configuration">Appendix: configuration</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
