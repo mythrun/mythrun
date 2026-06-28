@@ -28,6 +28,9 @@ docker-compose.override.yml
 # Local scratch / agent-authored ephemeral files (checklists, reports, etc.)
 tmp/
 
+# Agent-authored research artifacts (audits, comparisons) — local-only, not committed.
+docs/research/
+
 # Persistent dev-server logs (myth-lmz6). The dev-logged.sh wrapper writes
 # pino JSON to backend/logs/dev-YYYY-MM-DD.log; *.log above also covers
 # individual files but this scopes the whole directory away.
