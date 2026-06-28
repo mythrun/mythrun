@@ -24,6 +24,7 @@
     "wiki:accept-drift": "pnpm --filter @mythrun/wiki accept-drift",
     "wiki:dev": "pnpm --filter @mythrun/wiki dev",
     "smoke:staging": "bash backend/scripts/smoke/staging.sh",
+    "smoke:ws-transport": "bash backend/scripts/smoke/ws-transport.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",
