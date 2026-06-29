@@ -51,4 +51,24 @@ describe('ThemeToggle', () => {
     )
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  it('omits the fixed-position classes in inline placement', () => {
+    setMatch(false)
+    render(
+      <ThemeProvider>
+        <ThemeToggle label="Theme" placement="inline" data-testid="tt" />
+      </ThemeProvider>,
+    )
+    expect(screen.getByTestId('tt').className).not.toContain('fixed')
+  })
+
+  it('keeps the fixed FAB position by default', () => {
+    setMatch(false)
+    render(
+      <ThemeProvider>
+        <ThemeToggle label="Theme" data-testid="tt" />
+      </ThemeProvider>,
+    )
+    expect(screen.getByTestId('tt').className).toContain('fixed')
+  })
 })

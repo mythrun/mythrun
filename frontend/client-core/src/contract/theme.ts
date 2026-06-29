@@ -13,12 +13,15 @@ export interface ThemeContextValue {
   setTheme: (theme: Theme) => void
 }
 
-/**
- * The canonical theme-toggle FAB. A square button with its OWN solid surface +
- * strong border so it floats cleanly ABOVE the dither crown (occluding it, never
- * embedded). Carries the pixel sun/moon Icon; ≥44px touch target; 0px radius.
- */
+/** Where the theme toggle sits: a fixed top-right FAB, or a normal in-flow control. */
+export type ThemeTogglePlacement = 'fab' | 'inline'
+
+// The theme toggle. `placement='fab'` (default) is the fixed top-right FAB used
+// on genesis screens (signin, onboard). `placement='inline'` drops the fixed
+// positioning for a normal in-flow control (e.g. a nav cluster).
 export interface ThemeToggleProps extends BaseProps {
   /** Accessible name (an i18n KEY the consumer resolves) for the icon-only control. */
   label: string
+  /** Positioning mode. Default `'fab'` (fixed top-right); `'inline'` is in-flow. */
+  placement?: ThemeTogglePlacement
 }

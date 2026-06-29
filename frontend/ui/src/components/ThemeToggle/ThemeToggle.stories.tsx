@@ -23,3 +23,5 @@ export default meta
 type Story = StoryObj<typeof ThemeToggle>
 
 export const Default: Story = { args: { label: 'Theme' } }
+
+export const Inline: Story = { args: { label: 'Theme', placement: 'inline' } }

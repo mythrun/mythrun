@@ -4,11 +4,13 @@ import { cn } from '../../lib/cn.ts'
 import { Icon } from '../Icon/Icon.tsx'
 import { useTheme } from '../../theme/theme-provider.tsx'
 
-// The canonical theme-toggle FAB (MYT-84 §11). A SQUARE button with its OWN solid
+// The canonical theme toggle (MYT-84 §11). A SQUARE button with its OWN solid
 // `surface` + `border-strong` so it floats cleanly ABOVE the dither crown
-// (occluding it — never embedded). Self-positioning: `fixed` top-right so the
-// genesis screens render `<ThemeToggle/>` and it floats over the crown without the
-// screen reaching for raw positioning (no-ad-hoc-ui). A true 48px square — width ==
+// (occluding it — never embedded). FAB or inline; see `placement`: `'fab'`
+// (default) is `fixed` top-right so the genesis screens render `<ThemeToggle/>`
+// and it floats over the crown without the screen reaching for raw positioning
+// (no-ad-hoc-ui); `'inline'` drops the fixed classes for an in-flow nav control.
+// A true 48px square — width ==
 // height == `--control-lg` (the largest control step) so it reads as a real,
 // noticeable button and is square BY CONSTRUCTION (one token on both axes), well
 // above the 44px touch floor. 0px radius, theme-aware focus ring; the `md` (20px)
@@ -19,7 +21,7 @@ import { useTheme } from '../../theme/theme-provider.tsx'
 // which flip under `.dark` (the @theme-inline gotcha: never raw --color-* here).
 // The glyph follows the theme: sun in light, moon in dark (matches the mockup).
 export const ThemeToggle = forwardRef<HTMLButtonElement, ThemeToggleProps>(function ThemeToggle(
-  { label, ...rest },
+  { label, placement = 'fab', ...rest },
   ref,
 ) {
   const { theme, toggle } = useTheme()
@@ -30,7 +32,7 @@ export const ThemeToggle = forwardRef<HTMLButtonElement, ThemeToggleProps>(funct
       aria-label={label}
       onClick={toggle}
       className={cn(
-        'fixed top-[var(--space-4)] right-[var(--space-4)] z-[var(--z-nav)]',
+        placement === 'fab' && 'fixed top-[var(--space-4)] right-[var(--space-4)] z-[var(--z-nav)]',
         // A true square: width == height == --control-lg (48px). One token on both
         // axes guarantees square-by-construction and reads as a real, noticeable
         // button (well above the 44px touch floor).

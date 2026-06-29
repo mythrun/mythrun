@@ -124,4 +124,9 @@ export type { LogomarkProps, LogomarkTone } from './logomark.ts'
 // Theme contract (MYT-84) — the theme union, the `useTheme()` context value, and
 // the ThemeToggle FAB props. DOM-free types; the runtime (the `<html>.dark` +
 // localStorage side effects) lives in the web UI package (@mythrun/ui).
-export type { Theme, ThemeContextValue, ThemeToggleProps } from './theme.ts'
+export type {
+  Theme,
+  ThemeContextValue,
+  ThemeToggleProps,
+  ThemeTogglePlacement,
+} from './theme.ts'

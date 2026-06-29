@@ -173,4 +173,5 @@ export type {
   Theme,
   ThemeContextValue,
   ThemeToggleProps,
+  ThemeTogglePlacement,
 } from '@mythrun/client-core/contract'
