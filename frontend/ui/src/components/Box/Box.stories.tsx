@@ -12,6 +12,7 @@ const meta: Meta<typeof Box> = {
   component: Box,
   tags: ['autodocs'],
   argTypes: {
+    as: { control: 'select', options: ['div', 'nav', 'main', 'footer', 'header', 'section'] },
     padding: { control: 'select', options: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
     surface: { control: 'inline-radio', options: ['base', 'raised', 'overlay', 'reversed'] },
     border: { control: 'boolean' },
@@ -72,6 +73,14 @@ export const Reversed: Story = {
       <span className="font-ui text-sm">reversed · dark paper-900, light-on-dark text</span>
     </Box>
   ),
+}
+
+// Semantic landmark. `as` swaps the rendered element from the default `<div>`
+// to a page-landmark tag (`nav` / `main` / `footer` / `header` / `section`) —
+// surface/padding/border behaviour is unchanged. The landing page's nav/main/
+// footer consume this so the markup carries real landmark roles.
+export const Landmark: Story = {
+  args: { as: 'section', surface: 'raised', padding: 5, children: 'A section landmark' },
 }
 
 // Full-viewport floor. `minHeight="screen"` floors the Box at 100dvh (the

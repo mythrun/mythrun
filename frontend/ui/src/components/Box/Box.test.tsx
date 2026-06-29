@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createRef } from 'react'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { Box } from './Box.tsx'
 
@@ -86,6 +86,18 @@ describe('Box', () => {
     const { getByTestId } = render(<Box data-testid="box">x</Box>)
     const el = getByTestId('box')
     expect(el.classList.contains('border-border-strong')).toBe(false)
+  })
+
+  it('renders the semantic element named by `as`', () => {
+    render(<Box as="nav" data-testid="b">x</Box>)
+    expect(screen.getByTestId('b').tagName).toBe('NAV')
+  })
+
+  it('renders a footer landmark with a reversed surface', () => {
+    render(<Box as="footer" surface="reversed" data-testid="b">x</Box>)
+    const el = screen.getByTestId('b')
+    expect(el.tagName).toBe('FOOTER')
+    expect(el.className).toContain('dark')
   })
 
   it('forwards its ref to the underlying div', () => {

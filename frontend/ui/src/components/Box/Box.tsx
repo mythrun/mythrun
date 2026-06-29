@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { createElement, forwardRef } from 'react'
 import { cva } from 'class-variance-authority'
 import type { BoxProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
@@ -47,20 +47,20 @@ const box = cva('', {
   },
 })
 
-export const Box = forwardRef<HTMLDivElement, BoxProps>(function Box(
-  { padding, surface = 'base', border = false, minHeight, children, ...rest },
+export const Box = forwardRef<HTMLElement, BoxProps>(function Box(
+  { padding, surface = 'base', border = false, minHeight, as = 'div', children, ...rest },
   ref,
 ) {
-  return (
-    <div
-      ref={ref}
-      className={cn(
+  return createElement(
+    as,
+    {
+      ref,
+      className: cn(
         box({ surface, border, ...(minHeight !== undefined && { minHeight }) }),
         padding !== undefined && PADDING_CLASS[padding],
-      )}
-      {...rest}
-    >
-      {children}
-    </div>
+      ),
+      ...rest,
+    },
+    children,
   )
 })

@@ -7,6 +7,8 @@ import type { SpaceToken } from './space-token.ts'
  * border. The neutral building block for cards, panels, and grouped content.
  */
 export interface BoxProps extends BaseProps {
+  /** Semantic landmark element. Default 'div'. Use 'nav'/'main'/'footer'/'header' for page landmarks. */
+  as?: 'div' | 'nav' | 'main' | 'footer' | 'header' | 'section'
   /** Inner padding on all sides, a `--space-*` step. */
   padding?: SpaceToken
   /**
