@@ -75,7 +75,6 @@ export const descriptions: Record<string, string> = {
   'onboard.hint': 'Reassuring sub-line under the onboarding action ("you can change this later"). Short.',
   'onboard.errors.displayNameInvalid': 'Inline error under the onboarding input when the display name is rejected. ~1 sentence.',
   'onboard.errors.generic': 'Generic onboarding failure notice (rate-limited / exhausted retries). ~1 sentence with a retry nudge.',
-  'stub.landing': 'Placeholder label for the not-yet-built landing screen (a flow ticket owns the real screen). ~screen-title length.',
   'stub.join': 'Placeholder label for the not-yet-built invite-join screen (a flow ticket owns the real screen).',
   'stub.recap': 'Placeholder label for the not-yet-built session-recap screen (a flow ticket owns the real screen).',
   'stub.campaignNew': 'Placeholder label for the not-yet-built campaign-create screen (a flow ticket owns the real screen).',

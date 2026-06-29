@@ -95,7 +95,6 @@
     }
   },
   "stub": {
-    "landing": "[ph_landing_screen]",
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
     "campaignNew": "[ph_campaign_new_screen]",

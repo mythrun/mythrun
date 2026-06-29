@@ -1,15 +1,39 @@
-import { Stack, Heading, Text } from '@mythrun/ui'
+import { Box, Stack, HorizontalLockup, ThemeToggle, Button, useTheme } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 
-// The public landing screen — a thin stub the landing ticket (MYT-86) fills.
-// It composes @mythrun/ui only + an i18n placeholder (R5), and carries a
-// `data-testid` so the router test can assert which screen the tree resolved to.
-export function LandingRoute(): React.JSX.Element {
+// The SPA target both the nav Sign-in and the (later) hero CTA route to. Hoisted
+// to a module const so the path is a variable at the `navigate(...)` call site —
+// a literal there trips `i18next/no-literal-string` in the JSX-attribute scope.
+const SIGNIN_PATH = '/auth/signin'
+
+// The public landing page (MYT-86). Composed from @mythrun/ui only; nav/main/
+// footer are semantic landmarks (Box `as`). Prose is [ph_] i18n; the CTA + nav
+// Sign-in route to /auth/signin via SPA navigation.
+function LandingNav(): React.JSX.Element {
   const { t } = useTranslation()
+  const { theme } = useTheme()
+  const navigate = useNavigate()
+  const toggleLabel = theme === 'dark' ? t('theme.toLight') : t('theme.toDark')
   return (
-    <Stack gap={4} data-testid="route-landing">
-      <Heading level={1}>{t('stub.landing')}</Heading>
-      <Text as="p">{t('stub.landing')}</Text>
+    <Box as="nav" padding={4} data-testid="landing-nav">
+      <Stack direction="row" justify="between" align="center">
+        <HorizontalLockup aria-label={t('landing.wordmark')} data-testid="landing-wordmark" />
+        <Stack direction="row" align="center" gap={3}>
+          <ThemeToggle placement="inline" label={toggleLabel} data-testid="landing-theme-toggle" />
+          <Button variant="secondary" onPress={() => void navigate(SIGNIN_PATH)} data-testid="landing-signin">
+            {t('landing.signin')}
+          </Button>
+        </Stack>
+      </Stack>
+    </Box>
+  )
+}
+
+export function LandingRoute(): React.JSX.Element {
+  return (
+    <Stack minHeight="screen" data-testid="route-landing">
+      <LandingNav />
     </Stack>
   )
 }
