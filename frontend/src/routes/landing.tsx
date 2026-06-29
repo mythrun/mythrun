@@ -18,7 +18,7 @@ function LandingNav(): React.JSX.Element {
         <HorizontalLockup aria-label={t('landing.wordmark')} data-testid="landing-wordmark" />
         <Stack direction="row" align="center" gap={3}>
           <ThemeToggle placement="inline" label={toggleLabel} data-testid="landing-theme-toggle" />
-          <Button variant="secondary" onPress={() => void navigate(SIGNIN_PATH)} data-testid="landing-signin">
+          <Button variant="secondary" size="lg" onPress={() => void navigate(SIGNIN_PATH)} data-testid="landing-signin">
             {t('landing.signin')}
           </Button>
         </Stack>

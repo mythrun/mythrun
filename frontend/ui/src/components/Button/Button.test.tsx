@@ -163,17 +163,27 @@ describe('Button', () => {
     expect(getByRole('button')).toHaveClass('shrink-0')
   })
 
-  it('renders distinct visual heights per size (--control-sm/md/lg, not a blanket floor)', () => {
+  it('renders distinct MIN heights per size (--control-sm/md/lg) so a long label grows, not clips', () => {
     const heights: Record<'sm' | 'md' | 'lg', string> = {
-      sm: 'h-[var(--control-sm)]',
-      md: 'h-[var(--control-md)]',
-      lg: 'h-[var(--control-lg)]',
+      sm: 'min-h-[var(--control-sm)]',
+      md: 'min-h-[var(--control-md)]',
+      lg: 'min-h-[var(--control-lg)]',
     }
     for (const size of ['sm', 'md', 'lg'] as const) {
       const { getByRole, unmount } = render(<Button size={size}>x</Button>)
       expect(getByRole('button')).toHaveClass(heights[size])
       unmount()
     }
+  })
+
+  it('is responsive — caps at the container and wraps a long label (no viewport overflow)', () => {
+    const { getByRole } = render(<Button>x</Button>)
+    const el = getByRole('button')
+    // max-w-full caps the button at its container; text-center centers wrapped lines;
+    // no `whitespace-nowrap` so a long label wraps + the min-h button grows TALLER
+    // (correct responsive design) rather than spilling past the viewport.
+    expect(el).toHaveClass('max-w-full', 'text-center')
+    expect(el).not.toHaveClass('whitespace-nowrap')
   })
 
   it('scales the font 12/14/16 per step so sizes are clearly distinct (sm text-xs)', () => {

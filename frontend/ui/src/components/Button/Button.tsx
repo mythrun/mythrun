@@ -52,9 +52,11 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   ghost: 'bg-transparent text-ink hover:bg-surface-hover active:bg-surface-active',
 }
 
-// Visual height from the `--control-*` token (32/40/48); padding ramps +4/+8
-// (12/16/24); font steps 12/14/16 (text-xs/sm/base). All three axes change per
-// step so the sizes are clearly distinguishable — not just the height.
+// MINIMUM height from the `--control-*` token (32/40/48) — a FLOOR, not a fixed
+// height, so a wrapped label grows the button taller (with `py` for breathing room)
+// instead of clipping; a single-line label still sits at the control height. The
+// horizontal padding ramps +4/+8 (12/16/24); font steps 12/14/16 (text-xs/sm/base).
+// All three axes change per step so the sizes stay clearly distinguishable.
 //
 // GAP (spinner/icon ↔ label): tuned to the spinner that actually sits there, not
 // a uniform value. sm/md carry the 12px spinner, so the canonical 8px gap reads
@@ -62,17 +64,20 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 // spinner pulls it into one unit. lg carries the 24px spinner, where 8px is a
 // clean 0.5em / one-third-of-spinner, so it keeps the --space-2 gap.
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: 'h-[var(--control-sm)] px-[var(--space-3)] text-xs gap-[6px]',
-  md: 'h-[var(--control-md)] px-[var(--space-4)] text-sm gap-[6px]',
-  lg: 'h-[var(--control-lg)] px-[var(--space-5)] text-base gap-[var(--space-2)]',
+  sm: 'min-h-[var(--control-sm)] px-[var(--space-3)] py-[var(--space-1)] text-xs gap-[6px]',
+  md: 'min-h-[var(--control-md)] px-[var(--space-4)] py-[var(--space-2)] text-sm gap-[6px]',
+  lg: 'min-h-[var(--control-lg)] px-[var(--space-5)] py-[var(--space-2)] text-base gap-[var(--space-2)]',
 }
 
 const button = cva(
   cn(
-    // Layout: label + (optional) spinner sit on one row, centered, never wrapping.
-    // shrink-0 (§4): the fixed action affordance opts OUT of the blanket Stack
-    // min-w-0 default so a button never spills or squishes beside shrinking text.
-    'inline-flex items-center justify-center whitespace-nowrap shrink-0',
+    // Layout: the icon/spinner + label are centered (items/justify-center); the
+    // LABEL wraps (default whitespace-normal + text-center) and the button grows
+    // TALLER via min-h (SIZE_CLASS) rather than spilling wide — `max-w-full` caps it
+    // at the container so a long label never overflows the viewport (responsive by
+    // default). shrink-0 (§4): the action affordance still opts OUT of the blanket
+    // Stack min-w-0 default so it doesn't squish beside shrinking text in a row.
+    'inline-flex items-center justify-center text-center max-w-full shrink-0',
     'font-ui font-medium select-none cursor-pointer',
     // Flat 1-bit corners.
     'rounded-none',

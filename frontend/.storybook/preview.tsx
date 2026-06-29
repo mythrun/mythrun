@@ -36,6 +36,14 @@ const preview: Preview = {
   decorators: [
     (Story, context) => {
       const dark = context.globals.theme === 'dark'
+      // Drive the screen-harness ThemeProvider from the toolbar: it resolves its
+      // initial theme from localStorage('mythrun-theme') ONCE at mount, so seed that
+      // key from the toolbar (before the story mounts) and key the story on the theme
+      // below so a toolbar toggle RE-MOUNTS the provider to the new theme. Without this,
+      // screen stories' useTheme() ignores the toolbar — the CSS flips via `.dark` but
+      // the screen's theme-conditional logic (e.g. the landing dither's DIRECTION) stays
+      // stale. Component stories read the `.dark` class directly, so this is harmless there.
+      localStorage.setItem('mythrun-theme', dark ? 'dark' : 'light')
       // Toggle `.dark` on the document root so PORTALED overlays (rendered to
       // document.body, outside this wrapper) inherit the theme too.
       useEffect(() => {
@@ -50,11 +58,14 @@ const preview: Preview = {
       // get the p-6 breathing room. The `data-sb-pad` hook lets the overflow
       // gate neutralize the specimen padding so a ≤375-but-wide component is
       // measured against the TRUE 375px budget, not 375−48.
+      // key on the theme so a toolbar toggle re-mounts the story, re-initializing the
+      // ThemeProvider (seeded above) to the new theme.
+      const themeKey = dark ? 'dark' : 'light'
       if (context.parameters.layout === 'fullscreen') {
-        return <Story />
+        return <Story key={themeKey} />
       }
       return (
-        <div data-sb-pad className="bg-bg text-ink p-6">
+        <div key={themeKey} data-sb-pad className="bg-bg text-ink p-6">
           <Story />
         </div>
       )
