@@ -111,14 +111,14 @@ describe('SeamlessInput', () => {
     // Resting baseline rule (thin, low-emphasis) ...
     expect(el).toHaveClass('border-b', 'border-border')
     // ... thickens to 2px + colors to accent on focus (the WCAG 2.4.13 indicator).
-    expect(el).toHaveClass('focus-visible:border-b-2', 'focus-visible:border-accent')
+    expect(el).toHaveClass('focus-visible:border-b-2', 'focus-visible:border-accent-fg')
     // The default box outline is removed — the baseline IS the indicator.
     expect(el).toHaveClass('focus-visible:outline-none')
   })
 
   it('uses the branded ember caret', () => {
     const { getByRole } = render(<SeamlessInput label="Q" />)
-    expect(getByRole('textbox')).toHaveClass('caret-accent')
+    expect(getByRole('textbox')).toHaveClass('caret-accent-fg')
   })
 
   it('strips the box: no border-box / background utility on the resting field', () => {

@@ -89,8 +89,8 @@ describe('Spinner', () => {
     // through. (The old `bg-surface` paper tile is gone.)
     expect(grid?.className).not.toMatch(/bg-(surface|paper|bg|accent|ember)/)
     // The default `accent` tone resolves currentColor to the brand ember via a
-    // `text-accent` token utility on the grid.
-    expect(grid?.className).toMatch(/\btext-accent\b/)
+    // `text-accent-fg` token utility on the grid (the FOREGROUND accent).
+    expect(grid?.className).toMatch(/\btext-accent-fg\b/)
     const cell = status.querySelector('[data-spinner-cell]')
     // The lit pixels are `bg-current` (== currentColor), so the pixel color is
     // whatever the grid's text color resolves to (ember for the default tone).
@@ -105,9 +105,9 @@ describe('Spinner', () => {
     const status = getByRole('status')
     const grid = status.querySelector('[data-spinner-grid]')
     // Inside a colored control the spinner must match the control's foreground,
-    // so the grid carries NO `text-accent` (it inherits the ambient text color);
+    // so the grid carries NO `text-accent-fg` (it inherits the ambient text color);
     // the ground stays transparent and the pixels stay `bg-current`.
-    expect(grid?.className).not.toMatch(/\btext-accent\b/)
+    expect(grid?.className).not.toMatch(/\btext-accent-fg\b/)
     expect(grid?.className).not.toMatch(/bg-(surface|paper|bg|accent|ember)/)
     const cell = status.querySelector('[data-spinner-cell]')
     expect(cell?.className).toMatch(/\bbg-current\b/)

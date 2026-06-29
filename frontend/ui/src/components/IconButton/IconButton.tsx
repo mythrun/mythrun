@@ -12,7 +12,7 @@ import { Spinner } from '../Spinner/Spinner.tsx'
 //
 // Shares Button's flat 1-bit corners, token-swap state matrix (incl. the pressed
 // `active:` step), and theme-aware focus ring (see Button.tsx for the rationale on
-// `outline-accent` vs the arbitrary token wrapper). The difference is GEOMETRY: an
+// `outline-accent-fg` vs the arbitrary token wrapper). The difference is GEOMETRY: an
 // icon-only control has no text to pad the tap area, so the ≥44px hit-target (§4)
 // is pinned on BOTH axes — but, like Button, only on COARSE pointers (touch): a
 // blanket `min-w/min-h-[44px]` would force `sm`(32) and `md`(40) both up to 44px,
@@ -38,7 +38,7 @@ const iconButton = cva(
     // ≥44px hit-target on BOTH axes — touch only, so the visual square stays the
     // distinct --control-* size on desktop (a blanket min would collapse sm/md).
     'pointer-coarse:min-w-[44px] pointer-coarse:min-h-[44px]',
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     'disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-tertiary disabled:border-border-strong',
   ),
   {

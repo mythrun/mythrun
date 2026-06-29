@@ -51,7 +51,7 @@ export function Tabs({
               'border-b-2 border-transparent text-ink-tertiary',
               'data-[state=active]:border-border-strong data-[state=active]:text-ink',
               'rounded-none cursor-pointer select-none',
-              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
               'disabled:cursor-not-allowed disabled:text-ink-tertiary disabled:opacity-60',
             )}
           >

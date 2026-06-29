@@ -14,9 +14,21 @@
   --ink: var(--color-paper-900);
   --ink-secondary: var(--color-paper-700);
   --ink-tertiary: var(--color-paper-600); /* paper-600 = AA body; brand doc's paper-500 is only 3.27:1 */
-  --accent: var(--color-ember-600);
-  --accent-hover: var(--color-ember-700);
-  --accent-active: var(--color-ember-800);   /* token-swap pressed state (one step past hover) */
+  --accent: var(--color-ember-500);          /* FILL token (bg-accent). ember-500 IS the brand hero #8A5A3C
+                                                (recentered); paper-50 text sits ON it at 5.30:1 (AA). */
+  --accent-hover: var(--color-ember-600);
+  --accent-active: var(--color-ember-700);   /* token-swap pressed state (one step past hover) */
+
+  /* Accent as a FOREGROUND stroke — text (text-accent-fg on Link/Label/Spinner),
+     focus rings (--focus-ring-color / outline-accent-fg on ~11 controls), and the
+     ghost-field caret + baseline. Drawn directly ON the page/surface, so it must
+     contrast AGAINST that bg — the OPPOSITE constraint from --accent the fill
+     (where text sits on top of it). In light mode the hero ember-500 serves both
+     roles, so --accent-fg mirrors --accent here; the two DIVERGE in dark (the fill
+     darkens for on-accent text AA, which is then too dark to read/ring against the
+     dark page, so the fg stays lighter — the luminance windows don't overlap). */
+  --accent-fg: var(--color-ember-500);        /* text 4.81:1 vs bg(paper-100), 5.30:1 vs surface(paper-50); ring ≥3:1 both — AA. */
+  --accent-fg-hover: var(--color-ember-600);  /* link hover: 6.24:1 vs bg, 6.88:1 vs surface */
   --success: var(--color-success-500);
   --warning: var(--color-warning-500);
   --danger: var(--color-danger-500);
@@ -49,28 +61,30 @@
      darkest ink keeps the panel's --border-strong edge legible against it. */
   --scrim: color-mix(in srgb, var(--color-paper-900) 60%, transparent);
 
-  /* Focus ring — 2px hard square outline, 2px offset, theme-aware color.
-     var(--accent) = ember-600 here → 4.81:1 vs bg, 5.30:1 vs surface (≥3:1). */
+  /* Focus ring — 2px hard square outline, 2px offset, theme-aware color. Keyed to
+     the FOREGROUND accent (--accent-fg), not the fill: the ring sits on the page/
+     surface (2px offset, OUTSIDE the control), so it must contrast against THAT,
+     not carry text. Light: ember-500 → 4.81:1 vs bg, 5.30:1 vs surface (≥3:1). */
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
-  --focus-ring-color: var(--accent);
+  --focus-ring-color: var(--accent-fg);
 
   /* Status-intent (light). --surface-* = tinted -50 panel; body text on it uses
      --ink. --border-* = -500 step (≥3:1 non-text). --text-* = AA (≥4.5:1) on
      BOTH the page (paper-100) and its own -50 tint; warning needs -700 (the -600
-     step is only 3.91:1 on paper-100), the rest clear at -600. */
+     step is only 3.97:1 on paper-100), the rest clear at -600. */
   --surface-success: var(--color-success-50);
-  --border-success: var(--color-success-500);  /* 3.85:1 vs paper-100, 3.61:1 vs success-50 */
-  --text-success: var(--color-success-600);    /* 4.91:1 vs paper-100, 4.60:1 vs success-50 */
+  --border-success: var(--color-success-500);  /* 3.85:1 vs paper-100, 4.25:1 vs success-50 */
+  --text-success: var(--color-success-600);    /* 4.98:1 vs paper-100, 5.49:1 vs success-50 */
   --surface-warning: var(--color-warning-50);
-  --border-warning: var(--color-warning-500);  /* 3.11:1 vs paper-100, 3.42:1 vs warning-50 */
-  --text-warning: var(--color-warning-700);    /* 5.30:1 vs paper-100, 5.84:1 vs warning-50 */
+  --border-warning: var(--color-warning-500);  /* 3.11:1 vs paper-100, 3.33:1 vs warning-50 */
+  --text-warning: var(--color-warning-700);    /* 5.30:1 vs paper-100, 5.68:1 vs warning-50 */
   --surface-danger: var(--color-danger-50);
-  --border-danger: var(--color-danger-500);    /* 3.91:1 vs paper-100, 3.71:1 vs danger-50 */
-  --text-danger: var(--color-danger-600);      /* 4.96:1 vs paper-100, 4.70:1 vs danger-50 */
+  --border-danger: var(--color-danger-500);    /* 3.91:1 vs paper-100, 4.09:1 vs danger-50 */
+  --text-danger: var(--color-danger-600);      /* 5.06:1 vs paper-100, 5.29:1 vs danger-50 */
   --surface-info: var(--color-info-50);
-  --border-info: var(--color-info-500);        /* 3.67:1 vs paper-100, 3.59:1 vs info-50 */
-  --text-info: var(--color-info-600);          /* 4.67:1 vs paper-100, 4.56:1 vs info-50 */
+  --border-info: var(--color-info-500);        /* 3.62:1 vs paper-100, 3.97:1 vs info-50 */
+  --text-info: var(--color-info-600);          /* 4.67:1 vs paper-100, 5.13:1 vs info-50 */
 }
 
 .dark {
@@ -80,9 +94,22 @@
   --ink: var(--color-paper-100);
   --ink-secondary: var(--color-paper-300);
   --ink-tertiary: var(--color-paper-400);
-  --accent: var(--color-ember-400);
-  --accent-hover: var(--color-ember-300);
-  --accent-active: var(--color-ember-200);   /* token-swap pressed (lighter one step in dark) */
+  --accent: var(--color-ember-400);          /* FILL token. recentered ember-400 = #94603c: paper-50 text on it 4.78:1 (AA) */
+  --accent-hover: var(--color-ember-500);
+  --accent-active: var(--color-ember-600);   /* DARKENS on press (like light mode): paper-50 text stays AA
+                                                (ember-400→500→600 = 4.78→5.30→6.88). Going LIGHTER would drop
+                                                the primary-button hover text to 3.17:1 (sub-AA), so the dark
+                                                accent moves toward the hero, not away from it. */
+
+  /* Foreground accent in dark — the SPLIT that resolves the overloaded token. The
+     fill (--accent) is ember-400, dark enough that paper-50 text on it clears AA
+     (4.78:1) but TOO dark to read/ring against the dark page (ember-400 vs
+     paper-900 = 3.23 text-sub-AA; vs a raised paper-800 surface = 2.88 ring-sub-
+     3:1). The fg goes LIGHTER (ember-300 #b17f56) so text + rings clear against
+     dark surfaces — the two luminance windows don't overlap, hence the split. */
+  --accent-fg: var(--color-ember-300);        /* text 4.88:1 vs bg(paper-900), 4.34:1 vs surface(paper-800);
+                                                 ring ≥3:1 vs bg(4.88), raised paper-800(4.34) AND overlay paper-700(3.47). */
+  --accent-fg-hover: var(--color-ember-200);  /* link hover BRIGHTENS in dark: 7.22:1 vs bg, 6.43:1 vs surface */
   --success: var(--color-success-400);
   --warning: var(--color-warning-400);
   --danger: var(--color-danger-400);
@@ -106,26 +133,31 @@
      at a higher alpha so the overlay still separates from the dimmed page. */
   --scrim: color-mix(in srgb, black 70%, transparent);
 
-  /* Focus ring color flips with --accent → ember-400 here:
-     4.76:1 vs bg, 4.23:1 vs surface (≥3:1). ember-600 would be sub-3:1 on dark. */
-  --focus-ring-color: var(--accent);
+  /* Focus ring color keyed to the FOREGROUND accent (--accent-fg → ember-300,
+     #b17f56), NOT the fill — this is the accent-role split that fixes the dark
+     ring. The recenter darkened the fill (--accent → ember-400) so on-accent text
+     clears AA, but ember-400 rings at only 2.88:1 on a raised paper-800 surface
+     (sub-3:1). Keying the ring to the lighter fg clears it: 4.88:1 vs bg(paper-900),
+     4.34:1 vs raised(paper-800), 3.47:1 vs overlay(paper-700) — all ≥3:1. (The fill
+     keeps --accent; fg/fill split because the two luminance windows don't overlap.) */
+  --focus-ring-color: var(--accent-fg);
 
   /* Status-intent (dark). --surface-* = tinted -900 panel; body text uses --ink.
      --border-* = -400 (≥3:1 non-text). --text-* = -300, AA (≥4.5:1) on BOTH the
-     page (paper-900) and its own -900 tint (the -400 step is only ~4.0:1 on its
-     own tint, so it fails AA there — -300 clears both). */
+     page (paper-900) and its own -900 tint (the -400 step is only ~3.1–3.3:1 on
+     its own tint, so it fails AA there — -300 clears both). */
   --surface-success: var(--color-success-900);
-  --border-success: var(--color-success-400);  /* 4.68:1 vs paper-900, 4.03:1 vs success-900 */
-  --text-success: var(--color-success-300);    /* 6.28:1 vs paper-900, 5.40:1 vs success-900 */
+  --border-success: var(--color-success-400);  /* 4.05:1 vs paper-900, 3.26:1 vs success-900 */
+  --text-success: var(--color-success-300);    /* 5.97:1 vs paper-900, 4.82:1 vs success-900 */
   --surface-warning: var(--color-warning-900);
-  --border-warning: var(--color-warning-400);  /* 5.74:1 vs paper-900, 4.01:1 vs warning-900 */
-  --text-warning: var(--color-warning-300);    /* 7.61:1 vs paper-900, 5.31:1 vs warning-900 */
+  --border-warning: var(--color-warning-400);  /* 4.99:1 vs paper-900, 3.26:1 vs warning-900 */
+  --text-warning: var(--color-warning-300);    /* 7.27:1 vs paper-900, 4.76:1 vs warning-900 */
   --surface-danger: var(--color-danger-900);
-  --border-danger: var(--color-danger-400);    /* 4.59:1 vs paper-900, 3.84:1 vs danger-900 */
-  --text-danger: var(--color-danger-300);      /* 6.20:1 vs paper-900, 5.19:1 vs danger-900 */
+  --border-danger: var(--color-danger-400);    /* 3.95:1 vs paper-900, 3.10:1 vs danger-900 */
+  --text-danger: var(--color-danger-300);      /* 5.86:1 vs paper-900, 4.60:1 vs danger-900 */
   --surface-info: var(--color-info-900);
-  --border-info: var(--color-info-400);        /* 4.91:1 vs paper-900, 4.04:1 vs info-900 */
-  --text-info: var(--color-info-300);          /* 6.56:1 vs paper-900, 5.38:1 vs info-900 */
+  --border-info: var(--color-info-400);        /* 4.30:1 vs paper-900, 3.29:1 vs info-900 */
+  --text-info: var(--color-info-300);          /* 6.32:1 vs paper-900, 4.83:1 vs info-900 */
 }
 
 @theme inline {
@@ -139,6 +171,8 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-active: var(--accent-active);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-fg-hover: var(--accent-fg-hover);
   --color-surface-hover: var(--surface-hover);
   --color-surface-active: var(--surface-active);
   --color-surface-raised: var(--surface-raised);

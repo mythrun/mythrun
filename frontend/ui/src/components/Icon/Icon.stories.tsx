@@ -66,7 +66,7 @@ export const Tinted: Story = {
   render: () => (
     <div className="flex items-center gap-[var(--space-4)]">
       <Icon name="plus" size="lg" decorative />
-      <span className="text-accent">
+      <span className="text-accent-fg">
         <Icon name="plus" size="lg" decorative />
       </span>
       <span className="text-danger">

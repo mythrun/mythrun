@@ -118,7 +118,7 @@ describe('Checkbox', () => {
       'border-border-strong',
       'focus-visible:outline-2',
       'focus-visible:outline-offset-2',
-      'focus-visible:outline-accent',
+      'focus-visible:outline-accent-fg',
     )
   })
 

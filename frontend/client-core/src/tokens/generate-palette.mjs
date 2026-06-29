@@ -5,35 +5,60 @@ import { dirname, resolve } from 'node:path'
 
 export const STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900]
 const PAPER = { 50:'#F8F4EA',100:'#EFE9DC',200:'#E1D9C6',300:'#C9BFA8',400:'#A89F8A',500:'#877F72',600:'#66604F',700:'#3D3528',800:'#2D2519',900:'#231B12' }
-const EMBER = { 50:'#F5E4D3',100:'#ECCDAB',200:'#DCAE7E',300:'#C99562',400:'#B47B4E',500:'#9E6A44',600:'#8A5A3C',700:'#714730',800:'#573624',900:'#3C2619' }
+
+// The brand hero ember, recentered to step 500 (the ramp's center) so the whole
+// system — ember plus the semantic ramps that ride its profile — is anchored on
+// it. (Was hand-authored at 600, which left the dark-mode accent step too light
+// to clear WCAG AA; recentering darkens that step by construction.)
+export const EMBER_HERO = '#8A5A3C'
+// Hero-anchored lightness ladder (oklch L per step), monotonic 50→900. The light
+// half eases into a short final approach so step 400 lands in the dark-accent AA
+// pocket (L≈0.52–0.55: paper-50 text ≥4.5:1 AND the step ≥3:1 vs paper-900); 500
+// IS the hero; the dark half steps evenly to a deep brown. Ember and every
+// semantic ramp ride this ladder, shifted to their own anchor's L.
+const L_LADDER = { 50:0.930,100:0.840,200:0.738,300:0.637,400:0.538,500:0.5132,600:0.452,700:0.386,800:0.320,900:0.254 }
+// Chroma profile (oklch C per step): warm ember saturation, peaking light-mid and
+// tapering to the extremes. Scaled to each ramp's anchor chroma in generateRamp.
+const C_PROFILE = { 50:0.0294,100:0.0571,200:0.0831,300:0.0920,400:0.0936,500:0.0852,600:0.0770,700:0.0677,800:0.0556,900:0.0401 }
+// Ember hue drift (deg): golden in the lights → red-brown in the darks, hero hue at
+// 500. Only ember carries a hue curve; the semantic ramps hold their anchor hue.
+const EMBER_HUE = { 50:67,100:67,200:65,300:60,400:55,500:52.26,600:51,700:50,800:50,900:51 }
+// Lightest-tint ceiling. A light anchor (e.g. warning) shifts its whole ramp up;
+// uncapped, the -50 step would clamp to pure white and lose its tint. The cap holds
+// a faint cream. It only ever bites the -50 step, so the monotonic-L invariant
+// (asserted in generatePalette) still holds.
+const TINT_CEIL = 0.965
 export const SEMANTIC_ANCHORS = {
   success:{hex:'#6D7A3E',anchorStep:500}, warning:{hex:'#B07835',anchorStep:500},
   danger:{hex:'#c34c43',anchorStep:500}, info:{hex:'#4A6B82',anchorStep:600},
 }
 const toRgb = toGamut('rgb', 'oklch')
-const emberOk = Object.fromEntries(STEPS.map((s) => [s, oklch(EMBER[s])]))
 
-function generateRamp(hex, anchorStep) {
+// Build a ramp by riding L_LADDER (shifted so the anchor's L lands on its step) and
+// scaling C_PROFILE to the anchor's chroma. Hue is constant (the anchor's) unless a
+// per-step hueProfile is passed — ember uses one to keep its golden→red-brown drift.
+function generateRamp(hex, anchorStep, hueProfile) {
   const a = oklch(hex)
-  const lShift = a.l - emberOk[anchorStep].l
+  const lShift = a.l - L_LADDER[anchorStep]
   const out = {}
   for (const s of STEPS) {
     if (s === anchorStep) { out[s] = hex; continue }
-    const l = Math.min(1, Math.max(0, emberOk[s].l + lShift))
-    const c = a.c * (emberOk[s].c / emberOk[anchorStep].c)
+    const l = Math.min(TINT_CEIL, Math.max(0, L_LADDER[s] + lShift))
+    const c = a.c * (C_PROFILE[s] / C_PROFILE[anchorStep])
+    const h = hueProfile ? hueProfile[s] : a.h
     // toGamut holds L+H and reduces chroma into sRGB. Out-of-gamut light
     // steps (e.g. warning-50, a near-white cream) clip at the gamut corner,
     // so their MEASURED hue may drift — expected, and judged via tokens.html.
-    out[s] = formatHex(toRgb({ mode: 'oklch', l, c, h: a.h }))
+    out[s] = formatHex(toRgb({ mode: 'oklch', l, c, h }))
   }
   return out
 }
 export function generatePalette() {
-  const palette = { paper: { ...PAPER }, ember: { ...EMBER } }
+  const palette = { paper: { ...PAPER }, ember: generateRamp(EMBER_HERO, 500, EMBER_HUE) }
   for (const [name, { hex, anchorStep }] of Object.entries(SEMANTIC_ANCHORS)) {
     palette[name] = generateRamp(hex, anchorStep)
   }
-  for (const name of Object.keys(SEMANTIC_ANCHORS)) {
+  for (const name of ['ember', ...Object.keys(SEMANTIC_ANCHORS)]) {
     const ls = STEPS.map((s) => oklch(palette[name][s]).l)
     for (let i = 1; i < ls.length; i++) {
       if (!(ls[i] < ls[i - 1])) throw new Error(`${name}: non-monotonic L at step ${STEPS[i]}`)

@@ -39,6 +39,9 @@ describe('token presence (manifest-driven)', () => {
       '--scrim',
       // interactive control boundary + theme-aware focus ring color
       '--border-strong', '--focus-ring-color', '--accent-active',
+      // foreground accent (text + ring) — split from the fill --accent so dark text/
+      // rings clear AA (MYT-86); both must exist in :root AND .dark
+      '--accent-fg', '--accent-fg-hover',
       // status-intent triplets (theme-aware, AA-verified)
       '--surface-success', '--border-success', '--text-success',
       '--surface-warning', '--border-warning', '--text-warning',
@@ -108,13 +111,18 @@ describe('flat 1-bit design language (§3): shadows removed', () => {
 })
 
 describe('theme-aware semantic tokens (§4/§5)', () => {
-  it('focus ring is a hard square outline keyed to the accent', () => {
+  it('focus ring is a hard square outline keyed to the FOREGROUND accent (the fg/fill split)', () => {
     expect(semanticCss).toContain('--focus-ring-width:')
     expect(semanticCss).toContain('--focus-ring-offset:')
-    expect(semanticCss).toMatch(/--focus-ring-color:\s*var\(--accent\)/)
+    // The ring is keyed to --accent-fg (text/ring role), NOT --accent (the fill):
+    // in dark the fill is too dark to ring at ≥3:1 on a raised surface (MYT-86).
+    expect(semanticCss).toMatch(/--focus-ring-color:\s*var\(--accent-fg\)/)
+    expect(semanticCss).not.toMatch(/--focus-ring-color:\s*var\(--accent\)\s*;/)
   })
   it('@theme inline surfaces the new theme-aware aliases as var-references', () => {
-    for (const name of ['--color-border-strong', '--color-surface-raised', '--color-text-danger']) {
+    for (const name of ['--color-border-strong', '--color-surface-raised', '--color-text-danger',
+      // the split fg accent must be exposed so text-accent-fg / outline-accent-fg resolve
+      '--color-accent-fg', '--color-accent-fg-hover']) {
       expect(semanticCss).toContain(name)
     }
   })

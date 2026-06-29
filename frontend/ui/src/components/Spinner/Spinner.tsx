@@ -26,8 +26,9 @@ import { GRID, GAP, SPEED_MS, buildCells, isOn } from './develop.ts'
 // all show whatever is behind the spinner — not a drawn paper tile). The lit cells
 // are `bg-current` (background = currentColor), so the pixel color is driven by the
 // grid's text color. `tone` picks that text color:
-//   - `accent` (default) → `text-accent` on the grid → the pixels are the brand
-//     ember (theme-aware). The standalone look (on a panel/surface).
+//   - `accent` (default) → `text-accent-fg` on the grid → the pixels are the brand
+//     ember (theme-aware, the FOREGROUND accent so it reads on a panel/surface in
+//     both themes). The standalone look (on a panel/surface).
 //   - `inherit` → NO color class → the pixels take the SURROUNDING text color, for
 //     use inside a colored control (a Button: paper on the ember primary fill, ink
 //     on secondary/ghost) — so an ember-on-ember vanish is impossible.
@@ -136,14 +137,14 @@ export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinne
           role + accessible name above carry the busy meaning, so the texture is
           aria-hidden. `grid` lays the cells out as a GRID × GRID square that fills
           the icon-token footprint; GAP=0 so the dither reads as one field. The
-          ground draws NO fill (transparent); `text-accent` (default tone) makes the
+          ground draws NO fill (transparent); `text-accent-fg` (default tone) makes the
           `bg-current` pixels resolve to the brand ember, while `tone="inherit"`
           omits it so the pixels take the surrounding control's text color. */}
       <span
         ref={gridRef}
         aria-hidden="true"
         data-spinner-grid=""
-        className={cn('grid', tone === 'accent' && 'text-accent')}
+        className={cn('grid', tone === 'accent' && 'text-accent-fg')}
         style={{
           width: `${String(GRID * CELL_PX[size])}px`,
           height: `${String(GRID * CELL_PX[size])}px`,

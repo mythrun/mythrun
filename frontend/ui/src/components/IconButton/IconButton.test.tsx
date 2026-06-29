@@ -74,7 +74,7 @@ describe('IconButton', () => {
     // The spinner replaces the icon (the control's foreground), so it uses
     // tone="inherit" — pixels match the control's text color, transparent ground.
     const grid = el.querySelector('[data-spinner-grid]')
-    expect(grid?.className).not.toMatch(/\btext-accent\b/)
+    expect(grid?.className).not.toMatch(/\btext-accent-fg\b/)
     expect(grid?.className).not.toMatch(/bg-(surface|paper|accent|ember)/)
     expect(grid?.querySelector('[data-spinner-cell]')?.className).toMatch(/\bbg-current\b/)
     await user.click(el)
@@ -111,7 +111,7 @@ describe('IconButton', () => {
     expect(getByRole('button')).toHaveClass(
       'focus-visible:outline-2',
       'focus-visible:outline-offset-2',
-      'focus-visible:outline-accent',
+      'focus-visible:outline-accent-fg',
     )
   })
 

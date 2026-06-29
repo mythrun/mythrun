@@ -118,7 +118,7 @@ describe('Switch', () => {
       'data-[state=checked]:border-accent',
       'focus-visible:outline-2',
       'focus-visible:outline-offset-2',
-      'focus-visible:outline-accent',
+      'focus-visible:outline-accent-fg',
     )
   })
 

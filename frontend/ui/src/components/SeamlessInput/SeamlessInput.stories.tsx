@@ -9,7 +9,7 @@ import { SeamlessInput } from './SeamlessInput.tsx'
 //
 // Built to the ghost-input design language: no border/background (the field
 // reads as text), display-size serif PROSE type (the "magical" register, vs the
-// boxed Input's mono data face), a branded `caret-accent`, the question as the
+// boxed Input's mono data face), a branded `caret-accent-fg`, the question as the
 // programmatically-associated visible label (WCAG 3.3.2), and a NON-BOX focus
 // affordance — a thin baseline rule that thickens + colors to accent on focus
 // (WCAG 2.4.13; the box outline is removed because the baseline IS the

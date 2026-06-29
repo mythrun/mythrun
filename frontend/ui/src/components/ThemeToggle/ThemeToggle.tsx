@@ -38,7 +38,7 @@ export const ThemeToggle = forwardRef<HTMLButtonElement, ThemeToggleProps>(funct
         'rounded-none cursor-pointer select-none',
         'bg-surface text-ink border border-border-strong',
         'hover:bg-surface-hover active:bg-surface-active',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
       )}
       {...rest}
     >

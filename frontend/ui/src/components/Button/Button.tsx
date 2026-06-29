@@ -24,10 +24,12 @@ const ICON_GAP = 'gap-[var(--space-2)]'
 // disabled arm swaps to muted tokens (a11y-exempt for contrast, §4).
 //
 // Focus ring (a11y-critical, §3): a 2px hard square outline, 2px offset, in the
-// `accent` token — which is EXACTLY what `--focus-ring-color` references in both
-// themes, so the ring is theme-aware. We use the `outline-accent` token utility
-// (not the arbitrary `outline-[var(--focus-ring-color)]`) because no-ad-hoc-color
-// (R3) bans arbitrary color utilities; the token form is semantically identical.
+// `accent-fg` token (the FOREGROUND accent — the ring sits OUTSIDE the control so
+// it must contrast against the page, not carry text like the fill) — which is
+// EXACTLY what `--focus-ring-color` references in both themes, so the ring is
+// theme-aware. We use the `outline-accent-fg` token utility (not the arbitrary
+// `outline-[var(--focus-ring-color)]`) because no-ad-hoc-color (R3) bans arbitrary
+// color utilities; the token form is semantically identical.
 //
 // Hit-target (a11y-critical, §4): the VISUAL height is the `--control-*` token
 // (32/40/48), and those three heights MUST read as distinct in the size scale.
@@ -79,7 +81,7 @@ const button = cva(
     // min-h would flatten sm/md to 44px and kill the size scale.
     'pointer-coarse:min-h-[44px]',
     // Theme-aware focus ring (== --focus-ring-color in both themes).
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     // Disabled (incl. loading): muted token swap, non-interactive cursor.
     // a11y-exempt for contrast (§4). `disabled:border-border-strong` keeps the
     // secondary border from looking active while muted.

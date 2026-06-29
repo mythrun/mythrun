@@ -15,7 +15,7 @@ import { Icon } from '../Icon/Icon.tsx'
 // Visuals follow the flat 1-bit register (see Input.tsx for the rationale): the
 // TRIGGER is shaped exactly like an Input — `rounded-none`, a 1px
 // `--border-strong` interactive boundary, `bg-surface`/`text-ink`, mono
-// `font-ui` (a chosen value is data), and the theme-aware `outline-accent`
+// `font-ui` (a chosen value is data), and the theme-aware `outline-accent-fg`
 // focus ring. invalid swaps the border to a 2px danger edge + the ring to the
 // danger token AND sets `aria-invalid` on the trigger (both halves — not color
 // alone); no background wash, the re-saturated red carries it. disabled gets
@@ -40,7 +40,7 @@ const trigger = cva(
     'rounded-none border border-border-strong',
     // Placeholder reads muted (Radix tags it `data-placeholder`).
     'data-[placeholder]:text-ink-tertiary',
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     'disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-tertiary disabled:border-border-strong',
   ),
   {

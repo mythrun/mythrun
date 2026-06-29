@@ -19,15 +19,16 @@ import type { SeamlessInputProps } from '@mythrun/client-core/contract'
 //     mono `font-ui` data face the boxed Input uses — inputs are data; a
 //     world's NAME is prose). Headline scale matches how conversational forms
 //     render the answer.
-//  3. Branded caret — `caret-accent` (the ember caret) so the cursor is legible
-//     + intentional against parchment.
+//  3. Branded caret — `caret-accent-fg` (the foreground-accent ember caret) so the
+//     cursor is legible + intentional against parchment in BOTH themes.
 //  4. The question IS the label — a prominent, programmatically-ASSOCIATED
 //     `<label htmlFor>` rendered ABOVE the field (the persistent visible label,
 //     WCAG 3.3.2). The field's accessible name is the question.
 //  5. A NON-BOX focus affordance (WCAG 2.4.13, CRITICAL) — a borderless field
 //     with the outline removed would have NO focus indicator. So: a thin bottom
 //     baseline rule in the low-emphasis `--border` token when unfocused, which
-//     THICKENS to 2px and colors to `--accent` on `:focus-visible`. The default
+//     THICKENS to 2px and colors to `--accent-fg` (the foreground accent, so the
+//     indicator clears ≥3:1 vs the page in dark mode too) on `:focus-visible`. The default
 //     box outline is removed (`focus-visible:outline-none`) BECAUSE the accent
 //     baseline IS the indicator — the 1px-subtle → 2px-accent change clears the
 //     ≥2px-area + ≥3:1-change-contrast bar. (The caret alone is NOT a WCAG focus
@@ -50,15 +51,17 @@ const FIELD_CLASS = cn(
   'block w-full font-body text-2xl leading-[1.4] text-ink',
   // No box: 0px corners (flat 1-bit), no border, transparent fill.
   'rounded-none border-0 bg-transparent',
-  // Branded ember caret.
-  'caret-accent',
+  // Branded ember caret — the FOREGROUND accent (--accent-fg, like the focus
+  // baseline below) so the caret + baseline stay a matched pair and both read
+  // against the dark page (the fill --accent is too dark in dark mode).
+  'caret-accent-fg',
   // Faint placeholder hint (never the label).
   'placeholder:text-ink-tertiary',
   // The NON-BOX focus affordance (WCAG 2.4.13): a thin low-emphasis baseline
   // rule that thickens + colors to accent on focus; the box outline is removed
   // because the baseline IS the indicator.
   'border-b border-border',
-  'focus-visible:outline-none focus-visible:border-b-2 focus-visible:border-accent',
+  'focus-visible:outline-none focus-visible:border-b-2 focus-visible:border-accent-fg',
   // Disabled: muted ink + non-interactive cursor (a11y-exempt inactive control).
   'disabled:cursor-not-allowed disabled:text-ink-tertiary',
 )

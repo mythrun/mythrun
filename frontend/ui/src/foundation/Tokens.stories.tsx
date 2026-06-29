@@ -45,7 +45,7 @@ function TokenSpecimen(): React.JSX.Element {
           Body copy on paper. Sensory detail, distinct NPC voices, tonal variety.
         </p>
         <p className="font-ui text-sm text-ink-tertiary">Mono UI chrome / metadata.</p>
-        <p className="font-ui text-base text-accent">Accent ember — interactive emphasis.</p>
+        <p className="font-ui text-base text-accent-fg">Accent ember — interactive emphasis.</p>
       </section>
     </div>
   )

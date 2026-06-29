@@ -15,7 +15,7 @@ import { cn } from '../../lib/cn.ts'
 // face). The control height is the `--control-*` token (§4).
 //
 // Focus ring (a11y-critical, §3): a 2px hard square outline, 2px offset. Color
-// is theme-aware via the `outline-accent` token utility (== --focus-ring-color
+// is theme-aware via the `outline-accent-fg` token utility (== --focus-ring-color
 // in both themes); no-ad-hoc-color (R3) bans the arbitrary token wrapper.
 //
 // invalid (§4): a HEAVIER 2px danger border (vs the 1px `--border-strong` normal
@@ -46,7 +46,7 @@ const input = cva(
     // Placeholder reads as muted, secondary text.
     'placeholder:text-ink-tertiary',
     // Theme-aware focus ring (default — the invalid arm overrides the color).
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     // Disabled / read-only: muted token swap, non-interactive cursor.
     'disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-tertiary disabled:border-border-strong',
     'read-only:cursor-default',

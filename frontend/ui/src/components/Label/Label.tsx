@@ -28,7 +28,7 @@ export const Label = forwardRef<HTMLLabelElement, LabelProps>(function Label(
       {required && (
         <>
           {' '}
-          <span aria-hidden="true" className="text-accent">
+          <span aria-hidden="true" className="text-accent-fg">
             *
           </span>
           <VisuallyHidden>(required)</VisuallyHidden>

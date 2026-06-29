@@ -36,7 +36,7 @@ const textArea = cva(
     'block w-full font-ui bg-surface text-ink',
     'rounded-none border border-border-strong',
     'placeholder:text-ink-tertiary',
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     'disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-tertiary disabled:border-border-strong',
     'read-only:cursor-default',
   ),

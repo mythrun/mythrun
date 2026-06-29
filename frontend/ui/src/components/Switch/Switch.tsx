@@ -53,7 +53,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
         'border-border-strong bg-surface',
         // ON: a filled ember square — the form's selected-radio idiom.
         'data-[state=checked]:bg-accent data-[state=checked]:border-accent',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
         // disabled keeps the boundary visible (never borderless), just dimmed.
         'disabled:cursor-not-allowed disabled:opacity-50',
         'cursor-pointer',

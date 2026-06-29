@@ -16,7 +16,8 @@ import { cn } from '../../lib/cn.ts'
 // fill); selecting it FILLS an inset inner square in the `--accent` token. That
 // filled-square fill is how a Radio differs from a Checkbox (the Checkbox stamps a
 // `check` glyph; the Radio fills its box). The focus ring is the shared theme-aware
-// `outline-accent`; disabled gets the muted token swap (a11y-exempt for contrast, §4).
+// `outline-accent-fg` (the foreground accent); disabled gets the muted token swap
+// (a11y-exempt for contrast, §4).
 //
 // invalid (§4) lives on the GROUP, not the item: setting `invalid` puts
 // `aria-invalid` on the radiogroup AND a 2px danger border on EVERY item. The
@@ -40,7 +41,7 @@ const item = cva(
     // 0px radius everywhere — a SQUARE box (matches Checkbox), no rounded exception.
     'rounded-none border border-border-strong bg-surface',
     'data-[state=checked]:border-accent',
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     'disabled:cursor-not-allowed disabled:border-border-strong',
     'cursor-pointer',
   ),

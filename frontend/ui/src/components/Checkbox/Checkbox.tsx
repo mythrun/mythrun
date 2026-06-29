@@ -30,7 +30,7 @@ const box = cva(
     // Checked + indeterminate (Radix sets both via data-state) swap to the accent fill.
     'data-[state=checked]:bg-accent data-[state=checked]:border-accent',
     'data-[state=indeterminate]:bg-accent data-[state=indeterminate]:border-accent',
-    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
     'disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-tertiary disabled:border-border-strong',
     'cursor-pointer',
   ),

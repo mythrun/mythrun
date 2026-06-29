@@ -7,9 +7,9 @@ describe('generated palette — brand fidelity + shape', () => {
   it('declares exactly 60 color tokens', () => {
     expect(Object.keys(c)).toHaveLength(60)
   })
-  it('reproduces paper + ember steps verbatim', () => {
+  it('reproduces paper verbatim + pins the recentered ember hero at step 500', () => {
     expect(c['--color-paper-100']).toBe('#EFE9DC')
-    expect(c['--color-ember-600']).toBe('#8A5A3C')
+    expect(c['--color-ember-500']).toBe('#8A5A3C')
     expect(c['--color-paper-900']).toBe('#231B12')
   })
   it('pins each semantic anchor to its exact brand hex (info anchors at 600)', () => {
