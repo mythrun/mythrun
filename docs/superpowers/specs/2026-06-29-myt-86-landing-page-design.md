@@ -40,7 +40,7 @@ Parchment & Ink — near-monochrome: **ember `#8A5A3C`** is the only saturated c
 
 ## Theming
 
-Theme-aware (light + dark via the nav toggle); both on-brand (paper-100 warm light / paper-900 warm dark). **The footer is always the reversed/dark surface.** The page→footer **dither fires only in light theme** (the committed light→dark contrast); dark theme drops it (dark-on-dark → no dither, per the brand rule). **WCAG AA caveat:** the ember `primary` Button is **sub-AA in dark theme** (its hardcoded `paper-50` label on `bg-accent` = ember-400 ≈ **3.25:1** vs the 4.5:1 floor; light theme's ember-600 ≈ 5.30:1 is fine). The fix lives in the shared Button / accent-on-fill token (a `@mythrun/ui` / MYT-82 concern, not MYT-86 markup) — the plan **pins a dark-theme CTA contrast check** and notes the token fix as the precondition for the "AA in both themes" claim. Body text (tagline / pricing via `--ink` / `--ink-tertiary`) clears AA in both themes.
+Theme-aware (light + dark via the nav toggle); both on-brand (paper-100 warm light / paper-900 warm dark). **The footer is always the reversed/dark surface.** The page→footer **dither fires only in light theme** (the committed light→dark contrast); dark theme drops it (dark-on-dark → no dither, per the brand rule). **WCAG AA — resolved at the design-system level (commit `b251053`).** The dark CTA was sub-AA (paper-50 on the dark ember accent ≈ 3.25:1). Root cause: an off-center ember ramp + a single overloaded `--accent`. Fixed by (1) **recentering the ember ramp** on the hero `#8A5A3C` at step 500, so the dark fill accent (`ember-400` `#94603c`) clears AA by construction (paper-50 label 4.78:1, vs-page 3.23:1); and (2) **splitting the accent** into `--accent` (fill) + `--accent-fg` (foreground: text + focus-ring), so dark-mode links + focus-rings also clear AA (`--accent-fg` dark = `ember-300` `#b17f56`, 4.88:1). The landing CTA is a `primary` Button (fill role) → AA-clean in both themes, no MYT-86-specific markup. The plan still **pins a dark-theme CTA contrast check** as a regression guard. Body text (tagline / pricing via `--ink` / `--ink-tertiary`) clears AA in both themes.
 
 ## Copy / placeholders
 
@@ -70,4 +70,5 @@ Desktop + ~375px mweb, responsive by construction (`min-h-dvh` via `Box minHeigh
 
 - The optional 3-section scroll (needs MYT-88 + the flow previews); the "See it in action" demo; the real `$X` (MYT-95); the Terms / Privacy route destinations.
 - The authed app-frame adopting `ThemeToggle placement="inline"` in its header.
-- The shared Button / accent-on-fill **dark-theme contrast token fix** (MYT-82), if not resolved within MYT-86.
+
+(The dark-theme accent contrast fix is **done** — commit `b251053`: the ember-ramp recenter on the hero + the `--accent` / `--accent-fg` split. No longer a precondition.)
