@@ -38,7 +38,18 @@
     }
   },
   "theme": {
-    "toggle": "Theme"
+    "toggle": "Theme",
+    "toLight": "Switch to light theme",
+    "toDark": "Switch to dark theme"
+  },
+  "landing": {
+    "title": "[ph_landing_title: the page's h1 — brand name + what Mythrun is, ~5-8 words, for SEO + screen readers]",
+    "tagline": "[ph_landing_tagline: a terse at-the-table line, ~1 sentence — what a session feels like]",
+    "cta": "[ph_landing_cta: a terse primary-CTA label — enter a session]",
+    "pricing": "[ph_landing_pricing: one line — sessions start at $X, your first is free]",
+    "legal": "[ph_landing_legal: <1>Terms</1> · <2>Privacy</2> · <3>Questions?</3> — a short legal/contact line]",
+    "signin": "Sign in",
+    "wordmark": "Mythrun"
   },
   "signin": {
     "wordmark": "Mythrun",

@@ -36,4 +36,21 @@ describe('i18n key descriptions', () => {
     const describedKeys = Object.keys(descriptions).sort()
     expect(describedKeys).toEqual(catalogKeys)
   })
+
+  it('includes the landing keys with descriptions', () => {
+    const described = new Set(Object.keys(descriptions))
+    for (const k of [
+      'landing.title',
+      'landing.tagline',
+      'landing.cta',
+      'landing.pricing',
+      'landing.legal',
+      'landing.signin',
+      'landing.wordmark',
+      'theme.toLight',
+      'theme.toDark',
+    ]) {
+      expect(described.has(k)).toBe(true)
+    }
+  })
 })
