@@ -81,4 +81,19 @@ describe('LandingRoute', () => {
     act(() => { screen.getByTestId('landing-signin').click() })
     expect(screen.getByTestId('signin-stub')).toBeDefined()
   })
+
+  it('renders a <main> landmark with a hidden h1, lockup, tagline, CTA, and pricing', () => {
+    renderLanding()
+    expect(screen.getByTestId('landing-hero').tagName).toBe('MAIN')
+    expect(screen.getByRole('heading', { level: 1 })).toBeDefined()
+    expect(screen.getByTestId('landing-hero-lockup')).toBeDefined()
+    expect(screen.getByTestId('landing-tagline')).toBeDefined()
+    expect(screen.getByTestId('landing-pricing')).toBeDefined()
+  })
+
+  it('navigates to /auth/signin when the hero CTA is pressed', () => {
+    renderLanding()
+    act(() => { screen.getByTestId('landing-cta').click() })
+    expect(screen.getByTestId('signin-stub')).toBeDefined()
+  })
 })

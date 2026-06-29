@@ -1,4 +1,4 @@
-import { Box, Stack, HorizontalLockup, ThemeToggle, Button, useTheme } from '@mythrun/ui'
+import { Box, Stack, HorizontalLockup, Lockup, VisuallyHidden, Heading, Text, ThemeToggle, Button, useTheme } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 
@@ -7,9 +7,6 @@ import { useNavigate } from 'react-router-dom'
 // a literal there trips `i18next/no-literal-string` in the JSX-attribute scope.
 const SIGNIN_PATH = '/auth/signin'
 
-// The public landing page (MYT-86). Composed from @mythrun/ui only; nav/main/
-// footer are semantic landmarks (Box `as`). Prose is [ph_] i18n; the CTA + nav
-// Sign-in route to /auth/signin via SPA navigation.
 function LandingNav(): React.JSX.Element {
   const { t } = useTranslation()
   const { theme } = useTheme()
@@ -30,10 +27,34 @@ function LandingNav(): React.JSX.Element {
   )
 }
 
+function LandingHero(): React.JSX.Element {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  return (
+    <Box as="main" padding={6} data-testid="landing-hero">
+      <VisuallyHidden>
+        <Heading level={1}>{t('landing.title')}</Heading>
+      </VisuallyHidden>
+      <Stack align="center" gap={6}>
+        <Lockup aria-label={t('landing.wordmark')} data-testid="landing-hero-lockup" />
+        <Text as="p" role="prose-body" data-testid="landing-tagline">{t('landing.tagline')}</Text>
+        <Button variant="primary" onPress={() => void navigate(SIGNIN_PATH)} data-testid="landing-cta">
+          {t('landing.cta')}
+        </Button>
+        <Text role="data" data-testid="landing-pricing">{t('landing.pricing')}</Text>
+      </Stack>
+    </Box>
+  )
+}
+
+// The public landing page (MYT-86). Composed from @mythrun/ui only; nav/main/
+// footer are semantic landmarks (Box `as`). Prose is [ph_] i18n; the CTA + nav
+// Sign-in route to /auth/signin via SPA navigation.
 export function LandingRoute(): React.JSX.Element {
   return (
     <Stack minHeight="screen" data-testid="route-landing">
       <LandingNav />
+      <LandingHero />
     </Stack>
   )
 }
