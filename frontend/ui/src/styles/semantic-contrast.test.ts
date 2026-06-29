@@ -33,6 +33,11 @@ const p = generatePalette()
 const PAPER_50 = p.paper[50]    // light text on the accent fill
 const PAPER_900 = p.paper[900]  // the dark page ground
 
+// The ramp steps asserted below are COUPLED to the token→step mapping in
+// frontend/ui/src/styles/semantic.css: dark `--accent` = ember-400 (line ~97),
+// light `--accent` = ember-500 (~17), dark `--accent-fg` = ember-300 (~110). This
+// guard pins those steps' contrast, not the live CSS-var resolution — if a token is
+// REMAPPED to a different step in semantic.css, update the steps here to match.
 describe('semantic accent contrast (regression guard for the MYT-86 dark CTA)', () => {
   it('dark --accent fill (ember-400) carries paper-50 label at AA', () => {
     expect(wcagContrast(p.ember[400], PAPER_50)).toBeGreaterThanOrEqual(4.5)

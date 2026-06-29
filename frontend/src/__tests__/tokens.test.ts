@@ -47,7 +47,9 @@ describe('token presence (manifest-driven)', () => {
       '--surface-warning', '--border-warning', '--text-warning',
       '--surface-danger', '--border-danger', '--text-danger',
       '--surface-info', '--border-info', '--text-info']
-    const darkStart = css.indexOf('.dark {')
+    // The dark token block opens `.dark, .surface-inverted {` (the inverting footer
+    // surface rides the same block — theme-inversion, no duplicated values).
+    const darkStart = css.indexOf('.dark,')
     const darkBlock = css.slice(darkStart, css.indexOf('}', darkStart))
     for (const a of aliases) {
       expect(css).toContain(`${a}:`)        // declared (in :root)
@@ -132,11 +134,13 @@ describe('theme-aware semantic tokens (§4/§5)', () => {
 })
 
 describe('hover/active surface steps (MYT-82 Button visual audit)', () => {
-  // Slice the :root block (light) and the .dark block so per-theme values can be
-  // pinned independently. :root spans from its opening brace to the first '}'.
-  const rootStart = semanticCss.indexOf(':root {')
+  // Slice the light token block and the dark token block so per-theme values can be
+  // pinned independently. The blocks carry multi-selectors so a `.surface-inverted`
+  // region rides them (theme-inversion, no dup): light = `:root, .dark .surface-inverted {`,
+  // dark = `.dark, .surface-inverted {`. Anchor on the block-opening selector token.
+  const rootStart = semanticCss.indexOf(':root,')
   const rootBlock = semanticCss.slice(rootStart, semanticCss.indexOf('}', rootStart))
-  const darkStart = semanticCss.indexOf('.dark {')
+  const darkStart = semanticCss.indexOf('.dark,')
   const darkBlock = semanticCss.slice(darkStart, semanticCss.indexOf('}', darkStart))
 
   it('light --surface-hover is paper-200 (a visible step vs the page paper-100 AND a surface paper-50)', () => {

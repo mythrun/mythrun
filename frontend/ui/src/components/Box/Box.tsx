@@ -24,6 +24,8 @@ const box = cva('', {
       raised: 'bg-surface-raised',
       overlay: 'bg-surface-overlay',
       reversed: 'dark bg-bg',
+      inverted: 'surface-inverted bg-bg',
+      none: '',
     },
     border: {
       true: 'border border-border-strong',

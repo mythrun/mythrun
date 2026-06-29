@@ -48,6 +48,31 @@ describe('Box', () => {
     expect(el.classList.contains('bg-bg')).toBe(true)
   })
 
+  it('maps surface=inverted to the theme-inverting surface', () => {
+    const { getByTestId } = render(
+      <Box data-testid="box" surface="inverted">
+        x
+      </Box>,
+    )
+    const el = getByTestId('box')
+    // `.surface-inverted` flips with the page theme (dark on a light page, light on
+    // a dark page); `bg-bg` paints the flipped fill.
+    expect(el.classList.contains('surface-inverted')).toBe(true)
+    expect(el.classList.contains('bg-bg')).toBe(true)
+  })
+
+  it('paints no background when surface=none (transparent landmark)', () => {
+    const { getByTestId } = render(
+      <Box data-testid="box" surface="none">
+        x
+      </Box>,
+    )
+    const el = getByTestId('box')
+    expect(el.classList.contains('bg-surface')).toBe(false)
+    expect(el.classList.contains('surface-inverted')).toBe(false)
+    expect(el.classList.contains('bg-bg')).toBe(false)
+  })
+
   it('floors the box at the viewport height when minHeight=screen', () => {
     const { getByTestId } = render(
       <Box data-testid="box" minHeight="screen">

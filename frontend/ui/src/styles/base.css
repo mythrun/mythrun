@@ -13,7 +13,7 @@ body {
    `var(--ink)` (which flip under `.dark`), but the `--color-*` tokens resolve frozen at
    the light value. `:where()` keeps it at ZERO specificity so any explicit `bg-*` /
    `text-*` utility on the section still wins. */
-:where(.dark) {
+:where(.dark, .surface-inverted) {
   background-color: var(--bg);
   color: var(--ink);
 }

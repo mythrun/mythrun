@@ -7,7 +7,7 @@ import type { SpaceToken } from './space-token.ts'
  * border. The neutral building block for cards, panels, and grouped content.
  */
 export interface BoxProps extends BaseProps {
-  /** Semantic landmark element. Default 'div'. Use 'nav'/'main'/'footer'/'header' for page landmarks. */
+  /** Semantic landmark element. Default 'div'. Use 'nav'/'main'/'footer'/'header'/'section' for page landmarks. */
   as?: 'div' | 'nav' | 'main' | 'footer' | 'header' | 'section'
   /** Inner padding on all sides, a `--space-*` step. */
   padding?: SpaceToken
@@ -20,8 +20,17 @@ export interface BoxProps extends BaseProps {
    *   bg, inherited text flips to light paper-100), the same inversion the
    *   page→footer break uses. The dark counterpart a `light-ink` Dither resolves
    *   into.
+   * - `inverted` — theme-INVERTING: dark on a light page, light on a dark page
+   *   (the always-flipped landing footer — the page grades INTO its opposite).
+   *   The opposite of the current theme; distinct from `reversed` (ALWAYS dark).
+   *   Re-themes ONLY via the semantic CSS-var utilities (`text-ink`, `bg-bg`, …); do
+   *   NOT place a `dark:`-variant-themed component inside — on a dark page the light
+   *   footer is a `.dark` descendant, so `dark:` utilities would fire backwards.
+   * - `none` — TRANSPARENT: paints no background, so the box inherits the page
+   *   field. For semantic-landmark wrappers (nav/main) on a flat single-tone page
+   *   that must NOT introduce the lighter `--surface` panel tone over the page bg.
    */
-  surface?: 'base' | 'raised' | 'overlay' | 'reversed'
+  surface?: 'base' | 'raised' | 'overlay' | 'reversed' | 'inverted' | 'none'
   /** Draw a 1px `--border-strong` boundary on all sides. */
   border?: boolean
   /**

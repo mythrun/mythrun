@@ -97,18 +97,19 @@ describe('LandingRoute', () => {
     expect(screen.getByTestId('signin-stub')).toBeDefined()
   })
 
-  it('renders a <footer> landmark with Terms / Privacy / Questions links', () => {
+  it('renders a <footer> landmark with Terms / Privacy / Questions links wired to their destinations', () => {
     renderLanding()
     expect(screen.getByTestId('landing-footer').tagName).toBe('FOOTER')
-    expect(screen.getByTestId('landing-terms')).toBeDefined()
-    expect(screen.getByTestId('landing-privacy')).toBeDefined()
-    expect(screen.getByTestId('landing-questions')).toBeDefined()
+    // assert the hrefs, not just presence — this is what verifies the <Trans> slot→destination wiring
+    expect(screen.getByTestId('landing-terms').getAttribute('href')).toBe('/terms')
+    expect(screen.getByTestId('landing-privacy').getAttribute('href')).toBe('/privacy')
+    expect(screen.getByTestId('landing-questions').getAttribute('href')).toBe('mailto:hello@mythrun.dev')
   })
 
-  it('renders the page→footer dither in light theme only', () => {
+  it('renders the page→footer dither in BOTH themes (it flips direction, never hides)', () => {
     renderLanding()
-    expect(screen.getByTestId('landing-dither')).toBeDefined()       // light (default)
+    expect(screen.getByTestId('landing-dither')).toBeDefined()        // light (default)
     act(() => { screen.getByTestId('landing-theme-toggle').click() }) // → dark
-    expect(screen.queryByTestId('landing-dither')).toBeNull()
+    expect(screen.getByTestId('landing-dither')).toBeDefined()        // still present in dark (flipped, not hidden)
   })
 })

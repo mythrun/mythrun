@@ -7,7 +7,11 @@
    WCAG threshold in BOTH themes — non-text ≥3:1, body text ≥4.5:1 (AA).
    Ratios measured with culori's wcagContrast against the actual bg/surface
    steps; values cited inline so a future step change can't silently regress. */
-:root {
+/* The light token set. ALSO applies to a `.surface-inverted` region INSIDE `.dark`
+   — so the always-inverted footer reads LIGHT on a dark page. Rides this same block
+   via an added selector (no duplicated values); see `.surface-inverted` at `.dark`. */
+:root,
+.dark .surface-inverted {
   --bg: var(--color-paper-100);
   --surface: var(--color-paper-50);
   --border: var(--color-paper-300);          /* decorative dividers ONLY (1.5:1 — sub-3:1, intentional) */
@@ -87,7 +91,12 @@
   --text-info: var(--color-info-600);          /* 4.67:1 vs paper-100, 5.13:1 vs info-50 */
 }
 
-.dark {
+/* The dark token set. ALSO applies to a `.surface-inverted` region on a LIGHT page
+   (alongside `.dark`) — so the inverted footer reads DARK on a light page.
+   `.surface-inverted` = theme-INVERTING (the opposite of the page theme); distinct
+   from `surface="reversed"` (= this `.dark`, ALWAYS dark, e.g. the 404). */
+.dark,
+.surface-inverted {
   --bg: var(--color-paper-900);
   --surface: var(--color-paper-800);
   --border: var(--color-paper-700);          /* decorative dividers ONLY (1.4:1 — sub-3:1, intentional) */
