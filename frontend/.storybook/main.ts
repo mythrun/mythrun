@@ -15,6 +15,15 @@ const config: StorybookConfig = {
   // `@import "tailwindcss"` in storybook.css so token utilities apply.
   viteFinal: (viteConfig) => {
     viteConfig.plugins = [...(viteConfig.plugins ?? []), tailwindcss()]
+    // build-storybook compiles a PRODUCTION bundle where `import.meta.env.DEV` is
+    // statically false — which tree-shakes the DEV-only routes (the /dev/transport
+    // harness in router.tsx) and their components out of the build entirely, so their
+    // screen stories route to the 404 and fail the overflow gate. Storybook IS a dev
+    // surface (and the transport harness lives only there), so force DEV=true: the dev
+    // routes + components ship into the preview bundle and their stories render the real
+    // route. Components render identically dev/prod, so the overflow measurements are
+    // unaffected — this only restores the DEV-gated routes the prod build dropped.
+    viteConfig.define = { ...(viteConfig.define ?? {}), 'import.meta.env.DEV': 'true' }
     return viteConfig
   },
 }

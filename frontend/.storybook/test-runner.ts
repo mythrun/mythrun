@@ -76,6 +76,20 @@ const config: TestRunnerConfig = {
         for (const el of Array.from(scope.querySelectorAll('*'))) {
           if (getComputedStyle(el).overflowX !== 'visible') continue
           if (el.scrollWidth <= el.clientWidth + 1) continue
+          // A clipping ANCESTOR contains the spill — it can't reach the viewport, so
+          // this is not a real intra-row collision. The canonical case: a
+          // VisuallyHidden / sr-only wrapper (position absolute, 1px box, overflow
+          // hidden + clip) around a heading — the inner heading keeps visible overflow
+          // and wide nowrap text, but the sr-only ancestor clips it to 1px. Skip when
+          // ANY ancestor clips overflowX (mirrors the element's own-overflow guard).
+          let clippedByAncestor = false
+          for (let p = el.parentElement; p !== null; p = p.parentElement) {
+            if (getComputedStyle(p).overflowX !== 'visible') {
+              clippedByAncestor = true
+              break
+            }
+          }
+          if (clippedByAncestor) continue
           const ownsText = Array.from(el.childNodes).some(
             (n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim() !== '',
           )

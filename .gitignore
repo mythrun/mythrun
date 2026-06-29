@@ -48,5 +48,11 @@ docs/wiki/site [0-9]*/
 .beads/dolt-server*.pid
 .beads/dolt-server*.port
 
-# Terraform plan files
+# Terraform plan files — the `terraform plan -out` artifact, named bare `tfplan`
+# OR `*.tfplan`. These MUST be ignored, not merely untracked: the wiki source-hash
+# (docs/wiki/build/sourceHash.ts) enumerates `infra/` via `git ls-files --others
+# --exclude-standard`, which includes untracked-but-unignored files — so a stray
+# `tfplan` under infra/ poisons infra/index.html's hash (present on dev, absent in a
+# clean CI checkout → drift). The bare `tfplan` line catches the extensionless name.
+tfplan
 *.tfplan
