@@ -1,5 +1,5 @@
-import { Box, Stack, HorizontalLockup, Lockup, VisuallyHidden, Heading, Text, ThemeToggle, Button, useTheme } from '@mythrun/ui'
-import { useTranslation } from 'react-i18next'
+import { Box, Stack, HorizontalLockup, Lockup, VisuallyHidden, Heading, Text, Dither, Link, ThemeToggle, Button, useTheme } from '@mythrun/ui'
+import { Trans, useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 
 // The SPA target both the nav Sign-in and the (later) hero CTA route to. Hoisted
@@ -47,14 +47,40 @@ function LandingHero(): React.JSX.Element {
   )
 }
 
+function LandingFooter(): React.JSX.Element {
+  return (
+    <Box as="footer" surface="reversed" padding={6} data-testid="landing-footer">
+      <Stack align="center" gap={2}>
+        <Text role="ui-caption" data-testid="landing-legal">
+          <Trans
+            i18nKey="landing.legal"
+            components={{
+              1: <Link href="/terms" data-testid="landing-terms" />,
+              2: <Link href="/privacy" data-testid="landing-privacy" />,
+              3: <Link href="mailto:hello@mythrun.dev" external data-testid="landing-questions" />,
+            }}
+          />
+        </Text>
+      </Stack>
+    </Box>
+  )
+}
+
 // The public landing page (MYT-86). Composed from @mythrun/ui only; nav/main/
 // footer are semantic landmarks (Box `as`). Prose is [ph_] i18n; the CTA + nav
-// Sign-in route to /auth/signin via SPA navigation.
+// Sign-in route to /auth/signin via SPA navigation. The page→footer Dither is
+// light-only: the reversed footer is already dark, so the ink crossfade only
+// reads against the light page above it.
 export function LandingRoute(): React.JSX.Element {
+  const { theme } = useTheme()
   return (
     <Stack minHeight="screen" data-testid="route-landing">
       <LandingNav />
       <LandingHero />
+      {theme === 'light' ? (
+        <Dither from="paper-100" to="paper-900" scale="hero" data-testid="landing-dither" />
+      ) : null}
+      <LandingFooter />
     </Stack>
   )
 }

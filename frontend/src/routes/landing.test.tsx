@@ -96,4 +96,19 @@ describe('LandingRoute', () => {
     act(() => { screen.getByTestId('landing-cta').click() })
     expect(screen.getByTestId('signin-stub')).toBeDefined()
   })
+
+  it('renders a <footer> landmark with Terms / Privacy / Questions links', () => {
+    renderLanding()
+    expect(screen.getByTestId('landing-footer').tagName).toBe('FOOTER')
+    expect(screen.getByTestId('landing-terms')).toBeDefined()
+    expect(screen.getByTestId('landing-privacy')).toBeDefined()
+    expect(screen.getByTestId('landing-questions')).toBeDefined()
+  })
+
+  it('renders the page→footer dither in light theme only', () => {
+    renderLanding()
+    expect(screen.getByTestId('landing-dither')).toBeDefined()       // light (default)
+    act(() => { screen.getByTestId('landing-theme-toggle').click() }) // → dark
+    expect(screen.queryByTestId('landing-dither')).toBeNull()
+  })
 })
