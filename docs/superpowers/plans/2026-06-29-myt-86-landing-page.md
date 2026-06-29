@@ -449,7 +449,7 @@ git commit -m "feat(MYT-86): landing nav landmark + retire stub.landing"
 - Test: `frontend/src/routes/landing.test.tsx`
 
 **Interfaces:**
-- Consumes: `BoxProps.as="main"` (Task 1); `landing.title`/`landing.tagline`/`landing.cta`/`landing.pricing`/`landing.wordmark` (Task 3); the `LandingRoute` root (Task 4).
+- Consumes: `BoxProps.as="main"` (Task 1); `landing.title`/`landing.tagline`/`landing.cta`/`landing.pricing`/`landing.wordmark` (Task 3); the `LandingRoute` root + the `SIGNIN_PATH` module const (Task 4 — reuse it for the CTA's `navigate`, do NOT re-introduce the `'/auth/signin'` literal, which trips `i18next/no-literal-string` inside the `onPress` expression).
 - Produces: a `<main>` landmark (`landing-hero`) with a visually-hidden `h1`, the stacked `Lockup`, the tagline, the primary CTA (→ `/auth/signin`), and the pricing line.
 
 - [ ] **Step 1: Write the failing test** — append to `landing.test.tsx`:
@@ -492,7 +492,7 @@ function LandingHero(): React.JSX.Element {
       <Stack align="center" gap={6}>
         <Lockup aria-label={t('landing.wordmark')} data-testid="landing-hero-lockup" />
         <Text as="p" role="prose-body" data-testid="landing-tagline">{t('landing.tagline')}</Text>
-        <Button variant="primary" onPress={() => void navigate('/auth/signin')} data-testid="landing-cta">
+        <Button variant="primary" onPress={() => void navigate(SIGNIN_PATH)} data-testid="landing-cta">
           {t('landing.cta')}
         </Button>
         <Text role="data" data-testid="landing-pricing">{t('landing.pricing')}</Text>
