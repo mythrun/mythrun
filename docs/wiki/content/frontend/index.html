@@ -20,8 +20,8 @@
 <!-- source: frontend/ui/src/styles/index.css -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:2dfbcad2de4ee453206dcb3ed8f80b54e414d2d99231c97a10631d7d775ff26c -->
-<!-- last-ticket: MYT-97 -->
+<!-- source-hash: sha256:c4b3cfcb4adc3a39559b95370e3a7d3813d949516b17a937ac3577539de051b9 -->
+<!-- last-ticket: MYT-86 -->
 
 <h1>Frontend</h1>
 
@@ -339,11 +339,14 @@
 <p>
   The palette is 60 colors: six ten-step ramps (<code>paper</code>, <code>ember</code>, and the
   <code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code> semantics). The
-  <code>paper</code> and <code>ember</code> anchors are the brand's hand-picked hexes, copied
-  verbatim. The 36 other steps are <em>generated</em>: <code>generate-palette.mjs</code> uses
-  <code>culori</code> to read each semantic anchor in OKLCH, then interpolates the rest of the ramp
-  by borrowing <code>ember</code>'s perceptual lightness curve and scaling chroma to the anchor —
-  writing <code>colors.generated.css</code> (a <code>@theme</code> block of
+  <code>paper</code> ramp is ten hand-picked hexes, copied verbatim. Every other ramp —
+  <code>ember</code> and the four semantics — is <em>generated</em> from a single brand-chosen
+  anchor: <code>generate-palette.mjs</code> uses <code>culori</code> to read the anchor in OKLCH,
+  then builds the rest of the ramp by riding a shared hero-anchored lightness ladder and scaling
+  chroma to the anchor, so all five generated ramps stay perceptually parallel.
+  <code>ember</code> is anchored on the brand hero <code>#8A5A3C</code> at the ramp's center (step
+  500) and carries its own golden→red-brown hue drift; only the anchor steps are emitted verbatim.
+  The generator writes <code>colors.generated.css</code> (a <code>@theme</code> block of
   <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>, and a
   <code>tokens.html</code> audit page. MYT-82 relocated the generator (and the raw token-scale data)
   into <code>@mythrun/client-core/src/tokens/</code> — the platform-neutral home — leaving the web
@@ -353,12 +356,16 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>A generator for the 36 steps, not 36 hand-picked hexes</strong> — hand-tuning forty
-  intermediate swatches by eye produces ramps that drift in lightness and read inconsistently
-  against each other. Anchoring each semantic ramp to <code>ember</code>'s OKLCH lightness curve
-  makes every ramp perceptually parallel by construction, and the generator asserts strict monotonic
-  lightness so a bad interpolation fails the build rather than shipping a muddy step. The brand's
-  chosen anchors are still authoritative — they're emitted verbatim; only the in-between steps are
+  <strong>Generated ramps, not hand-picked swatches</strong> — hand-tuning the intermediate swatches
+  by eye produces ramps that drift in lightness and read inconsistently against each other. Riding
+  one hero-anchored OKLCH lightness ladder makes every generated ramp perceptually parallel by
+  construction, and the generator asserts strict monotonic lightness so a bad interpolation fails
+  the build rather than shipping a muddy step. MYT-86 recentered <code>ember</code> onto that
+  ladder: the hero had been hand-pinned at step 600, off-center, which left the dark-mode accent
+  step too light to clear AA — moving the hero to the ramp's center (step 500) lets the dark accent
+  land dark enough, and is what the
+  <a href="./design-system.html#the-design-language-flat-1-bit">split accent token</a> builds on.
+  The brand's chosen anchors stay authoritative — emitted verbatim; only the in-between steps are
   computed.
 </aside>
 
@@ -369,7 +376,12 @@
   to a different paper/ember step (a true warm dark, not a second palette), and because the aliases
   are plain CSS custom properties in <code>:root</code>/<code>.dark</code>, the cascade does the
   flipping. A small <code>@theme inline</code> block then surfaces each alias as a Tailwind utility
-  (<code>bg-bg</code>, <code>text-ink</code>) that references the var at runtime.
+  (<code>bg-bg</code>, <code>text-ink</code>) that references the var at runtime. The accent role is
+  itself two aliases — a <code>--accent</code> <em>fill</em> and a <code>--accent-fg</code>
+  <em>foreground</em> — so dark-mode button fills, link text, and focus rings each clear AA under
+  opposite contrast constraints; the
+  <a href="./design-system.html#the-design-language-flat-1-bit">Design system</a>
+  tells that story.
 </p>
 
 <aside class="wiki-rationale">

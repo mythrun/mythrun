@@ -16,11 +16,12 @@
 <!-- source: frontend/src/routes/signin.tsx -->
 <!-- source: frontend/src/routes/onboard.tsx -->
 <!-- source: frontend/src/routes/callback.tsx -->
+<!-- source: frontend/src/routes/landing.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:2929a99459208488dbb796b5079a4b93ed9fafa31fc03fa3fc499f3b54a81333 -->
+<!-- source-hash: sha256:2b50d97df152a0e89e89813cdda8d28281b1ea356a7b8458c6b04d3dde68f528 -->
 <!-- source-hash: sha256:auto -->
-<!-- last-ticket: MYT-84 -->
+<!-- last-ticket: MYT-86 -->
 
 <h1>App shell &amp; data layer</h1>
 
@@ -430,7 +431,9 @@
   now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
   screens are thin i18n'd stubs the flow tickets fill, except the <strong>home hub</strong>, wired
   end-to-end (<code>useMyCampaigns</code> → real backend → Suspense loading → Cards or empty state)
-  as the done-when smoke.
+  as the done-when smoke, and the
+  <strong><a href="#the-landing-page">public landing page</a></strong>
+  (MYT-86), the first public-branch screen built out from a stub.
 </p>
 
 <aside class="wiki-rationale">
@@ -507,6 +510,44 @@
   with no <code>/refresh</code> ever reaching the server. Wiring it in <code>main.tsx</code> ahead
   of the bootstrap is what makes a reload actually re-hydrate the session; the provider effect still
   re-binds it for the in-app lifecycle (MYT-84).
+</aside>
+
+<h2 id="the-landing-page">The landing page</h2>
+
+<p>
+  The first real screen on the public branch — the marketing front door, built out from the i18n'd
+  stub the shell shipped with (MYT-86). It is composed entirely from
+  <a href="./design-system.html">mythrunUI</a>: a <strong>nav</strong> landmark (the horizontal
+  brand lockup, an inline theme toggle, and a Sign-in button), a centered <strong>hero</strong> (the
+  stacked lockup, a one-line tagline, the primary call-to-action, and a transparent pricing line),
+  and a theme-inverting <strong>footer</strong> (terms / privacy / a contact link). The three
+  landmarks are real <code>nav</code>/<code>main</code>/<code>footer</code> elements via the
+  <a href="./design-system.html">Box <code>as</code> prop</a>, not raw DOM. All copy is
+  <code>[ph_*]</code> i18n placeholder — the brand prose is Miklos's to write — and the CTA and the
+  nav Sign-in both route to <code>/auth/signin</code> through the SPA router, the
+  <a href="#oauth-flow">OAuth flow</a>'s entry point.
+</p>
+
+<p>
+  Visually the page grades into its footer: a page→footer
+  <a href="./design-system.html">Dither</a> sits between the hero and the footer, and because the
+  footer uses the
+  <a href="./design-system.html#theme-mode"><code>surface="inverted"</code></a> field — dark on a
+  light page, light on a dark page — the Dither's direction flips with the theme so it always grades
+  the page <em>into</em> its opposite. The footer-inversion mechanism is a design-system concern;
+  this screen is its first consumer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The hero centers, the footer pins — a grow spacer, not a fixed footer</strong> — the page
+  root is a <code>minHeight="screen"</code> Stack, but a min-height column with no growing child
+  collapses to its content and floats the footer mid-page on a tall desktop. So the hero is wrapped
+  in a <code>Stack grow justify="center"</code>: the spacer absorbs the slack, optically centering
+  the hero while the footer settles at the bottom edge. The fix is the same
+  <a href="./design-system.html#responsive-by-construction">layout-primitive</a> vocabulary the rest
+  of the app uses — no fixed-position footer, no viewport-unit math on the screen itself. (Miklos's
+  visual audit caught the floating footer; the per-component DOM tests could not, since the gap only
+  shows at a viewport taller than the content.)
 </aside>
 
 <h2>Gating the screens at phone width</h2>
@@ -785,7 +826,7 @@
   adapter, <code>jwt-claims</code>, <code>derive-username</code>),
   <code>frontend/client-core/src/platform/oauth-state-store.ts</code>,
   <code>frontend/src/routes/signin.tsx</code>, <code>frontend/src/routes/callback.tsx</code>,
-  <code>frontend/src/routes/onboard.tsx</code>,
+  <code>frontend/src/routes/onboard.tsx</code>, <code>frontend/src/routes/landing.tsx</code>,
   <code>frontend/src/platform/web/oauth-state-store.ts</code>,
   <code>frontend/src/platform/web/navigation.ts</code>.
 </p>

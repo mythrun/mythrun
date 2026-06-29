@@ -20,8 +20,8 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:ca19a88eea43c566b12b68131dbbaccaf332a3aee0ee999da52e687bbeaf8b84 -->
-<!-- last-ticket: MYT-84 -->
+<!-- source-hash: sha256:6c202687c81cfcf8716272e7c3b80a687f3abbc5c12efa2562d442c2c6be2e2b -->
+<!-- last-ticket: MYT-86 -->
 
 <h1>Design system</h1>
 
@@ -167,8 +167,8 @@
   </li>
   <li>
     <strong>Focus ring: 2px hard square outline, 2px offset, no glow</strong> — and theme-aware.
-    <code>--focus-ring-color: var(--accent)</code> resolves to ember-600 in light and ember-400 in
-    dark, so it clears WCAG 3:1 on both surfaces.
+    <code>--focus-ring-color: var(--accent-fg)</code> — the <em>foreground</em> accent, not the fill
+    — resolves to ember-500 in light and ember-300 in dark, so it clears WCAG 3:1 on both surfaces.
   </li>
   <li>
     <strong>Interaction states are token-swaps</strong> (discrete steps), never translucent
@@ -177,10 +177,19 @@
 </ul>
 
 <aside class="wiki-rationale">
-  <strong>Theme-aware focus ring</strong> — a fixed ember-600 ring fails the 3:1 non-text-contrast
-  floor against dark surfaces. Binding the ring to the <code>--accent</code> alias lets the
-  <code>.dark</code> remap swap in ember-400, which passes. The token-contrast gate (below) checks
-  this claim at the token level, since axe does not verify the ring color against its background.
+  <strong>The accent is two tokens — a fill and a foreground (MYT-86)</strong> — a single
+  <code>--accent</code> can't satisfy both ways the color is used. As a
+  <em>fill</em> (<code>--accent</code>, the primary button's background) it carries on-accent text,
+  so it must be dark enough for paper-50 to read on top of it. As a
+  <em>foreground</em> (<code>--accent-fg</code>: link text, the focus ring 2px <em>outside</em> the
+  control, the ghost-field caret) it is drawn directly on the page and must contrast
+  <em>against</em> it — the opposite constraint. In light mode the hero ember serves both, so the
+  two mirror. In dark mode the windows don't overlap: the fill darkens to ember-400 (so paper-50
+  clears AA on a primary button), which is then too dark to read or ring against the dark page, so
+  the foreground stays lighter (ember-300). Splitting the token is what lets dark-mode buttons,
+  links, and focus rings all clear AA at once; the focus ring keys to the foreground half. The
+  token-contrast gate (below) checks these claims at the token level, since axe does not verify a
+  color against its background.
 </aside>
 
 <h2>Theme mode</h2>
@@ -198,12 +207,15 @@
 </p>
 
 <p>
-  The visible control is the <code>ThemeToggle</code> — a square FAB fixed to the top-right that
-  flips the theme, carrying the sun glyph in light and the moon in dark. It is self-positioning, so
-  a screen renders a bare <code>&lt;ThemeToggle/&gt;</code> over the genesis crown without reaching
-  for raw layout. Its sun/moon come from the real Pixelarticons glyphs added to the swappable
-  <code>Icon</code> map (<code>glyphs.ts</code>) and to the closed <code>IconName</code> union —
-  replacing the hand-authored placeholders the set is not allowed to ship.
+  The visible control is the <code>ThemeToggle</code> — a square button that flips the theme,
+  carrying the sun glyph in light and the moon in dark. Its <code>placement</code> chooses how it
+  sits: <code>fab</code> (the default) is fixed top-right, so a genesis screen renders a bare
+  <code>&lt;ThemeToggle/&gt;</code> over the crown without reaching for raw layout;
+  <code>inline</code> (MYT-86) drops the fixed positioning for an in-flow nav control — the landing
+  page seats it in its nav row beside the sign-in button. Its sun/moon come from the real
+  Pixelarticons glyphs added to the swappable <code>Icon</code> map (<code>glyphs.ts</code>) and to
+  the closed <code>IconName</code> union — replacing the hand-authored placeholders the set is not
+  allowed to ship.
 </p>
 
 <aside class="wiki-rationale">
@@ -214,6 +226,22 @@
   preference) and sets the class <em>before first paint</em>; the provider reconciles to the
   identical value on mount, so there is no flip on hydrate. The script is the one place this logic
   is deliberately duplicated — it must run before any bundle does.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The inverted surface rides the existing token blocks, not a third set (MYT-86)</strong> —
+  <code>surface="reversed"</code> is simply <code>.dark</code> (always dark, whatever the page).
+  <code>surface="inverted"</code> is different: it must be the <em>opposite</em> of the current
+  theme — dark on a light page, light on a dark page — so the landing footer always reads as a
+  deliberate break the page grades into. Rather than author a new token set, the
+  <code>.surface-inverted</code> class is added as an extra <em>selector</em> on the two blocks that
+  already exist: it joins the dark block (<code>.dark, .surface-inverted</code>) so it goes dark on
+  a light page, and joins the light block scoped under dark (<code>.dark .surface-inverted</code>)
+  so it goes light on a dark page. Zero token values are duplicated — the whole semantic vocabulary
+  just flips inside the scope, the same cascade that drives <code>.dark</code>. (Because the region
+  is a real theme flip, a child must re-theme through the semantic utilities, never a hand-written
+  <code>dark:</code> variant — on a dark page the light footer is a <code>.dark</code> descendant,
+  so a <code>dark:</code> rule would fire backwards.)
 </aside>
 
 <h2>The build stack</h2>
@@ -262,7 +290,14 @@
     <code>minHeight="screen"</code> floor, on <code>100dvh</code> for mobile — for the dithered 404;
     see <a href="./app-shell.html">App shell &amp; data layer</a>. MYT-84 added a numeric
     <code>Stack</code> <code>grow</code> weight — proportional flex spacers that seat content with a
-    deliberate vertical rhythm, e.g. the genesis screens' optically-above-center card.)
+    deliberate vertical rhythm, e.g. the genesis screens' optically-above-center card. MYT-86 added
+    a semantic-landmark <code>as</code> prop to <code>Box</code> — <code>nav</code> /
+    <code>main</code> / <code>footer</code> / <code>header</code> / <code>section</code>, so a page
+    wraps a real landmark element without raw DOM — plus two more surfaces: <code>none</code>,
+    transparent (paints no background, so a landmark wrapper inherits the page field instead of
+    laying a panel tone over it), and <code>inverted</code>, theme-<em>inverting</em> — dark on a
+    light page, light on a dark page — the
+    <a href="./app-shell.html#the-landing-page">landing footer</a>'s field.)
   </li>
   <li>
     <strong>Typography</strong> — <code>Text</code>, <code>Heading</code>,
@@ -513,11 +548,15 @@
   keyboard-interaction tests (Tab/Esc/Arrow/Enter/Space), a Modal focus-trap-and-return test, and a
   Toast/Banner live-region test. A token-level contrast check uses the generator's
   <code>wcagContrast</code> to verify the focus-ring and interactive-border 3:1 claims that axe does
-  not check. Every interactive control — icon-only ones included — carries a ≥44px hit target and an
-  accessible name. MYT-97 added a second surface: standing up the Storybook test-runner activated
-  the <code>@storybook/addon-a11y</code> axe pass as <code>error</code> on every component story, so
-  an accessibility violation in a real-Chromium render now fails CI too (the addon stopped being
-  merely a dev-time aid). The app-shell screen stories set a11y to <code>off</code> — their
+  not check, and — since MYT-86 — a dark-accent regression guard
+  (<code>semantic-contrast.test.ts</code>) that asserts paper-50 text on the dark
+  <code>--accent</code> fill, and the split <code>--accent-fg</code> as link text and focus ring
+  against the dark page, all clear AA, so a future palette nudge can't silently sink the accent
+  below threshold. Every interactive control — icon-only ones included — carries a ≥44px hit target
+  and an accessible name. MYT-97 added a second surface: standing up the Storybook test-runner
+  activated the <code>@storybook/addon-a11y</code> axe pass as <code>error</code> on every component
+  story, so an accessibility violation in a real-Chromium render now fails CI too (the addon stopped
+  being merely a dev-time aid). The app-shell screen stories set a11y to <code>off</code> — their
   accessibility belongs to the flow tickets that build them — and the few Radix overlay specimens
   carry a documented per-story carve-out for one known <code>aria-hidden-focus</code>
   false-positive.

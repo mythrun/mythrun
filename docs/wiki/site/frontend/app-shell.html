@@ -590,7 +590,9 @@
   now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
   screens are thin i18n'd stubs the flow tickets fill, except the <strong>home hub</strong>, wired
   end-to-end (<code>useMyCampaigns</code> → real backend → Suspense loading → Cards or empty state)
-  as the done-when smoke.
+  as the done-when smoke, and the
+  <strong><a href="#the-landing-page">public landing page</a></strong>
+  (MYT-86), the first public-branch screen built out from a stub.
 </p>
 
 <aside class="wiki-rationale">
@@ -667,6 +669,44 @@
   with no <code>/refresh</code> ever reaching the server. Wiring it in <code>main.tsx</code> ahead
   of the bootstrap is what makes a reload actually re-hydrate the session; the provider effect still
   re-binds it for the in-app lifecycle (MYT-84).
+</aside>
+
+<h2 id="the-landing-page">The landing page</h2>
+
+<p>
+  The first real screen on the public branch — the marketing front door, built out from the i18n'd
+  stub the shell shipped with (MYT-86). It is composed entirely from
+  <a href="./design-system.html">mythrunUI</a>: a <strong>nav</strong> landmark (the horizontal
+  brand lockup, an inline theme toggle, and a Sign-in button), a centered <strong>hero</strong> (the
+  stacked lockup, a one-line tagline, the primary call-to-action, and a transparent pricing line),
+  and a theme-inverting <strong>footer</strong> (terms / privacy / a contact link). The three
+  landmarks are real <code>nav</code>/<code>main</code>/<code>footer</code> elements via the
+  <a href="./design-system.html">Box <code>as</code> prop</a>, not raw DOM. All copy is
+  <code>[ph_*]</code> i18n placeholder — the brand prose is Miklos's to write — and the CTA and the
+  nav Sign-in both route to <code>/auth/signin</code> through the SPA router, the
+  <a href="#oauth-flow">OAuth flow</a>'s entry point.
+</p>
+
+<p>
+  Visually the page grades into its footer: a page→footer
+  <a href="./design-system.html">Dither</a> sits between the hero and the footer, and because the
+  footer uses the
+  <a href="./design-system.html#theme-mode"><code>surface="inverted"</code></a> field — dark on a
+  light page, light on a dark page — the Dither's direction flips with the theme so it always grades
+  the page <em>into</em> its opposite. The footer-inversion mechanism is a design-system concern;
+  this screen is its first consumer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The hero centers, the footer pins — a grow spacer, not a fixed footer</strong> — the page
+  root is a <code>minHeight="screen"</code> Stack, but a min-height column with no growing child
+  collapses to its content and floats the footer mid-page on a tall desktop. So the hero is wrapped
+  in a <code>Stack grow justify="center"</code>: the spacer absorbs the slack, optically centering
+  the hero while the footer settles at the bottom edge. The fix is the same
+  <a href="./design-system.html#responsive-by-construction">layout-primitive</a> vocabulary the rest
+  of the app uses — no fixed-position footer, no viewport-unit math on the screen itself. (Miklos's
+  visual audit caught the floating footer; the per-component DOM tests could not, since the gap only
+  shows at a viewport taller than the content.)
 </aside>
 
 <h2 id="gating-the-screens-at-phone-width">Gating the screens at phone width</h2>
@@ -945,7 +985,7 @@
   adapter, <code>jwt-claims</code>, <code>derive-username</code>),
   <code>frontend/client-core/src/platform/oauth-state-store.ts</code>,
   <code>frontend/src/routes/signin.tsx</code>, <code>frontend/src/routes/callback.tsx</code>,
-  <code>frontend/src/routes/onboard.tsx</code>,
+  <code>frontend/src/routes/onboard.tsx</code>, <code>frontend/src/routes/landing.tsx</code>,
   <code>frontend/src/platform/web/oauth-state-store.ts</code>,
   <code>frontend/src/platform/web/navigation.ts</code>.
 </p>
@@ -954,7 +994,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — four states</a></li><li style="padding-left:0"><a href="#the-token-in-memory">The access token, in memory</a></li><li style="padding-left:0"><a href="#oauth-flow">Acquiring identity — the OAuth sign-in flow</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#gating-the-screens-at-phone-width">Gating the screens at phone width</a></li><li style="padding-left:0"><a href="#talking-to-the-api">Talking to the API</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:12px"><a href="#add-a-player-facing-screen">Add a player-facing screen</a></li><li style="padding-left:12px"><a href="#trace-a-sign-in-end-to-end">Trace a sign-in end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#the-shape-four-packages-the-brain-in-the-middle">The shape — four packages, the brain in the middle</a></li><li style="padding-left:0"><a href="#the-typed-wire-mythrun-contract">The typed wire — @mythrun/contract</a></li><li style="padding-left:0"><a href="#the-data-layer-one-seam-to-the-backend">The data layer — one seam to the backend</a></li><li style="padding-left:0"><a href="#the-session-gate">The session gate — four states</a></li><li style="padding-left:0"><a href="#the-token-in-memory">The access token, in memory</a></li><li style="padding-left:0"><a href="#oauth-flow">Acquiring identity — the OAuth sign-in flow</a></li><li style="padding-left:0"><a href="#conformance-by-construction">Conformance by construction</a></li><li style="padding-left:0"><a href="#platform-interfaces-the-native-seam">Platform interfaces — the native seam</a></li><li style="padding-left:0"><a href="#the-shell-routing-the-quiet-frame-and-the-dithered-404">The shell — routing, the quiet frame, and the dithered 404</a></li><li style="padding-left:0"><a href="#the-landing-page">The landing page</a></li><li style="padding-left:0"><a href="#gating-the-screens-at-phone-width">Gating the screens at phone width</a></li><li style="padding-left:0"><a href="#talking-to-the-api">Talking to the API</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-rest-endpoint-to-the-data-layer">Add a REST endpoint to the data layer</a></li><li style="padding-left:12px"><a href="#add-a-player-facing-screen">Add a player-facing screen</a></li><li style="padding-left:12px"><a href="#trace-a-sign-in-end-to-end">Trace a sign-in end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-the-data-layer-surface">Appendix: packages &amp; the data-layer surface</a></li><li style="padding-left:12px"><a href="#packages-touched-or-added">Packages touched or added</a></li><li style="padding-left:12px"><a href="#the-data-layer-surface-client-core-api">The data-layer surface (client-core/api)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
