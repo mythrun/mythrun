@@ -68,6 +68,11 @@ export interface AvatarGroupProps extends BaseProps {
   /** Cap on how many avatars render before collapsing the rest into `+N`.
    *  Omit to render every child. */
   max?: number
+  /** The token surface the cluster sits on — selects the overlap-ring color so
+   *  the ring matches the background and reads as a clean separation, not a
+   *  mismatched halo. `'bg'` (default) rings in the PAGE color; `'surface'`
+   *  rings in the CARD color, for a cluster placed on a Card. */
+  surface?: 'bg' | 'surface'
   /** The Avatars to cluster — inherited from {@link BaseProps} as `children`. */
   children?: BaseProps['children']
 }

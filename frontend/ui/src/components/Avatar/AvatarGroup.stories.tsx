@@ -1,11 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { Avatar } from './Avatar.tsx'
 import { AvatarGroup } from './AvatarGroup.tsx'
+import { Card, CardBody } from '../Card/Card.tsx'
 
 // AvatarGroup — an overlapping cluster of Avatars, each separated from the one
-// beneath by a token ring (the page color) so the stack reads as distinct faces.
-// When the child count exceeds `max`, the first `max` render and a trailing `+N`
-// overflow chip stands in for the rest.
+// beneath by a token ring so the stack reads as distinct faces. The ring color
+// tracks the `surface` the cluster sits on (`'bg'` page default / `'surface'` on
+// a Card) so it matches the background instead of haloing. When the child count
+// exceeds `max`, the first `max` render and a trailing `+N` overflow chip stands
+// in for the rest.
 
 const PEOPLE = ['Ada Lovelace', 'Grace Hopper', 'Alan Turing', 'Edsger Dijkstra', 'Ken Thompson', 'Barbara Liskov']
 
@@ -51,5 +54,22 @@ export const Uncapped: Story = {
         <Avatar key={n} name={n} />
       ))}
     </AvatarGroup>
+  ),
+}
+
+// On a Card — the cluster passes `surface="surface"` so the overlap ring matches
+// the card background (`ring-surface`) instead of the page (`ring-bg`); without
+// it the ring would read as a faint mismatched halo on the surface.
+export const OnCard: Story = {
+  render: () => (
+    <Card>
+      <CardBody>
+        <AvatarGroup max={4} surface="surface">
+          {PEOPLE.map((n) => (
+            <Avatar key={n} name={n} />
+          ))}
+        </AvatarGroup>
+      </CardBody>
+    </Card>
   ),
 }

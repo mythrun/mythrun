@@ -3,9 +3,11 @@ import type { AvatarGroupProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 
 // AvatarGroup — an overlapping cluster of Avatars. Each face is separated from
-// the one beneath it by a token RING (`ring-2 ring-bg`, the page color), so the
-// stack reads as distinct squares rather than a smear; a negative inline margin
-// produces the overlap. When the child count exceeds `max`, the first `max`
+// the one beneath it by a token RING, so the stack reads as distinct squares
+// rather than a smear; a negative inline margin produces the overlap. The ring
+// color tracks the SURFACE the cluster sits on (`surface` prop) so it matches the
+// background and reads as a clean cut, not a halo — `ring-bg` on the page,
+// `ring-surface` on a Card. When the child count exceeds `max`, the first `max`
 // render and a trailing `+N` overflow chip stands in for the rest.
 //
 // The overflow chip mirrors the Avatar shape (SQUARE — 0px radius, §3, no rounded
@@ -18,12 +20,20 @@ import { cn } from '../../lib/cn.ts'
 // flattens fragments + filters nullish children) so `max` counts real avatars.
 
 const OVERLAP = '-ml-[var(--space-2)]'
-// A token ring in the page color separates overlapping faces. `ring-bg` =
-// var(--color-bg); `rounded-none` because the ring must follow the SQUARE avatar.
-const RING = cn('ring-2 ring-bg rounded-none', OVERLAP)
+// The token ring color per surface. `ring-bg` = var(--color-bg) (the page);
+// `ring-surface` = var(--color-surface) (a Card). Both literals appear verbatim
+// so Tailwind's JIT scanner emits each utility (a computed `ring-${surface}`
+// would never be seen).
+const RING_COLOR: Record<NonNullable<AvatarGroupProps['surface']>, string> = {
+  bg: 'ring-bg',
+  surface: 'ring-surface',
+}
+// The full overlap ring: width + surface-matched color + SQUARE corner + overlap.
+const ringFor = (surface: NonNullable<AvatarGroupProps['surface']>): string =>
+  cn('ring-2 rounded-none', RING_COLOR[surface], OVERLAP)
 
 export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function AvatarGroup(
-  { max, children, 'data-testid': dataTestId },
+  { max, children, surface = 'bg', 'data-testid': dataTestId },
   ref,
 ) {
   // `Children.toArray` flattens fragments, drops nullish children, AND assigns
@@ -33,6 +43,7 @@ export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function
   const cap = max ?? all.length
   const shown = all.slice(0, cap)
   const overflow = all.length - shown.length
+  const ring = ringFor(surface)
 
   return (
     <div
@@ -42,7 +53,7 @@ export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function
     >
       {shown.map((child, i) => (
         // The first avatar keeps its natural edge; the rest overlap + ring.
-        <span key={child.key} className={i === 0 ? '' : RING}>
+        <span key={child.key} className={i === 0 ? '' : ring}>
           {child}
         </span>
       ))}
@@ -53,7 +64,7 @@ export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function
             'w-[var(--control-md)] h-[var(--control-md)]',
             'rounded-none bg-surface text-ink border border-border-strong',
             'font-ui text-sm font-medium leading-none',
-            RING,
+            ring,
           )}
         >
           {`+${String(overflow)}`}
