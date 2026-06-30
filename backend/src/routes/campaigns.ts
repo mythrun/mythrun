@@ -26,7 +26,9 @@ import type { Redis } from 'ioredis'
 import type { Logger as PinoLogger } from 'pino'
 import { z } from 'zod'
 import type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
+import { WorldColorPairSchema } from '@mythrun/contract/rest'
 import { createRepo, type Repo } from '../repo/index.js'
+import type { HubCardRow } from '../repo/campaigns.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
@@ -34,7 +36,12 @@ import { requireUser } from '../auth/require-user.js'
 import { worldSnapshotView } from '../repo/world-snapshot-view.js'
 import { campaignWikiView } from '../repo/campaign-wiki-view.js'
 import { resolveSpeaker } from '../session/attribution.js'
-import { derivePhase, type PhaseAndStages, type PipelinePhase } from '../sse/derive-phase.js'
+import {
+  derivePhase,
+  deriveCardPhase,
+  type PhaseAndStages,
+  type PipelinePhase,
+} from '../sse/derive-phase.js'
 import { openSseConnection } from '../sse/sse-connection.js'
 import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../sse/connection-counter.js'
@@ -805,12 +812,16 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   )
 
   // -------------------------------------------------------------------------
-  // GET /api/campaigns/mine (MYT-51 T10)
+  // GET /api/campaigns/mine (MYT-51 T10 → MYT-87 T11 hub-card expansion)
   //
-  // List the caller's campaigns — owned or any role where they are a
-  // member with invite_accepted = true. The repo's listByUser already
-  // joins campaign_members with that filter so owned + joined collapse
-  // into a single ordered list.
+  // List the caller's campaigns — owned or any role where they are a member
+  // with invite_accepted = true — as the full home-hub card payload. The
+  // repo's `listHubCardsForUser` joins campaign_members with that filter (so
+  // owned + joined collapse into one ordered list), filters archived, and
+  // batches the world / session / party reads with no fanout. The handler
+  // projects each row to the `CampaignSummary` wire shape: derives the
+  // per-viewer `cardPhase`, validates the colour pair, and serializes the
+  // `Date` columns to ISO strings.
   // -------------------------------------------------------------------------
 
   app.get(
@@ -825,20 +836,10 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
     async (request, reply) => {
       const dbUser = requireDbUser(request)
-      const campaigns = await repo.campaigns.listByUser(dbUser.id)
-      // Map each row to the CampaignSummary wire shape: OMIT sourceWorldId /
-      // createdBy (the hub doesn't need them), and serialize the `Date`
-      // created/updated columns to ISO strings (the contract models the wire,
-      // z.iso.datetime(), not the row).
-      const summaries: CampaignSummary[] = campaigns.map((c) => ({
-        id: c.id,
-        worldId: c.worldId,
-        name: c.name,
-        status: c.status,
-        language: c.language,
-        createdAt: c.createdAt.toISOString(),
-        updatedAt: c.updatedAt.toISOString(),
-      }))
+      const cards = await repo.campaigns.listHubCardsForUser(dbUser.id)
+      const summaries: CampaignSummary[] = cards.map((card) =>
+        toHubCardSummary(card, dbUser.id),
+      )
       const body: MyCampaignsResponse = { campaigns: summaries }
       return reply.send(body)
     },
@@ -1010,6 +1011,50 @@ const RenameCampaignBodySchema = z.object({
 // ---------------------------------------------------------------------------
 // Helpers (extracted to keep the handler under the lint length budget).
 // ---------------------------------------------------------------------------
+
+/**
+ * MYT-87 T11: project one repo `HubCardRow` to the `CampaignSummary` wire shape
+ * for the given viewer. Derives the per-viewer `cardPhase`
+ * (`viewerHasCharacter` from the viewer's own roster row; `partyAllReady` when
+ * every accepted member has a character), validates the persisted colour pair
+ * against the curated WorldColor set (an invalid / half-set pair collapses to
+ * null — migration 030 keeps the column un-CHECKed), and serializes the `Date`
+ * columns to ISO strings (the contract models the wire, not the row).
+ */
+function toHubCardSummary(card: HubCardRow, viewerId: string): CampaignSummary {
+  const viewerHasCharacter = card.party.find((p) => p.userId === viewerId)?.hasCharacter ?? false
+  const partyAllReady = card.party.length > 0 && card.party.every((p) => p.hasCharacter)
+  const cardPhase = deriveCardPhase({
+    campaign: { status: card.status, sessionCount: card.sessionCount },
+    world: { status: card.worldStatus },
+    viewerHasCharacter,
+    partyAllReady,
+  })
+  const worldColors =
+    card.colorFrom !== null && card.colorTo !== null
+      ? (WorldColorPairSchema.safeParse({ from: card.colorFrom, to: card.colorTo }).data ?? null)
+      : null
+  return {
+    id: card.id,
+    worldId: card.worldId,
+    name: card.name,
+    status: card.status,
+    language: card.language,
+    createdAt: card.createdAt.toISOString(),
+    updatedAt: card.updatedAt.toISOString(),
+    worldName: card.worldName,
+    worldColors,
+    creator: card.creator,
+    party: card.party.map((p) => ({
+      userId: p.userId,
+      displayName: p.displayName,
+      hasCharacter: p.hasCharacter,
+    })),
+    sessionCount: card.sessionCount,
+    lastPlayedAt: card.lastPlayedAt === null ? null : card.lastPlayedAt.toISOString(),
+    cardPhase,
+  }
+}
 
 /**
  * Resolve the concept + intentSummary pair from the discriminated body.

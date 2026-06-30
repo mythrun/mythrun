@@ -15,6 +15,7 @@ import rateLimit from '@fastify/rate-limit'
 import type { Pool } from 'pg'
 import IoredisMock from 'ioredis-mock'
 import type { Redis } from 'ioredis'
+import { MyCampaignsResponseSchema } from '@mythrun/contract/rest'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
@@ -104,6 +105,108 @@ async function seedCampaignOwnedBy(
   return { campaignId, worldId }
 }
 
+// MYT-87 T11: a fully parametrized hub-card seeder. Inserts a world (status +
+// optional colour pair), a campaign (status), and the owner membership.
+async function seedHubCampaign(
+  pool: Pool,
+  scope: TestScope,
+  owner: SeededUser,
+  index: number,
+  opts: {
+    campaignStatus: 'setup' | 'active' | 'archived' | 'failed'
+    worldStatus?: 'generating' | 'complete' | 'failed'
+    colorFrom?: string | null
+    colorTo?: string | null
+  },
+): Promise<{ campaignId: string; worldId: string }> {
+  const worldId = uuidv7()
+  const campaignId = uuidv7()
+  await pool.query(
+    `INSERT INTO worlds (id, created_by, name, concept, status, color_from, color_to)
+     VALUES ($1, $2, $3, 'A long enough concept for the test', $4, $5, $6)`,
+    [
+      worldId,
+      owner.userId,
+      scope.worldName(index),
+      opts.worldStatus ?? 'complete',
+      opts.colorFrom ?? null,
+      opts.colorTo ?? null,
+    ],
+  )
+  await pool.query(
+    `INSERT INTO campaigns (id, world_id, created_by, name, status)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [campaignId, worldId, owner.userId, scope.campaignName(index), opts.campaignStatus],
+  )
+  await pool.query(
+    `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+     VALUES ($1, $2, $3, 'owner', true)`,
+    [uuidv7(), campaignId, owner.userId],
+  )
+  return { campaignId, worldId }
+}
+
+// Adds an accepted member row (a joined player).
+async function addAcceptedMember(
+  pool: Pool,
+  campaignId: string,
+  member: SeededUser,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+     VALUES ($1, $2, $3, 'player', true)`,
+    [uuidv7(), campaignId, member.userId],
+  )
+}
+
+// Gives a (campaign, user) pair a built character — a `characters` row + the
+// `campaign_characters` join (which is what `hasCharacter` keys on). Mirrors
+// the proven seed in campaigns-details.test.ts (characters dropped campaign_id
+// in migration 009).
+async function seedCharacter(
+  pool: Pool,
+  scope: TestScope,
+  campaignId: string,
+  user: SeededUser,
+  label: string,
+): Promise<void> {
+  const characterId = uuidv7()
+  await pool.query(
+    `INSERT INTO characters (
+       id, user_id, name, level, class, species, background,
+       str, dex, con, int, wis, cha,
+       hit_points, max_hit_points, armor_class, proficiency_bonus
+     ) VALUES ($1, $2, $3, 1, 'Fighter', 'Human', 'Soldier',
+               10, 10, 10, 10, 10, 10, 10, 10, 10, 2)`,
+    [characterId, user.userId, `${scope.id}-${label}`],
+  )
+  await pool.query(
+    `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+     VALUES ($1, $2, $3, $4)`,
+    [uuidv7(), campaignId, characterId, user.userId],
+  )
+}
+
+// Adds one ended session to a campaign (started_at defaults to now()).
+async function seedSession(pool: Pool, campaignId: string, sessionNumber: number): Promise<void> {
+  await pool.query(
+    `INSERT INTO sessions (id, campaign_id, session_number, status)
+     VALUES ($1, $2, $3, 'ended')`,
+    [uuidv7(), campaignId, sessionNumber],
+  )
+}
+
+// Wipe scope characters before the campaigns CASCADE-blocking users delete.
+// Characters survived the campaigns CASCADE after migration 009 decoupled them,
+// so cleanupTestScope's users-delete pass would hit characters_user_id_fkey.
+async function wipeScopeCharacters(pool: Pool, scope: TestScope): Promise<void> {
+  await pool.query(
+    `DELETE FROM characters
+       WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+    [`${scope.id}%`],
+  )
+}
+
 async function buildTestApp(pool: Pool, redis: Redis): Promise<FastifyInstance> {
   globalThis.fetch = (): Promise<Response> => Promise.reject(new Error('ECONNREFUSED'))
   const app = Fastify({ logger: false, trustProxy: 1 })
@@ -135,6 +238,7 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
   })
 
   afterAll(async () => {
+    await wipeScopeCharacters(pool, scope)
     await cleanupTestScope(pool, scope)
     await pool.end()
   })
@@ -143,7 +247,9 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
     redis = new IoredisMock()
-    // myth-5jdo: scoped cleanup replaces blanket DELETEs.
+    // myth-5jdo: scoped cleanup replaces blanket DELETEs. Characters first
+    // (migration 009 decoupled them from the campaigns CASCADE).
+    await wipeScopeCharacters(pool, scope)
     await cleanupTestScope(pool, scope)
     app = await buildTestApp(pool, redis)
   })
@@ -262,5 +368,117 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     // then 403s because no users row exists for it.
     expect(res.statusCode).toBe(403)
     expect(res.json()).toEqual({ code: 'username_required' })
+  })
+
+  // -------------------------------------------------------------------------
+  // MYT-87 T11: the expanded hub-card payload.
+  // -------------------------------------------------------------------------
+
+  it('200 returns the expanded hub-card shape; archived absent, cardPhase + sessionCount + colours correct', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const player2 = await seedUser(pool, scope, 1)
+
+    // (0) Active campaign: world complete + coloured, 2 members both with a
+    // character (party ready), 2 sessions → cardPhase 'played', sessionCount 2.
+    const active = await seedHubCampaign(pool, scope, owner, 0, {
+      campaignStatus: 'active',
+      worldStatus: 'complete',
+      colorFrom: 'ember',
+      colorTo: 'lapis',
+    })
+    await addAcceptedMember(pool, active.campaignId, player2)
+    await seedCharacter(pool, scope, active.campaignId, owner, 'pc-owner')
+    await seedCharacter(pool, scope, active.campaignId, player2, 'pc-player2')
+    await seedSession(pool, active.campaignId, 1)
+    await seedSession(pool, active.campaignId, 2)
+
+    // (1) Archived campaign → must NOT appear.
+    const archived = await seedHubCampaign(pool, scope, owner, 1, {
+      campaignStatus: 'archived',
+      worldStatus: 'complete',
+    })
+
+    // (2) Failed world → cardPhase 'failed', worldColors null (uncoloured).
+    const failed = await seedHubCampaign(pool, scope, owner, 2, {
+      campaignStatus: 'setup',
+      worldStatus: 'failed',
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/mine`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    // Whole body conforms to the wire contract.
+    const parsed = MyCampaignsResponseSchema.parse(res.json())
+
+    const ids = parsed.campaigns.map((c) => c.id)
+    expect(ids).toContain(active.campaignId)
+    expect(ids).toContain(failed.campaignId)
+    expect(ids).not.toContain(archived.campaignId)
+    expect(parsed.campaigns).toHaveLength(2)
+
+    const activeCard = parsed.campaigns.find((c) => c.id === active.campaignId)
+    if (!activeCard) throw new Error('active card missing')
+    expect(activeCard.worldName).toBe(scope.worldName(0))
+    expect(activeCard.worldColors).toEqual({ from: 'ember', to: 'lapis' })
+    expect(activeCard.creator).toBeNull() // owner created the world
+    expect(activeCard.cardPhase).toBe('played')
+    // No fanout: 2 sessions × 2 party members must NOT double the count.
+    expect(activeCard.sessionCount).toBe(2)
+    expect(typeof activeCard.lastPlayedAt).toBe('string')
+    expect(activeCard.party).toHaveLength(2)
+    expect(activeCard.party.every((p) => p.hasCharacter)).toBe(true)
+
+    const failedCard = parsed.campaigns.find((c) => c.id === failed.campaignId)
+    if (!failedCard) throw new Error('failed card missing')
+    expect(failedCard.cardPhase).toBe('failed')
+    expect(failedCard.worldColors).toBeNull()
+    expect(failedCard.sessionCount).toBe(0)
+    expect(failedCard.lastPlayedAt).toBeNull()
+  })
+
+  it("200 cardPhase 'needs-character' for a setup campaign where the viewer has no PC", async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const seed = await seedHubCampaign(pool, scope, owner, 0, {
+      campaignStatus: 'setup',
+      worldStatus: 'complete',
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/mine`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const parsed = MyCampaignsResponseSchema.parse(res.json())
+    const card = parsed.campaigns.find((c) => c.id === seed.campaignId)
+    if (!card) throw new Error('card missing')
+    expect(card.cardPhase).toBe('needs-character')
+    expect(card.party).toHaveLength(1)
+    expect(card.party[0]?.hasCharacter).toBe(false)
+  })
+
+  it('200 creator is the world-creator display name for a joined (not-owned) campaign', async () => {
+    const me = await seedUser(pool, scope, 0)
+    const other = await seedUser(pool, scope, 1)
+    // `other` owns the world + campaign; `me` is an accepted player.
+    const seed = await seedHubCampaign(pool, scope, other, 0, {
+      campaignStatus: 'setup',
+      worldStatus: 'complete',
+    })
+    await addAcceptedMember(pool, seed.campaignId, me)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/mine`,
+      headers: { 'x-mythrun-dev-sub': me.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const parsed = MyCampaignsResponseSchema.parse(res.json())
+    const card = parsed.campaigns.find((c) => c.id === seed.campaignId)
+    if (!card) throw new Error('card missing')
+    expect(card.creator).toBe(scope.displayName(1))
   })
 })

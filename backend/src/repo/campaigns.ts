@@ -2,6 +2,7 @@ import { type Pool } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import {
   toCampaign,
+  toWorldStatus,
   toCampaignMember,
   type CampaignDbRow,
   type CampaignMemberDbRow,
@@ -50,6 +51,51 @@ export interface IntegrationMetaRow {
     readonly locationEntityId: string
     readonly prose: string
   }[]
+}
+
+// MYT-87 T11 home-hub card payload. One roster entry on a card — the member's
+// id + display name + whether they have a built character. `hasCharacter` feeds
+// the per-viewer `cardPhase` derivation (the route maps this to the contract's
+// `HubPartyMember`, which is structurally identical).
+export interface HubCardPartyMember {
+  readonly userId: string
+  readonly displayName: string
+  readonly hasCharacter: boolean
+}
+
+// MYT-87 T11: the assembled per-campaign hub-card data (pre-wire). The route
+// layer derives the per-viewer `cardPhase` from this, validates the colour pair
+// against the contract enum, and serializes the `Date` columns to ISO strings.
+// `colorFrom`/`colorTo` are the raw persisted TEXT (validated at the wire
+// boundary, not here — see migration 030). `worldStatus` is narrowed so it can
+// feed `deriveCardPhase` directly.
+export interface HubCardRow {
+  readonly id: string
+  readonly worldId: string
+  readonly name: string
+  readonly status: 'setup' | 'active' | 'archived' | 'failed'
+  readonly language: string
+  readonly createdAt: Date
+  readonly updatedAt: Date
+  readonly worldName: string
+  readonly worldStatus: 'generating' | 'complete' | 'failed'
+  readonly colorFrom: string | null
+  readonly colorTo: string | null
+  readonly creator: string | null
+  readonly sessionCount: number
+  readonly lastPlayedAt: Date | null
+  readonly party: readonly HubCardPartyMember[]
+}
+
+// Raw extra columns selected alongside `c.*` by the hub-card join (query 1).
+interface HubCardExtraRow {
+  readonly world_name: string
+  readonly world_status: string
+  readonly color_from: string | null
+  readonly color_to: string | null
+  readonly creator: string | null
+  readonly session_count: number
+  readonly last_played_at: Date | null
 }
 
 // Composable binder: each method captures the ClientLike `c` (pool OR an
@@ -359,6 +405,105 @@ export function campaignsNs(c: ClientLike) {
         [userId],
       )
       return result.rows.map(toCampaign)
+    },
+
+    /**
+     * MYT-87 T11 home-hub card payload. TWO batched queries — NO fanout / N+1:
+     *
+     *  (1) `campaigns ⋈ worlds ⋈ users(world creator)` + a LATERAL session
+     *      aggregate (count + max started_at) per campaign. The aggregate runs
+     *      in its own subquery so the session count is NEVER multiplied by the
+     *      party size — a direct `members × sessions` join would cartesian the
+     *      count. Archived campaigns are filtered here (the hub never shows
+     *      them). `creator` is null when the viewer created the world.
+     *
+     *  (2) one batched party-roster read over ALL the returned campaign ids
+     *      (`= ANY($ids)`), grouped per campaign in app code. `hasCharacter`
+     *      is "a campaign_characters row exists for the (campaign, user) pair"
+     *      (models `getPartyRoster`'s join).
+     *
+     * The route layer derives the per-viewer `cardPhase` (via `deriveCardPhase`)
+     * and validates the colour pair against the contract — this method stays
+     * pure data access.
+     */
+    listHubCardsForUser: async (userId: string): Promise<HubCardRow[]> => {
+      const cards = await c.query<CampaignDbRow & HubCardExtraRow>(
+        `SELECT c.*,
+                w.name       AS world_name,
+                w.status     AS world_status,
+                w.color_from AS color_from,
+                w.color_to   AS color_to,
+                CASE WHEN w.created_by <> $1 THEN cu.display_name END AS creator,
+                s.session_count,
+                s.last_played_at
+           FROM campaigns c
+           JOIN campaign_members cm ON cm.campaign_id = c.id
+           JOIN worlds w ON w.id = c.world_id
+           JOIN users cu ON cu.id = w.created_by
+           LEFT JOIN LATERAL (
+             SELECT count(*)::int AS session_count, max(started_at) AS last_played_at
+               FROM sessions WHERE campaign_id = c.id
+           ) s ON true
+          WHERE cm.user_id = $1
+            AND cm.invite_accepted = true
+            AND c.status <> 'archived'
+          ORDER BY c.created_at DESC`,
+        [userId],
+      )
+      if (cards.rows.length === 0) return []
+
+      const ids = cards.rows.map((r) => r.id)
+      const roster = await c.query<{
+        campaign_id: string
+        user_id: string
+        display_name: string
+        has_character: boolean
+      }>(
+        `SELECT cm.campaign_id,
+                cm.user_id,
+                u.display_name,
+                (ch.character_id IS NOT NULL) AS has_character
+           FROM campaign_members cm
+           JOIN users u ON u.id = cm.user_id
+           LEFT JOIN campaign_characters ch
+             ON ch.campaign_id = cm.campaign_id AND ch.user_id = cm.user_id
+          WHERE cm.campaign_id = ANY($1::uuid[])
+            AND cm.invite_accepted = true
+          ORDER BY cm.joined_at`,
+        [ids],
+      )
+
+      const partyByCampaign = new Map<string, HubCardPartyMember[]>()
+      for (const r of roster.rows) {
+        const list = partyByCampaign.get(r.campaign_id) ?? []
+        list.push({
+          userId: r.user_id,
+          displayName: r.display_name,
+          hasCharacter: r.has_character,
+        })
+        partyByCampaign.set(r.campaign_id, list)
+      }
+
+      return cards.rows.map((row) => {
+        const campaign = toCampaign(row)
+        return {
+          id: campaign.id,
+          worldId: campaign.worldId,
+          name: campaign.name,
+          status: campaign.status,
+          language: campaign.language,
+          createdAt: campaign.createdAt,
+          updatedAt: campaign.updatedAt,
+          worldName: row.world_name,
+          worldStatus: toWorldStatus(row.world_status),
+          colorFrom: row.color_from,
+          colorTo: row.color_to,
+          creator: row.creator,
+          sessionCount: row.session_count,
+          lastPlayedAt: row.last_played_at,
+          party: partyByCampaign.get(campaign.id) ?? [],
+        }
+      })
     },
 
     update: async (id: string, patch: CampaignUpdate): Promise<Campaign> => {

@@ -87,7 +87,7 @@ export interface SessionDbRow {
 // known sets, but the helpers throw loudly if a future migration adds an
 // option without updating the TS types. Defense in depth.
 
-function toWorldStatus(v: string): 'generating' | 'complete' | 'failed' {
+export function toWorldStatus(v: string): 'generating' | 'complete' | 'failed' {
   if (v !== 'generating' && v !== 'complete' && v !== 'failed') {
     throw new Error(`unexpected world status value from DB: ${v}`)
   }

@@ -67,102 +67,131 @@ describe('@mythrun/contract/rest', () => {
     })
   })
 
-  describe('CampaignSummarySchema', () => {
-    it('parses a valid wire-shape campaign summary', () => {
-      const parsed = CampaignSummarySchema.parse({
-        id: 'c',
-        worldId: 'w',
-        name: 'My Campaign',
-        status: 'setup',
-        language: 'en',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z',
-      })
+  describe('CampaignSummarySchema (MYT-87 T11 hub card)', () => {
+    // A full, valid hub-card body. Individual tests clone + mutate this.
+    const hubCard = {
+      id: 'c',
+      worldId: 'w',
+      name: 'My Campaign',
+      status: 'setup' as const,
+      language: 'en',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      worldName: 'The Sunless Reach',
+      worldColors: { from: 'ember', to: 'lapis' },
+      creator: null,
+      party: [{ userId: 'u', displayName: 'Ada', hasCharacter: true }],
+      sessionCount: 0,
+      lastPlayedAt: null,
+      cardPhase: 'needs-character' as const,
+    }
+
+    it('parses a valid wire-shape hub card', () => {
+      const parsed = CampaignSummarySchema.parse(hubCard)
       expect(parsed.status).toBe('setup')
+      expect(parsed.worldName).toBe('The Sunless Reach')
+      expect(parsed.worldColors).toEqual({ from: 'ember', to: 'lapis' })
+      expect(parsed.cardPhase).toBe('needs-character')
+      expect(parsed.party[0]?.hasCharacter).toBe(true)
     })
 
     it('accepts every status enum member', () => {
       for (const status of ['setup', 'active', 'archived', 'failed'] as const) {
-        const parsed = CampaignSummarySchema.parse({
-          id: 'c',
-          worldId: 'w',
-          name: 'My Campaign',
-          status,
-          language: 'en',
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-02T00:00:00.000Z',
-        })
+        const parsed = CampaignSummarySchema.parse({ ...hubCard, status })
         expect(parsed.status).toBe(status)
       }
     })
 
+    it('accepts every cardPhase enum member', () => {
+      for (const cardPhase of [
+        'generating',
+        'failed',
+        'needs-character',
+        'waiting-for-players',
+        'not-played',
+        'played',
+      ] as const) {
+        const parsed = CampaignSummarySchema.parse({ ...hubCard, cardPhase })
+        expect(parsed.cardPhase).toBe(cardPhase)
+      }
+    })
+
     it('rejects an unknown status', () => {
+      expect(() => CampaignSummarySchema.parse({ ...hubCard, status: 'paused' })).toThrow()
+    })
+
+    it('rejects an unknown cardPhase', () => {
+      expect(() => CampaignSummarySchema.parse({ ...hubCard, cardPhase: 'orbiting' })).toThrow()
+    })
+
+    it('accepts a null worldColors (world not yet colored) + a null lastPlayedAt', () => {
+      const parsed = CampaignSummarySchema.parse({
+        ...hubCard,
+        worldColors: null,
+        lastPlayedAt: null,
+      })
+      expect(parsed.worldColors).toBeNull()
+      expect(parsed.lastPlayedAt).toBeNull()
+    })
+
+    it('rejects a worldColors pair with a color outside the curated set', () => {
       expect(() =>
-        CampaignSummarySchema.parse({
-          id: 'c',
-          worldId: 'w',
-          name: 'My Campaign',
-          status: 'paused',
-          language: 'en',
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-02T00:00:00.000Z',
-        }),
+        CampaignSummarySchema.parse({ ...hubCard, worldColors: { from: 'ember', to: 'chartreuse' } }),
       ).toThrow()
     })
 
     it('REJECTS a Date value for createdAt (wire shape is a string)', () => {
-      expect(() =>
-        CampaignSummarySchema.parse({
-          id: 'c',
-          worldId: 'w',
-          name: 'My Campaign',
-          status: 'setup',
-          language: 'en',
-          createdAt: new Date(),
-          updatedAt: '2026-01-02T00:00:00.000Z',
-        }),
-      ).toThrow()
+      expect(() => CampaignSummarySchema.parse({ ...hubCard, createdAt: new Date() })).toThrow()
+    })
+
+    it('REJECTS a Date value for lastPlayedAt (wire shape is a string)', () => {
+      expect(() => CampaignSummarySchema.parse({ ...hubCard, lastPlayedAt: new Date() })).toThrow()
     })
 
     it('is a projection: omits sourceWorldId / createdBy', () => {
       const parsed = CampaignSummarySchema.parse({
-        id: 'c',
-        worldId: 'w',
-        name: 'My Campaign',
-        status: 'setup',
-        language: 'en',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z',
+        ...hubCard,
         sourceWorldId: 'leak',
         createdBy: 'leak',
       })
       expect(parsed).not.toHaveProperty('sourceWorldId')
       expect(parsed).not.toHaveProperty('createdBy')
     })
+
+    it('rejects a fractional sessionCount (must be a non-negative int)', () => {
+      expect(() => CampaignSummarySchema.parse({ ...hubCard, sessionCount: 1.5 })).toThrow()
+      expect(() => CampaignSummarySchema.parse({ ...hubCard, sessionCount: -1 })).toThrow()
+    })
   })
 
   describe('MyCampaignsResponseSchema', () => {
+    const hubCard = {
+      id: 'c',
+      worldId: 'w',
+      name: 'My Campaign',
+      status: 'active' as const,
+      language: 'en',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      worldName: 'The Sunless Reach',
+      worldColors: null,
+      creator: 'Other Player',
+      party: [],
+      sessionCount: 3,
+      lastPlayedAt: '2026-01-03T00:00:00.000Z',
+      cardPhase: 'played' as const,
+    }
+
     it('parses an empty campaigns array', () => {
       const parsed = MyCampaignsResponseSchema.parse({ campaigns: [] })
       expect(parsed.campaigns).toEqual([])
     })
 
     it('parses a populated campaigns array', () => {
-      const parsed = MyCampaignsResponseSchema.parse({
-        campaigns: [
-          {
-            id: 'c',
-            worldId: 'w',
-            name: 'My Campaign',
-            status: 'active',
-            language: 'en',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-02T00:00:00.000Z',
-          },
-        ],
-      })
+      const parsed = MyCampaignsResponseSchema.parse({ campaigns: [hubCard] })
       expect(parsed.campaigns).toHaveLength(1)
       expect(parsed.campaigns[0]?.id).toBe('c')
+      expect(parsed.campaigns[0]?.cardPhase).toBe('played')
     })
   })
 })
