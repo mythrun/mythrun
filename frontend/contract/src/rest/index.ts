@@ -5,6 +5,7 @@
 // clients consume the SCHEMAS to validate inbound responses.
 export * from './users.js'
 export * from './campaigns.js'
+export * from './billing.js'
 export * from './auth.js'
 export * from './ws-ticket.js'
 export * from './world-color.js'

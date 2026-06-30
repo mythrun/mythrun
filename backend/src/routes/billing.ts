@@ -20,6 +20,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import type { Stripe } from 'stripe'
+import type { BalanceResponse } from '@mythrun/contract/rest'
 import type { Env } from '../config/env.js'
 import { getSkuCache, type SkuInternalEntry } from '../billing/sku-cache.js'
 import { getStripeClient } from '../billing/stripe-client.js'
@@ -87,7 +88,12 @@ async function handleBalance(
           status: sub.status,
         }
 
-  return reply.code(200).send({ session, world_gen, active_subscription })
+  // `satisfies` types the response against the snake_case wire contract
+  // (@mythrun/contract/rest) without re-shaping it — the home hub consumes the
+  // same `BalanceResponse` via the typed `useBalance` hook.
+  const body = { session, world_gen, active_subscription } satisfies BalanceResponse
+
+  return reply.code(200).send(body)
 }
 
 interface HistoryCursor {
