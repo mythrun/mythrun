@@ -7,6 +7,7 @@ import {
   VocabularyRegistrySchema,
   type VocabularyRegistry,
 } from '../llm/schemas/vocabulary-registry.js'
+import type { WorldColor } from '@mythrun/contract/rest'
 
 // Allowlist projection of the worlds table — the enforced-ignorance wire-shape
 // gate. Plot-bearing columns (key_tensions, political_summary, world_overview,
@@ -541,6 +542,25 @@ export function worldsNs(c: ClientLike) {
       await c.query(`UPDATE worlds SET vocabulary_registry = $2::jsonb WHERE id = $1`, [
         id,
         registryJson,
+      ])
+    },
+
+    /**
+     * world-colour stage (MYT-87) persist: the world's two-stop dither identity
+     * (color_from/color_to, migration 030). An idempotent SET, NOT a delta —
+     * both the world-gen colour stage (T8) and the backfill (T9) are
+     * authoritative writers, so each SETs the full pair rather than mutating a
+     * running value. `from`/`to` are validated `WorldColor`s at the contract
+     * layer; the column is plain nullable TEXT (no DB CHECK — see migration 030).
+     */
+    setColorPair: async (
+      id: string,
+      pair: { from: WorldColor; to: WorldColor },
+    ): Promise<void> => {
+      await c.query(`UPDATE worlds SET color_from = $2, color_to = $3 WHERE id = $1`, [
+        id,
+        pair.from,
+        pair.to,
       ])
     },
 
