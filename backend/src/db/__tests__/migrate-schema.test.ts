@@ -815,6 +815,7 @@ describe('schema-parity (integration)', () => {
       '027_fact_supersede.sql',
       '028_session_messages_trigger_kind.sql',
       '029_session_messages_fts.sql',
+      '030_world_color_identity.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -1033,5 +1034,55 @@ describe('migration 022 — session_preps uniqueness', () => {
        WHERE t.relname = 'session_preps' AND c.contype = 'u'`,
     )
     expect(rows.some((r) => r.def.includes('UNIQUE (campaign_id, session_number)'))).toBe(true)
+  })
+})
+
+// MYT-87 T6: migration 030 adds the per-world dither identity — two nullable
+// TEXT columns (color_from, color_to) on worlds. Null = not-yet-generated (the
+// ghost band); the WorldColor enum is enforced at the app layer, NOT a DB CHECK,
+// so this block asserts only the column shape. Lives in its own describe so the
+// schema-parity test above stays self-contained.
+describe('migration 030 — world color identity', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 1 })
+    await resetSchema(pool)
+    await runMigrations({
+      pool,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+      logger: makeSilentLogger(),
+    })
+  })
+
+  afterAll(async () => {
+    // Restore globalSetup's seed rows so subsequent test files see the same
+    // baseline they assume — same teardown shape as the migration-014 block.
+    await seedTestDatabase(pool)
+    await pool.end()
+  })
+
+  it('adds worlds.color_from + worlds.color_to as nullable TEXT', async () => {
+    const { rows } = await pool.query(
+      `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_name='worlds' AND column_name IN ('color_from', 'color_to')
+       ORDER BY column_name`,
+    )
+    expect(rows).toEqual([
+      {
+        column_name: 'color_from',
+        data_type: 'text',
+        is_nullable: 'YES',
+        column_default: null,
+      },
+      {
+        column_name: 'color_to',
+        data_type: 'text',
+        is_nullable: 'YES',
+        column_default: null,
+      },
+    ])
   })
 })
