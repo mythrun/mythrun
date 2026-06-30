@@ -24,6 +24,7 @@ const meta: Meta<typeof Card> = {
   argTypes: {
     surface: { control: 'inline-radio', options: ['base', 'raised'] },
     collapse: { control: 'boolean' },
+    frame: { control: 'inline-radio', options: ['solid', 'dashed'] },
   },
 }
 
@@ -111,6 +112,29 @@ export const CollapseResponsive: Story = {
         <Button variant="primary">card.collapse.action</Button>
       </Stack>
     </Card>
+  ),
+}
+
+// frame="dashed" — the empty-state / "not yet written" cover. The border STYLE
+// switches to dashed (the strong edge color is unchanged), reading as an
+// outline-to-be-filled rather than a committed surface. Used for the campaign
+// hub's "Unwritten" tile.
+export const Dashed: Story = {
+  name: 'Frame · dashed (empty-state cover)',
+  args: { frame: 'dashed' },
+  render: (args) => (
+    <div className="w-96 max-w-full">
+      <Card {...args}>
+        <CardBody>
+          <Stack align="center" gap={2}>
+            <Heading level={2} role={TITLE}>
+              card.dashed.title
+            </Heading>
+            <Text role={UI_CAPTION}>card.dashed.hint</Text>
+          </Stack>
+        </CardBody>
+      </Card>
+    </div>
   ),
 }
 

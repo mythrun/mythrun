@@ -43,6 +43,15 @@ const card = cva('rounded-none overflow-hidden', {
         'sm:w-auto sm:mx-auto sm:max-w-[420px] sm:border sm:border-border-strong sm:p-[var(--space-6)]',
       ),
     },
+    // `frame` swaps only the border STYLE (the color stays `--border-strong`).
+    // `solid` is the default solid edge (no class needed); `dashed` reads as an
+    // outline-to-be-filled — the empty-state "Unwritten" cover. `border-dashed`
+    // is inert wherever the border width is 0 (collapse mode below sm), so it
+    // composes cleanly with `collapse` and only shows where the edge exists.
+    frame: {
+      solid: '',
+      dashed: 'border-dashed',
+    },
   },
   compoundVariants: [
     // Non-collapse: the surface paints at every width.
@@ -55,15 +64,16 @@ const card = cva('rounded-none overflow-hidden', {
   defaultVariants: {
     surface: 'base',
     collapse: false,
+    frame: 'solid',
   },
 })
 
 export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
-  { surface = 'base', collapse = false, children, ...rest },
+  { surface = 'base', collapse = false, frame = 'solid', children, ...rest },
   ref,
 ) {
   return (
-    <div ref={ref} className={cn(card({ surface, collapse }))} {...rest}>
+    <div ref={ref} className={cn(card({ surface, collapse, frame }))} {...rest}>
       {children}
     </div>
   )

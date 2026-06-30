@@ -32,6 +32,16 @@ export interface CardProps extends BaseProps {
    * slot pattern is not used with it.
    */
   collapse?: boolean
+  /**
+   * Edge treatment for the `--border-strong` Card border. Default `solid` (the
+   * standard 1px interactive-grade edge). `dashed` swaps the border STYLE to
+   * dashed while keeping the same strong edge color — the empty-state / "not yet
+   * written" cover (e.g. the campaign hub's "Unwritten" tile), reading as an
+   * outline-to-be-filled rather than a committed surface. Composes with
+   * `surface` and `collapse` (in collapse mode the dashed edge appears at `sm`+,
+   * where the border itself returns).
+   */
+  frame?: 'solid' | 'dashed'
 }
 
 /**

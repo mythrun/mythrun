@@ -100,6 +100,60 @@ describe('Card', () => {
     })
   })
 
+  describe('frame (solid edge by default, dashed for the empty-state cover)', () => {
+    it('keeps the solid strong border by default (no dashed style)', () => {
+      const { getByTestId } = render(<Card data-testid="card">x</Card>)
+      const el = getByTestId('card')
+      expect(el.classList.contains('border-border-strong')).toBe(true)
+      expect(el.classList.contains('border-dashed')).toBe(false)
+    })
+
+    it('keeps the solid strong border for the explicit frame="solid"', () => {
+      const { getByTestId } = render(
+        <Card frame="solid" data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      expect(el.classList.contains('border-border-strong')).toBe(true)
+      expect(el.classList.contains('border-dashed')).toBe(false)
+    })
+
+    it('adds the dashed border style for frame="dashed" (keeping the strong edge color)', () => {
+      const { getByTestId } = render(
+        <Card frame="dashed" data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      expect(el.classList.contains('border-dashed')).toBe(true)
+      expect(el.classList.contains('border')).toBe(true)
+      expect(el.classList.contains('border-border-strong')).toBe(true)
+    })
+
+    it('composes the dashed frame with surface=raised', () => {
+      const { getByTestId } = render(
+        <Card frame="dashed" surface="raised" data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      expect(el.classList.contains('border-dashed')).toBe(true)
+      expect(el.classList.contains('bg-surface-raised')).toBe(true)
+    })
+
+    it('composes the dashed frame with collapse (dashed edge returns at sm+)', () => {
+      const { getByTestId } = render(
+        <Card frame="dashed" collapse data-testid="card">
+          x
+        </Card>,
+      )
+      const el = getByTestId('card')
+      expect(el.classList.contains('border-dashed')).toBe(true)
+      expect(el.classList.contains('sm:border-border-strong')).toBe(true)
+    })
+  })
+
   it('has no axe violations', async () => {
     const { container } = render(
       <Card surface="raised">
