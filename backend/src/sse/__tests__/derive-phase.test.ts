@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   CHARCREATION_STAGES,
   POSTCREATION_STAGES,
+  deriveCardPhase,
   derivePhase,
   type CampaignRow,
+  type CardPhase,
   type WorldRow,
   type PipelineRunRow,
 } from '../derive-phase.js'
@@ -414,5 +416,128 @@ describe('post-MYT-54 stage taxonomy', () => {
       ],
     })
     expect(result.phase).toBe('post_creation')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MYT-87 T10: viewer-relative hub `cardPhase`. Pure, no I/O. Drives the
+// campaign-hub card's implicit-status line. `derivePhase` (above) stays the
+// global pipeline phase; this is the per-viewer card projection.
+//
+// Lifecycle note: the character-creation window is campaign.status === 'setup'.
+// A campaign flips to 'active' only as the FINAL write of character-integration,
+// once every PC is woven in (repo/campaigns.ts:302 setActive), so the
+// viewer-relative states (needs-character / waiting-for-players) fire during
+// 'setup', NOT 'active'.
+// ---------------------------------------------------------------------------
+describe('deriveCardPhase', () => {
+  interface CardCase {
+    readonly name: string
+    readonly world: WorldRow['status']
+    readonly campaign: CampaignRow['status']
+    readonly viewerHasCharacter: boolean
+    readonly partyAllReady: boolean
+    readonly sessionCount: number
+    readonly expected: CardPhase
+  }
+
+  const cases: readonly CardCase[] = [
+    // Terminal/in-flight gates win first.
+    {
+      name: 'world failed -> failed',
+      world: 'failed',
+      campaign: 'setup',
+      viewerHasCharacter: false,
+      partyAllReady: false,
+      sessionCount: 0,
+      expected: 'failed',
+    },
+    {
+      name: 'world generating -> generating',
+      world: 'generating',
+      campaign: 'setup',
+      viewerHasCharacter: false,
+      partyAllReady: false,
+      sessionCount: 0,
+      expected: 'generating',
+    },
+    {
+      name: 'campaign failed + world complete -> failed (MYT-56 integration exhausted)',
+      world: 'complete',
+      campaign: 'failed',
+      viewerHasCharacter: true,
+      partyAllReady: true,
+      sessionCount: 2,
+      expected: 'failed',
+    },
+    // world complete + campaign 'setup' (the character-creation window):
+    // project against the viewer + party.
+    {
+      name: 'setup + complete + viewer lacks a character -> needs-character',
+      world: 'complete',
+      campaign: 'setup',
+      viewerHasCharacter: false,
+      partyAllReady: false,
+      sessionCount: 0,
+      expected: 'needs-character',
+    },
+    {
+      name: 'setup + complete + viewer ready, party not all ready -> waiting-for-players',
+      world: 'complete',
+      campaign: 'setup',
+      viewerHasCharacter: true,
+      partyAllReady: false,
+      sessionCount: 0,
+      expected: 'waiting-for-players',
+    },
+    {
+      name: 'setup + complete + party all ready -> not-played (pre-active transient)',
+      world: 'complete',
+      campaign: 'setup',
+      viewerHasCharacter: true,
+      partyAllReady: true,
+      sessionCount: 0,
+      expected: 'not-played',
+    },
+    // campaign 'active' — every PC integrated, world playable.
+    {
+      name: 'active + complete + no sessions yet -> not-played',
+      world: 'complete',
+      campaign: 'active',
+      viewerHasCharacter: true,
+      partyAllReady: true,
+      sessionCount: 0,
+      expected: 'not-played',
+    },
+    {
+      name: 'active + complete + has played -> played',
+      world: 'complete',
+      campaign: 'active',
+      viewerHasCharacter: true,
+      partyAllReady: true,
+      sessionCount: 2,
+      expected: 'played',
+    },
+    // Precedence: a failed world wins over an otherwise-playable active campaign
+    // (the active + ready + sessionCount fields here would yield 'played').
+    {
+      name: 'precedence: world failed wins over an active, played campaign',
+      world: 'failed',
+      campaign: 'active',
+      viewerHasCharacter: true,
+      partyAllReady: true,
+      sessionCount: 2,
+      expected: 'failed',
+    },
+  ]
+
+  it.each(cases)('$name', ({ world, campaign, viewerHasCharacter, partyAllReady, sessionCount, expected }) => {
+    const result = deriveCardPhase({
+      campaign: { status: campaign, sessionCount },
+      world: { status: world },
+      viewerHasCharacter,
+      partyAllReady,
+    })
+    expect(result).toBe(expected)
   })
 })

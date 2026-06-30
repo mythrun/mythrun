@@ -150,6 +150,53 @@ export function derivePhase(input: {
   return { phase, stages, cumulativeCostUsd }
 }
 
+// ---------------------------------------------------------------------------
+// MYT-87 T10: viewer-relative hub `cardPhase`.
+//
+// `derivePhase` above is the *global* pipeline phase — the same for every
+// member. The campaign-hub card needs a *per-viewer* projection: it answers
+// "what does THIS player's card say right now?", which depends on whether the
+// viewer has made a character and whether the whole party is ready. This is a
+// pure projection (no I/O); the caller resolves `viewerHasCharacter` /
+// `partyAllReady` / `sessionCount` from the repo and hands them in.
+// ---------------------------------------------------------------------------
+export type CardPhase =
+  | 'generating'
+  | 'failed'
+  | 'needs-character'
+  | 'waiting-for-players'
+  | 'not-played'
+  | 'played'
+
+export function deriveCardPhase(input: {
+  readonly campaign: { readonly status: CampaignRow['status']; readonly sessionCount: number }
+  readonly world: { readonly status: WorldRow['status'] }
+  readonly viewerHasCharacter: boolean
+  readonly partyAllReady: boolean
+}): CardPhase {
+  const { campaign, world, viewerHasCharacter, partyAllReady } = input
+
+  // Terminal/in-flight gates win over every viewer-relative branch.
+  if (world.status === 'failed') return 'failed'
+  if (campaign.status === 'failed') return 'failed' // character-integration exhausted (MYT-56)
+  if (world.status === 'generating') return 'generating'
+
+  // World complete below.
+  // The character-creation window is campaign.status === 'setup' — a campaign
+  // flips to 'active' only as the FINAL write of character-integration, once
+  // every PC is woven in (repo/campaigns.ts:302 setActive). So the
+  // viewer-relative states fire during 'setup', NOT 'active'.
+  if (campaign.status === 'setup') {
+    if (!viewerHasCharacter) return 'needs-character'
+    if (!partyAllReady) return 'waiting-for-players'
+    return 'not-played' // all ready, pre-active transient
+  }
+
+  // campaign 'active' — all PCs integrated, world playable.
+  if (campaign.sessionCount === 0) return 'not-played'
+  return 'played'
+}
+
 function computePhase(input: {
   readonly campaign: CampaignRow
   readonly world: WorldRow
