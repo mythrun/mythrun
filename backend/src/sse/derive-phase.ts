@@ -65,6 +65,7 @@ export interface PhaseAndStages {
 // post-creation stages are campaign-scoped (campaign_id set, user_id null).
 export const WORLDGEN_STAGES = [
   'concept_intake',
+  'world_color', // MYT-87 T8 — runs right after concept_intake
   'vocabulary_intake', // myth-pfke
   'world_and_factions',
   'locations_and_npcs',

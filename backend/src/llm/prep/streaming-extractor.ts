@@ -27,6 +27,7 @@ import { resolveRelationship, normalizeName } from './name-resolution.js'
 
 export type WorldGenStage =
   | 'concept_intake'
+  | 'world_color'
   | 'vocabulary_intake'
   | 'world_and_factions'
   | 'locations_and_npcs'

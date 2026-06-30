@@ -40,6 +40,7 @@ import {
   type WorldGenJobPayload,
 } from '../world-gen-processor.js'
 import { StageNotImplementedError } from '../stages/stage-not-implemented.js'
+import * as worldColorModule from '../stages/world-color.js'
 import * as vocabularyIntakeModule from '../stages/vocabulary-intake.js'
 import * as worldAndFactionsModule from '../stages/world-and-factions.js'
 import * as locationsAndNpcsModule from '../stages/locations-and-npcs.js'
@@ -61,6 +62,13 @@ vi.mock('ai', async () => {
 // untouched, so the existing 6 scenarios still halt at stage 2.
 // myth-pfke: vocabulary-intake (stage 1.5) gets the same per-module mock
 // pattern so the legacy tests still halt at the first non-concept stage.
+// MYT-87 T8: world_color (stage 2, right after concept_intake) gets the same
+// per-module mock so the legacy tests flow past it to the first
+// not-yet-implemented stage (world_and_factions) without hitting real Haiku.
+vi.mock('../stages/world-color.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stages/world-color.js')>()
+  return { ...actual, runWorldColorStage: vi.fn() }
+})
 vi.mock('../stages/vocabulary-intake.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../stages/vocabulary-intake.js')>()
   return { ...actual, runVocabularyIntakeStage: vi.fn() }
@@ -305,6 +313,15 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     // succeed-with-zero-cost so concept_intake-only tests still flow to
     // the next not-yet-implemented stage (world_and_factions). Tests that
     // halt explicitly at stage 1.5 override via mockImplementationOnce.
+    // MYT-87 T8: world_color (stage 2) defaults to a clean succeed-with-zero-
+    // cost so the legacy concept_intake-only tests flow past it to the next
+    // not-yet-implemented stage (world_and_factions), exactly like
+    // vocabulary_intake below.
+    vi.mocked(worldColorModule.runWorldColorStage).mockResolvedValue({
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    })
     vi.mocked(vocabularyIntakeModule.runVocabularyIntakeStage).mockResolvedValue({
       costUsd: 0,
       inputTokens: 0,

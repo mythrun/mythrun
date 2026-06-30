@@ -37,6 +37,7 @@ import { z } from 'zod'
 import type { LlmCallDiagnostic } from '../ai.js'
 import { issueCostCapRefund, sumCompletedStageCosts } from './cost-cap.js'
 import { runConceptIntakeStage } from './stages/concept-intake.js'
+import { runWorldColorStage } from './stages/world-color.js'
 import { runVocabularyIntakeStage } from './stages/vocabulary-intake.js'
 import { runStartingSituationStage } from './stages/starting-situation.js'
 import { runRandomTablesStage } from './stages/random-tables.js'
@@ -75,6 +76,11 @@ const SEED_TABLES_PLACEHOLDER =
 
 export const WORLD_GEN_STAGES = [
   'concept_intake',
+  // MYT-87 T8: pick the world's two-stop WorldColor dither identity. Placed
+  // right after concept_intake so tone/themes are loaded for the vibe inputs;
+  // a cheap Haiku one-shot with a contrast-guarded re-roll, persists color_from
+  // /color_to via worlds.setColorPair.
+  'world_color',
   'vocabulary_intake',
   'world_and_factions',
   'locations_and_npcs',
@@ -457,6 +463,21 @@ async function dispatchStage(
       intentSummary: null,
     })
     return wrapLegacyStage(cost)
+  }
+  if (stage === 'world_color') {
+    /* c8 ignore start — same rationale as the vocabulary_intake arm below:
+     * the `?? ''` fallbacks on tone/themes fire only when concept_intake
+     * produced a null on those columns, which its schema forbids. Real
+     * coverage of this arg-marshaling comes from the live-LLM E2E smoke. */
+    const cost = await runWorldColorStage(repo, {
+      worldId: ctx.world.id,
+      worldName: ctx.world.name,
+      concept: ctx.world.concept,
+      tone: ctx.world.tone ?? '',
+      themes: ctx.world.themes ?? '',
+    })
+    return wrapLegacyStage(cost)
+    /* c8 ignore stop */
   }
   if (stage === 'vocabulary_intake') {
     /* c8 ignore start — same rationale as the wave-4 arms below: the `?? ''`

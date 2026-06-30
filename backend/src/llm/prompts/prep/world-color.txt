@@ -1,0 +1,26 @@
+You are choosing the two-colour identity for a Mythrun world's cover art.
+
+The cover is a coarse, paper-y 1-bit ordered dither between two colours drawn
+from a fixed, hand-curated palette — a printed, woodblock register, not a glossy
+gradient. Pick the pair whose mood fits the world below.
+
+`from` is the sparse ground — the quieter, dominant field.
+`to` is the dense accent — the colour the dither builds toward.
+
+Both colours MUST be chosen from this palette:
+
+{{paletteList}}
+
+The two ends must read as clearly distinct from one another — a legible
+light/dark split, not two near-identical tones. When you need one end to carry
+that contrast, reach for a pale paper ground (paper-50, paper-100, paper-200) or
+a dark step (paper-900, ember-900); the mid-toned pigments alone tend to sit too
+close together.
+
+World:
+- Name: {{worldName}}
+- Concept: {{concept}}
+- Tone: {{tone}}
+- Themes: {{themes}}
+
+{{rejectedFeedback}}Choose one `from` colour and one `to` colour from the palette above.

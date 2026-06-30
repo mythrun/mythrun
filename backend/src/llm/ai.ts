@@ -81,6 +81,7 @@ const DEFAULT_STAGE: WorldGenStage = 'concept_intake'
 
 const VALID_STAGES = new Set<WorldGenStage>([
   'concept_intake',
+  'world_color',
   'vocabulary_intake',
   'world_and_factions',
   'locations_and_npcs',
