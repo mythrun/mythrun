@@ -35,6 +35,16 @@
       "active": "[ph_active]",
       "archived": "[ph_archived]",
       "failed": "[ph_failed]"
+    },
+    "card": {
+      "generating": "[ph_home_card_generating: a terse 'shaping your world' line]",
+      "failed": "[ph_home_card_failed: a terse 'world generation failed — open to retry' line]",
+      "needsCharacter": "[ph_home_card_needs_character: your turn — make your character]",
+      "waiting": "[ph_home_card_waiting: a terse 'waiting on the rest of the party' line]",
+      "notPlayed": "[ph_home_card_not_played: a terse 'ready — your first session awaits' line]",
+      "record": "[ph_home_card_record: {{sessions}} sessions · {{when}}]",
+      "recently": "[ph_home_card_recently: recently]",
+      "byCreator": "[ph_home_card_by_creator: · by {{creator}}]"
     }
   },
   "theme": {
