@@ -27,6 +27,7 @@ export {
 // Endpoint slices + the thin React-Query suspense hooks the screens render against.
 export { getMe, useMe, register, checkUsername } from './api/users.ts'
 export { getMyCampaigns, useMyCampaigns } from './api/campaigns.ts'
+export { getBalance, useBalance } from './api/billing.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 
 // REST domain types (z.infer from the @mythrun/contract response schemas),
@@ -34,6 +35,7 @@ export { createSession, refreshSession, logout } from './api/session.ts'
 // they call the hook through — never reaching into @mythrun/contract directly
 // (R5: route/feature code imports @mythrun/client-core, @mythrun/ui, i18n only).
 export type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
+export type { BalanceResponse, ActiveSubscriptionSummary } from '@mythrun/contract/rest'
 export type {
   RegisterRequest,
   RegisterResponse,

@@ -7,6 +7,7 @@ import {
   ApiClientProvider,
   useSessionStore,
   type ApiContext,
+  type BalanceResponse,
   type CampaignSummary,
 } from '@mythrun/client-core'
 import { ThemeProvider } from '@mythrun/ui'
@@ -19,10 +20,11 @@ import { i18n } from '../i18n/config.ts'
 // header bug lived) is gated, not just isolated primitives. The data the
 // screens read is pre-seeded:
 //   • session store → `ready` (the RequireAuth gate), so authed screens render.
-//   • QueryClient cache → setQueryData(['campaigns','mine'], …) with
-//     staleTime:Infinity. `useMyCampaigns` is a SUSPENSE query — a key/shape
-//     mismatch hangs forever, so the story's `play` (expectScreen) asserts the
-//     root testid and fails loud instead of timing out as a flake.
+//   • QueryClient cache → setQueryData(['campaigns','mine'], …) and, for the
+//     header credit display, setQueryData(['billing','balance'], …) — both with
+//     staleTime:Infinity. `useMyCampaigns` / `useBalance` are SUSPENSE queries —
+//     a key/shape mismatch hangs forever, so the story's `play` (expectScreen)
+//     asserts the root testid and fails loud instead of timing out as a flake.
 //   • i18nOverrides → swap an i18n placeholder for adversarial-length copy
 //     (the app-frame display name is an i18n key, not a prop).
 // A dummy ApiContext + the pre-seeded, never-stale cache mean no network call
@@ -43,6 +45,8 @@ export interface ScreenHarnessProps {
   readonly session?: Session
   /** Pre-seed the `['campaigns','mine']` suspense cache (home hub). */
   readonly seedCampaigns?: readonly CampaignSummary[]
+  /** Pre-seed the `['billing','balance']` suspense cache (header credits). */
+  readonly seedBalance?: BalanceResponse
   /** Override i18n keys (e.g. an adversarial-length `frame.displayName`). */
   readonly i18nOverrides?: Readonly<Record<string, string>>
 }
@@ -58,6 +62,7 @@ export function ScreenHarness({
   entry,
   session = 'ready',
   seedCampaigns,
+  seedBalance,
   i18nOverrides,
 }: ScreenHarnessProps): React.JSX.Element {
   // Lazy init: one-time per story mount, before children render, so the auth
@@ -76,6 +81,9 @@ export function ScreenHarness({
     })
     if (seedCampaigns) {
       queryClient.setQueryData(['campaigns', 'mine'], { campaigns: seedCampaigns })
+    }
+    if (seedBalance) {
+      queryClient.setQueryData(['billing', 'balance'], seedBalance)
     }
     return { client: queryClient, router: createMemoryRouter(routes, { initialEntries: [entry] }) }
   })
