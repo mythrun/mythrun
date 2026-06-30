@@ -109,6 +109,11 @@ export type { BadgeProps, BadgeVariant } from './badge.ts'
 // `PaletteColor` set), replacing the old fixed `pairing` presets — a consumer can
 // match any adjacent section's exact palette color, still constrained to the tokens.
 export type { DitherProps, DitherDirection, PaletteColor, PaletteRamp, PaletteStep } from './dither.ts'
+// CoverDither (MYT-87) — the card-scale world-identity dither cover. Unlike Dither
+// (a fixed transition strip), this is a FULL-FIELD tiled texture filling its host;
+// its two ends are `WorldColor`s (the curated cover set), resolved to the right
+// css-var namespace by `worldColorCssVar` in `@mythrun/contract`.
+export type { CoverDitherProps } from './cover-dither.ts'
 
 // Brand identity suite (MYT-84 visual audit) — the four brand-art components, each
 // inlining its locked SVG export, theme-driven via `currentColor`/the `--ink` token

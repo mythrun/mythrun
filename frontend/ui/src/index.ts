@@ -78,6 +78,9 @@ export { Avatar } from './components/Avatar/Avatar.tsx'
 export { AvatarGroup } from './components/Avatar/AvatarGroup.tsx'
 export { Badge } from './components/Badge/Badge.tsx'
 export { Dither } from './components/Dither/Dither.tsx'
+// CoverDither (MYT-87) — the card-scale world-identity dither cover (a full-field
+// tiled texture), distinct from Dither's fixed transition strip.
+export { CoverDither } from './components/CoverDither/CoverDither.tsx'
 
 // Brand identity suite (MYT-84 visual audit) — the four first-class brand-art
 // components, each inlining its locked SVG export, theme-driven (ink on light, cream
@@ -165,6 +168,7 @@ export type {
   PaletteColor,
   PaletteRamp,
   PaletteStep,
+  CoverDitherProps,
   LogomarkProps,
   LogomarkTone,
   WordmarkProps,

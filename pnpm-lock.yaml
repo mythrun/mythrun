@@ -383,6 +383,9 @@ importers:
       '@mythrun/client-core':
         specifier: workspace:*
         version: link:../client-core
+      '@mythrun/contract':
+        specifier: workspace:*
+        version: link:../contract
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
