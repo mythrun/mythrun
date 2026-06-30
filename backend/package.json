@@ -22,6 +22,7 @@
     "db:migrate:test": "set -a && . ./.env.development && [ -f ../.env.worktree ] && . ../.env.worktree; set +a; DATABASE_URL=\"$DATABASE_URL_TEST\" tsx src/db/migrate.ts",
     "db:migrate:compiled": "node dist/db/migrate.js",
     "world:embed-backfill": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/world-embed-backfill.ts",
+    "world:color-backfill": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/world-color-backfill.ts",
     "dev-tool:check": "tsx scripts/dev-tool-check.ts",
     "smoke:phantom-reconciliation": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/phantom-reconciliation.ts",
     "smoke:entity-consolidation-flow": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/entity-consolidation-flow.ts",
