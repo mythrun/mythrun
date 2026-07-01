@@ -103,7 +103,7 @@ function make(overrides: Partial<CampaignSummary> = {}): CampaignSummary {
     createdAt: '2026-06-24T10:00:00.000Z',
     updatedAt: '2026-06-24T11:00:00.000Z',
     worldName: 'Aerthmoor',
-    worldColors: { from: 'lapis', to: 'slate' },
+    worldColors: { from: 'lapis-100', to: 'slate-800' },
     creator: null,
     party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: true }],
     sessionCount: 0,

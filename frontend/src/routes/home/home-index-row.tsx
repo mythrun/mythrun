@@ -1,27 +1,33 @@
-import { Stack, Heading, Text, CoverDither, Link } from '@mythrun/ui'
+import { Stack, Text, CoverDither, Link } from '@mythrun/ui'
+import { useTranslation } from 'react-i18next'
 import type { CampaignSummary } from '@mythrun/client-core'
-import { useCardPhaseLine } from './card-phase-line.ts'
+import { cardPhaseLine } from './card-phase-line.ts'
 
-// The campaign-hub mobile INDEX ROW (MYT-87 — the "table of contents"). On a
-// narrow viewport the hub collapses the cover-card grid into a compact index: one
-// quiet row per campaign, composed from @mythrun/ui primitives only (no-ad-hoc-ui).
-// A small self-sized world-dither swatch + the title + world + the SAME mono state
-// line the card shows (shared via `useCardPhaseLine`), the WHOLE row a link to the
-// campaign. Flat paper register — square, no badges / dots / status chips; state is
-// conveyed only by the mono line. The rows are hairline-divided by the container
-// (see `home-hub.tsx`), so the row itself carries no rule.
+// The campaign-hub mobile INDEX ROW (MYT-87 — the "table of contents"). Below the
+// grid breakpoint the hub collapses the cover-card shelf into a compact index: one
+// quiet, UNIFORM-HEIGHT row per campaign, so the list reads as a table of contents
+// rather than a column of variable cards. Composed from @mythrun/ui primitives only
+// (no ad-hoc UI): a small self-sized world-dither `swatch` + a serif title + the
+// italic `world · creator` sub-line + the SAME mono state line the cover card shows
+// (shared via `cardPhaseLine`), the WHOLE row a link to the campaign.
 //
-// The row link is `unstyled` (MYT-87 T16, the same fix the cover card takes):
-// @mythrun/ui's default `Link` tints its whole subtree with the accent foreground,
-// so a plain Link renders the row's title/world/state in link-accent rather than ink.
-// `unstyled` drops the accent paint (keeping the a11y focus ring) so the row reads in
-// the quiet paper-ink register, still composing the one sanctioned navigable primitive
-// without hand-rolling raw CSS.
+// Uniform height comes from TRUNCATION, not a hard-coded px height: every text line
+// is `truncate` (single-line ellipsis), so a long title / world / placeholder can't
+// wrap and stretch the row — each row is exactly its three one-line texts beside the
+// fixed 48px swatch. Flat paper register — square swatch, no badges / dots / status
+// chips; state is conveyed only by the mono line.
+//
+// The row link is `unstyled` (the same fix the cover card takes): @mythrun/ui's
+// default `Link` tints its whole subtree with the accent foreground, so a plain Link
+// would render the row's title/world/state in link-accent rather than ink. `unstyled`
+// drops the accent paint (keeping the a11y focus ring) so the row reads in the quiet
+// paper-ink register, still composing the one sanctioned navigable primitive.
 
-/** One campaign as a compact index row; the whole row links to its detail. */
+/** One campaign as a compact, uniform-height index row; the whole row links to its detail. */
 export function CampaignIndexRow({ campaign }: { campaign: CampaignSummary }): React.JSX.Element {
-  const { id, name, worldName, worldColors } = campaign
-  const stateLine = useCardPhaseLine(campaign)
+  const { t, i18n } = useTranslation()
+  const { id, name, worldName, worldColors, creator } = campaign
+  const stateLine = cardPhaseLine(campaign, t, i18n.language)
 
   return (
     <Link href={`/campaigns/${id}`} unstyled data-testid={`campaign-index-row-${id}`}>
@@ -29,18 +35,25 @@ export function CampaignIndexRow({ campaign }: { campaign: CampaignSummary }): R
         {worldColors !== null ? (
           <CoverDither size="swatch" from={worldColors.from} to={worldColors.to} data-testid="row-cover" />
         ) : (
-          // GHOST swatch — a still-generating world has no colours yet. A muted
-          // paper→paper dither (NOT a chromatic default pair) holds the swatch's
-          // square + the paper register while reading as "unwritten".
-          <CoverDither size="swatch" from="paper-100" to="paper-200" data-testid="row-cover-ghost" />
+          // GHOST swatch — a still-generating world has no colours yet. Omitting both
+          // ends renders CoverDither's muted paper→paper ghost (it must not borrow a
+          // fake chromatic identity), holding the square + the paper register.
+          <CoverDither size="swatch" data-testid="row-cover-ghost" />
         )}
         <Stack gap={1} grow>
-          <Heading level={2}>{name}</Heading>
-          <Text role="prose-body" data-testid="row-world">
-            {worldName}
+          {/* Serif title — the narrative line; truncated so it holds a single row. */}
+          <Text role="prose-body" truncate data-testid="row-title">
+            {name}
           </Text>
-          {/* Mono ledger line — the record/state, as plain text (no dot/badge/chip). */}
-          <Text role="data" data-testid="row-state">
+          {/* World · creator — the italic muted sub-line. The creator credit shows
+              ONLY on a joined (not-own) world, mirroring the cover card. */}
+          <Text role="subtitle" truncate data-testid="row-world">
+            {worldName}
+            {creator !== null ? t('home.card.byCreator', { creator }) : null}
+          </Text>
+          {/* Mono ledger line — the record/state, carried as plain text (the register
+              forbids a dot/badge/chip); truncated to keep every row the same height. */}
+          <Text role="meta" truncate data-testid="row-state">
             {stateLine}
           </Text>
         </Stack>

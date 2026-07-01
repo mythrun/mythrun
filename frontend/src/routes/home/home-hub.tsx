@@ -16,6 +16,13 @@ import { CampaignIndexRow } from './home-index-row.tsx'
 
 const GRID_BREAKPOINT = 'sm'
 
+// The fluid shelf's minimum cover width, in px — the ~230px book-cover width the
+// card is built at (`CampaignCard`'s `CARD_WIDTH`). `Grid auto-fill` fits as many
+// of these as comfortably fit per row, then wraps (card quality over grid math, no
+// fixed column count). It's a raw px escape hatch because the `--space` token scale
+// caps at 64px and can't express a card-scale track.
+const COVER_MIN_PX = 230
+
 /** The responsive grid ⊕ index body for a non-empty campaign list. */
 export function CampaignHubBody({
   campaigns,
@@ -24,11 +31,11 @@ export function CampaignHubBody({
 }): React.JSX.Element {
   return (
     <>
-      {/* Desktop — a grid of cover cards. Fixed column count for now; T16's visual
-          audit tunes the count (and `Grid` auto-fit's --space-token min-width can't
-          yet express a card-width track, so a fluid card grid is a Grid follow-up). */}
+      {/* Desktop — a fluid shelf of cover cards. `auto-fill` at the ~230px cover
+          width packs as many covers per row as fit, then wraps (no fixed column
+          count — the shelf grows with the viewport). */}
       <Show above={GRID_BREAKPOINT} data-testid="hub-grid">
-        <Grid columns={2} gap={4}>
+        <Grid columns="auto-fill" minColumnPx={COVER_MIN_PX} gap={4}>
           {campaigns.map((campaign) => (
             <CampaignCard key={campaign.id} campaign={campaign} />
           ))}

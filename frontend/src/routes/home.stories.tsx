@@ -43,7 +43,7 @@ const HUB_CAMPAIGNS: readonly CampaignSummary[] = [
     createdAt: '2026-06-24T12:00:00.000Z',
     updatedAt: '2026-06-24T13:00:00.000Z',
     worldName: 'The Cinderlands',
-    worldColors: { from: 'ember-200', to: 'umber' },
+    worldColors: { from: 'ember-200', to: 'umber-800' },
     creator: null,
     party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: false }],
     sessionCount: 0,
@@ -59,7 +59,7 @@ const HUB_CAMPAIGNS: readonly CampaignSummary[] = [
     createdAt: '2026-06-24T14:00:00.000Z',
     updatedAt: '2026-06-24T15:00:00.000Z',
     worldName: 'Selavere',
-    worldColors: { from: 'moss', to: 'verdigris' },
+    worldColors: { from: 'moss-100', to: 'verdigris-800' },
     creator: 'Bram',
     party: [
       { userId: 'u-1', displayName: 'Ada', hasCharacter: false },
@@ -78,7 +78,7 @@ const HUB_CAMPAIGNS: readonly CampaignSummary[] = [
     createdAt: '2026-06-24T16:00:00.000Z',
     updatedAt: '2026-06-24T17:00:00.000Z',
     worldName: 'The Iris Fen',
-    worldColors: { from: 'iris', to: 'heather' },
+    worldColors: { from: 'iris-100', to: 'heather-800' },
     creator: null,
     party: [
       { userId: 'u-1', displayName: 'Ada', hasCharacter: true },
@@ -98,7 +98,7 @@ const HUB_CAMPAIGNS: readonly CampaignSummary[] = [
     createdAt: '2026-06-24T18:00:00.000Z',
     updatedAt: '2026-06-24T19:00:00.000Z',
     worldName: 'Karthvalen',
-    worldColors: { from: 'lapis', to: 'slate' },
+    worldColors: { from: 'lapis-100', to: 'slate-900' },
     creator: null,
     party: [
       { userId: 'u-1', displayName: 'Ada', hasCharacter: true },
@@ -117,7 +117,7 @@ const HUB_CAMPAIGNS: readonly CampaignSummary[] = [
     createdAt: '2026-05-01T10:00:00.000Z',
     updatedAt: '2026-06-20T10:00:00.000Z',
     worldName: 'Ondemor',
-    worldColors: { from: 'rose', to: 'sienna' },
+    worldColors: { from: 'rose-100', to: 'rose-800' },
     creator: 'Bram',
     // A >5 party to exercise the `+N` seal overflow on the card.
     party: [
