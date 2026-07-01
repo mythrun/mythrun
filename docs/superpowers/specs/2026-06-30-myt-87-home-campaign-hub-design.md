@@ -2,6 +2,45 @@
 
 > **Status:** Brainstorm complete, design approved + revised after blind review (2026-06-30, 4 lenses: frontend, backend, color-gen/ZFC, UX/scope; 1 showstopper resolved by design decision). Next: user-review gate → writing-plans → beads → subagent-driven implementation.
 > **Linear:** MYT-87 (Frontend milestone). **UX source:** UX Design spec §4.
+> **Visual rework LOCKED 2026-07-01** — see the revision block immediately below; it supersedes the original card / grid / cover-dither / world-colour / dark-mode design where they conflict.
+
+---
+
+## REVISION 2026-07-01 — visual rework (supersedes §The campaign card, §The grid/index, §The cover-dither component, §The world-colour identity, and the dither parts of §Frontend below)
+
+The first implementation (T1–T16, committed locally, unpushed) shipped the data/backend vertical correctly but diverged from the design visually. After a live design session (mockups + a Haiku-vs-Sonnet colour taste-off + a full contrast enumeration + an interactive dark-mode toggle test), the following are LOCKED. Where this section conflicts with the original design below, **this section wins.**
+
+### Card — a book cover
+- **Portrait, ~3:2 (height:width)** — a paperback/spine, not a wide banner. Fixed, good-looking card width; the grid fits **as many as comfortably fit per row, then wraps** (fluid auto-fill sized to the card — NOT a fixed column count). Card quality over grid math.
+- **Dither header ~40% of card height, full-bleed**, bottom-bordered in ink. Title (serif) at the top of the body; **party seals + record/state line as the foot "imprint,"** air between. No text on the dither. The mono state line + `cardPhase` model is unchanged from the original spec.
+
+### Cover-dither — a full-fill gradient (rebuild)
+- The dither **fills its window bottom→top** as a true Bayer gradient between the two colours (light end at top → dark end at bottom). NOT a transition-strip with solid ends (the first build reused the footer `Dither`'s fixed 20-cell band, which read as a band floating with side-scatter — the bug behind "suspended in the middle").
+- Works at **any host size**, including the small mobile swatch (fixed ~44–48px square) — cell size chosen so grain stays visible.
+- **Theme-responsive via CSS, no canvas re-render:** render the fixed Bayer pattern with two colour *classes* (ground/accent); set the light-mode pair AND the dark-mode (re-ink) pair as CSS custom properties, with `.dark` selecting the dark pair. The pattern is constant; only the two hex values flip.
+
+### Colour model — Sonnet picks, code guarantees contrast
+- **Model: Sonnet, not Haiku.** A blind taste-off (12 worlds each) showed Haiku picks decent hues but no contrast discipline and leans on neutral paper; **Sonnet's restrained, often-monochromatic taste won decisively.** One Sonnet call at world creation (once per world, ever) — a negligible tier bump for a real jump in taste. ZFC: route the aesthetic judgment to the model that can actually handle it.
+- **The pick:** Sonnet one-shots **two palette colours** (any hue, any step) from the WIDENED palette, constrained so the two steps are **≥5 rungs apart** on the 10-rung ladder (50…900). Enumeration proved ≥5 rungs guarantees ~3.0+ WCAG contrast in the worst hue combo (4 rungs or fewer can drop below 3.0). Code **validates the rung distance and re-rolls** if a pick violates it (both models obeyed it 100% in testing; the guard stays). No luminance-snapping — the model keeps the aesthetic choice; code only enforces the mechanical floor. This REPLACES the original "luminance floor + re-roll, expect paper-ground+accent" model — with per-hue ramps, Sonnet can pick two genuinely complementary chromatic colours that also read (e.g. light-coral × dark-teal).
+
+### Palette — per-hue ramps become real tokens
+- The 12 brand pigments (moss, pine, verdigris, lapis, iris, heather, rose, sienna, ochre, umber, slate, ember) are single mid-tone values today (near-equiluminant → two of them can't dither). **Extend `generate-palette.mjs`** to run each pigment through the same OKLCH luminance ladder used for ember/semantic ramps, emitting `--color-{hue}-{step}` for all 10 steps of all 12 hues (into `colors.generated.css` + `tokens.manifest.json` + the drift guard). Additive (light/dark variants of existing hues).
+- The `WorldColor` runtime enum (in `@mythrun/contract`) expands to this widened set (paper + ember + the 12 pigment ramps); the backend luminance table takes the new hexes. The ≥5-rung rule replaces the enum-membership contrast concern.
+
+### Dark mode — re-ink (theme-adaptive)
+- **The cover re-inks in dark mode:** the light end drops to `lightHue-400` (the hue's smouldering mid-tone) and the dark end deepens to `darkHue-900` (near-black), so the cover reads as a dark object with the colour glowing, cohering with the dark card. (`lightHue`/`darkHue` = the hues of the two picked colours; for a mono pick both are the same hue.) Chosen over "frozen" after a live toggle test — a moody, intentional dark surface beats a bright light-mode cover sitting on a dark screen. The dither is subtler in dark by design (contrast ~2.5). Rendered via the CSS ground/accent classes above.
+
+### Mobile & copy
+- **Mobile index:** uniform, compact rows (fixed height, smaller type); the swatch is a small fixed square running the same full-fill dither (legible at that size). Replaces the variable-height rows + the broken swatch.
+- **Copy:** the `[ph_…]` placeholder VALUES must be short — roughly the length of the real copy ("Shaping your world", "Make your character", "4 sessions · 2 days ago") — not verbose meta-descriptions. The long placeholders were breaking the layout, especially on mobile.
+
+### Grid enhancement
+- The `@mythrun/ui` `Grid` needs a **px / non-token `minColumnWidth`** so it can auto-fill at the ~230px card width (its `auto-fit` `minColumnWidth` is a SpaceToken capped at 64px today). This is the fluid-shelf mechanism (bead `myth-xdmq3`, pulled into this rework).
+
+### What stays from the first build (unchanged)
+The backend data plumbing is correct and stays: the two `worlds` colour columns, `setColorPair`, the mandatory backfill (re-run with Sonnet), the viewer-relative `cardPhase` (the setup-gated fix), the `/mine` expansion, `BalanceResponseSchema` + `useBalance`, the Card `dashed` variant, the AvatarGroup `surface` ring. The rework revises the luminance-hex table, the CoverDither (rebuild), the colour stage (Sonnet + ≥5-rung + re-ink), the CampaignCard (book cover), the mobile index + the Grid enhancement, and the copy — and adds the token-generation task.
+
+---
 
 ## Goal
 
