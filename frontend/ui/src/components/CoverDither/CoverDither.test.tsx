@@ -154,6 +154,19 @@ describe('CoverDither', () => {
     expect(swatchRoot).not.toHaveClass('w-full')
   })
 
+  it('draws a slightly-thick theme-adaptive border ONLY when bordered (the standalone swatch)', () => {
+    const plain = render(<CoverDither from="pine-200" to="pine-900" size="swatch" />)
+    expect(plain.container.querySelector('[data-cover-size]')).not.toHaveClass('border-2')
+    plain.unmount()
+
+    const bordered = render(<CoverDither from="pine-200" to="pine-900" size="swatch" bordered />)
+    const root = bordered.container.querySelector('[data-cover-size]')
+    // A slightly-thick edge in the theme-adaptive border-strong token, so a pale /
+    // low-contrast pair reads as a distinct tile in BOTH light and dark.
+    expect(root).toHaveClass('border-2')
+    expect(root).toHaveClass('border-border-strong')
+  })
+
   it('defaults to the band size when size is omitted', () => {
     const { container } = render(<CoverDither from="rose-100" to="rose-800" />)
     expect(container.querySelector('[data-cover-size]')).toHaveAttribute('data-cover-size', 'band')

@@ -59,7 +59,7 @@ const GRID = {
 type CoverVars = CSSProperties & Record<`--cover-${string}`, string>
 
 export const CoverDither = forwardRef<HTMLDivElement, CoverDitherProps>(function CoverDither(
-  { from, to, size = 'band', 'data-testid': dataTestId },
+  { from, to, size = 'band', bordered = false, 'data-testid': dataTestId },
   ref,
 ) {
   // No colour pick yet → the muted paper ghost (both ends absent by contract).
@@ -102,6 +102,9 @@ export const CoverDither = forwardRef<HTMLDivElement, CoverDitherProps>(function
       className={cn(
         'relative block overflow-hidden',
         SIZE_CLASS[size],
+        // Standalone covers (the mobile swatch) take a slightly-thick theme-adaptive
+        // edge so a pale/low-contrast pair stays a distinct tile against the page.
+        bordered && 'border-2 border-border-strong',
         // Light pair by default; the `.dark` scope re-inks to the dark pair. The
         // pattern never changes — only these two values do.
         '[--cover-ground:var(--cover-ground-lt)] [--cover-accent:var(--cover-accent-lt)]',

@@ -33,12 +33,12 @@ export function CampaignIndexRow({ campaign }: { campaign: CampaignSummary }): R
     <Link href={`/campaigns/${id}`} unstyled data-testid={`campaign-index-row-${id}`}>
       <Stack direction="row" align="center" gap={3}>
         {worldColors !== null ? (
-          <CoverDither size="swatch" from={worldColors.from} to={worldColors.to} data-testid="row-cover" />
+          <CoverDither size="swatch" bordered from={worldColors.from} to={worldColors.to} data-testid="row-cover" />
         ) : (
           // GHOST swatch — a still-generating world has no colours yet. Omitting both
           // ends renders CoverDither's muted paper→paper ghost (it must not borrow a
           // fake chromatic identity), holding the square + the paper register.
-          <CoverDither size="swatch" data-testid="row-cover-ghost" />
+          <CoverDither size="swatch" bordered data-testid="row-cover-ghost" />
         )}
         <Stack gap={1} grow>
           {/* Serif title — the narrative line; truncated so it holds a single row. */}

@@ -47,4 +47,11 @@ export interface CoverDitherProps extends Omit<BaseProps, 'children'> {
    * visibly chunky at either scale.
    */
   size?: 'band' | 'swatch'
+  /**
+   * Draw a slightly-thick, theme-adaptive `border-strong` edge around the cover.
+   * Off by default (a `band` cover sits inside its `CoverCard`'s own border). Set
+   * for a STANDALONE cover — the mobile index `swatch` — so a low-contrast or pale
+   * pair still reads as a distinct tile instead of melting into the page ground.
+   */
+  bordered?: boolean
 }

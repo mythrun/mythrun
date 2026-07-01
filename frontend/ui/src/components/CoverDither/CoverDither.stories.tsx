@@ -94,6 +94,28 @@ export const Swatches: Story = {
   ),
 }
 
+// BORDERED swatches — the mobile index sets `bordered`, a slightly-thick theme-adaptive
+// edge, so a pale / low-contrast pair (or the paper ghost) still reads as a distinct tile
+// against the page ground instead of melting into it. Toggle the toolbar theme to confirm
+// the edge stays visible in both.
+export const SwatchesBordered: Story = {
+  name: 'Swatches (bordered · mobile list)',
+  render: () => (
+    <div className="flex flex-wrap items-start gap-[var(--space-4)]">
+      {PAIRS.map((p) => (
+        <figure key={p.label} className="flex flex-col gap-[var(--space-2)]">
+          <CoverDither from={p.from} to={p.to} size="swatch" bordered />
+          <figcaption className="font-ui text-xs text-ink-secondary">{p.label}</figcaption>
+        </figure>
+      ))}
+      <figure className="flex flex-col gap-[var(--space-2)]">
+        <CoverDither size="swatch" bordered />
+        <figcaption className="font-ui text-xs text-ink-secondary">ghost (pale)</figcaption>
+      </figure>
+    </div>
+  ),
+}
+
 // RE-INK — the same identity in light and dark. The Bayer pattern is identical; dark mode
 // swaps only the two colour values (ground → the hue's smouldering -400, accent →
 // near-black -900), so the cover reads as a dark object with the colour glowing. The dark
