@@ -55,6 +55,14 @@ const validCampaign = {
   language: 'en',
   createdAt: '2026-06-24T10:00:00.000Z',
   updatedAt: '2026-06-24T11:00:00.000Z',
+  // MYT-87 T11 hub-card fields (the schema widened; this mock had lagged behind).
+  worldName: 'Aerthmoor',
+  worldColors: { from: 'verdigris-200', to: 'moss-800' },
+  creator: null,
+  party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: true }],
+  sessionCount: 3,
+  lastPlayedAt: '2026-06-24T12:00:00.000Z',
+  cardPhase: 'played' as const,
 }
 
 describe('useMyCampaigns', () => {
