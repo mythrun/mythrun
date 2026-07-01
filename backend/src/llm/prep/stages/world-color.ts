@@ -11,7 +11,7 @@
 // once-per-world tier bump is negligible.
 //
 // The proposed pair is RUNG-guarded: `rungsApart(from, to) >= MIN_RUNGS`, where
-// the ≥5-rung rule guarantees ~3.0+ WCAG contrast in the worst hue combo
+// the ≥6-rung rule guarantees ~3.0+ WCAG contrast in the worst hue combo
 // (enumeration-proven), so the two dither ends always read as distinct. On a
 // miss the stage RE-ROLLS, feeding the rejected pair back into the prompt so the
 // model avoids it. No luminance-snap — the aesthetic choice stays with the LLM
@@ -48,11 +48,11 @@ const PALETTE_LIST = [
   `Steps (light → dark): ${WORLD_COLOR_STEPS.join(', ')}`,
 ].join('\n')
 
-// The minimum ladder distance between the two ends. Enumeration proved ≥5 rungs
-// clears ~3.0:1 WCAG in the worst hue combo (4 or fewer can drop below), so the
+// The minimum ladder distance between the two ends. Enumeration proved ≥6 rungs
+// clears ~3.0:1 WCAG in the worst hue combo (5 or fewer can dip to ~2.5), so the
 // dither reads as two distinct fields. This is the mechanical floor the stage
 // enforces — the model keeps the aesthetic choice.
-const MIN_RUNGS = 5
+const MIN_RUNGS = 6
 
 // Bounded re-roll budget. Both models obeyed the rung rule ~100% in testing, so
 // a passing pair lands on the first attempt in practice; the budget guards a
@@ -90,9 +90,9 @@ function renderRejectedFeedback(rejected: readonly WorldColorPair[]): string {
   if (rejected.length === 0) return ''
   const lines = rejected.map((p) => `- from=${p.from}, to=${p.to}`).join('\n')
   return (
-    'These pairs were already rejected — the two steps were fewer than 5 rungs ' +
+    'These pairs were already rejected — the two steps were fewer than 6 rungs ' +
     'apart on the 10-step ladder, so the ends do not read as distinct. Do NOT ' +
-    `repeat them; pick two steps at least 5 rungs apart:\n${lines}\n\n`
+    `repeat them; pick two steps at least 6 rungs apart:\n${lines}\n\n`
   )
 }
 

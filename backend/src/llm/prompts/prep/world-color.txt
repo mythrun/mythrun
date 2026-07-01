@@ -17,7 +17,7 @@ Choose TWO colours:
 - `from` is the sparse ground — the quieter, lighter, dominant field.
 - `to` is the dense accent — the deeper colour the dither builds toward.
 
-Hard rule: the two steps must be at least 5 rungs apart on the ten-step ladder
+Hard rule: the two steps must be at least 6 rungs apart on the ten-step ladder
 (50, 100, 200, 300, 400, 500, 600, 700, 800, 900). For example paper-100 → to a
 step of 600 or darker; a 200 → a 700+; a 300 → an 800+. This keeps the two ends
 reading as clearly distinct. The two colours may share a hue (a restrained,

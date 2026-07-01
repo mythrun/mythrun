@@ -4,7 +4,7 @@
 // generateObject call (through the canonical ai.ts wrapper) proposes the
 // world's two-stop `WorldColor` dither identity, structurally constrained to
 // the widened per-hue ramp palette by `WorldColorPairSchema`. The stage
-// RUNG-guards the pair (`rungsApart(from, to) >= 5`) and RE-ROLLS on a miss —
+// RUNG-guards the pair (`rungsApart(from, to) >= 6`) and RE-ROLLS on a miss —
 // feeding the rejected pair back into the prompt — keeping the aesthetic
 // choice with the LLM per ZFC (no luminance snap). A passing pair persists via
 // `repo.worlds.setColorPair`.
@@ -59,7 +59,7 @@ const ARGS = {
 
 const SONNET_USAGE = { inputTokens: 800, outputTokens: 40, totalTokens: 840 }
 
-// sienna-200 → ochre-400: steps 2 rungs apart — below the 5-rung floor.
+// sienna-200 → ochre-400: steps 2 rungs apart — below the 6-rung floor.
 const LOW_RUNGS = { from: 'sienna-200', to: 'ochre-400' }
 // paper-100 → ember-900: steps 8 rungs apart — clears the floor.
 const PASSING = { from: 'paper-100', to: 'ember-900' }
@@ -169,7 +169,7 @@ describe('runWorldColorStage', () => {
   })
 
   it('falls back to the widest-separation proposal when every attempt misses the floor', async () => {
-    // Three sub-floor pairs (none clears 5 rungs). The widest-separation pair
+    // Three sub-floor pairs (none clears 6 rungs). The widest-separation pair
     // sits in the MIDDLE position, so this assertion can only pass if the stage
     // selects by rung distance — not by first- or last-seen position. The stage
     // must NOT fail the world; it persists the most-separated proposal the model

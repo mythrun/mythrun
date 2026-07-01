@@ -11,8 +11,8 @@
 // are EXCLUDED — a cover is decorative, never a UI-state signal.
 //
 // COLOUR MODEL (MYT-87 2026-07-01 rework): a Sonnet call one-shots TWO tokens at
-// least 5 rungs apart on the 10-rung ladder; the ≥5-rung rule guarantees ~3.0+
-// WCAG contrast (a full enumeration proved 4 rungs or fewer can drop below 3.0),
+// least 6 rungs apart on the 10-rung ladder; the ≥6-rung rule guarantees ~3.0+
+// WCAG contrast (a full enumeration proved 5 rungs or fewer can dip to ~2.5),
 // so the two dither ends always read as distinct. This REPLACES the old curated
 // 20-member set + luminance-table + contrast-floor model — with per-hue ramps
 // now real tokens, the model can pick two genuinely complementary chromatic
@@ -98,7 +98,7 @@ export function worldColorHue(name: WorldColor): WorldColorRamp {
 /**
  * The absolute distance between two colours on the 10-rung ladder — the contrast
  * proxy the colour model enforces. `rungsApart('verdigris-200', 'moss-800') === 6`;
- * `rungsApart('lapis-400', 'lapis-500') === 1`. A pair `≥ 5` rungs apart clears
+ * `rungsApart('lapis-400', 'lapis-500') === 1`. A pair `≥ 6` rungs apart clears
  * ~3.0:1 WCAG in the worst hue combo (enumeration-proven), so the two dither ends
  * always read as distinct.
  */
