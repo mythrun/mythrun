@@ -36,11 +36,20 @@ describe('Divider', () => {
     expect(el.classList.contains('h-full')).toBe(true)
   })
 
-  it('uses the decorative --border token (not --border-strong)', () => {
+  it('uses the decorative --border token by default (not --border-strong)', () => {
     const { getByRole } = render(<Divider />)
     const el = getByRole('separator')
     expect(el.classList.contains('bg-border')).toBe(true)
     expect(el.classList.contains('bg-border-strong')).toBe(false)
+  })
+
+  it('uses the ink pigment (paper-900) for tone="ink", not the decorative border', () => {
+    const { getByRole } = render(<Divider tone="ink" />)
+    const el = getByRole('separator')
+    // The ink seam is the non-inverting dark ramp token, so it stays a dark line
+    // in dark mode too (unlike the adaptive --ink text token).
+    expect(el.classList.contains('bg-paper-900')).toBe(true)
+    expect(el.classList.contains('bg-border')).toBe(false)
   })
 
   it('forwards its ref to the underlying div', () => {

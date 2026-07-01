@@ -1,6 +1,7 @@
 import { forwardRef, Children, isValidElement } from 'react'
 import type { AvatarGroupProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
+import { AVATAR_SIZE_CLASS } from './Avatar.tsx'
 
 // AvatarGroup — an overlapping cluster of Avatars. Each face is separated from
 // the one beneath it by a token RING, so the stack reads as distinct squares
@@ -14,7 +15,10 @@ import { cn } from '../../lib/cn.ts'
 // exception) + the quiet brand chip tokens (`--surface` / `--border-strong` /
 // `--ink`), mono `font-ui` (it's a count — data). It is plain text (`+2`); the
 // names it stands in for live in the avatars it replaced, so no extra a11y wiring
-// is needed.
+// is needed. It also sizes from the SAME `AVATAR_SIZE_CLASS` map as the seals, so
+// the group's `size` drives the chip's dimensions in lockstep — a `+N` chip is
+// exactly as tall/wide as the faces it collapses (a `sm` group → a `sm` chip),
+// never the md default towering over `sm` seals.
 //
 // `children` come in as Avatars; we cap with `Children.toArray` (which also
 // flattens fragments + filters nullish children) so `max` counts real avatars.
@@ -33,7 +37,7 @@ const ringFor = (surface: NonNullable<AvatarGroupProps['surface']>): string =>
   cn('ring-2 rounded-none', RING_COLOR[surface], OVERLAP)
 
 export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function AvatarGroup(
-  { max, children, surface = 'bg', 'data-testid': dataTestId },
+  { max, children, surface = 'bg', size = 'md', 'data-testid': dataTestId },
   ref,
 ) {
   // `Children.toArray` flattens fragments, drops nullish children, AND assigns
@@ -61,9 +65,11 @@ export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function
         <span
           className={cn(
             'inline-flex items-center justify-center',
-            'w-[var(--control-md)] h-[var(--control-md)]',
+            // Width/height + text size track the group `size`, from the SAME map
+            // the seals use — so the chip and the faces are identical dimensions.
+            AVATAR_SIZE_CLASS[size],
             'rounded-none bg-surface text-ink border border-border-strong',
-            'font-ui text-sm font-medium leading-none',
+            'font-ui font-medium leading-none',
             ring,
           )}
         >

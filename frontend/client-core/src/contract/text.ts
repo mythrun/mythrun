@@ -1,12 +1,14 @@
 import type { BaseProps } from './index.ts'
 
 /**
- * The four type ROLES a {@link Text} can carry — the brand's machine/prose
- * split at the body altitude. `prose-body` is narrative serif; the `ui-*` and
- * `data` roles are the monospace UI register. Headings live in {@link Heading}.
+ * The type ROLES a {@link Text} can carry — the brand's machine/prose split at
+ * the body altitude. `prose-body` is narrative serif and `subtitle` its italic,
+ * muted sub-line (a title's "world · creator"); the `ui-*`, `data`, and `meta`
+ * roles are the monospace UI register, with `meta` the quiet muted record line
+ * (smaller than `data`, the ink ledger value). Headings live in {@link Heading}.
  * Each role maps to a full static token class string in the web impl.
  */
-export type TextRole = 'prose-body' | 'ui-label' | 'ui-caption' | 'data'
+export type TextRole = 'prose-body' | 'subtitle' | 'ui-label' | 'ui-caption' | 'data' | 'meta'
 
 /**
  * Inline/block text primitive. Applies a typographic ROLE (family + size +

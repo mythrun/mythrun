@@ -73,3 +73,22 @@ export const OnCard: Story = {
     </Card>
   ),
 }
+
+// Small overflow — the campaign-card foot imprint: `sm` seals on a Card. The
+// group passes `size="sm"` so the `+N` chip sizes to the SAME 32px control token
+// as the seals; the chip sits flush in the row instead of towering over them (the
+// bug this specimen exists to catch). Pass the SAME `size` to the group and the
+// child Avatars.
+export const SmallOverflow: Story = {
+  render: () => (
+    <Card>
+      <CardBody>
+        <AvatarGroup max={3} surface="surface" size="sm">
+          {PEOPLE.map((n) => (
+            <Avatar key={n} name={n} size="sm" />
+          ))}
+        </AvatarGroup>
+      </CardBody>
+    </Card>
+  ),
+}

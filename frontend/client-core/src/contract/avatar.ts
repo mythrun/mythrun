@@ -73,6 +73,11 @@ export interface AvatarGroupProps extends BaseProps {
    *  mismatched halo. `'bg'` (default) rings in the PAGE color; `'surface'`
    *  rings in the CARD color, for a cluster placed on a Card. */
   surface?: 'bg' | 'surface'
+  /** Token size for the cluster — sizes the `+N` overflow chip to MATCH the
+   *  Avatars it stands in for, so the chip never towers over the seals. Pass the
+   *  same `size` you give the child Avatars (the children carry their own `size`;
+   *  this only drives the overflow chip). Default `md`. */
+  size?: AvatarSize
   /** The Avatars to cluster — inherited from {@link BaseProps} as `children`. */
   children?: BaseProps['children']
 }

@@ -12,7 +12,10 @@ const meta: Meta<typeof Text> = {
   component: Text,
   tags: ['autodocs'],
   argTypes: {
-    role: { control: 'inline-radio', options: ['prose-body', 'ui-label', 'ui-caption', 'data'] },
+    role: {
+      control: 'inline-radio',
+      options: ['prose-body', 'subtitle', 'ui-label', 'ui-caption', 'data', 'meta'],
+    },
     as: { control: 'inline-radio', options: ['span', 'p'] },
   },
 }
@@ -33,6 +36,12 @@ export const ProseBody: Story = {
   ),
 }
 
+export const Subtitle: Story = {
+  name: 'Subtitle (italic, muted serif sub-line)',
+  args: { role: 'subtitle' },
+  render: (args) => <Text {...args}>Selavere · by Bram</Text>,
+}
+
 export const UiLabel: Story = {
   name: 'UI label',
   args: { role: 'ui-label' },
@@ -48,6 +57,12 @@ export const UiCaption: Story = {
 export const Data: Story = {
   args: { role: 'data' },
   render: (args) => <Text {...args}>HP 24 / 30 · AC 16</Text>,
+}
+
+export const MetaLine: Story = {
+  name: 'Meta (quiet muted record line)',
+  args: { role: 'meta' },
+  render: (args) => <Text {...args}>4 sessions · 2 days ago</Text>,
 }
 
 export const Truncated: Story = {

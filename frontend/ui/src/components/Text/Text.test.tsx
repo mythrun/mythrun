@@ -30,7 +30,7 @@ describe('Text', () => {
     expect(getByTestId('t')).toHaveClass(...TYPE_ROLE_CLASS['prose-body'].split(' '))
   })
 
-  it.each(['ui-label', 'ui-caption', 'data'] as const)(
+  it.each(['subtitle', 'ui-label', 'ui-caption', 'data', 'meta'] as const)(
     'applies the %s role classes',
     (role) => {
       const { getByTestId } = render(

@@ -76,6 +76,11 @@ export type {
   CardFooterProps,
 } from './card.ts'
 
+// CoverCard (MYT-87) — a portrait "made-object" card: a full-bleed cover header
+// (a CoverDither) over an ink seam, then a body with narrative content at the top
+// and a foot-pinned imprint. Fixed 3:2 geometry the neutral Card doesn't model.
+export type { CoverCardProps } from './cover-card.ts'
+
 // Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
 // Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip
 // / Tabs / DropdownMenu) in the web impl — Radix supplies the a11y headline

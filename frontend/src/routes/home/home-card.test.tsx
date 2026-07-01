@@ -5,18 +5,20 @@ import type { CampaignSummary } from '@mythrun/client-core'
 import { i18n } from '../../i18n/config.ts'
 import { CampaignCard } from './home-card.tsx'
 
-// Unit test for the campaign-hub cover card (MYT-87 T14). The component is
-// rendered directly under the real i18n instance — the @mythrun/ui Link is a
-// plain <a> (no router needed) and none of the composed primitives read the
-// theme context, so the harness is just <I18nextProvider>. Each case proves one
-// arm of the design: the cardPhase → mono state-line map, the played record
-// string, the colored-vs-ghost cover band, the world · creator line's
-// creator-conditional, the +N party overflow, and the whole-card click target.
+// Unit test for the campaign-hub cover card (MYT-87 rework — book cover). The
+// component is rendered directly under the real i18n instance — the @mythrun/ui
+// Link is a plain <a> (no router needed) and none of the composed primitives read
+// the theme context, so the harness is just <I18nextProvider>. Each case proves one
+// arm of the design: the cardPhase → mono state-line map, the played record string,
+// the colored-vs-ghost cover band AND that the band receives the world's colour
+// pair, the world · creator line's creator-conditional, the +N party overflow, and
+// the whole-card click target.
 
 const DAY_MS = 86_400_000
 
-// A complete hub-card fixture (the widened MYT-87 T11 shape); each test overrides
-// only the fields it exercises.
+// A complete hub-card fixture (the widened MYT-87 shape, now with stepped
+// `{ramp}-{step}` WorldColor tokens); each test overrides only the fields it
+// exercises.
 function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary {
   return {
     id: 'c-1',
@@ -27,7 +29,7 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
     createdAt: '2026-06-01T10:00:00.000Z',
     updatedAt: '2026-06-01T10:00:00.000Z',
     worldName: 'Aerth',
-    worldColors: { from: 'ember', to: 'lapis' },
+    worldColors: { from: 'ember-200', to: 'lapis-800' },
     creator: null,
     party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: true }],
     sessionCount: 0,
@@ -48,6 +50,16 @@ function renderCard(campaign: CampaignSummary): void {
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+})
+
+describe('CampaignCard — book-cover structure', () => {
+  it('renders the cover band, the serif title, and the mono state line', () => {
+    renderCard(makeCampaign())
+    expect(screen.getByTestId('card-cover')).toBeDefined()
+    // The title is a real heading carrying the campaign name.
+    expect(screen.getByRole('heading', { name: 'The Sunken Coast' })).toBeDefined()
+    expect(screen.getByTestId('card-state')).toBeDefined()
+  })
 })
 
 describe('CampaignCard — cardPhase → mono state line', () => {
@@ -74,10 +86,15 @@ describe('CampaignCard — cardPhase → mono state line', () => {
 })
 
 describe('CampaignCard — cover band', () => {
-  it('renders the colored CoverDither when worldColors is set', () => {
-    renderCard(makeCampaign({ worldColors: { from: 'sienna', to: 'paper-100' } }))
-    expect(screen.getByTestId('card-cover')).toBeDefined()
+  it('renders the colored CoverDither, passing the world colour pair to it', () => {
+    // step-ordered ground (lower step) → accent (higher step), independent of
+    // argument order: verdigris-200 is the sparse ground, moss-800 the dense accent.
+    renderCard(makeCampaign({ worldColors: { from: 'verdigris-200', to: 'moss-800' } }))
+    const cover = screen.getByTestId('card-cover')
     expect(screen.queryByTestId('card-cover-ghost')).toBeNull()
+    // The pair reaches the cover as its light-mode ground/accent custom properties.
+    expect(cover.style.getPropertyValue('--cover-ground-lt')).toBe('var(--color-verdigris-200)')
+    expect(cover.style.getPropertyValue('--cover-accent-lt')).toBe('var(--color-moss-800)')
   })
 
   it('renders the ghost band (NOT a default-pair CoverDither) when worldColors is null', () => {

@@ -23,7 +23,7 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
     createdAt: '2026-06-01T10:00:00.000Z',
     updatedAt: '2026-06-01T10:00:00.000Z',
     worldName: 'Aerth',
-    worldColors: { from: 'ember', to: 'lapis' },
+    worldColors: { from: 'ember-200', to: 'lapis-800' },
     creator: null,
     party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: true }],
     sessionCount: 0,

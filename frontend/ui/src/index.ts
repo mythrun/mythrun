@@ -54,6 +54,11 @@ export { FormField } from './components/FormField/FormField.tsx'
 // shadow); the compound-component / slot pattern (§9).
 export { Card, CardHeader, CardBody, CardFooter } from './components/Card/Card.tsx'
 
+// CoverCard (MYT-87) — a portrait "made-object" card (fixed 3:2): a full-bleed
+// cover header over an ink seam, narrative content at the top, a foot-pinned
+// imprint. The campaign-hub card is a thin composition of it.
+export { CoverCard } from './components/CoverCard/CoverCard.tsx'
+
 // Overlays (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu. Each wraps
 // an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip / Tabs /
 // DropdownMenu): Radix supplies the a11y headline (focus trap + focus-RETURN,
@@ -148,6 +153,7 @@ export type {
   CardHeaderProps,
   CardBodyProps,
   CardFooterProps,
+  CoverCardProps,
   ModalProps,
   PopoverProps,
   PopoverSide,

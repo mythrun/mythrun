@@ -21,7 +21,7 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
     createdAt: '2026-06-01T10:00:00.000Z',
     updatedAt: '2026-06-01T10:00:00.000Z',
     worldName: 'Aerth',
-    worldColors: { from: 'ember', to: 'lapis' },
+    worldColors: { from: 'ember-200', to: 'lapis-800' },
     creator: null,
     party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: true }],
     sessionCount: 0,
@@ -43,7 +43,7 @@ afterEach(cleanup)
 
 describe('CampaignIndexRow', () => {
   it('renders the world-dither swatch when worldColors is set', () => {
-    renderRow(makeCampaign({ worldColors: { from: 'sienna', to: 'paper-100' } }))
+    renderRow(makeCampaign({ worldColors: { from: 'sienna-200', to: 'paper-100' } }))
     expect(screen.getByTestId('row-cover')).toBeDefined()
     expect(screen.queryByTestId('row-cover-ghost')).toBeNull()
   })

@@ -37,7 +37,12 @@ import { avatarColorFor } from './avatar-color.ts'
 // double-announce), and the initials text is `aria-hidden` (so AT doesn't read
 // "AL" on top of "Ada Lovelace").
 
-const SIZE_CLASS: Record<AvatarSize, string> = {
+// Token size → control-token width/height + matching text size. Exported so the
+// AvatarGroup `+N` overflow chip can size itself from the SAME map as the seals
+// it stands in for — a single source of truth means the chip and the faces can
+// never drift out of alignment. The literal `w-[var(--control-*)]` strings live
+// here (verbatim) so Tailwind's JIT scanner emits each utility.
+export const AVATAR_SIZE_CLASS: Record<AvatarSize, string> = {
   sm: 'w-[var(--control-sm)] h-[var(--control-sm)] text-xs',
   md: 'w-[var(--control-md)] h-[var(--control-md)] text-sm',
   lg: 'w-[var(--control-lg)] h-[var(--control-lg)] text-base',
@@ -94,7 +99,7 @@ export const Avatar = forwardRef<HTMLSpanElement, AvatarProps>(function Avatar(
         'relative inline-flex shrink-0 select-none items-center justify-center overflow-hidden',
         // The 1px square frame on the ROOT so the image variant is bordered too.
         'rounded-none align-middle border border-border-strong',
-        SIZE_CLASS[size],
+        AVATAR_SIZE_CLASS[size],
       )}
     >
       {src !== undefined ? (

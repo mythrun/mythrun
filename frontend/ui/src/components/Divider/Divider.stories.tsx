@@ -12,6 +12,7 @@ const meta: Meta<typeof Divider> = {
   tags: ['autodocs'],
   argTypes: {
     orientation: { control: 'inline-radio', options: ['horizontal', 'vertical'] },
+    tone: { control: 'inline-radio', options: ['border', 'ink'] },
   },
 }
 
@@ -40,6 +41,23 @@ export const Vertical: Story = {
       <span className="font-ui text-sm text-ink">Left</span>
       <Divider {...args} />
       <span className="font-ui text-sm text-ink">Right</span>
+    </div>
+  ),
+}
+
+// tone="ink" — the structural INK seam (dark paper-900 pigment), for a deliberate
+// cut like a cover→body boundary. Unlike the soft default hairline it stays a dark
+// line in dark mode too (toggle the toolbar theme). Shown over both surface tiers.
+export const Ink: Story = {
+  name: 'Tone · ink (structural seam)',
+  args: { orientation: 'horizontal', tone: 'ink' },
+  render: (args) => (
+    <div className="w-80">
+      <p className="font-ui text-sm text-ink">Cover</p>
+      <div className="py-[var(--space-3)]">
+        <Divider {...args} />
+      </div>
+      <p className="font-ui text-sm text-ink">Body</p>
     </div>
   ),
 }

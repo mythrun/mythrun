@@ -77,9 +77,15 @@ export const TYPE_ROLES = {
   heading: { font: 'serif', size: '1.25rem', weight: 600, lineHeight: 1.3 },
   title: { font: 'serif', size: '1.125rem', weight: 600, lineHeight: 1.4 },
   'prose-body': { font: 'serif', size: '1rem', weight: 400, lineHeight: 1.6 },
+  // Italic, muted serif sub-line beneath a title (a work's subtitle / a card's
+  // "world · creator"). `italic` + `tone: secondary` set the narrative-caption look.
+  subtitle: { font: 'serif', size: '0.875rem', weight: 400, lineHeight: 1.4, italic: true, tone: 'secondary' },
   'ui-label': { font: 'mono', size: '0.875rem', weight: 500, transform: 'uppercase', tracking: '0.5px' },
   'ui-caption': { font: 'mono', size: '0.75rem', weight: 500 },
   data: { font: 'mono', size: '0.875rem', weight: 400 },
+  // Quiet mono meta — a muted record/status line, smaller than `data` (the ink
+  // ledger value). The card's foot record line, a timestamp, a count caption.
+  meta: { font: 'mono', size: '0.75rem', weight: 400, tone: 'secondary' },
 } as const
 
 /** Font weights. `--weight-normal/medium/semibold`. */
