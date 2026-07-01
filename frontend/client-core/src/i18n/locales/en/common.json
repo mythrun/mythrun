@@ -31,17 +31,17 @@
   "home": {
     "title": "[ph_home_title]",
     "loading": "[ph_loading]",
-    "empty": "[ph_empty_hub: a short nudge here]",
+    "empty": "[ph: no campaigns yet]",
     "createCampaign": "[ph_home_create_campaign: create a campaign]",
     "card": {
-      "generating": "[ph_home_card_generating: a terse 'shaping your world' line]",
-      "failed": "[ph_home_card_failed: a terse 'world generation failed — open to retry' line]",
-      "needsCharacter": "[ph_home_card_needs_character: your turn — make your character]",
-      "waiting": "[ph_home_card_waiting: a terse 'waiting on the rest of the party' line]",
-      "notPlayed": "[ph_home_card_not_played: a terse 'ready — your first session awaits' line]",
-      "record": "[ph_home_card_record: {{sessions}} sessions · {{when}}]",
-      "recently": "[ph_home_card_recently: recently]",
-      "byCreator": "[ph_home_card_by_creator: · by {{creator}}]"
+      "generating": "[ph: shaping your world]",
+      "failed": "[ph: generation failed]",
+      "needsCharacter": "[ph: make your character]",
+      "waiting": "[ph: waiting for players]",
+      "notPlayed": "[ph: not played yet]",
+      "record": "[ph: {{sessions}} sessions · {{when}}]",
+      "recently": "[ph: recently]",
+      "byCreator": " · by {{creator}}"
     }
   },
   "theme": {
