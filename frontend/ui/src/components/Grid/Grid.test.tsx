@@ -54,6 +54,44 @@ describe('Grid', () => {
     )
   })
 
+  it('renders an inline auto-fill px track when columns=auto-fill + minColumnPx', () => {
+    const { getByTestId } = render(
+      <Grid data-testid="grid" columns="auto-fill" minColumnPx={230}>
+        x
+      </Grid>,
+    )
+    const el = getByTestId('grid')
+    // A card-width (~230px) track lives OFF the --space scale, so it is an inline
+    // px minmax, and auto-FILL keeps the card width stable (empty tracks are kept,
+    // cards don't stretch) as the item count changes.
+    expect(el.style.gridTemplateColumns).toBe('repeat(auto-fill, minmax(230px, 1fr))')
+    // px auto-fill is inline; no auto-fit track class is applied.
+    expect(el.className).not.toContain('grid-cols-')
+  })
+
+  it('falls back to the SpaceToken minimum for auto-fill when minColumnPx is omitted', () => {
+    const { getByTestId } = render(
+      <Grid data-testid="grid" columns="auto-fill" minColumnWidth={7}>
+        x
+      </Grid>,
+    )
+    // No px override — auto-fill reuses the --space token vocabulary, inline.
+    expect(getByTestId('grid').style.gridTemplateColumns).toBe(
+      'repeat(auto-fill, minmax(var(--space-7), 1fr))',
+    )
+  })
+
+  it('defaults the auto-fill minimum to --space-9 when neither px nor token is given', () => {
+    const { getByTestId } = render(
+      <Grid data-testid="grid" columns="auto-fill">
+        x
+      </Grid>,
+    )
+    expect(getByTestId('grid').style.gridTemplateColumns).toBe(
+      'repeat(auto-fill, minmax(var(--space-9), 1fr))',
+    )
+  })
+
   it('applies the gap token class for the given SpaceToken', () => {
     const { getByTestId } = render(
       <Grid data-testid="grid" gap={5}>

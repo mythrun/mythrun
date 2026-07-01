@@ -11,9 +11,10 @@ const meta: Meta<typeof Grid> = {
   component: Grid,
   tags: ['autodocs'],
   argTypes: {
-    columns: { control: 'text', description: 'A number, or "auto-fit"' },
+    columns: { control: 'text', description: 'A number, "auto-fit", or "auto-fill"' },
     gap: { control: 'select', options: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
     minColumnWidth: { control: 'select', options: [1, 2, 3, 4, 5, 6, 7, 8, 9] },
+    minColumnPx: { control: 'number', description: 'Min column width in px (auto-fill only)' },
   },
 }
 
@@ -56,6 +57,26 @@ export const AutoFit: Story = {
       <Grid {...args}>
         {cells(8).map((n) => (
           <Cell key={n} label={`Cell ${String(n)}`} />
+        ))}
+      </Grid>
+    </div>
+  ),
+}
+
+export const AutoFillCards: Story = {
+  name: 'Auto-fill at a card width (px)',
+  // The book-cover shelf: fits as many ~230px cards per row as comfortably fit,
+  // then wraps. auto-FILL keeps the card width stable (empty tracks are kept, so
+  // cards don't stretch) — card quality over grid math. The width is off the
+  // --space scale (which caps at 64px), so it is a raw-px `minColumnPx` escape
+  // hatch. Wide host to show multiple columns; overflow gate skips it (§5 opt-out).
+  parameters: { overflowGate: false },
+  args: { columns: 'auto-fill', minColumnPx: 230, gap: 4 },
+  render: (args) => (
+    <div className="w-[760px]">
+      <Grid {...args}>
+        {cells(5).map((n) => (
+          <Cell key={n} label={`Card ${String(n)}`} />
         ))}
       </Grid>
     </div>
