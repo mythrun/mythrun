@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent, configure } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
@@ -16,6 +16,16 @@ import {
 } from '@mythrun/client-core'
 import { routes } from '../app/router.tsx'
 import { i18n } from '../i18n/config.ts'
+
+// The hub renders every campaign TWICE (desktop grid + mobile index — both stay in
+// the DOM, toggled by Show's CSS `display`), each with a CoverDither's full-field SVG
+// (~600 <rect>s per band cover). Rendering that many nodes in jsdom is slow — a browser
+// GPU-paints it instantly, but on CI's slower CPU it overruns testing-library's 1000ms
+// waitFor default (the balance case measured 1312ms in CI vs ~350ms locally, so the
+// element appeared AFTER waitFor gave up → "Unable to find element"). The render
+// completes; it's just cut off. Bump the async + test timeouts (scoped to this file).
+vi.setConfig({ testTimeout: 15000 })
+configure({ asyncUtilTimeout: 10000 })
 
 // The wired home hub (done-when #3 — "renders real backend data behind a loading
 // state"), driven through the REAL `routes` array and the REAL provider stack so
