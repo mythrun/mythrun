@@ -1,4 +1,3 @@
-import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import type { CampaignSummary } from '@mythrun/client-core'
 
@@ -62,11 +61,4 @@ export function cardPhaseLine(
     })
   }
   return t(PHASE_LABEL_KEY[cardPhase])
-}
-
-/** The {@link cardPhaseLine} bound to the active i18n language + the wall clock —
- *  the hook form a component renders directly. */
-export function useCardPhaseLine(campaign: CampaignSummary): string {
-  const { t, i18n } = useTranslation()
-  return cardPhaseLine(campaign, t, i18n.language)
 }
