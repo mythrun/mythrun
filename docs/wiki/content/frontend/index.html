@@ -20,7 +20,7 @@
 <!-- source: frontend/ui/src/styles/index.css -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:c4b3cfcb4adc3a39559b95370e3a7d3813d949516b17a937ac3577539de051b9 -->
+<!-- source-hash: sha256:0fc090bb23bae432dae2165ee2bdaf50e02622801562103c3d2e5743f797eb9b -->
 <!-- last-ticket: MYT-86 -->
 
 <h1>Frontend</h1>
@@ -337,21 +337,24 @@
 </p>
 
 <p>
-  The palette is 60 colors: six ten-step ramps (<code>paper</code>, <code>ember</code>, and the
-  <code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code> semantics). The
-  <code>paper</code> ramp is ten hand-picked hexes, copied verbatim. Every other ramp —
-  <code>ember</code> and the four semantics — is <em>generated</em> from a single brand-chosen
-  anchor: <code>generate-palette.mjs</code> uses <code>culori</code> to read the anchor in OKLCH,
-  then builds the rest of the ramp by riding a shared hero-anchored lightness ladder and scaling
-  chroma to the anchor, so all five generated ramps stay perceptually parallel.
-  <code>ember</code> is anchored on the brand hero <code>#8A5A3C</code> at the ramp's center (step
-  500) and carries its own golden→red-brown hue drift; only the anchor steps are emitted verbatim.
-  The generator writes <code>colors.generated.css</code> (a <code>@theme</code> block of
-  <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>, and a
-  <code>tokens.html</code> audit page. MYT-82 relocated the generator (and the raw token-scale data)
-  into <code>@mythrun/client-core/src/tokens/</code> — the platform-neutral home — leaving the web
-  CSS emission in <code>@mythrun/ui</code>, which runs the generator at build time. That relocation
-  and the completed token scales it brought are covered on the
+  The palette is 170 colors: seventeen ten-step ramps — <code>paper</code>, <code>ember</code>, the
+  <code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code> semantics, and the
+  eleven brand pigments (moss, pine, verdigris, lapis, iris, heather, rose, sienna, ochre, umber,
+  slate). The <code>paper</code> ramp is ten hand-picked hexes, copied verbatim. Every other ramp —
+  <code>ember</code>, the four semantics, and the eleven pigments — is <em>generated</em> from a
+  single brand-chosen anchor: <code>generate-palette.mjs</code> uses <code>culori</code> to read the
+  anchor in OKLCH, then builds the rest of the ramp by riding a shared hero-anchored lightness
+  ladder and scaling chroma to the anchor, so every generated ramp stays perceptually parallel
+  (MYT-87 widened the pigments — once single mid-tones — into full ramps so a
+  <a href="../world-campaign/world-color.html">world cover</a> can pick a light and a dark of any
+  hue and dither). <code>ember</code> is anchored on the brand hero <code>#8A5A3C</code> at the
+  ramp's center (step 500) and carries its own golden→red-brown hue drift; only the anchor steps are
+  emitted verbatim. The generator writes <code>colors.generated.css</code> (a
+  <code>@theme</code> block of <code>--color-*</code> tokens), a <code>tokens.manifest.json</code>,
+  and a <code>tokens.html</code> audit page. MYT-82 relocated the generator (and the raw token-scale
+  data) into <code>@mythrun/client-core/src/tokens/</code> — the platform-neutral home — leaving the
+  web CSS emission in <code>@mythrun/ui</code>, which runs the generator at build time. That
+  relocation and the completed token scales it brought are covered on the
   <a href="./design-system.html#the-token-foundation-relocated">Design system</a> page.
 </p>
 

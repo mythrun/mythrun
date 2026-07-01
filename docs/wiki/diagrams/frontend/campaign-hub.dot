@@ -1,0 +1,41 @@
+digraph campaign_hub {
+  // The home hub screen. HomeRoute owns the Suspense boundary; useMyCampaigns
+  // resolves the /mine payload; the hub renders either the first-run empty shelf
+  // or the responsive body — a Show switch between a fluid grid of cover cards
+  // (desktop) and a compact index of rows (mobile). Both layouts share one state
+  // line. The always-present frame carries the live credit balance.
+  rankdir=TB;
+  compound=true;
+
+  route [label="HomeRoute\n<Suspense> · route error boundary"];
+  hook  [label="useMyCampaigns()\n(client-core suspense query)\nGET /api/campaigns/mine"];
+
+  subgraph cluster_body {
+    label="the hub body";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    empty [label="EmptyShelf\ndashed Card + ghost cover\n+ New Campaign CTA"];
+
+    subgraph cluster_switch {
+      label="CampaignHubBody  (Show breakpoint switch @ sm)";
+      style="dashed";
+      color="ember";
+      fontcolor="ember";
+
+      grid [label="Show above=sm\nGrid auto-fill · minColumnPx 230\n→ CampaignCard (cover card)", color="ember", fontcolor="ember"];
+      index [label="Show below=sm\nStack · hairline dividers\n→ CampaignIndexRow (swatch + line)"];
+    }
+  }
+
+  line [label="cardPhaseLine\ncardPhase → mono state line\n(shared by card + row)"];
+  frame [label="AppFrame → HeaderCredits\nuseBalance() · resilient slot"];
+
+  route -> hook;
+  hook  -> empty [label="0 campaigns"];
+  hook  -> grid  [lhead=cluster_switch, label="N campaigns"];
+  grid  -> line  [style="dotted"];
+  index -> line  [style="dotted"];
+  frame -> route [style="invis"];
+}

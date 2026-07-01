@@ -6,7 +6,6 @@
 <!-- source: frontend/client-core/src/platform/secure-storage.ts -->
 <!-- source: frontend/client-core/src/index.ts -->
 <!-- source: frontend/src/app/ -->
-<!-- source: frontend/src/routes/home.tsx -->
 <!-- source: frontend/src/storybook/screen-harness.tsx -->
 <!-- source: frontend/scripts/screen-story-coverage.mjs -->
 <!-- source: frontend/src/platform/web/secure-storage.ts -->
@@ -19,7 +18,7 @@
 <!-- source: frontend/src/routes/landing.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:21c8aa77c1738488b784cea6298d8006ebb67c71412fea0cccf3d61998e8334c -->
+<!-- source-hash: sha256:d94982082a1f5648b7610a68014ebac5b723591c70e68529ee483e2ff8297a55 -->
 <!-- last-ticket: MYT-86 -->
 
 <h1>App shell &amp; data layer</h1>
@@ -175,11 +174,13 @@
 
 <p>
   On top of the primitive sit thin <strong>slice hooks</strong> — <code>useMe</code>,
-  <code>useMyCampaigns</code> — each a one-liner that reads the ambient <code>ApiContext</code> from
-  a <code>client-core</code> React context and hands the endpoint to React-Query's
-  <code>useSuspenseQuery</code>. The hooks are React, not DOM, so they stay R1-clean and a native
-  shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract and its slice
-  to <code>client-core/api</code>; the pattern never changes.
+  <code>useMyCampaigns</code>, <code>useBalance</code> — each a one-liner that reads the ambient
+  <code>ApiContext</code> from a <code>client-core</code> React context and hands the endpoint to
+  React-Query's <code>useSuspenseQuery</code>. The hooks are React, not DOM, so they stay R1-clean
+  and a native shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract
+  and its slice to <code>client-core/api</code>; the pattern never changes — the
+  <a href="./campaign-hub.html">campaign hub</a> added the <code>useBalance</code> (billing) slice
+  and widened the <code>/mine</code> contract this way.
 </p>
 
 <aside class="wiki-rationale">
@@ -428,9 +429,10 @@
   composed from <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the
   narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
   now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
-  screens are thin i18n'd stubs the flow tickets fill, except the <strong>home hub</strong>, wired
-  end-to-end (<code>useMyCampaigns</code> → real backend → Suspense loading → Cards or empty state)
-  as the done-when smoke, and the
+  screens are thin i18n'd stubs the flow tickets fill, except the
+  <strong><a href="./campaign-hub.html">campaign hub</a></strong
+  >, since built out into the app's first full screen — a shelf of book-cover campaign cards with
+  the header's credit balance wired live — and the
   <strong><a href="#the-landing-page">public landing page</a></strong>
   (MYT-86), the first public-branch screen built out from a stub.
 </p>

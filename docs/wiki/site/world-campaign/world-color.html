@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World colour identity · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="world-campaign" data-page="world-color">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html" class="active">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../world-campaign/index.html">Overview</a></li><li><a href="../world-campaign/world-color.html" class="active">World colour identity</a></li><li><a href="../world-campaign/campaign-hub-payload.html">Campaign hub payload</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › World & Campaign › World colour identity</div>
+        <article>
+<h1>World colour identity</h1>
+
+<p class="lead">
+  Every world gets a two-colour dither identity — the cover art its campaign cards wear on the home
+  hub. A single Sonnet call at world creation picks the pair from a closed palette; deterministic
+  code guarantees the two ends read as distinct; the pair is stored on the world and inherited by
+  its campaigns.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1558pt" height="257pt"
+ viewBox="14.00 14.00 1544.00 242.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 238.28)">
+<title>world_color</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-223.88 1525.6,-223.88 1525.6,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_stage</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="341.32,-58.84 341.32,-155.84 1161.97,-155.84 1161.97,-58.84 341.32,-58.84"/>
+<text xml:space="preserve" text-anchor="middle" x="751.65" y="-141.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world_color stage &#160;(backend world&#45;gen · once per world)</text>
+</g>
+<!-- vibe -->
+<g id="node1" class="node">
+<title>vibe</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="193.41,-219.88 9.9,-219.88 9.9,-149.8 193.41,-149.8 193.41,-219.88"/>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-201.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world vibe</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-188.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">name · concept</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-174.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tone · themes</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-161.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(concept_intake output)</text>
+</g>
+<!-- sonnet -->
+<g id="node2" class="node">
+<title>sonnet</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="564.44,-125.28 341.32,-125.28 341.32,-68.4 564.44,-68.4 564.44,-125.28"/>
+<text xml:space="preserve" text-anchor="middle" x="452.88" y="-106.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Sonnet generateObject</text>
+<text xml:space="preserve" text-anchor="middle" x="452.88" y="-93.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">schema = WorldColorPairSchema</text>
+<text xml:space="preserve" text-anchor="middle" x="452.88" y="-80.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(structurally in&#45;palette)</text>
+</g>
+<!-- vibe&#45;&gt;sonnet -->
+<g id="edge1" class="edge">
+<title>vibe&#45;&gt;sonnet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M193.95,-161.83C236.28,-151.17 287.15,-138.35 332.48,-126.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="332.92,-129.34 339.11,-125.26 331.73,-124.59 332.92,-129.34"/>
+</g>
+<!-- guard -->
+<g id="node3" class="node">
+<title>guard</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="798.14,-115.28 601.44,-115.28 601.44,-58.4 798.14,-58.4 798.14,-115.28"/>
+<text xml:space="preserve" text-anchor="middle" x="699.79" y="-96.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rung guard</text>
+<text xml:space="preserve" text-anchor="middle" x="699.79" y="-83.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rungsApart(from,to) ≥ 6</text>
+<text xml:space="preserve" text-anchor="middle" x="699.79" y="-70.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ ~3.0:1 WCAG</text>
+</g>
+<!-- sonnet&#45;&gt;guard -->
+<g id="edge3" class="edge">
+<title>sonnet&#45;&gt;guard</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M564.87,-92.31C573.98,-91.94 583.18,-91.56 592.26,-91.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="592.21,-93.64 599.1,-90.91 592.01,-88.75 592.21,-93.64"/>
+</g>
+<!-- reroll -->
+<g id="node4" class="node">
+<title>reroll</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1161.97,-134.28 965.26,-134.28 965.26,-77.4 1161.97,-77.4 1161.97,-134.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1063.62" y="-115.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">re&#45;roll</text>
+<text xml:space="preserve" text-anchor="middle" x="1063.62" y="-102.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(feed rejected pair back)</text>
+<text xml:space="preserve" text-anchor="middle" x="1063.62" y="-89.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">max 3 · best&#45;of fallback</text>
+</g>
+<!-- guard&#45;&gt;reroll -->
+<g id="edge4" class="edge">
+<title>guard&#45;&gt;reroll</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M798.71,-91.98C847.37,-94.54 906.28,-97.63 956.08,-100.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="955.69,-102.68 962.81,-100.6 955.95,-97.79 955.69,-102.68"/>
+<text xml:space="preserve" text-anchor="middle" x="870.15" y="-101.04" font-family="Courier,monospace" font-size="10.00">&lt; 6 rungs</text>
+</g>
+<!-- cols -->
+<g id="node6" class="node">
+<title>cols</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1185.07,-59.28 942.16,-59.28 942.16,-2.4 1185.07,-2.4 1185.07,-59.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1063.62" y="-40.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds.color_from</text>
+<text xml:space="preserve" text-anchor="middle" x="1063.62" y="-27.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worlds.color_to</text>
+<text xml:space="preserve" text-anchor="middle" x="1063.62" y="-14.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(nullable TEXT · migration 030)</text>
+</g>
+<!-- guard&#45;&gt;cols -->
+<g id="edge6" class="edge">
+<title>guard&#45;&gt;cols</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M798.59,-67.83C804.52,-66.79 810.41,-65.78 816.14,-64.84 853.99,-58.63 895.23,-52.63 932.96,-47.45"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="933.05,-49.91 939.65,-46.54 932.39,-45.06 933.05,-49.91"/>
+<text xml:space="preserve" text-anchor="middle" x="870.15" y="-79.84" font-family="Courier,monospace" font-size="10.00">≥ 6 rungs →</text>
+<text xml:space="preserve" text-anchor="middle" x="870.15" y="-67.84" font-family="Courier,monospace" font-size="10.00">setColorPair (SET)</text>
+</g>
+<!-- reroll&#45;&gt;sonnet -->
+<g id="edge5" class="edge">
+<title>reroll&#45;&gt;sonnet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M964.81,-116.98C871.33,-125.89 726.52,-135.19 601.44,-123.84 592.4,-123.02 583.09,-121.92 573.75,-120.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="574.25,-118.24 566.97,-119.67 573.55,-123.09 574.25,-118.24"/>
+</g>
+<!-- enum -->
+<g id="node5" class="node">
+<title>enum</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="203.31,-131.88 0,-131.88 0,-61.8 203.31,-61.8 203.31,-131.88"/>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-113.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@mythrun/contract</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-100.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldColor enum</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-86.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">13 ramps × 10 steps = 130</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-73.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(semantic ramps excluded)</text>
+</g>
+<!-- enum&#45;&gt;sonnet -->
+<g id="edge2" class="edge">
+<title>enum&#45;&gt;sonnet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M203.66,-96.84C243.81,-96.84 290.3,-96.84 332.12,-96.84"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="331.88,-99.29 338.88,-96.84 331.88,-94.39 331.88,-99.29"/>
+<text xml:space="preserve" text-anchor="middle" x="272.32" y="-99.84" font-family="Courier,monospace" font-size="10.00">constrains output</text>
+</g>
+<!-- cover -->
+<g id="node8" class="node">
+<title>cover</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1521.6,-59.28 1305.09,-59.28 1305.09,-2.4 1521.6,-2.4 1521.6,-59.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1413.34" y="-40.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CoverDither</text>
+<text xml:space="preserve" text-anchor="middle" x="1413.34" y="-27.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">var(&#45;&#45;color&#45;{ramp}&#45;{step})</text>
+<text xml:space="preserve" text-anchor="middle" x="1413.34" y="-14.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">light pair + reInkPair(dark)</text>
+</g>
+<!-- cols&#45;&gt;cover -->
+<g id="edge8" class="edge">
+<title>cols&#45;&gt;cover</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1185.75,-30.84C1221.49,-30.84 1260.53,-30.84 1295.97,-30.84"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1295.6,-33.29 1302.6,-30.84 1295.6,-28.39 1295.6,-33.29"/>
+<text xml:space="preserve" text-anchor="middle" x="1245.08" y="-45.84" font-family="Courier,monospace" font-size="10.00">/mine surfaces</text>
+<text xml:space="preserve" text-anchor="middle" x="1245.08" y="-33.84" font-family="Courier,monospace" font-size="10.00">the pair</text>
+</g>
+<!-- backfill -->
+<g id="node7" class="node">
+<title>backfill</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="200.01,-43.68 3.3,-43.68 3.3,0 200.01,0 200.01,-43.68"/>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;color&#45;backfill.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="101.65" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&#45;&#45;world / &#45;&#45;all [&#45;&#45;force]</text>
+</g>
+<!-- backfill&#45;&gt;sonnet -->
+<g id="edge7" class="edge">
+<title>backfill&#45;&gt;sonnet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M200.72,-42.62C238.98,-50.76 283.21,-60.2 323.32,-68.84 326.26,-69.47 329.23,-70.11 332.23,-70.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="332.2,-73.25 339.54,-72.24 333.17,-68.45 332.2,-73.25"/>
+<text xml:space="preserve" text-anchor="middle" x="272.32" y="-83.84" font-family="Courier,monospace" font-size="10.00">re&#45;runs the</text>
+<text xml:space="preserve" text-anchor="middle" x="272.32" y="-71.84" font-family="Courier,monospace" font-size="10.00">same stage</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The identity is a <code>{from, to}</code> pair of <code>WorldColor</code>s — two design-token
+  names the <a href="../frontend/design-system.html">CoverDither</a> renders as a top-to-bottom
+  Bayer gradient. The pair is produced once, at world-gen time, by a dedicated stage in the
+  <a href="../runtime/world-gen.html">world-generation pipeline</a>, and never regenerated unless an
+  operator forces it. It is plot-free and public-tier-safe: a decorative colour carries no
+  enforced-ignorance concern, so it flows straight into the player-facing hub projection.
+</p>
+
+<h3 id="the-closed-palette-a-shared-runtime-enum">The closed palette — a shared runtime enum</h3>
+
+<p>
+  A world may only be tinted with a <code>WorldColor</code>: one of <strong>130 tokens</strong> —
+  the full grid of 13 colour ramps (the neutral <code>paper</code> ground, the
+  <code>ember</code> brand accent, and the 11 remaining brand pigments) across the 10-rung OKLCH
+  luminance ladder (<code>50</code> lightest … <code>900</code> darkest). Each name is a standard
+  design token, so <code>verdigris-200</code> resolves uniformly to
+  <code>var(--color-verdigris-200)</code>. The set is built programmatically from the ramps × steps
+  grid and validated by a <code>WorldColorPairSchema</code> zod enum.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The enum lives in <code>@mythrun/contract</code>, not <code>client-core</code></strong> —
+  the colour set is the one contract the <em>backend</em> shares with the frontend: the colour stage
+  constrains the LLM's output to it, the route validates a persisted pair against it, and the
+  CoverDither resolves it. <code>@mythrun/contract</code> is the zod-only, React-free package the
+  backend can import; <code>client-core</code> depends on React and cannot cross the wire. The
+  semantic ramps (<code>success</code>/<code>warning</code>/<code>danger</code>/<code>info</code>)
+  are deliberately <em>excluded</em> — a cover is decoration, never a UI-state signal, so a world
+  can never accidentally wear an alarm colour. A client-core drift guard cross-checks every member
+  against the real emitted design tokens, so the set can never name a <code>--color-*</code> that
+  doesn't exist.
+</aside>
+
+<h3 id="sonnet-picks-code-guarantees-contrast">Sonnet picks, code guarantees contrast</h3>
+
+<p>
+  The <code>world_color</code> stage runs one non-streaming <strong>Sonnet</strong>
+  <code>generateObject</code> call, structurally constrained to <code>WorldColorPairSchema</code> —
+  the model literally cannot emit an off-brand colour. It sees the world's vibe (name, concept,
+  tone, themes, loaded by the preceding <code>concept_intake</code> stage) and the palette rendered
+  as a hue list plus the ladder steps, and returns a <code>{from, to}</code> pair.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Sonnet, not Haiku</strong> — a blind taste-off (12 worlds each) showed Haiku picks
+  serviceable hues but no contrast discipline and leans on neutral paper, while Sonnet's restrained,
+  often-monochromatic taste won decisively. This is one call per world, ever — a negligible tier
+  bump for a real jump in taste, and exactly the
+  <a href="../index.html">Zero-Framework-Cognition</a> move: route the aesthetic judgment to the
+  model that can actually make it, and keep application code out of the colour-picking business.
+</aside>
+
+<p>
+  Code owns exactly one thing: the <strong>mechanical contrast floor</strong>. The two ends must sit
+  at least <strong>six rungs apart</strong> on the ladder (<code>rungsApart(from, to) &ge; 6</code
+  >). A full enumeration proved six rungs guarantees ~3.0:1 WCAG contrast in the worst hue
+  combination — five rungs or fewer can dip to ~2.5 and the two dither fields stop reading as
+  distinct. On a miss the stage <strong>re-rolls</strong>: it feeds the rejected pair back into the
+  prompt so the model avoids it, up to three attempts.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Re-roll, never snap</strong> — when a pair fails the floor, the stage does
+  <em>not</em> nudge a colour to a legal rung. That would put an aesthetic decision in application
+  code. Instead it hands the rejection back to Sonnet and lets the model choose again — the
+  aesthetic choice stays with the model the whole way. Both models obeyed the rung rule ~100% of the
+  time in testing, so a passing pair lands on the first attempt in practice; the budget only guards
+  a pathological run. If all three attempts somehow miss, the stage persists the
+  <em>most-separated</em> of the model's own proposals (a best-of fallback) and logs a warning —
+  mechanical selection among the LLM's picks, still not a snap, so a decorative colour choice can
+  never fail world generation.
+</aside>
+
+<h3 id="dark-mode-re-inking-not-freezing">Dark mode — re-inking, not freezing</h3>
+
+<p>
+  The stored pair is a <em>light-mode</em> identity. In dark mode the cover re-inks rather than
+  glaring bright on a dark card: <code>reInkPair</code> drops the lighter end to its hue's
+  smouldering mid-tone (<code>-400</code>) and deepens the darker end to near-black
+  (<code>-900</code>), keeping each end's hue. The cover then reads as a dark object with the colour
+  glowing. This is a pure function of the stored pair — no second LLM call, no second stored value —
+  and the <a href="../frontend/design-system.html">CoverDither</a> applies it in CSS so the theme
+  flips with no re-render.
+</p>
+
+<h3 id="stored-on-the-world-backfilled-for-the-rest">Stored on the world, backfilled for the rest</h3>
+
+<p>
+  Migration <code>030</code> adds two nullable <code>TEXT</code> columns to <code>worlds</code> —
+  <code>color_from</code> and <code>color_to</code>. Null means "not generated yet" and renders the
+  hub's muted paper ghost band; the <code>WorldColor</code> enum is enforced at the application and
+  contract layers plus the backfill, not as a DB <code>CHECK</code>, so the column doesn't pin the
+  enum a second time. The stage persists through <code>worlds.setColorPair</code>, an idempotent
+  <code>SET</code> (not a delta), inside a short writes-only transaction after the LLM call
+  completes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Backfill is mandatory, not a fallback</strong> — every world that already reached
+  <code>complete</code> before the stage existed gets a real pair from the same stage. The
+  <em>only</em> no-pair render path is the still-generating window (the ghost band). The alternative
+  — letting an uncoloured world fall back to a default cover at render time — is exactly the
+  silent-stub-fallback the codebase forbids: it would hide missing data behind a plausible-looking
+  default. A test asserts no <code>complete</code>/<code>played</code> world renders a default, and
+  the backfill (below) is the operational half of that guarantee.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="backfill-world-colours">Backfill world colours</h3>
+<ol>
+  <li>
+    The script re-runs the same colour stage (real Sonnet spend) against existing worlds:
+    <code>pnpm world:color-backfill --world &lt;id&gt;</code> colours one world;
+    <code>--all</code> colours every <code>complete</code> world whose pair is still null (the safe,
+    incremental default, re-runnable).
+  </li>
+  <li>
+    <code>--all --force</code> widens the selection to <em>every</em> <code>complete</code> world
+    and re-rolls the pair — a deliberate full re-colour of the corpus and a real spend event. Run it
+    knowingly, not casually.
+  </li>
+  <li>
+    Each per-world write goes through the canonical stage runner (<code>generateObject</code> →
+    contrast re-roll → <code>setColorPair</code>), so a backfilled world is indistinguishable from a
+    freshly generated one. The script logs one JSON line per world (id + token cost) and exits
+    non-zero on failure.
+  </li>
+  <li>
+    After a schema/stage change reaches staging, run <code>--all</code> once so no
+    <code>complete</code> world is left on the ghost band — this is the operational side of the
+    no-default guarantee.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The colour stage is one step of the <a href="../runtime/world-gen.html">world-gen pipeline</a>,
+  ordered right after <code>concept_intake</code>. The stored pair is surfaced to the client through
+  the <a href="./campaign-hub-payload.html">campaign hub payload</a> (<code
+    >GET /api/campaigns/mine</code
+  >), which validates it against the same contract before it crosses the wire. The consumer is the
+  <a href="../frontend/design-system.html">CoverDither</a> primitive, which resolves each token to a
+  CSS variable and applies the dark-mode re-ink; the
+  <a href="./campaign-hub.html">campaign hub screen</a> composes it as each card's cover art.
+</p>
+
+<h2 id="appendix-the-colour-set-amp-the-guard">Appendix: the colour set &amp; the guard</h2>
+
+<table>
+  <tr>
+    <th>Symbol</th>
+    <th>Where</th>
+    <th>What it is</th>
+  </tr>
+  <tr>
+    <td><code>WORLD_COLOR_RAMPS</code></td>
+    <td><code>contract/rest/world-color.ts</code></td>
+    <td>
+      The 13 ramps: <code>paper</code>, <code>ember</code>, + 11 pigments (semantic ramps excluded)
+    </td>
+  </tr>
+  <tr>
+    <td><code>WORLD_COLOR_STEPS</code></td>
+    <td>same</td>
+    <td>
+      The 10-rung ladder <code>[50…900]</code>; <code>rungsApart</code> is measured over this index
+      order
+    </td>
+  </tr>
+  <tr>
+    <td><code>WORLD_COLORS</code> / <code>WorldColorSchema</code></td>
+    <td>same</td>
+    <td>The 130-member <code>{ramp}-{step}</code> set + its zod enum</td>
+  </tr>
+  <tr>
+    <td><code>rungsApart(a, b)</code></td>
+    <td>same</td>
+    <td>Ladder distance; the stage requires <code>&ge; 6</code></td>
+  </tr>
+  <tr>
+    <td><code>reInkPair(pair)</code></td>
+    <td>same</td>
+    <td>Light pair → dark pair (<code>-400</code> / <code>-900</code>, hue preserved)</td>
+  </tr>
+  <tr>
+    <td><code>MIN_RUNGS</code> / <code>MAX_COLOR_ATTEMPTS</code></td>
+    <td><code>stages/world-color.ts</code></td>
+    <td><code>6</code> / <code>3</code> — the floor and the re-roll budget</td>
+  </tr>
+  <tr>
+    <td><code>color_from</code> / <code>color_to</code></td>
+    <td><code>migrations/030</code></td>
+    <td>Nullable <code>TEXT</code> on <code>worlds</code>; null = ghost band</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/contract/src/rest/world-color.ts</code> ·
+  <code>backend/src/llm/prep/stages/world-color.ts</code> ·
+  <code>backend/src/llm/prompts/prep/world-color.txt</code> ·
+  <code>backend/migrations/030_world_color_identity.sql</code> ·
+  <code>backend/scripts/world-color-backfill.ts</code>
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-palette-a-shared-runtime-enum">The closed palette — a shared runtime enum</a></li><li style="padding-left:12px"><a href="#sonnet-picks-code-guarantees-contrast">Sonnet picks, code guarantees contrast</a></li><li style="padding-left:12px"><a href="#dark-mode-re-inking-not-freezing">Dark mode — re-inking, not freezing</a></li><li style="padding-left:12px"><a href="#stored-on-the-world-backfilled-for-the-rest">Stored on the world, backfilled for the rest</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#backfill-world-colours">Backfill world colours</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-colour-set-amp-the-guard">Appendix: the colour set &amp; the guard</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Campaign hub payload · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="world-campaign" data-page="campaign-hub-payload">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html" class="active">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../world-campaign/index.html">Overview</a></li><li><a href="../world-campaign/world-color.html">World colour identity</a></li><li><a href="../world-campaign/campaign-hub-payload.html" class="active">Campaign hub payload</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › World & Campaign › Campaign hub payload</div>
+        <article>
+<h1>The campaign hub payload</h1>
+
+<p class="lead">
+  <code>GET /api/campaigns/mine</code> assembles everything a home-hub card needs — the world, the
+  party, the play record, and a per-viewer status — in two batched queries with no fanout, then
+  hands the frontend a ready-to-render <code>CampaignSummary[]</code>.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1896pt" height="212pt"
+ viewBox="14.00 14.00 1882.00 197.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 193.4)">
+<title>campaign_hub_payload</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-179 1863.64,-179 1863.64,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_repo</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="220.5,-76 220.5,-167 832.95,-167 832.95,-76 220.5,-76"/>
+<text xml:space="preserve" text-anchor="middle" x="526.73" y="-153.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">listHubCardsForUser &#160;(repo · pure data access)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_route</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="892.95,-8 892.95,-161 1232.4,-161 1232.4,-8 892.95,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1062.68" y="-147.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">toHubCardSummary &#160;(route · per card, per viewer)</text>
+</g>
+<!-- caller -->
+<g id="node1" class="node">
+<title>caller</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="183.5,-132.84 0,-132.84 0,-89.16 183.5,-89.16 183.5,-132.84"/>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-114.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/campaigns/mine</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-101.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(the signed&#45;in viewer)</text>
+</g>
+<!-- q1 -->
+<g id="node2" class="node">
+<title>q1</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="516.23,-146.04 220.5,-146.04 220.5,-75.96 516.23,-75.96 516.23,-146.04"/>
+<text xml:space="preserve" text-anchor="middle" x="368.37" y="-127.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">query 1</text>
+<text xml:space="preserve" text-anchor="middle" x="368.37" y="-114.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaigns ⋈ worlds ⋈ users(creator)</text>
+<text xml:space="preserve" text-anchor="middle" x="368.37" y="-101.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ LATERAL (count, max started_at)</text>
+<text xml:space="preserve" text-anchor="middle" x="368.37" y="-87.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WHERE member · accepted · not archived</text>
+</g>
+<!-- caller&#45;&gt;q1 -->
+<g id="edge1" class="edge">
+<title>caller&#45;&gt;q1</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M184.19,-111C192.94,-111 201.97,-111 211.12,-111"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="211.1,-113.45 218.1,-111 211.1,-108.55 211.1,-113.45"/>
+</g>
+<!-- q2 -->
+<g id="node3" class="node">
+<title>q2</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="832.95,-146.04 570.23,-146.04 570.23,-75.96 832.95,-75.96 832.95,-146.04"/>
+<text xml:space="preserve" text-anchor="middle" x="701.59" y="-127.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">query 2</text>
+<text xml:space="preserve" text-anchor="middle" x="701.59" y="-114.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">batched party roster</text>
+<text xml:space="preserve" text-anchor="middle" x="701.59" y="-101.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WHERE campaign_id = ANY($ids)</text>
+<text xml:space="preserve" text-anchor="middle" x="701.59" y="-87.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hasCharacter = character row exists</text>
+</g>
+<!-- q1&#45;&gt;q2 -->
+<g id="edge2" class="edge">
+<title>q1&#45;&gt;q2</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M516.57,-111C531.38,-111 546.38,-111 561.1,-111"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="560.92,-113.45 567.92,-111 560.92,-108.55 560.92,-113.45"/>
+<text xml:space="preserve" text-anchor="middle" x="543.23" y="-114" font-family="Courier,monospace" font-size="10.00">ids</text>
+</g>
+<!-- phase -->
+<g id="node4" class="node">
+<title>phase</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1219.94,-139.44 904.42,-139.44 904.42,-82.56 1219.94,-82.56 1219.94,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1062.18" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">deriveCardPhase</text>
+<text xml:space="preserve" text-anchor="middle" x="1062.18" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">generating · failed · needs&#45;character</text>
+<text xml:space="preserve" text-anchor="middle" x="1062.18" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">waiting&#45;for&#45;players · not&#45;played · played</text>
+</g>
+<!-- q2&#45;&gt;phase -->
+<g id="edge3" class="edge">
+<title>q2&#45;&gt;phase</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M833.57,-111C850.17,-111 867.37,-111 884.53,-111"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="884.14,-113.45 891.14,-111 884.14,-108.55 884.14,-113.45"/>
+<text xml:space="preserve" text-anchor="middle" x="862.95" y="-114" font-family="Courier,monospace" font-size="10.00">rows</text>
+</g>
+<!-- wire -->
+<g id="node6" class="node">
+<title>wire</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1571.73,-107.44 1269.4,-107.44 1269.4,-50.56 1571.73,-50.56 1571.73,-107.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1420.57" y="-88.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CampaignSummary[]</text>
+<text xml:space="preserve" text-anchor="middle" x="1420.57" y="-75.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldColors · party · creator</text>
+<text xml:space="preserve" text-anchor="middle" x="1420.57" y="-62.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessionCount · lastPlayedAt · cardPhase</text>
+</g>
+<!-- phase&#45;&gt;wire -->
+<g id="edge4" class="edge">
+<title>phase&#45;&gt;wire</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1220.53,-96.87C1233.69,-95.69 1247,-94.5 1260.17,-93.31"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1260.24,-95.77 1266.99,-92.7 1259.8,-90.89 1260.24,-95.77"/>
+</g>
+<!-- valid -->
+<g id="node5" class="node">
+<title>valid</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1160.53,-64.44 963.82,-64.44 963.82,-7.56 1160.53,-7.56 1160.53,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1062.18" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">validate colour pair</text>
+<text xml:space="preserve" text-anchor="middle" x="1062.18" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldColorPairSchema</text>
+<text xml:space="preserve" text-anchor="middle" x="1062.18" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(half&#45;set → null ghost)</text>
+</g>
+<!-- valid&#45;&gt;wire -->
+<g id="edge5" class="edge">
+<title>valid&#45;&gt;wire</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1161.03,-47.81C1191.71,-51.51 1226.41,-55.69 1260.2,-59.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1259.72,-62.18 1266.96,-60.59 1260.3,-57.32 1259.72,-62.18"/>
+</g>
+<!-- hub -->
+<g id="node7" class="node">
+<title>hub</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1859.64,-100.84 1715.75,-100.84 1715.75,-57.16 1859.64,-57.16 1859.64,-100.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1787.7" y="-82.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaign hub</text>
+<text xml:space="preserve" text-anchor="middle" x="1787.7" y="-69.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(frontend screen)</text>
+</g>
+<!-- wire&#45;&gt;hub -->
+<g id="edge6" class="edge">
+<title>wire&#45;&gt;hub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1572.45,-79C1618.44,-79 1667.2,-79 1706.57,-79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1706.52,-81.45 1713.52,-79 1706.52,-76.55 1706.52,-81.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1643.74" y="-82" font-family="Courier,monospace" font-size="10.00">the home&#45;hub cards</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The <a href="./campaign-hub.html">home hub</a> is one screen showing many campaigns at a glance,
+  so its endpoint has to gather a lot per card — the world name and colours, the party roster with
+  who-has-a-character, a session count and last-played time — without turning into an N+1 loop or a
+  cartesian join. <code>listHubCardsForUser</code> in the repo does the gathering; the route's
+  <code>toHubCardSummary</code> projects each row to the wire shape and derives the viewer-relative
+  status. The repo stays pure data access; the per-viewer judgment lives at the route.
+</p>
+
+<h3 id="two-batched-queries-no-fanout">Two batched queries, no fanout</h3>
+
+<p>
+  The first query joins <code>campaigns ⋈ worlds ⋈ users</code> (the world's creator) and reads the
+  session aggregate through a <code>LEFT JOIN LATERAL</code> — a per-campaign subquery counting
+  sessions and taking <code>max(started_at)</code>. It returns the caller's campaigns — owned or
+  joined collapse into one list via <code>campaign_members</code> — filtered to accepted memberships
+  and non-archived campaigns, newest first.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The session count rides a LATERAL, not a third join</strong> — joining
+  <code>sessions</code> directly alongside <code>campaign_members</code> would multiply each session
+  row by the party size and inflate the count. Running the aggregate in its own lateral subquery
+  keeps it exactly one number per campaign, independent of how many members the campaign has.
+</aside>
+
+<p>
+  The second query reads the party roster for <em>all</em> the returned campaigns at once (<code
+    >WHERE campaign_id = ANY($ids)</code
+  >), joining <code>users</code> for display names and <code>campaign_characters</code> for
+  <code>hasCharacter</code> (a character row exists for the member). The rows are grouped per
+  campaign in application code.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Batched roster, not a per-card lookup</strong> — calling a <code>getPartyRoster</code> per
+  campaign inside the map would be a classic N+1: one hub with twenty campaigns becomes twenty-one
+  round trips. One <code>ANY($ids)</code> read fetches every roster in a single trip and the
+  grouping happens in memory. The whole payload is therefore exactly two queries regardless of how
+  many campaigns the viewer has.
+</aside>
+
+<h3 id="the-viewer-relative-cardphase">The viewer-relative <code>cardPhase</code></h3>
+
+<p>
+  A campaign's card says something different depending on <em>who is looking</em>: the same campaign
+  reads "make your character" to a player who hasn't, and "waiting for players" to one who has. So
+  the status is not a single global value — it is <code>deriveCardPhase</code>, a pure projection
+  the route computes per viewer from the campaign status, the world status, whether the viewer has a
+  character (their own roster row), and whether the whole party is ready. It resolves to one of six
+  states:
+</p>
+
+<ul>
+  <li><code>generating</code> — the world is still being built.</li>
+  <li>
+    <code>failed</code> — world-gen failed, or character-integration exhausted its repair chain.
+  </li>
+  <li>
+    <code>needs-character</code> — the world is ready and this viewer hasn't made a character.
+  </li>
+  <li><code>waiting-for-players</code> — the viewer is ready but not every member is.</li>
+  <li>
+    <code>not-played</code> — everyone's ready (or the campaign just went active) with zero
+    sessions.
+  </li>
+  <li>
+    <code>played</code> — the campaign is active and has sessions; the card shows the play record.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The character-creation window is <code>setup</code>, not <code>active</code></strong> — a
+  campaign stays <code>setup</code> through both world-gen <em>and</em> character creation, and
+  flips to <code>active</code> only as the final write of character-integration, once every PC is
+  woven in. So the viewer-relative branches (<code>needs-character</code> /
+  <code>waiting-for-players</code>) gate on <code>setup</code>; by the time a campaign is
+  <code>active</code> the party is complete and the card is either <code>not-played</code> or
+  <code>played</code>. Getting this wrong would strand a fully-set-up campaign on the wrong line.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A sibling of <code>derivePhase</code>, not a replacement</strong> — the same file already
+  hosts <code>derivePhase</code>, the <em>global</em> SSE pipeline phase that is identical for every
+  member (see <a href="../runtime/pipeline-status.html">Pipeline status</a>).
+  <code>deriveCardPhase</code> is added alongside it rather than folded in: the hub needs a
+  per-viewer projection, the SSE channel needs the global one, and keeping the terminal
+  <code>failed</code> signal (which an earlier "is the world ready?" boolean erased) matters to
+  both.
+</aside>
+
+<h3 id="from-row-to-wire">From row to wire</h3>
+
+<p>
+  <code>toHubCardSummary</code> finishes each card: it derives <code>cardPhase</code>, validates the
+  stored <a href="./world-color.html">colour pair</a> against <code>WorldColorPairSchema</code> (an
+  invalid or half-set pair collapses to <code>null</code>, which renders the ghost band), and
+  serializes the <code>Date</code> columns to ISO strings — the contract models the wire, not the
+  database row. Notably the avatar pigment is <em>not</em> on the wire: it is a deterministic
+  frontend derivation from the display name, so returning it would create a second source of truth.
+  The result is the widened <code>CampaignSummary</code> the frontend consumes.
+</p>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The wire shape is defined in <code>frontend/contract/src/rest/campaigns.ts</code> and consumed by
+  the <a href="./campaign-hub.html">campaign hub screen</a> through its
+  <code>useMyCampaigns</code> hook. The colour pair each card carries is produced by the
+  <a href="./world-color.html">world colour identity</a> stage. <code>deriveCardPhase</code> shares
+  a file with the SSE <a href="../runtime/pipeline-status.html">pipeline phase</a> derivation. The
+  endpoint is one of the <a href="../runtime/dev-tool.html">dev tool</a>'s poll targets.
+</p>
+
+<h2 id="appendix-the-wire-shape">Appendix: the wire shape</h2>
+
+<p>
+  Each element of the <code>campaigns</code> array (beyond <code>id</code> / <code>name</code>):
+</p>
+
+<table>
+  <tr>
+    <th>Field</th>
+    <th>Type</th>
+    <th>Notes</th>
+  </tr>
+  <tr>
+    <td><code>worldName</code></td>
+    <td><code>string</code></td>
+    <td>Joined from <code>worlds</code></td>
+  </tr>
+  <tr>
+    <td><code>worldColors</code></td>
+    <td><code>{from, to} | null</code></td>
+    <td>Validated pair; null → ghost band</td>
+  </tr>
+  <tr>
+    <td><code>creator</code></td>
+    <td><code>string | null</code></td>
+    <td>Creator display name, null when the viewer owns the world</td>
+  </tr>
+  <tr>
+    <td><code>party</code></td>
+    <td><code>{userId, displayName, hasCharacter}[]</code></td>
+    <td>Accepted members only</td>
+  </tr>
+  <tr>
+    <td><code>sessionCount</code> / <code>lastPlayedAt</code></td>
+    <td><code>number</code> / <code>string | null</code></td>
+    <td>From the LATERAL aggregate; ISO string on the wire</td>
+  </tr>
+  <tr>
+    <td><code>cardPhase</code></td>
+    <td>six-state enum</td>
+    <td>Viewer-relative; drives the card's state line and click target</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/repo/campaigns.ts</code> (<code>listHubCardsForUser</code>) ·
+  <code>backend/src/routes/campaigns.ts</code> (<code>/api/campaigns/mine</code>,
+  <code>toHubCardSummary</code>) ·
+  <code>backend/src/sse/derive-phase.ts</code> (<code>deriveCardPhase</code>) ·
+  <code>frontend/contract/src/rest/campaigns.ts</code>
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#two-batched-queries-no-fanout">Two batched queries, no fanout</a></li><li style="padding-left:12px"><a href="#the-viewer-relative-cardphase">The viewer-relative cardPhase</a></li><li style="padding-left:12px"><a href="#from-row-to-wire">From row to wire</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-wire-shape">Appendix: the wire shape</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

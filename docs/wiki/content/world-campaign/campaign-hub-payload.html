@@ -1,0 +1,186 @@
+<!-- source: backend/src/repo/campaigns.ts -->
+<!-- source: backend/src/routes/campaigns.ts -->
+<!-- source: backend/src/sse/derive-phase.ts -->
+<!-- source: frontend/contract/src/rest/campaigns.ts -->
+<!-- source-hash: sha256:e9f48e54d5e89e644ffb691f3f3ee603e1fd6311730158fc3fac3d4ba43128e1 -->
+<!-- last-ticket: MYT-87 -->
+
+<h1>The campaign hub payload</h1>
+
+<p class="lead">
+  <code>GET /api/campaigns/mine</code> assembles everything a home-hub card needs — the world, the
+  party, the play record, and a per-viewer status — in two batched queries with no fanout, then
+  hands the frontend a ready-to-render <code>CampaignSummary[]</code>.
+</p>
+
+<!-- @diagram: world-campaign/campaign-hub-payload -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The <a href="./campaign-hub.html">home hub</a> is one screen showing many campaigns at a glance,
+  so its endpoint has to gather a lot per card — the world name and colours, the party roster with
+  who-has-a-character, a session count and last-played time — without turning into an N+1 loop or a
+  cartesian join. <code>listHubCardsForUser</code> in the repo does the gathering; the route's
+  <code>toHubCardSummary</code> projects each row to the wire shape and derives the viewer-relative
+  status. The repo stays pure data access; the per-viewer judgment lives at the route.
+</p>
+
+<h3>Two batched queries, no fanout</h3>
+
+<p>
+  The first query joins <code>campaigns ⋈ worlds ⋈ users</code> (the world's creator) and reads the
+  session aggregate through a <code>LEFT JOIN LATERAL</code> — a per-campaign subquery counting
+  sessions and taking <code>max(started_at)</code>. It returns the caller's campaigns — owned or
+  joined collapse into one list via <code>campaign_members</code> — filtered to accepted memberships
+  and non-archived campaigns, newest first.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The session count rides a LATERAL, not a third join</strong> — joining
+  <code>sessions</code> directly alongside <code>campaign_members</code> would multiply each session
+  row by the party size and inflate the count. Running the aggregate in its own lateral subquery
+  keeps it exactly one number per campaign, independent of how many members the campaign has.
+</aside>
+
+<p>
+  The second query reads the party roster for <em>all</em> the returned campaigns at once (<code
+    >WHERE campaign_id = ANY($ids)</code
+  >), joining <code>users</code> for display names and <code>campaign_characters</code> for
+  <code>hasCharacter</code> (a character row exists for the member). The rows are grouped per
+  campaign in application code.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Batched roster, not a per-card lookup</strong> — calling a <code>getPartyRoster</code> per
+  campaign inside the map would be a classic N+1: one hub with twenty campaigns becomes twenty-one
+  round trips. One <code>ANY($ids)</code> read fetches every roster in a single trip and the
+  grouping happens in memory. The whole payload is therefore exactly two queries regardless of how
+  many campaigns the viewer has.
+</aside>
+
+<h3>The viewer-relative <code>cardPhase</code></h3>
+
+<p>
+  A campaign's card says something different depending on <em>who is looking</em>: the same campaign
+  reads "make your character" to a player who hasn't, and "waiting for players" to one who has. So
+  the status is not a single global value — it is <code>deriveCardPhase</code>, a pure projection
+  the route computes per viewer from the campaign status, the world status, whether the viewer has a
+  character (their own roster row), and whether the whole party is ready. It resolves to one of six
+  states:
+</p>
+
+<ul>
+  <li><code>generating</code> — the world is still being built.</li>
+  <li>
+    <code>failed</code> — world-gen failed, or character-integration exhausted its repair chain.
+  </li>
+  <li>
+    <code>needs-character</code> — the world is ready and this viewer hasn't made a character.
+  </li>
+  <li><code>waiting-for-players</code> — the viewer is ready but not every member is.</li>
+  <li>
+    <code>not-played</code> — everyone's ready (or the campaign just went active) with zero
+    sessions.
+  </li>
+  <li>
+    <code>played</code> — the campaign is active and has sessions; the card shows the play record.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The character-creation window is <code>setup</code>, not <code>active</code></strong> — a
+  campaign stays <code>setup</code> through both world-gen <em>and</em> character creation, and
+  flips to <code>active</code> only as the final write of character-integration, once every PC is
+  woven in. So the viewer-relative branches (<code>needs-character</code> /
+  <code>waiting-for-players</code>) gate on <code>setup</code>; by the time a campaign is
+  <code>active</code> the party is complete and the card is either <code>not-played</code> or
+  <code>played</code>. Getting this wrong would strand a fully-set-up campaign on the wrong line.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A sibling of <code>derivePhase</code>, not a replacement</strong> — the same file already
+  hosts <code>derivePhase</code>, the <em>global</em> SSE pipeline phase that is identical for every
+  member (see <a href="../runtime/pipeline-status.html">Pipeline status</a>).
+  <code>deriveCardPhase</code> is added alongside it rather than folded in: the hub needs a
+  per-viewer projection, the SSE channel needs the global one, and keeping the terminal
+  <code>failed</code> signal (which an earlier "is the world ready?" boolean erased) matters to
+  both.
+</aside>
+
+<h3>From row to wire</h3>
+
+<p>
+  <code>toHubCardSummary</code> finishes each card: it derives <code>cardPhase</code>, validates the
+  stored <a href="./world-color.html">colour pair</a> against <code>WorldColorPairSchema</code> (an
+  invalid or half-set pair collapses to <code>null</code>, which renders the ghost band), and
+  serializes the <code>Date</code> columns to ISO strings — the contract models the wire, not the
+  database row. Notably the avatar pigment is <em>not</em> on the wire: it is a deterministic
+  frontend derivation from the display name, so returning it would create a second source of truth.
+  The result is the widened <code>CampaignSummary</code> the frontend consumes.
+</p>
+
+<h2>Integration points</h2>
+
+<p>
+  The wire shape is defined in <code>frontend/contract/src/rest/campaigns.ts</code> and consumed by
+  the <a href="./campaign-hub.html">campaign hub screen</a> through its
+  <code>useMyCampaigns</code> hook. The colour pair each card carries is produced by the
+  <a href="./world-color.html">world colour identity</a> stage. <code>deriveCardPhase</code> shares
+  a file with the SSE <a href="../runtime/pipeline-status.html">pipeline phase</a> derivation. The
+  endpoint is one of the <a href="../runtime/dev-tool.html">dev tool</a>'s poll targets.
+</p>
+
+<h2>Appendix: the wire shape</h2>
+
+<p>
+  Each element of the <code>campaigns</code> array (beyond <code>id</code> / <code>name</code>):
+</p>
+
+<table>
+  <tr>
+    <th>Field</th>
+    <th>Type</th>
+    <th>Notes</th>
+  </tr>
+  <tr>
+    <td><code>worldName</code></td>
+    <td><code>string</code></td>
+    <td>Joined from <code>worlds</code></td>
+  </tr>
+  <tr>
+    <td><code>worldColors</code></td>
+    <td><code>{from, to} | null</code></td>
+    <td>Validated pair; null → ghost band</td>
+  </tr>
+  <tr>
+    <td><code>creator</code></td>
+    <td><code>string | null</code></td>
+    <td>Creator display name, null when the viewer owns the world</td>
+  </tr>
+  <tr>
+    <td><code>party</code></td>
+    <td><code>{userId, displayName, hasCharacter}[]</code></td>
+    <td>Accepted members only</td>
+  </tr>
+  <tr>
+    <td><code>sessionCount</code> / <code>lastPlayedAt</code></td>
+    <td><code>number</code> / <code>string | null</code></td>
+    <td>From the LATERAL aggregate; ISO string on the wire</td>
+  </tr>
+  <tr>
+    <td><code>cardPhase</code></td>
+    <td>six-state enum</td>
+    <td>Viewer-relative; drives the card's state line and click target</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/repo/campaigns.ts</code> (<code>listHubCardsForUser</code>) ·
+  <code>backend/src/routes/campaigns.ts</code> (<code>/api/campaigns/mine</code>,
+  <code>toHubCardSummary</code>) ·
+  <code>backend/src/sse/derive-phase.ts</code> (<code>deriveCardPhase</code>) ·
+  <code>frontend/contract/src/rest/campaigns.ts</code>
+</p>

@@ -69,7 +69,11 @@ export const structure: Section[] = [
   {
     slug: 'world-campaign',
     title: 'World & Campaign',
-    pages: [{ slug: 'index', title: 'Overview' }],
+    pages: [
+      { slug: 'index', title: 'Overview' },
+      { slug: 'world-color', title: 'World colour identity' },
+      { slug: 'campaign-hub-payload', title: 'Campaign hub payload' },
+    ],
   },
   {
     slug: 'combat',
@@ -86,6 +90,7 @@ export const structure: Section[] = [
       { slug: 'index', title: 'Overview' },
       { slug: 'design-system', title: 'Design system' },
       { slug: 'app-shell', title: 'App shell & data layer' },
+      { slug: 'campaign-hub', title: 'Campaign hub' },
       { slug: 'realtime-transport', title: 'Realtime transport' },
     ],
   },

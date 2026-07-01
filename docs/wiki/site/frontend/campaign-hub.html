@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Campaign hub · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="campaign-hub">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html" class="active">Campaign hub</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Campaign hub</div>
+        <article>
+<h1>Campaign hub</h1>
+
+<p class="lead">
+  The player's home base between sessions: a quiet shelf of their campaigns, each a small book-cover
+  card carrying its world's colour identity, with a clear path to make a new one. The hub is the
+  first real screen the app renders — a full-stack vertical from the <code>/mine</code> payload to
+  the cover art.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="804pt" height="486pt"
+ viewBox="14.00 14.00 789.00 472.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 467.8)">
+<title>campaign_hub</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-453.4 771,-453.4 771,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_body</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-93.88 8,-193.16 759,-193.16 759,-93.88 8,-93.88"/>
+<text xml:space="preserve" text-anchor="middle" x="383.5" y="-179.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the hub body</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_switch</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="222,-93.88 222,-171.96 759,-171.96 759,-93.88 222,-93.88"/>
+<text xml:space="preserve" text-anchor="middle" x="490.5" y="-158.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CampaignHubBody &#160;(Show breakpoint switch @ sm)</text>
+</g>
+<!-- route -->
+<g id="node1" class="node">
+<title>route</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="354.06,-368.72 97.94,-368.72 97.94,-325.04 354.06,-325.04 354.06,-368.72"/>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-350.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HomeRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-336.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&lt;Suspense&gt; · route error boundary</text>
+</g>
+<!-- hook -->
+<g id="node2" class="node">
+<title>hook</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="334.26,-288.04 117.74,-288.04 117.74,-231.16 334.26,-231.16 334.26,-288.04"/>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-269.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useMyCampaigns()</text>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-256.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(client&#45;core suspense query)</text>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-243.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/campaigns/mine</text>
+</g>
+<!-- route&#45;&gt;hook -->
+<g id="edge1" class="edge">
+<title>route&#45;&gt;hook</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M226,-324.36C226,-316.13 226,-306.5 226,-297.26"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="228.45,-297.38 226,-290.38 223.55,-297.38 228.45,-297.38"/>
+</g>
+<!-- empty -->
+<g id="node3" class="node">
+<title>empty</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="204.35,-150.76 7.65,-150.76 7.65,-93.88 204.35,-93.88 204.35,-150.76"/>
+<text xml:space="preserve" text-anchor="middle" x="106" y="-132.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">EmptyShelf</text>
+<text xml:space="preserve" text-anchor="middle" x="106" y="-119.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dashed Card + ghost cover</text>
+<text xml:space="preserve" text-anchor="middle" x="106" y="-105.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ New Campaign CTA</text>
+</g>
+<!-- hook&#45;&gt;empty -->
+<g id="edge2" class="edge">
+<title>hook&#45;&gt;empty</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M201.14,-230.57C182.39,-209.44 156.58,-180.34 136.58,-157.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="138.52,-156.28 132.04,-152.67 134.85,-159.54 138.52,-156.28"/>
+<text xml:space="preserve" text-anchor="middle" x="216.77" y="-204.16" font-family="Courier,monospace" font-size="10.00">0 campaigns</text>
+</g>
+<!-- grid -->
+<g id="node4" class="node">
+<title>grid</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="471.76,-150.76 222.24,-150.76 222.24,-93.88 471.76,-93.88 471.76,-150.76"/>
+<text xml:space="preserve" text-anchor="middle" x="347" y="-132.22" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Show above=sm</text>
+<text xml:space="preserve" text-anchor="middle" x="347" y="-119.02" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Grid auto&#45;fill · minColumnPx 230</text>
+<text xml:space="preserve" text-anchor="middle" x="347" y="-105.82" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ CampaignCard (cover card)</text>
+</g>
+<!-- hook&#45;&gt;grid -->
+<g id="edge3" class="edge">
+<title>hook&#45;&gt;grid</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M251.07,-230.57C264.55,-215.51 281.64,-196.39 297.65,-178.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="299.44,-180.16 302.28,-173.31 295.79,-176.9 299.44,-180.16"/>
+<text xml:space="preserve" text-anchor="middle" x="308.67" y="-204.16" font-family="Courier,monospace" font-size="10.00">N campaigns</text>
+</g>
+<!-- line -->
+<g id="node6" class="node">
+<title>line</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="596.56,-56.88 373.44,-56.88 373.44,0 596.56,0 596.56,-56.88"/>
+<text xml:space="preserve" text-anchor="middle" x="485" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cardPhaseLine</text>
+<text xml:space="preserve" text-anchor="middle" x="485" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cardPhase → mono state line</text>
+<text xml:space="preserve" text-anchor="middle" x="485" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(shared by card + row)</text>
+</g>
+<!-- grid&#45;&gt;line -->
+<g id="edge4" class="edge">
+<title>grid&#45;&gt;line</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M389.15,-93.25C404,-83.37 420.81,-72.18 436.17,-61.95"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="437.12,-64.26 441.59,-58.34 434.41,-60.18 437.12,-64.26"/>
+</g>
+<!-- index -->
+<g id="node5" class="node">
+<title>index</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="758.66,-150.76 489.34,-150.76 489.34,-93.88 758.66,-93.88 758.66,-150.76"/>
+<text xml:space="preserve" text-anchor="middle" x="624" y="-132.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Show below=sm</text>
+<text xml:space="preserve" text-anchor="middle" x="624" y="-119.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Stack · hairline dividers</text>
+<text xml:space="preserve" text-anchor="middle" x="624" y="-105.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ CampaignIndexRow (swatch + line)</text>
+</g>
+<!-- index&#45;&gt;line -->
+<g id="edge5" class="edge">
+<title>index&#45;&gt;line</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M581.54,-93.25C566.59,-83.37 549.65,-72.18 534.19,-61.95"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="535.91,-60.15 528.72,-58.34 533.2,-64.24 535.91,-60.15"/>
+</g>
+<!-- frame -->
+<g id="node7" class="node">
+<title>frame</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="340.86,-449.4 111.14,-449.4 111.14,-405.72 340.86,-405.72 340.86,-449.4"/>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-430.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppFrame → HeaderCredits</text>
+<text xml:space="preserve" text-anchor="middle" x="226" y="-417.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useBalance() · resilient slot</text>
+</g>
+<!-- frame&#45;&gt;route -->
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  <code>HomeRoute</code> owns a <code>&lt;Suspense&gt;</code> boundary; the data-consuming inner
+  component calls <code>useMyCampaigns</code> — a client-core suspense query over
+  <a href="../world-campaign/campaign-hub-payload.html">GET /api/campaigns/mine</a> — so it only
+  renders once the payload resolves. A screen reaches the backend <em>only</em> through a
+  client-core hook, never raw fetch; the loading spinner and the route-level error boundary handle
+  the other two states. With zero campaigns the hub shows a first-run empty shelf; otherwise it
+  renders the responsive body.
+</p>
+
+<h3 id="the-cover-card-a-book-cover">The cover card — a book cover</h3>
+
+<p>
+  Each campaign is a portrait <code>CampaignCard</code>, composed entirely from
+  <a href="./design-system.html">mythrunUI</a> primitives — no ad-hoc UI. A
+  <code>CoverCard</code> carries the world's two-colour identity as a full-bleed
+  <code>CoverDither</code> band (~40% of the card), an ink seam, then a body: a serif title and an
+  italic <em>world · creator</em> line at the top, and a mono "imprint" pinned to the foot — the
+  party seals (square <code>Avatar</code> tiles) over the record/state line. The whole card is one
+  link to the campaign's detail.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Status is text, never a dot</strong> — the paper register forbids status dots, badges, and
+  chips. A campaign's state is conveyed by the mono ledger line plus the implicit party seals, and
+  nothing else. The line is derived once by <code>cardPhaseLine</code> from the payload's
+  <code>cardPhase</code>: "shaping your world", "make your character", "waiting for players", or,
+  once played, the "<em>N sessions · 2 days ago</em>" record — the only place the hub formats a
+  relative time (mechanical <code>Intl.RelativeTimeFormat</code>, locale-aware). The card and the
+  mobile row render this exact string, so the logic lives in one shared module.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The cover link is <code>unstyled</code></strong> — mythrunUI's <code>Link</code> tints its
+  whole subtree with the accent foreground, so a plain link would render the cover's title, world,
+  and state in link-accent instead of ink. The <code>unstyled</code> variant drops the accent paint
+  while keeping the accessibility focus ring, so a whole-card link still reads in the quiet
+  paper-ink register. When a world has no colour pick yet (<code>worldColors === null</code>), the
+  cover shows CoverDither's muted paper ghost band rather than borrowing a fake chromatic identity.
+</aside>
+
+<h3 id="grid-on-the-wall-index-in-the-hand">Grid on the wall, index in the hand</h3>
+
+<p>
+  The card and the mobile row are visually distinct layouts — a cover card versus a
+  table-of-contents line — so <code>CampaignHubBody</code> is a breakpoint <em>switch</em>, not a
+  reflow. It uses the <code>Show</code> primitive (the one place a raw breakpoint class is legal, so
+  the screen stays ad-hoc-UI-free): at and above <code>sm</code>, a fluid <code>Grid</code> of cover
+  cards; below it, a compact <code>Stack</code> of hairline-divided index rows.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A fluid shelf, not a fixed column count</strong> — the grid uses <code>auto-fill</code> at
+  the card's ~230px cover width, packing as many covers per row as comfortably fit, then wrapping.
+  The shelf grows with the viewport instead of snapping to 1/2/3 columns. This needed the design
+  system's new px <code>minColumnPx</code> track, since the token space scale caps well below a card
+  width. Each mobile <code>CampaignIndexRow</code> is a small self-sized world
+  <code>swatch</code> plus three truncating text lines beside it, so every row is exactly one line
+  tall — uniform height by truncation, not a hard-coded pixel height.
+</aside>
+
+<h3 id="the-empty-shelf">The empty shelf</h3>
+
+<p>
+  With no campaigns the hub centers a single "Unwritten" cover: a
+  <code>Card frame="dashed"</code> (the design system's new dashed variant, reading as an outline
+  waiting to be filled) wrapping a muted paper ghost band — the same ghost a still-generating world
+  shows — over an evocative one-line invitation and a "Create a campaign" CTA that routes into the
+  campaign-creation flow. The card click and the CTA both point at real routes.
+</p>
+
+<h3 id="the-header-credits">The header credits</h3>
+
+<p>
+  The always-present app frame carries the live session-credit balance.
+  <code>HeaderCredits</code> reads it through the <code>useBalance</code> suspense hook and renders
+  a terse mono number, but because it is a suspense query in a frame that must paint immediately, it
+  wraps itself in its own <code>&lt;Suspense&gt;</code> <em>and</em> a local error boundary.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The credits slot degrades alone</strong> — a slow or failed balance fetch must never tear
+  down the whole authed shell through the router error boundary. So the slot loads behind a small
+  spinner and renders nothing on failure; the "+" buy affordance beside it sits
+  <em>outside</em> that boundary, so a player can still act even if the number didn't load. The buy
+  "+" and the settings gear route to an interim <code>/settings</code> until the dedicated buy flow
+  ships; the frame's logomark and display-name slots remain chrome placeholders for now. The card's
+  click target is a thin interim campaign-detail stub — a real route, not a dead click — with the
+  modal/sheet body left to a later ticket.
+</aside>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The hub consumes the
+  <a href="../world-campaign/campaign-hub-payload.html">campaign hub payload</a>
+  (<code>useMyCampaigns</code>) and the balance endpoint (<code>useBalance</code>), both through
+  <a href="./app-shell.html">the client-core data layer</a>. Every visible piece — the
+  <code>CoverCard</code>, <code>CoverDither</code>, <code>Show</code>, the dashed <code>Card</code>,
+  the <code>AvatarGroup</code> seals — is a <a href="./design-system.html">mythrunUI</a> primitive.
+  The cover colours come from the
+  <a href="../world-campaign/world-color.html">world colour identity</a>.
+</p>
+
+<h2 id="appendix-the-screen-modules">Appendix: the screen modules</h2>
+
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/home.tsx</code></td>
+    <td><code>HomeRoute</code> (Suspense) · <code>CampaignHub</code> · <code>EmptyShelf</code></td>
+  </tr>
+  <tr>
+    <td><code>routes/home/home-hub.tsx</code></td>
+    <td><code>CampaignHubBody</code> — the <code>Show</code> grid ⊕ index switch</td>
+  </tr>
+  <tr>
+    <td><code>routes/home/home-card.tsx</code></td>
+    <td><code>CampaignCard</code> — the book-cover card</td>
+  </tr>
+  <tr>
+    <td><code>routes/home/home-index-row.tsx</code></td>
+    <td><code>CampaignIndexRow</code> — the compact mobile row</td>
+  </tr>
+  <tr>
+    <td><code>routes/home/card-phase-line.ts</code></td>
+    <td><code>cardPhaseLine</code> — <code>cardPhase</code> → the shared mono state line</td>
+  </tr>
+  <tr>
+    <td><code>app/header-credits.tsx</code></td>
+    <td><code>HeaderCredits</code> — the resilient live-balance slot</td>
+  </tr>
+  <tr>
+    <td><code>routes/campaign-detail.tsx</code></td>
+    <td>Interim card click target (<code>/campaigns/:id</code>)</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/src/routes/home.tsx</code> · <code>frontend/src/routes/home/</code> ·
+  <code>frontend/src/routes/campaign-detail.tsx</code> ·
+  <code>frontend/src/app/header-credits.tsx</code>
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-cover-card-a-book-cover">The cover card — a book cover</a></li><li style="padding-left:12px"><a href="#grid-on-the-wall-index-in-the-hand">Grid on the wall, index in the hand</a></li><li style="padding-left:12px"><a href="#the-empty-shelf">The empty shelf</a></li><li style="padding-left:12px"><a href="#the-header-credits">The header credits</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-screen-modules">Appendix: the screen modules</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

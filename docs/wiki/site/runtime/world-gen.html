@@ -38,20 +38,24 @@
   entity emission (<code>world_and_factions</code> Opus, <code>locations_and_npcs</code> Opus,
   <code>entity_relationships</code> Sonnet), a <code>entity_consolidation</code> stage (Sonnet) that
   materializes any phantom entities stage 4 declared as placeholders, and a final non-streaming
-  Sonnet <code>coherence_pass</code>. A non-streaming Sonnet <code>vocabulary_intake</code> stage
-  runs between <code>concept_intake</code> and <code>world_and_factions</code> — it generates the
-  world's distinctive lexicon (the <a href="#vocabulary-registry">vocabulary registry</a>) and every
-  downstream stage injects the rendered registry into its system prompt. After
-  <code>entity_consolidation</code> commits the worker fires a
-  <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable through
-  <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still running, and
-  stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage handler returns a
-  unified <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the
-  handler commits its writes inside a <code>repo.transaction</code> and
-  <code>runStage</code> publishes the finalized events only after that COMMIT. A cost-cap circuit
-  breaker reads <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; over-cap
-  refunds the credit and marks the world failed — except at stage 7, where cap-fire marks the world
-  COMPLETE (coherence is best-effort polish).
+  Sonnet <code>coherence_pass</code>. Two non-prose structured stages ride alongside these: a
+  <code>world_color</code> stage runs immediately after <code>concept_intake</code> and picks the
+  world's two-colour cover identity (a Sonnet pick, contrast-guarded in code — see
+  <a href="../world-campaign/world-color.html">World colour identity</a>), and a non-streaming
+  Sonnet <code>vocabulary_intake</code> stage runs between <code>concept_intake</code> and
+  <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
+  <a href="#vocabulary-registry">vocabulary registry</a>) and every downstream stage injects the
+  rendered registry into its system prompt. After <code>entity_consolidation</code> commits the
+  worker fires a <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable
+  through <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still
+  running, and stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage
+  handler returns a unified
+  <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the handler
+  commits its writes inside a <code>repo.transaction</code> and <code>runStage</code> publishes the
+  finalized events only after that COMMIT. A cost-cap circuit breaker reads
+  <code>settings.world_gen_cost_cap_usd</code> at the start of each stage; over-cap refunds the
+  credit and marks the world failed — except at stage 7, where cap-fire marks the world COMPLETE
+  (coherence is best-effort polish).
 </p>
 
 <figure class="wiki-diagram">
@@ -1077,21 +1081,23 @@
 <p>
   The processor in <code>backend/src/llm/prep/world-gen-processor.ts</code> runs on the
   <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
-  ordered tuple <code>concept_intake</code>, <code>vocabulary_intake</code>,
-  <code>world_and_factions</code>, <code>locations_and_npcs</code>,
+  ordered tuple <code>concept_intake</code>, <code>world_color</code>,
+  <code>vocabulary_intake</code>, <code>world_and_factions</code>, <code>locations_and_npcs</code>,
   <code>entity_relationships</code>, <code>entity_consolidation</code>,
   <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>. The list
-  carries two pre-passes plus one resolution stage on top of the original seven prose-bearing
-  passes: <code>vocabulary_intake</code> is stage 1.5 — it generates the per-world
-  <a href="#vocabulary-registry">vocabulary registry</a> before any downstream prose-bearing stage
-  runs — and <code>entity_consolidation</code> is stage 4b, sitting between
-  <code>entity_relationships</code> and <code>starting_situation</code>. Stage 4b materializes any
-  phantom entities stage 4 declared as placeholders (see
+  carries three structured stages plus one resolution stage on top of the original seven
+  prose-bearing passes: <code>world_color</code> is stage 1.25 — a Sonnet pick of the world's
+  <a href="../world-campaign/world-color.html">two-colour cover identity</a>, persisted to
+  <code>worlds.color_from</code>/<code>color_to</code> — <code>vocabulary_intake</code> is stage 1.5
+  — it generates the per-world <a href="#vocabulary-registry">vocabulary registry</a> before any
+  downstream prose-bearing stage runs — and <code>entity_consolidation</code> is stage 4b, sitting
+  between <code>entity_relationships</code> and <code>starting_situation</code>. Stage 4b
+  materializes any phantom entities stage 4 declared as placeholders (see
   <a href="#stage-4b-phantom-reference-reconciliation">phantom-reference reconciliation</a>); it
   short-circuits to a zero-cost skip when stage 4 didn't declare any. Section headings and the
-  cost-cap discussion treat <code>vocabulary_intake</code> and <code>entity_consolidation</code> as
-  structured setup / resolution calls rather than core prose stages. Every iteration enforces the
-  same per-stage invariant:
+  cost-cap discussion treat <code>world_color</code>, <code>vocabulary_intake</code>, and
+  <code>entity_consolidation</code> as structured setup / resolution calls rather than core prose
+  stages. Every iteration enforces the same per-stage invariant:
 </p>
 
 <ol>
@@ -1243,6 +1249,17 @@
           political_summary</code
         >; also propagates <code>worlds.name</code> to <code>campaigns.name</code> for rows still
         holding the create-time <code>'Untitled'</code> placeholder (myth-4lhr)
+      </td>
+      <td>none</td>
+    </tr>
+    <tr>
+      <td><code>world_color</code></td>
+      <td>Sonnet</td>
+      <td>non-streaming</td>
+      <td>
+        <code>worlds.color_from</code> / <code>color_to</code> — the two-colour
+        <a href="../world-campaign/world-color.html">cover identity</a>, ≥6-rung contrast-guarded
+        and re-rolled on a miss
       </td>
       <td>none</td>
     </tr>

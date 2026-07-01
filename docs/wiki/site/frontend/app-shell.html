@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › App shell & data layer</div>
         <article>
@@ -335,11 +335,13 @@
 
 <p>
   On top of the primitive sit thin <strong>slice hooks</strong> — <code>useMe</code>,
-  <code>useMyCampaigns</code> — each a one-liner that reads the ambient <code>ApiContext</code> from
-  a <code>client-core</code> React context and hands the endpoint to React-Query's
-  <code>useSuspenseQuery</code>. The hooks are React, not DOM, so they stay R1-clean and a native
-  shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract and its slice
-  to <code>client-core/api</code>; the pattern never changes.
+  <code>useMyCampaigns</code>, <code>useBalance</code> — each a one-liner that reads the ambient
+  <code>ApiContext</code> from a <code>client-core</code> React context and hands the endpoint to
+  React-Query's <code>useSuspenseQuery</code>. The hooks are React, not DOM, so they stay R1-clean
+  and a native shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract
+  and its slice to <code>client-core/api</code>; the pattern never changes — the
+  <a href="./campaign-hub.html">campaign hub</a> added the <code>useBalance</code> (billing) slice
+  and widened the <code>/mine</code> contract this way.
 </p>
 
 <aside class="wiki-rationale">
@@ -588,9 +590,10 @@
   composed from <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the
   narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
   now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
-  screens are thin i18n'd stubs the flow tickets fill, except the <strong>home hub</strong>, wired
-  end-to-end (<code>useMyCampaigns</code> → real backend → Suspense loading → Cards or empty state)
-  as the done-when smoke, and the
+  screens are thin i18n'd stubs the flow tickets fill, except the
+  <strong><a href="./campaign-hub.html">campaign hub</a></strong
+  >, since built out into the app's first full screen — a shelf of book-cover campaign cards with
+  the header's credit balance wired live — and the
   <strong><a href="#the-landing-page">public landing page</a></strong>
   (MYT-86), the first public-branch screen built out from a stub.
 </p>

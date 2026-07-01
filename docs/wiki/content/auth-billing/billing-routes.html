@@ -6,7 +6,7 @@
 <!-- source: backend/src/repo/user-subscriptions.ts -->
 <!-- source: backend/src/repo/billing-history.ts -->
 <!-- source: backend/src/repo/purchases.ts -->
-<!-- source-hash: sha256:09731263a346d2900cd13365c496325f220cf6cd6af0a7fd8dd6cfa5ffab33b7 -->
+<!-- source-hash: sha256:ab9d06bc2f66ac905d481d341ab217a1e1276a4cab8812810ea7cf82480d2f3f -->
 <!-- last-ticket: MYT-42 -->
 
 <h1>Billing routes</h1>
@@ -67,7 +67,10 @@
   reads run in parallel via <code>Promise.all</code>. The <code>active_subscription</code> shape is
   a small projection of the underlying row (<code>tier_lookup_key</code>,
   <code>current_period_end</code>, <code>cancel_at_period_end</code>, <code>status</code>) — enough
-  for the UI to render "Sojourner, renews in 3 days" without exposing internal columns.
+  for the UI to render "Sojourner, renews in 3 days" without exposing internal columns. MYT-87 typed
+  the handler's response against a shared <code>BalanceResponseSchema</code> (the snake_case wire
+  shape is unchanged) so the <a href="../frontend/campaign-hub.html">campaign hub</a>'s
+  <code>useBalance</code> hook parses the same contract the backend serializes.
 </p>
 
 <p>

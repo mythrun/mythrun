@@ -1,3 +1,13 @@
 <h1>World &amp; Campaign</h1>
 <p class="lead">Prep engine, world store, campaign pipeline.</p>
-<p>Nothing built here yet. Will be populated as the world/campaign pipeline ships.</p>
+<p>
+  The first slices are built. Each world carries a
+  <a href="./world-color.html">world colour identity</a> — a two-stop dither pair a Sonnet stage
+  picks at world creation and code contrast-guards, stored on the world and worn as its campaign
+  cards' cover art. The <a href="./campaign-hub-payload.html">campaign hub payload</a> (<code
+    >GET /api/campaigns/mine</code
+  >) assembles everything a home-hub card needs — the world, the party, the play record, and a
+  per-viewer status — in two batched queries, feeding the
+  <a href="../frontend/campaign-hub.html">campaign hub</a> screen. The broader prep engine and world
+  store grow in as the pipeline ships.
+</p>

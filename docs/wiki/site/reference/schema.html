@@ -1237,7 +1237,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="worlds" id="schema-table-worlds">
   <summary>
     <span class="schema-table-name">worlds</span>
-    <span class="schema-table-meta">26 columns · 1 index · 5 CHECKs · 2 FKs</span>
+    <span class="schema-table-meta">28 columns · 1 index · 5 CHECKs · 2 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1422,6 +1422,20 @@ END)</code></li>
         <td><code>jsonb</code></td>
         <td>NO</td>
         <td><code>'{&quot;declarations&quot;: [], &quot;relationships&quot;: []}'::jsonb</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="color_from">
+        <td><code>color_from</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="color_to">
+        <td><code>color_to</code></td>
+        <td><code>text</code></td>
+        <td>YES</td>
+        <td>—</td>
         <td>—</td>
       </tr>
     </tbody>

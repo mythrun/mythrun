@@ -1,0 +1,36 @@
+digraph world_color {
+  // The per-world colour identity: one Sonnet call at world creation one-shots a
+  // two-stop dither pair, constrained by a shared runtime enum to the 130-token
+  // palette; deterministic code guarantees contrast (≥6 rungs) and re-rolls a bad
+  // pick, then persists it on the world. The cover art (CoverDither) resolves it
+  // to CSS vars and re-inks for dark mode. A backfill feeds the same stage.
+  rankdir=LR;
+  compound=true;
+
+  vibe [label="world vibe\nname · concept\ntone · themes\n(concept_intake output)"];
+
+  subgraph cluster_stage {
+    label="world_color stage  (backend world-gen · once per world)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    sonnet [label="Sonnet generateObject\nschema = WorldColorPairSchema\n(structurally in-palette)", color="ember", fontcolor="ember"];
+    guard  [label="rung guard\nrungsApart(from,to) ≥ 6\n→ ~3.0:1 WCAG"];
+    reroll [label="re-roll\n(feed rejected pair back)\nmax 3 · best-of fallback"];
+  }
+
+  enum [label="@mythrun/contract\nWorldColor enum\n13 ramps × 10 steps = 130\n(semantic ramps excluded)"];
+  cols [label="worlds.color_from\nworlds.color_to\n(nullable TEXT · migration 030)"];
+  backfill [label="world-color-backfill.ts\n--world / --all [--force]"];
+  cover [label="CoverDither\nvar(--color-{ramp}-{step})\nlight pair + reInkPair(dark)"];
+
+  vibe   -> sonnet;
+  enum   -> sonnet [style="dotted", label="constrains output"];
+  sonnet -> guard;
+  guard  -> reroll [label="< 6 rungs"];
+  reroll -> sonnet [style="dashed"];
+  guard  -> cols   [label="≥ 6 rungs →\nsetColorPair (SET)"];
+  backfill -> sonnet [ltail=cluster_stage, lhead=cluster_stage, label="re-runs the\nsame stage"];
+  cols   -> cover  [label="/mine surfaces\nthe pair"];
+}

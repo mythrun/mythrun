@@ -1,0 +1,168 @@
+<!-- source: frontend/src/routes/home.tsx -->
+<!-- source: frontend/src/routes/home/ -->
+<!-- source: frontend/src/routes/campaign-detail.tsx -->
+<!-- source: frontend/src/app/header-credits.tsx -->
+<!-- source-hash: sha256:50629f242528b4f91357017ab0945bd38b51bab4a45084faee93f04bc2bef569 -->
+<!-- last-ticket: MYT-87 -->
+
+<h1>Campaign hub</h1>
+
+<p class="lead">
+  The player's home base between sessions: a quiet shelf of their campaigns, each a small book-cover
+  card carrying its world's colour identity, with a clear path to make a new one. The hub is the
+  first real screen the app renders — a full-stack vertical from the <code>/mine</code> payload to
+  the cover art.
+</p>
+
+<!-- @diagram: frontend/campaign-hub -->
+
+<h2>How it fits together</h2>
+
+<p>
+  <code>HomeRoute</code> owns a <code>&lt;Suspense&gt;</code> boundary; the data-consuming inner
+  component calls <code>useMyCampaigns</code> — a client-core suspense query over
+  <a href="../world-campaign/campaign-hub-payload.html">GET /api/campaigns/mine</a> — so it only
+  renders once the payload resolves. A screen reaches the backend <em>only</em> through a
+  client-core hook, never raw fetch; the loading spinner and the route-level error boundary handle
+  the other two states. With zero campaigns the hub shows a first-run empty shelf; otherwise it
+  renders the responsive body.
+</p>
+
+<h3>The cover card — a book cover</h3>
+
+<p>
+  Each campaign is a portrait <code>CampaignCard</code>, composed entirely from
+  <a href="./design-system.html">mythrunUI</a> primitives — no ad-hoc UI. A
+  <code>CoverCard</code> carries the world's two-colour identity as a full-bleed
+  <code>CoverDither</code> band (~40% of the card), an ink seam, then a body: a serif title and an
+  italic <em>world · creator</em> line at the top, and a mono "imprint" pinned to the foot — the
+  party seals (square <code>Avatar</code> tiles) over the record/state line. The whole card is one
+  link to the campaign's detail.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Status is text, never a dot</strong> — the paper register forbids status dots, badges, and
+  chips. A campaign's state is conveyed by the mono ledger line plus the implicit party seals, and
+  nothing else. The line is derived once by <code>cardPhaseLine</code> from the payload's
+  <code>cardPhase</code>: "shaping your world", "make your character", "waiting for players", or,
+  once played, the "<em>N sessions · 2 days ago</em>" record — the only place the hub formats a
+  relative time (mechanical <code>Intl.RelativeTimeFormat</code>, locale-aware). The card and the
+  mobile row render this exact string, so the logic lives in one shared module.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The cover link is <code>unstyled</code></strong> — mythrunUI's <code>Link</code> tints its
+  whole subtree with the accent foreground, so a plain link would render the cover's title, world,
+  and state in link-accent instead of ink. The <code>unstyled</code> variant drops the accent paint
+  while keeping the accessibility focus ring, so a whole-card link still reads in the quiet
+  paper-ink register. When a world has no colour pick yet (<code>worldColors === null</code>), the
+  cover shows CoverDither's muted paper ghost band rather than borrowing a fake chromatic identity.
+</aside>
+
+<h3>Grid on the wall, index in the hand</h3>
+
+<p>
+  The card and the mobile row are visually distinct layouts — a cover card versus a
+  table-of-contents line — so <code>CampaignHubBody</code> is a breakpoint <em>switch</em>, not a
+  reflow. It uses the <code>Show</code> primitive (the one place a raw breakpoint class is legal, so
+  the screen stays ad-hoc-UI-free): at and above <code>sm</code>, a fluid <code>Grid</code> of cover
+  cards; below it, a compact <code>Stack</code> of hairline-divided index rows.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A fluid shelf, not a fixed column count</strong> — the grid uses <code>auto-fill</code> at
+  the card's ~230px cover width, packing as many covers per row as comfortably fit, then wrapping.
+  The shelf grows with the viewport instead of snapping to 1/2/3 columns. This needed the design
+  system's new px <code>minColumnPx</code> track, since the token space scale caps well below a card
+  width. Each mobile <code>CampaignIndexRow</code> is a small self-sized world
+  <code>swatch</code> plus three truncating text lines beside it, so every row is exactly one line
+  tall — uniform height by truncation, not a hard-coded pixel height.
+</aside>
+
+<h3>The empty shelf</h3>
+
+<p>
+  With no campaigns the hub centers a single "Unwritten" cover: a
+  <code>Card frame="dashed"</code> (the design system's new dashed variant, reading as an outline
+  waiting to be filled) wrapping a muted paper ghost band — the same ghost a still-generating world
+  shows — over an evocative one-line invitation and a "Create a campaign" CTA that routes into the
+  campaign-creation flow. The card click and the CTA both point at real routes.
+</p>
+
+<h3>The header credits</h3>
+
+<p>
+  The always-present app frame carries the live session-credit balance.
+  <code>HeaderCredits</code> reads it through the <code>useBalance</code> suspense hook and renders
+  a terse mono number, but because it is a suspense query in a frame that must paint immediately, it
+  wraps itself in its own <code>&lt;Suspense&gt;</code> <em>and</em> a local error boundary.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The credits slot degrades alone</strong> — a slow or failed balance fetch must never tear
+  down the whole authed shell through the router error boundary. So the slot loads behind a small
+  spinner and renders nothing on failure; the "+" buy affordance beside it sits
+  <em>outside</em> that boundary, so a player can still act even if the number didn't load. The buy
+  "+" and the settings gear route to an interim <code>/settings</code> until the dedicated buy flow
+  ships; the frame's logomark and display-name slots remain chrome placeholders for now. The card's
+  click target is a thin interim campaign-detail stub — a real route, not a dead click — with the
+  modal/sheet body left to a later ticket.
+</aside>
+
+<h2>Integration points</h2>
+
+<p>
+  The hub consumes the
+  <a href="../world-campaign/campaign-hub-payload.html">campaign hub payload</a>
+  (<code>useMyCampaigns</code>) and the balance endpoint (<code>useBalance</code>), both through
+  <a href="./app-shell.html">the client-core data layer</a>. Every visible piece — the
+  <code>CoverCard</code>, <code>CoverDither</code>, <code>Show</code>, the dashed <code>Card</code>,
+  the <code>AvatarGroup</code> seals — is a <a href="./design-system.html">mythrunUI</a> primitive.
+  The cover colours come from the
+  <a href="../world-campaign/world-color.html">world colour identity</a>.
+</p>
+
+<h2>Appendix: the screen modules</h2>
+
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/home.tsx</code></td>
+    <td><code>HomeRoute</code> (Suspense) · <code>CampaignHub</code> · <code>EmptyShelf</code></td>
+  </tr>
+  <tr>
+    <td><code>routes/home/home-hub.tsx</code></td>
+    <td><code>CampaignHubBody</code> — the <code>Show</code> grid ⊕ index switch</td>
+  </tr>
+  <tr>
+    <td><code>routes/home/home-card.tsx</code></td>
+    <td><code>CampaignCard</code> — the book-cover card</td>
+  </tr>
+  <tr>
+    <td><code>routes/home/home-index-row.tsx</code></td>
+    <td><code>CampaignIndexRow</code> — the compact mobile row</td>
+  </tr>
+  <tr>
+    <td><code>routes/home/card-phase-line.ts</code></td>
+    <td><code>cardPhaseLine</code> — <code>cardPhase</code> → the shared mono state line</td>
+  </tr>
+  <tr>
+    <td><code>app/header-credits.tsx</code></td>
+    <td><code>HeaderCredits</code> — the resilient live-balance slot</td>
+  </tr>
+  <tr>
+    <td><code>routes/campaign-detail.tsx</code></td>
+    <td>Interim card click target (<code>/campaigns/:id</code>)</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/src/routes/home.tsx</code> · <code>frontend/src/routes/home/</code> ·
+  <code>frontend/src/routes/campaign-detail.tsx</code> ·
+  <code>frontend/src/app/header-credits.tsx</code>
+</p>

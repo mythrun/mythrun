@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:8b843f1f6b26dd9bedc1659ea71a30ecd67c570321af5de6b6e6b4096f5731e3 -->
+<!-- source-hash: sha256:a22dbfe9d34c056c3173ce2de37a90b8ba5a7c77bf147457515f0acfbf75324f -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>LLM client</h1>
@@ -18,10 +18,11 @@
   <code>maxOutputTokens</code> ceiling so a long-prose call can lift the SDK default before it
   truncates, and — MYT-72 — an optional <code>redactRawText</code> flag (<code>generateObject</code>
   only) for a call whose raw output reasons over secrets. Consumers include the onboarding profanity
-  classifier, the world-gen input gate, the paint-job validator, the eight world-gen stage handlers
-  (concept_intake, vocabulary_intake, world_and_factions, locations_and_npcs, entity_relationships,
-  entity_consolidation, starting_situation, random_tables, coherence_pass), the structured-output
-  repair chain plus its companion per-item drop-on-fail gate on the streaming stages, the
+  classifier, the world-gen input gate, the paint-job validator, the world-gen stage handlers
+  (concept_intake, world_color, vocabulary_intake, world_and_factions, locations_and_npcs,
+  entity_relationships, entity_consolidation, starting_situation, random_tables, coherence_pass),
+  the structured-output repair chain plus its companion per-item drop-on-fail gate on the streaming
+  stages, the
   <a href="#the-session-prep-generation-stage">session-prep generation stage</a>, the
   <a href="./dm-trigger.html">DM-trigger classifier</a> (a cheap Haiku <code>generateObject</code>
   deciding whether the AI DM should take a turn), the

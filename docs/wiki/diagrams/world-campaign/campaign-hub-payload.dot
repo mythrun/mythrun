@@ -1,0 +1,39 @@
+digraph campaign_hub_payload {
+  // GET /api/campaigns/mine assembles the home-hub card payload in two batched
+  // queries (no fanout / N+1), then derives a viewer-relative cardPhase per card.
+  // The result is the CampaignSummary[] wire shape the frontend hub renders.
+  rankdir=LR;
+  compound=true;
+
+  caller [label="GET /api/campaigns/mine\n(the signed-in viewer)"];
+
+  subgraph cluster_repo {
+    label="listHubCardsForUser  (repo · pure data access)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    q1 [label="query 1\ncampaigns ⋈ worlds ⋈ users(creator)\n+ LATERAL (count, max started_at)\nWHERE member · accepted · not archived"];
+    q2 [label="query 2\nbatched party roster\nWHERE campaign_id = ANY($ids)\nhasCharacter = character row exists"];
+  }
+
+  subgraph cluster_route {
+    label="toHubCardSummary  (route · per card, per viewer)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    phase [label="deriveCardPhase\ngenerating · failed · needs-character\nwaiting-for-players · not-played · played", color="ember", fontcolor="ember"];
+    valid [label="validate colour pair\nWorldColorPairSchema\n(half-set → null ghost)"];
+  }
+
+  wire [label="CampaignSummary[]\nworldColors · party · creator\nsessionCount · lastPlayedAt · cardPhase"];
+  hub  [label="campaign hub\n(frontend screen)"];
+
+  caller -> q1;
+  q1 -> q2 [label="ids"];
+  q2 -> phase [ltail=cluster_repo, lhead=cluster_route, label="rows"];
+  phase -> wire;
+  valid -> wire;
+  wire -> hub [label="the home-hub cards"];
+}

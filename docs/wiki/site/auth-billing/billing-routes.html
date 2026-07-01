@@ -382,7 +382,10 @@
   reads run in parallel via <code>Promise.all</code>. The <code>active_subscription</code> shape is
   a small projection of the underlying row (<code>tier_lookup_key</code>,
   <code>current_period_end</code>, <code>cancel_at_period_end</code>, <code>status</code>) — enough
-  for the UI to render "Sojourner, renews in 3 days" without exposing internal columns.
+  for the UI to render "Sojourner, renews in 3 days" without exposing internal columns. MYT-87 typed
+  the handler's response against a shared <code>BalanceResponseSchema</code> (the snake_case wire
+  shape is unchanged) so the <a href="../frontend/campaign-hub.html">campaign hub</a>'s
+  <code>useBalance</code> hook parses the same contract the backend serializes.
 </p>
 
 <p>

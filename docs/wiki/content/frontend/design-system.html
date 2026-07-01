@@ -20,18 +20,18 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:b3a1abac1bdaef22e6f650b36063d8bad0f074830bdc08e9dc39f46dc45a9eb6 -->
+<!-- source-hash: sha256:70ecf4ebceac03d9bb093f229d24aff3172007b53424434506ce4c40f8ca6523 -->
 <!-- last-ticket: MYT-86 -->
 
 <h1>Design system</h1>
 
 <p class="lead">
   mythrunUI — the brand-aligned, token-driven component library the whole app composes. The system
-  before the app: ~32 primitives (layout, type, controls, overlays, feedback, display, brand) each
-  typed against a platform-neutral contract, styled from a single token vocabulary, responsive by
-  construction (they shrink, wrap, and truncate so nothing spills a phone-width row), light/dark at
-  runtime, documented in one frontend-level Storybook, and held in place by lint, accessibility, and
-  mobile-viewport CI gates. Two packages carry it —
+  before the app: ~35 primitives (layout, responsive, type, controls, overlays, feedback, display,
+  brand) each typed against a platform-neutral contract, styled from a single token vocabulary,
+  responsive by construction (they shrink, wrap, and truncate so nothing spills a phone-width row),
+  light/dark at runtime, documented in one frontend-level Storybook, and held in place by lint,
+  accessibility, and mobile-viewport CI gates. Two packages carry it —
   <code>@mythrun/client-core</code> (the platform-neutral brain: the component contract + the token
   data) and <code>@mythrun/ui</code> (the web implementation that turns the contract into DOM).
 </p>
@@ -126,6 +126,19 @@
   breakpoints, and the twelve curated avatar pigments). These are exposed as the build-time subpath
   <code>@mythrun/client-core/tokens</code>. <strong>No CSS moves.</strong>
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The pigments widened into full ramps (MYT-87)</strong> — the eleven non-hero brand
+  pigments (moss, pine, verdigris, lapis, iris, heather, rose, sienna, ochre, umber, slate) began as
+  single mid-tone values, so two of them, being near-equiluminant, couldn't dither against each
+  other. The generator now runs each pigment through the same OKLCH luminance ladder ember and the
+  semantic ramps ride, emitting all ten steps (<code>--color-{hue}-{step}</code>) — the authored
+  mid-tone lands unchanged on its nearest rung, and the rest of the ramp is generated around it.
+  That turns the palette into a full grid a
+  <a href="../world-campaign/world-color.html">world cover</a> can pick a genuine light-of-one-hue ×
+  dark-of-another from and always read. The change is additive (light and dark variants of colours
+  that already existed) and flows through the same manifest + drift guard as every other token.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Generator moves, web CSS stays</strong> — the token <em>values</em> are platform-neutral
@@ -297,11 +310,30 @@
     transparent (paints no background, so a landmark wrapper inherits the page field instead of
     laying a panel tone over it), and <code>inverted</code>, theme-<em>inverting</em> — dark on a
     light page, light on a dark page — the
-    <a href="./app-shell.html#the-landing-page">landing footer</a>'s field.)
+    <a href="./app-shell.html#the-landing-page">landing footer</a>'s field. MYT-87 added a px
+    <code>minColumnPx</code> track to <code>Grid</code> — an <code>auto-fill</code> minimum in raw
+    pixels rather than a <code>SpaceToken</code> (the space scale caps well below a card width), the
+    fluid shelf mechanism the <a href="./campaign-hub.html">campaign hub</a> packs cover cards on —
+    and a <code>tone="ink"</code> <code>Divider</code>, a deliberate structural cut dark in both
+    themes, the seam between a cover card's cover art and its body.)
   </li>
   <li>
-    <strong>Typography</strong> — <code>Text</code>, <code>Heading</code>,
-    <code>Link</code> (router-aware, i18n), <code>VisuallyHidden</code>.
+    <strong>Responsive</strong> — <code>Show</code>, a show/hide switch between two visually
+    distinct layouts (the hub's desktop card grid vs its mobile index list). It toggles visibility
+    at a breakpoint with full static class strings — a pair of sibling <code>Show</code>s (<code
+      >above</code
+    >
+    ⊕ <code>below</code> the same step) renders exactly one, and the hidden branch is
+    <code>display:none</code>, out of the layout <em>and</em> the a11y tree, so the off-screen
+    layout's headings and links never leak to assistive tech.
+  </li>
+  <li>
+    <strong>Typography</strong> — <code>Text</code> (roles now include <code>subtitle</code>, the
+    italic muted narrative sub-line, and <code>meta</code>, the mono ledger line the hub reads a
+    campaign's state into), <code>Heading</code>, <code>Link</code> (router-aware, i18n, plus an
+    <code>unstyled</code> variant that drops the accent tint from its subtree while keeping the
+    focus ring — a whole-card or whole-row link that shouldn't paint its contents link-accent),
+    <code>VisuallyHidden</code>.
   </li>
   <li>
     <strong>Leaves</strong> — <code>Icon</code>, <code>Spinner</code> — composed by the controls
@@ -324,9 +356,12 @@
   <li>
     <strong>Containers &amp; overlays</strong> — <code>Card</code> (header/body/footer slots, plus a
     responsive <code>collapse</code> mode — a bordered card at <code>sm</code> and up, dropping its
-    border/surface/padding to sit native and inline below the breakpoint, the genesis screens'
-    card), <code>Modal</code>, <code>Popover</code>, <code>Tooltip</code>, <code>Tabs</code>,
-    <code>Menu</code>.
+    border/surface/padding to sit native and inline below the breakpoint, the genesis screens' card,
+    and a <code>frame="dashed"</code> variant — an outline waiting to be filled, the hub's
+    empty-state "Unwritten" cover), <code>CoverCard</code> (a portrait "made-object" card with a
+    full-bleed cover header, an ink seam, and a foot-pinned imprint — the fixed cover geometry the
+    neutral <code>Card</code> doesn't model), <code>Modal</code>, <code>Popover</code>,
+    <code>Tooltip</code>, <code>Tabs</code>, <code>Menu</code>.
   </li>
   <li>
     <strong>Feedback</strong> — <code>Banner</code> (inline, persistent),
@@ -334,7 +369,11 @@
   </li>
   <li>
     <strong>Display</strong> — <code>Avatar</code>/<code>AvatarGroup</code> (image-with-initials
-    fallback, twelve curated pigments), <code>Badge</code>, <code>Dither</code>.
+    fallback, twelve curated pigments; <code>AvatarGroup</code> gained a <code>size</code> and a
+    <code>surface</code> prop — its overlap ring follows either the page or a card surface, so seals
+    clustered on a card don't halo), <code>CoverDither</code> (a card-scale full-field Bayer
+    gradient between two <code>WorldColor</code>s — a world's cover art, distinct from the
+    fixed-geometry transition-strip <code>Dither</code>), <code>Badge</code>, <code>Dither</code>.
   </li>
   <li>
     <strong>Brand</strong> — <code>Logomark</code> (the 64-px pixel-art mark, crisp-scaled,
@@ -371,9 +410,15 @@
 </aside>
 
 <p>
-  Feature-specific composites — campaign cards, roll cards, chat messages, the character sheet — are
-  deliberately <strong>out of scope</strong> here. They get built into mythrunUI inside their own
-  feature issues, never ad-hoc, so the system grows with the app rather than ahead of it.
+  Feature-specific composites — the campaign card, roll cards, chat messages, the character sheet —
+  are deliberately <strong>out of scope</strong> here. They get built inside their own feature
+  issues, never ad-hoc. But their <em>reusable</em> parts land in the system: the
+  <a href="./campaign-hub.html">campaign hub</a> gave mythrunUI the <code>CoverCard</code>,
+  <code>CoverDither</code>, and <code>Show</code> primitives plus the
+  <code>Card</code>/<code>Grid</code>/<code>Avatar</code>/<code>Text</code>/<code>Link</code>
+  extensions above, while the campaign-specific <code>CampaignCard</code> that composes them stays a
+  screen component. The line is reusability, not feature-adjacency — a book-cover card is a general
+  shape; "a campaign's card" is not.
 </p>
 
 <h2>Responsive by construction</h2>
