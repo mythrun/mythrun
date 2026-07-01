@@ -10,6 +10,7 @@ import {
   chaosAt,
   thresholdAt,
   buildBand,
+  buildField,
 } from './bayer.ts'
 
 // Guards on the LOCKED brand dither formula. If any of these change, the dither
@@ -110,6 +111,41 @@ describe('buildBand', () => {
     for (let row = BAND_CELLS / 2; row < BAND_CELLS; row++) {
       expect(cells.filter((c) => c.y === row && c.accent).length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('buildField', () => {
+  it('produces a full rows × cols field (every cell, both axes)', () => {
+    const cells = buildField(10, 8)
+    expect(cells).toHaveLength(10 * 8)
+  })
+
+  it('is pure GROUND at the top row and pure ACCENT at the bottom row', () => {
+    const cols = 24
+    const rows = 12
+    const cells = buildField(cols, rows)
+    const accentInRow = (row: number) =>
+      cells.filter((c) => c.y === row && c.accent).length
+    // t = 0 at the top → no cell clears its (≥ 0) threshold; t = 1 at the bottom
+    // → every cell clears its (< 1) threshold. The cover's solid-ish edges.
+    expect(accentInRow(0)).toBe(0)
+    expect(accentInRow(rows - 1)).toBe(cols)
+  })
+
+  it('sweeps ground→accent: the accent share rises down the field', () => {
+    const cols = 24
+    const rows = 16
+    const cells = buildField(cols, rows)
+    const accentInRow = (row: number) =>
+      cells.filter((c) => c.y === row && c.accent).length
+    // A quarter-way down is sparser than three-quarters-way down.
+    expect(accentInRow(Math.floor(rows / 4))).toBeLessThan(accentInRow(Math.floor((rows * 3) / 4)))
+  })
+
+  it('degenerates a single-row field to pure accent (no divide-by-zero)', () => {
+    const cells = buildField(6, 1)
+    expect(cells).toHaveLength(6)
+    expect(cells.every((c) => c.accent)).toBe(true)
   })
 })
 

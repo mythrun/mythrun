@@ -114,3 +114,26 @@ export function buildBand(crossCells: number): DitherCell[] {
   }
   return cells
 }
+
+/**
+ * Build a FULL-FIELD dither grid `cols` × `rows` — a true top→bottom Bayer
+ * gradient across the WHOLE field, not a fixed-length transition strip (`buildBand`).
+ * `t` runs 0 at the top row → 1 at the bottom row, so the top row is pure GROUND
+ * (nothing clears a threshold ≥ 0), the bottom row pure ACCENT, and the rows
+ * between dither the ground→accent sweep. Reuses the locked `thresholdAt` math, so
+ * the grain is identical to the `Dither` band's; only the field GEOMETRY differs.
+ * This is the CoverDither's fill: the campaign cover IS the whole gradient, edge to
+ * edge. Pure (no DOM) so the geometry is unit-testable in isolation.
+ */
+export function buildField(cols: number, rows: number): DitherCell[] {
+  const cells: DitherCell[] = []
+  for (let y = 0; y < rows; y++) {
+    // Ramp value at this row: 0 at the top, 1 at the bottom. A single-row field
+    // degenerates to pure accent (t = 1) rather than dividing by zero.
+    const t = rows > 1 ? y / (rows - 1) : 1
+    for (let x = 0; x < cols; x++) {
+      cells.push({ x, y, accent: thresholdAt(x, y) < t })
+    }
+  }
+  return cells
+}

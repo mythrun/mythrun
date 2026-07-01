@@ -1,117 +1,141 @@
-import { forwardRef, useId } from 'react'
+import { forwardRef } from 'react'
+import type { CSSProperties } from 'react'
 import type { CoverDitherProps } from '@mythrun/client-core/contract'
-import { worldColorCssVar, type WorldColor } from '@mythrun/contract/rest'
+import { reInkPair, worldColorCssVar, worldColorStep, type WorldColor } from '@mythrun/contract/rest'
 import { cn } from '../../lib/cn.ts'
-import { BAND_CELLS, CELL_PX, CROSS_CELLS, buildBand } from '../Dither/bayer.ts'
+import { buildField } from '../Dither/bayer.ts'
 
-// CoverDither — the card-scale dither COVER that carries a world's two-colour identity
-// (the genesis / home-hub cover art). It is NOT a `Dither`: `Dither` is a fixed-geometry
-// transition STRIP (the brand's page→footer band — 20 dithered cells, cropped, framed by
-// two solid adjacent sections, no children). CoverDither is a FULL-FIELD texture that
-// fills its host edge-to-edge and TILES the locked 4×4-Bayer two-colour dither — the
-// "tiled wall" of a campaign cover — sized to the card-band aspect or the mobile square.
-// The locked Bayer math (`bayer.ts`, pure + unit-tested) is REUSED unchanged.
+// CoverDither — the card-scale dither COVER that carries a world's two-colour
+// identity (the genesis / home-hub cover art). It is NOT a `Dither`: `Dither` is a
+// fixed-geometry transition STRIP (the brand's page→footer band — 20 dithered cells
+// framed by two solid adjacent sections). CoverDither is a FULL-FIELD Bayer gradient
+// that fills its host edge-to-edge — a true top→bottom sweep between the two
+// world-colours, the whole cover art of a campaign card. The locked Bayer math
+// (`bayer.ts`, pure + unit-tested) is REUSED unchanged; only the field geometry
+// differs (`buildField`, a full grid, vs `buildBand`, a fixed strip).
 //
-// FILLS THE HOST IN BOTH AXES. Where `Dither` pins its transition axis to the band's own
-// length (a 160px strip) and only tiles the CROSS axis, CoverDither's fill rect is
-// 100% × 100%, so the dither tiles to fill the whole cover in both directions — the
-// transition axis fills the host too. The SVG has NO viewBox (1 user unit = 1 CSS px, no
-// internal scaling) and a `<pattern patternUnits="userSpaceOnUse">` at the natural
-// cell-pixel size, so the grain stays PERFECTLY SQUARE at any host size (`crispEdges`
-// kills anti-aliasing); a wider/taller host gets MORE identical cells, never stretched ones.
+// RENDERED AS SVG (not canvas) so the cover is THEME-RESPONSIVE via CSS with zero
+// re-render: the Bayer PATTERN — which cell is ground vs accent — is fixed, and the
+// two colour VALUES ride custom properties the `.dark` selector flips. A
+// `viewBox`/`preserveAspectRatio="none"` grid stretches the fixed COLS×ROWS field to
+// fill the host in both axes (the gradient must span exactly top→bottom, so the field
+// stretches — it cannot tile); `crispEdges` keeps the grain chunky.
 //
-// COLOUR is `from`→`to`, each a `WorldColor` (the curated cover set — R3, never raw hex).
-// The set spans TWO css-var namespaces — the 12 avatar pigments (`--color-avatar-{name}`)
-// and selected paper/ember ramp steps (`--color-{name}`). `worldColorCssVar` (the single
-// place that convention is encoded) resolves the namespace; we wrap its var NAME in
-// `var(...)`. `from` is the ground the dither emerges from; `to` the accent it resolves
-// into. a11y: the cover is pure decoration → `aria-hidden`; nothing composes on it (no
-// children).
-//
-// GRAIN: the cover uses the `preview` (8px) cell — a card cover / mobile swatch is a SMALL
-// surface, so the chunkier 8px grain stays visible AS grain rather than reading as noise.
-// The from→to ramp + cell math live in `bayer.ts`; this component is the cover's geometry.
+// COLOUR is a `from`/`to` pair, each a `WorldColor` (`{ramp}-{step}` token, R3, never
+// raw hex). The ends are ordered by ladder STEP, not argument order: the lower step is
+// the sparse GROUND (top), the higher step the dense ACCENT (bottom). `worldColorCssVar`
+// resolves each to its uniform `var(--color-{ramp}-{step})`. a11y: the cover is pure
+// decoration → `aria-hidden`; nothing composes on it (no children).
 
-/** Wrap the css-var NAME `worldColorCssVar` returns (e.g. `--color-avatar-sienna`) into a
- *  `var(...)` reference. Pigments resolve to the avatar namespace, ramp steps to the base
- *  palette namespace — the helper owns that switch so we never hand-roll it. */
-function worldColorToVar(name: WorldColor): string {
-  return `var(${worldColorCssVar(name)})`
-}
+/** The still-generating placeholder pair — a muted `paper` ground→accent shown when a
+ *  world has no colour pick yet (`from`/`to` absent). Run through the SAME
+ *  ground/accent/re-ink pipeline as a real pair, so it darkens coherently in dark mode
+ *  instead of glaring bright on the dark card. */
+const GHOST_FROM: WorldColor = 'paper-100'
+const GHOST_TO: WorldColor = 'paper-200'
 
-/** Intrinsic shape per `size`. `band` is the wide card-cover banner — it fills its host
- *  WIDTH and derives a short height from the 16/5 aspect. `swatch` is a SELF-SIZED small
- *  square (a fixed `--space-8` / 48px tile, `shrink-0` so it holds its size as a flex-row
- *  thumbnail) — the leading world-identity chip in a compact list row, where the host (a
- *  screen) can't set a width. Either way the dither tiles to fill the resulting box. */
+/** Intrinsic shape per `size`. `band` is the wide card-cover banner: it fills its host
+ *  WIDTH and stands up its own 5:3 cover-band height (the card is built around it).
+ *  `swatch` is a SELF-SIZED fixed square (a `--space-8` / 48px tile, `shrink-0` so it
+ *  holds its size as a flex-row thumbnail) — the leading world-identity chip in a
+ *  compact list row, where the host can't set a width. */
 const SIZE_CLASS = {
-  band: 'w-full aspect-[16/5]',
+  band: 'w-full aspect-[5/3]',
   swatch: 'w-[var(--space-8)] shrink-0 aspect-square',
 } as const
 
-// The cover grain: the chunkier `preview` cell so the dither stays visible at card scale.
-const COVER_CELL_PX = CELL_PX.preview
-// One tile = a full from→to dither ramp (the locked band), tiled to fill the cover.
-const TILE_WIDTH_PX = CROSS_CELLS * COVER_CELL_PX
-const TILE_HEIGHT_PX = BAND_CELLS * COVER_CELL_PX
+/** Full-field grid per size: `cols`×`rows` ≈ the size's aspect so the square-drawn
+ *  cells render ~square at the natural size, and the count sets the GRAIN (host px ÷
+ *  cells). The band is a ~230px card cover (≈5px cells); the swatch a 48px square
+ *  (≈4px cells) — each kept coarse enough that the dither reads AS grain, not noise. */
+const GRID = {
+  band: { cols: 45, rows: 27 },
+  swatch: { cols: 12, rows: 12 },
+} as const
+
+/** The four raw colour values a cover rides — the light pair and the re-inked dark
+ *  pair — as inline custom properties. A `.dark`-scoped class picks which pair
+ *  `--cover-ground` / `--cover-accent` resolve to, so the theme flips with no JS. */
+type CoverVars = CSSProperties & Record<`--cover-${string}`, string>
 
 export const CoverDither = forwardRef<HTMLDivElement, CoverDitherProps>(function CoverDither(
   { from, to, size = 'band', 'data-testid': dataTestId },
   ref,
 ) {
-  // Curated cover colours → `var(--color*)` refs (pigment vs ramp namespace via the helper).
-  const ground = worldColorToVar(from)
-  const accent = worldColorToVar(to)
-  // The from→to dither cell grid (locked Bayer math, reused unchanged): a tile of the ramp.
-  const cells = buildBand(CROSS_CELLS)
-  // A per-instance pattern id so the MANY covers on the dashboard wall don't collide on the
-  // SVG `<pattern>` reference (the id is document-global within the SVG namespace).
-  const patternId = `cover-dither-${useId()}`
+  // No colour pick yet → the muted paper ghost (both ends absent by contract).
+  const isGhost = from === undefined || to === undefined
+  const rawFrom = from ?? GHOST_FROM
+  const rawTo = to ?? GHOST_TO
+
+  // Order by ladder step: the lower step is the light GROUND (top, sparse), the higher
+  // step the deep ACCENT (bottom, dense) — the direction the field sweeps. Independent
+  // of the from/to argument order.
+  const groundColor = worldColorStep(rawFrom) <= worldColorStep(rawTo) ? rawFrom : rawTo
+  const accentColor = groundColor === rawFrom ? rawTo : rawFrom
+
+  // Dark mode re-inks the SAME pattern: ground → its hue's smouldering -400, accent →
+  // near-black -900 (hues preserved). reInkPair keys off step, so passing {ground,
+  // accent} (ground ≤ accent) yields {darkGround, darkAccent} in the same positions.
+  const darkPair = reInkPair({ from: groundColor, to: accentColor })
+
+  // The light + dark colour values as custom properties; the `.dark`-scoped classes
+  // below select which pair `--cover-ground` / `--cover-accent` point at.
+  const style: CoverVars = {
+    '--cover-ground-lt': worldColorCssVar(groundColor),
+    '--cover-accent-lt': worldColorCssVar(accentColor),
+    '--cover-ground-dk': worldColorCssVar(darkPair.from),
+    '--cover-accent-dk': worldColorCssVar(darkPair.to),
+  }
+
+  const { cols, rows } = GRID[size]
+  // Only the accent cells are drawn (the ground is one background rect beneath them),
+  // halving the rect count. The pattern is fixed; the two fills flip with the theme.
+  const accentCells = buildField(cols, rows).filter((c) => c.accent)
 
   return (
     <div
       ref={ref}
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       data-cover-size={size}
-      className={cn('relative block overflow-hidden', SIZE_CLASS[size])}
+      {...(isGhost ? { 'data-cover-ghost': 'true' } : {})}
+      style={style}
+      className={cn(
+        'relative block overflow-hidden',
+        SIZE_CLASS[size],
+        // Light pair by default; the `.dark` scope re-inks to the dark pair. The
+        // pattern never changes — only these two values do.
+        '[--cover-ground:var(--cover-ground-lt)] [--cover-accent:var(--cover-accent-lt)]',
+        'dark:[--cover-ground:var(--cover-ground-dk)] dark:[--cover-accent:var(--cover-accent-dk)]',
+      )}
     >
-      {/* No viewBox → 1 user unit = 1 CSS px, no internal scaling: the pattern tiles at its
-          NATURAL pixel size and the cells stay perfectly square at any host size.
-          `crispEdges` kills anti-aliasing on the cells. Decorative → aria-hidden. */}
+      {/* No square-pixel viewBox here (unlike Dither's tiling pattern): the gradient
+          must span exactly top→bottom, so the fixed COLS×ROWS field STRETCHES to fill
+          via preserveAspectRatio="none". `crispEdges` keeps the cells hard-edged.
+          Decorative → aria-hidden. */}
       <svg
         data-cover-texture
         aria-hidden="true"
         className="absolute inset-0 h-full w-full"
+        viewBox={`0 0 ${String(cols)} ${String(rows)}`}
+        preserveAspectRatio="none"
         shapeRendering="crispEdges"
       >
-        <defs>
-          <pattern
-            id={patternId}
-            data-cover-pattern
-            patternUnits="userSpaceOnUse"
-            width={TILE_WIDTH_PX}
-            height={TILE_HEIGHT_PX}
-          >
-            {/* GROUND fills the tile; the accent dither cells paint over it — sparse accent
-                at the ramp's start, dense at its end (the brand's two-colour dither). */}
-            <rect x={0} y={0} width={TILE_WIDTH_PX} height={TILE_HEIGHT_PX} fill={ground} />
-            {cells
-              .filter((c) => c.accent)
-              .map((c) => (
-                <rect
-                  key={`${String(c.x)}:${String(c.y)}`}
-                  x={c.x * COVER_CELL_PX}
-                  y={c.y * COVER_CELL_PX}
-                  width={COVER_CELL_PX}
-                  height={COVER_CELL_PX}
-                  fill={accent}
-                />
-              ))}
-          </pattern>
-        </defs>
-        {/* Fills the field in BOTH axes (the cover IS the whole texture): the pattern tiles
-            to fill, so the dither runs edge-to-edge — the transition axis fills the host too. */}
-        <rect data-cover-fill x={0} y={0} width="100%" height="100%" fill={`url(#${patternId})`} />
+        {/* GROUND fills the whole field; the accent cells paint over it — sparse at the
+            top, dense at the bottom (the two-colour dither sweep). Fill via CSS (not the
+            `fill` attribute) so the custom-property value resolves and flips with theme. */}
+        <rect
+          data-cover-ground
+          x={0}
+          y={0}
+          width={cols}
+          height={rows}
+          className="[fill:var(--cover-ground)]"
+        />
+        <g data-cover-accent className="[fill:var(--cover-accent)]">
+          {accentCells.map((c) => (
+            <rect key={`${String(c.x)}:${String(c.y)}`} x={c.x} y={c.y} width={1} height={1} />
+          ))}
+        </g>
       </svg>
     </div>
   )
