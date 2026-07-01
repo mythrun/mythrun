@@ -439,6 +439,30 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     expect(failedCard.lastPlayedAt).toBeNull()
   })
 
+  it('200 collapses an invalid persisted colour pair to null (a legacy off-enum pair)', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    // A world coloured before the widened WorldColor enum: bare pigment names that
+    // are no longer valid tokens. Migration 030 leaves color_from/to un-CHECKed, so
+    // the row persists — toHubCardSummary must safeParse it to null, never throw.
+    const seed = await seedHubCampaign(pool, scope, owner, 0, {
+      campaignStatus: 'active',
+      worldStatus: 'complete',
+      colorFrom: 'ember',
+      colorTo: 'lapis',
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/mine`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const parsed = MyCampaignsResponseSchema.parse(res.json())
+    const card = parsed.campaigns.find((c) => c.id === seed.campaignId)
+    if (!card) throw new Error('card missing')
+    expect(card.worldColors).toBeNull()
+  })
+
   it("200 cardPhase 'needs-character' for a setup campaign where the viewer has no PC", async () => {
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedHubCampaign(pool, scope, owner, 0, {

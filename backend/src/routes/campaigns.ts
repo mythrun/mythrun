@@ -1022,7 +1022,13 @@ const RenameCampaignBodySchema = z.object({
  * columns to ISO strings (the contract models the wire, not the row).
  */
 function toHubCardSummary(card: HubCardRow, viewerId: string): CampaignSummary {
-  const viewerHasCharacter = card.party.find((p) => p.userId === viewerId)?.hasCharacter ?? false
+  const viewerRow = card.party.find((p) => p.userId === viewerId)
+  // The `?? false` arm is defensive: the viewer is always in their own /mine card's
+  // party (they own it or are an accepted member — /mine never returns a card they're
+  // absent from), so a viewer-not-in-party row is unreachable. The truthy path
+  // (viewer has / lacks a PC) is exercised by the phase tests.
+  /* c8 ignore next */
+  const viewerHasCharacter = viewerRow?.hasCharacter ?? false
   const partyAllReady = card.party.length > 0 && card.party.every((p) => p.hasCharacter)
   const cardPhase = deriveCardPhase({
     campaign: { status: card.status, sessionCount: card.sessionCount },
