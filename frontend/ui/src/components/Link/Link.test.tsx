@@ -63,6 +63,46 @@ describe('Link', () => {
     expect(getByRole('link')).toHaveClass('text-accent-fg', 'hover:text-accent-fg-hover')
   })
 
+  it('unstyled: drops the accent text + hover underline so children inherit ink', () => {
+    // The bare/un-tinted variant (a card- or row-wrapping link): no accent paint,
+    // so the composed target renders in the ambient ink, not link-accent.
+    const { getByRole } = render(
+      <Link href="/x" unstyled>
+        x
+      </Link>,
+    )
+    const el = getByRole('link')
+    expect(el).not.toHaveClass('text-accent-fg')
+    expect(el).not.toHaveClass('hover:underline')
+    expect(el).not.toHaveClass('hover:text-accent-fg-hover')
+  })
+
+  it('unstyled: KEEPS the a11y focus-ring outline', () => {
+    // Dropping the accent must NOT drop the keyboard focus indicator — a
+    // focusable link always needs a visible ring.
+    const { getByRole } = render(
+      <Link href="/x" unstyled>
+        x
+      </Link>,
+    )
+    expect(getByRole('link')).toHaveClass(
+      'focus-visible:outline-2',
+      'focus-visible:outline-offset-2',
+      'focus-visible:outline-accent-fg',
+    )
+  })
+
+  it('unstyled: still renders a real anchor with its href', () => {
+    const { getByRole } = render(
+      <Link href="/campaign/1" unstyled>
+        cover
+      </Link>,
+    )
+    const el = getByRole('link', { name: 'cover' })
+    expect(el.tagName).toBe('A')
+    expect(el).toHaveAttribute('href', '/campaign/1')
+  })
+
   it('forwards its ref to the underlying anchor', () => {
     const ref = createRef<HTMLAnchorElement>()
     render(

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { CampaignSummary } from '@mythrun/client-core'
-import { i18n } from '../i18n/config.ts'
+import { i18n } from '../../i18n/config.ts'
 import { CampaignHubBody } from './home-hub.tsx'
 
 // Unit test for the responsive campaign-hub BODY (MYT-87 T15). The hub renders

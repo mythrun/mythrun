@@ -25,9 +25,12 @@ export interface CoverDitherProps extends Omit<BaseProps, 'children'> {
   /** Accent colour (the dense end the dither resolves into). */
   to: WorldColor
   /**
-   * Intrinsic shape. `'band'` (the default) is the wide card-cover banner;
-   * `'swatch'` is the mobile square crop. Both fill their host width and tile the
-   * dither to fill; the grain stays square-pixel crisp at either size.
+   * Intrinsic shape. `'band'` (the default) is the wide card-cover banner — it
+   * fills its host width and derives a short height from the cover aspect.
+   * `'swatch'` is a SELF-SIZED small square (a fixed leading thumbnail — the
+   * world-identity chip in a compact list row, where the host can't set a width),
+   * holding its size as a flex-row item. Either way the dither tiles to fill and
+   * the grain stays square-pixel crisp at either size.
    */
   size?: 'band' | 'swatch'
 }

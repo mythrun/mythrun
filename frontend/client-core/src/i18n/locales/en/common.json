@@ -5,7 +5,9 @@
   "frame": {
     "logo": "[ph_logo]",
     "displayName": "[ph_name]",
-    "credits": "[ph_bal]",
+    "credits": "[ph_credits_label: session credits]",
+    "creditsLoading": "[ph_credits_loading]",
+    "buyCredits": "[ph_buy_credits]",
     "settings": "[ph_settings]"
   },
   "splash": {
@@ -30,12 +32,7 @@
     "title": "[ph_home_title]",
     "loading": "[ph_loading]",
     "empty": "[ph_empty_hub: a short nudge here]",
-    "status": {
-      "setup": "[ph_setup]",
-      "active": "[ph_active]",
-      "archived": "[ph_archived]",
-      "failed": "[ph_failed]"
-    },
+    "createCampaign": "[ph_home_create_campaign: create a campaign]",
     "card": {
       "generating": "[ph_home_card_generating: a terse 'shaping your world' line]",
       "failed": "[ph_home_card_failed: a terse 'world generation failed — open to retry' line]",
@@ -108,6 +105,7 @@
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
     "campaignNew": "[ph_campaign_new_screen]",
+    "campaignDetail": "[ph_campaign_detail_screen]",
     "characterNew": "[ph_character_new_screen]",
     "play": "[ph_play_screen]",
     "settings": "[ph_settings_screen]"

@@ -14,4 +14,13 @@ export interface LinkProps extends BaseProps {
   onPress?: () => void
   /** Open in a new context (web: `target="_blank"` with safe `rel`). */
   external?: boolean
+  /**
+   * Drop the link's own accent styling — no accent text colour, no hover
+   * underline — so the children render in the AMBIENT ink and the link is a bare
+   * navigable wrapper. The a11y focus ring is KEPT (a keyboard-focusable link
+   * always needs a visible focus indicator). Use this when the link wraps a
+   * larger composed target (a whole card / index row) that must read in its own
+   * paper-ink register, not in link-accent. Default `false` (the accent link).
+   */
+  unstyled?: boolean
 }

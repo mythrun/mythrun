@@ -24,12 +24,12 @@ import { cardPhaseLine } from './card-phase-line.ts'
 //
 // The WHOLE card is the click target → the campaign detail. The detail surface
 // (a modal/sheet) is owned by a later ticket; the card links to the canonical
-// `/campaigns/:id` URL (an interim target — no dead click). NOTE for the T16
-// visual audit: @mythrun/ui's Link styles its descendants as link text
-// (text-accent-fg + hover underline; the type roles set no colour, so they
-// inherit). The quiet-cover treatment (a bare/un-tinted card-link variant, or a
-// stretched-link pattern) is a primitive-level decision for the visual audit —
-// this composes the sanctioned navigable primitive without hand-rolling raw CSS.
+// `/campaigns/:id` URL (an interim target — no dead click). The link is `unstyled`
+// (MYT-87 T16): @mythrun/ui's default Link tints its whole subtree with the accent
+// foreground, so a plain Link renders the cover's title/world/state in link-accent
+// instead of ink. `unstyled` drops the accent paint (keeping the a11y focus ring), so
+// the cover reads in the quiet paper-ink register while still composing the one
+// sanctioned navigable primitive (no hand-rolled raw CSS).
 
 const MAX_SEALS = 5
 
@@ -42,7 +42,7 @@ export function CampaignCard({ campaign }: { campaign: CampaignSummary }): React
   const stateLine = cardPhaseLine(campaign, t, i18n.language)
 
   return (
-    <Link href={`/campaigns/${id}`} data-testid={`campaign-card-${id}`}>
+    <Link href={`/campaigns/${id}`} unstyled data-testid={`campaign-card-${id}`}>
       <Card>
         {worldColors !== null ? (
           <CoverDither size="band" from={worldColors.from} to={worldColors.to} data-testid="card-cover" />

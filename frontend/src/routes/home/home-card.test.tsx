@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { CampaignSummary } from '@mythrun/client-core'
-import { i18n } from '../i18n/config.ts'
+import { i18n } from '../../i18n/config.ts'
 import { CampaignCard } from './home-card.tsx'
 
 // Unit test for the campaign-hub cover card (MYT-87 T14). The component is

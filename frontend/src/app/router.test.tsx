@@ -1,8 +1,9 @@
 import { render, screen, act } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@mythrun/ui'
-import { useSessionStore } from '@mythrun/client-core'
+import { ApiClientProvider, useSessionStore, type ApiContext } from '@mythrun/client-core'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { routes } from './router.tsx'
 import { i18n } from '../i18n/config.ts'
@@ -60,16 +61,31 @@ beforeAll(() => {
   })
 })
 
+const TEST_CTX: ApiContext = { baseUrl: 'http://api.test', getAuthHeaders: () => Promise.resolve({}) }
+
 // The harness mirrors the real composition root (AppProviders → ThemeProvider →
-// the router): screens that consume `useTheme` (SigninRoute's theme-driven crown)
-// need the provider present, the same way the shipped app supplies it.
+// QueryClient → ApiContext → i18n → the router). The QueryClient + ApiContext are
+// now load-bearing for the authed frame: <AppFrame> reads the live balance
+// (`useBalance`, MYT-87) in its header, so the frame needs the data stack even for
+// a data-free authed STUB. We PRE-SEED the balance cache (staleTime:Infinity → no
+// fetch fires) so the routing check stays hermetic — no MSW, no network — while the
+// header credits resolve from cache. (The loading→data→error paths are exercised in
+// `routes/home.test.tsx` with the full stack + MSW.)
 function renderAt(initialPath: string): void {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  client.setQueryData(['billing', 'balance'], { session: 120, world_gen: 0, active_subscription: null })
   const router = createMemoryRouter(routes, { initialEntries: [initialPath] })
   render(
     <ThemeProvider>
-      <I18nextProvider i18n={i18n}>
-        <RouterProvider router={router} />
-      </I18nextProvider>
+      <QueryClientProvider client={client}>
+        <ApiClientProvider value={TEST_CTX}>
+          <I18nextProvider i18n={i18n}>
+            <RouterProvider router={router} />
+          </I18nextProvider>
+        </ApiClientProvider>
+      </QueryClientProvider>
     </ThemeProvider>,
   )
 }
@@ -102,6 +118,38 @@ describe('app router', () => {
     // The quiet brand frame's header is present, wrapping the settings stub.
     expect(screen.getByTestId('app-frame')).toBeDefined()
     expect(screen.getByTestId('route-settings')).toBeDefined()
+  })
+
+  it('resolves the home-hub card target /campaigns/:id to the detail stub, NOT the 404', () => {
+    // The hub card links to the canonical `/campaigns/:id` detail URL. Landing on
+    // that URL (a full-page nav for the plain-anchor card, or a fresh boot) must
+    // resolve to the interim CampaignDetailRoute — the guard against the launch
+    // dead-click where the card fell through `*` → NotFound. This is the robust
+    // regression check: a plain `<a href>` (the @mythrun/ui Link) is not an RR
+    // Link, so a jsdom click on it can't SPA-navigate the memory router — but
+    // rendering AT the card's target URL proves exactly what a click lands on.
+    act(() => {
+      useSessionStore.getState().setReady('dev-user-1')
+    })
+    renderAt('/campaigns/c-1')
+    expect(screen.getByTestId('route-campaign-detail')).toBeDefined()
+    // It resolved inside the authed frame, and did NOT fall through to the 404.
+    // (Assert the NotFound's own testid is absent — not "no dither anywhere":
+    // other screens carry dithers, and this file has no RTL cleanup so a prior
+    // test's signin crown dither leaks into the document.)
+    expect(screen.getByTestId('app-frame')).toBeDefined()
+    expect(screen.queryByTestId('not-found')).toBeNull()
+  })
+
+  it('still resolves the static /campaigns/new above the dynamic :id route', () => {
+    // Adding `campaigns/:id` must not shadow the static `campaigns/new` — RR ranks
+    // static segments above dynamic, so the create stub still wins its own path.
+    act(() => {
+      useSessionStore.getState().setReady('dev-user-1')
+    })
+    renderAt('/campaigns/new')
+    expect(screen.getByTestId('route-campaign-new')).toBeDefined()
+    expect(screen.queryByTestId('route-campaign-detail')).toBeNull()
   })
 
   it('renders the dithered 404 for an unknown path', () => {

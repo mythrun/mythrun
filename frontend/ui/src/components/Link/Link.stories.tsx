@@ -13,6 +13,7 @@ const meta: Meta<typeof Link> = {
   argTypes: {
     href: { control: 'text' },
     external: { control: 'boolean' },
+    unstyled: { control: 'boolean' },
   },
 }
 
@@ -29,4 +30,13 @@ export const Internal: Story = {
 export const External: Story = {
   args: { href: 'https://example.com', external: true },
   render: (args) => <Link {...args}>Open the rules reference</Link>,
+}
+
+// The bare/un-tinted variant: no accent text, no hover underline — the children
+// render in the ambient ink. For a link that wraps a larger composed target (a
+// whole card / index row) which must keep its own paper-ink register. The a11y
+// focus ring is kept (tab to it to see the outline).
+export const Unstyled: Story = {
+  args: { href: '/campaign', unstyled: true },
+  render: (args) => <Link {...args}>The Sunken Coast — a whole card in ink</Link>,
 }

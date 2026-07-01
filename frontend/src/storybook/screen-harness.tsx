@@ -36,6 +36,18 @@ const STORYBOOK_CTX: ApiContext = {
   getAuthHeaders: () => Promise.resolve({}),
 }
 
+// The app-frame header now reads the live balance on EVERY authed route (MYT-87
+// T16 `useBalance`), so any authed screen would otherwise suspend-hang on the
+// (unseeded) balance cache. Seed a representative default for every story so the
+// header credits render deterministically; a story passes `seedBalance` to
+// override with a specific value. A dummy value is harmless on the public screens
+// that never render the frame.
+const DEFAULT_BALANCE: BalanceResponse = {
+  session: 120,
+  world_gen: 4,
+  active_subscription: null,
+}
+
 type Session = 'unauthenticated' | 'onboarding-required' | 'ready'
 
 export interface ScreenHarnessProps {
@@ -82,9 +94,9 @@ export function ScreenHarness({
     if (seedCampaigns) {
       queryClient.setQueryData(['campaigns', 'mine'], { campaigns: seedCampaigns })
     }
-    if (seedBalance) {
-      queryClient.setQueryData(['billing', 'balance'], seedBalance)
-    }
+    // Always seed a balance (the frame reads it on every authed route) — the prop
+    // overrides the default for a story that asserts a specific balance.
+    queryClient.setQueryData(['billing', 'balance'], seedBalance ?? DEFAULT_BALANCE)
     return { client: queryClient, router: createMemoryRouter(routes, { initialEntries: [entry] }) }
   })
 

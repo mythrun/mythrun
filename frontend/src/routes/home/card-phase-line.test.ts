@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { CampaignSummary } from '@mythrun/client-core'
-import { i18n } from '../i18n/config.ts'
+import { i18n } from '../../i18n/config.ts'
 import { cardPhaseLine } from './card-phase-line.ts'
 
 // Unit test for the shared cardPhase → mono state-line helper (MYT-87 T15). The

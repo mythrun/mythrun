@@ -14,6 +14,7 @@ import { JoinRoute } from '../routes/join.tsx'
 import { RecapRoute } from '../routes/recap.tsx'
 import { HomeRoute } from '../routes/home.tsx'
 import { CampaignNewRoute } from '../routes/campaign-new.tsx'
+import { CampaignDetailRoute } from '../routes/campaign-detail.tsx'
 import { CharacterNewRoute } from '../routes/character-new.tsx'
 import { PlayRoute } from '../routes/play.tsx'
 import { SettingsRoute } from '../routes/settings.tsx'
@@ -95,6 +96,11 @@ export function buildRoutes(dev: boolean): RouteObject[] {
               children: [
                 { path: 'home', element: <HomeRoute /> },
                 { path: 'campaigns/new', element: <CampaignNewRoute /> },
+                // The home-hub card's click target. Static `campaigns/new` outranks
+                // this dynamic `:id` (RR ranks static segments above dynamic), so
+                // `/campaigns/new` still resolves to CampaignNewRoute; a real
+                // campaign id lands here instead of falling through to the 404.
+                { path: 'campaigns/:id', element: <CampaignDetailRoute /> },
                 { path: 'campaigns/:id/character/new', element: <CharacterNewRoute /> },
                 { path: 'campaigns/:id/play', element: <PlayRoute /> },
                 { path: 'settings', element: <SettingsRoute /> },

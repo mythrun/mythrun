@@ -11,12 +11,12 @@ import { useCardPhaseLine } from './card-phase-line.ts'
 // conveyed only by the mono line. The rows are hairline-divided by the container
 // (see `home-hub.tsx`), so the row itself carries no rule.
 //
-// NOTE (T16 visual audit, shared with the card): @mythrun/ui's `Link` tints its
-// whole subtree with the accent foreground, so the row text renders in the link
-// accent rather than ink. This composes the one sanctioned navigable primitive
-// without hand-rolling raw CSS; the bare/un-tinted card-link treatment is the
-// primitive-level call for the T16 audit / brand sign-off — the same fix the cover
-// card needs.
+// The row link is `unstyled` (MYT-87 T16, the same fix the cover card takes):
+// @mythrun/ui's default `Link` tints its whole subtree with the accent foreground,
+// so a plain Link renders the row's title/world/state in link-accent rather than ink.
+// `unstyled` drops the accent paint (keeping the a11y focus ring) so the row reads in
+// the quiet paper-ink register, still composing the one sanctioned navigable primitive
+// without hand-rolling raw CSS.
 
 /** One campaign as a compact index row; the whole row links to its detail. */
 export function CampaignIndexRow({ campaign }: { campaign: CampaignSummary }): React.JSX.Element {
@@ -24,7 +24,7 @@ export function CampaignIndexRow({ campaign }: { campaign: CampaignSummary }): R
   const stateLine = useCardPhaseLine(campaign)
 
   return (
-    <Link href={`/campaigns/${id}`} data-testid={`campaign-index-row-${id}`}>
+    <Link href={`/campaigns/${id}`} unstyled data-testid={`campaign-index-row-${id}`}>
       <Stack direction="row" align="center" gap={3}>
         {worldColors !== null ? (
           <CoverDither size="swatch" from={worldColors.from} to={worldColors.to} data-testid="row-cover" />

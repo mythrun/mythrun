@@ -80,10 +80,13 @@ describe('ScreenHarness seedBalance', () => {
     render(<ScreenHarness entry="/home" seedCampaigns={[campaign]} seedBalance={balance} />)
 
     // The composed /home tree mounts (app-frame + the seeded campaign) with the
-    // new balance seed in the cache — no suspend-hang, no thrown render.
+    // new balance seed in the cache — no suspend-hang, no thrown render. The hub
+    // renders BOTH breakpoint layouts (jsdom has no media query), so the campaign
+    // is present as a grid cover card — assert the per-layout testid (the name
+    // text itself appears twice, once per layout).
     await waitFor(() => {
       expect(screen.getByTestId('app-frame')).toBeDefined()
     })
-    expect(screen.getByText(campaign.name)).toBeDefined()
+    expect(screen.getByTestId(`campaign-card-${campaign.id}`)).toBeDefined()
   })
 })

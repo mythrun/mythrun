@@ -21,13 +21,18 @@ import { cn } from '../../lib/cn.ts'
 // arbitrary `outline-[var(--focus-ring-color)]` because no-ad-hoc-color (R3)
 // bans arbitrary color utilities — the token utility is the supported form, and
 // here it's semantically identical to the focus-ring token.
-const LINK_CLASS = cn(
-  'text-accent-fg underline-offset-2 hover:underline hover:text-accent-fg-hover',
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
-)
+//
+// The class is split so the `unstyled` variant can drop the ACCENT paint (text
+// colour + hover underline) while KEEPING the a11y focus ring: an unstyled link
+// wraps a larger composed target (a whole card / index row) that must render in
+// the ambient ink, but a keyboard-focusable link still needs a visible focus
+// indicator.
+const FOCUS_CLASS =
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg'
+const ACCENT_CLASS = 'text-accent-fg underline-offset-2 hover:underline hover:text-accent-fg-hover'
 
 export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
-  { href, onPress, external = false, children, ...rest },
+  { href, onPress, external = false, unstyled = false, children, ...rest },
   ref,
 ) {
   const externalAttrs = external ? { target: '_blank', rel: 'noopener noreferrer' } : {}
@@ -36,7 +41,7 @@ export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
       ref={ref}
       href={href}
       onClick={onPress}
-      className={LINK_CLASS}
+      className={cn(FOCUS_CLASS, !unstyled && ACCENT_CLASS)}
       {...externalAttrs}
       {...rest}
     >
