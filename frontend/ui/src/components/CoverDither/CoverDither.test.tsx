@@ -103,6 +103,23 @@ describe('CoverDither', () => {
     expect(swatchRoot).toHaveClass('aspect-square')
   })
 
+  it('sizes band to fill host width, but swatch as a fixed self-sized square thumbnail', () => {
+    // The band is a full-width cover banner; the swatch is a fixed `--space-8`
+    // (48px) leading chip that holds its size in a flex row (`shrink-0`) so a
+    // screen-composed list row can use it without setting a width.
+    const band = render(<CoverDither from="pine" to="paper-100" size="band" />)
+    const bandRoot = band.container.querySelector('[data-cover-size]')
+    expect(bandRoot).toHaveClass('w-full')
+    expect(bandRoot).not.toHaveClass('shrink-0')
+    band.unmount()
+
+    const swatch = render(<CoverDither from="pine" to="paper-100" size="swatch" />)
+    const swatchRoot = swatch.container.querySelector('[data-cover-size]')
+    expect(swatchRoot).toHaveClass('w-[var(--space-8)]')
+    expect(swatchRoot).toHaveClass('shrink-0')
+    expect(swatchRoot).not.toHaveClass('w-full')
+  })
+
   it('defaults to the band size when size is omitted', () => {
     const { container } = render(<CoverDither from="rose" to="paper-900" />)
     expect(container.querySelector('[data-cover-size]')).toHaveAttribute('data-cover-size', 'band')

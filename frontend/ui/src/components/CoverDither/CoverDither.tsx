@@ -39,12 +39,14 @@ function worldColorToVar(name: WorldColor): string {
   return `var(${worldColorCssVar(name)})`
 }
 
-/** Intrinsic shape per `size`: the wide card-cover banner vs the mobile square crop. Both
- *  fill their host WIDTH; the band derives a short height from a wide aspect, the swatch a
- *  square. The dither tiles to fill whatever box results. */
+/** Intrinsic shape per `size`. `band` is the wide card-cover banner — it fills its host
+ *  WIDTH and derives a short height from the 16/5 aspect. `swatch` is a SELF-SIZED small
+ *  square (a fixed `--space-8` / 48px tile, `shrink-0` so it holds its size as a flex-row
+ *  thumbnail) — the leading world-identity chip in a compact list row, where the host (a
+ *  screen) can't set a width. Either way the dither tiles to fill the resulting box. */
 const SIZE_CLASS = {
-  band: 'aspect-[16/5]',
-  swatch: 'aspect-square',
+  band: 'w-full aspect-[16/5]',
+  swatch: 'w-[var(--space-8)] shrink-0 aspect-square',
 } as const
 
 // The cover grain: the chunkier `preview` cell so the dither stays visible at card scale.
@@ -71,7 +73,7 @@ export const CoverDither = forwardRef<HTMLDivElement, CoverDitherProps>(function
       ref={ref}
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       data-cover-size={size}
-      className={cn('relative block w-full overflow-hidden', SIZE_CLASS[size])}
+      className={cn('relative block overflow-hidden', SIZE_CLASS[size])}
     >
       {/* No viewBox → 1 user unit = 1 CSS px, no internal scaling: the pattern tiles at its
           NATURAL pixel size and the cells stay perfectly square at any host size.

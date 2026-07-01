@@ -5,6 +5,9 @@ export { Stack } from './components/Stack/Stack.tsx'
 export { Box } from './components/Box/Box.tsx'
 export { Grid } from './components/Grid/Grid.tsx'
 export { Divider } from './components/Divider/Divider.tsx'
+// Responsive show/hide switch (MYT-87) — toggles two visually distinct layouts at
+// a breakpoint (the hub's desktop grid ⊕ mobile index).
+export { Show } from './components/Show/Show.tsx'
 
 // Typography primitives (MYT-82 Wave 1b).
 export { Text } from './components/Text/Text.tsx'
@@ -107,6 +110,8 @@ export type {
   BoxProps,
   GridProps,
   DividerProps,
+  ShowProps,
+  Breakpoint,
   SpaceToken,
   TextProps,
   TextRole,

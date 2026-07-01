@@ -12,6 +12,7 @@ import {
 } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { CampaignSummary } from '@mythrun/client-core'
+import { cardPhaseLine } from './card-phase-line.ts'
 
 // The campaign-hub cover card (MYT-87 — "The Cover"). Each campaign is a quiet
 // paperback cover composed from @mythrun/ui primitives only (no-ad-hoc-ui): a
@@ -31,59 +32,14 @@ import type { CampaignSummary } from '@mythrun/client-core'
 // this composes the sanctioned navigable primitive without hand-rolling raw CSS.
 
 const MAX_SEALS = 5
-const DAY_MS = 86_400_000
-
-// The five phases whose state line is a single static label. `played` is special
-// (a record string built from sessionCount + a relative lastPlayedAt), so it is
-// excluded here and handled below. A static literal map (the spirit of the
-// retired STATUS_LABEL_KEY) keeps every key a first-class string the typed-keys
-// guard + the i18n:todo scan can see — a computed `home.card.${phase}` template
-// would be invisible to both.
-const PHASE_LABEL_KEY = {
-  generating: 'home.card.generating',
-  failed: 'home.card.failed',
-  'needs-character': 'home.card.needsCharacter',
-  'waiting-for-players': 'home.card.waiting',
-  'not-played': 'home.card.notPlayed',
-} as const satisfies Record<Exclude<CampaignSummary['cardPhase'], 'played'>, string>
-
-/**
- * A terse, locale-aware "when" for the played record line — the only place the
- * card formats a relative time. Mechanical date math (no LLM, ZFC-exempt) through
- * the platform's `Intl.RelativeTimeFormat` (`numeric: 'auto'` → "today" /
- * "yesterday" / "2 days ago" / "last week"), stepped day → week → month → year by
- * magnitude. The locale is the active i18n language so the phrase matches the
- * catalog's locale.
- */
-function formatRelative(iso: string, nowMs: number, locale: string): string {
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
-  const days = Math.round((new Date(iso).getTime() - nowMs) / DAY_MS)
-  const magnitude = Math.abs(days)
-  if (magnitude < 7) return rtf.format(days, 'day')
-  if (magnitude < 30) return rtf.format(Math.round(days / 7), 'week')
-  if (magnitude < 365) return rtf.format(Math.round(days / 30), 'month')
-  return rtf.format(Math.round(days / 365), 'year')
-}
 
 /** One campaign as a flat cover card; the whole card links to its detail. */
 export function CampaignCard({ campaign }: { campaign: CampaignSummary }): React.JSX.Element {
   const { t, i18n } = useTranslation()
-  const { id, name, worldName, worldColors, creator, party, cardPhase, sessionCount, lastPlayedAt } =
-    campaign
+  const { id, name, worldName, worldColors, creator, party } = campaign
 
-  // The played card reads "N sessions · <relative>"; lastPlayedAt is non-null for
-  // a played card by construction, but the wire type allows null — fall back to a
-  // terse "recently" so the line never renders a dangling separator.
-  const stateLine =
-    cardPhase === 'played'
-      ? t('home.card.record', {
-          sessions: sessionCount,
-          when:
-            lastPlayedAt !== null
-              ? formatRelative(lastPlayedAt, Date.now(), i18n.language)
-              : t('home.card.recently'),
-        })
-      : t(PHASE_LABEL_KEY[cardPhase])
+  // The mono ledger line (shared with the mobile index row — see card-phase-line).
+  const stateLine = cardPhaseLine(campaign, t, i18n.language)
 
   return (
     <Link href={`/campaigns/${id}`} data-testid={`campaign-card-${id}`}>

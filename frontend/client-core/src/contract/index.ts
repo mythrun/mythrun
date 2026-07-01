@@ -17,6 +17,8 @@ export type { StackProps } from './stack.ts'
 export type { BoxProps } from './box.ts'
 export type { GridProps } from './grid.ts'
 export type { DividerProps } from './divider.ts'
+// Responsive show/hide switch (MYT-87) — `above`/`below` a named breakpoint.
+export type { ShowProps, Breakpoint } from './show.ts'
 
 // Typography-primitive contracts (MYT-82 Wave 1b).
 export type { TextProps, TextRole } from './text.ts'

@@ -80,13 +80,14 @@ export const Bands: Story = {
   ),
 }
 
-// The mobile SWATCH — the square crop the same cover shows on a narrow viewport. The grain
-// stays square; the dither tiles to fill the square.
+// The SWATCH — a self-sized small square (a fixed --space-8 / 48px tile); the leading
+// world-identity chip in a compact list row. It does NOT fill its host (unlike the band),
+// so no width wrapper is needed. The grain stays square; the dither tiles to fill.
 export const Swatches: Story = {
   render: () => (
     <div className="flex flex-wrap gap-[var(--space-4)]">
       {PAIRS.map((p) => (
-        <figure key={p.label} className="flex w-32 max-w-full flex-col gap-[var(--space-2)]">
+        <figure key={p.label} className="flex flex-col gap-[var(--space-2)]">
           <CoverDither from={p.from} to={p.to} size="swatch" />
           <figcaption className="font-ui text-xs text-ink-secondary">{p.label}</figcaption>
         </figure>
@@ -105,9 +106,9 @@ export const BandAndSwatch: Story = {
         <CoverDither from="lapis" to="paper-50" size="band" />
         <figcaption className="font-ui text-xs text-ink-secondary">band</figcaption>
       </figure>
-      <figure className="flex w-32 max-w-full flex-col gap-[var(--space-2)]">
+      <figure className="flex flex-col gap-[var(--space-2)]">
         <CoverDither from="lapis" to="paper-50" size="swatch" />
-        <figcaption className="font-ui text-xs text-ink-secondary">swatch</figcaption>
+        <figcaption className="font-ui text-xs text-ink-secondary">swatch (48px)</figcaption>
       </figure>
     </div>
   ),
