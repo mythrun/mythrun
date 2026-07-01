@@ -383,8 +383,8 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     const active = await seedHubCampaign(pool, scope, owner, 0, {
       campaignStatus: 'active',
       worldStatus: 'complete',
-      colorFrom: 'ember',
-      colorTo: 'lapis',
+      colorFrom: 'ember-100',
+      colorTo: 'lapis-800',
     })
     await addAcceptedMember(pool, active.campaignId, player2)
     await seedCharacter(pool, scope, active.campaignId, owner, 'pc-owner')
@@ -422,7 +422,7 @@ describe('GET /api/campaigns/mine (MYT-51 T10)', () => {
     const activeCard = parsed.campaigns.find((c) => c.id === active.campaignId)
     if (!activeCard) throw new Error('active card missing')
     expect(activeCard.worldName).toBe(scope.worldName(0))
-    expect(activeCard.worldColors).toEqual({ from: 'ember', to: 'lapis' })
+    expect(activeCard.worldColors).toEqual({ from: 'ember-100', to: 'lapis-800' })
     expect(activeCard.creator).toBeNull() // owner created the world
     expect(activeCard.cardPhase).toBe('played')
     // No fanout: 2 sessions × 2 party members must NOT double the count.

@@ -1,17 +1,22 @@
 // backend/src/llm/prep/stages/world-color.ts
 //
-// MYT-87 T8: the world-gen colour stage. Picks the world's two-stop
-// `WorldColor` dither identity (the per-world pigment pair the campaign hub
-// renders) from the world's vibe (name / concept / tone / themes).
+// MYT-87 T8 (reworked 2026-07-01): the world-gen colour stage. Picks the
+// world's two-stop `WorldColor` dither identity (the per-world cover pair the
+// campaign hub renders) from the world's vibe (name / concept / tone / themes).
 //
-// A single non-streaming Haiku `generateObject` call, structurally constrained
-// to the curated palette by `WorldColorPairSchema` — the LLM cannot emit an
-// off-brand colour. The proposed pair is contrast-guarded
-// (`contrastRatio(from, to) >= CONTRAST_FLOOR`); on a miss the stage RE-ROLLS,
-// feeding the rejected pair back into the prompt so the model avoids it. The
-// aesthetic choice stays with the LLM the whole way (ZFC) — the stage never
-// snaps a colour deterministically. The passing pair persists via
-// `repo.worlds.setColorPair` (an idempotent SET).
+// A single non-streaming SONNET `generateObject` call, structurally constrained
+// to the widened per-hue ramp palette by `WorldColorPairSchema` — the LLM cannot
+// emit an off-brand colour. Sonnet (not Haiku) because a blind taste-off showed
+// Sonnet's restrained, often-monochromatic colour taste wins decisively; the
+// once-per-world tier bump is negligible.
+//
+// The proposed pair is RUNG-guarded: `rungsApart(from, to) >= MIN_RUNGS`, where
+// the ≥5-rung rule guarantees ~3.0+ WCAG contrast in the worst hue combo
+// (enumeration-proven), so the two dither ends always read as distinct. On a
+// miss the stage RE-ROLLS, feeding the rejected pair back into the prompt so the
+// model avoids it. No luminance-snap — the aesthetic choice stays with the LLM
+// the whole way (ZFC). The passing pair persists via `repo.worlds.setColorPair`
+// (an idempotent SET).
 //
 // Placed AFTER concept_intake in the stage list so tone/themes are loaded.
 
@@ -20,44 +25,50 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { generateObject } from '../../ai.js'
-import { HAIKU } from '../../models.js'
+import { SONNET } from '../../models.js'
 import { logger } from '../../logger.js'
 import {
   WorldColorPairSchema,
-  WORLD_COLOR_PIGMENTS,
-  WORLD_COLOR_RAMP_STEPS,
+  WORLD_COLOR_RAMPS,
+  WORLD_COLOR_STEPS,
+  rungsApart,
   type WorldColorPair,
 } from '@mythrun/contract'
-import { contrastRatio, CONTRAST_FLOOR } from '../world-color-palette.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/world-color.txt'),
   'utf8',
 )
 
-// The palette names rendered into the prompt, grouped by namespace. Sourced
-// from the contract's curated lists so a future palette change can't drift the
-// prompt out of sync with the schema the call is constrained to.
+// The palette rendered into the prompt: the available hues (ramps) + the ladder
+// steps. Sourced from the contract's canonical lists so a future palette change
+// can't drift the prompt out of sync with the schema the call is constrained to.
 const PALETTE_LIST = [
-  `Pigments: ${WORLD_COLOR_PIGMENTS.join(', ')}`,
-  `Paper & ember ramp steps: ${WORLD_COLOR_RAMP_STEPS.join(', ')}`,
+  `Hues (each available at all 10 steps): ${WORLD_COLOR_RAMPS.join(', ')}`,
+  `Steps (light → dark): ${WORLD_COLOR_STEPS.join(', ')}`,
 ].join('\n')
 
-// Bounded re-roll budget. The curated palette has many high-contrast pairs
-// (every pale-paper ↔ pigment cover clears ~3.8:1), so a passing pair lands
-// well within three Haiku attempts in practice.
+// The minimum ladder distance between the two ends. Enumeration proved ≥5 rungs
+// clears ~3.0:1 WCAG in the worst hue combo (4 or fewer can drop below), so the
+// dither reads as two distinct fields. This is the mechanical floor the stage
+// enforces — the model keeps the aesthetic choice.
+const MIN_RUNGS = 5
+
+// Bounded re-roll budget. Both models obeyed the rung rule ~100% in testing, so
+// a passing pair lands on the first attempt in practice; the budget guards a
+// pathological run without letting a decorative pick fail world-gen.
 const MAX_COLOR_ATTEMPTS = 3
 
-// Anthropic Haiku 4.5 pricing per https://www.anthropic.com/pricing
-// (verify quarterly). $1/MTok input, $5/MTok output. Held local to the stage —
+// Anthropic Sonnet 4.6 pricing per https://www.anthropic.com/pricing
+// (verify quarterly). $3/MTok input, $15/MTok output. Held local to the stage —
 // see concept-intake.ts for why each stage owns its own constants.
-const HAIKU_INPUT_PER_MTOK = 1.0
-const HAIKU_OUTPUT_PER_MTOK = 5.0
+const SONNET_INPUT_PER_MTOK = 3.0
+const SONNET_OUTPUT_PER_MTOK = 15.0
 
 function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): number {
   return (
-    (usage.inputTokens / 1_000_000) * HAIKU_INPUT_PER_MTOK +
-    (usage.outputTokens / 1_000_000) * HAIKU_OUTPUT_PER_MTOK
+    (usage.inputTokens / 1_000_000) * SONNET_INPUT_PER_MTOK +
+    (usage.outputTokens / 1_000_000) * SONNET_OUTPUT_PER_MTOK
   )
 }
 
@@ -79,9 +90,9 @@ function renderRejectedFeedback(rejected: readonly WorldColorPair[]): string {
   if (rejected.length === 0) return ''
   const lines = rejected.map((p) => `- from=${p.from}, to=${p.to}`).join('\n')
   return (
-    'These pairs were already rejected — the two colours sat too close in ' +
-    'contrast to read as distinct. Do NOT repeat them; pick a pair with a ' +
-    `clearer light/dark split:\n${lines}\n\n`
+    'These pairs were already rejected — the two steps were fewer than 5 rungs ' +
+    'apart on the 10-step ladder, so the ends do not read as distinct. Do NOT ' +
+    `repeat them; pick two steps at least 5 rungs apart:\n${lines}\n\n`
   )
 }
 
@@ -102,16 +113,17 @@ export async function runWorldColorStage(
   let inputTokens = 0
   let outputTokens = 0
   let chosen: WorldColorPair | undefined
-  // Best-of fallback: the highest-contrast pair seen so far, used only if every
-  // attempt misses the floor (near-impossible given the palette). Persisting
-  // the most-legible of the LLM's OWN proposals is mechanical selection, not a
-  // deterministic colour snap — so a decorative choice can never fail world-gen.
+  // Best-of fallback: the widest-separation pair seen so far, used only if every
+  // attempt misses the rung floor (near-impossible given how reliably the models
+  // obey it). Persisting the most-separated of the LLM's OWN proposals is
+  // mechanical selection among its choices, not a luminance snap — so a
+  // decorative pick can never fail world-gen.
   let fallback: WorldColorPair | undefined
-  let fallbackContrast = -Infinity
+  let fallbackRungs = -Infinity
 
   for (let attempt = 0; attempt < MAX_COLOR_ATTEMPTS && chosen === undefined; attempt++) {
     const result = await generateObject({
-      model: HAIKU,
+      model: SONNET,
       schema: WorldColorPairSchema,
       schemaName: 'WorldColorPairSchema',
       callSite: 'world-color',
@@ -123,14 +135,14 @@ export async function runWorldColorStage(
     outputTokens += result.usage.outputTokens ?? 0
 
     const pair = result.output
-    const ratio = contrastRatio(pair.from, pair.to)
-    if (ratio >= CONTRAST_FLOOR) {
+    const rungs = rungsApart(pair.from, pair.to)
+    if (rungs >= MIN_RUNGS) {
       chosen = pair
     } else {
       rejected.push(pair)
-      if (ratio > fallbackContrast) {
+      if (rungs > fallbackRungs) {
         fallback = pair
-        fallbackContrast = ratio
+        fallbackRungs = rungs
       }
     }
   }
@@ -147,12 +159,12 @@ export async function runWorldColorStage(
   if (chosen === undefined) {
     logger.warn(
       {
-        event: 'world_color.contrast_floor_exhausted',
+        event: 'world_color.rung_floor_exhausted',
         worldId: args.worldId,
         attempts: MAX_COLOR_ATTEMPTS,
-        contrast: fallbackContrast,
+        rungs: fallbackRungs,
       },
-      'world-color: no pair cleared the contrast floor; persisting the most-legible proposal',
+      'world-color: no pair cleared the rung floor; persisting the most-separated proposal',
     )
   }
 

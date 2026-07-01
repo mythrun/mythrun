@@ -1,18 +1,18 @@
 // backend/src/llm/prep/stages/__tests__/world-color.test.ts
 //
-// MYT-87 T8: world-gen colour stage. A single Haiku generateObject call
-// (through the canonical ai.ts wrapper) proposes the world's two-stop
-// `WorldColor` dither identity, structurally constrained to the curated
-// palette by `WorldColorPairSchema`. The stage contrast-guards the pair
-// (contrastRatio >= CONTRAST_FLOOR) and RE-ROLLS on a miss — feeding the
-// rejected pair back into the prompt — keeping the aesthetic choice with the
-// LLM per ZFC (no deterministic colour snap). A passing pair persists via
+// MYT-87 T8 (reworked 2026-07-01): world-gen colour stage. A single SONNET
+// generateObject call (through the canonical ai.ts wrapper) proposes the
+// world's two-stop `WorldColor` dither identity, structurally constrained to
+// the widened per-hue ramp palette by `WorldColorPairSchema`. The stage
+// RUNG-guards the pair (`rungsApart(from, to) >= 5`) and RE-ROLLS on a miss —
+// feeding the rejected pair back into the prompt — keeping the aesthetic
+// choice with the LLM per ZFC (no luminance snap). A passing pair persists via
 // `repo.worlds.setColorPair`.
 //
 // Mock target: `'ai'` (the Vercel SDK) — the same upstream-mock pattern every
-// peer stage test uses (vocabulary-intake, random-tables, etc.). The wrapper's
-// internal `sdkGenerateText` is what produces the response, so mocking
-// `generateText` and reading `result.output` exercises the stage end-to-end.
+// peer stage test uses. The wrapper's internal `sdkGenerateText` is what
+// produces the response, so mocking `generateText` and reading `result.output`
+// exercises the stage end-to-end.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as ai from 'ai'
@@ -57,14 +57,14 @@ const ARGS = {
   themes: 'debt, tide, forgetting',
 }
 
-const HAIKU_USAGE = { inputTokens: 800, outputTokens: 40, totalTokens: 840 }
+const SONNET_USAGE = { inputTokens: 800, outputTokens: 40, totalTokens: 840 }
 
-// sienna<->ochre = 1.019:1 — below the 3.0 floor (equiluminant pigments).
-const LOW_CONTRAST = { from: 'sienna', to: 'ochre' }
-// paper-50<->ember = 5.299:1 — clears the floor (a pale ground + a pigment).
-const PASSING = { from: 'paper-50', to: 'ember' }
+// sienna-200 → ochre-400: steps 2 rungs apart — below the 5-rung floor.
+const LOW_RUNGS = { from: 'sienna-200', to: 'ochre-400' }
+// paper-100 → ember-900: steps 8 rungs apart — clears the floor.
+const PASSING = { from: 'paper-100', to: 'ember-900' }
 
-function mockPair(pair: { from: string; to: string }, usage = HAIKU_USAGE): void {
+function mockPair(pair: { from: string; to: string }, usage = SONNET_USAGE): void {
   mockGenerateText.mockResolvedValueOnce({
     output: pair,
     finishReason: 'stop',
@@ -77,14 +77,14 @@ describe('runWorldColorStage', () => {
     vi.clearAllMocks()
   })
 
-  it('re-rolls on a low-contrast pair and persists the passing pair', async () => {
-    mockPair(LOW_CONTRAST)
+  it('re-rolls on a sub-floor pair and persists the passing pair', async () => {
+    mockPair(LOW_RUNGS)
     mockPair(PASSING)
 
     const repo = makeColorRepo()
     await runWorldColorStage(repo as unknown as Repo, ARGS)
 
-    // Two LLM calls: the rejected low-contrast pair, then the passing re-roll.
+    // Two LLM calls: the rejected too-close pair, then the passing re-roll.
     expect(mockGenerateText).toHaveBeenCalledTimes(2)
     // Persisted exactly the passing pair, inside one transaction.
     expect(repo.transaction).toHaveBeenCalledTimes(1)
@@ -94,7 +94,7 @@ describe('runWorldColorStage', () => {
   })
 
   it('feeds the rejected pair back into the re-roll prompt', async () => {
-    mockPair(LOW_CONTRAST)
+    mockPair(LOW_RUNGS)
     mockPair(PASSING)
 
     const repo = makeColorRepo()
@@ -104,8 +104,8 @@ describe('runWorldColorStage', () => {
     const second = mockGenerateText.mock.calls[1]?.[0] as unknown as { prompt: string }
     // The first attempt has no rejection feedback; the re-roll lists the
     // rejected pair verbatim so the model avoids repeating it.
-    expect(first.prompt).not.toContain('from=sienna, to=ochre')
-    expect(second.prompt).toContain('from=sienna, to=ochre')
+    expect(first.prompt).not.toContain('from=sienna-200, to=ochre-400')
+    expect(second.prompt).toContain('from=sienna-200, to=ochre-400')
   })
 
   it('persists on the first attempt when the pair already clears the floor', async () => {
@@ -118,15 +118,20 @@ describe('runWorldColorStage', () => {
     expect(repo.worlds.setColorPair).toHaveBeenCalledWith('w1', PASSING)
   })
 
-  it('uses Haiku rates and accumulates cost across re-roll attempts', async () => {
-    mockPair(LOW_CONTRAST)
+  it('uses the Sonnet model and Sonnet rates, accumulating cost across re-rolls', async () => {
+    mockPair(LOW_RUNGS)
     mockPair(PASSING)
 
     const repo = makeColorRepo()
     const result = await runWorldColorStage(repo as unknown as Repo, ARGS)
 
-    // Two Haiku calls at $1/MTok in, $5/MTok out — summed across attempts.
-    const expected = ((800 * 2) / 1_000_000) * 1 + ((40 * 2) / 1_000_000) * 5
+    // The stage calls Sonnet (not Haiku) — a wrapLanguageModel result whose
+    // inner provider carries the sonnet model id.
+    const opts = mockGenerateText.mock.calls[0]?.[0] as unknown as { model: { modelId?: string } }
+    expect(opts.model.modelId).toContain('sonnet')
+
+    // Two Sonnet calls at $3/MTok in, $15/MTok out — summed across attempts.
+    const expected = ((800 * 2) / 1_000_000) * 3 + ((40 * 2) / 1_000_000) * 15
     expect(result.costUsd).toBeCloseTo(expected, 9)
     expect(result.inputTokens).toBe(1600)
     expect(result.outputTokens).toBe(80)
@@ -163,22 +168,22 @@ describe('runWorldColorStage', () => {
     expect(opts.prompt).not.toContain('{{rejectedFeedback}}')
   })
 
-  it('falls back to the most-legible proposal when every attempt misses the floor', async () => {
-    // Three sub-floor pairs (none clears 3.0). The highest-contrast pair sits
-    // in the MIDDLE position, so this assertion can only pass if the stage
-    // selects by contrast — not by first- or last-seen position. The stage must
-    // NOT fail the world; it persists the most-legible proposal the model
+  it('falls back to the widest-separation proposal when every attempt misses the floor', async () => {
+    // Three sub-floor pairs (none clears 5 rungs). The widest-separation pair
+    // sits in the MIDDLE position, so this assertion can only pass if the stage
+    // selects by rung distance — not by first- or last-seen position. The stage
+    // must NOT fail the world; it persists the most-separated proposal the model
     // produced (mechanical selection among the LLM's own choices, not a snap).
-    mockPair({ from: 'moss', to: 'pine' }) // 1.056:1 — first
-    mockPair({ from: 'ember', to: 'sienna' }) // 1.120:1 — middle, the max
-    mockPair({ from: 'sienna', to: 'ochre' }) // 1.019:1 — last, the min
+    mockPair({ from: 'moss-300', to: 'moss-500' }) // 2 rungs — first
+    mockPair({ from: 'pine-200', to: 'pine-600' }) // 4 rungs — middle, the max
+    mockPair({ from: 'sienna-400', to: 'sienna-500' }) // 1 rung — last, the min
 
     const repo = makeColorRepo()
     await runWorldColorStage(repo as unknown as Repo, ARGS)
 
     expect(mockGenerateText).toHaveBeenCalledTimes(3)
     expect(repo.worlds.setColorPair).toHaveBeenCalledTimes(1)
-    expect(persistedPair(repo)).toEqual({ from: 'ember', to: 'sienna' })
+    expect(persistedPair(repo)).toEqual({ from: 'pine-200', to: 'pine-600' })
   })
 
   it('rethrows LLM call errors so retry classification fires', async () => {
@@ -191,10 +196,11 @@ describe('runWorldColorStage', () => {
 
   it('the schema rejects an off-palette colour (off-brand is structurally impossible)', () => {
     // The generateObject schema is WorldColorPairSchema — a closed z.enum over
-    // the curated set. A colour outside it fails the parse, so the LLM can
+    // the widened set. A colour outside it fails the parse, so the LLM can
     // never emit an off-brand pair through the structured-output constraint.
     expect(WorldColorPairSchema.safeParse(PASSING).success).toBe(true)
-    expect(WorldColorPairSchema.safeParse({ from: 'hotpink', to: 'ember' }).success).toBe(false)
-    expect(WorldColorPairSchema.safeParse({ from: 'ember', to: '#abcdef' }).success).toBe(false)
+    // A bare pigment (no step) is no longer a member; an invented name fails too.
+    expect(WorldColorPairSchema.safeParse({ from: 'sienna', to: 'ember-900' }).success).toBe(false)
+    expect(WorldColorPairSchema.safeParse({ from: 'ember-900', to: '#abcdef' }).success).toBe(false)
   })
 })

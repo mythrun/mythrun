@@ -1,62 +1,55 @@
 import { describe, it, expect } from 'vitest'
-import {
-  WORLD_COLORS,
-  WORLD_COLOR_PIGMENTS,
-  WORLD_COLOR_RAMP_STEPS,
-  worldColorCssVar,
-} from '@mythrun/contract/rest'
-import { AVATAR_COLORS } from '../../tokens/scales.ts'
-import { generatePalette } from '../../tokens/generate-palette.mjs'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import { WORLD_COLORS, worldColorCssVar } from '@mythrun/contract/rest'
 
-// Drift guard: the curated `WorldColor` set lives in the react-free
-// `@mythrun/contract` (so the backend can validate it), but the actual color
-// VALUES it names live in `@mythrun/client-core`'s design tokens — the 12 avatar
-// pigments (`AVATAR_COLORS`) and the generated `paper`/`ember` ramps. Nothing at
-// the type level couples the two: a `WorldColor` is just a string literal. This
-// test is that coupling — every curated member must resolve to a token that
-// really exists, so the set can't silently reference a deleted/renamed token.
-describe('WorldColor drift guard — every curated cover color resolves to a real design token', () => {
-  // The set of every `--color-{name}` ramp token the generator actually emits
-  // for the `paper`/`ember` ramps (e.g. `'paper-100'`, `'ember-900'`) — built
-  // from the generator's own output (not a hardcoded list) so a step that
-  // disappears from a ramp would make the matching world color fail here. We key
-  // off `Object.keys` (typed `string[]`) rather than `Object.entries` (whose
-  // value is `any` for the generator's closed-key `Ramp` interface).
-  const palette = generatePalette()
-  const generatedRampTokens = new Set<string>()
-  for (const ramp of ['paper', 'ember'] as const) {
-    for (const step of Object.keys(palette[ramp])) {
-      generatedRampTokens.add(`${ramp}-${step}`)
-    }
+// Drift guard: the widened `WorldColor` set lives in the react-free
+// `@mythrun/contract` (so the backend can validate it), but the actual colour
+// VALUES it names are the design tokens emitted by `@mythrun/ui` into
+// `tokens.manifest.json`. Nothing at the type level couples the two — a
+// `WorldColor` is just a `${ramp}-${step}` string literal. This test IS that
+// coupling: every member must resolve to a `--color-{name}` token that really
+// exists, so the set can never reference a deleted/renamed/never-emitted token.
+const here = dirname(fileURLToPath(import.meta.url))
+// __tests__ → contract → src → client-core → frontend → repo root
+const repoRoot = resolve(here, '../../../../..')
+const manifestText = readFileSync(
+  resolve(repoRoot, 'frontend/ui/src/styles/tokens.manifest.json'),
+  'utf8',
+)
+
+/** The set of every `--color-*` key present in the generated tokens manifest. */
+function manifestColorTokens(json: string): Set<string> {
+  const out = new Set<string>()
+  for (const m of json.matchAll(/"(--color-[\w-]+)":\s*"#[0-9A-Fa-f]{6}"/g)) {
+    const name = m[1]
+    if (name !== undefined) out.add(name)
   }
+  return out
+}
 
-  it('every pigment is a real AVATAR_COLORS key (→ --color-avatar-{name})', () => {
-    for (const name of WORLD_COLOR_PIGMENTS) {
-      expect(AVATAR_COLORS, name).toHaveProperty(name)
-      expect(worldColorCssVar(name)).toBe(`--color-avatar-${name}`)
-    }
+const MANIFEST_TOKENS = manifestColorTokens(manifestText)
+
+describe('WorldColor drift guard — every cover colour resolves to a real design token', () => {
+  it('the manifest actually parsed (guard against an empty regex match)', () => {
+    // A non-trivial floor so a broken read / renamed manifest can't vacuously pass.
+    expect(MANIFEST_TOKENS.size).toBeGreaterThan(WORLD_COLORS.length)
+    expect(MANIFEST_TOKENS.has('--color-verdigris-200')).toBe(true)
   })
 
-  it('every ramp step is a real generated paper/ember token (→ --color-{name})', () => {
-    for (const name of WORLD_COLOR_RAMP_STEPS) {
-      expect(generatedRampTokens.has(name), `${name} is an emitted ramp token`).toBe(true)
-      expect(worldColorCssVar(name)).toBe(`--color-${name}`)
-    }
-  })
-
-  it('every WORLD_COLORS member resolves to a real token (pigment OR ramp step)', () => {
+  it('every WorldColor resolves to a real --color-{name} manifest token', () => {
     for (const name of WORLD_COLORS) {
-      const resolvesToAPigment = Object.prototype.hasOwnProperty.call(AVATAR_COLORS, name)
-      const resolvesToARampStep = generatedRampTokens.has(name)
-      expect(resolvesToAPigment || resolvesToARampStep, `${name} resolves to a real token`).toBe(true)
-      // A world color is exactly one of the two — never both, never neither.
-      expect(resolvesToAPigment && resolvesToARampStep, `${name} is single-namespace`).toBe(false)
+      const cssVar = worldColorCssVar(name)
+      expect(cssVar).toBe(`var(--color-${name})`)
+      // The token the css-var references must exist in the emitted manifest.
+      expect(MANIFEST_TOKENS.has(`--color-${name}`), `${name} → --color-${name} exists`).toBe(true)
     }
   })
 
   it('does NOT reference the semantic ramps (success/warning/danger/info)', () => {
     for (const name of WORLD_COLORS) {
-      const ramp = name.includes('-') ? name.slice(0, name.indexOf('-')) : name
+      const ramp = name.slice(0, name.lastIndexOf('-'))
       expect(['success', 'warning', 'danger', 'info']).not.toContain(ramp)
     }
   })

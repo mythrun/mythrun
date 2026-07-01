@@ -78,7 +78,7 @@ describe('@mythrun/contract/rest', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
       worldName: 'The Sunless Reach',
-      worldColors: { from: 'ember', to: 'lapis' },
+      worldColors: { from: 'ember-100', to: 'lapis-800' },
       creator: null,
       party: [{ userId: 'u', displayName: 'Ada', hasCharacter: true }],
       sessionCount: 0,
@@ -90,7 +90,7 @@ describe('@mythrun/contract/rest', () => {
       const parsed = CampaignSummarySchema.parse(hubCard)
       expect(parsed.status).toBe('setup')
       expect(parsed.worldName).toBe('The Sunless Reach')
-      expect(parsed.worldColors).toEqual({ from: 'ember', to: 'lapis' })
+      expect(parsed.worldColors).toEqual({ from: 'ember-100', to: 'lapis-800' })
       expect(parsed.cardPhase).toBe('needs-character')
       expect(parsed.party[0]?.hasCharacter).toBe(true)
     })
@@ -136,7 +136,7 @@ describe('@mythrun/contract/rest', () => {
 
     it('rejects a worldColors pair with a color outside the curated set', () => {
       expect(() =>
-        CampaignSummarySchema.parse({ ...hubCard, worldColors: { from: 'ember', to: 'chartreuse' } }),
+        CampaignSummarySchema.parse({ ...hubCard, worldColors: { from: 'ember-100', to: 'chartreuse' } }),
       ).toThrow()
     })
 

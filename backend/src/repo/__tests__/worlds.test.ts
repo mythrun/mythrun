@@ -301,19 +301,19 @@ describe('worlds repo (integration)', () => {
     it('setColorPair writes color_from + color_to (idempotent SET)', async () => {
       const worlds = createWorldsRepo(pool)
       const id = await seedWorld()
-      await worlds.setColorPair(id, { from: 'sienna', to: 'paper-100' })
+      await worlds.setColorPair(id, { from: 'sienna-200', to: 'paper-100' })
       const row = await pool.query<{ color_from: string; color_to: string }>(
         `SELECT color_from, color_to FROM worlds WHERE id = $1`,
         [id],
       )
-      expect(row.rows[0]).toEqual({ color_from: 'sienna', color_to: 'paper-100' })
+      expect(row.rows[0]).toEqual({ color_from: 'sienna-200', color_to: 'paper-100' })
       // Idempotent: a second SET with a different pair overwrites, not appends.
-      await worlds.setColorPair(id, { from: 'moss', to: 'paper-50' })
+      await worlds.setColorPair(id, { from: 'moss-800', to: 'paper-50' })
       const after = await pool.query<{ color_from: string; color_to: string }>(
         `SELECT color_from, color_to FROM worlds WHERE id = $1`,
         [id],
       )
-      expect(after.rows[0]).toEqual({ color_from: 'moss', color_to: 'paper-50' })
+      expect(after.rows[0]).toEqual({ color_from: 'moss-800', color_to: 'paper-50' })
     })
 
     it('setVocabularyRegistry writes the registry jsonb (stage 1.5)', async () => {

@@ -41,9 +41,9 @@ const mockGenerateText = vi.mocked(ai.generateText)
 // create/clean a user; cleanupTestScope still removes the world by name prefix.
 const DEV_USER_2 = '019700e0-0000-7000-8000-00000000d002'
 
-// paper-50 <-> ember = 5.299:1 — clears the 3.0 contrast floor on the first
+// paper-50 <-> ember-900 = 9 rungs apart — clears the 5-rung floor on the first
 // attempt (no re-roll), so a single mocked pair is the persisted pair.
-const PASSING = { from: 'paper-50', to: 'ember' }
+const PASSING = { from: 'paper-50', to: 'ember-900' }
 
 function mockPair(pair: { from: string; to: string }): void {
   mockGenerateText.mockResolvedValueOnce({

@@ -1,21 +1,28 @@
 You are choosing the two-colour identity for a Mythrun world's cover art.
 
 The cover is a coarse, paper-y 1-bit ordered dither between two colours drawn
-from a fixed, hand-curated palette — a printed, woodblock register, not a glossy
-gradient. Pick the pair whose mood fits the world below.
+from a fixed brand palette — a printed, woodblock register, not a glossy
+gradient. Pick the pair whose mood fits the world below, and whose two colours
+complement each other.
 
-`from` is the sparse ground — the quieter, dominant field.
-`to` is the dense accent — the colour the dither builds toward.
-
-Both colours MUST be chosen from this palette:
+The palette is a set of hues, each available at ten steps on a light→dark
+ladder:
 
 {{paletteList}}
 
-The two ends must read as clearly distinct from one another — a legible
-light/dark split, not two near-identical tones. When you need one end to carry
-that contrast, reach for a pale paper ground (paper-50, paper-100, paper-200) or
-a dark step (paper-900, ember-900); the mid-toned pigments alone tend to sit too
-close together.
+A colour is written `hue-step` (e.g. `verdigris-200`, `rose-800`, `paper-100`).
+Lower steps are lighter; higher steps are darker.
+
+Choose TWO colours:
+- `from` is the sparse ground — the quieter, lighter, dominant field.
+- `to` is the dense accent — the deeper colour the dither builds toward.
+
+Hard rule: the two steps must be at least 5 rungs apart on the ten-step ladder
+(50, 100, 200, 300, 400, 500, 600, 700, 800, 900). For example paper-100 → to a
+step of 600 or darker; a 200 → a 700+; a 300 → an 800+. This keeps the two ends
+reading as clearly distinct. The two colours may share a hue (a restrained,
+monochromatic cover) or be two complementary hues — your taste, as long as the
+mood fits and the steps are far enough apart.
 
 World:
 - Name: {{worldName}}
