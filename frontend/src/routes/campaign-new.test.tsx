@@ -606,4 +606,41 @@ describe('CampaignNewRoute guided draft persistence (§11)', () => {
     expect(screen.getByTestId<HTMLInputElement>('guided-name-input').value).toBe(GUIDED_PICKS[2].title)
     expect(screen.getByTestId<HTMLTextAreaElement>('guided-why-input').value).toBe(GUIDED_PICKS[2].whyILikeIt)
   })
+
+  it('clears the guided draft when the draft is committed via the FREEFORM path', async () => {
+    // A guided draft can commit WITHOUT the guided preview's Begin: guided-rejection
+    // → "edit as freeform" → freeform commit routes through FreeformScreen.onCommitted.
+    // The clear lives in toCampaign, so this path drops the draft too (no leak).
+    synthesizeGuided(
+      http.post(GUIDED_SYNTH_URL, () =>
+        HttpResponse.json(
+          {
+            code: 'concept_rejected',
+            reason: 'clone_intent',
+            rejectionMessage: 'Too close to an existing world.',
+            synthesizedConcept: 'A near-clone concept.',
+          },
+          { status: 422 },
+        ),
+      ),
+    )
+    await waitFor(() => { expect(screen.getByTestId('screen-rejection')).toBeDefined() })
+    // The guided picks were persisted while typing — the draft is present here.
+    expect(readGuidedDraft()?.picks).toEqual(GUIDED_PICKS)
+
+    // Drop into freeform (pre-filled with the judged concept, ≥ 20 chars → Begin enabled).
+    act(() => { screen.getByTestId('rejection-edit-freeform').click() })
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json({ campaignId: 'c-freeform-1' }, { status: 201 }),
+      ),
+    )
+    act(() => { screen.getByTestId('freeform-begin').click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-freeform-1')
+    })
+    // The freeform commit cleared the leaked guided draft (idempotent clear in toCampaign).
+    expect(readGuidedDraft()).toBeNull()
+  })
 })

@@ -47,18 +47,17 @@ export function CampaignNewRoute(): React.JSX.Element {
     setFreeformPrefill('')
     go('freeform')
   }
-  // The generating route (Phase C makes it phase-aware). A real navigate — the
-  // screen fires a neutral intent; the controller owns the route.
+  // The generating route (Phase C makes it phase-aware). A real campaign create —
+  // via ANY commit path (guided preview Begin, or a guided draft committed through
+  // the freeform screen after guided→switch or a rejection→"edit as freeform") —
+  // clears the guided draft exactly once, here. The clear is IDEMPOTENT (a no-op
+  // when no draft was written, e.g. pure freeform), so the picks still survive
+  // synthesize → preview → rework → a 410-restart (those re-prefill) and only an
+  // actual create drops them (spec §11). Then a real navigate — the screen fires a
+  // neutral intent; the controller owns the route.
   const toCampaign = (campaignId: string): void => {
-    void navigate(`/campaigns/${campaignId}`)
-  }
-  // A committed GUIDED campaign is the ONLY moment the guided draft is cleared
-  // (spec §11): the picks survive synthesize → preview → rework → a 410-restart so
-  // those paths re-prefill; only an actual campaign create drops the draft. The
-  // freeform path never wrote a draft, so it needs no clear.
-  const onGuidedCommitted = (campaignId: string): void => {
     clearGuidedDraft()
-    toCampaign(campaignId)
+    void navigate(`/campaigns/${campaignId}`)
   }
 
   return (
@@ -99,7 +98,7 @@ export function CampaignNewRoute(): React.JSX.Element {
       ) : current === 'preview' && previewPayload ? (
         <PreviewScreen
           payload={previewPayload}
-          onCommitted={onGuidedCommitted}
+          onCommitted={toCampaign}
           onStartOver={() => { go('guided') }}
           onPreviewExpired={() => { go('guided') }}
           onRejected={(r) => {
