@@ -139,6 +139,27 @@
       "retry": "[ph: something interrupted the weave — try again]",
       "cooldown": "[ph: a lot of tries just now — give it a moment]",
       "credits": "[ph: you're out of session credits — top up to keep going]"
+    },
+    "preview": {
+      "eyebrow": "[ph: the world we found]",
+      "begin": "[ph: begin]",
+      "askChange": "[ph: ask for one change]",
+      "startOver": "[ph: start over]",
+      "changeQuestion": "[ph: what would you change]",
+      "rework": "[ph: rework]",
+      "cancelChange": "[ph: never mind]",
+      "changeUsed": "[ph: your one change has been used]",
+      "retry": "[ph: something interrupted the weave — try again]",
+      "cooldown": "[ph: a lot of tries just now — give it a moment]",
+      "credits": "[ph: you're out of session credits — top up to keep going]"
+    },
+    "rejection": {
+      "eyebrow": "[ph: not this one]",
+      "fallback": "[ph: that idea can't seed a world — try another]",
+      "judged": "[ph: what we tried to build]",
+      "editAsFreeform": "[ph: edit it as your own idea]",
+      "startOver": "[ph: start over]",
+      "filteredMessage": "[ph: that can't become a world here — start something new]"
     }
   },
   "stub": {

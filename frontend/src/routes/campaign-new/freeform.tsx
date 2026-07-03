@@ -29,6 +29,13 @@ export interface FreeformScreenProps {
   onCommitted: (campaignId: string) => void
   /** Chose the quiet switch line → the controller advances to `guided`. */
   onGuided: () => void
+  /**
+   * Seed text for the concept field (default empty). The rejection screen's
+   * "edit as freeform" carries the judged guided concept in here so the player
+   * lands on freeform pre-filled; a normal fork → freeform entry omits it. Read
+   * once at mount (the screen unmounts between flow steps, so it re-seeds fresh).
+   */
+  initialConcept?: string
 }
 
 /** Pull a non-empty `rejectionMessage` off an HttpError body (nullable per contract). */
@@ -40,10 +47,14 @@ function rejectionMessageOf(body: unknown): string | null {
   return null
 }
 
-export function FreeformScreen({ onCommitted, onGuided }: FreeformScreenProps): React.JSX.Element {
+export function FreeformScreen({
+  onCommitted,
+  onGuided,
+  initialConcept = '',
+}: FreeformScreenProps): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
-  const [concept, setConcept] = useState('')
+  const [concept, setConcept] = useState(() => initialConcept)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
 

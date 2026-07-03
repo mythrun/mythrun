@@ -295,8 +295,8 @@ describe('CampaignNewRoute guided screen', () => {
     await waitFor(() => {
       expect(screen.getByTestId('screen-preview')).toBeDefined()
     })
-    // The preview payload reached the preview screen (the id the controller carried).
-    expect(screen.getByTestId('preview-payload').textContent).toBe('p-1')
+    // The carried concept reached (and renders on) the preview screen.
+    expect(screen.getByTestId('preview-concept').textContent).toBe('A synthesized concept.')
     // The wire body is exactly the three picks — nothing more.
     expect(capturedBody).toEqual({ picks: PICKS })
   })
@@ -348,5 +348,178 @@ describe('CampaignNewRoute guided screen', () => {
     gotoGuided()
     act(() => { screen.getByTestId('guided-switch').click() })
     expect(screen.getByTestId('screen-freeform')).toBeDefined()
+  })
+})
+
+// Shared guided-walk for the preview + rejection blocks: register the terminal
+// synthesize handler, then fork → guided → fill the three picks → fire the final
+// synthesize. The caller waits for whichever screen the handler's status lands on.
+const GUIDED_SYNTH_URL = `${BASE_URL}/api/campaigns/synthesize-preview`
+const GUIDED_PICKS = [
+  { title: 'Dark Souls', whyILikeIt: 'the oppressive melancholy' },
+  { title: 'Dune', whyILikeIt: 'ecology as destiny' },
+  { title: 'Annihilation', whyILikeIt: 'the shimmer' },
+] as const
+
+function synthesizeGuided(handler: ReturnType<typeof http.post>): void {
+  server.use(handler)
+  renderRoute()
+  act(() => { screen.getByText(loveTitle()).click() })
+  GUIDED_PICKS.forEach((p, i) => {
+    fireEvent.change(screen.getByTestId('guided-name-input'), { target: { value: p.title } })
+    fireEvent.change(screen.getByTestId('guided-why-input'), { target: { value: p.whyILikeIt } })
+    if (i < 2) act(() => { screen.getByTestId('guided-advance').click() })
+  })
+  act(() => { screen.getByTestId('guided-advance').click() })
+}
+
+describe('CampaignNewRoute preview screen', () => {
+  const CONCEPT = 'A drowned cathedral city the tide never fully leaves.'
+
+  /** Walk fork → guided → synthesize (201) → preview, carrying `concept`/`previewId`. */
+  async function gotoPreview(concept = CONCEPT, previewId = 'p-1'): Promise<void> {
+    synthesizeGuided(
+      http.post(GUIDED_SYNTH_URL, () => HttpResponse.json({ previewId, concept }, { status: 201 })),
+    )
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+  }
+
+  it('renders the concept prose and the three initial actions', async () => {
+    await gotoPreview()
+    expect(screen.getByTestId('preview-concept').textContent).toBe(CONCEPT)
+    expect(screen.getByTestId('preview-begin')).toBeDefined()
+    expect(screen.getByTestId('preview-ask-change')).toBeDefined()
+    expect(screen.getByTestId('preview-start-over')).toBeDefined()
+    // No spent-note before any rework.
+    expect(screen.queryByTestId('preview-change-spent')).toBeNull()
+  })
+
+  it('commits the guided preview (wrapped body) and navigates to /campaigns/:id on Begin', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ campaignId: 'c-guided-1' }, { status: 201 })
+      }),
+    )
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-begin').click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-guided-1')
+    })
+    // The guided commit body carries the previewId only — no concept text.
+    expect(capturedBody).toEqual({
+      world: { kind: 'new', source: { mode: 'guided', previewId: 'p-1' } },
+    })
+  })
+
+  it('reworks once: shows the revised concept and leaves Begin as the only action', async () => {
+    const revised = 'A revised tidal city, now watched over by a living lighthouse.'
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/preview/p-1/rework`, () =>
+        HttpResponse.json({ previewId: 'p-1', concept: revised }, { status: 200 }),
+      ),
+    )
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-ask-change').click() })
+    fireEvent.change(screen.getByTestId('preview-change-input'), { target: { value: 'make the lighthouse alive' } })
+    act(() => { screen.getByTestId('preview-rework').click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-concept').textContent).toBe(revised)
+    })
+    // The one change is spent: only Begin remains + the faint spent-note.
+    expect(screen.getByTestId('preview-begin')).toBeDefined()
+    expect(screen.getByTestId('preview-change-spent')).toBeDefined()
+    expect(screen.queryByTestId('preview-ask-change')).toBeNull()
+    expect(screen.queryByTestId('preview-start-over')).toBeNull()
+    expect(screen.queryByTestId('preview-change-input')).toBeNull()
+  })
+
+  it('routes to the rejection state when a rework is rejected by the gate (422)', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/preview/p-1/rework`, () =>
+        HttpResponse.json(
+          {
+            code: 'concept_rejected',
+            reason: 'inappropriate',
+            rejectionMessage: 'That change crosses a line.',
+            synthesizedConcept: 'A reworked-but-rejected concept.',
+          },
+          { status: 422 },
+        ),
+      ),
+    )
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-ask-change').click() })
+    fireEvent.change(screen.getByTestId('preview-change-input'), { target: { value: 'push it further' } })
+    act(() => { screen.getByTestId('preview-rework').click() })
+
+    await waitFor(() => { expect(screen.getByTestId('screen-rejection')).toBeDefined() })
+    expect(screen.getByTestId('rejection-message').textContent).toBe('That change crosses a line.')
+    expect(screen.queryByTestId('screen-preview')).toBeNull()
+  })
+
+  it('returns to the guided picks on Start over', async () => {
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-start-over').click() })
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(screen.queryByTestId('screen-preview')).toBeNull()
+  })
+
+  it('restarts the guided flow when the commit reports the preview expired (410)', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json({ code: 'preview_expired' }, { status: 410 }),
+      ),
+    )
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-begin').click() })
+
+    await waitFor(() => { expect(screen.getByTestId('screen-guided')).toBeDefined() })
+    expect(screen.queryByTestId('screen-preview')).toBeNull()
+  })
+})
+
+describe('CampaignNewRoute rejection screen', () => {
+  /** Walk fork → guided → synthesize (422 guided rejection) → the rejection screen. */
+  async function gotoRejection(): Promise<void> {
+    synthesizeGuided(
+      http.post(GUIDED_SYNTH_URL, () =>
+        HttpResponse.json(
+          {
+            code: 'concept_rejected',
+            reason: 'clone_intent',
+            rejectionMessage: 'Too close to an existing world.',
+            synthesizedConcept: 'A near-clone concept.',
+          },
+          { status: 422 },
+        ),
+      ),
+    )
+    await waitFor(() => { expect(screen.getByTestId('screen-rejection')).toBeDefined() })
+  }
+
+  it('renders the rejection message and, for a guided rejection, the judged concept', async () => {
+    await gotoRejection()
+    expect(screen.getByTestId('rejection-message').textContent).toBe('Too close to an existing world.')
+    expect(screen.getByTestId('rejection-concept').textContent).toBe('A near-clone concept.')
+    expect(screen.getByTestId('rejection-edit-freeform')).toBeDefined()
+    expect(screen.getByTestId('rejection-start-over')).toBeDefined()
+  })
+
+  it('drops into freeform pre-filled with the judged concept on edit-as-freeform', async () => {
+    await gotoRejection()
+    act(() => { screen.getByTestId('rejection-edit-freeform').click() })
+    expect(screen.getByTestId('screen-freeform')).toBeDefined()
+    expect(screen.getByTestId<HTMLTextAreaElement>('freeform-input').value).toBe('A near-clone concept.')
+  })
+
+  it('returns to the guided picks on start over', async () => {
+    await gotoRejection()
+    act(() => { screen.getByTestId('rejection-start-over').click() })
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(screen.queryByTestId('screen-rejection')).toBeNull()
   })
 })
