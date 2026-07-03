@@ -5,7 +5,7 @@
 // through the input gate share ONE copy:
 //   - POST /api/campaigns              (create — freeform | guided, charging)
 //   - POST /api/campaigns/synthesize-preview (guided preview, non-charging)
-//   - POST /api/campaigns/rework-preview     (A4 — guided rework, non-charging)
+//   - POST /api/campaigns/preview/:previewId/rework (A4 — guided rework, non-charging)
 //
 // Two pieces live here:
 //   - checkRejectionStorm: a READ-ONLY peek at the per-user storm counter, run

@@ -44,13 +44,20 @@ vi.mock('../../llm/prep/synthesize-concept.js', async (importOriginal) => {
 vi.mock('../../llm/prep/input-gate.js', () => ({
   runInputGate: vi.fn(),
 }))
+// A4 — the rework primitive (Sonnet). Mocked at the module boundary; no real LLM.
+vi.mock('../../llm/prep/revise-concept.js', () => ({
+  reviseConcept: vi.fn(),
+}))
 
 import { synthesizeConcept } from '../../llm/prep/synthesize-concept.js'
 import { runInputGate } from '../../llm/prep/input-gate.js'
+import { reviseConcept } from '../../llm/prep/revise-concept.js'
+import { putPreview } from '../../preview/preview-store.js'
 import type { LanguageModelUsage } from 'ai'
 
 const synthesizeConceptMock = vi.mocked(synthesizeConcept)
 const runInputGateMock = vi.mocked(runInputGate)
+const reviseConceptMock = vi.mocked(reviseConcept)
 
 // Shape-correct usage placeholder (the route never reads it).
 const STUB_USAGE: LanguageModelUsage = {
@@ -124,6 +131,27 @@ function inject(app: FastifyInstance, devSub: string, payload: unknown) {
   })
 }
 
+function injectRework(
+  app: FastifyInstance,
+  devSub: string,
+  previewId: string,
+  payload: unknown,
+) {
+  return app.inject({
+    method: 'POST',
+    url: `/api/campaigns/preview/${previewId}/rework`,
+    headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+    payload: payload as Record<string, unknown>,
+  })
+}
+
+// Shared intentSummary shape for seeded/revised preview records.
+const STUB_INTENT = {
+  aesthetics: ['revised'],
+  themes: ['change'],
+  sourcesInternal: ['r1', 'r2', 'r3'],
+}
+
 describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
   let pool: Pool
   let redis: Redis
@@ -149,6 +177,16 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
 
     synthesizeConceptMock.mockReset()
     runInputGateMock.mockReset()
+    reviseConceptMock.mockReset()
+    // Default revised output; individual A4 tests override as needed.
+    reviseConceptMock.mockResolvedValue({
+      concept: 'A revised concept honoring the change while keeping the original spine intact.',
+      intentSummary: {
+        aesthetics: ['revised'],
+        themes: ['change'],
+        sourcesInternal: ['r1', 'r2', 'r3'],
+      },
+    })
     // Default synth output; individual tests override as needed.
     synthesizeConceptMock.mockResolvedValue({
       concept:
@@ -314,5 +352,200 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     expect(res.statusCode).toBe(400)
     expect(res.json<{ code: string }>().code).toBe('invalid_body')
     expect(synthesizeConceptMock).not.toHaveBeenCalled()
+  })
+
+  // -----------------------------------------------------------------------
+  // A4 — POST /api/campaigns/preview/:previewId/rework (single-shot rework)
+  // -----------------------------------------------------------------------
+
+  describe('rework (MYT-89 A4)', () => {
+    const ORIGINAL_CONCEPT =
+      'A drowned cathedral-city where the tide keeps the calendar and every bell is rung by the dead.'
+
+    it('200 reworks a fresh preview: overwrites the concept and sets reworkCount:1', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const previewId = await putPreview(redis, userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+      const revised =
+        'A sun-bleached cathedral-city where the tide keeps the calendar and the living ring the bells at noon.'
+      reviseConceptMock.mockResolvedValue({
+        concept: revised,
+        intentSummary: { aesthetics: ['bleached'], themes: ['renewal'], sourcesInternal: ['s'] },
+      })
+
+      const res = await injectRework(app, devSub, previewId, { change: 'make it brighter, less morbid' })
+
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{ previewId: string; concept: string }>()
+      expect(body.previewId).toBe(previewId)
+      expect(body.concept).toBe(revised)
+
+      // Store now holds the reworked concept with reworkCount bumped to 1.
+      const stored = await getPreview(redis, userId, previewId)
+      expect(stored?.concept).toBe(revised)
+      expect(stored?.reworkCount).toBe(1)
+
+      // The prior concept + the change note were the revise inputs.
+      expect(reviseConceptMock).toHaveBeenCalledTimes(1)
+      expect(reviseConceptMock.mock.calls[0]).toEqual([
+        ORIGINAL_CONCEPT,
+        'make it brighter, less morbid',
+      ])
+    })
+
+    it('422 on a gate-rejected rework leaves the ORIGINAL concept and reworkCount:0 intact', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const previewId = await putPreview(redis, userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+      const rejectedRevision = 'A revised concept that reads as a clone of a copyrighted work.'
+      reviseConceptMock.mockResolvedValue({
+        concept: rejectedRevision,
+        intentSummary: STUB_INTENT,
+      })
+      runInputGateMock.mockResolvedValue({
+        verdict: 'reject',
+        reason: 'clone_intent',
+        rejectionMessage: 'This reads as a clone of a copyrighted work.',
+        reasoning: 'clone_intent: server-only reasoning',
+        usage: STUB_USAGE,
+      })
+
+      const res = await injectRework(app, devSub, previewId, { change: 'make it exactly like <IP>' })
+
+      expect(res.statusCode).toBe(422)
+      const body = res.json<{
+        code: string
+        reason: string
+        synthesizedConcept?: string
+        reasoning?: string
+      }>()
+      expect(body.code).toBe('concept_rejected')
+      expect(body.reason).toBe('clone_intent')
+      // Guided mode surfaces the (revised) concept that was judged.
+      expect(body.synthesizedConcept).toBe(rejectedRevision)
+      // Server-only reasoning never leaks.
+      expect(body.reasoning).toBeUndefined()
+
+      // Load-bearing invariant: a rejected rework mutates NOTHING in the store.
+      const stored = await getPreview(redis, userId, previewId)
+      expect(stored?.concept).toBe(ORIGINAL_CONCEPT)
+      expect(stored?.reworkCount).toBe(0)
+    })
+
+    it('409 rework_exhausted when the preview was already reworked (reworkCount:1) — no LLM call', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const previewId = await putPreview(redis, userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 1,
+      })
+
+      const res = await injectRework(app, devSub, previewId, { change: 'one more change' })
+
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('rework_exhausted')
+      expect(reviseConceptMock).not.toHaveBeenCalled()
+      expect(runInputGateMock).not.toHaveBeenCalled()
+    })
+
+    it('410 preview_expired for an unknown previewId (uniform with commit, NOT 404)', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      const res = await injectRework(app, devSub, uuidv7(), { change: 'x' })
+
+      expect(res.statusCode).toBe(410)
+      expect(res.json<{ code: string }>().code).toBe('preview_expired')
+      expect(reviseConceptMock).not.toHaveBeenCalled()
+    })
+
+    it('410 preview_expired when another user owns the previewId (IDOR isolation)', async () => {
+      const owner = await seedUserWithCredits(pool, scope, 1, 0)
+      const other = await seedUserWithCredits(pool, scope, 1, 1)
+      const previewId = await putPreview(redis, owner.userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+
+      const res = await injectRework(app, other.devSub, previewId, { change: 'let me at it' })
+
+      expect(res.statusCode).toBe(410)
+      expect(res.json<{ code: string }>().code).toBe('preview_expired')
+      // The owner's preview is untouched.
+      const stored = await getPreview(redis, owner.userId, previewId)
+      expect(stored?.concept).toBe(ORIGINAL_CONCEPT)
+      expect(stored?.reworkCount).toBe(0)
+    })
+
+    it('400 invalid_body on an empty change note — no LLM call', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const previewId = await putPreview(redis, userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+
+      const res = await injectRework(app, devSub, previewId, { change: '' })
+
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('invalid_body')
+      expect(reviseConceptMock).not.toHaveBeenCalled()
+    })
+
+    // ---------------------------------------------------------------------
+    // A4 cost-control: same guards synthesize-preview has, mirrored onto
+    // rework — a rejection-producing rework loop must not burn Sonnet.
+    // ---------------------------------------------------------------------
+
+    it('403 insufficient_credits when balance is 0 — reviseConcept is NEVER called', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 0)
+      const previewId = await putPreview(redis, userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+
+      const res = await injectRework(app, devSub, previewId, { change: 'brighten it up' })
+
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ code: 'insufficient_credits', creditType: 'world_gen' })
+      // The whole point: no Sonnet burn for a 0-credit user, even holding a valid previewId.
+      expect(reviseConceptMock).not.toHaveBeenCalled()
+      expect(runInputGateMock).not.toHaveBeenCalled()
+      // Invariant preserved: the parked concept + unspent budget survive.
+      const stored = await getPreview(redis, userId, previewId)
+      expect(stored?.concept).toBe(ORIGINAL_CONCEPT)
+      expect(stored?.reworkCount).toBe(0)
+    })
+
+    it('429 rejection_storm_cooldown when the counter is over threshold — no LLM call', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const previewId = await putPreview(redis, userId, {
+        concept: ORIGINAL_CONCEPT,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+      // Past the 3-per-hour threshold (4th trips cooldown).
+      await redis.set(`${REDIS_KEY_PREFIX}rejection_storm:${userId}`, '4', 'EX', 3600)
+
+      const res = await injectRework(app, devSub, previewId, { change: 'brighten it up' })
+
+      expect(res.statusCode).toBe(429)
+      expect(res.json<{ code: string }>().code).toBe('rejection_storm_cooldown')
+      const retryAfter = res.headers['retry-after']
+      expect(retryAfter).toBeDefined()
+      expect(Number(retryAfter)).toBeGreaterThan(0)
+      expect(reviseConceptMock).not.toHaveBeenCalled()
+      expect(runInputGateMock).not.toHaveBeenCalled()
+      // Untouched preview.
+      const stored = await getPreview(redis, userId, previewId)
+      expect(stored?.reworkCount).toBe(0)
+    })
   })
 })
