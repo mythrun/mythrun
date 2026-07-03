@@ -101,10 +101,24 @@
       "noEvents": "No events yet"
     }
   },
+  "campaignNew": {
+    "fork": {
+      "eyebrow": "[ph: a new world]",
+      "question": "[ph: how do you want to begin?]",
+      "lede": "[ph: every campaign starts as a world]",
+      "idea": {
+        "title": "[ph: start from an idea — title]",
+        "subtitle": "[ph: start from an idea — subtitle]"
+      },
+      "love": {
+        "title": "[ph: build from what you love — title]",
+        "subtitle": "[ph: build from what you love — subtitle]"
+      }
+    }
+  },
   "stub": {
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
-    "campaignNew": "[ph_campaign_new_screen]",
     "campaignDetail": "[ph_campaign_detail_screen]",
     "characterNew": "[ph_character_new_screen]",
     "play": "[ph_play_screen]",
