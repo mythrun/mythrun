@@ -114,6 +114,15 @@
         "title": "[ph: build from what you love — title]",
         "subtitle": "[ph: build from what you love — subtitle]"
       }
+    },
+    "freeform": {
+      "eyebrow": "[ph: your own idea]",
+      "question": "[ph: describe the world you want to play in]",
+      "hint": "[ph: a sentence or a page — tone, place, what makes it strange]",
+      "begin": "[ph: begin]",
+      "switchToGuided": "[ph: not sure where to start? build it from things you love]",
+      "rejectedFallback": "[ph: that idea can't seed a world — try another]",
+      "retry": "[ph: something interrupted the weave — try again]"
     }
   },
   "stub": {

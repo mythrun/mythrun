@@ -1,8 +1,11 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, act, cleanup } from '@testing-library/react'
-import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+import { render, screen, act, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { createMemoryRouter, RouterProvider, useParams } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
+import { ApiClientProvider, type ApiContext } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
 import { CampaignNewRoute } from './campaign-new.tsx'
 
@@ -33,33 +36,67 @@ class MemStorage {
   }
 }
 
+const BASE_URL = 'http://api.test'
+const server = setupServer()
+const testCtx: ApiContext = {
+  baseUrl: BASE_URL,
+  getAuthHeaders: () => Promise.resolve({}),
+}
+
 beforeAll(() => {
   Object.defineProperty(globalThis, 'localStorage', {
     value: new MemStorage(),
     configurable: true,
     writable: true,
   })
+  server.listen({ onUnhandledRequest: 'error' })
 })
 
 function setMatch(): void {
   Object.defineProperty(window, 'matchMedia', { writable: true, value: (q: string) => ({ matches: false, media: q, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }) })
 }
 
+// The navigation SINK: `/campaigns/:campaignId` (the generating route, Phase C).
+// B3 only needs to prove the controller navigates there on a 201, so this stand-in
+// echoes the routed id back for the assertion.
+function CampaignTarget(): React.JSX.Element {
+  const { campaignId } = useParams()
+  return <div data-testid="route-campaign-target">{campaignId}</div>
+}
+
 function renderRoute(): void {
   const router = createMemoryRouter(
-    [{ path: '/campaigns/new', element: <CampaignNewRoute /> }],
+    [
+      { path: '/campaigns/new', element: <CampaignNewRoute /> },
+      { path: '/campaigns/:campaignId', element: <CampaignTarget /> },
+    ],
     { initialEntries: ['/campaigns/new'] },
   )
-  render(<ThemeProvider><I18nextProvider i18n={i18n}><RouterProvider router={router} /></I18nextProvider></ThemeProvider>)
+  render(
+    <ThemeProvider>
+      <ApiClientProvider value={testCtx}>
+        <I18nextProvider i18n={i18n}>
+          <RouterProvider router={router} />
+        </I18nextProvider>
+      </ApiClientProvider>
+    </ThemeProvider>,
+  )
 }
 
 beforeEach(() => { setMatch(); localStorage.clear() })
 // Web's vitest config sets no `globals`, so testing-library's auto-cleanup is not
 // registered — `cleanup()` must UNMOUNT the prior render (mirrors landing.test).
-afterEach(() => { cleanup() })
+afterEach(() => { cleanup(); server.resetHandlers() })
+afterAll(() => { server.close() })
 
 const ideaTitle = (): string => i18n.t('campaignNew.fork.idea.title')
 const loveTitle = (): string => i18n.t('campaignNew.fork.love.title')
+
+/** Walk fork → freeform (the screen every freeform case starts from). */
+function gotoFreeform(): void {
+  renderRoute()
+  act(() => { screen.getByText(ideaTitle()).click() })
+}
 
 describe('CampaignNewRoute', () => {
   it('renders the fork screen with both choices (i18n keys resolved)', () => {
@@ -91,5 +128,76 @@ describe('CampaignNewRoute', () => {
     act(() => { screen.getByTestId('campaign-new-back').click() })
     expect(screen.getByTestId('screen-fork')).toBeDefined()
     expect(screen.queryByTestId('campaign-new-back')).toBeNull()
+  })
+})
+
+describe('CampaignNewRoute freeform screen', () => {
+  const begin = (): HTMLButtonElement => screen.getByTestId<HTMLButtonElement>('freeform-begin')
+  const typeConcept = (value: string): void => {
+    fireEvent.change(screen.getByTestId('freeform-input'), { target: { value } })
+  }
+
+  it('keeps Begin disabled under 20 chars and enables it at or above 20', () => {
+    gotoFreeform()
+    // Empty → disabled.
+    expect(begin().disabled).toBe(true)
+    // 19 chars → still disabled (the freeform floor mirrors the contract min(20)).
+    typeConcept('a'.repeat(19))
+    expect(begin().disabled).toBe(true)
+    // 20 chars → enabled.
+    typeConcept('a'.repeat(20))
+    expect(begin().disabled).toBe(false)
+  })
+
+  it('posts the WRAPPED freeform body and navigates to /campaigns/:newId on 201', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ campaignId: 'c-new-1' }, { status: 201 })
+      }),
+    )
+    gotoFreeform()
+    const concept = 'A drowned cathedral city the tide never fully leaves.'
+    typeConcept(concept)
+    act(() => { begin().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-new-1')
+    })
+    // The wire body is the wrapped freeform shape — nothing more.
+    expect(capturedBody).toEqual({
+      world: { kind: 'new', source: { mode: 'freeform', concept } },
+    })
+  })
+
+  it('shows a 422 concept_rejected rejectionMessage inline, without navigating', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json(
+          { code: 'concept_rejected', reason: 'inappropriate', rejectionMessage: 'That concept crosses a line.' },
+          { status: 422 },
+        ),
+      ),
+    )
+    gotoFreeform()
+    typeConcept('A drowned cathedral city the tide never fully leaves.')
+    act(() => { begin().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('freeform-notice').textContent).toBe('That concept crosses a line.')
+    })
+    // Stayed on freeform — the minimal inline rejection does not navigate (B5 owns
+    // the full rejection screen).
+    expect(screen.getByTestId('screen-freeform')).toBeDefined()
+    expect(screen.queryByTestId('route-campaign-target')).toBeNull()
+    // Begin is re-enabled so the player can edit + retry.
+    expect(begin().disabled).toBe(false)
+  })
+
+  it('switches to the guided path when the quiet switch line is pressed', () => {
+    gotoFreeform()
+    act(() => { screen.getByTestId('freeform-switch').click() })
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
   })
 })

@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Stack, Box, Button, Icon } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { ForkScreen } from './campaign-new/fork.tsx'
+import { FreeformScreen } from './campaign-new/freeform.tsx'
 
 // The campaign-create flow (`/campaigns/new`, spec §1) — a thin screen state
 // machine. The player walks a linear path of SCREENS; the controller holds a
@@ -22,6 +24,7 @@ function ScreenStub({ screen }: { screen: Exclude<Screen, 'fork'> }): React.JSX.
 
 export function CampaignNewRoute(): React.JSX.Element {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   // The back-history stack: the last entry is the current screen; `fork` is the
   // permanent root (never popped), so `back` is shown iff the stack has depth.
   const [history, setHistory] = useState<Screen[]>(['fork'])
@@ -53,6 +56,17 @@ export function CampaignNewRoute(): React.JSX.Element {
         <ForkScreen
           onFreeform={() => {
             go('freeform')
+          }}
+          onGuided={() => {
+            go('guided')
+          }}
+        />
+      ) : current === 'freeform' ? (
+        <FreeformScreen
+          onCommitted={(campaignId) => {
+            // The generating route (Phase C makes it phase-aware). A real navigate
+            // now — the screen fires a neutral intent; the controller owns the route.
+            void navigate(`/campaigns/${campaignId}`)
           }}
           onGuided={() => {
             go('guided')
