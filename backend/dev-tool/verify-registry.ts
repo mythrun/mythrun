@@ -47,7 +47,12 @@ export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 // computed independently of page composition.
 export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> = {
   // CAMPAIGNS-page panels
-  'campaign-create': [{ method: 'POST', path: '/api/campaigns' }],
+  'campaign-create': [
+    { method: 'POST', path: '/api/campaigns' },
+    // MYT-89 A5: the guided flow synthesizes+reworks a concept before commit.
+    { method: 'POST', path: '/api/campaigns/synthesize-preview' },
+    { method: 'POST', path: '/api/campaigns/preview/:previewId/rework' },
+  ],
   'my-campaigns': [{ method: 'GET', path: '/api/campaigns/mine' }],
   'campaign-details': [{ method: 'GET', path: '/api/campaigns/:campaignId' }],
   'campaign-rename': [{ method: 'PATCH', path: '/api/campaigns/:campaignId/name' }],
