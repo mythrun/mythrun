@@ -1,14 +1,24 @@
 // MYT-51 T13 — campaign-create-panel.
 //
-// Mode toggle (freeform | guided) over a single shared submit pipeline.
-// Freeform: name + concept textarea. Guided: name + 3 picks ({title,
-// whyILikeIt}) per spec D4. Submit goes through `apiCall` to
-// POST /api/campaigns; the route's discriminated `code` field steers the
-// rendered error UX per spec § "POST /api/campaigns flow":
+// Mode toggle (freeform | guided) over a shared submit pipeline.
+//
+// Freeform commits its concept directly to POST /api/campaigns.
+//
+// Guided (MYT-89 A5) is now a TWO-STEP flow: the 3 picks ({title, whyILikeIt},
+// spec D4) go to POST /api/campaigns/synthesize-preview (Sonnet synth + input
+// gate, non-charging), which returns an opaque `previewId`; the panel then
+// commits `{mode:'guided', previewId}` to POST /api/campaigns. This is the
+// dev-tool's preview→commit E2E path. Synthesis + the gate no longer run on the
+// create commit — so the guided 422 concept_rejected now surfaces from the
+// synthesize-preview step, and the commit adds a 410 (preview expired) case.
+//
+// Both steps share the SAME discriminated `code` error vocabulary, so one
+// renderer steers the UX regardless of which call returned the non-201:
 //
 //   400 invalid_body                          → field-level Zod hint
 //   403 insufficient_credits                  → link to credit-grant
 //   409 concurrent_generation_in_progress     → disable submit until clear
+//   410 preview_expired (guided commit)       → prompt a re-synthesize
 //   422 concept_rejected                      → rejectionMessage + (guided)
 //                                                a collapsed "see what was
 //                                                judged" expander
@@ -24,7 +34,7 @@
 // `innerHTML` — same rule applies to every server-returned string field
 // in this panel.
 
-import { apiCall } from '../api-client.js'
+import { apiCall, type ApiResponse } from '../api-client.js'
 import { setActiveCampaignId } from '../shell/active-campaign.js'
 import { openSse, type SseConnection } from '../sse-client.js'
 import { registerPanelMount } from '../shell/shell.js'
@@ -81,6 +91,14 @@ function readCreateSuccess(body: unknown): CreateSuccess | null {
   if (!isObject(body)) return null
   const id = body.campaignId
   return typeof id === 'string' && id.length > 0 ? { campaignId: id } : null
+}
+
+// MYT-89 A5: the 201 body from POST /api/campaigns/synthesize-preview carries
+// the opaque `previewId` the guided flow then commits.
+function readPreviewId(body: unknown): string | null {
+  if (!isObject(body)) return null
+  const id = body.previewId
+  return typeof id === 'string' && id.length > 0 ? id : null
 }
 
 function readRetryAfterSeconds(body: unknown): number | null {
@@ -587,30 +605,27 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
     }, 1000)
   }
 
-  function buildBody(): Record<string, unknown> | null {
-    // myth-4lhr: no name in the body — concept_intake auto-names.
-    const body: Record<string, unknown> =
-      mode === 'freeform'
-        ? {
-            world: {
-              kind: 'new',
-              source: { mode: 'freeform', concept: conceptTextarea.value.trim() },
-            },
-          }
-        : {
-            world: {
-              kind: 'new',
-              source: {
-                mode: 'guided',
-                picks: titleInputs.map((titleEl, i) => ({
-                  title: titleEl.value.trim(),
-                  // whyInputs is the matching parallel array; length is the same
-                  // by construction (the for-loop above pushes both per row).
-                  whyILikeIt: (whyInputs[i]?.value ?? '').trim(),
-                })),
-              },
-            },
-          }
+  // Guided picks → the synthesize-preview body. MYT-89 A5: guided create posts
+  // these to POST /api/campaigns/synthesize-preview (not /api/campaigns), which
+  // synthesizes + gates and returns a previewId we then commit.
+  function buildPicks(): { title: string; whyILikeIt: string }[] {
+    return titleInputs.map((titleEl, i) => ({
+      title: titleEl.value.trim(),
+      // whyInputs is the matching parallel array; length is the same by
+      // construction (the for-loop above pushes both per row).
+      whyILikeIt: (whyInputs[i]?.value ?? '').trim(),
+    }))
+  }
+
+  // The POST /api/campaigns commit body. Freeform commits the concept directly;
+  // guided commits the opaque previewId returned by synthesize-preview.
+  // myth-4lhr: no name in the body — concept_intake auto-names.
+  function buildCommitBody(committedMode: Mode, previewId: string): Record<string, unknown> {
+    const source: Record<string, unknown> =
+      committedMode === 'freeform'
+        ? { mode: 'freeform', concept: conceptTextarea.value.trim() }
+        : { mode: 'guided', previewId }
+    const body: Record<string, unknown> = { world: { kind: 'new', source } }
     // myth-exac T22: dev-only flag to surface secret-tier facts.
     if (bypassCheckbox.checked) {
       body.devBypassAccessFilter = true
@@ -738,61 +753,42 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
     })
   }
 
-  async function submit(): Promise<void> {
-    if (inFlightConcurrentBlock) return
-    clearCooldown()
-    extraDetails.replaceChildren()
-    // A fresh submit clears any prior failure surface and tears down
-    // any prior SSE subscription (we'll open a new one on 201).
-    closeSse()
-    clearFailureSurfaces()
-    const body = buildBody()
-    if (body === null) return
-
-    submitBtn.disabled = true
-    result.textContent = 'submitting...'
-    setState('submitting')
-    const submittedMode = mode
-
-    const res = await apiCall('/api/campaigns', {
-      method: 'POST',
-      body: JSON.stringify(body),
+  // The 201-created success surface: campaignId line + "Watch progress →"
+  // affordance, make it the shell's active campaign, open a private SSE sub.
+  function renderCreateSuccess(success: CreateSuccess): void {
+    result.replaceChildren()
+    const line = document.createElement('div')
+    line.textContent = `201 created — campaignId: ${success.campaignId}`
+    result.appendChild(line)
+    // myth-0smu: surface a "Watch progress →" affordance that navigates the
+    // shell to the World workflow (status + snapshot + hierarchy + tables).
+    const watch = document.createElement('button')
+    watch.textContent = 'Watch progress →'
+    watch.style.marginTop = '6px'
+    watch.addEventListener('click', () => {
+      window.dispatchEvent(
+        new CustomEvent<{ workflowId: string }>('mythrun.navigate-workflow', {
+          detail: { workflowId: 'world' },
+        }),
+      )
     })
+    result.appendChild(watch)
+    // Make the new campaign the shell's active one — the drawer + other panels
+    // react via onActiveCampaignChanged.
+    setActiveCampaignId(success.campaignId)
+    // Also subscribe privately so this panel can react to stage-failed events
+    // directly (separate consumer/lifecycle from the drawer's connection).
+    subscribeToStream(success.campaignId)
+    setState('submitted')
+    submitBtn.disabled = false
+  }
 
-    if (res.status === 201) {
-      const success = readCreateSuccess(res.body)
-      if (success !== null) {
-        result.replaceChildren()
-        const line = document.createElement('div')
-        line.textContent = `201 created — campaignId: ${success.campaignId}`
-        result.appendChild(line)
-        // myth-0smu: surface a "Watch progress →" affordance that
-        // navigates the shell to the World workflow (where status +
-        // snapshot + hierarchy + random tables are co-located).
-        const watch = document.createElement('button')
-        watch.textContent = 'Watch progress →'
-        watch.style.marginTop = '6px'
-        watch.addEventListener('click', () => {
-          window.dispatchEvent(
-            new CustomEvent<{ workflowId: string }>('mythrun.navigate-workflow', {
-              detail: { workflowId: 'world' },
-            }),
-          )
-        })
-        result.appendChild(watch)
-        // Make the new campaign the shell's active one — the drawer +
-        // other panels react via onActiveCampaignChanged.
-        setActiveCampaignId(success.campaignId)
-        // Also subscribe privately so this panel can react to
-        // stage-failed events directly (separate consumer, separate
-        // lifecycle from the drawer's connection).
-        subscribeToStream(success.campaignId)
-        setState('submitted')
-        submitBtn.disabled = false
-        return
-      }
-    }
-
+  // Steer the non-201 error UX off the discriminated `code`. Shared by BOTH
+  // guided steps (synthesize-preview and the commit) since they speak the same
+  // code vocabulary. Leaves the panel back at 'ready' so the user can edit and
+  // retry — except concurrent-gen, which owns its own disabled state and
+  // returns early.
+  function renderApiError(res: ApiResponse<unknown>, submittedMode: Mode): void {
     const code = readCode(res.body) ?? '(no code)'
 
     if (res.status === 422 && code === 'concept_rejected') {
@@ -813,6 +809,11 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
     } else if (res.status === 503 && code === 'queue_full') {
       result.textContent = `503 ${code}`
       startCooldown(parseRetryAfter(res.body, 60), code)
+    } else if (res.status === 410 && code === 'preview_expired') {
+      // MYT-89 A5: the guided preview lapsed between synthesize-preview and the
+      // commit (30-min TTL). Prompt a re-synthesize.
+      result.textContent =
+        '410 preview_expired — the synthesized preview expired; synthesize again'
     } else if (res.status === 400) {
       // Zod body errors — render as JSON for the dev's debugging.
       result.textContent = `400 invalid_body: ${JSON.stringify(res.body, null, 2)}`
@@ -822,11 +823,58 @@ export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
       }`
     }
 
-    // Any non-201 response leaves the panel back at 'ready' so the
-    // user can edit and retry. (Concurrent-gen returned early above and
-    // owns its own state — submit stays disabled until clear.)
     setState('ready')
     submitBtn.disabled = false
+  }
+
+  async function submit(): Promise<void> {
+    if (inFlightConcurrentBlock) return
+    clearCooldown()
+    extraDetails.replaceChildren()
+    // A fresh submit clears any prior failure surface and tears down
+    // any prior SSE subscription (we'll open a new one on 201).
+    closeSse()
+    clearFailureSurfaces()
+
+    submitBtn.disabled = true
+    result.textContent = 'submitting...'
+    setState('submitting')
+    const submittedMode = mode
+
+    // MYT-89 A5: guided commits an ALREADY-GATED preview. Synthesize-preview
+    // first (Sonnet synth + input gate, non-charging) to mint a previewId; any
+    // non-201 there renders with the shared error UX and bails. Freeform skips
+    // this and commits its concept directly.
+    let previewId = ''
+    if (submittedMode === 'guided') {
+      result.textContent = 'synthesizing preview...'
+      const previewRes = await apiCall('/api/campaigns/synthesize-preview', {
+        method: 'POST',
+        body: JSON.stringify({ picks: buildPicks() }),
+      })
+      const id = readPreviewId(previewRes.body)
+      if (id === null) {
+        renderApiError(previewRes, submittedMode)
+        return
+      }
+      previewId = id
+      result.textContent = 'committing...'
+    }
+
+    const res = await apiCall('/api/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(buildCommitBody(submittedMode, previewId)),
+    })
+
+    if (res.status === 201) {
+      const success = readCreateSuccess(res.body)
+      if (success !== null) {
+        renderCreateSuccess(success)
+        return
+      }
+    }
+
+    renderApiError(res, submittedMode)
   }
 
   submitBtn.addEventListener('click', () => {

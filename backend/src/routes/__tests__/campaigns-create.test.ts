@@ -51,6 +51,11 @@ vi.mock('../../llm/prep/input-gate.js', () => ({
 // Re-import after vi.mock so the test uses the stub.
 import { synthesizeConcept } from '../../llm/prep/synthesize-concept.js'
 import { runInputGate } from '../../llm/prep/input-gate.js'
+// MYT-89 A5: guided create now commits an already-gated preview. Tests seed the
+// preview store directly (putPreview) for a real previewId rather than routing
+// through synthesize-preview — this plugin registration doesn't mount the
+// preview route, and the create handler only reads via getPreview.
+import { putPreview } from '../../preview/preview-store.js'
 import type { LanguageModelUsage } from 'ai'
 
 const synthesizeConceptMock = vi.mocked(synthesizeConcept)
@@ -71,6 +76,15 @@ const STUB_USAGE: LanguageModelUsage = {
     textTokens: 10,
     reasoningTokens: 0,
   },
+}
+
+// Shape-correct intentSummary for seeded preview records (SynthesizerOutput
+// shape). The create commit reads only `concept` off the preview, but a stored
+// record always carries the intent it was synthesized from.
+const STUB_INTENT = {
+  aesthetics: ['rain', 'salt'],
+  themes: ['memory'],
+  sourcesInternal: ['internal-pick-1', 'internal-pick-2', 'internal-pick-3'],
 }
 
 // --- Test harness ---------------------------------------------------------
@@ -372,18 +386,16 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       expect(synthesizeConceptMock).not.toHaveBeenCalled()
     })
 
-    it('201 guided: synthesizer ran; concept stored on worlds is the synthesized one', async () => {
-      const { devSub } = await seedUserWithCredits(pool, scope, 1)
-      const synthesizedConcept =
+    it('201 guided: commits the already-gated preview concept; NO re-synth, NO re-gate', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      // The gated concept was parked at synthesize-preview time. Seed it
+      // directly (real previewId) and commit with it.
+      const gatedConcept =
         'A rain-soaked archipelago where lighthouses are sentient and remember every shipwreck they have ever witnessed.'
-      synthesizeConceptMock.mockResolvedValue({
-        concept: synthesizedConcept,
-        intentSummary: {
-          aesthetics: ['rain', 'salt'],
-          themes: ['memory'],
-          sourcesInternal: ['internal-pick-1', 'internal-pick-2', 'internal-pick-3'],
-        },
-        usage: STUB_USAGE,
+      const previewId = await putPreview(redis, userId, {
+        concept: gatedConcept,
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
       })
 
       const res = await app.inject({
@@ -391,38 +403,91 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: scope.campaignName(0),
           world: {
             kind: 'new',
-            source: {
-              mode: 'guided',
-              picks: [
-                { title: 'Studio Ghibli films', whyILikeIt: 'gentle melancholy and wind' },
-                { title: 'Old maritime journals', whyILikeIt: 'isolation and salt' },
-                { title: 'Stories about memory', whyILikeIt: 'what things remember' },
-              ],
-            },
+            source: { mode: 'guided', previewId },
           },
         },
       })
       expect(res.statusCode).toBe(201)
       const body = res.json<{ campaignId: string }>()
 
-      expect(synthesizeConceptMock).toHaveBeenCalledTimes(1)
-      // The gate received the synthesized concept + intentSummary
-      // (verifying the downstream wiring matches Roc-Imp7 / D5).
-      expect(runInputGateMock).toHaveBeenCalledTimes(1)
-      const gateArgs = runInputGateMock.mock.calls[0]?.[0]
-      expect(gateArgs?.concept).toBe(synthesizedConcept)
-      expect(gateArgs?.intentSummary).not.toBeNull()
+      // The commit does NOT re-synthesize and does NOT re-gate — the stored
+      // concept is server-authored and already passed the gate at preview time.
+      expect(synthesizeConceptMock).not.toHaveBeenCalled()
+      expect(runInputGateMock).not.toHaveBeenCalled()
 
-      // The world row stores the SYNTHESIZED concept (not the picks).
+      // The world row stores the PREVIEW's concept verbatim.
       const worlds = await pool.query<{ concept: string }>(
         `SELECT concept FROM worlds
          WHERE id = (SELECT world_id FROM campaigns WHERE id = $1)`,
         [body.campaignId],
       )
-      expect(worlds.rows[0]?.concept).toBe(synthesizedConcept)
+      expect(worlds.rows[0]?.concept).toBe(gatedConcept)
+
+      // The commit path is otherwise identical: the credit was debited and the
+      // world-gen job enqueued.
+      const ledger = await pool.query<{ amount: string; source_type: string }>(
+        `SELECT amount::text AS amount, source_type FROM credit_ledger
+         WHERE user_id = $1 AND source_type = 'debit'`,
+        [userId],
+      )
+      expect(ledger.rows).toHaveLength(1)
+      expect(Number(ledger.rows[0]?.amount)).toBe(-1)
+      expect(queueSpy.add).toHaveBeenCalledTimes(1)
+    })
+
+    it('410 preview_expired when the guided previewId is absent/expired', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      // A well-formed but never-stored previewId → 410 (NOT 400 — the body is
+      // valid; the concept-source load is what misses).
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          world: {
+            kind: 'new',
+            source: { mode: 'guided', previewId: uuidv7() },
+          },
+        },
+      })
+      expect(res.statusCode).toBe(410)
+      expect(res.json()).toEqual({ code: 'preview_expired' })
+      // Nothing committed, nothing debited, nothing enqueued.
+      const c = await pool.query(`SELECT id FROM campaigns WHERE created_by = $1`, [userId])
+      expect(c.rows).toHaveLength(0)
+      expect(queueSpy.add).not.toHaveBeenCalled()
+    })
+
+    it('410 preview_expired when another user owns the previewId (IDOR isolation)', async () => {
+      // Owner parks a preview; a DIFFERENT authenticated user tries to commit
+      // it. getPreview bakes the userId into the Redis key, so the cross-user
+      // load simply misses → the same 410 an absent id gets. No cross-user
+      // world is ever created.
+      const owner = await seedUserWithCredits(pool, scope, 1, 0)
+      const other = await seedUserWithCredits(pool, scope, 1, 1)
+      const previewId = await putPreview(redis, owner.userId, {
+        concept: 'A private concept only the owner previewed.',
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': other.devSub },
+        payload: {
+          world: {
+            kind: 'new',
+            source: { mode: 'guided', previewId },
+          },
+        },
+      })
+      expect(res.statusCode).toBe(410)
+      expect(res.json()).toEqual({ code: 'preview_expired' })
+      const c = await pool.query(`SELECT id FROM campaigns WHERE created_by = $1`, [other.userId])
+      expect(c.rows).toHaveLength(0)
     })
   })
 
@@ -486,50 +551,13 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       },
     )
 
-    it('422 guided-mode rejection includes synthesizedConcept', async () => {
-      const { devSub } = await seedUserWithCredits(pool, scope, 1)
-      const synth =
-        'A clockwork bureaucracy of mountain-monks whose ledgers track every promise ever broken.'
-      synthesizeConceptMock.mockResolvedValue({
-        concept: synth,
-        intentSummary: {
-          aesthetics: ['ink'],
-          themes: ['promise'],
-          sourcesInternal: ['internal'],
-        },
-        usage: STUB_USAGE,
-      })
-      runInputGateMock.mockResolvedValue({
-        verdict: 'reject',
-        reason: 'clone_intent',
-        rejectionMessage: 'This reads as a clone of a copyrighted work.',
-        reasoning: 'clone_intent: ...',
-        usage: STUB_USAGE,
-      })
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/campaigns',
-        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
-        payload: {
-          name: scope.campaignName(0),
-          world: {
-            kind: 'new',
-            source: {
-              mode: 'guided',
-              picks: [
-                { title: 'Pick A', whyILikeIt: 'reason A' },
-                { title: 'Pick B', whyILikeIt: 'reason B' },
-                { title: 'Pick C', whyILikeIt: 'reason C' },
-              ],
-            },
-          },
-        },
-      })
-      expect(res.statusCode).toBe(422)
-      const body = res.json<{ synthesizedConcept?: string }>()
-      expect(body.synthesizedConcept).toBe(synth)
-    })
+    // MYT-89 A5: the guided-mode gate rejection (422 with synthesizedConcept)
+    // moved OFF the create commit — guided create now commits an already-gated
+    // preview and does NOT re-gate. That 422 path now lives on the
+    // synthesize-preview / rework routes and is covered by
+    // campaign-preview.test.ts ('422 concept_rejected includes the
+    // synthesizedConcept'). The freeform 422 above still exercises the create
+    // route's own gate.
   })
 
   // -----------------------------------------------------------------------
@@ -581,27 +609,24 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       expect(res.statusCode).toBe(400)
     })
 
-    it('400 on wrong number of picks', async () => {
+    it('400 on a guided body missing previewId (schema, before any store load)', async () => {
+      // MYT-89 A5: the guided arm now requires `previewId: string`. A guided
+      // source without it is a body-shape bug — 400 at Zod, distinct from the
+      // 410 a well-formed-but-absent previewId gets at the store load.
       const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
         headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
         payload: {
-          name: scope.campaignName(0),
           world: {
             kind: 'new',
-            source: {
-              mode: 'guided',
-              picks: [
-                { title: 'A', whyILikeIt: 'a' },
-                { title: 'B', whyILikeIt: 'b' },
-              ],
-            },
+            source: { mode: 'guided' },
           },
         },
       })
       expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('invalid_body')
     })
   })
 
