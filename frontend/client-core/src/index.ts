@@ -27,6 +27,7 @@ export {
 // Endpoint slices + the thin React-Query suspense hooks the screens render against.
 export { getMe, useMe, register, checkUsername } from './api/users.ts'
 export { getMyCampaigns, useMyCampaigns } from './api/campaigns.ts'
+export { synthesizePreview, reworkPreview, createCampaign } from './api/campaign-create.ts'
 export { getBalance, useBalance } from './api/billing.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 
@@ -35,6 +36,21 @@ export { createSession, refreshSession, logout } from './api/session.ts'
 // they call the hook through — never reaching into @mythrun/contract directly
 // (R5: route/feature code imports @mythrun/client-core, @mythrun/ui, i18n only).
 export type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
+// Campaign-create wire types the create UI (Phase B) types + branches against —
+// read off THIS barrel so route/feature code never imports @mythrun/contract (R5).
+// GATE_REASONS is a runtime value (the closed reject-reason set for the concept gate).
+export { GATE_REASONS } from '@mythrun/contract/rest'
+export type {
+  SynthesizerPick,
+  SynthesizePreviewRequest,
+  SynthesizePreviewResponse,
+  ReworkRequest,
+  ReworkResponse,
+  CreateCampaignRequest,
+  CreateCampaignResponse,
+  ConceptRejection,
+  GateReason,
+} from '@mythrun/contract/rest'
 export type { BalanceResponse, ActiveSubscriptionSummary } from '@mythrun/contract/rest'
 export type {
   RegisterRequest,
