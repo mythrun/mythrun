@@ -6,9 +6,14 @@
 // ~10 minutes of world generation, so the concept lives here (not Postgres)
 // with a short TTL: abandoned previews reap themselves.
 //
-// Keys are `campaign-preview:${userId}:${previewId}`. The userId is baked
-// INTO the key, so a cross-user `getPreview` simply misses — there is no
-// IDOR surface where user B reads user A's preview by guessing the id.
+// Keys are `${redisKeyPrefix}campaign-preview:${userId}:${previewId}`. The
+// `redisKeyPrefix` (`${MYTHRUN_ENV}:${REGION_PREFIX}:`, config/env.ts) is the
+// same env/region namespace session-state, the rate-limiter, pipeline
+// channels, and the rejection-storm counter all carry — so a per-env key
+// inventory / flush (`SCAN prod:use1:*`) reaches this key family too. The
+// userId is baked INTO the key, so a cross-user `getPreview` simply misses —
+// there is no IDOR surface where user B reads user A's preview by guessing
+// the id.
 //
 // The Redis client is a parameter (matching redis/session-state.ts's
 // `makeSessionState(redis, …)` shape) so these functions are unit-testable
@@ -35,9 +40,12 @@ export interface PreviewRecord {
   readonly reworkCount: number
 }
 
-/** The user-scoped Redis key. userId is embedded so a cross-user read misses. */
-function previewKey(userId: string, previewId: string): string {
-  return `campaign-preview:${userId}:${previewId}`
+/** The env-namespaced, user-scoped Redis key. `redisKeyPrefix` already carries
+ *  its trailing colon (`${MYTHRUN_ENV}:${REGION_PREFIX}:`), so it prefixes
+ *  directly — matching session-state's `${keyPrefix}session:…`. userId is
+ *  embedded so a cross-user read misses. */
+function previewKey(redisKeyPrefix: string, userId: string, previewId: string): string {
+  return `${redisKeyPrefix}campaign-preview:${userId}:${previewId}`
 }
 
 /**
@@ -47,12 +55,13 @@ function previewKey(userId: string, previewId: string): string {
  */
 export async function putPreview(
   redis: Redis,
+  redisKeyPrefix: string,
   userId: string,
   record: PreviewRecord,
 ): Promise<string> {
   const previewId = uuidv7()
   await redis.set(
-    previewKey(userId, previewId),
+    previewKey(redisKeyPrefix, userId, previewId),
     JSON.stringify(record),
     'EX',
     PREVIEW_TTL_SECONDS,
@@ -67,10 +76,11 @@ export async function putPreview(
  */
 export async function getPreview(
   redis: Redis,
+  redisKeyPrefix: string,
   userId: string,
   previewId: string,
 ): Promise<PreviewRecord | null> {
-  const raw = await redis.get(previewKey(userId, previewId))
+  const raw = await redis.get(previewKey(redisKeyPrefix, userId, previewId))
   if (raw === null) return null
   try {
     return JSON.parse(raw) as PreviewRecord
@@ -89,12 +99,13 @@ export async function getPreview(
  */
 export async function overwritePreview(
   redis: Redis,
+  redisKeyPrefix: string,
   userId: string,
   previewId: string,
   record: PreviewRecord,
 ): Promise<void> {
   await redis.set(
-    previewKey(userId, previewId),
+    previewKey(redisKeyPrefix, userId, previewId),
     JSON.stringify(record),
     'EX',
     PREVIEW_TTL_SECONDS,

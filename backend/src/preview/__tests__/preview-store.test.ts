@@ -17,6 +17,11 @@ const UUIDV7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a
 const USER_A = 'user-a'
 const USER_B = 'user-b'
 
+// Env/region namespace (`${MYTHRUN_ENV}:${REGION_PREFIX}:` in prod) that every
+// prefixed Redis key carries; the trailing colon is part of the prefix, so it
+// concatenates directly onto the `campaign-preview:…` key family.
+const PREFIX = 'test:local:'
+
 function makeRecord(overrides: Partial<PreviewRecord> = {}): PreviewRecord {
   return {
     concept: 'A rain-soaked harbor town where the tide never fully goes out.',
@@ -45,50 +50,64 @@ describe('preview-store', () => {
 
   it('putPreview returns a UUIDv7 and a same-user getPreview round-trips the record', async () => {
     const record = makeRecord()
-    const previewId = await putPreview(redis, USER_A, record)
+    const previewId = await putPreview(redis, PREFIX, USER_A, record)
 
     expect(previewId).toMatch(UUIDV7_RE)
-    expect(await getPreview(redis, USER_A, previewId)).toEqual(record)
+    expect(await getPreview(redis, PREFIX, USER_A, previewId)).toEqual(record)
   })
 
-  it('putPreview stores under campaign-preview:{userId}:{previewId} with a 30-min TTL', async () => {
-    const previewId = await putPreview(redis, USER_A, makeRecord())
+  it('putPreview namespaces the key under redisKeyPrefix with a 30-min TTL', async () => {
+    const previewId = await putPreview(redis, PREFIX, USER_A, makeRecord())
 
-    const key = `campaign-preview:${USER_A}:${previewId}`
+    // The stored key carries the env/region prefix, so a per-env inventory /
+    // flush (`SCAN {prefix}*`) reaches this key family (the merge-blocker fix).
+    const key = `${PREFIX}campaign-preview:${USER_A}:${previewId}`
+    expect(key).toContain(PREFIX)
     expect(await redis.exists(key)).toBe(1)
+    // The UN-prefixed key (the pre-fix form) must NOT exist.
+    expect(await redis.exists(`campaign-preview:${USER_A}:${previewId}`)).toBe(0)
     const ttl = await redis.ttl(key)
     expect(ttl).toBeGreaterThan(1700)
     expect(ttl).toBeLessThanOrEqual(1800)
   })
 
-  it('getPreview from another user misses (cross-user isolation — key embeds userId)', async () => {
-    const previewId = await putPreview(redis, USER_A, makeRecord())
+  it('a preview written under prefix P is unreadable under a different prefix', async () => {
+    const previewId = await putPreview(redis, PREFIX, USER_A, makeRecord())
 
-    expect(await getPreview(redis, USER_B, previewId)).toBeNull()
+    // Same user + previewId, different env namespace → the key differs → miss.
+    expect(await getPreview(redis, 'other:env:', USER_A, previewId)).toBeNull()
+    // Sanity: it IS readable under the same prefix.
+    expect(await getPreview(redis, PREFIX, USER_A, previewId)).not.toBeNull()
+  })
+
+  it('getPreview from another user misses (cross-user isolation — key embeds userId)', async () => {
+    const previewId = await putPreview(redis, PREFIX, USER_A, makeRecord())
+
+    expect(await getPreview(redis, PREFIX, USER_B, previewId)).toBeNull()
   })
 
   it('getPreview returns null for an absent/expired previewId', async () => {
-    expect(await getPreview(redis, USER_A, 'never-stored')).toBeNull()
+    expect(await getPreview(redis, PREFIX, USER_A, 'never-stored')).toBeNull()
   })
 
   it('getPreview returns null when the stored blob is corrupt (not JSON)', async () => {
     const previewId = '01923456-789a-7bcd-8ef0-000000000001'
-    await redis.set(`campaign-preview:${USER_A}:${previewId}`, 'not-json{', 'EX', 1800)
+    await redis.set(`${PREFIX}campaign-preview:${USER_A}:${previewId}`, 'not-json{', 'EX', 1800)
 
-    expect(await getPreview(redis, USER_A, previewId)).toBeNull()
+    expect(await getPreview(redis, PREFIX, USER_A, previewId)).toBeNull()
   })
 
   it('overwritePreview replaces the record (reworkCount:1) and resets the TTL', async () => {
-    const previewId = await putPreview(redis, USER_A, makeRecord({ reworkCount: 0 }))
+    const previewId = await putPreview(redis, PREFIX, USER_A, makeRecord({ reworkCount: 0 }))
 
     const reworked = makeRecord({
       concept: 'The same harbor, now under a foreign flag.',
       reworkCount: 1,
     })
-    await overwritePreview(redis, USER_A, previewId, reworked)
+    await overwritePreview(redis, PREFIX, USER_A, previewId, reworked)
 
-    expect(await getPreview(redis, USER_A, previewId)).toEqual(reworked)
-    const ttl = await redis.ttl(`campaign-preview:${USER_A}:${previewId}`)
+    expect(await getPreview(redis, PREFIX, USER_A, previewId)).toEqual(reworked)
+    const ttl = await redis.ttl(`${PREFIX}campaign-preview:${USER_A}:${previewId}`)
     expect(ttl).toBeGreaterThan(1700)
     expect(ttl).toBeLessThanOrEqual(1800)
   })

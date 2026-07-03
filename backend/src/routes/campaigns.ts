@@ -536,7 +536,12 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         }
         concept = source.concept
       } else {
-        const preview = await getPreview(createDeps.redis, dbUser.id, source.previewId)
+        const preview = await getPreview(
+          createDeps.redis,
+          createDeps.redisKeyPrefix,
+          dbUser.id,
+          source.previewId,
+        )
         if (preview === null) {
           return reply.code(410).send({ code: 'preview_expired' })
         }

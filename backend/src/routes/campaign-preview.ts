@@ -166,7 +166,7 @@ export const campaignPreviewRoutes: FastifyPluginAsync<CampaignPreviewOpts> = as
       // Step 7: park the gated concept in Redis under a fresh previewId, keyed
       // to the AUTHENTICATED user (IDOR-safe). reworkCount starts at 0 — a
       // later rework (A4) bumps it to 1.
-      const previewId = await putPreview(opts.redis, dbUser.id, {
+      const previewId = await putPreview(opts.redis, opts.redisKeyPrefix, dbUser.id, {
         concept: synth.concept,
         intentSummary: synth.intentSummary,
         reworkCount: 0,
@@ -232,7 +232,7 @@ export const campaignPreviewRoutes: FastifyPluginAsync<CampaignPreviewOpts> = as
       }
 
       // Load by the authenticated user id (IDOR-safe; cross-user misses → 410).
-      const preview = await getPreview(opts.redis, dbUser.id, previewId)
+      const preview = await getPreview(opts.redis, opts.redisKeyPrefix, dbUser.id, previewId)
       if (preview === null) {
         return reply.code(410).send({ code: 'preview_expired' })
       }
@@ -263,7 +263,7 @@ export const campaignPreviewRoutes: FastifyPluginAsync<CampaignPreviewOpts> = as
       }
 
       // Gate pass: overwrite the parked concept (sets reworkCount:1, resets TTL).
-      await overwritePreview(opts.redis, dbUser.id, previewId, {
+      await overwritePreview(opts.redis, opts.redisKeyPrefix, dbUser.id, previewId, {
         concept: revised.concept,
         intentSummary: revised.intentSummary,
         reworkCount: 1,

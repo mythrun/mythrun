@@ -242,7 +242,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     expect(body.concept).toBe(synthesizedConcept)
 
     // The stored preview round-trips for the same user with reworkCount:0.
-    const stored = await getPreview(redis, userId, body.previewId)
+    const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, body.previewId)
     expect(stored).not.toBeNull()
     expect(stored?.concept).toBe(synthesizedConcept)
     expect(stored?.reworkCount).toBe(0)
@@ -364,7 +364,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
 
     it('200 reworks a fresh preview: overwrites the concept and sets reworkCount:1', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
-      const previewId = await putPreview(redis, userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -384,7 +384,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       expect(body.concept).toBe(revised)
 
       // Store now holds the reworked concept with reworkCount bumped to 1.
-      const stored = await getPreview(redis, userId, previewId)
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, previewId)
       expect(stored?.concept).toBe(revised)
       expect(stored?.reworkCount).toBe(1)
 
@@ -398,7 +398,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
 
     it('422 on a gate-rejected rework leaves the ORIGINAL concept and reworkCount:0 intact', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
-      const previewId = await putPreview(redis, userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -433,14 +433,14 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       expect(body.reasoning).toBeUndefined()
 
       // Load-bearing invariant: a rejected rework mutates NOTHING in the store.
-      const stored = await getPreview(redis, userId, previewId)
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, previewId)
       expect(stored?.concept).toBe(ORIGINAL_CONCEPT)
       expect(stored?.reworkCount).toBe(0)
     })
 
     it('409 rework_exhausted when the preview was already reworked (reworkCount:1) — no LLM call', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
-      const previewId = await putPreview(redis, userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 1,
@@ -467,7 +467,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     it('410 preview_expired when another user owns the previewId (IDOR isolation)', async () => {
       const owner = await seedUserWithCredits(pool, scope, 1, 0)
       const other = await seedUserWithCredits(pool, scope, 1, 1)
-      const previewId = await putPreview(redis, owner.userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, owner.userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -478,14 +478,14 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       expect(res.statusCode).toBe(410)
       expect(res.json<{ code: string }>().code).toBe('preview_expired')
       // The owner's preview is untouched.
-      const stored = await getPreview(redis, owner.userId, previewId)
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, owner.userId, previewId)
       expect(stored?.concept).toBe(ORIGINAL_CONCEPT)
       expect(stored?.reworkCount).toBe(0)
     })
 
     it('400 invalid_body on an empty change note — no LLM call', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
-      const previewId = await putPreview(redis, userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -505,7 +505,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
 
     it('403 insufficient_credits when balance is 0 — reviseConcept is NEVER called', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 0)
-      const previewId = await putPreview(redis, userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -519,14 +519,14 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       expect(reviseConceptMock).not.toHaveBeenCalled()
       expect(runInputGateMock).not.toHaveBeenCalled()
       // Invariant preserved: the parked concept + unspent budget survive.
-      const stored = await getPreview(redis, userId, previewId)
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, previewId)
       expect(stored?.concept).toBe(ORIGINAL_CONCEPT)
       expect(stored?.reworkCount).toBe(0)
     })
 
     it('429 rejection_storm_cooldown when the counter is over threshold — no LLM call', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
-      const previewId = await putPreview(redis, userId, {
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -544,7 +544,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       expect(reviseConceptMock).not.toHaveBeenCalled()
       expect(runInputGateMock).not.toHaveBeenCalled()
       // Untouched preview.
-      const stored = await getPreview(redis, userId, previewId)
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, previewId)
       expect(stored?.reworkCount).toBe(0)
     })
   })
