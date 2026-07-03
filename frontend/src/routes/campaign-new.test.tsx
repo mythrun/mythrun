@@ -5,7 +5,13 @@ import { render, screen, act, cleanup, fireEvent, waitFor } from '@testing-libra
 import { createMemoryRouter, RouterProvider, useParams } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
-import { ApiClientProvider, type ApiContext } from '@mythrun/client-core'
+import {
+  ApiClientProvider,
+  configureGuidedDraft,
+  readGuidedDraft,
+  type ApiContext,
+  type SessionDraftStore,
+} from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
 import { CampaignNewRoute } from './campaign-new.tsx'
 
@@ -344,6 +350,30 @@ describe('CampaignNewRoute guided screen', () => {
     expect(advanceBtn().disabled).toBe(false)
   })
 
+  it('routes a content_filtered synthesize to the TERMINAL rejection, not a retry notice', async () => {
+    server.use(
+      http.post(SYNTH_URL, () =>
+        HttpResponse.json({ code: 'content_filtered' }, { status: 422 }),
+      ),
+    )
+    gotoGuided()
+    fillAllPicks()
+    act(() => { advanceBtn().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('screen-rejection')).toBeDefined()
+    })
+    // Anthropic's content policy is terminal (retrying re-hits the same filter):
+    // the distinct filtered message + start-over only — never the try-again notice.
+    expect(screen.getByTestId('rejection-message').textContent).toBe(
+      i18n.t('campaignNew.rejection.filteredMessage'),
+    )
+    expect(screen.getByTestId('rejection-start-over')).toBeDefined()
+    expect(screen.queryByTestId('rejection-edit-freeform')).toBeNull()
+    expect(screen.queryByTestId('guided-notice')).toBeNull()
+    expect(screen.queryByTestId('screen-guided')).toBeNull()
+  })
+
   it('switches to the freeform path from the step-one quiet switch line', () => {
     gotoGuided()
     act(() => { screen.getByTestId('guided-switch').click() })
@@ -521,5 +551,59 @@ describe('CampaignNewRoute rejection screen', () => {
     act(() => { screen.getByTestId('rejection-start-over').click() })
     expect(screen.getByTestId('screen-guided')).toBeDefined()
     expect(screen.queryByTestId('screen-rejection')).toBeNull()
+  })
+})
+
+// The §11 draft seam is a no-op in the harness by default (the web store is only
+// wired at boot). Configure an in-memory SessionDraftStore so the clear-timing
+// wiring — draft survives synthesize, cleared only on commit — is EXERCISED.
+function makeDraftStore(): SessionDraftStore {
+  const backing = new Map<string, string>()
+  return {
+    get: (key) => backing.get(key) ?? null,
+    set: (key, value) => { backing.set(key, value) },
+    remove: (key) => { backing.delete(key) },
+  }
+}
+
+describe('CampaignNewRoute guided draft persistence (§11)', () => {
+  beforeEach(() => { configureGuidedDraft(makeDraftStore()) })
+  afterEach(() => { configureGuidedDraft(null) })
+
+  async function gotoPreviewWithDraft(): Promise<void> {
+    synthesizeGuided(
+      http.post(GUIDED_SYNTH_URL, () =>
+        HttpResponse.json({ previewId: 'p-1', concept: 'A synthesized concept.' }, { status: 201 }),
+      ),
+    )
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+  }
+
+  it('keeps the draft through synthesize and clears it only once the campaign commits', async () => {
+    await gotoPreviewWithDraft()
+    // The picks SURVIVE a successful synthesize — so a start-over / 410 re-prefills.
+    expect(readGuidedDraft()?.picks).toEqual(GUIDED_PICKS)
+
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json({ campaignId: 'c-guided-1' }, { status: 201 }),
+      ),
+    )
+    act(() => { screen.getByTestId('preview-begin').click() })
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-guided-1')
+    })
+    // The draft is dropped exactly once — at guided commit.
+    expect(readGuidedDraft()).toBeNull()
+  })
+
+  it('re-prefills the guided picks when Start over returns from the preview', async () => {
+    await gotoPreviewWithDraft()
+    act(() => { screen.getByTestId('preview-start-over').click() })
+    // Back on guided (re-mounted from the persisted draft, on the last-typed step),
+    // with that pick re-prefilled — the three picks were NOT lost (§11).
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(screen.getByTestId<HTMLInputElement>('guided-name-input').value).toBe(GUIDED_PICKS[2].title)
+    expect(screen.getByTestId<HTMLTextAreaElement>('guided-why-input').value).toBe(GUIDED_PICKS[2].whyILikeIt)
   })
 })

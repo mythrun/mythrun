@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Stack, Button, Icon } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import { clearGuidedDraft } from '@mythrun/client-core'
 import { ForkScreen } from './campaign-new/fork.tsx'
 import { FreeformScreen } from './campaign-new/freeform.tsx'
 import { GuidedScreen } from './campaign-new/guided.tsx'
@@ -51,6 +52,14 @@ export function CampaignNewRoute(): React.JSX.Element {
   const toCampaign = (campaignId: string): void => {
     void navigate(`/campaigns/${campaignId}`)
   }
+  // A committed GUIDED campaign is the ONLY moment the guided draft is cleared
+  // (spec §11): the picks survive synthesize → preview → rework → a 410-restart so
+  // those paths re-prefill; only an actual campaign create drops the draft. The
+  // freeform path never wrote a draft, so it needs no clear.
+  const onGuidedCommitted = (campaignId: string): void => {
+    clearGuidedDraft()
+    toCampaign(campaignId)
+  }
 
   return (
     <Stack gap={5} data-testid="route-campaign-new">
@@ -90,7 +99,7 @@ export function CampaignNewRoute(): React.JSX.Element {
       ) : current === 'preview' && previewPayload ? (
         <PreviewScreen
           payload={previewPayload}
-          onCommitted={toCampaign}
+          onCommitted={onGuidedCommitted}
           onStartOver={() => { go('guided') }}
           onPreviewExpired={() => { go('guided') }}
           onRejected={(r) => {

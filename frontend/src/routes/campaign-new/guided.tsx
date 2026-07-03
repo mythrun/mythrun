@@ -7,13 +7,13 @@ import {
   isHttpError,
   readGuidedDraft,
   writeGuidedDraft,
-  clearGuidedDraft,
   GATE_REASONS,
   type GuidedDraft,
   type GuidedPickDraft,
   type ConceptRejection,
   type GateReason,
 } from '@mythrun/client-core'
+import type { RejectionState } from './rejection.tsx'
 
 // The campaign-create GUIDED screen (spec §1, "Build from what you love") — the
 // player names three things they love, one at a time, and the synthesizer turns
@@ -51,8 +51,9 @@ interface Notice {
 export interface GuidedScreenProps {
   /** Synthesized a preview (HTTP 201) → the controller advances to the preview screen. */
   onSynthesized: (payload: { previewId: string; concept: string }) => void
-  /** The concept gate rejected the picks (422) → the controller advances to the rejection screen. */
-  onRejected: (rejection: ConceptRejection) => void
+  /** The gate rejected the picks (422 concept_rejected) OR the content policy blocked the prompt
+   *  (terminal content_filtered) → the controller advances to the rejection screen. */
+  onRejected: (rejection: RejectionState) => void
   /** Chose the quiet switch line → the controller advances to `freeform`. */
   onFreeform: () => void
 }
@@ -79,6 +80,19 @@ function rejectionFrom(body: unknown): ConceptRejection {
     rejectionMessage,
     ...(synthesizedConcept !== undefined ? { synthesizedConcept } : {}),
   }
+}
+
+// A synthesize terminally rejects two ways: the gate's `concept_rejected` verdict
+// (422) or the terminal `content_filtered` (Anthropic policy — retrying re-hits
+// the same filter, so it's NOT a try-again). Both route to the rejection screen;
+// everything else falls through to a calm inline notice. Mirrors preview.tsx's
+// rework path, which already sends content_filtered to the terminal rejection.
+function rejectionRouteFor(err: unknown): RejectionState | null {
+  if (isHttpError(err)) {
+    if (err.code === 'content_filtered') return { code: 'content_filtered' }
+    if (err.code === 'concept_rejected') return rejectionFrom(err.body)
+  }
+  return null
 }
 
 /** Map a non-rejection failure to its calm inline notice (rejections route away, handled by the caller). */
@@ -236,10 +250,13 @@ export function GuidedScreen({ onSynthesized, onRejected, onFreeform }: GuidedSc
     try {
       const body = picks.map((p) => ({ title: p.title.trim(), whyILikeIt: p.whyILikeIt.trim() }))
       const res = await synthesizePreview(ctx, { picks: body })
-      clearGuidedDraft()
+      // Note: the draft is NOT cleared here — it survives synthesize → preview so a
+      // "start over" or a 410 preview-expired restart re-prefills the picks (§11).
+      // The controller clears it only once a campaign is actually committed.
       onSynthesized({ previewId: res.previewId, concept: res.concept })
     } catch (err) {
-      if (isHttpError(err) && err.code === 'concept_rejected') onRejected(rejectionFrom(err.body))
+      const rejection = rejectionRouteFor(err)
+      if (rejection !== null) onRejected(rejection)
       else setNotice(noticeFor(err))
     } finally {
       setBusy(false)
