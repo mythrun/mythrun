@@ -47,12 +47,12 @@ import type { PipelineSubscriber } from '../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../sse/connection-counter.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { synthesizeConcept } from '../llm/prep/synthesize-concept.js'
-import { runInputGate, type InputGateVerdict } from '../llm/prep/input-gate.js'
-import {
-  createRejectionStormCounter,
-  REJECTION_STORM_THRESHOLD,
-  REJECTION_STORM_WINDOW_SECONDS,
-} from '../auth/rejection-storm.js'
+import { runInputGate } from '../llm/prep/input-gate.js'
+import { createRejectionStormCounter } from '../auth/rejection-storm.js'
+// MYT-89 A3: the read-only storm check + the 422 gate-rejection emitter were
+// extracted to concept-gate.ts (shared verbatim by the create route here, the
+// synthesize-preview route, and the A4 rework route). Behavior-identical.
+import { checkRejectionStorm, handleGateRejection } from './concept-gate.js'
 
 // Minimal contract for the world-gen BullMQ queue. Declared here (not
 // imported from BullMQ directly) so the plugin's Opts shape isn't coupled
@@ -1078,87 +1078,11 @@ async function resolveConceptAndIntent(source: NewWorldSource): Promise<{
   return { concept: synth.concept, intentSummary: synth.intentSummary }
 }
 
-/**
- * Read-only rejection-storm check. Returns the current count + whether
- * the cooldown is active. Distinct from the storm counter's
- * `incrementAndCheck` — the route checks the count BEFORE the gate so
- * cooldowns reject the cheapest possible way (no LLM call). The actual
- * increment happens only on a 422 from the gate.
- */
-async function checkRejectionStorm(
-  redis: Redis,
-  redisKeyPrefix: string,
-  userId: string,
-): Promise<{ cooldownActive: boolean; retryAfterSeconds: number }> {
-  const key = `${redisKeyPrefix}rejection_storm:${userId}`
-  const raw = await redis.get(key)
-  const count = raw === null ? 0 : Number.parseInt(raw, 10)
-  if (!Number.isFinite(count) || count <= REJECTION_STORM_THRESHOLD) {
-    return { cooldownActive: false, retryAfterSeconds: 0 }
-  }
-  // Match rejection-storm.ts's PTTL rounding contract: never return 0
-  // while the cooldown is still active. The fallback to the full window
-  // length only fires if the key has no TTL (defensive — every key set
-  // by the counter goes via EXPIRE-NX so a TTL is always present).
-  const pttlMs = await redis.pttl(key)
-  /* c8 ignore start — race fallback: same as rejection-storm.ts:87 —
-   * key expired between INCR and PTTL. */
-  const retryAfterSeconds = pttlMs > 0 ? Math.ceil(pttlMs / 1000) : REJECTION_STORM_WINDOW_SECONDS
-  /* c8 ignore stop */
-  return { cooldownActive: true, retryAfterSeconds }
-}
-
 /** Sum the values of a getJobCounts() response across all requested states. */
 function sumQueueCounts(counts: Record<string, number>): number {
   let total = 0
   for (const v of Object.values(counts)) total += v
   return total
-}
-
-/**
- * Gate rejection branch: increments the rejection-storm counter, logs the
- * server-side reasoning (Roc-Imp6 — never returned in the HTTP response),
- * and shapes the 422 response. `synthesizedConcept` is included only on
- * guided-mode rejections (Kraken-C2 — lets the user see what was judged).
- */
-async function handleGateRejection(args: {
-  reply: FastifyReply
-  gate: InputGateVerdict
-  userId: string
-  mode: 'freeform' | 'guided'
-  synthesizedConcept: string
-  stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
-  logger: PinoLogger
-}): Promise<FastifyReply> {
-  // Increment regardless of whether the increment trips the cooldown —
-  // the cooldown is checked at the START of the NEXT request, not on
-  // this one. (The current request still returns 422; the next one will
-  // return 429 if this increment pushed the count past the threshold.)
-  await args.stormIncrementer()
-
-  args.logger.info(
-    {
-      event: 'input_gate_reject',
-      reason: args.gate.reason,
-      reasoning: args.gate.reasoning,
-    },
-    'concept rejected by input gate',
-  )
-
-  const responsePayload: {
-    code: 'concept_rejected'
-    reason: InputGateVerdict['reason']
-    rejectionMessage: string | null
-    synthesizedConcept?: string
-  } = {
-    code: 'concept_rejected',
-    reason: args.gate.reason,
-    rejectionMessage: args.gate.rejectionMessage,
-  }
-  if (args.mode === 'guided') {
-    responsePayload.synthesizedConcept = args.synthesizedConcept
-  }
-  return args.reply.code(422).send(responsePayload)
 }
 
 /**

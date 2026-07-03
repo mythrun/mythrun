@@ -21,6 +21,7 @@ import { sessionsRoutes } from './routes/sessions.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
+import { campaignPreviewRoutes } from './routes/campaign-preview.js'
 import { authRoutes } from './routes/auth.js'
 import { createCognitoOAuthClient } from './auth/cognito-oauth-client.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
@@ -438,6 +439,18 @@ export const buildApp = async (
     redis: deps.redisRealtime,
     redisKeyPrefix: deps.redisKeyPrefix,
     worldGenQueue: deps.worldGenQueue,
+  })
+
+  // MYT-89 A3: guided world-creation preview. POST
+  // /api/campaigns/synthesize-preview synthesizes + gates an original concept
+  // and parks it in Redis under a previewId WITHOUT charging a credit (charged
+  // later at commit). Registered after requireOnboarded, like campaignsRoutes,
+  // so it inherits the JWT + onboarded gates. Its own focused plugin (keeps
+  // campaigns.ts from growing).
+  await app.register(campaignPreviewRoutes, {
+    pool: deps.pg,
+    redis: deps.redisRealtime,
+    redisKeyPrefix: deps.redisKeyPrefix,
   })
 
   // myth-epo4 T22 / MYT-53: per-player character-creation routes
