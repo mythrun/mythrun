@@ -59,6 +59,13 @@ export { Card, CardHeader, CardBody, CardFooter } from './components/Card/Card.t
 // imprint. The campaign-hub card is a thin composition of it.
 export { CoverCard } from './components/CoverCard/CoverCard.tsx'
 
+// GhostChoiceList (MYT-89) — a borderless "paper" choice list (flat 1-bit): each
+// item is a real <button> styled as a ghost (transparent, surface-hover token-swap,
+// serif title + quiet sub-line + trailing ember arrow — no border/box/mark), with
+// the choices framed AND separated by quiet Divider hairlines. The campaign-create
+// fork.
+export { GhostChoiceList } from './components/GhostChoiceList/GhostChoiceList.tsx'
+
 // Overlays (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu. Each wraps
 // an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip / Tabs /
 // DropdownMenu): Radix supplies the a11y headline (focus trap + focus-RETURN,
@@ -154,6 +161,8 @@ export type {
   CardBodyProps,
   CardFooterProps,
   CoverCardProps,
+  GhostChoiceListProps,
+  GhostChoiceItem,
   ModalProps,
   PopoverProps,
   PopoverSide,

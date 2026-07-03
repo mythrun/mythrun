@@ -81,6 +81,13 @@ export type {
 // and a foot-pinned imprint. Fixed 3:2 geometry the neutral Card doesn't model.
 export type { CoverCardProps } from './cover-card.ts'
 
+// GhostChoiceList (MYT-89) — a borderless "paper" choice list (flat 1-bit): each
+// item is a real <button> styled as a ghost (transparent, surface-hover token-swap,
+// serif title + quiet sub-line, no border/box/mark), with the choices framed AND
+// separated by quiet Divider hairlines. The campaign-create fork. DOM-free (§9):
+// each item's `onSelect` is a neutral callback, no className/style/raw DOM events.
+export type { GhostChoiceListProps, GhostChoiceItem } from './ghost-choice-list.ts'
+
 // Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
 // Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip
 // / Tabs / DropdownMenu) in the web impl — Radix supplies the a11y headline
