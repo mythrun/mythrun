@@ -256,6 +256,24 @@ describe('home hub (wired)', () => {
     })
   })
 
+  it('the populated-hub New Campaign CTA navigates to the creation route', async () => {
+    seedReady()
+    server.use(campaignsOk([campaignA]), balanceOk())
+
+    renderHome()
+
+    // A player who already owns campaigns gets a quiet trailing CTA in the hub
+    // body (MYT-87 shipped the CTA only on the empty shelf) — it routes to the
+    // same /campaigns/new creation surface the empty CTA does.
+    await waitFor(() => {
+      expect(screen.getByTestId('new-campaign')).toBeDefined()
+    })
+    fireEvent.click(screen.getByTestId('new-campaign'))
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-new')).toBeDefined()
+    })
+  })
+
   it('the campaign card links to the detail route (interim)', async () => {
     seedReady()
     server.use(campaignsOk([campaignA]), balanceOk())

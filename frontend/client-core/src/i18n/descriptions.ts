@@ -32,7 +32,7 @@ export const descriptions: Record<string, string> = {
   'home.title': 'Heading on the home hub. Short (~2-3 words), e.g. "Your campaigns".',
   'home.loading': 'Loading label on the home hub while campaigns are fetched. Short.',
   'home.empty': 'Empty-state message on the home hub when the player has no campaigns. ~1 short sentence + a nudge to start.',
-  'home.createCampaign': 'Label for the "+ Create a campaign" CTA on the empty hub (the "+" is a leading icon, so this is the text only). Terse, brand-voiced, e.g. "Create a campaign".',
+  'home.createCampaign': 'Label for the "+ Create a campaign" CTA — the empty hub\'s primary CTA and the populated hub\'s quiet trailing "new campaign" action (the "+" is a leading icon, so this is the text only). Terse, brand-voiced, e.g. "Create a campaign".',
   'home.card.generating': 'Hub-card mono state line while the world is still being generated. Terse, ~3-5 words.',
   'home.card.failed': 'Hub-card mono state line when world generation failed (terminal). Terse, ~4-6 words, hints that opening the card retries.',
   'home.card.needsCharacter': "Hub-card mono state line when it is the viewer's turn to make their character. Terse, ~4-6 words.",

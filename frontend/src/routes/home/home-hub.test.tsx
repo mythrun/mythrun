@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
+import { MemoryRouter } from 'react-router-dom'
 import type { CampaignSummary } from '@mythrun/client-core'
 import { i18n } from '../../i18n/config.ts'
 import { CampaignHubBody } from './home-hub.tsx'
@@ -33,11 +34,16 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
   }
 }
 
+// The body now carries a `useNavigate`-backed "new campaign" CTA (the populated-hub
+// counterpart to the empty shelf's create CTA), so the unit render needs a router
+// context — a bare <MemoryRouter> is enough (the CTA only calls navigate on press).
 function renderHub(campaigns: CampaignSummary[]): void {
   render(
-    <I18nextProvider i18n={i18n}>
-      <CampaignHubBody campaigns={campaigns} />
-    </I18nextProvider>,
+    <MemoryRouter>
+      <I18nextProvider i18n={i18n}>
+        <CampaignHubBody campaigns={campaigns} />
+      </I18nextProvider>
+    </MemoryRouter>,
   )
 }
 
@@ -67,5 +73,13 @@ describe('CampaignHubBody', () => {
     const index = screen.getByTestId('hub-index')
     // Three rows → two separators between them.
     expect(within(index).getAllByRole('separator')).toHaveLength(2)
+  })
+
+  it('renders a quiet "new campaign" CTA below the shelf (the populated-hub counterpart to the empty CTA)', () => {
+    renderHub([makeCampaign({ id: 'a' })])
+    // A single trailing affordance for starting another campaign — MYT-87 shipped
+    // the CTA only on the EMPTY hub, so a player who already owns campaigns had no
+    // way to start a new one from the populated grid.
+    expect(screen.getByTestId('new-campaign')).toBeDefined()
   })
 })
