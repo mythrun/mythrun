@@ -201,3 +201,152 @@ describe('CampaignNewRoute freeform screen', () => {
     expect(screen.getByTestId('screen-guided')).toBeDefined()
   })
 })
+
+describe('CampaignNewRoute guided screen', () => {
+  const SYNTH_URL = `${BASE_URL}/api/campaigns/synthesize-preview`
+  const stepMarker = (n: 'one' | 'two' | 'three'): string => i18n.t(`campaignNew.guided.step.${n}`)
+  const findLabel = (): string => i18n.t('campaignNew.guided.find')
+
+  const nameInput = (): HTMLInputElement => screen.getByTestId<HTMLInputElement>('guided-name-input')
+  const whyInput = (): HTMLTextAreaElement => screen.getByTestId<HTMLTextAreaElement>('guided-why-input')
+  const advanceBtn = (): HTMLButtonElement => screen.getByTestId<HTMLButtonElement>('guided-advance')
+  const marker = (): string | null => screen.getByTestId('guided-step-marker').textContent
+
+  const typePick = (title: string, why: string): void => {
+    fireEvent.change(nameInput(), { target: { value: title } })
+    fireEvent.change(whyInput(), { target: { value: why } })
+  }
+
+  /** Walk fork → guided (the screen every guided case starts from). */
+  function gotoGuided(): void {
+    renderRoute()
+    act(() => { screen.getByText(loveTitle()).click() })
+  }
+
+  const PICKS = [
+    { title: 'Dark Souls', whyILikeIt: 'the oppressive melancholy' },
+    { title: 'Dune', whyILikeIt: 'ecology as destiny' },
+    { title: 'Annihilation', whyILikeIt: 'the shimmer' },
+  ] as const
+
+  /** Fill all three picks in sequence, advancing through steps 1→2→3 (leaves on step 3). */
+  function fillAllPicks(): void {
+    PICKS.forEach((p, i) => {
+      typePick(p.title, p.whyILikeIt)
+      if (i < 2) act(() => { advanceBtn().click() })
+    })
+  }
+
+  it('starts on step one with the name + why fields and the first marker', () => {
+    gotoGuided()
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(marker()).toBe(stepMarker('one'))
+    expect(nameInput()).toBeDefined()
+    expect(whyInput()).toBeDefined()
+    // No step-back on step one; the quiet freeform switch is offered instead.
+    expect(screen.queryByTestId('guided-back')).toBeNull()
+    expect(screen.getByTestId('guided-switch')).toBeDefined()
+  })
+
+  it('advances through the three steps with the primary action', () => {
+    gotoGuided()
+    typePick(PICKS[0].title, PICKS[0].whyILikeIt)
+    act(() => { advanceBtn().click() })
+    expect(marker()).toBe(stepMarker('two'))
+    typePick(PICKS[1].title, PICKS[1].whyILikeIt)
+    act(() => { advanceBtn().click() })
+    expect(marker()).toBe(stepMarker('three'))
+    // On the last step the action becomes "Find my world".
+    expect(advanceBtn().textContent).toBe(findLabel())
+  })
+
+  it('keeps the primary action disabled until the current pick is filled', () => {
+    gotoGuided()
+    expect(advanceBtn().disabled).toBe(true)
+    fireEvent.change(nameInput(), { target: { value: 'Dark Souls' } })
+    expect(advanceBtn().disabled).toBe(true) // why still empty
+    fireEvent.change(whyInput(), { target: { value: 'the oppressive melancholy' } })
+    expect(advanceBtn().disabled).toBe(false)
+  })
+
+  it('← Back on step two returns to step one with the step-one pick preserved', () => {
+    gotoGuided()
+    typePick(PICKS[0].title, PICKS[0].whyILikeIt)
+    act(() => { advanceBtn().click() })
+    expect(marker()).toBe(stepMarker('two'))
+    act(() => { screen.getByTestId('guided-back').click() })
+    expect(marker()).toBe(stepMarker('one'))
+    expect(nameInput().value).toBe(PICKS[0].title)
+    expect(whyInput().value).toBe(PICKS[0].whyILikeIt)
+  })
+
+  it('posts exactly the 3-pick body and, on 201, moves to preview carrying the payload', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post(SYNTH_URL, async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ previewId: 'p-1', concept: 'A synthesized concept.' }, { status: 201 })
+      }),
+    )
+    gotoGuided()
+    fillAllPicks()
+    act(() => { advanceBtn().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('screen-preview')).toBeDefined()
+    })
+    // The preview payload reached the preview screen (the id the controller carried).
+    expect(screen.getByTestId('preview-payload').textContent).toBe('p-1')
+    // The wire body is exactly the three picks — nothing more.
+    expect(capturedBody).toEqual({ picks: PICKS })
+  })
+
+  it('routes to the rejection state on a 422 concept_rejected', async () => {
+    server.use(
+      http.post(SYNTH_URL, () =>
+        HttpResponse.json(
+          {
+            code: 'concept_rejected',
+            reason: 'clone_intent',
+            rejectionMessage: 'Too close to an existing world.',
+            synthesizedConcept: 'A near-clone concept.',
+          },
+          { status: 422 },
+        ),
+      ),
+    )
+    gotoGuided()
+    fillAllPicks()
+    act(() => { advanceBtn().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('screen-rejection')).toBeDefined()
+    })
+    expect(screen.queryByTestId('screen-guided')).toBeNull()
+  })
+
+  it('shows a calm inline retry notice on a 503, without leaving the guided screen', async () => {
+    server.use(
+      http.post(SYNTH_URL, () =>
+        HttpResponse.json({ code: 'llm_upstream_unavailable' }, { status: 503 }),
+      ),
+    )
+    gotoGuided()
+    fillAllPicks()
+    act(() => { advanceBtn().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('guided-notice')).toBeDefined()
+    })
+    // Stayed on guided; the action re-enables so the player can retry.
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(screen.queryByTestId('screen-preview')).toBeNull()
+    expect(advanceBtn().disabled).toBe(false)
+  })
+
+  it('switches to the freeform path from the step-one quiet switch line', () => {
+    gotoGuided()
+    act(() => { screen.getByTestId('guided-switch').click() })
+    expect(screen.getByTestId('screen-freeform')).toBeDefined()
+  })
+})

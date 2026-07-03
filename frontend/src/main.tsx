@@ -9,6 +9,7 @@ import {
   configureOAuth,
   configureTokenRefresh,
   configureStreamingFetch,
+  configureGuidedDraft,
   refreshSession,
   bootstrapSession,
 } from '@mythrun/client-core'
@@ -17,6 +18,7 @@ import { type AppProvidersConfig, toApiContext } from './app/providers.tsx'
 import { createWebSecureStorage } from './platform/web/secure-storage.ts'
 import { createWebOAuthStateStore } from './platform/web/oauth-state-store.ts'
 import { createWebStreamingFetch } from './platform/web/streaming-fetch.ts'
+import { createWebSessionDraftStore } from './platform/web/guided-draft-store.ts'
 import './index.css'
 
 // The web entry — the ONE place a web-only DOM touch is allowed (the
@@ -45,6 +47,12 @@ const config: AppProvidersConfig = import.meta.env.DEV
 // still opens SSE/WS — the /dev/transport harness runs in DEV — so this must NOT
 // be fenced inside either auth branch.
 configureStreamingFetch(createWebStreamingFetch())
+
+// Wire the guided-create draft store UNCONDITIONALLY (both auth modes), at module
+// scope — the create flow is reachable in dev (bypass) and prod (jwt) alike, so
+// the sessionStorage-backed draft persistence (MYT-89 §11 refresh-survival) must
+// not be fenced inside either auth branch.
+configureGuidedDraft(createWebSessionDraftStore())
 
 // DEV BOOTSTRAP (bypass only): the dev backend's bypass auth seam is always
 // authenticated (it injects `request.user.sub` on every request), so the dev app

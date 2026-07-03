@@ -28,6 +28,18 @@ export {
 export { getMe, useMe, register, checkUsername } from './api/users.ts'
 export { getMyCampaigns, useMyCampaigns } from './api/campaigns.ts'
 export { synthesizePreview, reworkPreview, createCampaign } from './api/campaign-create.ts'
+
+// Guided-create draft persistence seam (MYT-89 §11) — the DOM-free brain reaches
+// sessionStorage through the injected SessionDraftStore port (web impl in
+// @mythrun/web, wired once at boot via configureGuidedDraft). The guided create
+// screen reads/writes the in-progress picks so a refresh re-prefills them.
+export {
+  configureGuidedDraft,
+  readGuidedDraft,
+  writeGuidedDraft,
+  clearGuidedDraft,
+} from './create/guided-draft.ts'
+export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 

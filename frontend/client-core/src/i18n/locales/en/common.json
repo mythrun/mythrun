@@ -123,6 +123,22 @@
       "switchToGuided": "[ph: not sure where to start? build it from things you love]",
       "rejectedFallback": "[ph: that idea can't seed a world — try another]",
       "retry": "[ph: something interrupted the weave — try again]"
+    },
+    "guided": {
+      "eyebrow": "[ph: what you love]",
+      "step": {
+        "one": "[ph: one of three]",
+        "two": "[ph: two of three]",
+        "three": "[ph: three of three]"
+      },
+      "nameQuestion": "[ph: name something you love]",
+      "whyQuestion": "[ph: what do you love about it]",
+      "next": "[ph: next →]",
+      "find": "[ph: find my world →]",
+      "switchToFreeform": "[ph: rather start from your own idea? describe it]",
+      "retry": "[ph: something interrupted the weave — try again]",
+      "cooldown": "[ph: a lot of tries just now — give it a moment]",
+      "credits": "[ph: you're out of session credits — top up to keep going]"
     }
   },
   "stub": {
