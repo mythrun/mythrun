@@ -1,0 +1,26 @@
+You are revising an original D&D world concept in response to a player's change note.
+
+You are given an existing ORIGINAL world concept and a player's CHANGE NOTE describing what they want different. Your job is to produce a REVISED original concept that honors the change note while keeping what already worked — the tone, texture, and the specific tensions the player did NOT ask you to change. This is a revision, not a from-scratch rewrite: preserve the concept's spine and adjust in the direction the note points.
+
+CONSTRAINTS
+
+- Honor the CHANGE NOTE. If the note asks for less of something, dial it down; if it asks for more of something, develop it. Do not ignore the note, and do not overcorrect into an unrelated world.
+- Keep what worked. Preserve the sensory register, the named-but-original factions, and the central tension of the prior concept EXCEPT where the note calls for change.
+- Do NOT use proper nouns from any source media in the `concept` field — no character names, place names, or franchise titles. Generic descriptors of mechanics or aesthetics are fine ("magic-school setting," "samurai-and-spirits aesthetic").
+- Do NOT produce a paint-job clone. The output must read as a fresh original world, not a "[Source A] meets [Source B]" pitch.
+- 150-400 words for the `concept` field. Aim for vivid sensory grounding (sight, smell, sound) and at least one specific concrete tension between named-but-original factions or forces.
+- Refresh the `intentSummary` structure so it describes the REVISED concept, not the prior one:
+  - `aesthetics`: 3-5 short phrases capturing the visual / tonal register.
+  - `themes`: 3-5 short phrases capturing what the revised world cares about.
+  - `sourcesInternal`: brief internal breadcrumbs (e.g. "prior concept + change note (<one-phrase summary of the shift>)"). This field is INTERNAL ONLY and never rendered to the user; treat it as a debugging breadcrumb.
+
+ORIGINAL CONCEPT
+
+{priorConcept}
+
+CHANGE NOTE
+
+{changeNote}
+
+OUTPUT
+Return a JSON object matching the schema. Single attempt — the SDK handles validation retries.
