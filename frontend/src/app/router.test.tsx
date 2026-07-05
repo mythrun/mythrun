@@ -3,10 +3,43 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@mythrun/ui'
-import { ApiClientProvider, useSessionStore, type ApiContext } from '@mythrun/client-core'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import {
+  ApiClientProvider,
+  useSessionStore,
+  type ApiContext,
+  type WorldGenStream,
+} from '@mythrun/client-core'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { routes } from './router.tsx'
 import { i18n } from '../i18n/config.ts'
+
+// Mock ONLY the world-gen stream off the client-core barrel; `importOriginal` +
+// spread keeps every other export real, so the app tree — `useSessionStore` (the
+// gate), `ApiClientProvider`, `useBalance` (the authed header) — still mounts
+// through the actual stack. This routing check must stay HERMETIC: the real
+// `useWorldGenStream` would (a) open a live SSE with backoff-reconnect timers
+// against the test baseUrl (a leak past this cleanup-free file's teardown), and
+// (b) start in `generating`, mounting <WorldGenGraph> → `canvas.getContext`,
+// which jsdom throws on ('Not implemented'). Returning a fully-active campaign
+// (`complete/complete`) renders CampaignDetailRoute's fall-through detail arm
+// (`route-campaign-detail`) — a stable, canvas-free surface that still proves the
+// route resolved. The phase-aware branching itself is exercised end-to-end in
+// `routes/campaign-detail.test.tsx`.
+vi.mock('@mythrun/client-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mythrun/client-core')>()
+  return {
+    ...actual,
+    useWorldGenStream: vi.fn(
+      (): WorldGenStream => ({
+        phase: 'complete',
+        nodes: [],
+        edges: [],
+        status: 'complete',
+        retry: () => Promise.resolve(),
+      }),
+    ),
+  }
+})
 
 // The shell's routing contract, proven through `createMemoryRouter` over the
 // SAME `routes` array the app ships (so the test exercises the real tree, not a
