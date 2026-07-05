@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;background:#f4f1ea;color:#2b2b2b;font-family:'Source Serif 4',Georgia,serif;}
+  .wrap{max-width:940px;margin:0 auto;padding:18px 20px 40px;}
+  h2{font-size:22px;margin:0 0 4px;}
+  .sub{font-family:ui-monospace,monospace;font-size:12px;color:#7a7060;margin:0 0 14px;}
+  .stage{position:relative;border:1px solid #cfc7b4;border-radius:4px;overflow:hidden;}
+  canvas{display:block;width:100%;}
+  .bar{display:flex;gap:10px;align-items:center;margin:12px 0;font-family:ui-monospace,monospace;font-size:12px;}
+  button{font-family:ui-monospace,monospace;font-size:12px;border:1px solid #2b2b2b;background:#fff;padding:6px 12px;border-radius:3px;cursor:pointer;}
+  button.on{background:#2b2b2b;color:#f4f1ea;}
+  ul{font-size:13px;line-height:1.6;color:#444;max-width:700px;}
+  b{color:#2b2b2b;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Generation — two acts (chaos → order)</h2>
+  <p class="sub">Act 1: entities coalesce from pixel-chaos, swirl thins to nothing by the last one. Act 2: the web stitches in, slow penstrokes.</p>
+  <div class="bar">
+    <span>speed:</span>
+    <button id="real" class="on" onclick="setSpeed(1,this)">Realistic (10s / entity)</button>
+    <button onclick="setSpeed(4,this)">Fast (4×)</button>
+    <button onclick="setSpeed(10,this)">Fast (10×)</button>
+    <button onclick="restart()">↻ restart</button>
+    <span id="clock" style="margin-left:auto;color:#7a7060;"></span>
+  </div>
+  <div class="stage"><canvas id="c"></canvas></div>
+  <ul style="margin-top:16px;">
+    <li><b>Swirl</b> — dense & pixel-y at the start (chaos), thinning on a curve, <b>gone by the final entity</b>. Quantity = Act-1 progress.</li>
+    <li><b>Act 2 edges</b> — after all nodes are in, connections draw as <b>slow deliberate penstrokes</b> (~2s each), one at a time.</li>
+    <li>A couple of edges <b>snap</b> at the very end (the coherence repair).</li>
+  </ul>
+</div>
+<script>
+const c=document.getElementById('c'), x=c.getContext('2d');
+const CW=900, CH=470, DPR=Math.min(2,window.devicePixelRatio||1);
+c.width=CW*DPR; c.height=CH*DPR; c.style.height=CH+'px'; x.scale(DPR,DPR);
+
+// Act 1: entities appear one / 10s (disconnected). Act 2: edges stitch in after.
+const E=[
+ {n:'Stillwater',k:'LOCATION',x:.47,y:.44,t:0},
+ {n:'Belltoe',k:'LOCATION',x:.64,y:.66,t:10},
+ {n:'The Forgetting Road',k:'LOCATION',x:.55,y:.27,t:20},
+ {n:'Bell-Wardens',k:'FACTION',x:.32,y:.55,t:30},
+ {n:'Abbot Sennel',k:'NPC',x:.27,y:.33,t:40},
+ {n:'The Understirring',k:'LOCATION',x:.50,y:.74,t:50},
+ {n:'Master Peret Vell',k:'NPC',x:.73,y:.45,t:60},
+ {n:"Recollects' Circle",k:'FACTION',x:.41,y:.81,t:70},
+ {n:'The Bell-Loft',k:'LOCATION',x:.60,y:.45,t:80},
+];
+const TN=E.length, LAST=E[TN-1].t; // last entity at t=80
+// Act 2 edges: begin after last node settles (~t=84), one every 3.2s, 2s penstroke each. Last 2 = snap.
+const D=3.2, DUR=2.0, A2=LAST+4;
+const EG=[
+ {a:0,b:2},{a:0,b:1},{a:0,b:3},{a:3,b:4},{a:0,b:5},{a:1,b:5},{a:0,b:6},{a:3,b:6},{a:5,b:8},{a:0,b:8},{a:3,b:7},{a:5,b:7}
+].map((e,i)=>({...e, t:A2+i*D, snap: i>=10}));
+const ENDT=EG[EG.length-1].t+DUR;
+const px=e=>40+e.x*(CW-80), py=e=>30+e.y*(CH-60);
+let P=[]; function initP(){P=[];for(let i=0;i<620;i++)P.push({x:Math.random()*CW,y:Math.random()*CH,p:Math.random(),s:Math.random()});}
+initP();
+let speed=1,t0=performance.now();
+function setSpeed(s,b){speed=s;document.querySelectorAll('.bar button').forEach(x=>x.classList.remove('on'));if(b)b.classList.add('on');else event.target.classList.add('on');}
+function restart(){t0=performance.now();initP();}
+const easeOut=t=>1-Math.pow(1-t,3), easeInOut=t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+function frame(){
+  const T=(performance.now()-t0)/1000*speed;
+  const eShown=E.filter(e=>T>=e.t).length;
+  const edDone=EG.filter(e=>T>=e.t+DUR).length;
+  const prog=Math.min(100,Math.round(eShown/TN*70 + edDone/EG.length*30));
+  document.getElementById('clock').textContent='t+'+Math.floor((performance.now()-t0)/1000*speed)+'s · '+prog+'%';
+  x.clearRect(0,0,CW,CH);
+  // swirl — dense pixel chaos; density = (1 - entities_in/total)^0.7, gone by last entity
+  const dens=Math.pow(Math.max(0,1-eShown/TN),0.7);
+  if(dens>0.01){ for(const q of P){ q.p+=0.005*speed; if(q.p>1)q.p-=1;
+    q.x+=(Math.sin((q.y*0.03)+q.p*6)*0.6)*speed; q.y+=(Math.cos((q.x*0.03)+q.p*6)*0.5)*speed;
+    if(q.x<0)q.x+=CW; if(q.x>CW)q.x-=CW; if(q.y<0)q.y+=CH; if(q.y>CH)q.y-=CH;
+    const tw=0.35+0.65*Math.abs(Math.sin(q.p*6.28)); const a=0.22*dens*tw; if(a<0.015)continue;
+    x.fillStyle='rgba(110,100,78,'+a+')'; const sz=q.s<0.6?2:3; x.fillRect(q.x|0,q.y|0,sz,sz);} }
+  // edges — Act 2 penstroke (slow), last two snap
+  for(const g of EG){ if(T<g.t)continue; const s=E[g.a],tg=E[g.b];
+    const raw=Math.max(0,Math.min(1,(T-g.t)/(g.snap?0.5:DUR))); const pr=g.snap?easeOut(raw):easeInOut(raw);
+    const sx=px(s),sy=py(s),tx=px(tg),ty=py(tg);
+    x.strokeStyle='rgba(90,82,60,0.6)'; x.lineWidth=1.3; x.lineCap='round';
+    x.beginPath(); x.moveTo(sx,sy); x.lineTo(sx+(tx-sx)*pr, sy+(ty-sy)*pr); x.stroke(); }
+  // nodes
+  for(const e of E){ if(T<e.t)continue; const a=Math.max(0,Math.min(1,(T-e.t)/1.0)); const nx=px(e),ny=py(e);
+    x.globalAlpha=a; const sz=e.k==='FACTION'?11:e.k==='NPC'?8:10; x.fillStyle='#2b2b2b';
+    if(e.k==='NPC'){x.save();x.translate(nx,ny);x.rotate(Math.PI/4);x.fillRect(-sz/2,-sz/2,sz,sz);x.restore();} else x.fillRect(nx-sz/2,ny-sz/2,sz,sz);
+    x.font='13px Georgia,serif'; x.fillText(e.n,nx+sz,ny+4);
+    x.fillStyle='#8a8070'; x.globalAlpha=a*0.7; x.font='9px ui-monospace,monospace'; x.fillText(e.k,nx+sz,ny+15); x.globalAlpha=1; }
+  // status card
+  const phase = eShown<TN ? (T<30?'naming the world…':'raising the factions…') : (T<ENDT?'weaving the connections…':'the world is ready');
+  x.fillStyle='#fff'; x.strokeStyle='#2b2b2b'; x.lineWidth=1; roundRect(14,14,206,44,4); x.fill(); x.stroke();
+  x.fillStyle='#2b2b2b'; x.font='11px ui-monospace,monospace';
+  const spin= T<ENDT ? '◐◓◑◒'[(Math.floor(performance.now()/150))%4]+' ' : '✓ ';
+  x.fillText(spin+phase,24,32);
+  x.fillStyle='#e6e2d8'; x.fillRect(24,40,164,4); x.fillStyle='#2b2b2b'; x.fillRect(24,40,164*prog/100,4);
+  x.fillText(prog+'%',24,55);
+  requestAnimationFrame(frame);
+}
+function roundRect(x0,y0,w,h,r){x.beginPath();x.moveTo(x0+r,y0);x.arcTo(x0+w,y0,x0+w,y0+h,r);x.arcTo(x0+w,y0+h,x0,y0+h,r);x.arcTo(x0,y0+h,x0,y0,r);x.arcTo(x0,y0,x0+w,y0,r);x.closePath();}
+frame();
+</script>
+</body>
+</html>
