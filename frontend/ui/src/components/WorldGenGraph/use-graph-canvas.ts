@@ -123,7 +123,7 @@ export function useGraphCanvas(params: GraphCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
-    return startMotionLoop(ctx, resolveInk(canvas), { getSim, paintFrame, sizeRef })
+    return startMotionLoop(ctx, canvas, { getSim, paintFrame, sizeRef })
   }, [reducedMotion, canvasRef, applySize, paintFrame, getSim])
 
   // Fine-pointer interaction: hover-raise, drag-to-pin, tap-to-select. Attached only
@@ -172,10 +172,15 @@ interface MotionLoopDeps {
 
 /** Run the rAF churn loop: each frame tick the sim, repaint the graph, then spawn +
  *  render ambient ghost blooms near the node points. Returns the cancel teardown.
- *  Module-scoped so the hook body stays lean. */
+ *  Module-scoped so the hook body stays lean.
+ *
+ *  The theme ink is re-resolved EACH frame (not captured once) so a light/dark
+ *  toggle mid-generation repaints the Canvas immediately — the Canvas is the one
+ *  surface Tailwind can't reach, and a captured ink would stay stale until remount.
+ *  A single computed-style read per frame is the accepted cost (C4 review). */
 function startMotionLoop(
   ctx: CanvasRenderingContext2D,
-  ink: string,
+  canvas: HTMLCanvasElement,
   deps: MotionLoopDeps,
 ): () => void {
   const { getSim, paintFrame, sizeRef } = deps
@@ -183,6 +188,7 @@ function startMotionLoop(
   let raf = 0
   let last = 0
   const frame = (now: number): void => {
+    const ink = resolveInk(canvas)
     getSim().tick()
     const points = paintFrame(ctx, ink)
     const dt = last === 0 ? 16 : now - last

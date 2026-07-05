@@ -96,6 +96,8 @@ function StreamingDemo({ reducedMotion }: { reducedMotion?: boolean }): React.JS
           edges={edges}
           {...(selectedKey !== undefined ? { selectedKey } : {})}
           onSelect={setSelectedKey}
+          listLabel="Entities in your forming world"
+          emptyLabel="The world is still taking shape"
           {...(reducedMotion !== undefined ? { reducedMotion } : {})}
         />
       </div>
@@ -124,7 +126,13 @@ export const Populated: Story = {
     return (
       <div className="min-h-dvh bg-bg p-[var(--space-6)]">
         <div className="h-[70vh]">
-          <WorldGenGraph nodes={nodes} edges={edges} onSelect={() => undefined} />
+          <WorldGenGraph
+            nodes={nodes}
+            edges={edges}
+            onSelect={() => undefined}
+            listLabel="Entities in your forming world"
+            emptyLabel="The world is still taking shape"
+          />
         </div>
       </div>
     )

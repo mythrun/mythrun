@@ -27,6 +27,10 @@ const FIXTURE: GraphNode[] = [
 ]
 const EDGES: GraphEdge[] = [{ synthKey: 'e1', from: 's2/maeris', to: 's3/guild', relationship: 'leads' }]
 
+// The chrome labels are consumer-supplied (i18n) props — the DS owns no copy. Every
+// render passes them; tests that assert on them use these exact values.
+const LABELS = { listLabel: 'Entities in your forming world', emptyLabel: 'The world is still taking shape' }
+
 /** A permissive fake 2D context: every method is a no-op, every property write is
  *  absorbed. Lets the reduced-motion / motion tests run the draw path (which jsdom's
  *  null context otherwise skips) so we can assert the rAF behaviour around it. */
@@ -53,7 +57,7 @@ describe('WorldGenGraph — accessible entity list', () => {
   it('renders one activatable item per node, showing name + kind', () => {
     stubGetContext(null)
     const { getByRole, getByText } = render(
-      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />,
     )
     for (const n of FIXTURE) {
       const item = getByRole('button', { name: new RegExp(n.name) })
@@ -65,7 +69,7 @@ describe('WorldGenGraph — accessible entity list', () => {
 
   it('renders exactly one list item per node', () => {
     stubGetContext(null)
-    const { getAllByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    const { getAllByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />)
     expect(getAllByRole('button')).toHaveLength(FIXTURE.length)
   })
 
@@ -73,7 +77,7 @@ describe('WorldGenGraph — accessible entity list', () => {
     stubGetContext(null)
     const onSelect = vi.fn()
     const user = userEvent.setup()
-    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={onSelect} />)
+    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={onSelect} {...LABELS} />)
     await user.click(getByRole('button', { name: /Maeris Vale/ }))
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('s2/maeris')
   })
@@ -82,7 +86,7 @@ describe('WorldGenGraph — accessible entity list', () => {
     stubGetContext(null)
     const onSelect = vi.fn()
     const user = userEvent.setup()
-    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={onSelect} />)
+    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={onSelect} {...LABELS} />)
     getByRole('button', { name: /Ashfen Reach/ }).focus()
     await user.keyboard('{Enter}')
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('s1/reach')
@@ -91,7 +95,7 @@ describe('WorldGenGraph — accessible entity list', () => {
   it('marks the selected item via aria-current', () => {
     stubGetContext(null)
     const { getByRole } = render(
-      <WorldGenGraph nodes={FIXTURE} edges={EDGES} selectedKey="s2/maeris" onSelect={vi.fn()} />,
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} selectedKey="s2/maeris" onSelect={vi.fn()} {...LABELS} />,
     )
     expect(getByRole('button', { name: /Maeris Vale/ })).toHaveAttribute('aria-current', 'true')
     expect(getByRole('button', { name: /Ashfen Reach/ })).not.toHaveAttribute('aria-current')
@@ -100,16 +104,28 @@ describe('WorldGenGraph — accessible entity list', () => {
   it('has no a11y violations', async () => {
     stubGetContext(null)
     const { container } = render(
-      <WorldGenGraph nodes={FIXTURE} edges={EDGES} selectedKey="s1/reach" onSelect={vi.fn()} />,
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} selectedKey="s1/reach" onSelect={vi.fn()} {...LABELS} />,
     )
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('labels the list with the consumer-supplied listLabel (DS owns no copy)', () => {
+    stubGetContext(null)
+    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />)
+    expect(getByRole('list')).toHaveAccessibleName(LABELS.listLabel)
+  })
+
+  it('shows the consumer-supplied emptyLabel when no entity has arrived', () => {
+    stubGetContext(null)
+    const { getByText } = render(<WorldGenGraph nodes={[]} edges={[]} onSelect={vi.fn()} {...LABELS} />)
+    expect(getByText(LABELS.emptyLabel)).toBeInTheDocument()
   })
 })
 
 describe('WorldGenGraph — Canvas', () => {
   it('marks the decorative Canvas aria-hidden', () => {
     stubGetContext(null)
-    const { container } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    const { container } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />)
     const canvas = container.querySelector('canvas')
     expect(canvas).not.toBeNull()
     expect(canvas).toHaveAttribute('aria-hidden', 'true')
@@ -120,7 +136,7 @@ describe('WorldGenGraph — motion contract', () => {
   it('reducedMotion renders WITHOUT starting a requestAnimationFrame loop', () => {
     stubGetContext(fakeCtx())
     const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
-    render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} reducedMotion />)
+    render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} reducedMotion {...LABELS} />)
     // Static settle-to-convergence redraw only — no rAF churn.
     expect(raf).not.toHaveBeenCalled()
   })
@@ -129,7 +145,7 @@ describe('WorldGenGraph — motion contract', () => {
     stubGetContext(fakeCtx())
     const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
     const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
-    const { unmount } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    const { unmount } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />)
     expect(raf).toHaveBeenCalled()
     unmount()
     expect(caf).toHaveBeenCalled()

@@ -8,11 +8,10 @@ import { cn } from '../../lib/cn.ts'
 // also the whole testable surface (jsdom has no Canvas). Flat 1-bit paper register:
 // no borders/boxes/dots — the selected row is a quiet surface token-swap.
 
-// Placeholder copy pending brand i18n (Miklos owns user-facing strings). The item
-// text is DATA (the entity's real name + kind), not invented prose, so it ships as
-// is; only the chrome labels are deferred.
-const LIST_ARIA_LABEL = '[ph: entities in your forming world]'
-const EMPTY_LABEL = '[ph: the world is still taking shape]'
+// The chrome labels (the list's `aria-label`, the empty-state note) are COPY, so a
+// DS component doesn't own them — they arrive as props the consuming app resolves
+// from i18n. The item text is DATA (the entity's real name + kind), not copy, so it
+// renders directly.
 
 const ITEM_CLASS = cn(
   'group flex w-full items-baseline justify-between gap-[var(--space-3)] text-left',
@@ -28,14 +27,24 @@ export interface EntityListProps {
   nodes: GraphNode[]
   selectedKey: string | undefined
   onSelect: (synthKey: string) => void
+  /** Accessible label for the list — an i18n'd value supplied by the consumer. */
+  listLabel: string
+  /** Empty-state note before any entity has arrived — supplied by the consumer. */
+  emptyLabel: string
 }
 
-export function EntityList({ nodes, selectedKey, onSelect }: EntityListProps): React.JSX.Element {
+export function EntityList({
+  nodes,
+  selectedKey,
+  onSelect,
+  listLabel,
+  emptyLabel,
+}: EntityListProps): React.JSX.Element {
   return (
-    <ul aria-label={LIST_ARIA_LABEL} className="min-w-0 max-h-full overflow-y-auto">
+    <ul aria-label={listLabel} className="min-w-0 max-h-full overflow-y-auto">
       {nodes.length === 0 && (
         <li className="px-[var(--space-3)] py-[var(--space-2)] font-body text-sm text-ink-tertiary">
-          {EMPTY_LABEL}
+          {emptyLabel}
         </li>
       )}
       {nodes.map((node) => {

@@ -172,6 +172,8 @@
   },
   "worldGen": {
     "shaping": "[ph: your world is taking shape]",
+    "listLabel": "[ph: entities in your forming world]",
+    "emptyLabel": "[ph: the world is still taking shape]",
     "failedTitle": "[ph: the world stalled]",
     "failedBody": "[ph: the making was interrupted — you can pick it back up]",
     "retry": "[ph: try again]",

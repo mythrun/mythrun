@@ -18,7 +18,16 @@ import { useGraphCanvas } from './use-graph-canvas.ts'
 // imperative Canvas work lives in useGraphCanvas; this component is thin composition.
 
 export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(function WorldGenGraph(
-  { nodes, edges, selectedKey, onSelect, reducedMotion = false, 'data-testid': dataTestId },
+  {
+    nodes,
+    edges,
+    selectedKey,
+    onSelect,
+    reducedMotion = false,
+    listLabel,
+    emptyLabel,
+    'data-testid': dataTestId,
+  },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -38,7 +47,13 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
       </div>
       {/* The accessible + selectable surface. */}
       <div className="min-w-0 sm:w-64 sm:shrink-0">
-        <EntityList nodes={nodes} selectedKey={selectedKey} onSelect={onSelect} />
+        <EntityList
+          nodes={nodes}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+          listLabel={listLabel}
+          emptyLabel={emptyLabel}
+        />
       </div>
     </div>
   )

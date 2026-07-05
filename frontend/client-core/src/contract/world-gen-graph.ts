@@ -38,4 +38,12 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  loop, no ambient ghost blooms — the physics ticks to convergence once per
    *  `nodes`/`edges` change and the graph is drawn static (still accurate). */
   reducedMotion?: boolean
+  /** Accessible label for the entity list — an i18n key the consumer resolves.
+   *  The Canvas is `aria-hidden`, so this list is the graph's whole accessible
+   *  name. The DS owns no copy (§ components-live-in-the-design-system); the
+   *  consuming app supplies the i18n'd value. */
+  listLabel: string
+  /** Empty-state note shown in the list before any entity has streamed in — an
+   *  i18n key the consumer resolves (the DS owns no copy). */
+  emptyLabel: string
 }

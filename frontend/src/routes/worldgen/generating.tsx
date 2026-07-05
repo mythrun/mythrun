@@ -30,6 +30,8 @@ export function GeneratingView({ nodes, edges }: GeneratingViewProps): React.JSX
         nodes={nodes}
         edges={edges}
         onSelect={setSelectedKey}
+        listLabel={t('worldGen.listLabel')}
+        emptyLabel={t('worldGen.emptyLabel')}
         {...(selectedKey !== undefined ? { selectedKey } : {})}
       />
       <Text role="ui-caption">{t('worldGen.shaping')}</Text>
