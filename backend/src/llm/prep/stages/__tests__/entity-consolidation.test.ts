@@ -143,6 +143,7 @@ describe('runEntityConsolidationStage', () => {
           to: 'new-001',
           relationship: 'rival_of',
           description: 'Long Vigil rivals the Ironjaw over Bone Reach territory.',
+          accessLevel: 'known',
         },
       ],
     }
@@ -247,6 +248,8 @@ describe('runEntityConsolidationStage', () => {
       targetEntityId: insertCall.id,
       relationshipType: 'rival_of',
       description: 'Long Vigil rivals the Ironjaw over Bone Reach territory.',
+      // MYT-89 Phase A: tier carried from the stage-4 buffer.
+      accessLevel: 'known',
       // myth-imxg.5: insert-time synth_key carries the same wire identity
       // the per-resolved-relationship `edge-added` event publishes, so
       // stage 7 can address the row by the same string stage 4b established
@@ -410,6 +413,7 @@ describe('runEntityConsolidationStage', () => {
           to: 'new-002',
           relationship: 'opposed_to',
           description: 'references the omitted placeholder',
+          accessLevel: 'known',
         },
       ],
     }

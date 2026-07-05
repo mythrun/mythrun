@@ -46,6 +46,11 @@ export interface WorldInventory {
       targetEntityId: string
       relationshipType: string
       description: string
+      // MYT-89 Phase A: persisted by stages 4/4b/7 (migration 031); stage 7
+      // reads it to preserve the existing tier on a fix_relationship that
+      // doesn't re-tier. Structurally propagated by load's
+      // `new Map(relRows.map((r) => [r.id, r]))`.
+      accessLevel: AccessLevel
       // myth-imxg.3: persisted by stages 4/4b/7 (migration 020); stage 7
       // reads it for edge-removed SSE events. Structurally propagated by
       // load's `new Map(relRows.map((r) => [r.id, r]))`.

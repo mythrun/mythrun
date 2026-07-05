@@ -6,6 +6,7 @@
 // start (design §D9).
 
 import type { ClientLike } from './_types.js'
+import type { AccessLevel } from './facts.js'
 import { uuidv7 } from './uuidv7.js'
 
 export interface InsertRelationshipInput {
@@ -13,6 +14,11 @@ export interface InsertRelationshipInput {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  // MYT-89 Phase A: the relationship's own access tier. Mirrors the
+  // fact-level tier — a secret connection between two known entities must
+  // not surface in the known-tier reveal. Persisted into
+  // relationships.access_level (migration 031).
+  readonly accessLevel: AccessLevel
   // myth-imxg.2: required so stage 7 (coherence pass) can address the
   // existing row on the wire by its synth_key when emitting edge-removed
   // SSE events. Column is nullable in the schema (migration 020) but
@@ -26,6 +32,9 @@ export interface Relationship {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  // MYT-89 Phase A: surfaced so stage 7 (coherence pass) can preserve the
+  // existing tier when a fix_relationship patch doesn't re-tier it.
+  readonly accessLevel: AccessLevel
   readonly synthKey: string
 }
 
@@ -36,6 +45,7 @@ interface RelationshipListByWorldDbRow {
   readonly target_entity_id: string
   readonly relationship_type: string
   readonly description: string
+  readonly access_level: AccessLevel
   readonly synth_key: string
 }
 
@@ -46,6 +56,7 @@ function toRelationship(row: RelationshipListByWorldDbRow): Relationship {
     targetEntityId: row.target_entity_id,
     relationshipType: row.relationship_type,
     description: row.description,
+    accessLevel: row.access_level,
     synthKey: row.synth_key,
   }
 }
@@ -101,11 +112,11 @@ export function relationshipsNs(c: ClientLike) {
       for (const row of rows) {
         const id = uuidv7()
         ids.push(id)
-        values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
-        params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description, row.synthKey)
+        values.push(`($${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)}, $${String(p++)})`)
+        params.push(id, row.sourceEntityId, row.targetEntityId, row.relationshipType, row.description, row.accessLevel, row.synthKey)
       }
       await c.query(
-        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
+        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level, synth_key)
      VALUES ${values.join(', ')}`,
         params,
       )
@@ -124,18 +135,20 @@ export function relationshipsNs(c: ClientLike) {
       targetEntityId: string
       relationshipType: string
       description: string
+      accessLevel: AccessLevel
       synthKey: string
     }): Promise<void> => {
       await c.query(
         `INSERT INTO relationships
-           (id, source_entity_id, target_entity_id, relationship_type, description, synth_key)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+           (id, source_entity_id, target_entity_id, relationship_type, description, access_level, synth_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           input.id,
           input.sourceEntityId,
           input.targetEntityId,
           input.relationshipType,
           input.description,
+          input.accessLevel,
           input.synthKey,
         ],
       )
@@ -156,10 +169,13 @@ export function relationshipsNs(c: ClientLike) {
       relationshipType: string
       description: string
     }): Promise<void> => {
+      // MYT-89 Phase A: character-integration edges (PC→world + PC↔PC) are
+      // player-created and non-secret by construction, so access_level bakes
+      // in the 'known' literal — same rationale as facts.insertIntegrationFact.
       await c.query(
         `INSERT INTO relationships
-             (id, source_entity_id, target_entity_id, relationship_type, description)
-           VALUES ($1, $2, $3, $4, $5)`,
+             (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+           VALUES ($1, $2, $3, $4, $5, 'known')`,
         [
           uuidv7(),
           input.sourceEntityId,
@@ -171,7 +187,7 @@ export function relationshipsNs(c: ClientLike) {
     },
     listByWorld: async (worldId: string): Promise<Relationship[]> => {
       const result = await c.query<RelationshipListByWorldDbRow>(
-        `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.synth_key
+        `SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type, r.description, r.access_level, r.synth_key
        FROM relationships r
        JOIN entities e ON e.id = r.source_entity_id
        WHERE e.world_id = $1`,

@@ -54,7 +54,7 @@ function makeInv(): WorldInventory {
       ['fact-3', { id: 'fact-3', entityId: 'ent-1', topic: 'history', content: 'Also history.', accessLevel: 'known' }],
     ]),
     relationshipsById: new Map([
-      ['rel-1', { id: 'rel-1', sourceEntityId: 'ent-1', targetEntityId: 'ent-2', relationshipType: 'leads', description: 'd', synthKey: 'test/rel/0' }],
+      ['rel-1', { id: 'rel-1', sourceEntityId: 'ent-1', targetEntityId: 'ent-2', relationshipType: 'leads', description: 'd', accessLevel: 'known', synthKey: 'test/rel/0' }],
     ]),
   }
 }
@@ -339,8 +339,8 @@ describe('lookupRelTriple — ambiguous_relationship branch', () => {
       proseByEntityId: new Map(),
       factsById: new Map(),
       relationshipsById: new Map([
-        ['r-1', { id: 'r-1', sourceEntityId: 'e-a', targetEntityId: 'e-b', relationshipType: 'leads', description: 'first', synthKey: 'test/rel/0' }],
-        ['r-2', { id: 'r-2', sourceEntityId: 'e-a', targetEntityId: 'e-b', relationshipType: 'leads', description: 'duplicate', synthKey: 'test/rel/1' }],
+        ['r-1', { id: 'r-1', sourceEntityId: 'e-a', targetEntityId: 'e-b', relationshipType: 'leads', description: 'first', accessLevel: 'known', synthKey: 'test/rel/0' }],
+        ['r-2', { id: 'r-2', sourceEntityId: 'e-a', targetEntityId: 'e-b', relationshipType: 'leads', description: 'duplicate', accessLevel: 'known', synthKey: 'test/rel/1' }],
       ]),
     }
     const ctx = buildResolutionContext(inv)

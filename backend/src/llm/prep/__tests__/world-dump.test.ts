@@ -232,6 +232,7 @@ describe('loadWorldInventory — synthKey on relationships', () => {
       targetEntityId: entB,
       relationshipType: 'adjacent_to',
       description: 'Test edge.',
+      accessLevel: 'known',
       synthKey,
     }])
 

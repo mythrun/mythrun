@@ -23,6 +23,7 @@
 //   7. Clear worlds.entity_consolidation_pending to empty arrays.
 
 import type { Repo } from '../../../repo/index.js'
+import type { AccessLevel } from '../../../repo/facts.js'
 import type { Redis } from 'ioredis'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -87,6 +88,9 @@ interface PendingRelationship {
   readonly to: string
   readonly relationship: string
   readonly description: string
+  // MYT-89 Phase A: the relationship tier stage 4 stamped into the buffer;
+  // carried into relationships.access_level when the phantom edge materializes.
+  readonly accessLevel: AccessLevel
 }
 interface PendingState {
   readonly declarations: readonly PendingDeclaration[]
@@ -220,6 +224,7 @@ export async function runEntityConsolidationStage(
     readonly targetEntityId: string
     readonly relationshipType: string
     readonly description: string
+    readonly accessLevel: AccessLevel
   }
   interface GhostPublish {
     readonly index: number
@@ -283,6 +288,7 @@ export async function runEntityConsolidationStage(
         targetEntityId: target,
         relationshipType: r.relationship,
         description: r.description,
+        accessLevel: r.accessLevel,
       })
     }
     if (persistedRels.length > 0) {

@@ -115,6 +115,9 @@ interface AcceptedRow {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  // MYT-89 Phase A: the LLM-emitted relationship tier, carried from the
+  // resolved tree row into relationships.access_level at persist time.
+  readonly accessLevel: AccessLevel
   // myth-exac T15: the source-array index from the LLM stream. Carried
   // forward so the post-commit `finalized` synthKey matches the streaming
   // extractor's mid-flight `edge-added` synthKey
@@ -136,6 +139,9 @@ interface PlaceholderRelationshipRow {
   readonly to: string
   readonly relationship: string
   readonly description: string
+  // MYT-89 Phase A: carried into the entity_consolidation_pending buffer so
+  // stage 4b persists the same tier when it materializes the phantom edge.
+  readonly accessLevel: AccessLevel
 }
 
 interface ValidDeclaration {
@@ -171,6 +177,7 @@ function partitionByNames(
           targetEntityId: res.targetEntityId,
           relationshipType: res.relationshipType,
           description: res.description,
+          accessLevel: r.access_level,
           sourceIndex: i,
         })
         break
@@ -180,6 +187,7 @@ function partitionByNames(
           to: res.synthId,
           relationship: res.relationshipType,
           description: res.description,
+          accessLevel: r.access_level,
         })
         break
       /* c8 ignore start — phantom_source: source is a phantom declaration,
@@ -191,6 +199,7 @@ function partitionByNames(
           to: res.targetEntityId,
           relationship: res.relationshipType,
           description: res.description,
+          accessLevel: r.access_level,
         })
         break
       /* c8 ignore stop */
@@ -204,6 +213,7 @@ function partitionByNames(
           to: res.targetSynthId,
           relationship: res.relationshipType,
           description: res.description,
+          accessLevel: r.access_level,
         })
         break
       /* c8 ignore stop */
@@ -451,6 +461,8 @@ export async function runEntityRelationshipsStage(
           targetEntityId: a.targetEntityId,
           relationshipType: a.relationshipType,
           description: a.description,
+          // MYT-89 Phase A: persist the LLM-emitted relationship tier.
+          accessLevel: a.accessLevel,
           // myth-imxg.4: persist the same wire-format identity the streaming
           // extractor's `edge-added` events + this stage's post-commit
           // `finalized` events use (line ~496 below). Keeps stages 4 / 4b / 7

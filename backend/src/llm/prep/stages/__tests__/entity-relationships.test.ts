@@ -247,6 +247,8 @@ describe('runEntityRelationshipsStage', () => {
       targetEntityId: E2,
       relationshipType: 'controls',
       description: 'Coast under brotherhood rule',
+      // MYT-89 Phase A: the persisted tier comes from the LLM-emitted row.
+      accessLevel: 'known',
       // myth-imxg.4: insert-time synth_key carries the same wire identity
       // the post-commit `finalized` event uses, so stage 7 can address the
       // row by the same string the wire feed established at stage 4.
@@ -287,16 +289,16 @@ describe('runEntityRelationshipsStage', () => {
     const tree = {
       relationships: [
         // Valid
-        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'Coast under brotherhood rule', access_level: 'known' },
         // Hallucinated source — drop
-        { from_name: NAME_GHOST, to_name: NAME_E2, relationship: 'serves', description: 'Phantom serves brotherhood' },
+        { from_name: NAME_GHOST, to_name: NAME_E2, relationship: 'serves', description: 'Phantom serves brotherhood', access_level: 'known' },
         // Hallucinated target — drop
-        { from_name: NAME_E3, to_name: NAME_GHOST, relationship: 'pursues', description: 'Aerion pursues a ghost' },
+        { from_name: NAME_E3, to_name: NAME_GHOST, relationship: 'pursues', description: 'Aerion pursues a ghost', access_level: 'known' },
         // Valid
-        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'Aerion commands the brotherhood' },
-        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'Aerion holds the keep' },
-        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast' },
-        { from_name: NAME_E5, to_name: NAME_E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'Aerion commands the brotherhood', access_level: 'known' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'Aerion holds the keep', access_level: 'known' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast', access_level: 'known' },
+        { from_name: NAME_E5, to_name: NAME_E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -588,16 +590,18 @@ describe('runEntityRelationshipsStage', () => {
     ])
     const padded = {
       relationships: [
-        // known → known (the only edge that should surface as finalized)
-        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule' },
+        // known → known (the only edge that should surface as finalized).
+        // The relationship's own access_level is independent of endpoint
+        // tiers — the finalized gate keys off endpoint tiers, not this field.
+        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule', access_level: 'known' },
         // known → secret
-        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
+        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal', access_level: 'known' },
         // secret → secret (self-loop on same entity name)
-        { from_name: 'Hidden Cabal', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Cabal members protect each other' },
+        { from_name: 'Hidden Cabal', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Cabal members protect each other', access_level: 'known' },
         // secret → known
-        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'pursues', description: 'Cabal watches the iron coast' },
+        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'pursues', description: 'Cabal watches the iron coast', access_level: 'known' },
         // secret → known
-        { from_name: 'Hidden Cabal', to_name: 'Brotherhood', relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
+        { from_name: 'Hidden Cabal', to_name: 'Brotherhood', relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -680,11 +684,11 @@ describe('runEntityRelationshipsStage', () => {
     ])
     const tree = {
       relationships: [
-        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule' },
-        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal' },
-        { from_name: 'Hidden Cabal', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Cabal members protect each other' },
-        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'pursues', description: 'Cabal watches the iron coast' },
-        { from_name: 'Hidden Cabal', to_name: 'Brotherhood', relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans' },
+        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule', access_level: 'known' },
+        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal', access_level: 'known' },
+        { from_name: 'Hidden Cabal', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Cabal members protect each other', access_level: 'known' },
+        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'pursues', description: 'Cabal watches the iron coast', access_level: 'known' },
+        { from_name: 'Hidden Cabal', to_name: 'Brotherhood', relationship: 'betrayed_by', description: 'Cabal sabotages brotherhood plans', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -727,9 +731,9 @@ describe('runEntityRelationshipsStage', () => {
       new_entity_declarations: [{ name: 'The Ironjaw', entity_type: 'faction' as const }],
       relationships: [
         // Real → real (persists into relationships table)
-        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'rival_of', description: 'Iron Coast rivals the brotherhood' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'rival_of', description: 'Iron Coast rivals the brotherhood', access_level: 'known' },
         // Real → declared-phantom (routed to pending state via synthId)
-        { from_name: NAME_E2, to_name: 'The Ironjaw', relationship: 'opposed_to', description: 'Brotherhood opposes phantom faction' },
+        { from_name: NAME_E2, to_name: 'The Ironjaw', relationship: 'opposed_to', description: 'Brotherhood opposes phantom faction', access_level: 'discoverable' },
       ],
       hierarchy_stragglers: [],
     }
@@ -760,6 +764,8 @@ describe('runEntityRelationshipsStage', () => {
       targetEntityId: E2,
       relationshipType: 'rival_of',
       description: 'Iron Coast rivals the brotherhood',
+      // MYT-89 Phase A: tier carried from the LLM row.
+      accessLevel: 'known',
       // myth-imxg.4: real→real row is at LLM-stream index 0 in this tree.
       synthKey: 'entity_relationships/relationships/0',
     })
@@ -771,7 +777,7 @@ describe('runEntityRelationshipsStage', () => {
     expect(pendingCall[0]).toBe('wld-1')
     const pendingJson = JSON.parse(pendingCall[1]) as {
       declarations: { placeholderId: string; name: string; entityType: string }[]
-      relationships: { from: string; to: string; relationship: string; description: string }[]
+      relationships: { from: string; to: string; relationship: string; description: string; accessLevel: string }[]
     }
     expect(pendingJson.declarations).toHaveLength(1)
     expect(pendingJson.declarations[0]).toEqual({
@@ -785,6 +791,9 @@ describe('runEntityRelationshipsStage', () => {
       to: 'new-001',
       relationship: 'opposed_to',
       description: 'Brotherhood opposes phantom faction',
+      // MYT-89 Phase A: stage 4 stamps the phantom edge's tier into the
+      // buffer so stage 4b persists it when the ghost materializes.
+      accessLevel: 'discoverable',
     })
   })
 
@@ -796,12 +805,12 @@ describe('runEntityRelationshipsStage', () => {
       new_entity_declarations: [{ name: 'The Ironjaw', entity_type: 'faction' as const }],
       relationships: [
         // Pad with 4 valid real→real rows so the schema's min(5) holds.
-        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a' },
-        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b' },
-        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c' },
-        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a', access_level: 'known' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b', access_level: 'known' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c', access_level: 'known' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd', access_level: 'known' },
         // The drop target: hallucinated name from, phantom to.
-        { from_name: NAME_GHOST, to_name: 'The Ironjaw', relationship: 'pursues', description: 'ghost→phantom' },
+        { from_name: NAME_GHOST, to_name: 'The Ironjaw', relationship: 'pursues', description: 'ghost→phantom', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
     }
@@ -838,12 +847,12 @@ describe('runEntityRelationshipsStage', () => {
       new_entity_declarations: [{ name: 'The Ironjaw', entity_type: 'faction' as const }],
       relationships: [
         // Pad with 4 valid real→real rows so the schema's min(5) holds.
-        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a' },
-        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b' },
-        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c' },
-        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a', access_level: 'known' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b', access_level: 'known' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c', access_level: 'known' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd', access_level: 'known' },
         // The drop target: phantom from, hallucinated name to.
-        { from_name: 'The Ironjaw', to_name: NAME_GHOST, relationship: 'pursues', description: 'phantom→ghost' },
+        { from_name: 'The Ironjaw', to_name: NAME_GHOST, relationship: 'pursues', description: 'phantom→ghost', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
     }
@@ -880,12 +889,12 @@ describe('runEntityRelationshipsStage', () => {
     // pending-state UPDATE still fires but no placeholder row appears.
     const tree = {
       relationships: [
-        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a' },
-        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b' },
-        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c' },
-        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'a', access_level: 'known' },
+        { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'b', access_level: 'known' },
+        { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'c', access_level: 'known' },
+        { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'd', access_level: 'known' },
         // Unknown name on the to side — no inventory match, no declaration.
-        { from_name: NAME_E1, to_name: 'Some Unknown Entity', relationship: 'opposed_to', description: 'phantom orphan' },
+        { from_name: NAME_E1, to_name: 'Some Unknown Entity', relationship: 'opposed_to', description: 'phantom orphan', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],
@@ -926,7 +935,7 @@ describe('runEntityRelationshipsStage', () => {
     // Stage 4 + 4b are a single retry unit (design §D9 + P3.4).
     const tree = {
       relationships: [
-        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'rival_of', description: 'Fresh rel' },
+        { from_name: NAME_E1, to_name: NAME_E2, relationship: 'rival_of', description: 'Fresh rel', access_level: 'known' },
       ],
       hierarchy_stragglers: [],
       new_entity_declarations: [],

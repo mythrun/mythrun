@@ -78,6 +78,7 @@ describe('worldInventory repo', () => {
       targetEntityId: entA,
       relationshipType: 'resides_at',
       description: 'Has lived in the stockade since the burning.',
+      accessLevel: 'known',
       synthKey,
     }])
 

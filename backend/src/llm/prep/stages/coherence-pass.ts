@@ -293,6 +293,10 @@ async function applyFixRelationship(
   const finalTargetId = newTargetEntityId ?? existing.targetEntityId
   const newRelationshipType = patch.newType ?? existing.relationshipType
   const newDescription = patch.newDescription ?? existing.description
+  // MYT-89 Phase A: re-tier only when the patch supplies newAccessLevel;
+  // otherwise preserve the existing row's tier (a fix that doesn't touch the
+  // tier must not blank it — the re-insert would otherwise lose it).
+  const newAccessLevel = patch.newAccessLevel ?? existing.accessLevel
   const newId = uuidv7()
   const newSynthKey = `coherence_pass/edges/${newId}`
   await tx.relationships.insertOne({
@@ -301,6 +305,7 @@ async function applyFixRelationship(
     targetEntityId: finalTargetId,
     relationshipType: newRelationshipType,
     description: newDescription,
+    accessLevel: newAccessLevel,
     synthKey: newSynthKey,
   })
   // myth-exac T16: SSE event only when BOTH old endpoints AND new
@@ -415,6 +420,8 @@ async function applyAddRelationship(
     targetEntityId,
     relationshipType: patch.relationship,
     description: patch.description,
+    // MYT-89 Phase A: the LLM declares the tier on an added relationship.
+    accessLevel: patch.access_level,
     synthKey: newSynthKey,
   })
   if (!shouldEmitEdgeEvent(ctx, sourceEntityId, targetEntityId)) return { events: [] }

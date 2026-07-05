@@ -146,11 +146,11 @@ describe('runCoherencePassStage', () => {
     )
     const [relR] = await relationships.insertMany(pool, [{
       sourceEntityId: entityA, targetEntityId: entityB, relationshipType: 'rivalry',
-      description: 'Mara distrusts the village elders.', synthKey: 'entity_relationships/relationships/0',
+      description: 'Mara distrusts the village elders.', accessLevel: 'known', synthKey: 'entity_relationships/relationships/0',
     }])
     const [relS] = await relationships.insertMany(pool, [{
       sourceEntityId: entityB, targetEntityId: entityC, relationshipType: 'employed_by',
-      description: 'Mara works the wharf.', synthKey: 'entity_relationships/relationships/1',
+      description: 'Mara works the wharf.', accessLevel: 'known', synthKey: 'entity_relationships/relationships/1',
     }])
     return { worldId, entityA, entityB, entityC, factX, relR: relR ?? '', relS: relS ?? '' }
   }
@@ -331,6 +331,36 @@ describe('runCoherencePassStage', () => {
       [seed.entityB, seed.entityC],
     )
     expect(newEdge.rows[0]?.description).toBe('Mara now serves as the wharf master, hand-picked.')
+  })
+
+  // MYT-89 Phase A (A4): fix_relationship re-tiers only when newAccessLevel
+  // is supplied; otherwise the delete+re-insert must PRESERVE the existing
+  // tier (a fix that doesn't touch the tier must not blank it). The seed
+  // relationship is 'known'.
+  it('fix_relationship preserves the existing access_level when newAccessLevel is omitted', async () => {
+    const seed = await seedWorld()
+    mockPatches([
+      { kind: 'fix_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', current_type: 'rivalry', newType: 'distrusts', rationale: 'Soften rivalry to distrust; tier is unchanged.' },
+    ])
+    await run(seed)
+    const newEdge = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM relationships WHERE source_entity_id = $1 AND target_entity_id = $2 AND relationship_type = 'distrusts' AND synth_key LIKE 'coherence_pass/edges/%'`,
+      [seed.entityA, seed.entityB],
+    )
+    expect(newEdge.rows[0]?.access_level).toBe('known')
+  })
+
+  it('fix_relationship re-tiers the row when newAccessLevel is supplied', async () => {
+    const seed = await seedWorld()
+    mockPatches([
+      { kind: 'fix_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', current_type: 'rivalry', newAccessLevel: 'secret', rationale: 'This connection is a hidden grudge; re-tier to secret.' },
+    ])
+    await run(seed, { bypassAccessFilter: true })
+    const newEdge = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM relationships WHERE source_entity_id = $1 AND target_entity_id = $2 AND relationship_type = 'rivalry' AND synth_key LIKE 'coherence_pass/edges/%'`,
+      [seed.entityA, seed.entityB],
+    )
+    expect(newEdge.rows[0]?.access_level).toBe('secret')
   })
 
   it('renders the world dump into the {{worldDump}} placeholder of the prompt', async () => {
@@ -517,7 +547,7 @@ describe('runCoherencePassStage', () => {
   it('add_relationship_by_name inserts a row + emits edge-added', async () => {
     const seed = await seedWorld()
     mockPatches([
-      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'home_of', description: 'Mara was born and raised in Old Eredil.', rationale: 'Prose explicitly says Mara grew up here; relation was missed at stage 4.' },
+      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'home_of', description: 'Mara was born and raised in Old Eredil.', access_level: 'known', rationale: 'Prose explicitly says Mara grew up here; relation was missed at stage 4.' },
     ], { inputTokens: 100, outputTokens: 100 })
     const { result } = await run(seed, { bypassAccessFilter: true })
     expect(await countRelationships(seed.worldId)).toBe(3) // 2 seeded + 1 added
@@ -534,7 +564,7 @@ describe('runCoherencePassStage', () => {
   it('add_relationship_by_name drops with WARN when source name unresolvable', async () => {
     const seed = await seedWorld()
     mockPatches([
-      { kind: 'add_relationship_by_name', source_name: 'Nobody', target_name: 'Mara', relationship: 'home_of', description: 'This relationship cannot land; source does not exist.', rationale: 'The model thought Nobody existed but no entity by that name.' },
+      { kind: 'add_relationship_by_name', source_name: 'Nobody', target_name: 'Mara', relationship: 'home_of', description: 'This relationship cannot land; source does not exist.', access_level: 'known', rationale: 'The model thought Nobody existed but no entity by that name.' },
     ], { inputTokens: 100, outputTokens: 100 })
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
@@ -553,7 +583,7 @@ describe('runCoherencePassStage', () => {
     const seed = await seedWorld()
     // A→B rivalry is REL_R in the fixture.
     mockPatches([
-      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'rivalry', description: 'Duplicate of an existing relationship.', rationale: 'The model emitted an add for a triple that already exists.' },
+      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'rivalry', description: 'Duplicate of an existing relationship.', access_level: 'known', rationale: 'The model emitted an add for a triple that already exists.' },
     ], { inputTokens: 100, outputTokens: 100 })
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
@@ -570,7 +600,7 @@ describe('runCoherencePassStage', () => {
   it('add_relationship_by_name persists the row but suppresses edge-added when an endpoint is non-known', async () => {
     const seed = await seedWorld({ A: 'known', B: 'discoverable', C: 'known' })
     mockPatches([
-      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'home_of', description: 'Mara was born and raised in Old Eredil.', rationale: 'Prose says she grew up here; relation missed at stage 4.' },
+      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'home_of', description: 'Mara was born and raised in Old Eredil.', access_level: 'known', rationale: 'Prose says she grew up here; relation missed at stage 4.' },
     ], { inputTokens: 100, outputTokens: 100 })
     const { result } = await run(seed)
     expect(await countRelationships(seed.worldId)).toBe(3) // INSERT still lands
