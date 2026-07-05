@@ -88,6 +88,12 @@ export type { CoverCardProps } from './cover-card.ts'
 // each item's `onSelect` is a neutral callback, no className/style/raw DOM events.
 export type { GhostChoiceListProps, GhostChoiceItem } from './ghost-choice-list.ts'
 
+// WorldGenGraph (MYT-89 Phase C) — the live streaming graph shown during world
+// generation: a force-directed Canvas (aria-hidden decorative) + an ACCESSIBLE
+// entity list (the a11y/keyboard/touch surface). The `GraphNode`/`GraphEdge` model
+// is re-exported here so consumers read the node shape off the contract surface.
+export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
+
 // Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
 // Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip
 // / Tabs / DropdownMenu) in the web impl — Radix supplies the a11y headline

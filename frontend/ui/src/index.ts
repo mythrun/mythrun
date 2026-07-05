@@ -66,6 +66,14 @@ export { CoverCard } from './components/CoverCard/CoverCard.tsx'
 // fork.
 export { GhostChoiceList } from './components/GhostChoiceList/GhostChoiceList.tsx'
 
+// WorldGenGraph (MYT-89 Phase C) — the live streaming graph shown during world
+// generation: a decorative force-directed Canvas (aria-hidden — square ink glyphs by
+// kind, hand-drawn links, ambient ghost-bloom churn, fine-pointer drag-to-pin) beside
+// an ACCESSIBLE entity list (the a11y/keyboard/touch selection surface). The parent
+// folds the SSE stream into nodes/edges props; a reduced-motion variant swaps the
+// rAF churn for a static settle-to-convergence redraw.
+export { WorldGenGraph } from './components/WorldGenGraph/WorldGenGraph.tsx'
+
 // Overlays (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu. Each wraps
 // an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip / Tabs /
 // DropdownMenu): Radix supplies the a11y headline (focus trap + focus-RETURN,
@@ -163,6 +171,10 @@ export type {
   CoverCardProps,
   GhostChoiceListProps,
   GhostChoiceItem,
+  WorldGenGraphProps,
+  GraphNode,
+  GraphEdge,
+  GraphNodeState,
   ModalProps,
   PopoverProps,
   PopoverSide,

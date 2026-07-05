@@ -1,0 +1,137 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { render } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { axe } from 'jest-axe'
+import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import { WorldGenGraph } from './WorldGenGraph.tsx'
+
+// WorldGenGraph pairs a decorative Canvas (aria-hidden — jsdom can't render it) with
+// an ACCESSIBLE entity list, which is the whole testable + a11y surface. These tests
+// exercise the list (one item per node, activation → onSelect, selection marking),
+// the Canvas's aria-hidden, and the reduced-motion contract (no rAF churn). Pixel
+// output is out of scope: getContext is null under jsdom (we stub it either way).
+
+const node = (synthKey: string, kind: string, name: string): GraphNode => ({
+  synthKey,
+  kind,
+  name,
+  displayId: synthKey,
+  state: 'live',
+  lastEventIndex: 0,
+})
+
+const FIXTURE: GraphNode[] = [
+  node('s1/reach', 'location', 'Ashfen Reach'),
+  node('s2/maeris', 'npc', 'Maeris Vale'),
+  node('s3/guild', 'faction', 'The Tallow Guild'),
+]
+const EDGES: GraphEdge[] = [{ synthKey: 'e1', from: 's2/maeris', to: 's3/guild', relationship: 'leads' }]
+
+/** A permissive fake 2D context: every method is a no-op, every property write is
+ *  absorbed. Lets the reduced-motion / motion tests run the draw path (which jsdom's
+ *  null context otherwise skips) so we can assert the rAF behaviour around it. */
+function fakeCtx(): CanvasRenderingContext2D {
+  return new Proxy(
+    {},
+    {
+      get: () => () => undefined,
+      set: () => true,
+    },
+  ) as unknown as CanvasRenderingContext2D
+}
+
+/** Stub HTMLCanvasElement.getContext for one test (restored by afterEach). */
+function stubGetContext(value: CanvasRenderingContext2D | null): void {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(value)
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('WorldGenGraph — accessible entity list', () => {
+  it('renders one activatable item per node, showing name + kind', () => {
+    stubGetContext(null)
+    const { getByRole, getByText } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
+    )
+    for (const n of FIXTURE) {
+      const item = getByRole('button', { name: new RegExp(n.name) })
+      expect(item.tagName).toBe('BUTTON')
+      expect(getByText(n.name)).toBeInTheDocument()
+      expect(getByText(n.kind)).toBeInTheDocument()
+    }
+  })
+
+  it('renders exactly one list item per node', () => {
+    stubGetContext(null)
+    const { getAllByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    expect(getAllByRole('button')).toHaveLength(FIXTURE.length)
+  })
+
+  it('calls onSelect(synthKey) when an item is activated (click)', async () => {
+    stubGetContext(null)
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={onSelect} />)
+    await user.click(getByRole('button', { name: /Maeris Vale/ }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('s2/maeris')
+  })
+
+  it('calls onSelect(synthKey) on keyboard activation (Enter)', async () => {
+    stubGetContext(null)
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={onSelect} />)
+    getByRole('button', { name: /Ashfen Reach/ }).focus()
+    await user.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('s1/reach')
+  })
+
+  it('marks the selected item via aria-current', () => {
+    stubGetContext(null)
+    const { getByRole } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} selectedKey="s2/maeris" onSelect={vi.fn()} />,
+    )
+    expect(getByRole('button', { name: /Maeris Vale/ })).toHaveAttribute('aria-current', 'true')
+    expect(getByRole('button', { name: /Ashfen Reach/ })).not.toHaveAttribute('aria-current')
+  })
+
+  it('has no a11y violations', async () => {
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} selectedKey="s1/reach" onSelect={vi.fn()} />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('WorldGenGraph — Canvas', () => {
+  it('marks the decorative Canvas aria-hidden', () => {
+    stubGetContext(null)
+    const { container } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    const canvas = container.querySelector('canvas')
+    expect(canvas).not.toBeNull()
+    expect(canvas).toHaveAttribute('aria-hidden', 'true')
+  })
+})
+
+describe('WorldGenGraph — motion contract', () => {
+  it('reducedMotion renders WITHOUT starting a requestAnimationFrame loop', () => {
+    stubGetContext(fakeCtx())
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} reducedMotion />)
+    // Static settle-to-convergence redraw only — no rAF churn.
+    expect(raf).not.toHaveBeenCalled()
+  })
+
+  it('starts (and on unmount cancels) a rAF loop when motion is allowed', () => {
+    stubGetContext(fakeCtx())
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    const { unmount } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    expect(raf).toHaveBeenCalled()
+    unmount()
+    expect(caf).toHaveBeenCalled()
+  })
+})

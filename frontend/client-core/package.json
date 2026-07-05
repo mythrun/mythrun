@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./contract": "./src/contract/index.ts",
+    "./worldgen": "./src/worldgen/index.ts",
     "./i18n": "./src/i18n/resources.ts",
     "./tokens": "./src/tokens/generate-palette.mjs",
     "./tokens/scales": "./src/tokens/scales.ts"
