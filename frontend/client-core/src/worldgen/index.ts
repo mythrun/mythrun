@@ -10,3 +10,16 @@ export { create as createForceSim } from './force-sim.ts'
 export type { ForceSim } from './force-sim.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
+
+// Wiki view model (MYT-89 Phase D): the pure normalizer that reshapes a
+// world-snapshot into the browsable model + the injected data-source seam.
+// DOM-free pure data (only a type import from @mythrun/contract), so it rides
+// this UI-safe subpath alongside the graph reducers.
+export { toWikiViewModel } from './wiki-view-model.ts'
+export type {
+  WikiViewModel,
+  WikiGroup,
+  WikiEntity,
+  WikiFact,
+  WikiDataSource,
+} from './wiki-view-model.ts'

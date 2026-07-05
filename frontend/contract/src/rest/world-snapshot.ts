@@ -1,0 +1,60 @@
+// REST response contract for the world-snapshot endpoint
+// (`GET /api/campaigns/:campaignId/world-snapshot`). A FOCUSED projection of
+// the backend `WorldSnapshot` (backend/src/repo/world-snapshot-view.ts): the
+// runtime handler `reply.send()`s the full composition (world summary,
+// relationships, prose kernels, stat blocks, …), but the wiki view model only
+// consumes three collections — entities, their `known`-tier facts, and the
+// location hierarchy. `z.object()` strips the unmodeled keys (same
+// focused-projection pattern as `WorldGenSnapshotSchema` in
+// client-core/api/campaigns.ts), so the richer payload validates and the extra
+// columns fall away without a schema churn each time the backend view grows.
+//
+// Enforced ignorance is a SERVER concern: for the owner the endpoint already
+// returned only `known`-tier entities/facts. This schema does no tier logic —
+// the tier is decided upstream by which endpoint served the payload (MYT-94
+// will add a character-scoped one). See `toWikiViewModel` in client-core.
+import { z } from 'zod'
+
+// The entity_type CHECK domain (migration 001 + the 'pc' addition). 'pc' is
+// included so a snapshot that carries an integrated player character still
+// validates; the wiki view model groups only the four world-lore kinds and
+// omits 'pc' (a PC is not world lore).
+export const ENTITY_KINDS = ['npc', 'location', 'faction', 'item', 'pc'] as const
+export const EntityKindSchema = z.enum(ENTITY_KINDS)
+export type EntityKind = z.infer<typeof EntityKindSchema>
+
+// One entity row on the wire (backend `Entity`, camelCase). `worldId` /
+// `accessLevel` exist on the payload but are NOT modeled — the wiki does not
+// consume them, so they strip away.
+export const WorldSnapshotEntitySchema = z.object({
+  id: z.string(),
+  entityType: EntityKindSchema,
+  name: z.string(),
+})
+export type WorldSnapshotEntity = z.infer<typeof WorldSnapshotEntitySchema>
+
+// One fact row (backend `FactRow`), narrowed to the display fields. `entityId`
+// is the owning entity (the wiki keys facts onto it). `accessLevel` /
+// `narrativeStatus` / `source` / timestamps strip away.
+export const WorldSnapshotFactSchema = z.object({
+  id: z.string(),
+  entityId: z.string(),
+  topic: z.string(),
+  content: z.string(),
+})
+export type WorldSnapshotFact = z.infer<typeof WorldSnapshotFactSchema>
+
+// One parent→child hierarchy edge (backend `EntityHierarchyRow`). Drives the
+// nested-location tree; `id` is unmodeled (the tree keys on the endpoint ids).
+export const WorldSnapshotHierarchyEdgeSchema = z.object({
+  parentEntityId: z.string(),
+  childEntityId: z.string(),
+})
+export type WorldSnapshotHierarchyEdge = z.infer<typeof WorldSnapshotHierarchyEdgeSchema>
+
+export const WorldSnapshotSchema = z.object({
+  entities: z.array(WorldSnapshotEntitySchema),
+  facts: z.array(WorldSnapshotFactSchema),
+  entityHierarchy: z.array(WorldSnapshotHierarchyEdgeSchema),
+})
+export type WorldSnapshot = z.infer<typeof WorldSnapshotSchema>
