@@ -180,6 +180,7 @@ async function buildApp(pool: Pool, redis: Redis): Promise<FastifyInstance> {
     pool,
     subscriber: noopSubscriber(),
     counter: noopCounter(),
+    frontendBaseUrl: 'http://localhost:5173',
     redis,
     redisKeyPrefix: REDIS_KEY_PREFIX,
     worldGenQueue: noopQueue(),

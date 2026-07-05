@@ -40,10 +40,38 @@ export interface OpenSseConnectionOpts {
   readonly reply: FastifyReply
   readonly logger: pino.Logger
   readonly onClose: () => void
+  /** The single allowlisted CORS origin — config.env.frontendBaseUrl, the exact
+   *  value @fastify/cors is registered with (app.ts). The hijacked SSE response
+   *  echoes the same single-origin policy when the request Origin matches. */
+  readonly allowedOrigin: string
+}
+
+// @fastify/cors is registered with { origin: [config.env.frontendBaseUrl],
+// credentials: true } (app.ts). Its onSend hook that injects the CORS response
+// headers NEVER runs on a hijacked reply — so an SSE response would otherwise
+// carry NO Access-Control-Allow-Origin, and a cross-origin browser fetch (dev:
+// localhost:5173 → localhost:3030) is blocked by CORS, starving the world-gen
+// graph of events (curl "works" because curl ignores CORS entirely). We
+// replicate that SAME single-origin policy here: echo the request Origin (with
+// Vary: Origin + Access-Control-Allow-Credentials, because the app sets
+// credentials:true) ONLY when it exactly matches the one allowlisted origin. A
+// non-matching Origin gets no header — never reflect an arbitrary Origin; that
+// is the security boundary. A same-origin request (no Origin header, e.g. prod
+// behind the BFF/CloudFront proxy) needs no CORS header at all.
+function corsHeaders(
+  requestOrigin: string | undefined,
+  allowedOrigin: string,
+): Record<string, string> {
+  if (requestOrigin === undefined || requestOrigin !== allowedOrigin) return {}
+  return {
+    'Access-Control-Allow-Origin': requestOrigin,
+    'Access-Control-Allow-Credentials': 'true',
+    Vary: 'Origin',
+  }
 }
 
 export function openSseConnection(opts: OpenSseConnectionOpts): SseSink {
-  const { request, reply, logger, onClose } = opts
+  const { request, reply, logger, onClose, allowedOrigin } = opts
 
   reply.hijack()
   const raw = reply.raw
@@ -51,6 +79,7 @@ export function openSseConnection(opts: OpenSseConnectionOpts): SseSink {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     'X-Accel-Buffering': 'no',
+    ...corsHeaders(request.headers.origin, allowedOrigin),
   })
 
   let closed = false

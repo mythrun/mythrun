@@ -430,6 +430,11 @@ export const buildApp = async (
     pool: deps.pg,
     subscriber,
     counter,
+    // Single-origin CORS for the hijacked SSE responses (/status/stream,
+    // /prep-status): @fastify/cors's onSend hook can't set the header on a
+    // hijacked reply, so openSseConnection echoes it from the SAME allowlisted
+    // origin the cors plugin is registered with above (config.env.frontendBaseUrl).
+    frontendBaseUrl: config.env.frontendBaseUrl,
     // MYT-51 T12: thread the BullMQ queue + redis + key prefix so
     // POST /api/campaigns + POST /resume can enqueue work and the
     // rejection-storm counter can read/write its sliding-window key.
@@ -496,7 +501,11 @@ export const buildApp = async (
       channel: 'prep',
     })
     app.decorate('mythrunProseSubscriber', proseSubscriber)
-    await app.register(devPrepProseRoutes, { subscriber: proseSubscriber, counter })
+    await app.register(devPrepProseRoutes, {
+      subscriber: proseSubscriber,
+      counter,
+      frontendBaseUrl: config.env.frontendBaseUrl,
+    })
   }
 
   // Dev/staging-only API-cost ticker endpoint (internal tooling). Gated on

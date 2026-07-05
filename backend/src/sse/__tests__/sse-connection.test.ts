@@ -52,9 +52,19 @@ function makeReply(): MockReply {
   }
 }
 
-function makeRequest(): { raw: EventEmitter } {
-  return { raw: new EventEmitter() }
+function makeRequest(headers: Record<string, string | undefined> = {}): {
+  raw: EventEmitter
+  headers: Record<string, string | undefined>
+} {
+  // Node lowercases request header names; `origin` mirrors that. Default {} so
+  // the no-Origin (same-origin) path reads request.headers.origin === undefined
+  // instead of throwing on a missing `headers` object.
+  return { raw: new EventEmitter(), headers }
 }
+
+// The single allowlisted CORS origin — mirrors config.env.frontendBaseUrl, the
+// exact value @fastify/cors is registered with (app.ts).
+const ALLOWED_ORIGIN = 'http://localhost:5173'
 
 describe('sse-connection', () => {
   beforeEach(() => {
@@ -72,6 +82,7 @@ describe('sse-connection', () => {
     openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -91,6 +102,7 @@ describe('sse-connection', () => {
     openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose: () => undefined,
     })
@@ -106,6 +118,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose: () => undefined,
     })
@@ -121,6 +134,7 @@ describe('sse-connection', () => {
     openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose: () => undefined,
     })
@@ -134,6 +148,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose: () => undefined,
     })
@@ -151,6 +166,7 @@ describe('sse-connection', () => {
     openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -168,6 +184,7 @@ describe('sse-connection', () => {
     openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -183,6 +200,7 @@ describe('sse-connection', () => {
     openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -197,6 +215,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -213,6 +232,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -230,6 +250,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -252,6 +273,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger,
       onClose: () => {
         throw new Error('handler-boom')
@@ -273,6 +295,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger,
       onClose,
     })
@@ -294,6 +317,7 @@ describe('sse-connection', () => {
     const sink = openSseConnection({
       request: request as never,
       reply: reply as never,
+      allowedOrigin: ALLOWED_ORIGIN,
       logger: pino({ level: 'silent' }),
       onClose,
     })
@@ -303,5 +327,54 @@ describe('sse-connection', () => {
     reply.raw.emit('drain')
     vi.advanceTimersByTime(5_000)
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  // ---------------------------------------------------------------------------
+  // CORS on the hijacked SSE response. @fastify/cors's onSend hook never runs
+  // on a hijacked reply, so openSseConnection must echo the same single-origin
+  // policy itself (echo the request Origin ONLY when it matches the one
+  // allowlisted origin) — otherwise a cross-origin browser fetch (dev:
+  // localhost:5173 → localhost:3030) is blocked and the world-gen graph gets
+  // zero events. See sse-connection.ts corsHeaders().
+  // ---------------------------------------------------------------------------
+
+  function openWithOrigin(origin: string | undefined): Record<string, string> {
+    const reply = makeReply()
+    let capturedHeaders: Record<string, string> = {}
+    reply.raw.writeHead = (_: number, headers: Record<string, string>): MockRaw => {
+      capturedHeaders = headers
+      reply.raw.headersSent = true
+      return reply.raw
+    }
+    const request = makeRequest(origin === undefined ? {} : { origin })
+    openSseConnection({
+      request: request as never,
+      reply: reply as never,
+      logger: pino({ level: 'silent' }),
+      onClose: () => undefined,
+      allowedOrigin: ALLOWED_ORIGIN,
+    })
+    return capturedHeaders
+  }
+
+  it('echoes Access-Control-Allow-Origin + Vary:Origin + credentials when Origin matches allowedOrigin', () => {
+    const headers = openWithOrigin(ALLOWED_ORIGIN)
+    expect(headers['Access-Control-Allow-Origin']).toBe(ALLOWED_ORIGIN)
+    expect(headers.Vary).toBe('Origin')
+    expect(headers['Access-Control-Allow-Credentials']).toBe('true')
+  })
+
+  it('does NOT echo Access-Control-Allow-Origin when the Origin does not match allowedOrigin', () => {
+    const headers = openWithOrigin('https://evil.example.com')
+    expect(headers['Access-Control-Allow-Origin']).toBeUndefined()
+    expect(headers.Vary).toBeUndefined()
+    expect(headers['Access-Control-Allow-Credentials']).toBeUndefined()
+  })
+
+  it('adds no CORS header when the request has no Origin (same-origin / prod BFF path)', () => {
+    const headers = openWithOrigin(undefined)
+    expect(headers['Access-Control-Allow-Origin']).toBeUndefined()
+    expect(headers.Vary).toBeUndefined()
+    expect(headers['Access-Control-Allow-Credentials']).toBeUndefined()
   })
 })

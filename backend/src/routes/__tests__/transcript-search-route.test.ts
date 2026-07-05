@@ -122,6 +122,7 @@ async function buildApp(pool: Pool, redis: Redis): Promise<FastifyInstance> {
   await app.register(requireOnboarded, { pool })
   await app.register(campaignsRoutes, {
     pool, subscriber: noopSubscriber(), counter: noopCounter(),
+    frontendBaseUrl: 'http://localhost:5173',
     redis, redisKeyPrefix: REDIS_KEY_PREFIX, worldGenQueue: noopQueue(),
   })
   await app.ready()

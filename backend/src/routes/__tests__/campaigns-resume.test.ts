@@ -187,6 +187,7 @@ async function buildTestApp(
     pool,
     subscriber: noopSubscriber(),
     counter: noopCounter(),
+    frontendBaseUrl: 'http://localhost:5173',
     redis,
     redisKeyPrefix: REDIS_KEY_PREFIX,
     worldGenQueue: queueSpy.queue,

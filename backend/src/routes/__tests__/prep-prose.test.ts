@@ -225,9 +225,23 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
           // requires Cognito config (buildApp throws without it). Stub values suffice:
           // the OAuth client does no network at construction, and this test never
           // exercises /api/auth — it only asserts the /api/dev block is absent.
+          //
+          // mythrunEnv='production' makes this a FAITHFUL full-production config, so
+          // the broad `not.toContain('/api/dev/')` assertion below is a true
+          // prod-absence invariant. Two independent dev-route gates key off two
+          // different fields: the prep-prose route (this test's real subject) is gated
+          // on authMode==='bypass', while the MYT-90 dev cost-ticker route
+          // (GET /api/dev/api-cost) is gated on mythrunEnv!=='production'. A prod boot
+          // is real + production, so BOTH gates close and NO /api/dev/ route registers.
+          // Pinning only authMode='real' (leaving the default mythrunEnv='development')
+          // would leave the ticker registered and make the broad assertion a
+          // false-negative — hence production here. buildApp does not re-validate env
+          // (that is loadEnv's job) and reads mythrunEnv only at the ticker gate, so
+          // production does not throw.
           env: makeStubEnv({
             frontendBaseUrl: FRONTEND_BASE_URL,
             authMode: 'real',
+            mythrunEnv: 'production',
             cognitoHostedUiDomain: 'stub.auth.us-east-1.amazoncognito.com',
             cognitoAppClientId: 'stub-client-id',
           }),
@@ -280,7 +294,11 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
           throw new Error('increment must not be called when AUTH_MODE !== bypass')
         },
       } as unknown as ConnectionCounter
-      await app.register(devPrepProseRoutes, { subscriber, counter })
+      await app.register(devPrepProseRoutes, {
+        subscriber,
+        counter,
+        frontendBaseUrl: 'http://localhost:5173',
+      })
       await app.ready()
       try {
         const res = await app.inject({

@@ -77,6 +77,11 @@ export interface Opts {
   readonly pool: Pool
   readonly subscriber: PipelineSubscriber
   readonly counter: ConnectionCounter
+  /** The single allowlisted CORS origin (config.env.frontendBaseUrl, the value
+   *  @fastify/cors is registered with). Threaded to openSseConnection so the
+   *  hijacked SSE responses (/status/stream, /prep-status) echo the CORS header
+   *  @fastify/cors's onSend hook can't set on a hijacked reply. */
+  readonly frontendBaseUrl: string
   // The MYT-51 T9 fields below are typed as optional so app.ts's existing
   // (MYT-50-era) registration still typechecks before T12 wires the new
   // dependencies in. The POST /api/campaigns handler runtime-asserts they
@@ -315,6 +320,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         request,
         reply,
         logger: request.log as PinoLogger,
+        allowedOrigin: opts.frontendBaseUrl,
         onClose: () => {
           if (detach) detach()
           opts.counter.decrement()
@@ -385,6 +391,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         request,
         reply,
         logger: request.log as PinoLogger,
+        allowedOrigin: opts.frontendBaseUrl,
         onClose: () => {
           if (detach) detach()
           opts.counter.decrement()

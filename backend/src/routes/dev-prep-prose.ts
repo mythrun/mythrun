@@ -44,6 +44,11 @@ export interface DevPrepProseRoutesOpts {
   /** Shared SSE connection counter (same instance the status/stream route
    *  uses) so the periodic-log connection count reflects prose streams too. */
   readonly counter: ConnectionCounter
+  /** The single allowlisted CORS origin (config.env.frontendBaseUrl). Threaded
+   *  to openSseConnection so the hijacked prose SSE response echoes the same
+   *  CORS header @fastify/cors sets — the dev tool fetches this cross-origin
+   *  (localhost:5173 → localhost:3030), same as the campaigns status stream. */
+  readonly frontendBaseUrl: string
 }
 
 interface Params {
@@ -88,6 +93,7 @@ export const devPrepProseRoutes: FastifyPluginAsync<DevPrepProseRoutesOpts> = as
         request,
         reply,
         logger: request.log as PinoLogger,
+        allowedOrigin: opts.frontendBaseUrl,
         onClose: () => {
           if (detach) detach()
           opts.counter.decrement()
