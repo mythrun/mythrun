@@ -131,4 +131,12 @@ export const descriptions: Record<string, string> = {
   'stub.characterNew': 'Placeholder label for the not-yet-built character-create screen (a flow ticket owns the real screen).',
   'stub.play': 'Placeholder label for the not-yet-built play screen (a flow ticket owns the real screen).',
   'stub.settings': 'Placeholder label for the not-yet-built settings screen (a flow ticket owns the real screen).',
+  'worldGen.shaping': 'Quiet phase line under the live world-gen graph while the world is still generating ("your world is taking shape"). The graph IS the progress — no bar. Terse, ~4-6 words, brand-voiced.',
+  'worldGen.failedTitle': 'Calm headline on the retryable world-gen failure state (not an apology). Terse, ~3-4 words.',
+  'worldGen.failedBody': 'Calm body under the world-gen failure headline: the making was interrupted and the player can retry. ~1 short sentence, no blame.',
+  'worldGen.retry': 'Label on the Retry action of the world-gen failure state (resumes generation). ~1-2 words, e.g. "Try again".',
+  'worldGen.terminalTitle': "Calm headline on the TERMINAL (non-resumable) world-gen state — this world can't be made. Terse, ~3-5 words.",
+  'worldGen.terminalBody': 'Calm body under the terminal world-gen headline: this campaign is a dead end, start a new one. ~1 short sentence, no retry nudge.',
+  'worldGen.readyTitle': 'Headline on the world-ready handoff placeholder shown the moment world-gen finishes ("your world is ready"), before Phase D fills the reveal. Terse, ~3-4 words.',
+  'worldGen.continue': 'Label on the Continue affordance stub on the world-ready handoff placeholder (Phase D replaces the destination). ~1 word.',
 }
