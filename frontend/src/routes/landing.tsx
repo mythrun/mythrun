@@ -1,6 +1,7 @@
 import { Box, Stack, HorizontalLockup, Lockup, VisuallyHidden, Heading, Text, Dither, Link, ThemeToggle, Button, useTheme } from '@mythrun/ui'
 import { Trans, useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { useSessionStore } from '@mythrun/client-core'
 
 // The SPA target both the nav Sign-in and the (later) hero CTA route to. Hoisted
 // to a module const so the path is a variable at the `navigate(...)` call site —
@@ -73,6 +74,22 @@ function LandingFooter(): React.JSX.Element {
 // flips direction with the theme to grade the page into it.
 export function LandingRoute(): React.JSX.Element {
   const { theme } = useTheme()
+  const status = useSessionStore((s) => s.status)
+  const [searchParams] = useSearchParams()
+  // DEV-only escape hatch: `/?preview` lets an auto-authed dev VIEW the marketing
+  // landing even while signed in. In a prod build `import.meta.env.DEV` is a
+  // statically-`false` constant, so the whole branch dead-code-eliminates — an
+  // authed prod visitor ALWAYS redirects, `?preview` or not.
+  const preview = import.meta.env.DEV && searchParams.has('preview')
+  // Redirect ONLY when definitively authed (`ready`): `/` is the anonymous
+  // marketing page, so a signed-in player hitting it lands in the app. While
+  // `initializing` (jwt on-load refresh not settled) we must NOT redirect — that
+  // would flash/bounce a real anonymous prod visitor mid-bootstrap. `unauthenticated`
+  // and `onboarding-required` also stay on the landing (onboarding is reached via
+  // the auth flow, not `/`). `replace` keeps `/` out of history so Back doesn't loop.
+  if (status === 'ready' && !preview) {
+    return <Navigate to="/home" replace />
+  }
   // The Dither ALWAYS fires; its direction flips with the theme so it always grades
   // the page INTO the inverted footer (light page → dark footer; dark → light). Held
   // as a const so the palette token names aren't JSX string literals (the i18n rule);

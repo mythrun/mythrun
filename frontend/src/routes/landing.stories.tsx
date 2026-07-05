@@ -10,7 +10,11 @@ const meta: Meta<typeof ScreenHarness> = {
 export default meta
 type Story = StoryObj<typeof ScreenHarness>
 
+// The landing is the ANONYMOUS marketing page: a signed-in (`ready`) visitor at
+// `/` now redirects to `/home` (LandingRoute's authed bounce), so preview it as an
+// anonymous visitor sees it — `unauthenticated` renders the landing regardless of
+// the build's DEV flag (the `/?preview` dev escape hatch is DEV-only).
 export const Default: Story = {
-  render: () => <ScreenHarness entry="/" session="ready" />,
+  render: () => <ScreenHarness entry="/" session="unauthenticated" />,
   play: expectScreen('route-landing'),
 }

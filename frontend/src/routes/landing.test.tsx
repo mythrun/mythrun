@@ -3,6 +3,7 @@ import { render, screen, act, cleanup } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
+import { useSessionStore } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
 import { LandingRoute } from './landing.tsx'
 
@@ -49,13 +50,17 @@ function setMatch(): void {
   Object.defineProperty(window, 'matchMedia', { writable: true, value: (q: string) => ({ matches: false, media: q, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }) })
 }
 
-function renderLanding(): void {
+function renderLanding(entry = '/'): void {
   const router = createMemoryRouter(
     [
       { path: '/', element: <LandingRoute /> },
       { path: '/auth/signin', element: <div data-testid="signin-stub" /> },
+      // The authed-redirect target. `<LandingRoute/>` bounces a `ready` session
+      // here, so the mini-router needs a stub to resolve — asserting `home-stub`
+      // is what proves the redirect (vs. still rendering `route-landing`).
+      { path: '/home', element: <div data-testid="home-stub" /> },
     ],
-    { initialEntries: ['/'] },
+    { initialEntries: [entry] },
   )
   render(<ThemeProvider><I18nextProvider i18n={i18n}><RouterProvider router={router} /></I18nextProvider></ThemeProvider>)
 }
@@ -63,8 +68,14 @@ function renderLanding(): void {
 beforeEach(() => { setMatch(); localStorage.clear() })
 // Web's vitest config sets no `globals`, so testing-library's auto-cleanup
 // afterEach is not registered — `cleanup()` must UNMOUNT the prior render or the
-// next case trips over duplicate landmarks (mirrors signin.test.tsx).
-afterEach(() => { cleanup() })
+// next case trips over duplicate landmarks (mirrors signin.test.tsx). The session
+// store is a module-level global that bleeds across cases, so reset it (AFTER the
+// unmount) to the boot default `initializing` — which renders the landing, the
+// state the store-agnostic landmark/nav/footer cases below implicitly assume.
+afterEach(() => {
+  cleanup()
+  act(() => { useSessionStore.getState().setInitializing() })
+})
 
 describe('LandingRoute', () => {
   it('renders a <nav> landmark with wordmark, theme toggle, and sign-in', () => {
@@ -111,5 +122,39 @@ describe('LandingRoute', () => {
     expect(screen.getByTestId('landing-dither')).toBeDefined()        // light (default)
     act(() => { screen.getByTestId('landing-theme-toggle').click() }) // → dark
     expect(screen.getByTestId('landing-dither')).toBeDefined()        // still present in dark (flipped, not hidden)
+  })
+
+  it('redirects a definitively-authed visitor (status ready) to /home instead of the landing', () => {
+    act(() => { useSessionStore.getState().setReady('dev-user-1') })
+    renderLanding()
+    expect(screen.getByTestId('home-stub')).toBeDefined()
+    // The marketing page must NOT render for a signed-in player.
+    expect(screen.queryByTestId('route-landing')).toBeNull()
+  })
+
+  it('renders the landing (no redirect) for an anonymous visitor', () => {
+    act(() => { useSessionStore.getState().setUnauthenticated() })
+    renderLanding()
+    expect(screen.getByTestId('route-landing')).toBeDefined()
+    expect(screen.getByTestId('landing-signin')).toBeDefined()
+    expect(screen.queryByTestId('home-stub')).toBeNull()
+  })
+
+  it('renders the landing (no redirect) while the session is still initializing', () => {
+    // Boot state (jwt on-load refresh not settled): must NOT bounce a real
+    // anonymous prod visitor mid-bootstrap.
+    act(() => { useSessionStore.getState().setInitializing() })
+    renderLanding()
+    expect(screen.getByTestId('route-landing')).toBeDefined()
+    expect(screen.queryByTestId('home-stub')).toBeNull()
+  })
+
+  it('renders the landing for an authed visitor at /?preview (the dev escape hatch)', () => {
+    // `import.meta.env.DEV` is true under vitest, so `?preview` exercises the dev
+    // branch: an auto-authed dev can still VIEW the landing via the query param.
+    act(() => { useSessionStore.getState().setReady('dev-user-1') })
+    renderLanding('/?preview')
+    expect(screen.getByTestId('route-landing')).toBeDefined()
+    expect(screen.queryByTestId('home-stub')).toBeNull()
   })
 })
