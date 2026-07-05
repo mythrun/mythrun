@@ -204,5 +204,17 @@
     "loading": "[ph: finding your openings]",
     "empty": "[ph: no openings yet]",
     "error": "[ph: something went wrong — try again]"
+  },
+  "campaign": {
+    "settling": "[ph: settling your campaign]",
+    "eyebrow": "[ph: your campaign]",
+    "invite": {
+      "title": "[ph: invite your players]",
+      "body": "[ph: send a link so your table can join — invites land next (MYT-91)]"
+    },
+    "character": {
+      "title": "[ph: everyone makes a character]",
+      "body": "[ph: each player builds who they are — character creation lands next (MYT-90)]"
+    }
   }
 }

@@ -6,7 +6,10 @@ import { ThemeProvider } from '@mythrun/ui'
 import {
   ApiClientProvider,
   useWorldGenStream,
+  getStartingSituations,
+  getMyCampaigns,
   type ApiContext,
+  type CampaignSummary,
   type WorldGenStream,
 } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
@@ -30,10 +33,37 @@ vi.mock('@mythrun/client-core', async (importOriginal) => {
     getWorldSnapshot: vi
       .fn()
       .mockResolvedValue({ entities: [], facts: [], entityHierarchy: [], relationships: [] }),
+    // The post-situation seam: `world_ready` splits reveal-vs-page on the chosen
+    // starting-situation flag (see campaign-detail.tsx). Default `chosenIndex: null`
+    // → the reveal (pre-situation). `getMyCampaigns` feeds the campaign page's world
+    // identity (worldName + worldColors), found by id.
+    getStartingSituations: vi.fn().mockResolvedValue({ situations: [], chosenIndex: null }),
+    getMyCampaigns: vi.fn().mockResolvedValue({ campaigns: [] }),
   }
 })
 
 const mockStream = vi.mocked(useWorldGenStream)
+const mockSituations = vi.mocked(getStartingSituations)
+const mockCampaigns = vi.mocked(getMyCampaigns)
+
+// One hub-shaped campaign carrying a world identity (name + dither pair) — the
+// campaign page finds it by id off `getMyCampaigns` and renders its world name.
+const CAMPAIGN: CampaignSummary = {
+  id: 'c1',
+  worldId: 'w1',
+  name: 'The Ashfen Pact',
+  status: 'setup',
+  language: 'en',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+  worldName: 'Emberdeep Hollow',
+  worldColors: { from: 'moss-100', to: 'verdigris-800' },
+  creator: null,
+  party: [],
+  sessionCount: 0,
+  lastPlayedAt: null,
+  cardPhase: 'needs-character',
+}
 
 // ENVIRONMENT shim (Node 25 vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; Node 25's non-functional builtin SHADOWS jsdom's real
@@ -137,20 +167,51 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(screen.queryByTestId('worldgen-retry')).toBeNull()
   })
 
-  it('renders the Phase D world reveal when world-gen just finished', async () => {
+  it('renders the Phase D world reveal at world_ready before a situation is chosen', async () => {
     mockStream.mockReturnValue(
       streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
     )
+    // No situation chosen yet → the one-time reveal.
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null })
     renderDetail()
-    // The reveal mounts and fetches its wiki snapshot; findBy flushes that effect.
+    // The reveal mounts after the settling gate resolves; findBy flushes that.
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
     // The settled graph's accessible entity list carries the node names.
     expect(screen.getByText('Ashfen Reach')).toBeDefined()
   })
 
-  it('falls through to the existing detail content for an already-active campaign', () => {
-    mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'complete' }))
+  it('renders the campaign page at world_ready once a situation is chosen', async () => {
+    mockStream.mockReturnValue(
+      streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
+    )
+    // A chosen situation → the reveal is done; the campaign page (D5) lands.
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1 })
+    mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
     renderDetail()
-    expect(screen.getByTestId('route-campaign-detail')).toBeDefined()
+    // The campaign page: world identity + both MYT-89 boundary seams.
+    expect(await screen.findByTestId('route-campaign-detail')).toBeDefined()
+    expect(screen.getByTestId('campaign-world-name').textContent).toBe('Emberdeep Hollow')
+    expect(screen.getByTestId('seam-invite')).toBeDefined()
+    expect(screen.getByTestId('seam-character')).toBeDefined()
+    // The reveal must NOT show once the situation is chosen.
+    expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
+  })
+
+  it('falls back to the reveal when the chosen-situation fetch fails', async () => {
+    mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'world_ready' }))
+    mockSituations.mockRejectedValue(new Error('boom'))
+    renderDetail()
+    // A transient failure defaults to the pre-situation reveal (re-pick is idempotent).
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+  })
+
+  it('renders the campaign page for an already-active campaign (phase complete)', async () => {
+    mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'complete' }))
+    mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
+    renderDetail()
+    // A later phase already has a situation → straight to the campaign page (D5).
+    expect(await screen.findByTestId('route-campaign-detail')).toBeDefined()
+    expect(screen.getByTestId('seam-invite')).toBeDefined()
+    expect(screen.getByTestId('seam-character')).toBeDefined()
   })
 })

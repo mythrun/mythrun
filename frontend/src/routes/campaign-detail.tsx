@@ -1,31 +1,71 @@
+import { useEffect, useState } from 'react'
 import { Stack, Heading, Text, Button } from '@mythrun/ui'
-import { useApiContext, useWorldGenStream } from '@mythrun/client-core'
-import type { PipelinePhase } from '@mythrun/contract/events'
+import {
+  getStartingSituations,
+  useApiContext,
+  useWorldGenStream,
+  type ApiContext,
+  type StartingSituationsResponse,
+} from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { GeneratingView } from './worldgen/generating.tsx'
 import { WorldReveal } from './worldgen/reveal.tsx'
+import { CampaignPage } from './campaign-page.tsx'
 
 // The campaign-detail screen (`/campaigns/:id`) — the home-hub card's click
 // target AND where the create flow lands after Begin (MYT-89 Phase C, C6). It is
 // PHASE-AWARE: it opens the world-gen status stream (`useWorldGenStream`, C5) and
 // branches on the coarse lifecycle so the SAME url is the returnable home for a
-// generating world, a failed/terminal one, the just-finished handoff, and — once
-// the campaign is fully set up — the existing detail content (the fall-through).
+// generating world, a failed/terminal one, the just-finished reveal (D3), and —
+// once a starting situation is chosen — the CAMPAIGN PAGE (D5).
 //
-// The `complete` status covers BOTH the just-finished handoff (phase
-// `world_ready`/`character_creation`/`post_creation`) and a fully-active campaign
-// (phase `complete`); `phase` splits them — the handoff is the seam Phase D fills
-// with the reveal → wiki → continue, and phase `complete` falls through to the
+// THE POST-SITUATION SEAM: picking a starting situation (D4) does NOT advance the
+// pipeline phase — it only records `campaigns.starting_situation_index`, so the
+// derived phase stays `world_ready` (it flips to `complete` only when the campaign
+// goes active, after the whole party's characters are integrated). So a `complete`
+// STATUS with a `world_ready` PHASE is ambiguous: the just-generated owner (no
+// situation yet → the one-time reveal) vs the owner who just picked one (→ the
+// campaign page). The pipeline phase can't tell them apart, so this route reads the
+// chosen-situation flag (`getStartingSituations().chosenIndex`) for exactly that
+// `world_ready` case. Every later phase (character_creation / post_creation /
+// complete) implies a situation is already chosen, so those go straight to the
 // campaign page. Flat 1-bit paper register throughout; all UI composes @mythrun/ui.
 
-/** Phases where world-gen has FINISHED but the campaign is still mid-setup — the
- *  Phase D handoff seam (reveal → wiki → continue), not yet a playable campaign. */
-const HANDOFF_PHASES: ReadonlySet<PipelinePhase> = new Set<PipelinePhase>([
-  'world_ready',
-  'character_creation',
-  'post_creation',
-])
+/** The situations source — defaults to the real endpoint; tests substitute it. */
+type FetchSituations = (ctx: ApiContext, campaignId: string) => Promise<StartingSituationsResponse>
+
+/** Whether the owner has already chosen a starting situation. `loading` is the
+ *  brief resolve window; `not-chosen` and a fetch failure both fall to the reveal
+ *  (the pre-situation default — worst case the owner re-picks idempotently). */
+type ChosenState = 'loading' | 'not-chosen' | 'chosen'
+
+/** Resolve the chosen-situation flag, but ONLY while the ambiguous `world_ready`
+ *  case is live (`active`). Other phases never fetch — they route deterministically. */
+function useSituationChosen(
+  ctx: ApiContext,
+  campaignId: string,
+  active: boolean,
+  fetchSituations: FetchSituations,
+): ChosenState {
+  const [state, setState] = useState<ChosenState>('loading')
+  useEffect(() => {
+    if (!active) return
+    let alive = true
+    setState('loading')
+    void fetchSituations(ctx, campaignId)
+      .then((res) => {
+        if (alive) setState(res.chosenIndex !== null ? 'chosen' : 'not-chosen')
+      })
+      .catch(() => {
+        if (alive) setState('not-chosen')
+      })
+    return () => {
+      alive = false
+    }
+  }, [ctx, campaignId, active, fetchSituations])
+  return state
+}
 
 /** Calm, retryable world-gen failure — a resume action, not an apology (§ brand). */
 function FailedView({ onRetry }: { onRetry: () => void }): React.JSX.Element {
@@ -58,33 +98,47 @@ function TerminalView(): React.JSX.Element {
   )
 }
 
-/** The existing (interim) detail content — the fall-through for a campaign that is
- *  past setup and fully playable. A later ticket owns the real detail surface. */
-function DetailContent(): React.JSX.Element {
+/** The brief resolve window at `world_ready` while the chosen-situation flag loads —
+ *  a calm line, so the reveal↔page split never flashes the wrong surface. */
+function SettlingView(): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <Stack gap={4} data-testid="route-campaign-detail">
-      <Heading level={1}>{t('stub.campaignDetail')}</Heading>
-      <Text as="p">{t('stub.campaignDetail')}</Text>
+    <Stack gap={3} data-testid="campaign-settling">
+      <Text role="ui-caption" as="p">
+        {t('campaign.settling')}
+      </Text>
     </Stack>
   )
 }
 
-export function CampaignDetailRoute(): React.JSX.Element {
+export interface CampaignDetailRouteProps {
+  /** The chosen-situation source — defaults to the real endpoint; tests substitute it. */
+  fetchSituations?: FetchSituations
+}
+
+export function CampaignDetailRoute({
+  fetchSituations = getStartingSituations,
+}: CampaignDetailRouteProps = {}): React.JSX.Element {
   const ctx = useApiContext()
-  // The route only matches with an `:id`; `?? ''` keeps the hook call
+  // The route only matches with an `:id`; `?? ''` keeps the hook calls
   // unconditional (hooks can't branch) without a non-null assertion.
   const { id = '' } = useParams<{ id: string }>()
   const { nodes, edges, status, phase, retry } = useWorldGenStream(ctx, id)
+  // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
+  const worldReady = status === 'complete' && phase === 'world_ready'
+  const chosen = useSituationChosen(ctx, id, worldReady, fetchSituations)
 
   if (status === 'generating') return <GeneratingView nodes={nodes} edges={edges} />
   if (status === 'failed') return <FailedView onRetry={() => void retry()} />
   if (status === 'terminal') return <TerminalView />
 
-  // status === 'complete': the just-finished handoff vs a fully-active campaign.
-  // The handoff is the Phase D reveal — the settled graph beside the browsable
-  // wiki, with a Continue → to the starting-situation pick (D4).
-  if (phase !== null && HANDOFF_PHASES.has(phase))
-    return <WorldReveal campaignId={id} nodes={nodes} edges={edges} />
-  return <DetailContent />
+  // status === 'complete'. The `world_ready` phase splits on the chosen-situation
+  // flag: the one-time reveal (D3) until a situation is picked, then the campaign
+  // page (D5). Every later phase already has a situation → the campaign page.
+  if (worldReady) {
+    if (chosen === 'loading') return <SettlingView />
+    if (chosen === 'not-chosen')
+      return <WorldReveal campaignId={id} nodes={nodes} edges={edges} />
+  }
+  return <CampaignPage campaignId={id} />
 }

@@ -158,4 +158,10 @@ export const descriptions: Record<string, string> = {
   'startingSituation.loading': 'Calm placeholder line shown while the three opening hooks are being fetched. Terse, ~2-4 words.',
   'startingSituation.empty': 'Calm placeholder line shown when there are no opening hooks to choose from (defensive — a finished world normally has three). Terse, ~2-4 words.',
   'startingSituation.error': 'Calm line shown when the opening hooks fail to load OR when recording the owner\'s pick fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
+  'campaign.settling': 'Calm transient placeholder on the campaign page (/campaigns/:id) shown for the brief moment after world-gen completes while it resolves whether to show the one-time world reveal or the settled campaign hub. Terse, ~2-3 words.',
+  'campaign.eyebrow': 'Quiet eyebrow/kicker above the campaign name on the campaign page, beside the world identity (cover + world name). Terse, ~1-2 words, e.g. "Your campaign".',
+  'campaign.invite.title': 'Heading of the "invite players" region on the campaign page — the placeholder seam for the not-yet-built invite flow (MYT-91). Terse, ~2-3 words, e.g. "Invite your players".',
+  'campaign.invite.body': 'Body of the invite-players placeholder seam on the campaign page: what this region will become (send an invite link so the party can join). ~1 short sentence; a clearly-marked stub pending MYT-91.',
+  'campaign.character.title': 'Heading of the "everyone makes a character" region on the campaign page — the placeholder seam for the not-yet-built character-creation flow (MYT-90). Terse, ~3-5 words.',
+  'campaign.character.body': 'Body of the make-a-character placeholder seam on the campaign page: what this region will become (each player builds their own character). ~1 short sentence; a clearly-marked stub pending MYT-90.',
 }
