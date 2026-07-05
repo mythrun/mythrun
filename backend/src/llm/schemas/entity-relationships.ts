@@ -34,6 +34,10 @@ export const relationshipItemSchema = z.object({
   // the haiku→sonnet repair only fixes malformed JSON, so a max() terminal-fails
   // the stage on valid output.
   description: z.string().min(10),
+  // Per-relationship access tier (MYT-89 Phase A). Mirrors the fact-level tier
+  // in entity-consolidation. REQUIRED so the prompt (A3) is forced to emit it
+  // and the persist path (A4) can carry it into relationships.access_level.
+  access_level: z.enum(['known', 'discoverable', 'secret']),
 })
 
 export const hierarchyStragglerItemSchema = z.object({

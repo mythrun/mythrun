@@ -138,10 +138,52 @@ describe('fix_relationship_by_name — newSource / newTarget', () => {
       }),
     ).toThrow(/at least one of newSource, newTarget, newType, newDescription/)
   })
+
+  it('accepts an optional newAccessLevel re-tier', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'fix_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        current_type: 'allied_with',
+        newAccessLevel: 'discoverable',
+        rationale: 'The relationship should be discoverable, not secret.',
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects an unknown newAccessLevel tier', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'fix_relationship_by_name',
+        source_name: 'A',
+        target_name: 'B',
+        current_type: 'allied_with',
+        newAccessLevel: 'public',
+        rationale: 'The relationship should be discoverable, not secret.',
+      }),
+    ).toThrow()
+  })
 })
 
 describe('add_relationship_by_name', () => {
-  it('accepts a valid patch', () => {
+  it('accepts a valid patch with each access_level', () => {
+    for (const access_level of ['known', 'discoverable', 'secret'] as const) {
+      expect(() =>
+        CoherencePatchSchema.parse({
+          kind: 'add_relationship_by_name',
+          source_name: 'Brother Anselm',
+          target_name: 'Stillwater Monastery',
+          relationship: 'keeper_of',
+          description: 'Anselm serves as the Keeper of the Order at Stillwater.',
+          access_level,
+          rationale: 'Prose explicitly states this; structured stage missed it.',
+        }),
+      ).not.toThrow()
+    }
+  })
+
+  it('rejects a patch missing access_level', () => {
     expect(() =>
       CoherencePatchSchema.parse({
         kind: 'add_relationship_by_name',
@@ -151,7 +193,21 @@ describe('add_relationship_by_name', () => {
         description: 'Anselm serves as the Keeper of the Order at Stillwater.',
         rationale: 'Prose explicitly states this; structured stage missed it.',
       }),
-    ).not.toThrow()
+    ).toThrow()
+  })
+
+  it('rejects an unknown access_level tier', () => {
+    expect(() =>
+      CoherencePatchSchema.parse({
+        kind: 'add_relationship_by_name',
+        source_name: 'Brother Anselm',
+        target_name: 'Stillwater Monastery',
+        relationship: 'keeper_of',
+        description: 'Anselm serves as the Keeper of the Order at Stillwater.',
+        access_level: 'public',
+        rationale: 'Prose explicitly states this; structured stage missed it.',
+      }),
+    ).toThrow()
   })
 
   it('rejects short description', () => {
@@ -162,6 +218,7 @@ describe('add_relationship_by_name', () => {
         target_name: 'B',
         relationship: 'allied_with',
         description: 'short',
+        access_level: 'known',
         rationale: 'Reasonable length but description fails the floor.',
       }),
     ).toThrow()

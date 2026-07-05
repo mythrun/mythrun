@@ -148,6 +148,7 @@ interface TreeRelationship {
   readonly to_name: string
   readonly relationship: string
   readonly description: string
+  readonly access_level: 'known' | 'discoverable' | 'secret'
 }
 interface TreeStraggler {
   readonly parent_name: string
@@ -176,11 +177,11 @@ const NAME_GHOST = 'Ghostly Apparition' // unresolvable — not in inventory
 function makeValidTree(): RelationshipsTree {
   return {
     relationships: [
-      { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'Coast under brotherhood rule' },
-      { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'Aerion commands the brotherhood' },
-      { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'Aerion holds the keep' },
-      { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast' },
-      { from_name: NAME_E5, to_name: NAME_E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven' },
+      { from_name: NAME_E1, to_name: NAME_E2, relationship: 'controls', description: 'Coast under brotherhood rule', access_level: 'known' },
+      { from_name: NAME_E2, to_name: NAME_E3, relationship: 'leads', description: 'Aerion commands the brotherhood', access_level: 'known' },
+      { from_name: NAME_E3, to_name: NAME_E4, relationship: 'protects', description: 'Aerion holds the keep', access_level: 'known' },
+      { from_name: NAME_E4, to_name: NAME_E1, relationship: 'located_in', description: 'Keep sits on the Iron Coast', access_level: 'known' },
+      { from_name: NAME_E5, to_name: NAME_E6, relationship: 'opposed_to', description: 'Vance schemes against Stormhaven', access_level: 'secret' },
     ],
     hierarchy_stragglers: [],
     new_entity_declarations: [],

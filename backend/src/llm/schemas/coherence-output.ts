@@ -50,13 +50,17 @@ const fixRelationshipPatch = z.object({
   newTarget: z.string().min(1).max(200).optional(),
   newType: z.string().min(2).max(60).optional(),
   newDescription: z.string().min(10).optional(),
+  // Optional re-tier (MYT-89 Phase A) — a fix may or may not adjust the tier,
+  // mirroring newType/newDescription. Counts as a real change for the .refine.
+  newAccessLevel: z.enum(['known', 'discoverable', 'secret']).optional(),
   rationale: z.string().min(20),
 }).refine(
   (p) => p.newSource !== undefined
     || p.newTarget !== undefined
     || p.newType !== undefined
-    || p.newDescription !== undefined,
-  { message: 'fix_relationship_by_name requires at least one of newSource, newTarget, newType, newDescription' },
+    || p.newDescription !== undefined
+    || p.newAccessLevel !== undefined,
+  { message: 'fix_relationship_by_name requires at least one of newSource, newTarget, newType, newDescription, newAccessLevel' },
 )
 
 const addRelationshipPatch = z.object({
@@ -65,6 +69,9 @@ const addRelationshipPatch = z.object({
   target_name: z.string().min(1).max(200),
   relationship: z.string().min(2).max(60),
   description: z.string().min(10),
+  // Required access tier (MYT-89 Phase A) — mirrors addFactPatch below. An
+  // inserted relationship must declare a tier so A4 can persist it.
+  access_level: z.enum(['known', 'discoverable', 'secret']),
   rationale: z.string().min(20),
 })
 
