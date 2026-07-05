@@ -10,7 +10,9 @@ import { ApiClientProvider } from './client-context.tsx'
 import { isContractValidationError } from './errors.ts'
 import { HttpError, isHttpError } from './errors.ts'
 import {
+  chooseStartingSituation,
   getMyCampaigns,
+  getStartingSituations,
   getWorldSnapshot,
   resumeGeneration,
   useMyCampaigns,
@@ -212,5 +214,68 @@ describe('resumeGeneration', () => {
     expect(isHttpError(error)).toBe(true)
     expect((error as HttpError).status).toBe(409)
     expect((error as HttpError).code).toBe('world_gen_capped')
+  })
+})
+
+describe('getStartingSituations', () => {
+  it('parses the three hooks + chosenIndex and strips the extra keys', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/c-9/starting-situations`, () =>
+        HttpResponse.json({
+          situations: [
+            // `locationEntityId` (+ any richer keys) strip away under z.object().
+            { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.', locationEntityId: 'ent-1' },
+            { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.', locationEntityId: 'ent-2' },
+          ],
+          chosenIndex: null,
+        }),
+      ),
+    )
+    await expect(getStartingSituations(testCtx, 'c-9')).resolves.toEqual({
+      situations: [
+        { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.' },
+        { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.' },
+      ],
+      chosenIndex: null,
+    })
+  })
+
+  it('throws a typed HttpError 404 when the situations stage has not run', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/c-9/starting-situations`, () =>
+        HttpResponse.json({ code: 'world_not_ready' }, { status: 404 }),
+      ),
+    )
+    const error = await getStartingSituations(testCtx, 'c-9').catch((e: unknown) => e)
+    expect(isHttpError(error)).toBe(true)
+    expect((error as HttpError).status).toBe(404)
+    expect((error as HttpError).code).toBe('world_not_ready')
+  })
+})
+
+describe('chooseStartingSituation', () => {
+  it('posts the chosen index as the body and resolves the recorded index', async () => {
+    let posted: unknown
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/c-9/starting-situation`, async ({ request }) => {
+        posted = await request.json()
+        return HttpResponse.json({ index: 2 })
+      }),
+    )
+    await expect(chooseStartingSituation(testCtx, 'c-9', 2)).resolves.toEqual({ index: 2 })
+    // Only `{ index }` rides the body — the campaignId travels in the path.
+    expect(posted).toEqual({ index: 2 })
+  })
+
+  it('throws a typed HttpError 409 situation_locked once the pick is locked in', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/c-9/starting-situation`, () =>
+        HttpResponse.json({ code: 'situation_locked' }, { status: 409 }),
+      ),
+    )
+    const error = await chooseStartingSituation(testCtx, 'c-9', 1).catch((e: unknown) => e)
+    expect(isHttpError(error)).toBe(true)
+    expect((error as HttpError).status).toBe(409)
+    expect((error as HttpError).code).toBe('situation_locked')
   })
 })

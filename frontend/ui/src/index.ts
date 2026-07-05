@@ -66,6 +66,12 @@ export { CoverCard } from './components/CoverCard/CoverCard.tsx'
 // fork.
 export { GhostChoiceList } from './components/GhostChoiceList/GhostChoiceList.tsx'
 
+// GhostHookList (MYT-89 Phase D) — a richer sibling of GhostChoiceList: the same
+// borderless flat-1-bit ghost list, but each item STACKS a serif title over an
+// optional quiet place line over a prose paragraph (the narrative body the compact
+// GhostChoiceItem can't hold). The starting-situation pick (three opening hooks).
+export { GhostHookList } from './components/GhostHookList/GhostHookList.tsx'
+
 // WorldGenGraph (MYT-89 Phase C) — the live streaming graph shown during world
 // generation: a decorative force-directed Canvas (aria-hidden — square ink glyphs by
 // kind, hand-drawn links, ambient ghost-bloom churn, fine-pointer drag-to-pin) beside
@@ -179,6 +185,8 @@ export type {
   CoverCardProps,
   GhostChoiceListProps,
   GhostChoiceItem,
+  GhostHookListProps,
+  GhostHookItem,
   WorldGenGraphProps,
   GraphNode,
   GraphEdge,

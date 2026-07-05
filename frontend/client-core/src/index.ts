@@ -31,8 +31,16 @@ export {
   useMyCampaigns,
   getWorldSnapshot,
   resumeGeneration,
+  getStartingSituations,
+  chooseStartingSituation,
 } from './api/campaigns.ts'
-export type { WorldGenSnapshot, ResumeResult } from './api/campaigns.ts'
+export type {
+  WorldGenSnapshot,
+  ResumeResult,
+  StartingSituation,
+  StartingSituationsResponse,
+  ChooseStartingSituationResult,
+} from './api/campaigns.ts'
 export { synthesizePreview, reworkPreview, createCampaign } from './api/campaign-create.ts'
 
 // Guided-create draft persistence seam (MYT-89 §11) — the DOM-free brain reaches

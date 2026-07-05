@@ -98,3 +98,89 @@ const resumeGenerationEndpoint = defineEndpoint<ResumeResult, { campaignId: stri
 export function resumeGeneration(ctx: ApiContext, campaignId: string): Promise<ResumeResult> {
   return resumeGenerationEndpoint({ campaignId }, ctx)
 }
+
+// -----------------------------------------------------------------------------
+// Starting-situation pick (MYT-89 Phase D, D4).
+//
+// After the reveal, the owner picks one of three opening hooks — the choice seeds
+// where play begins. Two endpoints: GET the three situations (member) + POST the
+// chosen index (owner). The GET's `title`/`locationName` were added by myth-k1ee;
+// every world that reaches this screen (a fresh post-generation world) carries
+// them, so both are required here (a pre-k1ee world never surfaces this flow).
+// The POST 200s `{ index }`; it throws `HttpError` 409 `situation_locked` once a
+// party member's concept is locked (the pick is done) — the screen treats that as
+// idempotent-success and proceeds to the campaign page anyway.
+// -----------------------------------------------------------------------------
+
+/** One opening hook from GET …/starting-situations. `title`/`locationName`/`prose`
+ *  are LLM-authored DATA (not i18n) the screen renders verbatim; the backend's
+ *  `locationEntityId` (+ any richer keys) strip away under `z.object()`. */
+const StartingSituationSchema = z.object({
+  index: z.number().int(),
+  title: z.string(),
+  locationName: z.string(),
+  prose: z.string(),
+})
+
+export type StartingSituation = z.infer<typeof StartingSituationSchema>
+
+/** GET …/starting-situations response: the three hooks + the owner's prior pick
+ *  (`chosenIndex` is null until the owner POSTs). */
+const StartingSituationsResponseSchema = z.object({
+  situations: z.array(StartingSituationSchema),
+  chosenIndex: z.number().int().nullable(),
+})
+
+export type StartingSituationsResponse = z.infer<typeof StartingSituationsResponseSchema>
+
+const getStartingSituationsEndpoint = defineEndpoint<
+  StartingSituationsResponse,
+  { campaignId: string }
+>({
+  method: 'GET',
+  path: (input) => `/api/campaigns/${encodeURIComponent(input.campaignId)}/starting-situations`,
+  response: StartingSituationsResponseSchema,
+})
+
+/** Member-visible. Fetches the three opening hooks + the owner's prior pick.
+ *  Throws `HttpError` 404 `world_not_ready` before the situations stage has run. */
+export function getStartingSituations(
+  ctx: ApiContext,
+  campaignId: string,
+): Promise<StartingSituationsResponse> {
+  return getStartingSituationsEndpoint({ campaignId }, ctx)
+}
+
+/** POST …/starting-situation body — the chosen hook's index (0..2). */
+const ChooseStartingSituationBodySchema = z.object({
+  index: z.number().int().min(0).max(2),
+})
+
+/** POST …/starting-situation 200 body — the recorded index. */
+const ChooseStartingSituationResultSchema = z.object({
+  index: z.number().int(),
+})
+
+export type ChooseStartingSituationResult = z.infer<typeof ChooseStartingSituationResultSchema>
+
+const chooseStartingSituationEndpoint = defineEndpoint<
+  ChooseStartingSituationResult,
+  { campaignId: string; index: number }
+>({
+  method: 'POST',
+  path: (input) => `/api/campaigns/${encodeURIComponent(input.campaignId)}/starting-situation`,
+  request: ChooseStartingSituationBodySchema,
+  response: ChooseStartingSituationResultSchema,
+})
+
+/** Owner-only. Records the chosen opening hook (200 `{ index }`); throws
+ *  `HttpError` 409 `situation_locked` once the pick is already locked in — the
+ *  caller treats that as idempotent-success. The request body (`{ index }`) is
+ *  contract-validated; the `campaignId` rides the path, not the body. */
+export function chooseStartingSituation(
+  ctx: ApiContext,
+  campaignId: string,
+  index: number,
+): Promise<ChooseStartingSituationResult> {
+  return chooseStartingSituationEndpoint({ campaignId, index }, ctx)
+}

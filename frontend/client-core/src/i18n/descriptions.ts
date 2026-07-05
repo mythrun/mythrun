@@ -153,4 +153,9 @@ export const descriptions: Record<string, string> = {
   'worldReveal.group.location': 'Group heading for LOCATION entities in the reveal wiki tree. ~1 word, plural, e.g. "Places".',
   'worldReveal.group.npc': 'Group heading for NPC entities in the reveal wiki tree. ~1 word, plural, e.g. "People".',
   'worldReveal.group.item': 'Group heading for ITEM entities in the reveal wiki tree. ~1 word, plural, e.g. "Things".',
+  'startingSituation.eyebrow': 'Quiet eyebrow/kicker above the starting-situation prompt (the screen where the owner picks one of three opening hooks, after the reveal). Terse, ~1-3 words, e.g. "The opening".',
+  'startingSituation.prompt': 'Headline question on the starting-situation pick screen — invites the owner to choose where play begins. Calm, brand-voiced, ~3-5 words, e.g. "Where does it begin?".',
+  'startingSituation.loading': 'Calm placeholder line shown while the three opening hooks are being fetched. Terse, ~2-4 words.',
+  'startingSituation.empty': 'Calm placeholder line shown when there are no opening hooks to choose from (defensive — a finished world normally has three). Terse, ~2-4 words.',
+  'startingSituation.error': 'Calm line shown when the opening hooks fail to load OR when recording the owner\'s pick fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
 }

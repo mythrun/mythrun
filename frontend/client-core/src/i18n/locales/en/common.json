@@ -197,5 +197,12 @@
       "npc": "[ph: people]",
       "item": "[ph: things]"
     }
+  },
+  "startingSituation": {
+    "eyebrow": "[ph: the opening]",
+    "prompt": "[ph: where does it begin?]",
+    "loading": "[ph: finding your openings]",
+    "empty": "[ph: no openings yet]",
+    "error": "[ph: something went wrong — try again]"
   }
 }

@@ -16,6 +16,7 @@ import { HomeRoute } from '../routes/home.tsx'
 import { CampaignNewRoute } from '../routes/campaign-new.tsx'
 import { CampaignDetailRoute } from '../routes/campaign-detail.tsx'
 import { CharacterNewRoute } from '../routes/character-new.tsx'
+import { SituationPickRoute } from '../routes/worldgen/situation-pick.tsx'
 import { PlayRoute } from '../routes/play.tsx'
 import { SettingsRoute } from '../routes/settings.tsx'
 
@@ -101,6 +102,10 @@ export function buildRoutes(dev: boolean): RouteObject[] {
                 // `/campaigns/new` still resolves to CampaignNewRoute; a real
                 // campaign id lands here instead of falling through to the 404.
                 { path: 'campaigns/:id', element: <CampaignDetailRoute /> },
+                // The starting-situation pick (D4) — where the reveal's Continue
+                // leads. Static `campaigns/new` still outranks `:id`; this deeper
+                // static tail sits under the same `:id` space.
+                { path: 'campaigns/:id/situation', element: <SituationPickRoute /> },
                 { path: 'campaigns/:id/character/new', element: <CharacterNewRoute /> },
                 { path: 'campaigns/:id/play', element: <PlayRoute /> },
                 { path: 'settings', element: <SettingsRoute /> },

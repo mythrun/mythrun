@@ -88,6 +88,13 @@ export type { CoverCardProps } from './cover-card.ts'
 // each item's `onSelect` is a neutral callback, no className/style/raw DOM events.
 export type { GhostChoiceListProps, GhostChoiceItem } from './ghost-choice-list.ts'
 
+// GhostHookList (MYT-89 Phase D) — a richer sibling of GhostChoiceList: the same
+// borderless flat-1-bit ghost list, but each item STACKS a serif title over an
+// optional quiet place line over a prose paragraph (the narrative body the compact
+// GhostChoiceItem can't hold). The starting-situation pick (three opening hooks).
+// DOM-free (§9): each item's `onSelect` is a neutral callback, no className/style.
+export type { GhostHookListProps, GhostHookItem } from './ghost-hook-list.ts'
+
 // WorldGenGraph (MYT-89 Phase C) — the live streaming graph shown during world
 // generation: a force-directed Canvas (aria-hidden decorative) + an ACCESSIBLE
 // entity list (the a11y/keyboard/touch surface). The `GraphNode`/`GraphEdge` model
