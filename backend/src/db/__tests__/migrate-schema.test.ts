@@ -304,6 +304,10 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
     check_clause: `CHECK ((status = ANY (ARRAY['completed'::text, 'refunded'::text])))`,
   },
   {
+    table_name: 'relationships',
+    check_clause: `CHECK ((access_level = ANY (ARRAY['known'::text, 'discoverable'::text, 'secret'::text])))`,
+  },
+  {
     table_name: 'session_messages',
     check_clause: `CHECK (((trigger_kind IS NULL) OR (trigger_kind = ANY (ARRAY['explicit'::text, 'solo'::text, 'auto'::text, 'correction'::text, 'farewell'::text]))))`,
   },
@@ -816,6 +820,7 @@ describe('schema-parity (integration)', () => {
       '028_session_messages_trigger_kind.sql',
       '029_session_messages_fts.sql',
       '030_world_color_identity.sql',
+      '031_relationship_access_level.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
