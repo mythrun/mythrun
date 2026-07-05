@@ -89,6 +89,18 @@ The prototype is a fixed **900×470** field with 12 entities; production runs th
 
 The core loop is O(particles × doublets): with ~41 entities the doublet count is ~180–200 (not the ~20 an earlier draft assumed), so ~4,800 × ~185 ≈ **~900k field evals/frame** plus a per-particle exclusion pass and `Math.exp` in the wake term — a real 60fps risk, peaking exactly at the Act-1 climax. **Required in the build (not deferred):** (a) spatially bucket doublets and evaluate only those within a few `RD` of a particle (the field decays as 1/r⁴ — far-field ≈ 0, so this is fidelity-preserving); (b) skip the advection+field+render passes when `effectiveDensity ≈ 0` (fog invisible near Act-1 end); (c) confirm 60fps at 41 entities on target hardware before sign-off. The per-frame grid pass (~11k cells × cloud/chaos/Bayer) is also real cost — measure it.
 
+### 3.8 The reveal moment — a rewarding gen→reveal transition (NOT a flash-cut)
+
+Completion is a **beat, not a state-swap** — it rewards the player who actually watched the ~10-minute build. On the final entity + final edge, do **not** hard-cut to the reveal layout. Instead, a short orchestrated moment (~3–4s; reduced-motion → a ~300ms cross-fade). It **diverges by platform** at the layout step. This is a first-class specified sequence (a `RevealTransition`, §5), storyable with a synthetic completed graph — port its choreography precisely, don't hand-wave a CSS transition.
+
+1. **The fog lifts** (~1s). The `fade` has already thinned the fog toward zero (§3.2f); the finish completes it as a **final gust** — the last particles are carried off the down-wind edges and despawn, so the atmosphere visibly *clears* rather than dissolving in place. The completed web stands alone on clean paper. (Fog is **totally gone** by the end of this step — a hard invariant.)
+2. **The world settles** (~1s, overlapping). The graph eases into rest: node positions settle, the buoy bob calms to a slower resting rhythm, and the world's title/eyebrow (`[ph: …]`) quietly fades in — understated, brand-terse, no fanfare.
+3. **The layout resolves** (~0.8s) — platform-specific:
+   - **Desktop:** the fullscreen graph **eases to the left 50%** as the **wiki panel slides in from the right** — the §4.1 50/50 layout *arriving in motion*, not appearing. The graph reflows/rescales into its half (per §3.6's virtual coordinate space), never cropped.
+   - **Mobile:** the graph **stays fullscreen** (it already is in the reveal); the **wiki drawer handle slides in from the right edge** with a one-time attention nudge, inviting exploration. Nothing occludes the just-revealed world — the player sees their whole map first, then chooses to open the wiki.
+
+**Reduced-motion:** skip the lift/settle/slide choreography — cross-fade gen→reveal in ~300ms with the fog already cleared and the layout already in its final position (the title still fades in). The completion is still *marked*, just not animated.
+
 ## 4. The reveal experience
 
 ### 4.1 Layout
@@ -123,6 +135,7 @@ Extend `@mythrun/ui` + `client-core` over assembling from misfit primitives — 
 - **Status card** (NEW, §3.3) — its own DOM component + story.
 - **`WorldWiki`** (reworked) → decompose into named storyable sub-components — **`WikiPage`, `WikiHome`, `RelatedFooter`, `InlineLink`** — with the **nav/history stack in a `client-core` hook (`useWikiNavigation`)**, not component-internal or router state. Its prop contract is **blocked by the §4.2 inline-link decision** — resolve that first.
 - **Mobile wiki drawer** (NEW, `@mythrun/ui`) — genuinely net-new (no `Drawer`/`Sheet` primitive exists); own component + story, interface = state-retention across open/close + same-spot summon/dismiss + tap-node-to-open. **Desktop 50/50 is NOT a new component** (existing `Grid columns={2}`). State what migrates from the `reveal.tsx` route into `@mythrun/ui` vs. stays in the route (selection-bridge, snapshot fetch).
+- **`RevealTransition`** (NEW, `@mythrun/ui`, §3.8) — orchestrates the gen→reveal moment (fog-lift → settle + title → platform-specific layout resolve), driven by a completion signal + `prefers-reduced-motion`. Owns the timeline; composes the fog field (final gust), the graph (settle), and the layout shift (desktop 50/50 slide vs. mobile drawer-handle reveal). Storyable with a synthetic completed graph so the beat can be tuned in isolation.
 
 No ad-hoc UI. Modules < 400 lines, functions < 50 — which is *why* the fog is split into sim + draw + shell rather than one primitive.
 
@@ -140,7 +153,7 @@ No ad-hoc UI. Modules < 400 lines, functions < 50 — which is *why* the fog is 
 - **During generation:** the visual list is gone (§3.4), but the streaming entities need an accessible representation — an **`aria-live` region** announcing phase + entities as they arrive, and/or a **visually-hidden entity list**. "No visual list" ≠ "no accessible representation."
 - **Reveal:** the wiki's **browse-by-kind (§4.2) is the guaranteed accessible path** to every entity. Provide keyboard graph selection (a visually-hidden **roving-tabindex** node list mirroring selection) so the Canvas graph isn't keyboard-dead.
 - **Drawer:** move focus into the drawer on open, restore to the triggering node/handle on close, trap focus while the full-width drawer occludes the graph. Define mobile Back-button precedence (wiki page back vs. close drawer vs. leave route) and root-page Back behavior.
-- **`prefers-reduced-motion` across ALL motion sources:** fog advection/turbulence (recompute a *static settled density on each entity-count change* — preserving the fade-with-entities progress signal rather than a blanket freeze that would kill the only progress cue), the buoy bob (disable), and Act-2 edges (appear instantly, no penstroke). Under reduced-motion the status-card `%` becomes the primary progress affordance.
+- **`prefers-reduced-motion` across ALL motion sources:** fog advection/turbulence (recompute a *static settled density on each entity-count change* — preserving the fade-with-entities progress signal rather than a blanket freeze that would kill the only progress cue), the buoy bob (disable), and Act-2 edges (appear instantly, no penstroke). Under reduced-motion the status-card `%` becomes the primary progress affordance. The reveal moment (§3.8) degrades to a ~300ms cross-fade (fog already cleared, layout final, title still fades in).
 - Node hit target: a generous **invariant** radius (bob is render-only, so the visible marker drifts from the fixed hit point — keep the target on the true position).
 
 ## 8. Open items (resolve in planning / implementation)
