@@ -34,6 +34,7 @@ Produce a JSON object with three arrays, in this order:
    - **`to_name`** — the target entity's name, same constraints.
    - **`relationship`** — a short verb or verb-phrase predicate. Typically 1–3 words, snake_case preferred, ≤30 characters. Examples: `allied_with`, `pursues`, `former_servant_of`, `courted_by`, `professional_counterparty_of`, `mentors`, `betrayed_by`, `serves`, `member_of`, `leads`, `controls`. Do NOT write a full sentence here — sentence-level texture goes in `description`.
    - **`description`** — 10–600 characters of free text describing the relationship. Concrete, specific, grounded in the prose above. Do not restate the `relationship` predicate; expand on it. If the relationship is contested, asymmetric, or has nuance the verb can't capture, this is where that texture lives.
+   - **`access_level`** — `known`, `discoverable`, or `secret`, tagging the secrecy of THIS connection — independent of the two entities' own tiers. `known` ONLY if the connection itself is public knowledge; two publicly-known entities can be *secretly* connected (`secret`). A connection that is merely hinted-at or unconfirmed is `discoverable`.
 
 3. **`hierarchy_stragglers`** — up to 20 entries (may be empty). Each entry: `{ "parent_name": "<exact name>", "child_name": "<exact name>" }`. Use this ONLY for parent-child location containment that stage 3 missed — for example, a settlement that should be inside a region but wasn't linked. Do NOT use this for ordinary relationships; those go in `relationships`.
 

@@ -33,7 +33,7 @@ If the prose of an existing entity directly states a relationship or fact that i
   - The prose explicitly states the relationship/fact (not implied, not speculated).
   - The relationship/fact is NOT already in the world dump's structured listings for that entity.
 
-Worked example 1: `add_relationship_by_name` — Anselm's prose says "He serves as the Keeper of the Order at Stillwater Monastery." The relationships section for Anselm shows no `keeper_of` edge to the monastery. Emit `add_relationship_by_name { source_name: 'Anselm', target_name: 'Stillwater Monastery', relationship: 'keeper_of', description: "Anselm holds the Keeper's office at Stillwater, ringing the dawn bell daily.", rationale: 'Prose explicitly names the role; structured stage missed the edge.' }`.
+Worked example 1: `add_relationship_by_name` — Anselm's prose says "He serves as the Keeper of the Order at Stillwater Monastery." The relationships section for Anselm shows no `keeper_of` edge to the monastery. Emit `add_relationship_by_name { source_name: 'Anselm', target_name: 'Stillwater Monastery', relationship: 'keeper_of', description: "Anselm holds the Keeper's office at Stillwater, ringing the dawn bell daily.", access_level: 'known', rationale: 'Prose explicitly names the role; structured stage missed the edge.' }`.
 
 Worked example 2: `add_fact_by_name` — Old Eredil's prose mentions a "harbor council" but no fact captures the governance. Emit `add_fact_by_name { entity_name: 'Old Eredil', topic: 'governance', content: 'Old Eredil is administered by a harbor council elected annually from senior fishing families.', access_level: 'known', rationale: 'Prose references the council without a structured fact to ground future references.' }`.
 
@@ -79,7 +79,7 @@ All patches identify their target by name. Each rationale is a single sentence (
 - `fix_relationship_by_name` — UPDATE a relationship's source, target, type, and/or description. Requires `source_name`, `target_name`, `current_type`; optional `newSource`, `newTarget`, `newType` (a short verb-phrase predicate, ≤30 chars), `newDescription`; at least one new* field is required. The patch is rejected if all four optional fields are absent.
 - `rename_entity_by_name` — UPDATE an entity's name. Requires `old_name`, `new_name`, `rationale`.
 - `delete_relationship_by_name` — DELETE a relationship row. Requires `source_name`, `target_name`, `current_type`, `rationale`.
-- `add_relationship_by_name` — INSERT a relationship between two existing entities. Requires `source_name`, `target_name`, `relationship`, `description`, `rationale`. Both endpoints must already exist in the world.
+- `add_relationship_by_name` — INSERT a relationship between two existing entities. Requires `source_name`, `target_name`, `relationship`, `description`, `access_level` (`known` | `discoverable` | `secret` — the secrecy of the connection itself, not the endpoints'), `rationale`. Both endpoints must already exist in the world.
 - `add_fact_by_name` — INSERT a fact on an existing entity. Requires `entity_name`, `topic`, `content`, `access_level` (`known` | `discoverable` | `secret`), `rationale`.
 - `delete_fact_by_name` — DELETE a fact. Requires `entity_name`, `fact_topic`, `rationale` (60+ chars — deletes are irreversible).
 
