@@ -133,16 +133,33 @@ describe('getMyCampaigns', () => {
 })
 
 describe('getWorldSnapshot', () => {
-  it('fetches the graph slice and strips the richer payload', async () => {
+  it('parses the graph + wiki projections and strips the richer payload', async () => {
     server.use(
       http.get(`${BASE_URL}/api/campaigns/c-9/world-snapshot`, () =>
         HttpResponse.json({
-          // Richer payload the endpoint returns; the focused schema keeps only
-          // entities + relationships (and only their graph-relevant fields).
+          // The full payload the endpoint returns. The widened schema keeps
+          // entities + relationships (graph) AND facts + entityHierarchy (wiki),
+          // each narrowed to their display fields; the world summary, prose
+          // kernels, stat blocks and per-row extras all strip away.
           world: { id: 'w-9', keyTensions: ['SECRET'] },
-          facts: [{ id: 'f-1' }],
+          proseKernels: [{ id: 'pk-1', body: 'ignored' }],
+          statBlocks: [{ id: 'sb-1' }],
           entities: [
             { id: 'ent-1', entityType: 'npc', name: 'The Spymaster', accessLevel: 'known' },
+            { id: 'ent-2', entityType: 'location', name: 'The Reach', accessLevel: 'known' },
+          ],
+          facts: [
+            {
+              id: 'f-1',
+              entityId: 'ent-1',
+              topic: 'Role',
+              content: 'Runs the harbour spies.',
+              accessLevel: 'known',
+              source: 'prep',
+            },
+          ],
+          entityHierarchy: [
+            { id: 'h-1', parentEntityId: 'ent-2', childEntityId: 'ent-1' },
           ],
           relationships: [
             {
@@ -157,7 +174,14 @@ describe('getWorldSnapshot', () => {
       ),
     )
     await expect(getWorldSnapshot(testCtx, 'c-9')).resolves.toEqual({
-      entities: [{ id: 'ent-1', entityType: 'npc', name: 'The Spymaster' }],
+      entities: [
+        { id: 'ent-1', entityType: 'npc', name: 'The Spymaster' },
+        { id: 'ent-2', entityType: 'location', name: 'The Reach' },
+      ],
+      facts: [
+        { id: 'f-1', entityId: 'ent-1', topic: 'Role', content: 'Runs the harbour spies.' },
+      ],
+      entityHierarchy: [{ parentEntityId: 'ent-2', childEntityId: 'ent-1' }],
       relationships: [
         { sourceEntityId: 'ent-1', targetEntityId: 'ent-2', relationshipType: 'serves' },
       ],

@@ -18,9 +18,19 @@ import { CampaignDetailRoute } from './campaign-detail.tsx'
 // the `useWorldGenStream` binding above is already the mock. The route's branch
 // is driven entirely by the hook's `{ status, phase, nodes, edges, retry }`
 // return, so a per-case mock return exercises every arm without a live SSE.
+// `getWorldSnapshot` is stubbed too: the `complete/world_ready` arm now renders
+// the Phase D <WorldReveal>, which fetches the world snapshot for its wiki via the
+// barrel's `getWorldSnapshot`. An empty resolved snapshot keeps the reveal's wiki
+// panel calm without a live endpoint (the reveal's own test covers the wiki).
 vi.mock('@mythrun/client-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mythrun/client-core')>()
-  return { ...actual, useWorldGenStream: vi.fn() }
+  return {
+    ...actual,
+    useWorldGenStream: vi.fn(),
+    getWorldSnapshot: vi
+      .fn()
+      .mockResolvedValue({ entities: [], facts: [], entityHierarchy: [], relationships: [] }),
+  }
 })
 
 const mockStream = vi.mocked(useWorldGenStream)
@@ -127,10 +137,15 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(screen.queryByTestId('worldgen-retry')).toBeNull()
   })
 
-  it('renders the completion handoff placeholder when world-gen just finished', () => {
-    mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'world_ready' }))
+  it('renders the Phase D world reveal when world-gen just finished', async () => {
+    mockStream.mockReturnValue(
+      streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
+    )
     renderDetail()
-    expect(screen.getByTestId('worldgen-complete')).toBeDefined()
+    // The reveal mounts and fetches its wiki snapshot; findBy flushes that effect.
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    // The settled graph's accessible entity list carries the node names.
+    expect(screen.getByText('Ashfen Reach')).toBeDefined()
   })
 
   it('falls through to the existing detail content for an already-active campaign', () => {

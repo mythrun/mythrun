@@ -1,6 +1,10 @@
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { MyCampaignsResponseSchema, type MyCampaignsResponse } from '@mythrun/contract/rest'
+import {
+  MyCampaignsResponseSchema,
+  type MyCampaignsResponse,
+  WorldSnapshotSchema,
+} from '@mythrun/contract/rest'
 import { defineEndpoint, type ApiContext } from './endpoint.ts'
 import { useApiContext } from './client-context.tsx'
 
@@ -25,35 +29,37 @@ export function useMyCampaigns() {
 }
 
 // -----------------------------------------------------------------------------
-// World-gen graph rehydration + resume (MYT-89 Phase C, C5).
+// World-snapshot fetch + resume (MYT-89 Phase C, C5 / Phase D, D3).
 //
-// Two imperative endpoints the `useWorldGenStream` hook calls OUTSIDE
-// react-query: the point-in-time world snapshot (seeds the graph on a
-// mid-generation mount) and the resume trigger (the failure-recovery branch).
+// Two imperative endpoints the world-gen flow calls OUTSIDE react-query: the
+// point-in-time world snapshot (seeds the graph on a mid-generation mount; feeds
+// the post-gen wiki reveal) and the resume trigger (the failure-recovery branch).
 //
-// The snapshot schema is a FOCUSED projection — the graph only consumes
-// entities + relationships. Zod's `object()` strips unknown keys, so the
-// endpoint's richer payload (world summary, facts, prose kernels, stat blocks,
-// hierarchy) passes validation and drops away without a schema churn every time
-// the backend view grows a column.
+// ONE endpoint, TWO consumers. The schema is the contract's known-tier
+// `WorldSnapshotSchema` (entities + facts + entityHierarchy — the D1 wiki view
+// model) WIDENED with the graph's `relationships` edges. `snapshotToSeed` (the
+// graph, C5) reads entities + relationships; `toWikiViewModel` (the wiki, D3)
+// reads entities + facts + entityHierarchy. The union type is a SUPERSET of the
+// contract `WorldSnapshot`, so it drops straight into `toWikiViewModel`. Zod's
+// `object()` strips the richer payload (world summary, prose kernels, stat
+// blocks) so extra columns fall away without a schema churn. The backend view
+// always emits facts + entityHierarchy as arrays (empty pre-facts), and the
+// endpoint 409s until stage 4 commits, so both the mid-gen seed fetch and the
+// post-gen wiki fetch validate against this shape.
 // -----------------------------------------------------------------------------
 
-/** The graph-relevant slice of GET /api/campaigns/:campaignId/world-snapshot. */
-const WorldGenSnapshotSchema = z.object({
-  entities: z.array(
-    z.object({
-      id: z.string(),
-      entityType: z.string(),
-      name: z.string(),
-    }),
-  ),
-  relationships: z.array(
-    z.object({
-      sourceEntityId: z.string(),
-      targetEntityId: z.string(),
-      relationshipType: z.string(),
-    }),
-  ),
+/** The graph edges — the one collection the contract `WorldSnapshot` omits (it is
+ *  the wiki's projection); the graph seed folds these into rendered relationships. */
+const WorldGenRelationshipSchema = z.object({
+  sourceEntityId: z.string(),
+  targetEntityId: z.string(),
+  relationshipType: z.string(),
+})
+
+/** GET /api/campaigns/:campaignId/world-snapshot as the frontend consumes it —
+ *  the contract known-tier projection widened with the graph's `relationships`. */
+const WorldGenSnapshotSchema = WorldSnapshotSchema.extend({
+  relationships: z.array(WorldGenRelationshipSchema),
 })
 
 export type WorldGenSnapshot = z.infer<typeof WorldGenSnapshotSchema>

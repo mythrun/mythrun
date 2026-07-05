@@ -181,5 +181,23 @@
     "terminalBody": "[ph: this one can't continue — start a new campaign]",
     "readyTitle": "[ph: your world is ready]",
     "continue": "[ph: continue]"
+  },
+  "worldReveal": {
+    "title": "[ph: your world]",
+    "explorePrompt": "[ph: wander your world; continue when you're ready]",
+    "continue": "[ph: continue]",
+    "loading": "[ph: settling your world]",
+    "empty": "[ph: nothing to explore yet]",
+    "graphLabel": "[ph: the entities of your world]",
+    "graphEmpty": "[ph: your world has no entities]",
+    "wikiSearchLabel": "[ph: search your world]",
+    "wikiSearchPlaceholder": "[ph: search]",
+    "wikiEmpty": "[ph: nothing matches]",
+    "group": {
+      "faction": "[ph: factions]",
+      "location": "[ph: places]",
+      "npc": "[ph: people]",
+      "item": "[ph: things]"
+    }
   }
 }

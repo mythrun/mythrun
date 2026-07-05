@@ -4,6 +4,7 @@ import type { PipelinePhase } from '@mythrun/contract/events'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { GeneratingView } from './worldgen/generating.tsx'
+import { WorldReveal } from './worldgen/reveal.tsx'
 
 // The campaign-detail screen (`/campaigns/:id`) — the home-hub card's click
 // target AND where the create flow lands after Begin (MYT-89 Phase C, C6). It is
@@ -57,20 +58,6 @@ function TerminalView(): React.JSX.Element {
   )
 }
 
-/** The Phase D handoff seam — a minimal "your world is ready" + a Continue stub.
- *  Task D-* replaces this with the reveal → wiki → continue → situation flow. */
-function CompleteHandoff(): React.JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <Stack gap={3} data-testid="worldgen-complete">
-      <Heading level={1} role="title">
-        {t('worldGen.readyTitle')}
-      </Heading>
-      <Button data-testid="worldgen-continue">{t('worldGen.continue')}</Button>
-    </Stack>
-  )
-}
-
 /** The existing (interim) detail content — the fall-through for a campaign that is
  *  past setup and fully playable. A later ticket owns the real detail surface. */
 function DetailContent(): React.JSX.Element {
@@ -95,6 +82,9 @@ export function CampaignDetailRoute(): React.JSX.Element {
   if (status === 'terminal') return <TerminalView />
 
   // status === 'complete': the just-finished handoff vs a fully-active campaign.
-  if (phase !== null && HANDOFF_PHASES.has(phase)) return <CompleteHandoff />
+  // The handoff is the Phase D reveal — the settled graph beside the browsable
+  // wiki, with a Continue → to the starting-situation pick (D4).
+  if (phase !== null && HANDOFF_PHASES.has(phase))
+    return <WorldReveal campaignId={id} nodes={nodes} edges={edges} />
   return <DetailContent />
 }
