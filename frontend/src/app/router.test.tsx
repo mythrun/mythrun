@@ -38,6 +38,31 @@ vi.mock('@mythrun/client-core', async (importOriginal) => {
         retry: () => Promise.resolve(),
       }),
     ),
+    // The `/campaigns/:id` case now mounts <CampaignPage>, which fires a real
+    // `getMyCampaigns` on mount to resolve the world identity. Stub it (mirrors
+    // campaign-page.test.tsx / campaign-detail.test.tsx) so no live network attempt
+    // escapes this cleanup-free file. The one campaign carries the SAME `c-1` id the
+    // `/campaigns/c-1` case navigates to, so the page finds it and renders cleanly.
+    getMyCampaigns: vi.fn().mockResolvedValue({
+      campaigns: [
+        {
+          id: 'c-1',
+          worldId: 'w-1',
+          name: 'The Ashfen Pact',
+          status: 'setup',
+          language: 'en',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          worldName: 'Emberdeep Hollow',
+          worldColors: { from: 'moss-100', to: 'verdigris-800' },
+          creator: null,
+          party: [],
+          sessionCount: 0,
+          lastPlayedAt: null,
+          cardPhase: 'needs-character',
+        },
+      ],
+    }),
   }
 })
 

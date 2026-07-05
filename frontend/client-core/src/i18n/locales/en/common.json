@@ -165,7 +165,6 @@
   "stub": {
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
-    "campaignDetail": "[ph_campaign_detail_screen]",
     "characterNew": "[ph_character_new_screen]",
     "play": "[ph_play_screen]",
     "settings": "[ph_settings_screen]"
@@ -207,6 +206,7 @@
   },
   "campaign": {
     "settling": "[ph: settling your campaign]",
+    "notFound": "[ph: we couldn't find this campaign]",
     "eyebrow": "[ph: your campaign]",
     "invite": {
       "title": "[ph: invite your players]",

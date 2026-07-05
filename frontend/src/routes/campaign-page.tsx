@@ -50,7 +50,7 @@ function WorldIdentity({
       <Stack direction="row" align="center" gap={3}>
         <CoverDither size="swatch" bordered data-testid="campaign-cover-ghost" />
         <Text role="ui-caption" as="p">
-          {loading ? t('campaign.settling') : t('worldReveal.empty')}
+          {loading ? t('campaign.settling') : t('campaign.notFound')}
         </Text>
       </Stack>
     )
