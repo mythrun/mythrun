@@ -74,6 +74,14 @@ export { GhostChoiceList } from './components/GhostChoiceList/GhostChoiceList.ts
 // rAF churn for a static settle-to-convergence redraw.
 export { WorldGenGraph } from './components/WorldGenGraph/WorldGenGraph.tsx'
 
+// WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their newly
+// generated world through: a borderless search field over a grouped tree
+// (factions/locations/npcs/items, nested locations indent under their parent), each
+// entity opening to its facts. Flat 1-bit paper register (Divider rules between
+// groups, a surface token-swap marks selection). Selection + query are prop-driven,
+// so D3 can wire the graph↔wiki shared selection through `selectedId`/`onSelect`.
+export { WorldWiki } from './components/WorldWiki/WorldWiki.tsx'
+
 // Overlays (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu. Each wraps
 // an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip / Tabs /
 // DropdownMenu): Radix supplies the a11y headline (focus trap + focus-RETURN,
@@ -175,6 +183,11 @@ export type {
   GraphNode,
   GraphEdge,
   GraphNodeState,
+  WorldWikiProps,
+  WikiViewModel,
+  WikiGroup,
+  WikiEntity,
+  WikiFact,
   ModalProps,
   PopoverProps,
   PopoverSide,

@@ -94,6 +94,13 @@ export type { GhostChoiceListProps, GhostChoiceItem } from './ghost-choice-list.
 // is re-exported here so consumers read the node shape off the contract surface.
 export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
 
+// WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their
+// newly-generated world through: a grouped tree (factions/locations/npcs/items,
+// nested locations), each entity opening to its facts, over a borderless search
+// field that filters by name. The `Wiki*` model types are re-exported here so a
+// consumer reads the model shape off the same contract surface as the props.
+export type { WorldWikiProps, WikiViewModel, WikiGroup, WikiEntity, WikiFact } from './world-wiki.ts'
+
 // Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
 // Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip
 // / Tabs / DropdownMenu) in the web impl — Radix supplies the a11y headline
