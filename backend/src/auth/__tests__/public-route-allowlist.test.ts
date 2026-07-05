@@ -6,8 +6,8 @@ import {
 } from '../public-route-allowlist.js'
 
 describe('public-route allowlist', () => {
-  it('contains the expected 9 entries', () => {
-    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(9)
+  it('contains the expected 10 entries', () => {
+    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(10)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /health')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /webhooks/stripe')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/billing/skus')).toBe(true)
@@ -18,6 +18,8 @@ describe('public-route allowlist', () => {
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/session')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/refresh')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/logout')).toBe(true)
+    // Dev/staging-only API-cost ticker (never registered in prod).
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/dev/api-cost')).toBe(true)
   })
 
   it('allowlisted public route registers cleanly', async () => {

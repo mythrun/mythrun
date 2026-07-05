@@ -29,6 +29,7 @@ import { sessionPrepsPlugin } from './routes/session-preps.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
 import { devFireTurnRoutes } from './routes/dev-fire-turn.js'
 import { devPrepProseRoutes } from './routes/dev-prep-prose.js'
+import { devApiCostRoutes } from './routes/dev-api-cost.js'
 import { PIPELINE_ROUTES } from './contract/pipeline-routes.js'
 import { createPipelineSubscriber, type PipelineSubscriber } from './sse/pipeline-subscriber.js'
 import { createConnectionCounter } from './sse/connection-counter.js'
@@ -496,6 +497,16 @@ export const buildApp = async (
     })
     app.decorate('mythrunProseSubscriber', proseSubscriber)
     await app.register(devPrepProseRoutes, { subscriber: proseSubscriber, counter })
+  }
+
+  // Dev/staging-only API-cost ticker endpoint (internal tooling). Gated on
+  // mythrunEnv, NOT authMode — staging boots authMode='real' but still wants the
+  // ticker, so this cannot live in the bypass block above. The route is `public`
+  // (a non-sensitive cumulative process counter the floating DevCostTicker polls
+  // on every page); it is LITERALLY ABSENT in a production boot (this gate + the
+  // plugin's own self-gate), so it 404s there and the widget auto-hides.
+  if (config.env.mythrunEnv !== 'production') {
+    await app.register(devApiCostRoutes, { mythrunEnv: config.env.mythrunEnv })
   }
 
   // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct

@@ -209,6 +209,12 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // page panel; E2E via MYT-64. (MYT-62 T6.)
   { method: 'GET', path: '/api/campaigns/:campaignId/prep-status' },
 
+  // GET /api/dev/api-cost: the dev/staging-only API-cost ticker endpoint. Its
+  // consumer is the floating DevCostTicker widget in the MAIN WEB APP
+  // (frontend/src/dev/), not a dev-tool inspector panel — so it has no page
+  // panel here. Never registered in production (mythrunEnv gate).
+  { method: 'GET', path: '/api/dev/api-cost' },
+
   // NOTE (MYT-75 T10): GET /ws/session/:sessionId is NO LONGER exempt — the
   // combat L1 inspector (`combat` panel, System page) is a real panel that
   // exercises it. The panel mounts to `ready` synchronously and opens the live

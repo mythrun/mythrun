@@ -118,6 +118,13 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // production (the dev block is gated on authMode === 'bypass').
   { method: 'GET', path: '/api/dev/campaigns/:campaignId/prep-prose' },
 
+  // Dev/staging API-cost ticker (dev-tooling). Registered when mythrunEnv !==
+  // 'production' (NOT gated on authMode — staging is authMode='real'), so it is
+  // present in this bypass-mode drift boot (makeStubEnv → mythrunEnv
+  // 'development'). Absent in a production boot. Serves the process-level
+  // cumulative approx Anthropic spend the DevCostTicker widget polls.
+  { method: 'GET', path: '/api/dev/api-cost' },
+
   // Stripe webhook (raw-body, public, signature-verified)
   { method: 'POST', path: '/webhooks/stripe' },
 

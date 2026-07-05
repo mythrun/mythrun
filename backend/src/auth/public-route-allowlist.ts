@@ -34,6 +34,15 @@ export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
   'POST /api/auth/session',
   'POST /api/auth/refresh',
   'POST /api/auth/logout',
+  // DEV/STAGING-ONLY internal tooling: the API-cost ticker endpoint. It is
+  // `public` because it is a non-sensitive cumulative process counter (approx
+  // Anthropic spend in USD, reset every restart) that the floating DevCostTicker
+  // widget polls on EVERY page — including pre-login and the dev bypass identity
+  // (no onboarded users row), which the JWT + requireOnboarded chain would
+  // 401/403. It is NEVER registered under mythrunEnv==='production' (app.ts gate
+  // + the plugin self-gate), so this allowlist entry is inert in prod. See
+  // routes/dev-api-cost.ts.
+  'GET /api/dev/api-cost',
 ])
 
 /**

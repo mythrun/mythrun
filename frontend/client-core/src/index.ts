@@ -56,6 +56,9 @@ export {
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
+// Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
+export { getDevApiCost } from './api/dev-cost.ts'
+export type { DevApiCostResponse } from './api/dev-cost.ts'
 
 // REST domain types (z.infer from the @mythrun/contract response schemas),
 // re-exported so screens read the shape of a hook's data off the SAME barrel
