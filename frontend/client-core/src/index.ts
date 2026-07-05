@@ -26,7 +26,13 @@ export {
 
 // Endpoint slices + the thin React-Query suspense hooks the screens render against.
 export { getMe, useMe, register, checkUsername } from './api/users.ts'
-export { getMyCampaigns, useMyCampaigns } from './api/campaigns.ts'
+export {
+  getMyCampaigns,
+  useMyCampaigns,
+  getWorldSnapshot,
+  resumeGeneration,
+} from './api/campaigns.ts'
+export type { WorldGenSnapshot, ResumeResult } from './api/campaigns.ts'
 export { synthesizePreview, reworkPreview, createCampaign } from './api/campaign-create.ts'
 
 // Guided-create draft persistence seam (MYT-89 §11) — the DOM-free brain reaches
@@ -127,6 +133,20 @@ export type {
   ConnectionStatus,
   ConnectionFailureReason,
 } from './realtime/index.ts'
+
+// World-gen streaming graph (MYT-89 Phase C, C5): the hook that opens the
+// status SSE, folds pipeline events into nodes/edges, rehydrates from the
+// world-snapshot mid-generation, and branches the failure→resume path. Lives
+// under src/worldgen/ alongside the pure-data reducers/force-sim, but exported
+// from THIS barrel (not the worldgen subpath): it pulls in api clients + the
+// SSE transport, so it is NOT part of the DOM-free-pure-data subpath the UI
+// library's WorldGenGraph imports.
+export { useWorldGenStream } from './worldgen/use-worldgen-stream.ts'
+export type {
+  WorldGenStream,
+  WorldGenStatus,
+  WorldGenStreamDeps,
+} from './worldgen/use-worldgen-stream.ts'
 
 // OAuth/PKCE helpers (MYT-84) — the canonical oauth API consumed by the sign-in +
 // callback screens. State persistence + the Cognito Hosted UI config are injected

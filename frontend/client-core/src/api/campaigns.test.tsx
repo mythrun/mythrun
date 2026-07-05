@@ -8,7 +8,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ApiContext } from './endpoint.ts'
 import { ApiClientProvider } from './client-context.tsx'
 import { isContractValidationError } from './errors.ts'
-import { getMyCampaigns, useMyCampaigns } from './campaigns.ts'
+import { HttpError, isHttpError } from './errors.ts'
+import {
+  getMyCampaigns,
+  getWorldSnapshot,
+  resumeGeneration,
+  useMyCampaigns,
+} from './campaigns.ts'
 
 // `useMyCampaigns` wires `getMyCampaigns` (GET /api/campaigns/mine, response
 // validated against the contract's MyCampaignsResponseSchema) into a TanStack
@@ -123,5 +129,64 @@ describe('getMyCampaigns', () => {
     await expect(getMyCampaigns(undefined, testCtx)).resolves.toEqual({
       campaigns: [validCampaign],
     })
+  })
+})
+
+describe('getWorldSnapshot', () => {
+  it('fetches the graph slice and strips the richer payload', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/c-9/world-snapshot`, () =>
+        HttpResponse.json({
+          // Richer payload the endpoint returns; the focused schema keeps only
+          // entities + relationships (and only their graph-relevant fields).
+          world: { id: 'w-9', keyTensions: ['SECRET'] },
+          facts: [{ id: 'f-1' }],
+          entities: [
+            { id: 'ent-1', entityType: 'npc', name: 'The Spymaster', accessLevel: 'known' },
+          ],
+          relationships: [
+            {
+              id: 'r-1',
+              sourceEntityId: 'ent-1',
+              targetEntityId: 'ent-2',
+              relationshipType: 'serves',
+              description: 'ignored',
+            },
+          ],
+        }),
+      ),
+    )
+    await expect(getWorldSnapshot(testCtx, 'c-9')).resolves.toEqual({
+      entities: [{ id: 'ent-1', entityType: 'npc', name: 'The Spymaster' }],
+      relationships: [
+        { sourceEntityId: 'ent-1', targetEntityId: 'ent-2', relationshipType: 'serves' },
+      ],
+    })
+  })
+})
+
+describe('resumeGeneration', () => {
+  it('resolves the 202 re-enqueue body', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/c-9/resume`, () =>
+        HttpResponse.json({ campaignId: 'c-9', action: 'world-gen-re-enqueued' }, { status: 202 }),
+      ),
+    )
+    await expect(resumeGeneration(testCtx, 'c-9')).resolves.toEqual({
+      campaignId: 'c-9',
+      action: 'world-gen-re-enqueued',
+    })
+  })
+
+  it('throws a typed HttpError on a terminal 409 code', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/c-9/resume`, () =>
+        HttpResponse.json({ code: 'world_gen_capped' }, { status: 409 }),
+      ),
+    )
+    const error = await resumeGeneration(testCtx, 'c-9').catch((e: unknown) => e)
+    expect(isHttpError(error)).toBe(true)
+    expect((error as HttpError).status).toBe(409)
+    expect((error as HttpError).code).toBe('world_gen_capped')
   })
 })
