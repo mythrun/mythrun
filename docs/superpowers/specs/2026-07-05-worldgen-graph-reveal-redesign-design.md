@@ -1,7 +1,7 @@
 # World-Gen Graph + Reveal Redesign — Design Spec
 
 > **Linear:** MYT-89 follow-up (audit-driven redesign of the generation-graph + reveal experience).
-> **Status:** Design approved (brainstormed + visually prototyped with Miklos), blind-reviewed (round 1 "Weather", 2 showstoppers fixed inline, nits folded in). **One open decision requires Miklos — see §10.** Then → plan → build.
+> **Status:** Design approved (brainstormed + visually prototyped with Miklos), blind-reviewed (round 1 "Weather", 2 showstoppers fixed inline, nits folded in). §10 resolved (Miklos: tier relationships). Ready for the user-review gate → plan → build.
 > **Canonical references (port the fog physics EXACTLY; do not re-derive):**
 > - Fog field: [`assets/2026-07-05-worldgen-fog-reference.html`](./assets/2026-07-05-worldgen-fog-reference.html)
 > - Two-act pacing + edge draw-in: [`assets/2026-07-05-worldgen-twoact-reference.html`](./assets/2026-07-05-worldgen-twoact-reference.html)
@@ -101,7 +101,7 @@ The core loop is O(particles × doublets): with ~41 entities the doublet count i
 Replace the inline expand/collapse tree with an actual wiki:
 
 - **Per-entity pages** — back-nav, name + kind, a **body composed from the entity's known-tier facts** (NOT "flowing prose" — a fact is a short `{topic, content}` statement; the body is these composed/ordered, not narrative prose; the LLM's sensory `prose_kernels` are *not* used — they're stripped from the client snapshot and carry no per-detail tier). **Specify the empty-body state:** a `known` entity whose facts are all `discoverable`/`secret` has *no* known facts → its page shows the name/kind with an explicit empty state, not a blank.
-- **RELATED footer** — the entity's relationships as **labeled links** (display-format the snake_case `relationship_type`, e.g. `warded_by` → "warded by"). *This is where the graph's edges live as text.* **⚠️ Gated on the §10 decision** (relationship tiering).
+- **RELATED footer** — the entity's relationships as **labeled links** (display-format the snake_case `relationship_type`, e.g. `warded_by` → "warded by"). *This is where the graph's edges live as text.* Filters to **known-tier** relationships (§10 — relationships gain an `access_level`).
 - **Inline entity links** — **name-matching is the ONLY available mechanism** (the pipeline marks no mentions; every cross-entity reference is name-based). The earlier "prep-engine-marked" option does not exist — removed. Name-matching over fact `content` has real hazards (substring collisions like `Bell` / `Bell-Wardens` / `The Bell-Loft`, possessives, non-canonical references like "the Abbot"); **specify collision/alias rules, or drop inline links and rely on the RELATED footer** (already structured + UUID-resolved) as the navigation mechanism. This is a scoping decision for planning, not a coin-flip.
 - **Home / search** — browse-by-kind (places / factions / people / things); also the guaranteed **accessible** entry to every entity (§7).
 - **Back-nav** — internal wiki history; define its interaction with the mobile Back button (§7).
@@ -110,7 +110,7 @@ Replace the inline expand/collapse tree with an actual wiki:
 
 ### 4.3 The reveal graph
 
-Settled: **fog fully faded**, entities + edges visible and **contained** (§2.2), nodes **selectable** (selection ↔ wiki, both directions: graph-click highlights the wiki page and vice-versa; define whether a graph click pushes onto the wiki back-stack). Edges are drawn (not snapping). **Edge rendering is gated on the §10 decision.**
+Settled: **fog fully faded**, entities + edges visible and **contained** (§2.2), nodes **selectable** (selection ↔ wiki, both directions: graph-click highlights the wiki page and vice-versa; define whether a graph click pushes onto the wiki back-stack). Edges are drawn (not snapping). Edges + their labels render **known-tier** relationships only (§10).
 
 ## 5. Design-system modifications — REQUIRED (do not cobble)
 
@@ -133,7 +133,7 @@ No ad-hoc UI. Modules < 400 lines, functions < 50 — which is *why* the fog is 
 - Prose = `[ph: …]` i18n keys.
 - Desktop AND ~375px, responsive by construction (§3.6).
 - Strict TS (no `any`); functions < 50 lines, modules < 400; all UI in `@mythrun/ui` + a story; all backend access via client-core; all wire types in `@mythrun/contract`.
-- Enforced ignorance stays server-side; the reveal is **known-tier** — see §10, which is where this principle is currently at risk.
+- Enforced ignorance stays server-side; the reveal is **known-tier**, relationships now included (tiered per §10).
 
 ## 7. Accessibility (required — a Canvas graph needs a parallel accessible model)
 
@@ -150,15 +150,12 @@ No ad-hoc UI. Modules < 400 lines, functions < 50 — which is *why* the fog is 
 3. **Reveal graph renderer** (§4.3) — reuse `WorldGenFogField` with fog fully faded (composes trivially once §5's `FogSim` takes `effectiveDensity` as a param) vs. a dedicated settled renderer. Prefer reuse.
 4. **Generation layout source** (§2.2) — contained force-sim vs. another placement scheme; determines how `WorldGenFogField` gets obstacle positions.
 
-## 10. REQUIRED DECISION — relationship tiering (enforced ignorance) — MIKLOS
+## 10. RESOLVED — relationship tiering (enforced ignorance)
 
-**This is the blind review's headline finding and it needs your call before build.** The redesign makes **relationships player-facing for the first time** (the RELATED footer, §4.2, and the reveal graph edges, §4.3) — today edges are broken (§2.1) and the wiki shows no relationships, so this is latent until we ship.
+**Decision (Miklos): tier relationships.** The redesign makes relationships player-facing for the first time (RELATED footer §4.2, reveal edges §4.3), and relationships carry no `access_level`, so a secret connection between two `known` entities (e.g. `secretly_serves` / "the hidden architect of the corruption") would leak on the happy path. This is a **deterministic** enforced-ignorance leak (not the accepted, LLM-gated *facts* risk in `project_secret_protection_threat_model`), so we close it properly.
 
-**The problem:** relationships carry **no tier** (`relationships` table has `source/target/type/description` — no `access_level`; no migration adds one). The snapshot builder (`relationships.ts` `listAmong`) filters relationships *only* by requiring both endpoints be surfaced entities — there is **no secrecy gate**. So **every relationship between two `known` entities renders, regardless of whether the connection itself is a spoiler.** A `known` NPC + `known` faction joined by a coherence-pass `secretly_serves` / "the hidden architect of the corruption" would surface verbatim as a RELATED link and a graph edge. That is a direct **enforced-ignorance leak on the happy path** — and unlike the accepted "facts are LLM-gated" risk (`project_secret_protection_threat_model`, which covers *facts*), relationships have no tier at all, so this isn't even LLM-gated; it's a deterministic leak surface.
-
-**The options:**
-- **(A) Tier relationships** — add `access_level` to the `relationships` table (migration), have `entity_relationships` + `coherence_pass` emit a tier per relationship, and filter to `known` in `listAmong`. Correct, but a schema + prompt + pipeline change.
-- **(B) Accept the risk** — extend the LLM-gated-secrets posture to relationships and document it (analogous to the facts decision), knowing the reveal may surface a secret connection between two known entities.
-- **(C) Surface relationships graph-only, minimally-labeled** — e.g. draw edges without the `relationship_type` label in the reveal (an edge that two things are connected is less of a spoiler than "secretly_serves"), deferring full tiering.
-
-Until you pick, §4.2's RELATED footer and §4.3's edge labels are **provisional**. I recommend (A) if we can afford the pipeline change before launch, else (C) as a safe interim. **What's your call?**
+**Required build work — a precondition for shipping the §4.2 RELATED footer + §4.3 edge labels. Core-infra + security surface: build it right, no shortcut.**
+- **Migration:** add `access_level` (`known` | `discoverable` | `secret`) to the `relationships` table, mirroring `facts`/`entities`. Backfill existing rows to the **safest** tier (`secret`) so nothing surfaces until re-tiered.
+- **Pipeline:** `entity_relationships` (stage 6) + `coherence_pass` (stage 10) emit a per-relationship tier — the prompt(s) gain a tier field + framing (**a relationship is `known` only if the connection *itself* is public, independent of the endpoints' tiers** — two known entities can be secretly connected). Update the Zod output schema (co-evolve prompt + schema; a constructed-state real-LLM smoke to confirm the tier is honored).
+- **Snapshot:** `relationships.ts` `listAmong` filters to `access_level = 'known'` for the reveal (and to the character-visible set for the MYT-94 player path), alongside the existing both-endpoints-surfaced predicate.
+- Sequencing note: unlabeled edges could ship before tiering if we ever needed to split it, but the decision is to tier — so the pipeline change lands with (or before) the reveal.
