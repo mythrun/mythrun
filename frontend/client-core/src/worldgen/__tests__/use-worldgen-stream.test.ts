@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { createStore } from 'zustand/vanilla'
-import type { PipelineEvent } from '@mythrun/contract/events'
+import type { PipelineEvent, PipelinePhase } from '@mythrun/contract/events'
 import type { ApiContext } from '../../api/endpoint.ts'
 import type { ConnectionState } from '../../realtime/connection.ts'
 import type { SseStatusClient } from '../../realtime/sse-status-client.ts'
 import { HttpError } from '../../api/errors.ts'
+import {
+  configureStreamingFetch,
+  resetStreamingFetch,
+} from '../../platform/streaming-fetch.ts'
+import { resetTokenManager } from '../../auth/token-manager.ts'
 import { useWorldGenStream } from '../use-worldgen-stream.ts'
 
 // useWorldGenStream (MYT-89 Phase C, C5): the data layer for the streaming
@@ -19,9 +24,13 @@ const CID = 'campaign-123'
 const ctx: ApiContext = { baseUrl: 'http://api.test', getAuthHeaders: () => Promise.resolve({}) }
 
 /** A hand-driven `SseStatusClient`: the test pushes events/snapshot frames and
- *  observes `open`/`close`. Listener unsubscribe is honoured so a post-unmount
- *  emit is a genuine no-op. */
-function makeMockClient() {
+ *  observes `open`/`close`. Listener unsubscribe is honoured (the default) so a
+ *  post-unmount emit is a genuine no-op. Pass `honorUnsub: false` for a "leaky"
+ *  transport that keeps delivering after teardown — the case the hook's
+ *  `mountedRef` guard exists to absorb (a real SSE frame in flight when the flow
+ *  unmounts). */
+function makeMockClient(opts: { honorUnsub?: boolean } = {}) {
+  const honorUnsub = opts.honorUnsub ?? true
   const eventCbs = new Set<(e: PipelineEvent) => void>()
   const snapshotCbs = new Set<(raw: unknown) => void>()
   let openedPath: string | null = null
@@ -34,11 +43,15 @@ function makeMockClient() {
     },
     onEvent: (cb) => {
       eventCbs.add(cb)
-      return () => eventCbs.delete(cb)
+      return () => {
+        if (honorUnsub) eventCbs.delete(cb)
+      }
     },
     onSnapshot: (cb) => {
       snapshotCbs.add(cb)
-      return () => snapshotCbs.delete(cb)
+      return () => {
+        if (honorUnsub) snapshotCbs.delete(cb)
+      }
     },
     close: () => {
       closed = true
@@ -59,6 +72,13 @@ function makeMockClient() {
 }
 
 describe('useWorldGenStream', () => {
+  // The real-default test below wires the two module-global transport seams
+  // (streaming fetch + token refresh). Reset them so no state leaks between tests.
+  afterEach(() => {
+    resetStreamingFetch()
+    resetTokenManager()
+  })
+
   it('folds pipeline events into nodes and edges', () => {
     const mock = makeMockClient()
     const createClient = () => mock.client
@@ -223,5 +243,220 @@ describe('useWorldGenStream', () => {
     })
     expect(errorSpy).not.toHaveBeenCalled()
     errorSpy.mockRestore()
+  })
+
+  it('a late frame from a leaky client (no unsubscribe) is dropped by the mounted-ref guard', () => {
+    const mock = makeMockClient({ honorUnsub: false })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { unmount } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    unmount()
+    // The leaky transport never removed our listeners, so BOTH the event and the
+    // snapshot callback still fire after teardown — the case the hook's
+    // `mountedRef` guard exists to absorb. Neither may setState-after-unmount or
+    // throw (React logs a console.error on a post-unmount setState).
+    act(() => {
+      mock.emit({ type: 'phase', phase: 'world_gen' })
+      mock.emitSnapshot({ phase: 'world_gen', stages: [], cumulativeCostUsd: 0 })
+    })
+
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('maps phase `failed` to the terminal (non-resumable) status', () => {
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emit({ type: 'phase', phase: 'failed' })
+    })
+
+    expect(result.current.status).toBe('terminal')
+  })
+
+  it('maps every world-ready-and-beyond phase to the complete status', () => {
+    const completePhases: PipelinePhase[] = [
+      'world_ready',
+      'character_creation',
+      'post_creation',
+      'complete',
+    ]
+
+    for (const phase of completePhases) {
+      const mock = makeMockClient()
+      // These phases are all snapshot-ready → they trigger the one-shot rehydrate,
+      // so fetchSnapshot must resolve (an empty world is enough for the status assert).
+      const fetchSnapshot = vi.fn().mockResolvedValue({ entities: [], relationships: [] })
+      const { result } = renderHook(() =>
+        useWorldGenStream(ctx, CID, {
+          createClient: () => mock.client,
+          fetchSnapshot,
+          resume: vi.fn(),
+        }),
+      )
+
+      act(() => {
+        mock.emit({ type: 'phase', phase })
+      })
+
+      expect(result.current.status).toBe('complete')
+    }
+  })
+
+  it('ignores a first-frame snapshot whose payload carries no usable phase', () => {
+    // Each raw exercises a distinct null-guard in phaseFromSnapshot:
+    //   null                     → raw === null
+    //   a bare string            → typeof raw !== 'object'
+    //   an object without `phase` → !('phase' in raw)
+    //   { phase: <non-string> }  → the `: null` arm of the string check
+    const rawCases: unknown[] = [null, 'world_snapshot_ready', { stages: [] }, { phase: 42 }]
+
+    for (const raw of rawCases) {
+      const mock = makeMockClient()
+      const { result } = renderHook(() =>
+        useWorldGenStream(ctx, CID, {
+          createClient: () => mock.client,
+          fetchSnapshot: vi.fn(),
+          resume: vi.fn(),
+        }),
+      )
+
+      act(() => {
+        mock.emitSnapshot(raw)
+      })
+
+      // phaseFromSnapshot returned null → the hook never sets a phase.
+      expect(result.current.phase).toBeNull()
+      expect(result.current.status).toBe('generating')
+    }
+  })
+
+  it('defaults fetchSnapshot + resume (wired, uninvoked) when the flow neither rehydrates nor retries', () => {
+    const mock = makeMockClient()
+    // Only createClient is injected; fetchSnapshot + resume fall through to the
+    // real getWorldSnapshot / resumeGeneration defaults. Neither is CALLED here
+    // (no world_snapshot_ready → no rehydrate; no retry()), so the defaults are
+    // assigned but never hit the network — the branch is the `??` fallback itself.
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, { createClient: () => mock.client }),
+    )
+
+    act(() => {
+      mock.emit({
+        type: 'entity-added',
+        synthKey: 'world_and_factions/f1',
+        entityKind: 'faction',
+        name: 'The Ashen Court',
+      })
+    })
+
+    expect(result.current.nodes.map((n) => n.name)).toEqual(['The Ashen Court'])
+    expect(result.current.status).toBe('generating')
+  })
+
+  it('defaults createClient to the real SSE status client when no transport is injected', () => {
+    // Park the connect coroutine on a never-settling streaming fetch so the REAL
+    // createSseStatusClient default constructs + opens without a wiring throw and
+    // without arming a reconnect timer. This proves the production default wiring
+    // (not just the injected test seam) yields a working stream.
+    configureStreamingFetch(
+      () => new Promise<{ status: number; chunks: AsyncIterable<string> }>(() => undefined),
+    )
+
+    const { result, unmount } = renderHook(() =>
+      useWorldGenStream(ctx, CID, { fetchSnapshot: vi.fn(), resume: vi.fn() }),
+    )
+
+    expect(result.current.status).toBe('generating')
+    expect(result.current.phase).toBeNull()
+    expect(result.current.nodes).toEqual([])
+    // Teardown drives the real client's close() (abort + markClosed) — no throw.
+    expect(() => {
+      unmount()
+    }).not.toThrow()
+  })
+
+  it('dedups a snapshot entity the live stream re-emits + finalizes to the same UUID into ONE node', async () => {
+    // spec §6 (Iridessa-C1) rehydration guarantee: the persisted snapshot seeds a
+    // node keyed by its real UUID; when the SAME entity also streams live and
+    // finalizes to that UUID, the seam must render ONE node — the live copy
+    // superseding the seed by matching `displayId` — never a phantom duplicate.
+    const SHARED_ID = '0192f0aa-1111-7abc-8def-000000000042'
+    const mock = makeMockClient()
+    const fetchSnapshot = vi.fn().mockResolvedValue({
+      entities: [{ id: SHARED_ID, entityType: 'npc', name: 'Seeded Warden' }],
+      relationships: [],
+    })
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, { createClient: () => mock.client, fetchSnapshot, resume: vi.fn() }),
+    )
+
+    // Rehydrate: the seed node's displayId IS the real UUID.
+    act(() => {
+      mock.emitSnapshot({ phase: 'world_snapshot_ready', stages: [], cumulativeCostUsd: 0 })
+    })
+    await waitFor(() => {
+      expect(result.current.nodes.some((n) => n.displayId === SHARED_ID)).toBe(true)
+    })
+
+    // The same entity now arrives live and finalizes to the SAME UUID. Post-finalize
+    // its displayId === SHARED_ID, so mergeNodes drops the seed copy.
+    act(() => {
+      mock.emit({
+        type: 'entity-added',
+        synthKey: 'locations_and_npcs/npcs/0',
+        entityKind: 'npc',
+        name: 'Warden (live)',
+      })
+      mock.emit({ type: 'finalized', synthKey: 'locations_and_npcs/npcs/0', entityId: SHARED_ID })
+    })
+
+    const matching = result.current.nodes.filter((n) => n.displayId === SHARED_ID)
+    expect(matching).toHaveLength(1)
+    // The live copy wins (fresher) — the seed is superseded, not duplicated.
+    expect(matching[0]?.name).toBe('Warden (live)')
+    expect(matching[0]?.synthKey).toBe('locations_and_npcs/npcs/0')
+  })
+
+  it('leaves the graph honestly sparse when the snapshot rehydrate fetch rejects', async () => {
+    const mock = makeMockClient()
+    const fetchSnapshot = vi
+      .fn()
+      .mockRejectedValue(new HttpError(409, 'Conflict', 'snapshot_not_ready'))
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, { createClient: () => mock.client, fetchSnapshot, resume: vi.fn() }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({ phase: 'world_snapshot_ready', stages: [], cumulativeCostUsd: 0 })
+    })
+    await waitFor(() => {
+      expect(fetchSnapshot).toHaveBeenCalledTimes(1)
+    })
+
+    // loadSeed swallowed the 409 race → no seed, no crash. Live events still fold.
+    act(() => {
+      mock.emit({
+        type: 'entity-added',
+        synthKey: 'world_and_factions/f1',
+        entityKind: 'faction',
+        name: 'The Ashen Court',
+      })
+    })
+
+    expect(result.current.nodes.map((n) => n.name)).toEqual(['The Ashen Court'])
   })
 })

@@ -131,4 +131,28 @@ describe('ForceSim pin / unpin', () => {
     // Freed, the node moves off the pin under the residual repulsion/centre.
     expect(sim.positions().get('a')).not.toEqual({ x: 100, y: 200 })
   })
+
+  it('is a no-op when pinning a synthKey that is not in the sim', () => {
+    const sim = create()
+    sim.sync([node('a')], [])
+
+    // A drag-pin racing a `stage-reset` that already dropped the node: the pin
+    // must not resurrect it or throw — the unknown key is simply ignored.
+    expect(() => {
+      sim.pin('ghost', 10, 20)
+    }).not.toThrow()
+    expect(sim.positions().has('ghost')).toBe(false)
+    expect(sim.positions().size).toBe(1)
+  })
+
+  it('is a no-op when unpinning a synthKey that is not in the sim', () => {
+    const sim = create()
+    sim.sync([node('a')], [])
+
+    expect(() => {
+      sim.unpin('ghost')
+    }).not.toThrow()
+    expect(sim.positions().has('ghost')).toBe(false)
+    expect(sim.positions().size).toBe(1)
+  })
 })

@@ -33,10 +33,15 @@ const REHEAT_ALPHA = 0.3
  *  out organically instead of arriving from d3's phyllotaxis spiral. */
 const SEED_JITTER = 2
 
-/** A d3 simulation node carrying its stable `synthKey` identity. `x/y/vx/vy/fx/fy`
- *  are the d3-managed fields (see SimulationNodeDatum). */
+/** A d3 simulation node carrying its stable `synthKey` identity. `vx/vy/fx/fy`
+ *  are the d3-managed fields (see SimulationNodeDatum). `x`/`y` are NARROWED to
+ *  required: `seedNode` always assigns finite coordinates and d3 only reassigns
+ *  them when `isNaN` (never our case), so a sim node's position is always defined
+ *  — `positions()` needs no `?? 0` defensiveness. */
 interface SimNode extends SimulationNodeDatum {
   synthKey: string
+  x: number
+  y: number
 }
 
 /** A d3 link datum. `source`/`target` are seeded as `synthKey` strings and
@@ -113,7 +118,7 @@ export function create(): ForceSim {
   function positions(): Map<string, { x: number; y: number }> {
     const out = new Map<string, { x: number; y: number }>()
     for (const simNode of byKey.values()) {
-      out.set(simNode.synthKey, { x: simNode.x ?? 0, y: simNode.y ?? 0 })
+      out.set(simNode.synthKey, { x: simNode.x, y: simNode.y })
     }
     return out
   }

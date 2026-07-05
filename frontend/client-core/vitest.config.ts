@@ -39,6 +39,12 @@ export default defineConfig({
         // builders + a reference reducer) is test infra, not production code, so
         // it is excluded below alongside the `*.test.ts` files.
         'src/realtime/**/*.ts',
+        // The world-gen streaming-graph brain (MYT-89 Phase C): the SSE-event →
+        // nodes/edges fold (C1 graph-reducers), the d3-force node-identity
+        // wrapper (C2 force-sim), and the DOM-free data-layer hook (C5
+        // use-worldgen-stream) that opens the status SSE, rehydrates from the
+        // world-snapshot, and branches the failure→resume path. 100%-gated.
+        'src/worldgen/**/*.ts',
         'eslint-rules/**/*.js',
       ],
       exclude: ['**/*.test.ts', '**/*.fixtures.ts'],
