@@ -139,8 +139,6 @@ export const descriptions: Record<string, string> = {
   'worldGen.retry': 'Label on the Retry action of the world-gen failure state (resumes generation). ~1-2 words, e.g. "Try again".',
   'worldGen.terminalTitle': "Calm headline on the TERMINAL (non-resumable) world-gen state — this world can't be made. Terse, ~3-5 words.",
   'worldGen.terminalBody': 'Calm body under the terminal world-gen headline: this campaign is a dead end, start a new one. ~1 short sentence, no retry nudge.',
-  'worldGen.readyTitle': 'Headline on the world-ready handoff placeholder shown the moment world-gen finishes ("your world is ready"), before Phase D fills the reveal. Terse, ~3-4 words.',
-  'worldGen.continue': 'Label on the Continue affordance stub on the world-ready handoff placeholder (Phase D replaces the destination). ~1 word.',
   'worldReveal.title': 'Headline on the world-reveal screen shown after world-gen completes — the settled graph beside the browsable wiki. Terse, brand-voiced, ~2-3 words, e.g. "Your world".',
   'worldReveal.explorePrompt': 'Quiet invitation under the reveal: wander/explore the newly-made world, and continue when ready. Calm, unhurried, ~1 short sentence.',
   'worldReveal.continue': 'Label on the Continue affordance that leads from the reveal to the starting-situation pick. ~1 word, e.g. "Continue".',

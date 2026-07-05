@@ -178,9 +178,7 @@
     "failedBody": "[ph: the making was interrupted — you can pick it back up]",
     "retry": "[ph: try again]",
     "terminalTitle": "[ph: this world can't be made]",
-    "terminalBody": "[ph: this one can't continue — start a new campaign]",
-    "readyTitle": "[ph: your world is ready]",
-    "continue": "[ph: continue]"
+    "terminalBody": "[ph: this one can't continue — start a new campaign]"
   },
   "worldReveal": {
     "title": "[ph: your world]",

@@ -162,10 +162,14 @@ export function WorldReveal({
       <Heading level={1} role="title">
         {t('worldReveal.title')}
       </Heading>
-      {/* Graph beside wiki. `auto-fit` + `minColumnPx` collapses to ONE column
-          (stacked) below ~2×min, so it reads side-by-side on desktop and stacked
-          at ~375px without a media query — each track is `min-w-0` (1fr floor). */}
-      <Grid columns="auto-fit" minColumnPx={340} gap={4}>
+      {/* Graph beside wiki. `auto-fill` + `minColumnPx` builds a
+          `repeat(auto-fill, minmax(340px, 1fr))` track: below ~680px (2×340 +
+          gap) only ONE 340px column fits, so the two panes WRAP into a genuine
+          stack at ~375px; at desktop widths two sit side by side — no media
+          query. (auto-fit would IGNORE `minColumnPx` — the DS honours it only
+          for auto-fill — and collapse to side-by-side even at 375px.) Very wide
+          viewports keep empty trailing tracks; cosmetically fine at two panes. */}
+      <Grid columns="auto-fill" minColumnPx={340} gap={4}>
         <WorldGenGraph
           data-testid="reveal-graph"
           nodes={nodes}
