@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Stack, Text, WorldGenGraph } from '@mythrun/ui'
 import type { WorldGenStream } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
+import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
 
 // The GENERATING VIEW (MYT-89 Phase C, C6) — the live world-gen experience the
 // `/campaigns/:id` route lands on after Begin, and the returnable background
@@ -21,6 +22,11 @@ export function GeneratingView({ nodes, edges }: GeneratingViewProps): React.JSX
   // Selection is a local, ephemeral concern (which entity the player is peeking
   // at) — it never leaves this screen, so it lives here, not in the stream.
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined)
+  // The graph's Canvas rAF loop + ambient blooms run for the whole ~10-min
+  // generation; the global CSS reduce-block can't stop a JS rAF loop, so we read
+  // the OS/browser preference here (web layer — DOM `matchMedia`) and hand the
+  // graph the boolean it honours (no loop, no blooms — a static settle instead).
+  const prefersReducedMotion = usePrefersReducedMotion()
 
   return (
     <Stack gap={4} data-testid="worldgen-generating">
@@ -30,6 +36,7 @@ export function GeneratingView({ nodes, edges }: GeneratingViewProps): React.JSX
         nodes={nodes}
         edges={edges}
         onSelect={setSelectedKey}
+        reducedMotion={prefersReducedMotion}
         listLabel={t('worldGen.listLabel')}
         emptyLabel={t('worldGen.emptyLabel')}
         {...(selectedKey !== undefined ? { selectedKey } : {})}
