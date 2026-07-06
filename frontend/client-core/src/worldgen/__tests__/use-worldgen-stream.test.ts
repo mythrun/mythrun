@@ -159,6 +159,229 @@ describe('useWorldGenStream', () => {
     expect(result.current.costUsd).toBe(3.75)
   })
 
+  it('advances stages[] LIVE past the snapshot state and reaches all-complete', () => {
+    // The ship-blocker (MYT-89 C7): `stages[]` was written ONLY from the
+    // connect-time snapshot, so the status-card % and the fog fade froze for
+    // the whole ~10-min gen. The backend emits incremental stage-*
+    // events; the hook must fold them so `stages[]` advances and reaches
+    // all-complete at the reveal.
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    // Snapshot at connect: one stage running, none complete (the frozen state).
+    act(() => {
+      mock.emitSnapshot({
+        phase: 'world_gen',
+        stages: [
+          {
+            stage: 'concept_intake',
+            status: 'running',
+            userId: null,
+            costUsd: 0,
+            startedAt: '2026-06-19T10:00:00.000Z',
+            completedAt: null,
+          },
+        ],
+        cumulativeCostUsd: 0.05,
+      })
+    })
+    const completedAt = (): number =>
+      result.current.stages.filter((s) => s.status === 'completed').length
+    expect(completedAt()).toBe(0)
+    expect(result.current.costUsd).toBe(0.05)
+
+    // Live progression: complete stage 1, start + complete a stage the
+    // snapshot never carried (proves append + advance).
+    act(() => {
+      mock.emit({
+        type: 'stage-completed',
+        stage: 'concept_intake',
+        userId: null,
+        durationMs: 5000,
+        costUsd: 0.1,
+      })
+      mock.emit({
+        type: 'stage-started',
+        stage: 'world_color',
+        userId: null,
+        startedAt: '2026-06-19T10:00:05.000Z',
+      })
+    })
+
+    // Advanced PAST the snapshot: one complete, a new running stage appended.
+    expect(completedAt()).toBe(1)
+    expect(result.current.stages).toHaveLength(2)
+    expect(result.current.stages.find((s) => s.status === 'running')?.stage).toBe('world_color')
+
+    // Finish the last stage → all-complete (the reveal / fog fully gone).
+    act(() => {
+      mock.emit({
+        type: 'stage-completed',
+        stage: 'world_color',
+        userId: null,
+        durationMs: 3000,
+        costUsd: 0.2,
+      })
+      mock.emit({ type: 'cost-update', cumulativeUsd: 0.3 })
+    })
+
+    expect(result.current.stages).toHaveLength(2)
+    expect(completedAt()).toBe(2)
+    expect(result.current.stages.every((s) => s.status === 'completed')).toBe(true)
+    // The completed stages carry their live cost + a derived completedAt.
+    expect(result.current.stages.find((s) => s.stage === 'world_color')?.costUsd).toBe(0.2)
+    expect(result.current.stages.find((s) => s.stage === 'world_color')?.completedAt).toBe(
+      '2026-06-19T10:00:08.000Z',
+    )
+    // costUsd also tracks the live absolute cost-update (frozen no more).
+    expect(result.current.costUsd).toBe(0.3)
+  })
+
+  it('marks a stage failed on a live stage-failed event', () => {
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({
+        phase: 'world_gen',
+        stages: [
+          {
+            stage: 'world_and_factions',
+            status: 'running',
+            userId: null,
+            costUsd: 0,
+            startedAt: '2026-06-19T10:00:00.000Z',
+            completedAt: null,
+          },
+        ],
+        cumulativeCostUsd: 0,
+      })
+      mock.emit({
+        type: 'stage-failed',
+        stage: 'world_and_factions',
+        userId: null,
+        errorCode: 'llm_timeout',
+        willRetry: false,
+      })
+    })
+
+    expect(result.current.stages).toHaveLength(1)
+    expect(result.current.stages[0]?.status).toBe('failed')
+  })
+
+  it('folds stage-completed / stage-failed for stages absent from the snapshot', () => {
+    // Pipeline_runs rows are created lazily, so a mid-window snapshot omits
+    // not-yet-started stages. A live stage-completed / stage-failed for such a
+    // stage APPENDS it (no prior `stage-started` seen → null start/end).
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({ phase: 'world_gen', stages: [], cumulativeCostUsd: 0 })
+      mock.emit({
+        type: 'stage-completed',
+        stage: 'random_tables',
+        userId: null,
+        durationMs: 1000,
+        costUsd: 0.05,
+      })
+      mock.emit({
+        type: 'stage-failed',
+        stage: 'coherence_pass',
+        userId: null,
+        errorCode: 'llm_timeout',
+        willRetry: false,
+      })
+    })
+
+    const completed = result.current.stages.find((s) => s.stage === 'random_tables')
+    expect(completed).toMatchObject({ status: 'completed', costUsd: 0.05, startedAt: null })
+    // No prior start → the derived completedAt is null (start unknown).
+    expect(completed?.completedAt).toBeNull()
+    const failed = result.current.stages.find((s) => s.stage === 'coherence_pass')
+    expect(failed).toMatchObject({ status: 'failed', costUsd: 0, startedAt: null, completedAt: null })
+  })
+
+  it('updates a snapshot stage in place on a live start + tolerates an unparseable startedAt', () => {
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({
+        phase: 'world_gen',
+        stages: [
+          // A running stage whose startedAt can't be parsed → its later
+          // completedAt derivation must fall back to null (not NaN/Invalid Date).
+          {
+            stage: 'concept_intake',
+            status: 'running',
+            userId: null,
+            costUsd: 0,
+            startedAt: 'not-a-date',
+            completedAt: null,
+          },
+          // A pending stage the snapshot already carries → a live stage-started
+          // updates it IN PLACE, preserving its prior cost (prev defined).
+          {
+            stage: 'world_color',
+            status: 'pending',
+            userId: null,
+            costUsd: 0.07,
+            startedAt: null,
+            completedAt: null,
+          },
+        ],
+        cumulativeCostUsd: 0.07,
+      })
+      mock.emit({
+        type: 'stage-completed',
+        stage: 'concept_intake',
+        userId: null,
+        durationMs: 1000,
+        costUsd: 0.1,
+      })
+      mock.emit({
+        type: 'stage-started',
+        stage: 'world_color',
+        userId: null,
+        startedAt: '2026-06-19T10:00:10.000Z',
+      })
+    })
+
+    // Both updated in place — no duplicate rows appended.
+    expect(result.current.stages).toHaveLength(2)
+    const concept = result.current.stages.find((s) => s.stage === 'concept_intake')
+    expect(concept?.status).toBe('completed')
+    // Unparseable startedAt → null completedAt (the NaN guard).
+    expect(concept?.completedAt).toBeNull()
+    const color = result.current.stages.find((s) => s.stage === 'world_color')
+    expect(color).toMatchObject({ status: 'running', costUsd: 0.07 })
+  })
+
   it('exposes costUsd as null when the snapshot payload omits cumulativeCostUsd', () => {
     const mock = makeMockClient()
     const { result } = renderHook(() =>
