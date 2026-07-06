@@ -30,6 +30,47 @@ const EDGE_ALPHA = 0.4
 /** Deterministic per-edge bow (px) so links read hand-drawn without frame jitter. */
 const EDGE_BOW = 7
 
+// ── Act-2 penstroke edge draw-in (MYT-89 C6) ──────────────────────────────────────────
+// Edges are DRAWN, not popped in: on first appearance each reveals as a partial line from
+// source→target (a penstroke), over a duration keyed by B3's `sourceStage`. `weave`
+// (relationship/consolidation passes) is the slow, deliberate stroke; `snap` (the late
+// coherence_pass batch) is near-instant. Seed edges (`arrivalIndex -1`) and reduced motion
+// render FULL immediately. Durations are NAMED constants, not magic numbers.
+
+/** Slow, deliberate penstroke (ms) — a `weave` edge's draw-in duration. */
+export const EDGE_WEAVE_MS = 900
+/** Fast draw-in (ms) — the late `coherence_pass` `snap` batch appears near-instantly. */
+export const EDGE_SNAP_MS = 180
+
+/** The draw-in duration (ms) for an edge's originating pass — `weave` slow, `snap` fast. */
+export function edgeDrawDurationMs(stage: GraphEdge['sourceStage']): number {
+  return stage === 'snap' ? EDGE_SNAP_MS : EDGE_WEAVE_MS
+}
+
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x
+}
+
+/** An edge's [0,1] draw-in progress at `nowMs`, given the rAF-clock time it was first seen
+ *  in the edges array (`appearMs`). Seed/pre-existing edges (`arrivalIndex < 0`) and the
+ *  reduced-motion path render FULL immediately (1); a not-yet-clocked edge is 0 (about to
+ *  start); otherwise it lerps over `edgeDrawDurationMs(sourceStage)` from its appear-time. */
+export function edgeDrawProgress(
+  edge: GraphEdge,
+  appearMs: number | undefined,
+  nowMs: number,
+  reducedMotion: boolean,
+): number {
+  if (reducedMotion || edge.arrivalIndex < 0) return 1
+  if (appearMs === undefined) return 0
+  return clamp01((nowMs - appearMs) / edgeDrawDurationMs(edge.sourceStage))
+}
+
+/** Point `t` of the way from `a` to `b` (the penstroke's drawn endpoint). */
+function lerpPoint(a: Point, b: Point, t: number): Point {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+}
+
 /** Map a CENTRED sim point (`[−VW/2, VW/2] × [−VH/2, VH/2]`) into the fog's top-left
  *  VIRTUAL space (`[0, VW] × [0, VH]`). This is the exact translation the host applies
  *  to the graph context (`translate(VW/2, VH/2)`), so a node drawn here lands on the
@@ -91,11 +132,16 @@ function hash(s: string): number {
  *  arc (a quadratic bowed off the straight line by a stable per-edge offset). Edge
  *  endpoints are entity UUIDs and `positions` is keyed by `displayId` (also the
  *  UUID once finalized) — the two id-spaces are reconciled, so the lookup matches
- *  (BUG 2.1: keying nodes on synthKey made this miss and drop every edge). */
+ *  (BUG 2.1: keying nodes on synthKey made this miss and drop every edge).
+ *
+ *  `progressOf` (C6) returns each edge's [0,1] draw-in progress: the stroke reveals
+ *  from source→target, its endpoint at `lerp(source, target, progress)` — a penstroke,
+ *  not a fade. Omitted → every edge is FULL (1), the pre-C6 behaviour B1's tests pin. */
 export function drawEdges(
   ctx: CanvasRenderingContext2D,
   edges: readonly GraphEdge[],
   positions: ReadonlyMap<string, Point>,
+  progressOf?: (edge: GraphEdge) => number,
 ): void {
   ctx.save()
   ctx.globalAlpha = EDGE_ALPHA
@@ -104,25 +150,29 @@ export function drawEdges(
     const a = positions.get(edge.from)
     const b = positions.get(edge.to)
     if (a === undefined || b === undefined) continue
-    drawEdge(ctx, a, b, edge.synthKey)
+    drawEdge(ctx, a, b, edge.synthKey, progressOf ? progressOf(edge) : 1)
   }
   ctx.restore()
 }
 
-/** One bowed link: a quadratic curve whose control point is nudged perpendicular
- *  to the midline by a stable ±EDGE_BOW so parallel links don't overlap flat. */
-function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, key: string): void {
-  const midX = (a.x + b.x) / 2
-  const midY = (a.y + b.y) / 2
-  const dx = b.x - a.x
-  const dy = b.y - a.y
+/** One bowed link, revealed `progress` of the way source→target (C6): a quadratic curve
+ *  from the source to `lerp(source, target, progress)`, its control point nudged
+ *  perpendicular to that drawn segment by a stable ±EDGE_BOW so parallel links don't
+ *  overlap flat. At `progress >= 1` the endpoint is the exact target — a crisp full line,
+ *  bit-identical to the pre-C6 stroke (B1 parity), never a fade. */
+function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, key: string, progress: number): void {
+  const end = progress >= 1 ? b : lerpPoint(a, b, progress)
+  const midX = (a.x + end.x) / 2
+  const midY = (a.y + end.y) / 2
+  const dx = end.x - a.x
+  const dy = end.y - a.y
   const len = Math.hypot(dx, dy) || 1
   const bow = ((hash(key) % 200) / 100 - 1) * EDGE_BOW // stable in [-EDGE_BOW, EDGE_BOW]
   const cx = midX + (-dy / len) * bow
   const cy = midY + (dx / len) * bow
   ctx.beginPath()
   ctx.moveTo(a.x, a.y)
-  ctx.quadraticCurveTo(cx, cy, b.x, b.y)
+  ctx.quadraticCurveTo(cx, cy, end.x, end.y)
   ctx.stroke()
 }
 

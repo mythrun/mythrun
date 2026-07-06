@@ -6,7 +6,7 @@ import {
   type ForceSim,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
-import { drawEdges, drawNodes, fogEntitiesFrom, type Point } from './canvas-draw.ts'
+import { drawEdges, drawNodes, edgeDrawProgress, fogEntitiesFrom, type Point } from './canvas-draw.ts'
 import {
   hasFinePointer,
   nearestKey,
@@ -86,6 +86,9 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
   const clockRef = useRef(0) // buoy-bob clock (seconds); 0 until the loop runs.
+  // C6 Act-2 penstroke state: the ms clock + each edge's first-seen ms (synthKey →
+  // appear-time), the draw-in lerps from. Advanced/stamped per frame in the motion loop.
+  const edgeDrawRef = useRef<EdgeDrawState>({ clockMs: 0, appear: new Map() })
   const settledRef = useRef(false) // reduced-motion: has the current graph been settled?
   nodesRef.current = nodes
   edgesRef.current = edges
@@ -138,7 +141,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     ctx.strokeStyle = ink
     ctx.fillStyle = ink
     const positions = getSim().positions()
-    drawEdges(ctx, edgesRef.current, positions)
+    paintEdges(ctx, edgesRef.current, positions, edgeDrawRef.current, reducedRef.current)
     drawNodes(ctx, nodesRef.current, positions, {
       selectedKey: selectedRef.current,
       hoverKey: hoverRef.current,
@@ -182,7 +185,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
-    return startMotionLoop(ctx, canvas, { getSim, paintFrame, clockRef })
+    return startMotionLoop(ctx, canvas, { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef })
   }, [reducedMotion, canvasRef, applySize, paintFrame, getSim])
 
   // Fine-pointer interaction (reveal only): hover-raise, drag-to-pin, tap-to-select.
@@ -240,15 +243,51 @@ function observeResize(canvas: HTMLCanvasElement | null, deps: ResizeDeps): (() 
   }
 }
 
+/** The C6 Act-2 penstroke clock: the ms elapsed since the motion loop started, plus each
+ *  edge's first-seen ms (synthKey → appear-time) its draw-in lerps from. One mutable ref. */
+interface EdgeDrawState {
+  clockMs: number
+  appear: Map<string, number>
+}
+
 interface MotionLoopDeps {
   getSim: () => ForceSim
   paintFrame: (ctx: CanvasRenderingContext2D, ink: string) => void
   clockRef: React.RefObject<number>
+  edgesRef: React.RefObject<GraphEdge[]>
+  edgeDrawRef: React.RefObject<EdgeDrawState>
 }
 
-/** Run the rAF loop: each frame advance the bob clock, tick the sim, and repaint the
- *  graph (edges + mono-ink glyphs with the render-only buoy bob). Returns the cancel
- *  teardown. Module-scoped so the hook body stays lean.
+/** Paint the edge layer with the C6 draw-in: each edge reveals as a source→target penstroke
+ *  over its stage duration, keyed on its first-seen clock (`state.appear`); reduced motion
+ *  and seed edges (`arrivalIndex -1`) resolve to a full line inside `edgeDrawProgress`. */
+function paintEdges(
+  ctx: CanvasRenderingContext2D,
+  edges: readonly GraphEdge[],
+  positions: ReadonlyMap<string, Point>,
+  state: EdgeDrawState,
+  reduced: boolean,
+): void {
+  drawEdges(ctx, edges, positions, (edge) =>
+    edgeDrawProgress(edge, state.appear.get(edge.synthKey), state.clockMs, reduced),
+  )
+}
+
+/** Stamp each newly-arrived edge's appear-time (C6): the first frame a non-seed edge's
+ *  synthKey shows up in the edges array, record the current ms clock so its penstroke
+ *  starts here. Because edges arrive incrementally over the SSE stream they self-stagger;
+ *  the coherence_pass batch arrives together and snaps together. Seed edges (arrivalIndex
+ *  -1) are skipped — they render full immediately, never a draw-in. */
+function recordEdgeAppearances(edges: readonly GraphEdge[], appear: Map<string, number>, nowMs: number): void {
+  for (const edge of edges) {
+    if (edge.arrivalIndex < 0) continue
+    if (!appear.has(edge.synthKey)) appear.set(edge.synthKey, nowMs)
+  }
+}
+
+/** Run the rAF loop: each frame advance the clocks, stamp new edges' appear-times, tick
+ *  the sim, and repaint the graph (edges drawing in + mono-ink glyphs with the render-only
+ *  buoy bob). Returns the cancel teardown. Module-scoped so the hook body stays lean.
  *
  *  The theme ink is re-resolved EACH frame (not captured once) so a light/dark toggle
  *  mid-generation repaints the Canvas immediately — the Canvas is the one surface
@@ -259,11 +298,14 @@ function startMotionLoop(
   canvas: HTMLCanvasElement,
   deps: MotionLoopDeps,
 ): () => void {
-  const { getSim, paintFrame, clockRef } = deps
+  const { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef } = deps
   let raf = 0
   const start = performance.now()
   const frame = (now: number): void => {
-    clockRef.current = (now - start) / 1000
+    const elapsedMs = now - start
+    clockRef.current = elapsedMs / 1000
+    edgeDrawRef.current.clockMs = elapsedMs
+    recordEdgeAppearances(edgesRef.current, edgeDrawRef.current.appear, elapsedMs)
     getSim().tick()
     paintFrame(ctx, resolveInk(canvas))
     raf = window.requestAnimationFrame(frame)

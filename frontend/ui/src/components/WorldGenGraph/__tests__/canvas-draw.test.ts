@@ -5,7 +5,18 @@ import {
   VIRTUAL_WIDTH,
 } from '@mythrun/client-core/worldgen'
 import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
-import { bobOffset, centredToVirtual, drawEdges, drawNodes, fogEntitiesFrom, type Point } from '../canvas-draw.ts'
+import {
+  bobOffset,
+  centredToVirtual,
+  drawEdges,
+  drawNodes,
+  edgeDrawDurationMs,
+  edgeDrawProgress,
+  EDGE_SNAP_MS,
+  EDGE_WEAVE_MS,
+  fogEntitiesFrom,
+  type Point,
+} from '../canvas-draw.ts'
 import { entityObstacle } from '../../WorldGenFog/fog-obstacles.ts'
 
 // BUG 2.1 render-layer proof. The sim/render/edge id-space is `displayId`: node
@@ -116,6 +127,75 @@ describe('drawEdges — displayId ↔ UUID reconciliation (BUG 2.1)', () => {
     const r = recorder()
     drawEdges(r.ctx, [edge], synthKeyPositions)
     expect(r.strokes).toBe(0)
+  })
+})
+
+// ── C6: the Act-2 penstroke edge draw-in ──────────────────────────────────────────────
+// Edges must NOT pop in — each is DRAWN from source→target (a penstroke) on first
+// appearance. `drawEdges` reveals a PARTIAL line: the stroked endpoint is lerp(source,
+// target, progress); at progress 1 it's the full line to the target (B1 parity). Progress
+// itself is a pure fn of the edge's first-seen clock, keyed on `sourceStage` — `weave`
+// (relationship/consolidation) draws SLOWLY, `snap` (coherence_pass) draws FAST.
+
+const seedEdge: GraphEdge = { ...edge, synthKey: 'seed', arrivalIndex: -1, sourceStage: 'snap' }
+const snapEdge: GraphEdge = { ...edge, synthKey: 'e-snap', arrivalIndex: 3, sourceStage: 'snap' }
+
+describe('drawEdges — partial-line penstroke reveal (C6)', () => {
+  it('at progress 0.5 strokes a partial line to lerp(source, target, 0.5)', () => {
+    const r = recorder()
+    drawEdges(r.ctx, [edge], displayIdPositions, () => 0.5)
+    // The pen starts at the source and has reached the MIDPOINT (half the length).
+    expect(r.strokes).toBe(1)
+    expect(r.moves).toEqual([{ x: -30, y: 0 }])
+    expect(r.quads).toHaveLength(1)
+    expect(r.quads[0]).toMatchObject({ x: 0, y: 0 }) // lerp({-30,0},{30,0},0.5)
+  })
+
+  it('at progress 1.0 strokes the full line to the target (B1 parity)', () => {
+    const r = recorder()
+    drawEdges(r.ctx, [edge], displayIdPositions, () => 1)
+    expect(r.moves).toEqual([{ x: -30, y: 0 }])
+    expect(r.quads[0]).toMatchObject({ x: 30, y: 0 })
+  })
+
+  it('omitting the progress source renders every edge FULL (default 1)', () => {
+    const r = recorder()
+    drawEdges(r.ctx, [edge], displayIdPositions)
+    expect(r.quads[0]).toMatchObject({ x: 30, y: 0 })
+  })
+})
+
+describe('edgeDrawDurationMs / edgeDrawProgress — weave vs snap timing (C6)', () => {
+  it('weave and snap resolve DIFFERENT durations (weave is the slow penstroke)', () => {
+    expect(edgeDrawDurationMs('weave')).toBe(EDGE_WEAVE_MS)
+    expect(edgeDrawDurationMs('snap')).toBe(EDGE_SNAP_MS)
+    expect(edgeDrawDurationMs('weave')).not.toBe(edgeDrawDurationMs('snap'))
+    expect(EDGE_WEAVE_MS).toBeGreaterThan(EDGE_SNAP_MS)
+  })
+
+  it('lerps progress over the stage duration from the first-seen clock', () => {
+    // half a weave duration in → half drawn.
+    expect(edgeDrawProgress(edge, 100, 100 + EDGE_WEAVE_MS / 2, false)).toBeCloseTo(0.5, 6)
+    // past the full duration → clamped to 1.
+    expect(edgeDrawProgress(edge, 0, EDGE_WEAVE_MS * 3, false)).toBe(1)
+  })
+
+  it('snap reaches full FASTER than weave at the same elapsed time', () => {
+    const elapsed = EDGE_SNAP_MS // exactly one snap duration
+    expect(edgeDrawProgress(snapEdge, 0, elapsed, false)).toBe(1) // snap done
+    expect(edgeDrawProgress(edge, 0, elapsed, false)).toBeLessThan(1) // weave still drawing
+  })
+
+  it('seed edges (arrivalIndex -1) render FULL immediately — never animate', () => {
+    expect(edgeDrawProgress(seedEdge, undefined, 0, false)).toBe(1)
+  })
+
+  it('reduced motion forces progress to 1 (instant full edges, no draw-in)', () => {
+    expect(edgeDrawProgress(edge, 0, 0, true)).toBe(1)
+  })
+
+  it('an edge not yet clocked (undefined appear-time) is progress 0 (about to start)', () => {
+    expect(edgeDrawProgress(edge, undefined, 500, false)).toBe(0)
   })
 })
 
