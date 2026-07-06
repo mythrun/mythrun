@@ -1,4 +1,4 @@
-import { BUOY_BOB, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
+import { BUOY_BOB, LABEL_TEXT_OFFSET_X, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
 
 // Pure Canvas-2D draw helpers for the world-gen streaming graph (MYT-89 C5). The
@@ -24,7 +24,6 @@ export interface Point {
 const GLYPH_HALF = 6
 const HOVER_SCALE = 1.5
 const SELECT_FRAME_PAD = 5
-const LABEL_OFFSET = 12
 const LABEL_ALPHA = 0.62
 const EDGE_ALPHA = 0.4
 /** Deterministic per-edge bow (px) so links read hand-drawn without frame jitter. */
@@ -185,6 +184,11 @@ export interface NodeDecoration {
   hoverKey: string | null
   t: number | null
   showLabels: boolean
+  /** The entity-name label font as a Canvas `font` string, resolved from the design-system
+   *  tokens (`resolveLabelFont` → `--font-body` at `--text-sm`). The host resolves it once at
+   *  mount and passes it every frame, so the label uses the SITE's typography and — measured
+   *  at the same font as the collision box — never over/under-runs its reserved keep-out. */
+  labelFont: string
 }
 
 /**
@@ -205,7 +209,7 @@ export function drawNodes(
     const hovered = node.displayId === deco.hoverKey
     const selected = node.displayId === deco.selectedKey
     const bob = bobFor(p, deco.t)
-    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, hovered, selected, deco.showLabels)
+    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, hovered, selected, deco.showLabels, deco.labelFont)
   }
 }
 
@@ -224,6 +228,7 @@ function drawNode(
   hovered: boolean,
   selected: boolean,
   showLabel: boolean,
+  labelFont: string,
 ): void {
   const half = GLYPH_HALF * (hovered ? HOVER_SCALE : 1)
   ctx.save()
@@ -232,17 +237,21 @@ function drawNode(
     ctx.strokeRect(-(half + SELECT_FRAME_PAD), -(half + SELECT_FRAME_PAD), (half + SELECT_FRAME_PAD) * 2, (half + SELECT_FRAME_PAD) * 2)
   }
   drawGlyph(ctx, node.kind, half)
-  if (showLabel) drawLabel(ctx, node.name, half)
+  if (showLabel) drawLabel(ctx, node.name, labelFont)
   ctx.restore()
 }
 
-/** The quiet entity name to the right of the glyph — low-alpha ink, mono. */
-function drawLabel(ctx: CanvasRenderingContext2D, name: string, half: number): void {
+/** The quiet entity name to the right of the glyph — low-alpha ink, in the design-system
+ *  label font (`labelFont`, resolved from `--font-body`/`--text-sm`). Drawn at the SHARED
+ *  `LABEL_TEXT_OFFSET_X` (NOT a hover-scaled offset), so the label sits at one fixed x the
+ *  collision box + fog keep-out reserve to exactly — the box's right edge is that offset plus
+ *  this same-font `measureText` width, a hard no-overlap bound in every hover/select state. */
+function drawLabel(ctx: CanvasRenderingContext2D, name: string, labelFont: string): void {
   ctx.save()
   ctx.globalAlpha = LABEL_ALPHA
-  ctx.font = '11px "IBM Plex Mono", ui-monospace, monospace'
+  ctx.font = labelFont
   ctx.textBaseline = 'middle'
-  ctx.fillText(name, half + LABEL_OFFSET, 0)
+  ctx.fillText(name, LABEL_TEXT_OFFSET_X, 0)
   ctx.restore()
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   LABEL_CAP_Y_OFFSET,
+  LABEL_TEXT_OFFSET_X,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
 } from '@mythrun/client-core/worldgen'
@@ -17,7 +18,12 @@ import {
   fogEntitiesFrom,
   type Point,
 } from '../canvas-draw.ts'
-import { entityObstacle } from '../../WorldGenFog/fog-obstacles.ts'
+import { entityObstacle, labelBoxExtents } from '../../WorldGenFog/fog-obstacles.ts'
+
+/** A representative resolved DS label font — the string the host passes each frame (in
+ *  production `resolveLabelFont` → `--font-body` at `--text-sm`). The unit draws just need a
+ *  non-empty `font` value; the box-bounds guarantee below keys off the OFFSET, not the font. */
+const LABEL_FONT_STUB = '14px "Source Serif 4", ui-serif, Georgia, serif'
 
 // BUG 2.1 render-layer proof. The sim/render/edge id-space is `displayId`: node
 // positions are keyed by `displayId`, and edge endpoints are entity UUIDs (= the
@@ -37,10 +43,17 @@ interface Recorder {
   /** Every `fillText(text, …)` call's text — the node-label draws (drawGlyph never
    *  fillTexts, only fill/stroke rects), so this is exactly the rendered names. */
   texts: string[]
+  /** Every `fillText` call with its position — so a test can assert WHERE the label lands
+   *  (the shared `LABEL_TEXT_OFFSET_X` the collision box + fog reserve to). */
+  fillTexts: { text: string; x: number; y: number }[]
+  /** Every value assigned to `ctx.font` — so a test can assert the label draws in the
+   *  resolved design-system font the host passes (not a bespoke literal). */
+  fonts: string[]
 }
 
 /** A recording 2D context: draw methods append to logs, everything else is a
- *  no-op, and property writes are absorbed. Enough to assert what got drawn. */
+ *  no-op, and property writes are absorbed (the `font` set is captured). Enough to
+ *  assert what got drawn, where, and in which font. */
 function recorder(): Recorder {
   const r: Recorder = {
     strokes: 0,
@@ -48,6 +61,8 @@ function recorder(): Recorder {
     quads: [],
     translates: [],
     texts: [],
+    fillTexts: [],
+    fonts: [],
     ctx: undefined as unknown as CanvasRenderingContext2D,
   }
   const impl: Record<string, (...args: never[]) => void> = {
@@ -63,15 +78,19 @@ function recorder(): Recorder {
     translate: (x: number, y: number) => {
       r.translates.push({ x, y })
     },
-    fillText: (text: string) => {
+    fillText: (text: string, x: number, y: number) => {
       r.texts.push(text)
+      r.fillTexts.push({ text, x, y })
     },
   }
   r.ctx = new Proxy(
     {},
     {
       get: (_t, prop: string) => impl[prop] ?? ((): void => undefined),
-      set: () => true,
+      set: (_t, prop: string, value: unknown) => {
+        if (prop === 'font') r.fonts.push(String(value))
+        return true
+      },
     },
   ) as unknown as CanvasRenderingContext2D
   return r
@@ -214,6 +233,7 @@ describe('drawNodes — displayId lookup', () => {
       hoverKey: null,
       t: null, // no bob → the draw translate is the raw physics position
       showLabels: false,
+      labelFont: LABEL_FONT_STUB,
     })
     // Both nodes resolve their position by displayId and are drawn there.
     expect(r.translates).toEqual([
@@ -229,6 +249,7 @@ describe('drawNodes — displayId lookup', () => {
       hoverKey: null,
       t: null,
       showLabels: false,
+      labelFont: LABEL_FONT_STUB,
     })
     expect(r.translates).toEqual([])
   })
@@ -247,6 +268,7 @@ describe('drawNodes — name labels (MYT-89 audit #3)', () => {
     hoverKey: null,
     t: null,
     showLabels,
+    labelFont: LABEL_FONT_STUB,
   })
 
   it('draws each node NAME when showLabels is true', () => {
@@ -266,6 +288,87 @@ describe('drawNodes — name labels (MYT-89 audit #3)', () => {
     drawNodes(r.ctx, [liveWon], displayIdPositions, deco(true))
     expect(r.texts).toEqual([liveWon.name])
     expect(r.texts).not.toContain(liveWon.kind) // 'faction' is never drawn as text
+  })
+})
+
+// ── MYT-89 follow-up: DS label font + the collision box bounds the DRAWN label ─────────
+// The label used to DRAW at a bespoke `11px IBM Plex Mono` while the collision box + fog
+// keep-out MEASURED at `14px Georgia` — two invented fonts, and the box modelled the label
+// starting at the reference `+sz` while production drew it at `+18`, so the box under-reserved
+// the right edge by ~7px. The fix: draw in the resolved design-system font (passed as
+// `deco.labelFont`) at the SHARED `LABEL_TEXT_OFFSET_X`, and anchor the box's right edge on
+// that same offset — so the reserved box bounds the drawn label on EVERY edge (no under-reserve).
+
+/** Draw one node with its name shown, in the given font, and return the recorder. */
+function drawLabelled(node: GraphNode, hovered: boolean, labelFont = LABEL_FONT_STUB): Recorder {
+  const r = recorder()
+  drawNodes(r.ctx, [node], displayIdPositions, {
+    selectedKey: undefined,
+    hoverKey: hovered ? node.displayId : null,
+    t: null,
+    showLabels: true,
+    labelFont,
+  })
+  return r
+}
+
+describe('entity-name label — design-system font + fixed offset', () => {
+  it('draws the label at the shared LABEL_TEXT_OFFSET_X, in the passed DS font', () => {
+    const r = drawLabelled(liveWon, false)
+    expect(r.fillTexts).toEqual([{ text: liveWon.name, x: LABEL_TEXT_OFFSET_X, y: 0 }])
+    // …and in the resolved design-system font the host passes — never a bespoke literal.
+    expect(r.fonts).toContain(LABEL_FONT_STUB)
+    expect(r.fonts).not.toContain('11px "IBM Plex Mono", ui-monospace, monospace')
+  })
+
+  it('keeps the label offset CONSTANT across hover (bounded by the static box in every state)', () => {
+    // The old draw used `half + LABEL_OFFSET`, so a hovered (scaled) glyph shifted the label
+    // right — past the static box. The label now sits at a fixed offset the box always bounds.
+    const at = (hovered: boolean): number => {
+      const entry = drawLabelled(liveWon, hovered).fillTexts[0]
+      if (entry === undefined) throw new Error('expected a label draw')
+      return entry.x
+    }
+    expect(at(false)).toBe(LABEL_TEXT_OFFSET_X)
+    expect(at(true)).toBe(LABEL_TEXT_OFFSET_X)
+  })
+})
+
+describe('labelBoxExtents / entityObstacle bound the DRAWN label (no under-reserve)', () => {
+  // The DRAWN label's extent, anchored on the ACTUAL draw offset the recorder captures, and a
+  // conservative vertical model for the DS label: `--text-sm` ≈ 14px, middle-baselined, so its
+  // ink sits within ±(px/2) of the baseline — the reference `[-16, +9]` clear band contains it.
+  const drawnX = ((): number => {
+    const entry = drawLabelled(liveWon, false).fillTexts[0]
+    if (entry === undefined) throw new Error('expected a label draw')
+    return entry.x
+  })()
+  const LABEL_NOMINAL_PX = 14 // DS --text-sm = 0.875rem at the 16px root
+  const LABEL_HALF_HEIGHT = LABEL_NOMINAL_PX / 2
+
+  it.each([0, 12, 40, 200])('bounds a %dpx-wide label on every edge (collision box)', (width) => {
+    const box = labelBoxExtents('location', width)
+    const label = {
+      left: drawnX,
+      right: drawnX + width,
+      top: -LABEL_HALF_HEIGHT,
+      bottom: LABEL_HALF_HEIGHT,
+    }
+    // RIGHT — the binding edge (the old `sz + width` under-reserved to the `+18` draw offset).
+    expect(box.right).toBeGreaterThanOrEqual(label.right)
+    expect(box.right).toBe(drawnX + width) // tight: exactly the drawn label's right edge
+    // LEFT / TOP / BOTTOM — the box (icon on the left, tall clear band) also contains the text.
+    expect(box.left).toBeLessThanOrEqual(label.left)
+    expect(box.top).toBeLessThanOrEqual(label.top)
+    expect(box.bottom).toBeGreaterThanOrEqual(label.bottom)
+  })
+
+  it('the FOG obstacle reserves that same right edge (fog + collision + draw are one box)', () => {
+    const width = 62
+    const anchorX = 300
+    const ob = entityObstacle({ x: anchorX, y: 140, kind: 'location' }, width, 0, 0)
+    // The obstacle's right edge, relative to the anchor, lands on the drawn label's right edge.
+    expect(ob.x + ob.w - anchorX).toBe(drawnX + width)
   })
 })
 

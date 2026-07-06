@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { ENTITY_SIZE, LABEL_CAP_Y_OFFSET, LABEL_CLEAR_PAD } from '@mythrun/client-core/worldgen'
+import {
+  ENTITY_SIZE,
+  LABEL_CAP_Y_OFFSET,
+  LABEL_CLEAR_PAD,
+  LABEL_TEXT_OFFSET_X,
+} from '@mythrun/client-core/worldgen'
 import { entityObstacle, markerSize } from './fog-obstacles.ts'
 
 // The obstacle GEOMETRY (MYT-89 C3) reconciles the reference's separate capsule + clear
 // window into the single FogObstacle box FogSim consumes. These pin the reconciliation:
-// the doublet midline lands EXACTLY on the capsule, the horizontal span matches the
-// reference caps exactly, and the vertical clear window lands within a half-pixel of the
-// reference `[-16, +9]`.
+// the doublet midline lands EXACTLY on the capsule, the vertical clear window lands within a
+// half-pixel of the reference `[-16, +9]`, and the horizontal span now reaches the DRAWN
+// label's right edge (`+LABEL_TEXT_OFFSET_X + textWidth`, the MYT-89 follow-up that closed the
+// ~7px right-edge under-reserve — the box was modelling the reference `+sz` label start).
 
 describe('markerSize', () => {
   it('sizes FACTION / NPC bespoke and everything else default', () => {
@@ -23,10 +29,13 @@ describe('entityObstacle', () => {
   const tw = 62
   const sz = ENTITY_SIZE.DEFAULT
 
-  it('spans the reference capsule horizontally: [x - sz/2, x + sz + textWidth]', () => {
+  it('spans the icon on the left to the DRAWN label right: [x - sz/2, x + LABEL_TEXT_OFFSET_X + textWidth]', () => {
+    // The right edge anchors on the SHARED `LABEL_TEXT_OFFSET_X` (where `canvas-draw` actually
+    // draws the label), NOT the reference `+sz` — so the fog reserves out to the drawn label's
+    // real right edge instead of under-reserving the ~7px to the `+18` draw offset.
     const ob = entityObstacle(entity, tw, 0, 0)
     expect(ob.x).toBe(entity.x - sz / 2)
-    expect(ob.x + ob.w).toBe(entity.x + sz + tw)
+    expect(ob.x + ob.w).toBe(entity.x + LABEL_TEXT_OFFSET_X + tw)
   })
 
   it('lands the box MIDLINE (the doublet line) EXACTLY on the capsule (y - cap offset)', () => {
@@ -54,7 +63,9 @@ describe('entityObstacle', () => {
     expect(ob.vy).toBe(-0.6)
   })
 
-  it('widens the box for a FACTION marker (bigger sz)', () => {
+  it('widens the box for a FACTION marker (bigger sz → the icon reaches further left)', () => {
+    // The label right edge is now sz-independent (it anchors on the drawn label), so a bigger
+    // marker widens the box via its LEFT (icon) edge, `-sz/2` — FACTION still yields a wider box.
     const loc = entityObstacle({ x: 300, y: 140, kind: 'LOCATION' }, tw, 0, 0)
     const fac = entityObstacle({ x: 300, y: 140, kind: 'FACTION' }, tw, 0, 0)
     expect(fac.w).toBeGreaterThan(loc.w)

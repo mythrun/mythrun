@@ -2,6 +2,7 @@ import {
   ENTITY_SIZE,
   LABEL_CAP_Y_OFFSET,
   LABEL_CLEAR_PAD,
+  LABEL_TEXT_OFFSET_X,
   type FogObstacle,
   type NodeBox,
 } from '@mythrun/client-core/worldgen'
@@ -40,18 +41,21 @@ const CLEAR_HEIGHT = LABEL_CLEAR_PAD.yTop + LABEL_CLEAR_PAD.yBottom
  * to the marker anchor (the icon centre) — the box the fog reserves AND the box the graph's
  * force-sim collides on (`NodeBox`). ONE definition, so collision + fog are consistent (a
  * label can never overlap a neighbour's icon or text — MYT-89 re-audit). The box is OFFSET
- * from the anchor: it spans the reference capsule horizontally (`-sz/2` → `sz + textWidth`,
- * so it extends much further RIGHT — the label sits to the right of the icon) and is centred
- * on the capsule midline `-LABEL_CAP_Y_OFFSET` (slightly ABOVE the anchor), its top/bottom
- * encoding the ~`[-16, +9]` clear window. Pure — no anchor, no motion — so both consumers
- * translate it by their own position.
+ * from the anchor: horizontally it spans the icon on the LEFT (`-sz/2`) to the label's drawn
+ * RIGHT edge (`LABEL_TEXT_OFFSET_X + textWidth` — the SHARED constant `canvas-draw` draws the
+ * label at, so the reserved box bounds the label exactly where it lands; the old `sz +
+ * textWidth` modelled the reference's `+sz` start and under-reserved the ~7px to the real
+ * `+18` draw offset). It is centred on the capsule midline `-LABEL_CAP_Y_OFFSET` (slightly
+ * ABOVE the anchor), its top/bottom encoding the ~`[-16, +9]` clear window — a 25px band that
+ * comfortably contains the design-system label (`--text-sm` ≈ 14px, middle-baselined). Pure —
+ * no anchor, no motion — so both consumers translate it by their own position.
  */
 export function labelBoxExtents(kind: string, textWidth: number): NodeBox {
   const sz = markerSize(kind)
   const midY = -LABEL_CAP_Y_OFFSET
   return {
     left: -sz / 2,
-    right: sz + textWidth,
+    right: LABEL_TEXT_OFFSET_X + textWidth,
     top: midY - CLEAR_HEIGHT / 2,
     bottom: midY + CLEAR_HEIGHT / 2,
   }

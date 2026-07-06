@@ -4,7 +4,6 @@ import {
   DPR_CAP,
   FADE_EXPONENT,
   FOG_PARAMS,
-  LABEL_FONT,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   WIND_BASE,
@@ -12,6 +11,7 @@ import {
   type FogSim,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity } from '@mythrun/client-core/contract'
+import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
 import { entityObstacle } from './fog-obstacles.ts'
 import { paintFog } from './fog-draw.ts'
 
@@ -112,8 +112,9 @@ function buildObstacles(
   prev: Map<number, Pos>,
   dtMs: number,
   widthCache: Map<string, number>,
+  labelFont: string,
 ): FogObstacle[] {
-  ctx.font = LABEL_FONT
+  ctx.font = labelFont
   const perSubStep = SUBSTEP_MS / Math.max(dtMs, MIN_DT_MS)
   const out: FogObstacle[] = []
   entities.forEach((entity, i) => {
@@ -172,6 +173,10 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // Memoized label widths (name → measured px). Persists across frames so `measureText`
   // runs once per distinct name, not per entity per frame (MYT-89 audit #2).
   const widthCacheRef = useRef<Map<string, number>>(new Map())
+  // Resolved DS label font ("`${px}px ${family}`" from `--font-body`/`--text-sm`), cached on
+  // first use. MUST be the SAME string the graph resolves (both call `resolveLabelFont` on a
+  // canvas in the same document) so the fog reserves the width the graph collides on + draws.
+  const labelFontRef = useRef('')
   const simTimeRef = useRef(0)
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
@@ -201,11 +206,12 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     sizeFogCanvas(canvas, ctx)
+    labelFontRef.current ||= resolveLabelFont(canvas)
     const sim = getSim()
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
     // Positions are static during a settle, so the obstacles (vx/vy = 0) are built ONCE
     // and reused across every sub-step — no per-step re-measure.
-    const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS, widthCacheRef.current)
+    const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS, widthCacheRef.current, labelFontRef.current)
     for (let i = 0; i < SETTLE_STEPS; i++) {
       sim.step(SUBSTEP_MS, obstacles, eff)
       simTimeRef.current += SUBSTEP_MS / 1000
@@ -226,6 +232,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     sizeFogCanvas(canvas, ctx)
+    labelFontRef.current ||= resolveLabelFont(canvas)
     return startFogLoop(ctx, getSim(), {
       getEntities: currentEntities,
       shownRef,
@@ -233,6 +240,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       densityRef,
       prevPosRef,
       widthCacheRef,
+      labelFontRef,
     })
   }, [reducedMotion, canvasRef, getSim, currentEntities])
 
@@ -279,6 +287,7 @@ interface FogLoopDeps {
   densityRef: React.RefObject<number>
   prevPosRef: React.RefObject<Map<number, Pos>>
   widthCacheRef: React.RefObject<Map<string, number>>
+  labelFontRef: React.RefObject<string>
 }
 
 /** Run the fixed-timestep rAF loop: each frame, compute the real dt + clock, build the
@@ -286,7 +295,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -294,7 +303,7 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     const dtMs = last === 0 ? SUBSTEP_MS : now - last
     last = now
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
-    const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current)
+    const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current, labelFontRef.current)
     sim.step(dtMs, obstacles, eff)
     repaint(ctx, sim, (now - start) / 1000, eff)
     raf = window.requestAnimationFrame(frame)

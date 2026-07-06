@@ -311,8 +311,20 @@ export const LABEL_CLEAR_PAD = {
  *  bobbed marker: `x` is `+sz` (the marker size, derived); `y` is this literal. */
 export const LABEL_TEXT_Y_OFFSET = 5
 
-/** ref: `x.font='14px Georgia,serif'`. Marker-label font (prototype render). */
-export const LABEL_FONT = '14px Georgia,serif'
+/** The x-offset (px) from the marker anchor where the entity-name LABEL text begins — the
+ *  glyph half-extent plus the icon↔text gap (mirrors `canvas-draw`'s `GLYPH_HALF` + the
+ *  former `LABEL_OFFSET`, now the single source both sides key off). The fog/collision box's
+ *  RIGHT edge is `this + textWidth`, so the reserved box bounds the label EXACTLY where it is
+ *  drawn — the drawn label, the force-sim collision box, and the fog keep-out all derive from
+ *  this ONE constant, closing the ~7px right-edge under-reserve the old `sz + textWidth` box
+ *  had (the box modelled the reference's `+sz` label start, but production draws at `+18`).
+ *
+ *  The label FONT is deliberately NOT a constant here anymore: it is resolved at RUNTIME from
+ *  the design-system tokens (`--font-body` at `--text-sm`) so the on-canvas label uses the
+ *  site's typography — the same serif the entity-list renders names in — instead of the
+ *  bespoke prototype font (MYT-89 follow-up). Both the fog and the graph resolve the identical
+ *  string via `resolveLabelFont`, so they still measure one width and reserve one box. */
+export const LABEL_TEXT_OFFSET_X = 18
 
 // ──────────────────────────────────────────────────────────────────────────
 // Streamlines (debug overlay — the "streamlines" toggle)

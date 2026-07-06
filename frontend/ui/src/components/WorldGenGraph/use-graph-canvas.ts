@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import {
   createForceSim,
-  LABEL_FONT,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   type ForceParams,
@@ -22,6 +21,7 @@ import {
   nearestKey,
   pointerToLocal,
   resolveInk,
+  resolveLabelFont,
   sizeCanvasForDpr,
 } from './canvas-util.ts'
 
@@ -100,16 +100,18 @@ function makeSim(params: Partial<ForceParams>): ForceSim {
 }
 
 /** Measure each node's icon+label collision box (keyed by `displayId` for
- *  `ForceSim.setBoxes`). The text width is measured at the fog's `LABEL_FONT` and memoized
- *  by name (stable per name+font, matching the fog's own width cache) so `measureText` runs
- *  once per distinct name; the box itself is the fog's shared `labelBoxExtents`, so the
- *  graph collides on the EXACT box the fog reserves. Module-scoped so the hook stays lean. */
+ *  `ForceSim.setBoxes`). The text width is measured at the resolved DESIGN-SYSTEM label font
+ *  (`labelFont` — the SAME string the fog measures and the label is drawn in) and memoized by
+ *  name (stable per name+font, matching the fog's own width cache) so `measureText` runs once
+ *  per distinct name; the box itself is the fog's shared `labelBoxExtents`, so the graph
+ *  collides on the EXACT box the fog reserves. Module-scoped so the hook stays lean. */
 function measureBoxes(
   ctx: CanvasRenderingContext2D,
   nodes: readonly GraphNode[],
   widthCache: Map<string, number>,
+  labelFont: string,
 ): Map<string, NodeBox> {
-  ctx.font = LABEL_FONT
+  ctx.font = labelFont
   const out = new Map<string, NodeBox>()
   for (const node of nodes) {
     let width = widthCache.get(node.name)
@@ -139,10 +141,15 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const hoverRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
-  // Memoized label widths (name → measured px at LABEL_FONT) for the collision boxes, mirroring
-  // the fog's own width cache so the graph's box and the fog's obstacle derive identical geometry.
+  // Memoized label widths (name → measured px at the resolved DS label font) for the collision
+  // boxes, mirroring the fog's own width cache so the graph's box and the fog's obstacle derive
+  // identical geometry (same font, same widths, one shared `labelBoxExtents`).
   const boxWidthCacheRef = useRef<Map<string, number>>(new Map())
   const inkRef = useRef('') // resolved theme ink, cached (refreshed on mount + theme flip).
+  // Resolved DS label font ("`${px}px ${family}`" from `--font-body`/`--text-sm`), cached on
+  // first use (family/size don't animate or flip with the theme). The draw, the collision-box
+  // measure, and the fog all key off this ONE string, so the reserved box bounds the drawn label.
+  const labelFontRef = useRef('')
   const clockRef = useRef(0) // buoy-bob clock (seconds); 0 until the loop runs.
   // C6 Act-2 penstroke state: the ms clock + each edge's first-seen ms (synthKey →
   // appear-time), the draw-in lerps from. Advanced/stamped per frame in the motion loop.
@@ -173,9 +180,14 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // 2D context → nothing renders, nothing to collide); re-measured on every sync (memoized).
   const applyBoxes = useCallback((): void => {
     const sim = simRef.current
-    const ctx = canvasRef.current?.getContext('2d') ?? null
-    if (sim === null || ctx === null) return
-    sim.setBoxes(measureBoxes(ctx, nodesRef.current, boxWidthCacheRef.current))
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d') ?? null
+    if (sim === null || canvas === null || ctx === null) return
+    // Lazily resolve-and-cache the DS label font: this LAYOUT effect can run before
+    // `applySize`'s passive effect fills the ref, and the box must be measured at the exact
+    // font the label is drawn in. Idempotent — whoever runs first caches it.
+    labelFontRef.current ||= resolveLabelFont(canvas)
+    sim.setBoxes(measureBoxes(ctx, nodesRef.current, boxWidthCacheRef.current, labelFontRef.current))
   }, [canvasRef])
 
   // Reduced motion: settle the sim to convergence ONCE per graph change, idempotently —
@@ -208,6 +220,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
       sizeRef.current = sizeCanvasForDpr(canvas, ctx)
       inkRef.current = resolveInk(canvas)
+      labelFontRef.current = resolveLabelFont(canvas)
     },
     [],
   )
@@ -230,6 +243,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
         hoverKey: hoverRef.current,
         t: reducedRef.current ? null : clockRef.current,
         showLabels: showLabelsRef.current,
+        labelFont: labelFontRef.current,
       })
       ctx.restore()
     },
