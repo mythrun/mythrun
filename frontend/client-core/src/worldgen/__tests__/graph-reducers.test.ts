@@ -169,8 +169,75 @@ describe('deriveEdges', () => {
         from: 's/0',
         to: 's/1',
         relationship: 'allied_with',
+        arrivalIndex: 2,
+        sourceStage: 'weave',
       },
     ])
+  })
+
+  it('records arrivalIndex (first-seen event order) and classifies sourceStage by prefix', () => {
+    const events: PipelineEvent[] = [
+      {
+        type: 'edge-added',
+        synthKey: 'entity_relationships/relationships/0',
+        from: 's/0',
+        to: 's/1',
+        relationship: 'allied_with',
+      },
+      {
+        type: 'edge-added',
+        synthKey: 'entity_consolidation/relationships/0',
+        from: 's/2',
+        to: 's/3',
+        relationship: 'serves',
+      },
+      {
+        type: 'edge-added',
+        synthKey: 'coherence_pass/edges/0',
+        from: 's/4',
+        to: 's/5',
+        relationship: 'rivals',
+      },
+    ]
+
+    const byKey = new Map(deriveEdges(events).map((e) => [e.synthKey, e]))
+
+    expect(byKey.get('entity_relationships/relationships/0')).toMatchObject({
+      arrivalIndex: 0,
+      sourceStage: 'weave',
+    })
+    expect(byKey.get('entity_consolidation/relationships/0')).toMatchObject({
+      arrivalIndex: 1,
+      sourceStage: 'weave',
+    })
+    expect(byKey.get('coherence_pass/edges/0')).toMatchObject({
+      arrivalIndex: 2,
+      sourceStage: 'snap',
+    })
+  })
+
+  it('keeps the original arrivalIndex when an existing edge synthKey is re-added', () => {
+    const events: PipelineEvent[] = [
+      {
+        type: 'edge-added',
+        synthKey: 'entity_relationships/relationships/0',
+        from: 's/0',
+        to: 's/1',
+        relationship: 'allied_with',
+      },
+      { type: 'entity-added', synthKey: 's/filler', entityKind: 'npc', name: 'Filler' },
+      {
+        type: 'edge-added',
+        synthKey: 'entity_relationships/relationships/0',
+        from: 's/0',
+        to: 's/1',
+        relationship: 'allied_with',
+      },
+    ]
+
+    const [edge] = deriveEdges(events)
+
+    expect(edge?.arrivalIndex).toBe(0)
   })
 
   it('buffers a placeholder edge until the ghost entity-added resolves it', () => {
@@ -205,6 +272,8 @@ describe('deriveEdges', () => {
         from: 'entity_consolidation/ghosts/0',
         to: 's/loc',
         relationship: 'guards',
+        arrivalIndex: 0,
+        sourceStage: 'weave',
       },
     ])
   })

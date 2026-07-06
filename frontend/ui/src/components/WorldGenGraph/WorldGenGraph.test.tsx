@@ -25,7 +25,9 @@ const FIXTURE: GraphNode[] = [
   node('s2/maeris', 'npc', 'Maeris Vale'),
   node('s3/guild', 'faction', 'The Tallow Guild'),
 ]
-const EDGES: GraphEdge[] = [{ synthKey: 'e1', from: 's2/maeris', to: 's3/guild', relationship: 'leads' }]
+const EDGES: GraphEdge[] = [
+  { synthKey: 'e1', from: 's2/maeris', to: 's3/guild', relationship: 'leads', arrivalIndex: 0, sourceStage: 'weave' },
+]
 
 // The chrome labels are consumer-supplied (i18n) props — the DS owns no copy. Every
 // render passes them; tests that assert on them use these exact values.

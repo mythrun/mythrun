@@ -35,6 +35,8 @@ const edge = (synthKey: string, from: string, to: string, relationship: string):
   from,
   to,
   relationship,
+  arrivalIndex: 0,
+  sourceStage: 'weave',
 })
 
 // A scripted mini generation. Each arrival carries the delay (ms) BEFORE it lands —

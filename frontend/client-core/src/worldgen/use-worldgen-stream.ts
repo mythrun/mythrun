@@ -121,6 +121,10 @@ function snapshotToSeed(snap: WorldGenSnapshot): GraphSeed {
       from: r.sourceEntityId,
       to: r.targetEntityId,
       relationship: r.relationshipType,
+      // A pre-existing edge already present in the snapshot: it should not
+      // animate as a weave, so it carries the `snap` stage + the -1 sentinel.
+      arrivalIndex: -1,
+      sourceStage: 'snap',
     }),
   )
   return { nodes, edges }

@@ -49,17 +49,38 @@ export interface GraphNode {
   readonly lastEventIndex: number
 }
 
+/** Which pipeline pass first emitted the edge — drives C6's Act-2 edge draw-in.
+ *  `weave` edges (relationship + consolidation passes) draw in slowly as a
+ *  penstroke; `snap` edges (the late coherence_pass batch) appear fast. */
+export type EdgeSourceStage = 'weave' | 'snap'
+
 export interface GraphEdge {
   readonly synthKey: string
   readonly from: string
   readonly to: string
   readonly relationship: string
+  /** The `deriveEdges` event-loop index at which this edge FIRST appeared —
+   *  first-seen arrival order, so C6 can sequence the weave. A re-add keeps the
+   *  original index; seed edges (`snapshotToSeed`) use the -1 sentinel. */
+  readonly arrivalIndex: number
+  readonly sourceStage: EdgeSourceStage
 }
 
 interface EdgeRecord {
   readonly from: string
   readonly to: string
   readonly relationship: string
+  readonly arrivalIndex: number
+}
+
+/** Classify an edge's originating pass by its `synthKey` stage-prefix (the
+ *  first `/`-segment). `coherence_pass/…` is the late `snap` batch; the
+ *  relationship + consolidation passes `weave`, and any unknown prefix defaults
+ *  to `weave` (the slow-draw path is the safe default — never mis-flag an edge
+ *  as an instant snap). */
+function classifyEdgeStage(synthKey: string): EdgeSourceStage {
+  const stage = synthKey.split('/', 1)[0]
+  return stage === 'coherence_pass' ? 'snap' : 'weave'
 }
 
 /** stage-4 (entity_relationships) may emit an edge endpoint as a `new-NNN`
@@ -127,9 +148,9 @@ function applyNodeEvent(byKey: Map<string, GraphNode>, e: PipelineEvent, index: 
 export function deriveEdges(events: PipelineEvent[]): GraphEdge[] {
   const resolutions = new Map<string, string>()
   const edges = new Map<string, EdgeRecord>()
-  for (const event of events) {
-    applyEdgeEvent(resolutions, edges, event)
-  }
+  events.forEach((event, index) => {
+    applyEdgeEvent(resolutions, edges, event, index)
+  })
   return renderEdges(resolutions, edges)
 }
 
@@ -137,11 +158,15 @@ function applyEdgeEvent(
   resolutions: Map<string, string>,
   edges: Map<string, EdgeRecord>,
   e: PipelineEvent,
+  index: number,
 ): void {
   if (e.type === 'entity-added') {
     if (e.placeholderId !== undefined) resolutions.set(e.placeholderId, e.synthKey)
   } else if (e.type === 'edge-added') {
-    edges.set(e.synthKey, { from: e.from, to: e.to, relationship: e.relationship })
+    // arrivalIndex is set only on first insert for this synthKey; a re-add
+    // updates the endpoints/relationship but keeps the original arrival order.
+    const arrivalIndex = edges.get(e.synthKey)?.arrivalIndex ?? index
+    edges.set(e.synthKey, { from: e.from, to: e.to, relationship: e.relationship, arrivalIndex })
   } else if (e.type === 'edge-removed') {
     edges.delete(e.synthKey)
   } else if (e.type === 'stage-reset') {
@@ -155,7 +180,14 @@ function renderEdges(resolutions: Map<string, string>, edges: Map<string, EdgeRe
     const from = resolveEndpoint(edge.from, resolutions)
     const to = resolveEndpoint(edge.to, resolutions)
     if (from === null || to === null) continue
-    rendered.push({ synthKey, from, to, relationship: edge.relationship })
+    rendered.push({
+      synthKey,
+      from,
+      to,
+      relationship: edge.relationship,
+      arrivalIndex: edge.arrivalIndex,
+      sourceStage: classifyEdgeStage(synthKey),
+    })
   }
   return rendered
 }

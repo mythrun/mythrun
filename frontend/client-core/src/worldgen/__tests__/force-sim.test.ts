@@ -35,7 +35,7 @@ function heteroNode(synthKey: string, displayId: string): GraphNode {
 }
 
 function edge(synthKey: string, from: string, to: string): GraphEdge {
-  return { synthKey, from, to, relationship: 'allied' }
+  return { synthKey, from, to, relationship: 'allied', arrivalIndex: 0, sourceStage: 'weave' }
 }
 
 function dist(

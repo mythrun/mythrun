@@ -74,7 +74,14 @@ const seedOnly: GraphNode = {
   state: 'finalized',
   lastEventIndex: 1,
 }
-const edge: GraphEdge = { synthKey: 'e-ab', from: uuidA, to: uuidB, relationship: 'leads' }
+const edge: GraphEdge = {
+  synthKey: 'e-ab',
+  from: uuidA,
+  to: uuidB,
+  relationship: 'leads',
+  arrivalIndex: 0,
+  sourceStage: 'weave',
+}
 
 /** Positions keyed by `displayId` — the reconciled render id-space. */
 const displayIdPositions = new Map<string, Point>([
