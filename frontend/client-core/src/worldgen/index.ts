@@ -8,6 +8,8 @@
 
 export { create as createForceSim } from './force-sim.ts'
 export type { ForceSim } from './force-sim.ts'
+export { createFogSim } from './fog-sim.ts'
+export type { FogSim, FogObstacle } from './fog-sim.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 

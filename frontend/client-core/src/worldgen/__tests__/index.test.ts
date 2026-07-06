@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createForceSim, deriveNodes, deriveEdges } from '../index.ts'
+import { createForceSim, createFogSim, deriveNodes, deriveEdges } from '../index.ts'
 
 // The `@mythrun/client-core/worldgen` subpath barrel is the DOM-free-pure-data
 // surface the UI library's WorldGenGraph (C4) imports WITHOUT pulling in the
@@ -11,6 +11,7 @@ import { createForceSim, deriveNodes, deriveEdges } from '../index.ts'
 describe('@mythrun/client-core/worldgen barrel', () => {
   it('re-exports the pure-data force-sim + reducers from the subpath root', () => {
     expect(createForceSim).toBeTypeOf('function')
+    expect(createFogSim).toBeTypeOf('function')
     expect(deriveNodes).toBeTypeOf('function')
     expect(deriveEdges).toBeTypeOf('function')
   })
