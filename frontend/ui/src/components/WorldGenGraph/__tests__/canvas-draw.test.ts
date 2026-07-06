@@ -34,6 +34,9 @@ interface Recorder {
   moves: Point[]
   quads: { cx: number; cy: number; x: number; y: number }[]
   translates: Point[]
+  /** Every `fillText(text, …)` call's text — the node-label draws (drawGlyph never
+   *  fillTexts, only fill/stroke rects), so this is exactly the rendered names. */
+  texts: string[]
 }
 
 /** A recording 2D context: draw methods append to logs, everything else is a
@@ -44,20 +47,24 @@ function recorder(): Recorder {
     moves: [],
     quads: [],
     translates: [],
+    texts: [],
     ctx: undefined as unknown as CanvasRenderingContext2D,
   }
-  const impl: Record<string, (...args: number[]) => void> = {
+  const impl: Record<string, (...args: never[]) => void> = {
     stroke: () => {
       r.strokes += 1
     },
-    moveTo: (x, y) => {
+    moveTo: (x: number, y: number) => {
       r.moves.push({ x, y })
     },
-    quadraticCurveTo: (cx, cy, x, y) => {
+    quadraticCurveTo: (cx: number, cy: number, x: number, y: number) => {
       r.quads.push({ cx, cy, x, y })
     },
-    translate: (x, y) => {
+    translate: (x: number, y: number) => {
       r.translates.push({ x, y })
+    },
+    fillText: (text: string) => {
+      r.texts.push(text)
     },
   }
   r.ctx = new Proxy(
@@ -224,6 +231,41 @@ describe('drawNodes — displayId lookup', () => {
       showLabels: false,
     })
     expect(r.translates).toEqual([])
+  })
+})
+
+// ── MYT-89 audit #3: name labels (decoupled from `interactive`) ────────────────────────
+// The regression: labels were gated on `interactive` (false during generation) so the
+// glyphs streamed in nameless while the fog parted around a text-sized keep-out —
+// "fog-parts-around-nothing." drawNodes draws the entity NAME iff `showLabels`, and the
+// gen path now passes `showLabels` true (see WorldGenGraph.test.tsx). The kind is NOT
+// rendered as text — it stays conveyed by the glyph SHAPE.
+
+describe('drawNodes — name labels (MYT-89 audit #3)', () => {
+  const deco = (showLabels: boolean): Parameters<typeof drawNodes>[3] => ({
+    selectedKey: undefined,
+    hoverKey: null,
+    t: null,
+    showLabels,
+  })
+
+  it('draws each node NAME when showLabels is true', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, deco(true))
+    expect(r.texts).toEqual(['The Tallow Guild', 'Maeris Vale'])
+  })
+
+  it('draws NO text when showLabels is false (the pre-fix generation behaviour)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, deco(false))
+    expect(r.texts).toEqual([])
+  })
+
+  it('renders the NAME only — never the kind as a text tag (shape conveys type)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon], displayIdPositions, deco(true))
+    expect(r.texts).toEqual([liveWon.name])
+    expect(r.texts).not.toContain(liveWon.kind) // 'faction' is never drawn as text
   })
 })
 

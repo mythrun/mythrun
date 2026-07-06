@@ -64,15 +64,23 @@ function effectiveDensity(shown: number, total: number, base: number): number {
   return base * Math.pow(remaining, FADE_EXPONENT)
 }
 
-/** Size the backing store to the 900×470 VIRTUAL space × DPR and scale the context so 1
- *  unit == 1 virtual px. The canvas ELEMENT is CSS-sized to the pane, so the fixed
- *  virtual render is uniformly CSS-scaled — the fog never overhangs (BUG 2.2 in pixels:
- *  everything is drawn in virtual units, the scale is applied by CSS, not baked in). */
+/** Size the backing store to the ELEMENT's real client pixels × DPR — full-pane
+ *  resolution (MYT-89 audit #2), so the fog is crisp instead of an upscaled fixed
+ *  900×470. The context is scaled by `(cssW / VIRTUAL_WIDTH) × dpr` so draw code stays in
+ *  the 900×470 VIRTUAL space; the `aspect-[90/47]` box keeps the height in step, so one
+ *  width-derived uniform scale fits both axes. Mirrors the graph's `sizeCanvasForDpr`
+ *  exactly (same element dims + same scale) so the two layered canvases stay pixel-aligned
+ *  — the fog-holes track the glyphs (BUG 2.2 stays closed: drawn in virtual units, the
+ *  resolution is the pane's, not baked in). */
 function sizeFogCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
   const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1)
-  canvas.width = Math.round(VIRTUAL_WIDTH * dpr)
-  canvas.height = Math.round(VIRTUAL_HEIGHT * dpr)
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const rect = canvas.getBoundingClientRect()
+  const cssW = Math.max(1, Math.round(rect.width))
+  const cssH = Math.max(1, Math.round(rect.height))
+  canvas.width = Math.round(cssW * dpr)
+  canvas.height = Math.round(cssH * dpr)
+  const scale = (cssW / VIRTUAL_WIDTH) * dpr
+  ctx.setTransform(scale, 0, 0, scale, 0, 0)
 }
 
 interface Pos {
@@ -80,30 +88,46 @@ interface Pos {
   y: number
 }
 
-/** Build one FogObstacle per entity: measure the label at the locked font, then the
- *  capsule-anchored box (fog-obstacles). `vx`/`vy` is the label's PER-SUB-STEP
- *  displacement — the per-frame delta scaled by `SUBSTEP_MS / dt` so the wake-drag is
- *  frame-rate-independent (a node dragged Δ over a frame drags its wake by Δ total,
- *  however many sub-steps that frame runs). `prev` is mutated to this frame's positions. */
+/** The measured width (px) of a label at the locked font, MEMOIZED by name (MYT-89 audit
+ *  #2): a label's width is fixed for a given name + font, so it is measured ONCE and
+ *  cached — not re-`measureText`'d every entity every frame. Names are stable and the set
+ *  only grows over a session, so the cache never needs invalidation (bounded, no evict). */
+function labelWidth(ctx: CanvasRenderingContext2D, name: string, cache: Map<string, number>): number {
+  const cached = cache.get(name)
+  if (cached !== undefined) return cached
+  const width = ctx.measureText(name).width
+  cache.set(name, width)
+  return width
+}
+
+/** Build one FogObstacle per entity: the memoized label width → the capsule-anchored box
+ *  (fog-obstacles). `vx`/`vy` is the label's PER-SUB-STEP displacement — the per-frame
+ *  delta scaled by `SUBSTEP_MS / dt` so the wake-drag is frame-rate-independent (a node
+ *  dragged Δ over a frame drags its wake by Δ total, however many sub-steps that frame
+ *  runs). `prev` position objects are mutated in place (no fresh Map per frame); stale
+ *  indices (a shrunk entity set) are trimmed so an index can't carry a foreign position. */
 function buildObstacles(
   ctx: CanvasRenderingContext2D,
   entities: readonly FogFieldEntity[],
   prev: Map<number, Pos>,
   dtMs: number,
+  widthCache: Map<string, number>,
 ): FogObstacle[] {
   ctx.font = LABEL_FONT
   const perSubStep = SUBSTEP_MS / Math.max(dtMs, MIN_DT_MS)
   const out: FogObstacle[] = []
-  const next = new Map<number, Pos>()
   entities.forEach((entity, i) => {
     const p = prev.get(i)
     const vx = p ? (entity.x - p.x) * perSubStep : 0
     const vy = p ? (entity.y - p.y) * perSubStep : 0
-    out.push(entityObstacle(entity, ctx.measureText(entity.name).width, vx, vy))
-    next.set(i, { x: entity.x, y: entity.y })
+    out.push(entityObstacle(entity, labelWidth(ctx, entity.name, widthCache), vx, vy))
+    if (p) {
+      p.x = entity.x
+      p.y = entity.y
+    } else prev.set(i, { x: entity.x, y: entity.y })
   })
-  prev.clear()
-  for (const [i, p] of next) prev.set(i, p)
+  let stale = entities.length
+  while (prev.delete(stale)) stale++
   return out
 }
 
@@ -145,6 +169,9 @@ export function useFogCanvas(params: FogCanvasParams): void {
   const totalRef = useRef(totalEntities)
   const densityRef = useRef(density)
   const prevPosRef = useRef<Map<number, Pos>>(new Map())
+  // Memoized label widths (name → measured px). Persists across frames so `measureText`
+  // runs once per distinct name, not per entity per frame (MYT-89 audit #2).
+  const widthCacheRef = useRef<Map<string, number>>(new Map())
   const simTimeRef = useRef(0)
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
@@ -178,7 +205,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
     // Positions are static during a settle, so the obstacles (vx/vy = 0) are built ONCE
     // and reused across every sub-step — no per-step re-measure.
-    const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS)
+    const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS, widthCacheRef.current)
     for (let i = 0; i < SETTLE_STEPS; i++) {
       sim.step(SUBSTEP_MS, obstacles, eff)
       simTimeRef.current += SUBSTEP_MS / 1000
@@ -199,8 +226,50 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     sizeFogCanvas(canvas, ctx)
-    return startFogLoop(ctx, getSim(), { getEntities: currentEntities, shownRef, totalRef, densityRef, prevPosRef })
+    return startFogLoop(ctx, getSim(), {
+      getEntities: currentEntities,
+      shownRef,
+      totalRef,
+      densityRef,
+      prevPosRef,
+      widthCacheRef,
+    })
   }, [reducedMotion, canvasRef, getSim, currentEntities])
+
+  // Re-size the backing store to the pane on resize so the fog stays crisp after a layout
+  // change (MYT-89 audit #2) — parity with the graph's `observeResize`; both size to the
+  // same element, so they stay pixel-aligned. Body at module scope. Inert under jsdom (the
+  // ResizeObserver shim never fires).
+  useEffect(
+    () => observeFogResize(canvasRef.current, { reducedMotion, settleStatic }),
+    [canvasRef, reducedMotion, settleStatic],
+  )
+}
+
+interface FogResizeDeps {
+  reducedMotion: boolean
+  settleStatic: () => void
+}
+
+/** Re-size the fog backing store to the pane on container resize. Under reduced motion,
+ *  re-settle + repaint (`settleStatic` sizes then paints once); under motion, just re-size
+ *  (the running loop repaints into the new backing next frame). Returns the disconnect
+ *  teardown (or undefined — no canvas / no ResizeObserver in jsdom). Module-scoped so the
+ *  hook stays lean; mirrors the graph's `observeResize` so the two layers re-size together. */
+function observeFogResize(canvas: HTMLCanvasElement | null, deps: FogResizeDeps): (() => void) | undefined {
+  if (canvas === null || typeof ResizeObserver === 'undefined') return undefined
+  const observer = new ResizeObserver(() => {
+    if (deps.reducedMotion) {
+      deps.settleStatic()
+      return
+    }
+    const ctx = canvas.getContext('2d')
+    if (ctx !== null) sizeFogCanvas(canvas, ctx)
+  })
+  observer.observe(canvas)
+  return () => {
+    observer.disconnect()
+  }
 }
 
 interface FogLoopDeps {
@@ -209,6 +278,7 @@ interface FogLoopDeps {
   totalRef: React.RefObject<number>
   densityRef: React.RefObject<number>
   prevPosRef: React.RefObject<Map<number, Pos>>
+  widthCacheRef: React.RefObject<Map<string, number>>
 }
 
 /** Run the fixed-timestep rAF loop: each frame, compute the real dt + clock, build the
@@ -216,7 +286,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { getEntities, shownRef, totalRef, densityRef, prevPosRef } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -224,7 +294,7 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     const dtMs = last === 0 ? SUBSTEP_MS : now - last
     last = now
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
-    const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs)
+    const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current)
     sim.step(dtMs, obstacles, eff)
     repaint(ctx, sim, (now - start) / 1000, eff)
     raf = window.requestAnimationFrame(frame)

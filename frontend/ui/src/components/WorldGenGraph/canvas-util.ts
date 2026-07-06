@@ -5,11 +5,14 @@ import type { Point } from './canvas-draw.ts'
 // the hook so each piece stays tiny + independently reasoned. None of this runs
 // under jsdom (no 2D context → the loop never starts, no pointer listeners attach).
 //
-// The graph canvas renders in the fog's 900×470 VIRTUAL space (C5 §3.6): the backing
-// store is sized to the virtual dims × DPR and the ELEMENT is CSS-stretched to the
-// pane, exactly like the fog canvas — so both layers share one CSS scale and the
-// fog-holes line up with the glyphs in pixels (BUG 2.2 closes: draw in virtual units,
-// scale by CSS, never bake the scale into the coordinates).
+// The graph canvas is AUTHORED in the fog's 900×470 VIRTUAL space (C5 §3.6) but
+// RENDERED at the pane's FULL resolution (MYT-89 audit #2): the backing store is sized
+// to the ELEMENT's real client pixels × DPR (not a fixed 900×470 that CSS then upscales
+// to a wide/retina pane → the blur/zoom), and the context is scaled so 1 draw unit == 1
+// virtual px. The fog canvas sizes identically off the same element, so both layers
+// share one virtual→pane transform and the fog-holes line up with the glyphs in pixels
+// (BUG 2.2 stays closed: draw in virtual units, the resolution is the pane's, not baked
+// into the coordinates).
 
 /** The theme ink for the Canvas — the one surface Tailwind can't reach, so the
  *  render loop resolves the token itself. The generated `--color-ink` token is
@@ -23,21 +26,27 @@ export function resolveInk(canvas: HTMLCanvasElement): string {
   return ink.length > 0 ? ink : style.color
 }
 
-/** Size the backing store to the 900×470 VIRTUAL space × (capped) DPR and scale the
- *  context so 1 unit == 1 virtual px — mirrors the fog's `sizeFogCanvas` so the two
- *  layered canvases render at the same virtual resolution and CSS-scale identically.
- *  Returns the current CSS box (the physical px size the ELEMENT occupies), which the
- *  pointer mapping needs to convert client px → virtual units. */
+/** Size the backing store to the ELEMENT's real client pixels × (capped) DPR — full-pane
+ *  resolution, so the render is crisp on a wide/retina pane instead of an upscaled fixed
+ *  900×470 (MYT-89 audit #2). The context is scaled by `(cssW / VIRTUAL_WIDTH) × dpr` so
+ *  draw code stays in the 900×470 VIRTUAL space; the `aspect-[90/47]` box keeps
+ *  `cssH/cssW ≈ VIRTUAL_HEIGHT/VIRTUAL_WIDTH`, so one width-derived uniform scale fits
+ *  both axes. Mirrors the fog's `sizeFogCanvas` exactly (same element dims + same scale)
+ *  so the two layered canvases stay pixel-aligned. Returns the current CSS box (the size
+ *  the ELEMENT occupies), which the pointer mapping needs to convert client px → virtual. */
 export function sizeCanvasForDpr(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
 ): { cssW: number; cssH: number } {
   const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1)
-  canvas.width = Math.round(VIRTUAL_WIDTH * dpr)
-  canvas.height = Math.round(VIRTUAL_HEIGHT * dpr)
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   const rect = canvas.getBoundingClientRect()
-  return { cssW: Math.max(1, Math.round(rect.width)), cssH: Math.max(1, Math.round(rect.height)) }
+  const cssW = Math.max(1, Math.round(rect.width))
+  const cssH = Math.max(1, Math.round(rect.height))
+  canvas.width = Math.round(cssW * dpr)
+  canvas.height = Math.round(cssH * dpr)
+  const scale = (cssW / VIRTUAL_WIDTH) * dpr
+  ctx.setTransform(scale, 0, 0, scale, 0, 0)
+  return { cssW, cssH }
 }
 
 /** Convert a pointer event to the graph's CENTRED VIRTUAL coordinate space (the space

@@ -54,6 +54,7 @@ function stubGetContext(value: CanvasRenderingContext2D | null): void {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('WorldGenGraph — generation gate (§3.4)', () => {
@@ -227,5 +228,54 @@ describe('WorldGenGraph — motion contract', () => {
     expect(raf).toHaveBeenCalled()
     unmount()
     expect(caf).toHaveBeenCalled()
+  })
+})
+
+// A recording context that logs every `fillText` text and returns a plausible
+// `measureText` width — enough for one motion frame of the graph + fog loops to run
+// under jsdom without throwing, so the drawn labels are observable.
+function labelRecordingCtx(texts: string[]): CanvasRenderingContext2D {
+  return new Proxy(
+    {},
+    {
+      get: (_t, prop) => {
+        if (prop === 'measureText') return (s: string) => ({ width: s.length * 7 })
+        if (prop === 'fillText')
+          return (text: string) => {
+            texts.push(text)
+          }
+        return () => undefined
+      },
+      set: () => true,
+    },
+  ) as unknown as CanvasRenderingContext2D
+}
+
+describe('WorldGenGraph — generation labels + drag (MYT-89 audit #3 / #5)', () => {
+  it('draws the node NAMES during generation (labels decoupled from interactive — #3)', () => {
+    const texts: string[] = []
+    stubGetContext(labelRecordingCtx(texts))
+    // Capture the rAF callbacks WITHOUT running them synchronously, then drive exactly one
+    // frame of each registered loop (graph + fog). Only the graph fillTexts entity names.
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb))
+    render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />) // interactive defaults false (gen)
+    frames.slice().forEach((cb) => {
+      cb(16)
+    })
+    for (const n of FIXTURE) expect(texts).toContain(n.name)
+    // The kind is conveyed by the glyph SHAPE, never drawn as a text tag.
+    expect(texts).not.toContain('location')
+  })
+
+  it('attaches Canvas pointer handlers DURING generation (drag decoupled from #5)', () => {
+    // A fine pointer is required for Canvas drag; jsdom has no matchMedia, so stub it.
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+    stubGetContext(fakeCtx())
+    vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    const addSpy = vi.spyOn(HTMLCanvasElement.prototype, 'addEventListener')
+    render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />) // gen (interactive false)
+    const attachedDrag = addSpy.mock.calls.some(([type]) => type === 'pointerdown')
+    expect(attachedDrag).toBe(true) // the pre-fix effect gated this off during generation
   })
 })

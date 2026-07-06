@@ -16,13 +16,14 @@ import {
 } from './canvas-util.ts'
 
 // The imperative Canvas controller for WorldGenGraph (MYT-89 C5). Owns the physics
-// (a persistent ForceSim in the 900×470 VIRTUAL space — the SAME space the fog renders
-// in, so a node's glyph and its fog-hole land on one coordinate), the buoy-bob clock,
-// the rAF render loop, DPR sizing, and — only in the interactive (reveal) phase —
-// fine-pointer hover/drag/select. Everything is guarded on a live 2D context, so under
-// jsdom (getContext → null) NOTHING here runs — the a11y entity list is the whole
-// testable + accessible surface. The FOLD never runs here: nodes/edges arrive as props
-// (the parent folds per SSE event); a change re-syncs.
+// (a persistent ForceSim in the 900×470 VIRTUAL space — the coordinate space the fog also
+// renders in, so a node's glyph and its fog-hole land on one coordinate; the RESOLUTION is
+// the pane's full pixels — audit #2), the buoy-bob clock, the rAF render loop, full-res
+// sizing, the cached theme ink, and fine-pointer hover/drag (live during generation too —
+// audit #5; only tap-to-select is reveal-gated). Everything is guarded on a live 2D
+// context, so under jsdom (getContext → null) NOTHING here runs — the a11y entity list is
+// the whole testable + accessible surface. The FOLD never runs here: nodes/edges arrive as
+// props (the parent folds per SSE event); a change re-syncs.
 //
 // It ALSO exposes `getFogEntities()` — the live node positions (+ the render-only bob),
 // mapped into the fog's VIRTUAL space — which WorldGenGraph feeds to the fog layer each
@@ -52,10 +53,15 @@ export interface GraphCanvasParams {
   selectedKey: string | undefined
   onSelect: (displayId: string) => void
   reducedMotion: boolean
-  /** Reveal phase (§3.4): shows node labels + attaches fine-pointer selection. During
-   *  generation (default `false`) the graph is inert — mono-ink glyphs, no labels, no
-   *  Canvas selection (selection belongs to the reveal). */
+  /** Reveal phase (§3.4): gates ONLY Canvas tap-to-select (`onSelect`). Fine-pointer
+   *  hover + drag-to-pin are LIVE regardless (MYT-89 audit #5) — dragging a node through
+   *  the fog is the toy, available during generation; only click-to-reveal-info is
+   *  reveal-only. */
   interactive: boolean
+  /** Draw the node NAME beside each glyph (MYT-89 audit #3). Decoupled from `interactive`
+   *  so names show DURING generation too — the fog already reserves a label-sized keep-out
+   *  per node, so drawing the name closes that visible mismatch. Type stays shape-only. */
+  showLabels: boolean
 }
 
 export interface GraphCanvas {
@@ -71,7 +77,7 @@ function settle(sim: ForceSim): void {
 }
 
 export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
-  const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion, interactive } = params
+  const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion, interactive, showLabels } = params
 
   // Latest props/state the imperative closures read (the useLatest idiom): refs so
   // the rAF loop + pointer listeners always see current values without re-binding.
@@ -82,9 +88,11 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const onSelectRef = useRef(onSelect)
   const reducedRef = useRef(reducedMotion)
   const interactiveRef = useRef(interactive)
+  const showLabelsRef = useRef(showLabels)
   const hoverRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
+  const inkRef = useRef('') // resolved theme ink, cached (refreshed on mount + theme flip).
   const clockRef = useRef(0) // buoy-bob clock (seconds); 0 until the loop runs.
   // C6 Act-2 penstroke state: the ms clock + each edge's first-seen ms (synthKey →
   // appear-time), the draw-in lerps from. Advanced/stamped per frame in the motion loop.
@@ -96,6 +104,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   onSelectRef.current = onSelect
   reducedRef.current = reducedMotion
   interactiveRef.current = interactive
+  showLabelsRef.current = showLabels
 
   // The sim lives in the fog's VIRTUAL space (C5 §3.6) — created lazily on first sync.
   // B2's containment (boundary force + distanceMax + per-tick clamp) now uses the real
@@ -127,13 +136,19 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     return fogEntitiesFrom(nodesRef.current, sim.positions(), t)
   }, [ensureSettled])
 
+  // Size the backing store to the pane AND cache the theme ink — the once-per-mount/resize
+  // canvas prep the draw paths share. `resolveInk` reads `getComputedStyle`, which the
+  // motion loop used to call EVERY frame (MYT-89 audit #2); caching it here (+ on a theme
+  // flip, via the observer below) lets the loop read the ref instead.
   const applySize = useCallback((canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
     sizeRef.current = sizeCanvasForDpr(canvas, ctx)
+    inkRef.current = resolveInk(canvas)
   }, [])
 
   // Draw one frame of the graph (edges + glyphs) in the VIRTUAL space, in the resolved
-  // ink. `t` is the bob clock (null under reduced motion → no bob); `interactive`
-  // enables the reveal's name labels (OFF during generation — §3.4).
+  // ink. `t` is the bob clock (null under reduced motion → no bob); `showLabels` draws the
+  // node name beside each glyph (ON during generation too — MYT-89 audit #3, decoupled
+  // from `interactive`).
   const paintFrame = useCallback((ctx: CanvasRenderingContext2D, ink: string): void => {
     ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
     ctx.save()
@@ -146,7 +161,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       selectedKey: selectedRef.current,
       hoverKey: hoverRef.current,
       t: reducedRef.current ? null : clockRef.current,
-      showLabels: interactiveRef.current,
+      showLabels: showLabelsRef.current,
     })
     ctx.restore()
   }, [getSim])
@@ -159,7 +174,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
     ensureSettled()
-    paintFrame(ctx, resolveInk(canvas))
+    paintFrame(ctx, inkRef.current)
   }, [canvasRef, applySize, ensureSettled, paintFrame])
 
   // Re-sync the physics whenever the folded graph changes. In a LAYOUT effect (runs
@@ -185,26 +200,17 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
-    return startMotionLoop(ctx, canvas, { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef })
+    return startMotionLoop(ctx, { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef, inkRef })
   }, [reducedMotion, canvasRef, applySize, paintFrame, getSim])
 
-  // Fine-pointer interaction (reveal only): hover-raise, drag-to-pin, tap-to-select.
-  // Attached only when INTERACTIVE + a live context + a FINE pointer + motion on — a
-  // coarse (touch) pointer and reduced motion both select via the list. During
-  // generation (interactive === false) the Canvas is inert (§3.4 gate).
+  // Fine-pointer interaction: hover-raise + drag-to-pin are LIVE whenever motion is on +
+  // a live context + a FINE pointer (MYT-89 audit #5 — dragging a node through the fog is
+  // the toy, available DURING generation). Only the tap-to-select `onSelect` call is gated
+  // on `interactive` (reveal-only), inside `attachPointerHandlers`. Body at module scope.
   useEffect(() => {
-    if (!interactive || reducedMotion || !hasFinePointer()) return
-    const canvas = canvasRef.current
-    if (canvas === null) return
-    if (canvas.getContext('2d') === null) return
-    return attachPointerHandlers(canvas, {
-      getSim,
-      sizeRef,
-      hoverRef,
-      dragRef,
-      onSelectRef,
-    })
-  }, [interactive, reducedMotion, canvasRef, getSim])
+    const deps: PointerDeps = { getSim, sizeRef, hoverRef, dragRef, onSelectRef, interactiveRef }
+    return setupPointerHandlers(canvasRef.current, reducedMotion, deps)
+  }, [reducedMotion, canvasRef, getSim])
 
   // Repaint on container resize, honouring the current mode (static vs let-the-loop-
   // handle-it). Mount-only; reads the latest mode via ref. jsdom's ResizeObserver is
@@ -214,7 +220,37 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     [canvasRef, applySize, staticPaint],
   )
 
+  // Re-resolve the cached ink on a light/dark flip (MYT-89 audit #2). Body at module scope.
+  useEffect(() => observeThemeInk({ canvasRef, inkRef, reducedRef, staticPaint }), [canvasRef, staticPaint])
+
   return { getFogEntities }
+}
+
+interface ThemeInkDeps {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>
+  inkRef: React.RefObject<string>
+  reducedRef: React.RefObject<boolean>
+  staticPaint: () => void
+}
+
+/** Re-resolve the cached ink into `inkRef` when the theme flips (the `.dark` class toggling
+ *  on `<html>`). The motion loop reads `inkRef` each frame, so it repaints in the new ink on
+ *  the next frame; a static (reduced-motion) graph needs an explicit repaint. Returns the
+ *  disconnect teardown (or undefined where MutationObserver is absent — jsdom without a
+ *  shim). This deterministic signal is what lets the loop CACHE the ink instead of re-reading
+ *  `getComputedStyle` every frame (MYT-89 audit #2). Module-scoped so the hook stays lean. */
+function observeThemeInk(deps: ThemeInkDeps): (() => void) | undefined {
+  const { canvasRef, inkRef, reducedRef, staticPaint } = deps
+  if (typeof MutationObserver === 'undefined') return undefined
+  const observer = new MutationObserver(() => {
+    const canvas = canvasRef.current
+    if (canvas !== null) inkRef.current = resolveInk(canvas)
+    if (reducedRef.current) staticPaint()
+  })
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  return () => {
+    observer.disconnect()
+  }
 }
 
 interface ResizeDeps {
@@ -256,6 +292,7 @@ interface MotionLoopDeps {
   clockRef: React.RefObject<number>
   edgesRef: React.RefObject<GraphEdge[]>
   edgeDrawRef: React.RefObject<EdgeDrawState>
+  inkRef: React.RefObject<string>
 }
 
 /** Paint the edge layer with the C6 draw-in: each edge reveals as a source→target penstroke
@@ -289,16 +326,13 @@ function recordEdgeAppearances(edges: readonly GraphEdge[], appear: Map<string, 
  *  the sim, and repaint the graph (edges drawing in + mono-ink glyphs with the render-only
  *  buoy bob). Returns the cancel teardown. Module-scoped so the hook body stays lean.
  *
- *  The theme ink is re-resolved EACH frame (not captured once) so a light/dark toggle
- *  mid-generation repaints the Canvas immediately — the Canvas is the one surface
- *  Tailwind can't reach, and a captured ink would stay stale until remount. A single
- *  computed-style read per frame is the accepted cost (C4 review). */
-function startMotionLoop(
-  ctx: CanvasRenderingContext2D,
-  canvas: HTMLCanvasElement,
-  deps: MotionLoopDeps,
-): () => void {
-  const { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef } = deps
+ *  The theme ink is read from `inkRef` (cached), NOT re-resolved via `getComputedStyle`
+ *  every frame (MYT-89 audit #2 — that per-frame style read was pure waste). The hook's
+ *  MutationObserver refreshes the ref on a light/dark flip, so the very next frame
+ *  repaints in the new ink — the Canvas (the one surface Tailwind can't reach) still
+ *  tracks the theme, without the per-frame cost. */
+function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): () => void {
+  const { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef, inkRef } = deps
   let raf = 0
   const start = performance.now()
   const frame = (now: number): void => {
@@ -307,7 +341,7 @@ function startMotionLoop(
     edgeDrawRef.current.clockMs = elapsedMs
     recordEdgeAppearances(edgesRef.current, edgeDrawRef.current.appear, elapsedMs)
     getSim().tick()
-    paintFrame(ctx, resolveInk(canvas))
+    paintFrame(ctx, inkRef.current)
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)
@@ -316,18 +350,37 @@ function startMotionLoop(
   }
 }
 
-interface PointerDeps {
+export interface PointerDeps {
   getSim: () => ForceSim
   sizeRef: React.RefObject<{ cssW: number; cssH: number }>
   hoverRef: React.RefObject<string | null>
   dragRef: React.RefObject<DragState | null>
   onSelectRef: React.RefObject<(displayId: string) => void>
+  /** Gates ONLY tap-to-select (MYT-89 audit #5): a click fires `onSelect` in the reveal
+   *  (`true`), but is inert during generation (`false`). Drag-to-pin is live either way. */
+  interactiveRef: React.RefObject<boolean>
+}
+
+/** Attach the fine-pointer handlers when motion is on, a FINE pointer is present, and the
+ *  canvas has a live 2D context; otherwise a no-op (a coarse/touch pointer, reduced motion,
+ *  or jsdom → the entity list is the selection surface). Returns the teardown (or undefined).
+ *  Module-scoped so the hook body stays lean (mirrors `observeResize`). NOT gated on
+ *  `interactive` — drag is live during generation; only `onSelect` is reveal-gated (#5). */
+function setupPointerHandlers(
+  canvas: HTMLCanvasElement | null,
+  reducedMotion: boolean,
+  deps: PointerDeps,
+): (() => void) | undefined {
+  if (reducedMotion || !hasFinePointer() || canvas === null) return undefined
+  if (canvas.getContext('2d') === null) return undefined
+  return attachPointerHandlers(canvas, deps)
 }
 
 /** Wire pointermove/down/up/leave on the canvas; returns the teardown. Split out of
- *  the hook so the effect body stays small and this stays independently readable. */
-function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDeps): () => void {
-  const { getSim, sizeRef, hoverRef, dragRef, onSelectRef } = deps
+ *  the hook so the effect body stays small and this stays independently readable.
+ *  Exported for unit test (jsdom can't drive real pointer capture through the effect). */
+export function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDeps): () => void {
+  const { getSim, sizeRef, hoverRef, dragRef, onSelectRef, interactiveRef } = deps
   const localOf = (e: PointerEvent): Point =>
     pointerToLocal(e, canvas, sizeRef.current.cssW, sizeRef.current.cssH)
 
@@ -355,8 +408,8 @@ function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDeps): ()
     const drag = dragRef.current
     if (drag === null) return
     if (!drag.moved) {
-      getSim().unpin(drag.key) // a tap (not a drag) selects + releases any prior pin
-      onSelectRef.current(drag.key)
+      getSim().unpin(drag.key) // a tap (not a drag) releases any prior pin, always
+      if (interactiveRef.current) onSelectRef.current(drag.key) // …but only selects in the reveal
     }
     dragRef.current = null
   }

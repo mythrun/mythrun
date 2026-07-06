@@ -57,6 +57,11 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  tap), and draws the name labels. Preserves the `displayId` selection contract —
    *  it is only GATED OFF during generation, never changed. */
   interactive?: boolean
+  /** Draw the entity NAME beside each glyph. Default `true` — names show DURING
+   *  generation too (MYT-89 audit #3), decoupled from `interactive`: the fog reserves a
+   *  label-sized keep-out per node, so drawing the name closes that mismatch. Type stays
+   *  conveyed by the glyph SHAPE (no type tag). Pass `false` for a bare mono-ink field. */
+  showLabels?: boolean
   /** The world-gen status card (C4) shown top-left of the graph pane during
    *  generation. When provided, rendered as a DOM overlay over the fog + graph
    *  canvases; omit it (e.g. the reveal) to hide it. */

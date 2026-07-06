@@ -18,9 +18,10 @@ import { useGraphCanvas } from './use-graph-canvas.ts'
 //   3. a status-card DOM overlay top-left (WorldGenStatusCard, C4) — progress, so the
 //      pre-entity stretch reads as work, not a hang.
 //
-// The GENERATION graph (default) is INERT: no entity list, no selection, no labels — the
-// fog is the ambient animation. The REVEAL opts in with `interactive`, which turns on the
-// accessible + selectable entity list, Canvas selection, and the on-glyph labels (§3.4).
+// The GENERATION graph (default) has no entity list and no click-to-select — but the
+// glyphs ARE named (MYT-89 audit #3, `showLabels` default true) and CAN be dragged through
+// the fog (audit #5). The REVEAL opts in with `interactive`, which adds the accessible +
+// selectable entity list and Canvas tap-to-select (§3.4); labels + drag are live in both.
 //
 // The FOLD never runs here: nodes/edges arrive as PROPS (the parent folds each SSE
 // event); a change re-syncs the physics WITHOUT resetting the layout. All the imperative
@@ -34,6 +35,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     onSelect,
     reducedMotion = false,
     interactive = false,
+    showLabels = true,
     status,
     shownEntities,
     totalEntities,
@@ -52,6 +54,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     onSelect,
     reducedMotion,
     interactive,
+    showLabels,
   })
 
   const shown = shownEntities ?? nodes.length
