@@ -3,6 +3,7 @@ import {
   LABEL_CAP_Y_OFFSET,
   LABEL_CLEAR_PAD,
   type FogObstacle,
+  type NodeBox,
 } from '@mythrun/client-core/worldgen'
 
 // Pure obstacle GEOMETRY for the world-gen fog shell (MYT-89 C3). Turns an entity's
@@ -35,12 +36,33 @@ export function markerSize(kind: string): number {
 const CLEAR_HEIGHT = LABEL_CLEAR_PAD.yTop + LABEL_CLEAR_PAD.yBottom
 
 /**
- * Build the `FogObstacle` box for one entity. `x`/`y` is the marker anchor (virtual
- * space); `textWidth` the measured label width; `vx`/`vy` the box's PER-SUB-STEP motion
- * (for the wake-drag when a label moves). The box spans the reference capsule
- * horizontally (`anchorX - sz/2` → `anchorX + sz + textWidth`) and is centred vertically
- * on the capsule midline (`anchorY - LABEL_CAP_Y_OFFSET`), so its midline lands on the
- * capsule and its top/bottom encode the ~`[-16, +9]` clear window (see module note).
+ * The icon+label box for one entity kind + measured text width, as SIGNED extents RELATIVE
+ * to the marker anchor (the icon centre) — the box the fog reserves AND the box the graph's
+ * force-sim collides on (`NodeBox`). ONE definition, so collision + fog are consistent (a
+ * label can never overlap a neighbour's icon or text — MYT-89 re-audit). The box is OFFSET
+ * from the anchor: it spans the reference capsule horizontally (`-sz/2` → `sz + textWidth`,
+ * so it extends much further RIGHT — the label sits to the right of the icon) and is centred
+ * on the capsule midline `-LABEL_CAP_Y_OFFSET` (slightly ABOVE the anchor), its top/bottom
+ * encoding the ~`[-16, +9]` clear window. Pure — no anchor, no motion — so both consumers
+ * translate it by their own position.
+ */
+export function labelBoxExtents(kind: string, textWidth: number): NodeBox {
+  const sz = markerSize(kind)
+  const midY = -LABEL_CAP_Y_OFFSET
+  return {
+    left: -sz / 2,
+    right: sz + textWidth,
+    top: midY - CLEAR_HEIGHT / 2,
+    bottom: midY + CLEAR_HEIGHT / 2,
+  }
+}
+
+/**
+ * Build the `FogObstacle` box for one entity — the shared `labelBoxExtents` translated to
+ * the marker anchor (virtual space), plus the box's PER-SUB-STEP motion (`vx`/`vy`, for the
+ * wake-drag when a label moves). Output is bit-identical to the pre-refactor box: `x`/`y`
+ * is the box top-left, `w`/`h` its size. The box midline lands on the reference capsule and
+ * its top/bottom encode the ~`[-16, +9]` clear window (see module note).
  */
 export function entityObstacle(
   entity: { x: number; y: number; kind: string },
@@ -48,15 +70,12 @@ export function entityObstacle(
   vx: number,
   vy: number,
 ): FogObstacle {
-  const sz = markerSize(entity.kind)
-  const left = entity.x - sz / 2
-  const right = entity.x + sz + textWidth
-  const midY = entity.y - LABEL_CAP_Y_OFFSET
+  const b = labelBoxExtents(entity.kind, textWidth)
   return {
-    x: left,
-    y: midY - CLEAR_HEIGHT / 2,
-    w: right - left,
-    h: CLEAR_HEIGHT,
+    x: entity.x + b.left,
+    y: entity.y + b.top,
+    w: b.right - b.left,
+    h: b.bottom - b.top,
     vx,
     vy,
   }

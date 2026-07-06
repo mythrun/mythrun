@@ -7,7 +7,7 @@
 // `@mythrun/client-core` barrel drags all of that in; this slice is pure data.
 
 export { create as createForceSim, FORCE_PARAMS, FORCE_PARAM_RANGES } from './force-sim.ts'
-export type { ForceSim, ForceParams } from './force-sim.ts'
+export type { ForceSim, ForceParams, NodeBox } from './force-sim.ts'
 export { createFogSim } from './fog-sim.ts'
 export type { FogSim, FogObstacle } from './fog-sim.ts'
 // The LOCKED fog params + every render-side constant (C1). Pure data (no DOM), so it

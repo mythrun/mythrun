@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { create, FORCE_PARAMS } from '../force-sim.ts'
+import type { ForceParams, NodeBox } from '../force-sim.ts'
 import type { GraphNode, GraphEdge } from '../graph-reducers.ts'
 
 // The world-gen graph populates live as entities stream in over ~10 minutes.
@@ -50,6 +51,51 @@ function dist(positions: Map<string, { x: number; y: number }>, a: string, b: st
   const pb = positions.get(b)
   if (pa === undefined || pb === undefined) throw new Error('missing node')
   return Math.hypot(pa.x - pb.x, pa.y - pb.y)
+}
+
+const EPS = 1e-6
+
+/** A representative icon+label collision box (SIGNED offset extents relative to the node
+ *  position) — the shape the fog reserves per entity (WorldGenFog `labelBoxExtents`): the icon
+ *  at the LEFT, the text label extending RIGHT by `textWidth`, the box centred slightly ABOVE
+ *  the anchor (the `LABEL_CAP_Y_OFFSET = 3` capsule), height = the reference `[-16, +9]` clear
+ *  window (25). A wider label = more horizontal extent, SAME height — the asymmetry the
+ *  rectangular collide packs around. The sim takes plain NUMBERS (no DOM / canvas). */
+function box(textWidth: number): NodeBox {
+  const sz = 11 // ENTITY_SIZE.DEFAULT
+  return { left: -sz / 2, right: sz + textWidth, top: -15.5, bottom: 9.5 }
+}
+
+interface Pos {
+  x: number
+  y: number
+}
+
+/** The signed X/Y overlap of two OFFSET boxes at their node positions (positive = overlap). */
+function boxOverlap(pa: Pos, ba: NodeBox, pb: Pos, bb: NodeBox): { x: number; y: number } {
+  return {
+    x: Math.min(pa.x + ba.right, pb.x + bb.right) - Math.max(pa.x + ba.left, pb.x + bb.left),
+    y: Math.min(pa.y + ba.bottom, pb.y + bb.bottom) - Math.max(pa.y + ba.top, pb.y + bb.top),
+  }
+}
+
+/** Two OFFSET boxes are DISJOINT when they don't overlap on at least one axis (accounting for
+ *  the vertical offset baked into `top`/`bottom`). */
+function boxesDisjoint(pa: Pos, ba: NodeBox, pb: Pos, bb: NodeBox): boolean {
+  const o = boxOverlap(pa, ba, pb, bb)
+  return o.x <= EPS || o.y <= EPS
+}
+
+/** Only the rectangular collide acts (charge / centre / boundary off, no padding, no seed
+ *  jitter so every node starts coincident at the origin) — isolates the box separation so a
+ *  disjoint settle is attributable to collide alone, not to charge repulsion. */
+const COLLIDE_ONLY: Partial<ForceParams> = {
+  chargeStrength: 0,
+  centerStrength: 0,
+  boundaryStrength: 0,
+  collisionPadding: 0,
+  seedJitter: 0,
+  margin: 0,
 }
 
 describe('ForceSim node-identity preservation', () => {
@@ -320,7 +366,7 @@ describe('ForceSim containment margin inset (MYT-89 follow-up)', () => {
 describe('ForceSim spread (MYT-89 audit #4)', () => {
   it('spreads a burst to FILL the space (not a central clump), contained + non-overlapping', () => {
     // The audit-#4 bug: nodes clumped in the centre of the 900×470 draw space. The
-    // re-tuned DEFAULTS (stronger charge, wider distanceMax, no centre pull, forceCollide,
+    // re-tuned DEFAULTS (stronger charge, wider distanceMax, no centre pull, box collide,
     // real seed jitter) must instead SPREAD the graph to fill the space. Deterministic
     // seeding (an injected LCG) so the settled layout is reproducible — big seedJitter
     // means no coincident nodes, so d3's internal coincidence jiggle never fires either.
@@ -336,11 +382,17 @@ describe('ForceSim spread (MYT-89 audit #4)', () => {
     const many: GraphNode[] = []
     for (let i = 0; i < 24; i++) many.push(node(`n-${String(i)}`))
     sim.sync(many, [])
+    // Real icon+label boxes are the collision unit now (a modest ~50px label each) — set them
+    // before settling so the rectangular collide has geometry to separate.
+    const nodeBox = box(50)
+    const boxes = new Map<string, NodeBox>(many.map((n) => [n.displayId, nodeBox]))
+    sim.setBoxes(boxes)
     for (let i = 0; i < 600; i++) sim.tick()
 
-    const pts = [...sim.positions().values()]
-    const xs = pts.map((p) => p.x)
-    const ys = pts.map((p) => p.y)
+    const p = sim.positions()
+    const pts = [...p.values()]
+    const xs = pts.map((pt) => pt.x)
+    const ys = pts.map((pt) => pt.y)
     const xSpan = Math.max(...xs) - Math.min(...xs)
     const ySpan = Math.max(...ys) - Math.min(...ys)
 
@@ -353,19 +405,120 @@ describe('ForceSim spread (MYT-89 audit #4)', () => {
     // repulsion — no node escapes the centred draw space.
     const halfW = width / 2
     const halfH = height / 2
-    for (const p of pts) {
-      expect(Math.abs(p.x)).toBeLessThanOrEqual(halfW)
-      expect(Math.abs(p.y)).toBeLessThanOrEqual(halfH)
+    for (const pt of pts) {
+      expect(Math.abs(pt.x)).toBeLessThanOrEqual(halfW)
+      expect(Math.abs(pt.y)).toBeLessThanOrEqual(halfH)
     }
 
-    // NO OVERLAP: forceCollide keeps every pair apart. d3's forceCollide(r) resolves
-    // centres to ≥ r_a + r_b (≈ 2r) apart, so ≥ collideRadius is the robust guard that
-    // the collide force is present + working (room for labels, no stacked glyphs).
-    const r = FORCE_PARAMS.collideRadius
-    pts.forEach((a, i) => {
-      pts.slice(i + 1).forEach((b) => {
-        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(r)
+    // NO OVERLAP: the rectangular collide keeps every pair of icon+label BOXES disjoint (not
+    // merely centres a fixed distance apart) — so no label ever overlaps a neighbour's icon or
+    // text. The offset AABBs are disjoint on at least one axis for every pair.
+    const entries = [...p.values()]
+    entries.forEach((a, i) => {
+      entries.slice(i + 1).forEach((b) => {
+        expect(boxesDisjoint(a, nodeBox, b, nodeBox)).toBe(true)
       })
     })
+  })
+})
+
+describe('ForceSim rectangular box collision (MYT-89 re-audit)', () => {
+  it('keeps every icon+label box disjoint after settle — collide-only, wide + narrow boxes', () => {
+    // The re-audit fix: collide on the node's icon + FULL text label BOX (an offset AABB), not
+    // a circle around the icon. Representative dims — one WIDE (long-label) box beside several
+    // NARROW ones, all seeded coincident at the origin (COLLIDE_ONLY). After settle every pair
+    // of offset boxes must be disjoint — the vertical offset (top/bottom asymmetry) included.
+    const sim = create({ width: 900, height: 470, params: COLLIDE_ONLY })
+    sim.sync([node('wide'), node('n1'), node('n2'), node('n3')], [])
+    const boxes = new Map<string, NodeBox>([
+      ['wide', box(200)],
+      ['n1', box(20)],
+      ['n2', box(40)],
+      ['n3', box(10)],
+    ])
+    sim.setBoxes(boxes)
+    for (let i = 0; i < 500; i++) sim.tick()
+
+    const p = sim.positions()
+    const ids = [...boxes.keys()]
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const idA = ids[i]
+        const idB = ids[j]
+        if (idA === undefined || idB === undefined) throw new Error('missing id')
+        const pa = p.get(idA)
+        const pb = p.get(idB)
+        const ba = boxes.get(idA)
+        const bb = boxes.get(idB)
+        if (pa === undefined || pb === undefined || ba === undefined || bb === undefined) {
+          throw new Error('missing node / box')
+        }
+        expect(boxesDisjoint(pa, ba, pb, bb), `${idA} and ${idB} overlap`).toBe(true)
+      }
+    }
+  })
+
+  it('a wide label claims horizontal room — a neighbour is pushed clear of the FULL label, not just the icon', () => {
+    // A wide node pinned at the origin; a narrow node placed INSIDE the wide label region (same
+    // row, x-overlap < the box height so the minimum-overlap axis is X → a horizontal push).
+    // The narrow node must end clear of the wide box's RIGHT edge — i.e., past the whole 200px
+    // label, not merely the icon: the CORE of the re-audit (text never overlaps a neighbour).
+    const sim = create({ width: 1200, height: 470, params: COLLIDE_ONLY })
+    sim.sync([node('wide'), node('narrow')], [])
+    const wideBox = box(200) // right extent = 211
+    const narrowBox = box(10) // right extent = 21
+    sim.setBoxes(new Map<string, NodeBox>([['wide', wideBox], ['narrow', narrowBox]]))
+
+    sim.pin('wide', 0, 0)
+    sim.pin('narrow', 195, 0) // inside the wide label (wide right edge = 211)
+    sim.tick() // seat the pinned start
+    sim.unpin('narrow')
+    for (let i = 0; i < 500; i++) sim.tick()
+
+    const p = sim.positions()
+    const wide = p.get('wide')
+    const narrow = p.get('narrow')
+    if (wide === undefined || narrow === undefined) throw new Error('missing node')
+
+    // The narrow box's LEFT edge sits at/beyond the wide box's RIGHT edge — it cleared the whole
+    // icon + 200px label…
+    expect(narrow.x + narrowBox.left).toBeGreaterThanOrEqual(wide.x + wideBox.right - EPS)
+    // …which is FAR past what an icon-only circle keep-out (~sz px) would demand.
+    expect(narrow.x).toBeGreaterThan(wide.x + 200)
+    expect(boxesDisjoint(wide, wideBox, narrow, narrowBox)).toBe(true)
+  })
+
+  it('a wide label does NOT force excess vertical spacing (rectangles pack tighter than a circumscribing circle)', () => {
+    // Two IDENTICAL wide nodes, coincident at the origin (COLLIDE_ONLY). The minimum-overlap
+    // axis for two wide boxes is VERTICAL, so they stack — separated by ~the box HEIGHT, with no
+    // horizontal spread. A circle CIRCUMSCRIBING the wide box would force the centres a full
+    // DIAMETER apart on every axis; the rectangle separates by a small fraction of that. This is
+    // the "packs tighter than a circle" guarantee — a wide label doesn't bloat vertical spacing.
+    const sim = create({ width: 900, height: 470, params: COLLIDE_ONLY })
+    sim.sync([node('a'), node('b')], [])
+    const wide = box(200)
+    sim.setBoxes(new Map<string, NodeBox>([['a', wide], ['b', wide]]))
+    for (let i = 0; i < 500; i++) sim.tick()
+
+    const p = sim.positions()
+    const pa = p.get('a')
+    const pb = p.get('b')
+    if (pa === undefined || pb === undefined) throw new Error('missing node')
+    const dx = Math.abs(pa.x - pb.x)
+    const dy = Math.abs(pa.y - pb.y)
+    const boxW = wide.right - wide.left // 216.5
+    const boxH = wide.bottom - wide.top // 25
+
+    // Stacked vertically: separated by ~the box height, no horizontal spread.
+    expect(dx).toBeLessThan(1e-3)
+    expect(dy).toBeGreaterThanOrEqual(boxH - EPS)
+
+    // TIGHTER THAN A CIRCLE: a circle enclosing the wide box has radius hypot(w/2, h/2); circle
+    // collision would force the centres ≥ that DIAMETER apart. The rectangle uses only ~the
+    // height — the wide HORIZONTAL extent never leaks into the vertical spacing.
+    const circleDiameter = 2 * Math.hypot(boxW / 2, boxH / 2)
+    expect(dy).toBeLessThan(circleDiameter)
+    expect(dy).toBeLessThan(boxW)
+    expect(boxesDisjoint(pa, wide, pb, wide)).toBe(true)
   })
 })

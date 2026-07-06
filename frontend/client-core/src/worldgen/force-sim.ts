@@ -1,11 +1,11 @@
 import {
   forceCenter,
-  forceCollide,
   forceLink,
   forceManyBody,
   forceSimulation,
   forceX,
   forceY,
+  type Force,
   type ForceLink,
   type Simulation,
   type SimulationLinkDatum,
@@ -80,10 +80,13 @@ export interface ForceParams {
    *  centre line. Low, so the cloud fills the space rather than collapsing to a ball;
    *  the hard clamp (not this force) is what guarantees the bound. */
   boundaryStrength: number
-  /** `forceCollide().radius` (px) — the per-node keep-out radius, so glyphs + their
-   *  labels never overlap (min centre-to-centre spacing ≈ 2×). Miklos wants room for
-   *  labels; d3's `forceCollide(r)` resolves centres to ≥ r_a + r_b apart. */
-  collideRadius: number
+  /** AABB-collision AIR (virtual px) — the extra gap enforced BETWEEN two nodes' label
+   *  boxes (icon + full text label), on top of the boxes themselves (MYT-89 re-audit). The
+   *  box is the collision unit now, not a circle: the rectangular keep-out force separates
+   *  the offset icon+label boxes (the SAME box the fog reserves — see the ui's box
+   *  measurement) so text can never overlap a neighbour's icon or text. This knob just tunes
+   *  the breathing room around each box; `0` = boxes may touch but never overlap. */
+  collisionPadding: number
   /** New-node seed spread: a node seeds at a random offset within ±(seedJitter/2) of
    *  centre. Bigger = real initial spread (breaks the stacked-at-origin symmetry);
    *  small = a streaming node emerges near centre and flies out organically. */
@@ -107,7 +110,7 @@ export const FORCE_PARAMS: ForceParams = {
   chargeDistanceMax: 800,
   centerStrength: 0,
   boundaryStrength: 0.03,
-  collideRadius: 40,
+  collisionPadding: 12,
   seedJitter: 90,
   margin: 50,
 }
@@ -120,7 +123,7 @@ export const FORCE_PARAM_RANGES = {
   chargeDistanceMax: { min: 100, max: 1400, step: 20 },
   centerStrength: { min: 0, max: 1, step: 0.02 },
   boundaryStrength: { min: 0, max: 0.2, step: 0.005 },
-  collideRadius: { min: 0, max: 90, step: 1 },
+  collisionPadding: { min: 0, max: 80, step: 1 },
   seedJitter: { min: 0, max: 400, step: 5 },
   margin: { min: 0, max: 150, step: 5 },
 } as const
@@ -140,6 +143,26 @@ export const FORCE_PARAM_RANGES = {
 // Applies to BOTH the generation and reveal graphs (they share this sim); there is
 // no phase-specific gating.
 
+/** The collision box for one node — the icon + its FULL text label, as SIGNED extents
+ *  RELATIVE to the node's position (the icon centre). The box is offset from the position:
+ *  it extends further RIGHT than left (the label sits to the right of the icon) and is
+ *  centred slightly ABOVE the anchor (the reference capsule offset). `left`/`top` are
+ *  negative, `right`/`bottom` positive. This is the EXACT box the fog reserves per entity
+ *  (`WorldGenFog/fog-obstacles.ts` `labelBoxExtents`) — collision + fog share one geometry,
+ *  so a node's label can never overlap a neighbour's icon or text (MYT-89 re-audit). The
+ *  sim receives these as NUMBERS (the ui measures the text via canvas; the sim stays
+ *  DOM-free). */
+export interface NodeBox {
+  /** x-min offset from the node position (≤ 0 — the icon's left edge). */
+  left: number
+  /** x-max offset (> 0 — the right edge of the text label). */
+  right: number
+  /** y-min offset (< 0 — the top of the label clear-window, above the anchor). */
+  top: number
+  /** y-max offset (> 0 — the bottom of the label clear-window, below the anchor). */
+  bottom: number
+}
+
 /** A d3 simulation node carrying BOTH identities: the stable internal `synthKey`
  *  (d3's link-resolver id, never changes → position continuity) and the current
  *  `displayId` (the external render/edge id-space, refreshed every `sync` — swaps
@@ -147,12 +170,17 @@ export const FORCE_PARAM_RANGES = {
  *  SimulationNodeDatum). `x`/`y` are NARROWED to required: `seedNode` always
  *  assigns finite coordinates and d3 only reassigns them when `isNaN` (never our
  *  case), so a sim node's position is always defined — `positions()` needs no
- *  `?? 0` defensiveness. */
+ *  `?? 0` defensiveness. `box` is the measured icon+label AABB (set via `setBoxes`
+ *  from the ui) the rectangular collision force keeps apart; `undefined` until the
+ *  ui has measured the label (the node is then ignored by collision). */
 interface SimNode extends SimulationNodeDatum {
   synthKey: string
   displayId: string
   x: number
   y: number
+  // Required-with-`undefined` (not plain optional) so `applyBoxes` can clear a stale box by
+  // assigning the `Map.get(…)` result directly under `exactOptionalPropertyTypes`.
+  box: NodeBox | undefined
 }
 
 /** A d3 link datum. `source`/`target` are seeded as `synthKey` strings (the edge's
@@ -167,6 +195,11 @@ export interface ForceSim {
   /** MERGE the derived graph into the persistent sim: survivors keep their
    *  position/momentum, new keys are seeded near centre, vanished keys drop. */
   sync(nodes: GraphNode[], edges: GraphEdge[]): void
+  /** Supply the measured icon+label collision box per `displayId` (the ui measures the
+   *  text; the sim stays DOM-free). Stored and RE-APPLIED on every `sync`, so a node that
+   *  streams in later still picks up its box, and a finalize (displayId swap) re-keys it.
+   *  The rectangular collision force keeps every pair of boxes from overlapping. */
+  setBoxes(boxes: Map<string, NodeBox>): void
   /** Advance the simulation one step. Driven by the render loop (C4). */
   tick(): void
   /** displayId → current position. */
@@ -190,14 +223,112 @@ function seedNode(
     y: (random() - 0.5) * jitter,
     vx: 0,
     vy: 0,
+    box: undefined, // set by `applyBoxes` once the ui has measured the label.
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// RECTANGULAR (AABB) COLLISION — the box IS the keep-out unit (MYT-89 re-audit)
+// The old `forceCollide(radius)` kept node CENTRES a fixed distance apart — a
+// CIRCLE around the icon. But a node's TEXT LABEL extends well past that circle
+// (to the right of the icon), so a label could overlap a neighbour's icon or text
+// even when the icons didn't touch. Miklos: "there should never be situations where
+// the text overlaps an icon or other text — this needs to be readable."
+//
+// The fix: collide on the node's icon+label BOUNDING BOX — the SAME offset AABB the
+// fog reserves per entity (`WorldGenFog/fog-obstacles.ts`). A simple O(n²) pairwise
+// separation (fine for the ~20–40 nodes here — no quadtree): for each overlapping
+// pair, push the two boxes apart along their MINIMUM-overlap axis, splitting the
+// overlap 50/50, iterated per tick like d3's own collide. Because the boxes are
+// OFFSET from the node position (asymmetric: the label extends right, the box sits
+// slightly above the anchor), the separation is computed on the offset extents, not
+// on the centres — a wide label claims horizontal room without forcing the excess
+// VERTICAL spacing a circumscribing circle would (rectangles pack tighter).
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Separate ONE overlapping pair of offset label boxes (velocity-based, like d3's
+ *  collide): work in the PROJECTED positions (`x + vx`), expand each box by half the
+ *  air gap, and if the projected AABBs overlap on BOTH axes, nudge the two velocities
+ *  apart along the MINIMUM-overlap axis by half the overlap each. Not alpha-scaled (the
+ *  keep-out is a hard constraint, not a soft settle) — over the tick loop the pair
+ *  converges to non-overlapping. Deterministic on an exact tie (equal centres → a fixed
+ *  split direction), so no RNG is needed. */
+function separateBoxes(
+  a: SimNode,
+  aBox: NodeBox,
+  b: SimNode,
+  bBox: NodeBox,
+  halfPad: number,
+): void {
+  const avx = a.vx ?? 0
+  const avy = a.vy ?? 0
+  const bvx = b.vx ?? 0
+  const bvy = b.vy ?? 0
+  const ax = a.x + avx
+  const ay = a.y + avy
+  const bx = b.x + bvx
+  const by = b.y + bvy
+
+  const overlapX =
+    Math.min(ax + aBox.right + halfPad, bx + bBox.right + halfPad) -
+    Math.max(ax + aBox.left - halfPad, bx + bBox.left - halfPad)
+  if (overlapX <= 0) return
+  const overlapY =
+    Math.min(ay + aBox.bottom + halfPad, by + bBox.bottom + halfPad) -
+    Math.max(ay + aBox.top - halfPad, by + bBox.top - halfPad)
+  if (overlapY <= 0) return
+
+  if (overlapX < overlapY) {
+    const push = overlapX / 2
+    const dir = ax + (aBox.left + aBox.right) / 2 <= bx + (bBox.left + bBox.right) / 2 ? 1 : -1
+    a.vx = avx - dir * push
+    b.vx = bvx + dir * push
+  } else {
+    const push = overlapY / 2
+    const dir = ay + (aBox.top + aBox.bottom) / 2 <= by + (bBox.top + bBox.bottom) / 2 ? 1 : -1
+    a.vy = avy - dir * push
+    b.vy = bvy + dir * push
+  }
+}
+
+/** The rectangular keep-out force: an O(n²) pairwise pass over the CURRENT node set,
+ *  separating every overlapping pair of icon+label boxes (`separateBoxes`). Nodes whose
+ *  box the ui hasn't measured yet (`box === undefined`) are skipped. `padding` is the AIR
+ *  between two boxes — split half onto each box's extents, so two boxes hold at least
+ *  `padding` px apart. Built as a d3 `Force`: `initialize` captures the live node array
+ *  (re-run on every `simulation.nodes()`), the call applies one separation pass per tick. */
+function boxCollide(padding: number): Force<SimNode, SimLink> {
+  const halfPad = padding / 2
+  let simNodes: SimNode[] = []
+  return Object.assign(
+    (): void => {
+      const n = simNodes.length
+      for (let i = 0; i < n; i++) {
+        const a = simNodes[i]
+        const aBox = a?.box
+        if (a === undefined || aBox === undefined) continue
+        for (let j = i + 1; j < n; j++) {
+          const b = simNodes[j]
+          const bBox = b?.box
+          if (b === undefined || bBox === undefined) continue
+          separateBoxes(a, aBox, b, bBox, halfPad)
+        }
+      }
+    },
+    {
+      initialize: (nextNodes: SimNode[]): void => {
+        simNodes = nextNodes
+      },
+    },
+  )
 }
 
 /** Build the STOPPED d3 simulation with the re-tuned spread forces (MYT-89 audit #4):
  *  charge (`chargeStrength` + `chargeDistanceMax`), the link force, a centre pull
- *  (`centerStrength`), `forceCollide` (`collideRadius` — no overlap, room for labels),
- *  and the per-axis inward boundary pull (`boundaryStrength`). `.stop()` because C4's
- *  render loop drives `tick()`, not d3's internal timer. */
+ *  (`centerStrength`), the rectangular box collide (`collisionPadding` — no icon/label
+ *  overlap, the box is the keep-out unit), and the per-axis inward boundary pull
+ *  (`boundaryStrength`). `.stop()` because C4's render loop drives `tick()`, not d3's
+ *  internal timer. */
 function buildSimulation(
   nodes: SimNode[],
   linkForce: ForceLink<SimNode, SimLink>,
@@ -212,10 +343,43 @@ function buildSimulation(
     )
     .force('link', linkForce)
     .force('center', forceCenter<SimNode>().strength(params.centerStrength))
-    .force('collide', forceCollide<SimNode>().radius(params.collideRadius))
+    .force('collide', boxCollide(params.collisionPadding))
     .force('boundX', forceX<SimNode>(0).strength(params.boundaryStrength))
     .force('boundY', forceY<SimNode>(0).strength(params.boundaryStrength))
     .stop()
+}
+
+/** HARD-clamp every node into the INSET draw space (`±boundW / ±boundH` = the full
+ *  half-dimensions less the `margin`). The boundary force + distanceMax keep the settle
+ *  smooth; this clamp is the GUARANTEE that no node — and thus no label — is ever reported
+ *  (or drawn) outside the frame's margin (MYT-89 BUG 2.2). Module-scoped so `tick` stays lean. */
+function clampNodes(nodes: SimNode[], boundW: number, boundH: number): void {
+  for (const simNode of nodes) {
+    if (simNode.x < -boundW) simNode.x = -boundW
+    else if (simNode.x > boundW) simNode.x = boundW
+    if (simNode.y < -boundH) simNode.y = -boundH
+    else if (simNode.y > boundH) simNode.y = boundH
+  }
+}
+
+/** The persistent icon+label box store: the ui-measured boxes keyed by the EXTERNAL
+ *  `displayId`, plus `applyBoxes` which stamps each onto the matching persistent `SimNode`.
+ *  Kept off `create` so the box plumbing is one line there. `setBoxes` replaces the whole set
+ *  (a fresh measurement) and re-applies; `applyBoxes` is also called after every `sync` so a
+ *  freshly-seeded node picks up an already-known box and a finalize (displayId swap) re-keys. */
+function makeBoxStore(byKey: Map<string, SimNode>): {
+  applyBoxes: () => void
+  setBoxes: (next: Map<string, NodeBox>) => void
+} {
+  let boxesByDisplayId = new Map<string, NodeBox>()
+  const applyBoxes = (): void => {
+    for (const simNode of byKey.values()) simNode.box = boxesByDisplayId.get(simNode.displayId)
+  }
+  const setBoxes = (next: Map<string, NodeBox>): void => {
+    boxesByDisplayId = next
+    applyBoxes()
+  }
+  return { applyBoxes, setBoxes }
 }
 
 export function create(opts: {
@@ -253,18 +417,14 @@ export function create(opts: {
   const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
   const simulation = buildSimulation(nodes, linkForce, params)
 
+  // Icon+label box store (keyed by displayId); re-applied after every merge so a late node resolves its box.
+  const { applyBoxes, setBoxes } = makeBoxStore(byKey)
+
   /** Advance one step, then HARD-clamp every node into the INSET draw space
-   *  (`±boundW / ±boundH` = the full half-dimensions less the `margin`). The boundary
-   *  force + distanceMax keep the settle smooth; this clamp is the guarantee that no
-   *  node — and thus no label — is ever reported (or drawn) inside the frame's margin. */
+   *  (`±boundW / ±boundH` = the full half-dimensions less the `margin`) via `clampNodes`. */
   function tick(): void {
     simulation.tick()
-    for (const simNode of nodes) {
-      if (simNode.x < -boundW) simNode.x = -boundW
-      else if (simNode.x > boundW) simNode.x = boundW
-      if (simNode.y < -boundH) simNode.y = -boundH
-      else if (simNode.y > boundH) simNode.y = boundH
-    }
+    clampNodes(nodes, boundW, boundH)
   }
 
   function mergeNodes(incoming: GraphNode[]): void {
@@ -316,6 +476,7 @@ export function create(opts: {
   function sync(incoming: GraphNode[], edges: GraphEdge[]): void {
     linkForce.links([]) // drop stale object refs before the node set changes.
     mergeNodes(incoming)
+    applyBoxes() // re-attach the measured boxes to survivors + freshly-seeded nodes.
     simulation.nodes(nodes) // re-inits forces; survivors keep x/y/vx/vy (valid → not re-seeded).
     linkForce.links(buildLinks(edges)) // resolves string endpoints against the current nodes.
     simulation.alpha(REHEAT_ALPHA) // reheat WITHOUT restart — keeps the timer stopped.
@@ -354,6 +515,7 @@ export function create(opts: {
 
   return {
     sync,
+    setBoxes,
     tick,
     positions,
     pin,

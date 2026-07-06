@@ -251,7 +251,7 @@ const FORCE_KEYS: readonly (keyof ForceParams)[] = [
   'chargeDistanceMax',
   'centerStrength',
   'boundaryStrength',
-  'collideRadius',
+  'collisionPadding',
   'seedJitter',
   'margin',
 ]
@@ -260,7 +260,7 @@ const FORCE_LABELS: Record<keyof ForceParams, string> = {
   chargeDistanceMax: '[ph: charge range]',
   centerStrength: '[ph: center]',
   boundaryStrength: '[ph: boundary]',
-  collideRadius: '[ph: collide]',
+  collisionPadding: '[ph: box gap]',
   seedJitter: '[ph: seed jitter]',
   margin: '[ph: margin]',
 }
@@ -273,7 +273,8 @@ const FORCE_DESCRIPTIONS: Record<keyof ForceParams, string> = {
     "Pulls the whole cluster toward the frame's middle (positions it, doesn't compress). 0 = let repulsion + margin decide.",
   boundaryStrength:
     'Gentle inward pull on every node. Higher = tighter/compact; lower = looser/wider.',
-  collideRadius: "Each node's personal-space bubble (minimum gap). Bigger = more room between nodes.",
+  collisionPadding:
+    'The gap between label boxes — bigger = more air between entities. Each entity already reserves its full icon + text box; this just adds breathing room around it (icons + text never overlap regardless).',
   seedJitter: 'How scattered a node starts when it appears. Higher = emerges more spread out.',
   margin: 'How far nodes stay clear of the frame edge (the breathing-room band). Higher = bigger margin.',
 }

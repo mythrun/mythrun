@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import {
   createForceSim,
+  LABEL_FONT,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   type ForceParams,
   type ForceSim,
+  type NodeBox,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import { labelBoxExtents } from '../WorldGenFog/fog-obstacles.ts'
 import {
   drawEdges,
   drawNodes,
@@ -96,6 +99,29 @@ function makeSim(params: Partial<ForceParams>): ForceSim {
   return createForceSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT, params })
 }
 
+/** Measure each node's icon+label collision box (keyed by `displayId` for
+ *  `ForceSim.setBoxes`). The text width is measured at the fog's `LABEL_FONT` and memoized
+ *  by name (stable per name+font, matching the fog's own width cache) so `measureText` runs
+ *  once per distinct name; the box itself is the fog's shared `labelBoxExtents`, so the
+ *  graph collides on the EXACT box the fog reserves. Module-scoped so the hook stays lean. */
+function measureBoxes(
+  ctx: CanvasRenderingContext2D,
+  nodes: readonly GraphNode[],
+  widthCache: Map<string, number>,
+): Map<string, NodeBox> {
+  ctx.font = LABEL_FONT
+  const out = new Map<string, NodeBox>()
+  for (const node of nodes) {
+    let width = widthCache.get(node.name)
+    if (width === undefined) {
+      width = ctx.measureText(node.name).width
+      widthCache.set(node.name, width)
+    }
+    out.set(node.displayId, labelBoxExtents(node.kind, width))
+  }
+  return out
+}
+
 export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion, interactive, showLabels } =
     params
@@ -113,6 +139,9 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const hoverRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
+  // Memoized label widths (name → measured px at LABEL_FONT) for the collision boxes, mirroring
+  // the fog's own width cache so the graph's box and the fog's obstacle derive identical geometry.
+  const boxWidthCacheRef = useRef<Map<string, number>>(new Map())
   const inkRef = useRef('') // resolved theme ink, cached (refreshed on mount + theme flip).
   const clockRef = useRef(0) // buoy-bob clock (seconds); 0 until the loop runs.
   // C6 Act-2 penstroke state: the ms clock + each edge's first-seen ms (synthKey →
@@ -138,6 +167,16 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     simRef.current ??= makeSim(forceParamsRef.current)
     return simRef.current
   }, [])
+
+  // Measure every node's icon+label box (the SAME box the fog reserves — `measureBoxes` →
+  // `labelBoxExtents`) and hand it to the sim's rectangular collide. A no-op under jsdom (no
+  // 2D context → nothing renders, nothing to collide); re-measured on every sync (memoized).
+  const applyBoxes = useCallback((): void => {
+    const sim = simRef.current
+    const ctx = canvasRef.current?.getContext('2d') ?? null
+    if (sim === null || ctx === null) return
+    sim.setBoxes(measureBoxes(ctx, nodesRef.current, boxWidthCacheRef.current))
+  }, [canvasRef])
 
   // Reduced motion: settle the sim to convergence ONCE per graph change, idempotently —
   // whoever reads first (the fog's static settle via getFogEntities, or the graph's own
@@ -214,15 +253,17 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const forceKey = JSON.stringify(forceParamsRef.current)
   useLayoutEffect(() => {
     reseedOnForceChange({ simRef, getSim, nodesRef, edgesRef, settledRef })
-  }, [forceKey, getSim])
+    applyBoxes() // re-attach the measured boxes to the freshly-rebuilt sim.
+  }, [forceKey, getSim, applyBoxes])
 
   // Re-sync the physics whenever the folded graph changes. In a LAYOUT effect (runs
   // before the fog child's effects) so a reduced-motion fog settle reads an already-
   // synced sim; the settle itself is deferred to `ensureSettled` (idempotent).
   useLayoutEffect(() => {
     getSim().sync(nodes, edges)
+    applyBoxes()
     settledRef.current = false
-  }, [nodes, edges, getSim])
+  }, [nodes, edges, getSim, applyBoxes])
 
   // Reduced-motion static redraw: settle (once) + paint on any graph change. The motion
   // loop that would otherwise pick a change up is off in this mode.
