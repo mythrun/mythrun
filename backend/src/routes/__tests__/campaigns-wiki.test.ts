@@ -150,10 +150,12 @@ async function seedCampaignWithWiki(
   ])
 
   // Relationship between the two known entities (DB-filterable by listAmong).
+  // access_level='known' is explicit — migration 031 defaults to 'secret', and
+  // the A5 tier filter would otherwise hide this edge from the known reveal.
   await pool.query(
     `INSERT INTO relationships
-       (id, source_entity_id, target_entity_id, relationship_type, description)
-     VALUES ($1, $2, $3, 'controls', 'k1 controls k2')`,
+       (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+     VALUES ($1, $2, $3, 'controls', 'k1 controls k2', 'known')`,
     [uuidv7(), known1, known2],
   )
 

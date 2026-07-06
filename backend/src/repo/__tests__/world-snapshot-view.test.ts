@@ -111,9 +111,13 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     await proseKernels.insert(pool, { entityId: known1, content: 'prose-k1' })
     await proseKernels.insert(pool, { entityId: known2, content: 'prose-k2' })
     await proseKernels.insert(pool, { entityId: discoverable, content: 'prose-d' })
+    // Both are 'known'-tier (migration 031 defaults access_level to 'secret',
+    // so this MUST be explicit or the tier filter would hide the known→known
+    // edge). The known→discoverable edge is excluded from the non-bypass
+    // snapshot by its endpoint (discoverable not in the known set), not its tier.
     await pool.query(
-      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-       VALUES ($1, $2, $3, 'controls', 'd1'), ($4, $5, $6, 'knows', 'd2')`,
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'controls', 'd1', 'known'), ($4, $5, $6, 'knows', 'd2', 'known')`,
       [uuidv7(), known1, known2, uuidv7(), known1, discoverable],
     )
     return { worldId, known1, known2, discoverable }
@@ -197,6 +201,34 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
 
     // All three prose kernels surface.
     expect(snap.proseKernels).toHaveLength(3)
+  })
+
+  // MYT-89 Phase A (A5): THE SECURITY GATE at the snapshot-composition level.
+  // A `secret` relationship between two `known` entities passes the entity
+  // tier filter (both endpoints are known) — only the relationship's OWN tier
+  // keeps it out of the non-bypass owner reveal. Without the listAmong tier
+  // filter this secret connection would leak (spec §10).
+  it('excludes a secret relationship between two known entities from the non-bypass snapshot', async () => {
+    const { worldId, known1, known2 } = await seedFixture()
+    // A secret connection between two KNOWN entities. Both endpoints survive
+    // the entity filter, so the relationship's access_level is the only guard.
+    await pool.query(
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'secretly_funds', 'k1 secretly funds k2', 'secret')`,
+      [uuidv7(), known1, known2],
+    )
+
+    // Non-bypass owner reveal: the secret edge is EXCLUDED. Only the fixture's
+    // known 'controls' edge (also known1→known2) surfaces.
+    const revealed = await worldSnapshotView.fetch(pool, worldId, { bypass: false })
+    expect(revealed.relationships).toHaveLength(1)
+    expect(revealed.relationships[0]?.relationshipType).toBe('controls')
+    expect(revealed.relationships.every((r) => r.accessLevel === 'known')).toBe(true)
+    expect(revealed.relationships.some((r) => r.relationshipType === 'secretly_funds')).toBe(false)
+
+    // Bypass widens: the secret edge surfaces alongside the known ones.
+    const bypassed = await worldSnapshotView.fetch(pool, worldId, { bypass: true })
+    expect(bypassed.relationships.some((r) => r.relationshipType === 'secretly_funds')).toBe(true)
   })
 
   it('surfaces a non-empty vocabulary registry (all-known tier, with adjacent_franchises) when bypass:false', async () => {

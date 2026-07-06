@@ -70,6 +70,11 @@ export interface RelationshipRow {
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
+  // MYT-89 Phase A (A5): the relationship's own access tier, surfaced on the
+  // snapshot-view read path. listAmong DB-filters to the caller's tier list, so
+  // in a non-bypass reveal this is always 'known'; under bypass it can be mixed.
+  // Kept honest on the type (mirrors FactRow) so callers/tests can assert it.
+  readonly accessLevel: AccessLevel
   readonly createdAt: Date
   readonly synthKey: string
 }
@@ -80,6 +85,7 @@ interface RelationshipDbRow {
   readonly target_entity_id: string
   readonly relationship_type: string
   readonly description: string
+  readonly access_level: AccessLevel
   readonly created_at: Date
   readonly synth_key: string
 }
@@ -91,6 +97,7 @@ function toRelationshipRow(row: RelationshipDbRow): RelationshipRow {
     targetEntityId: row.target_entity_id,
     relationshipType: row.relationship_type,
     description: row.description,
+    accessLevel: row.access_level,
     createdAt: row.created_at,
     synthKey: row.synth_key,
   }
@@ -195,19 +202,28 @@ export function relationshipsNs(c: ClientLike) {
       )
       return result.rows.map(toRelationship)
     },
-    // myth-exac T06: snapshot-view primary read path. Returns relationships
-    // where BOTH endpoints are in entityIds — i.e. the relationship is
-    // internal to the snapshot's filtered entity set. Empty input short-
-    // circuits to [] (matches the facts.listByEntities pattern).
-    listAmong: async (entityIds: readonly string[]): Promise<readonly RelationshipRow[]> => {
+    // myth-exac T06 / MYT-89 Phase A (A5): snapshot-view primary read path.
+    // Returns relationships where BOTH endpoints are in entityIds AND the
+    // relationship's own access_level is in accessLevels. The tier filter is
+    // the enforced-ignorance security gate: a `secret` connection between two
+    // `known` entities passes the endpoint filter but must NOT surface in the
+    // known-tier reveal (spec §10). accessLevels is REQUIRED — every caller
+    // makes an explicit tier decision; there is no insecure "return all"
+    // default. Empty entityIds short-circuits to [] (facts.listByEntities
+    // pattern).
+    listAmong: async (
+      entityIds: readonly string[],
+      accessLevels: readonly AccessLevel[],
+    ): Promise<readonly RelationshipRow[]> => {
       if (entityIds.length === 0) return []
       const result = await c.query<RelationshipDbRow>(
         `SELECT id, source_entity_id, target_entity_id, relationship_type,
-            description, created_at, synth_key
+            description, access_level, created_at, synth_key
        FROM relationships
       WHERE source_entity_id = ANY($1) AND target_entity_id = ANY($1)
+        AND access_level = ANY($2)
       ORDER BY id`,
-        [entityIds],
+        [entityIds, accessLevels],
       )
       return result.rows.map(toRelationshipRow)
     },
@@ -264,7 +280,9 @@ export const relationships = {
   listAmong: (
     client: ClientLike,
     entityIds: readonly string[],
-  ): Promise<readonly RelationshipRow[]> => relationshipsNs(client).listAmong(entityIds),
+    accessLevels: readonly AccessLevel[],
+  ): Promise<readonly RelationshipRow[]> =>
+    relationshipsNs(client).listAmong(entityIds, accessLevels),
   deleteByWorld: (client: ClientLike, worldId: string): Promise<void> =>
     relationshipsNs(client).deleteByWorld(worldId),
   updateById: (

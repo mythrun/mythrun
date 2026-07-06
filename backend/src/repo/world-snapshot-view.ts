@@ -116,7 +116,7 @@ async function fetch(
     proseKernels.listByEntities(client, entityIds),
     entityHierarchy.listForWorld(client, worldId),
     statBlocks.listByIds(client, statBlockIds),
-    relationships.listAmong(client, entityIds),
+    relationships.listAmong(client, entityIds, accessLevels),
   ])
 
   // Hierarchy listForWorld returns every edge in the world; constrain

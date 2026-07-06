@@ -36,6 +36,7 @@
     "smoke:analysis": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/myt-74b-analysis-smoke.ts",
     "smoke:combat-outcome": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/myt-75-combat-outcome-smoke.ts",
     "smoke:combat-turn": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/myt-75-combat-turn-smoke.ts",
+    "smoke:relationship-tiering": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/relationship-tiering.ts",
     "capture:ready-to-play": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/fixtures/capture.ts ready-to-play-campaign"
   },
   "dependencies": {

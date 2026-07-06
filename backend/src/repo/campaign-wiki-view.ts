@@ -41,7 +41,10 @@ async function fetch(client: ClientLike, worldId: string): Promise<CampaignWiki>
   const entityIds = entityRows.map((e) => e.id)
   const [factRows, relationshipRows] = await Promise.all([
     facts.listByEntities(client, entityIds, { accessLevels: ['known'], liveOnly: true }),
-    relationships.listAmong(client, entityIds),
+    // MYT-89 Phase A (A5): known-tier only. Without the tier filter a `secret`
+    // relationship between two `known` entities would surface in the PLAYER
+    // wiki — the endpoint filter alone can't catch it since both endpoints pass.
+    relationships.listAmong(client, entityIds, ['known']),
   ])
   return {
     world,

@@ -266,7 +266,7 @@ describe('relationships repo', () => {
         { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C', accessLevel: 'known', synthKey: 'test/rel/1' },
       ])
 
-      const rows = await relationships.listAmong(pool, [entA, entB])
+      const rows = await relationships.listAmong(pool, [entA, entB], ['known', 'discoverable', 'secret'])
       expect(rows).toHaveLength(1)
       expect(rows[0]?.sourceEntityId).toBe(entA)
       expect(rows[0]?.targetEntityId).toBe(entB)
@@ -283,7 +283,7 @@ describe('relationships repo', () => {
         { sourceEntityId: entA, targetEntityId: entC, relationshipType: 'borders', description: 'A→C', accessLevel: 'known', synthKey: 'test/rel/1' },
       ])
 
-      const rows = await relationships.listAmong(pool, [entA, entB, entC])
+      const rows = await relationships.listAmong(pool, [entA, entB, entC], ['known', 'discoverable', 'secret'])
       expect(rows).toHaveLength(2)
     })
 
@@ -291,8 +291,38 @@ describe('relationships repo', () => {
       await relationships.insertMany(pool, [
         { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'controls', description: 'A→B', accessLevel: 'known', synthKey: 'test/rel/0' },
       ])
-      const rows = await relationships.listAmong(pool, [])
+      const rows = await relationships.listAmong(pool, [], ['known'])
       expect(rows).toEqual([])
+    })
+
+    // MYT-89 Phase A (A5): THE SECURITY GATE. A `secret` relationship
+    // between two `known` entities must NOT surface in the known-tier
+    // reveal — even though BOTH endpoints pass the entity filter, the
+    // relationship's OWN tier keeps it hidden. This is the enforced-
+    // ignorance leak spec §10 exists to close: without the tier filter,
+    // the connection ("A secretly funds B") leaks though the endpoints
+    // are individually public. Bypass (all three tiers) surfaces both.
+    it('excludes a secret relationship between two known entities from the known tier', async () => {
+      await relationships.insertMany(pool, [
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'allied_with', description: 'A is openly allied with B.', accessLevel: 'known', synthKey: 'test/rel/known' },
+        { sourceEntityId: entA, targetEntityId: entB, relationshipType: 'secretly_funds', description: 'A secretly funds B.', accessLevel: 'secret', synthKey: 'test/rel/secret' },
+      ])
+
+      // Known-tier reveal: ONLY the known relationship. The secret edge
+      // is excluded despite both endpoints being known entities.
+      const knownRows = await relationships.listAmong(pool, [entA, entB], ['known'])
+      expect(knownRows).toHaveLength(1)
+      expect(knownRows[0]?.relationshipType).toBe('allied_with')
+      expect(knownRows[0]?.accessLevel).toBe('known')
+
+      // Bypass (all tiers): BOTH edges surface.
+      const bypassRows = await relationships.listAmong(pool, [entA, entB], [
+        'known',
+        'discoverable',
+        'secret',
+      ])
+      expect(bypassRows).toHaveLength(2)
+      expect(bypassRows.map((r) => r.accessLevel).sort()).toEqual(['known', 'secret'])
     })
   })
 })
@@ -376,7 +406,7 @@ describe('relationships.insertMany — writes synth_key', () => {
     expect(row?.synthKey).toBe(synthKey)
 
     // listAmong is the snapshot-view read path; it should expose synthKey too.
-    const amongRows = await relationships.listAmong(pool, [entA, entB])
+    const amongRows = await relationships.listAmong(pool, [entA, entB], ['known'])
     const amongRow = amongRows.find((r) => r.id === relId)
     expect(amongRow?.synthKey).toBe(synthKey)
   })

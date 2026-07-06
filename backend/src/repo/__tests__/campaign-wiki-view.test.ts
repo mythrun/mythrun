@@ -155,6 +155,52 @@ describe('campaignWikiView.fetch — MYT-74c', () => {
     expect('statBlocks' in result).toBe(false)
   })
 
+  // MYT-89 Phase A (A5): THE SECURITY GATE on the player-facing wiki. A
+  // `secret` relationship between two `known` entities passes the entity
+  // filter (both endpoints are known) — only the relationship's OWN tier
+  // keeps it off the player wiki. This is the more player-facing of the two
+  // reveal surfaces, so the exclusion must hold here too.
+  it('excludes a secret relationship between two known entities from the player wiki', async () => {
+    const userId = uuidv7()
+    const worldId = uuidv7()
+    const known1 = uuidv7()
+    const known2 = uuidv7()
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(0), scope.displayName(0), scope.username(0)],
+    )
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, tone, themes, era, status)
+       VALUES ($1, $2, $3, 'c', 't', 'th', 'an era', 'generating')`,
+      [worldId, userId, scope.worldName(0)],
+    )
+    await entities.insert(pool, {
+      id: known1, worldId, entityType: 'location',
+      name: `${scope.id}-k1`, accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await entities.insert(pool, {
+      id: known2, worldId, entityType: 'faction',
+      name: `${scope.id}-k2`, accessLevel: 'known', createdIn: 'stage:test',
+    })
+    // One open (known) edge + one secret edge, both between the SAME two
+    // known entities. Migration 031 defaults access_level to 'secret', so
+    // the tiers are explicit here.
+    await pool.query(
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'allied_with', 'an open alliance', 'known'),
+              ($4, $5, $6, 'secretly_funds', 'a hidden money trail', 'secret')`,
+      [uuidv7(), known1, known2, uuidv7(), known1, known2],
+    )
+
+    const result = await campaignWikiView.fetch(pool, worldId)
+
+    // Only the open (known) edge surfaces; the secret one is filtered out.
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0]?.relationshipType).toBe('allied_with')
+    expect(result.relationships.some((r) => r.relationshipType === 'secretly_funds')).toBe(false)
+  })
+
   it('throws when the world id does not exist', async () => {
     const missing = uuidv7()
     await expect(campaignWikiView.fetch(pool, missing)).rejects.toThrow(/not found/)
