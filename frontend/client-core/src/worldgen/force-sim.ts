@@ -107,12 +107,12 @@ export interface ForceParams {
  *  and the values he lands on replace these. */
 export const FORCE_PARAMS: ForceParams = {
   chargeStrength: -120,
-  chargeDistanceMax: 800,
+  chargeDistanceMax: 720,
   centerStrength: 0,
-  boundaryStrength: 0.03,
-  collisionPadding: 12,
-  seedJitter: 90,
-  margin: 50,
+  boundaryStrength: 0.01,
+  collisionPadding: 3,
+  seedJitter: 250,
+  margin: 15,
 }
 
 /** The slider envelopes (`min`/`max`/`step`) the spread-tuning harness exposes for
