@@ -1,12 +1,18 @@
-import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import { BUOY_BOB, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
+import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
 
-// Pure Canvas-2D draw helpers for the world-gen streaming graph (MYT-89 C4). The
+// Pure Canvas-2D draw helpers for the world-gen streaming graph (MYT-89 C5). The
 // brand register is FLAT 1-BIT PAPER: every entity is a SQUARE ink glyph (never a
 // circle/dot/badge), every link a hand-drawn ink line. No colour lives here — the
 // host sets `ctx.strokeStyle`/`ctx.fillStyle` to the resolved theme ink before
-// calling, exactly like GhostBloomField (keeps R3 intact for a raw Canvas surface
-// Tailwind can't reach). The host also translates the context to graph centre, so
-// these draw in the centred, non-negative-friendly coordinate space.
+// calling (keeps R3 intact for a raw Canvas surface Tailwind can't reach).
+//
+// COORDINATE SPACE (C5 unification, §3.6): the graph shares the fog's 900×470
+// VIRTUAL space. The force-sim reports CENTRED positions in `[−VW/2, VW/2] ×
+// [−VH/2, VH/2]`; the host translates the context by (VW/2, VH/2) before calling,
+// so these draw in the centred space AND `centredToVirtual` (below) maps the exact
+// same point into the fog's top-left virtual space — one point, two surfaces, so a
+// node's glyph and its fog-hole land on the identical coordinate.
 
 /** A resolved node position in the host's (centred) canvas space. */
 export interface Point {
@@ -23,6 +29,55 @@ const LABEL_ALPHA = 0.62
 const EDGE_ALPHA = 0.4
 /** Deterministic per-edge bow (px) so links read hand-drawn without frame jitter. */
 const EDGE_BOW = 7
+
+/** Map a CENTRED sim point (`[−VW/2, VW/2] × [−VH/2, VH/2]`) into the fog's top-left
+ *  VIRTUAL space (`[0, VW] × [0, VH]`). This is the exact translation the host applies
+ *  to the graph context (`translate(VW/2, VH/2)`), so a node drawn here lands on the
+ *  SAME virtual coordinate the fog obstacle is built at — the C5 coord unification. */
+export function centredToVirtual(p: Point): Point {
+  return { x: p.x + VIRTUAL_WIDTH / 2, y: p.y + VIRTUAL_HEIGHT / 2 }
+}
+
+/** The per-node buoy-bob OFFSET (px) at virtual position (x, y) and clock `t` (s) —
+ *  the reference's idle sway, verbatim from `BUOY_BOB`. A RENDER-time offset: it is
+ *  never written back to the physics (`positions()` stays authoritative), and BOTH
+ *  the glyph draw and the fog-obstacle mapping add the identical offset, so a node
+ *  and its fog-hole bob together. The phase is seeded on the (unbobbed) virtual
+ *  position so labels desync. */
+export function bobOffset(x: number, y: number, t: number): Point {
+  const ph = x * BUOY_BOB.phase.xCoeff + y * BUOY_BOB.phase.yCoeff
+  const dx = BUOY_BOB.x.reduce((sum, term) => sum + Math.sin(t * term.timeFreq + ph * term.phaseMul) * term.amp, 0)
+  const dy = BUOY_BOB.y.reduce((sum, term) => {
+    const fn = term.fn === 'sin' ? Math.sin : Math.cos
+    return sum + fn(t * term.timeFreq + ph * term.phaseMul) * term.amp
+  }, 0)
+  return { x: dx, y: dy }
+}
+
+/**
+ * Map the current graph nodes (+ their CENTRED sim positions) into the fog's
+ * `FogFieldEntity[]` in the shared VIRTUAL space (C5 decision 3): each node becomes a
+ * label the fog parts around, at the SAME virtual coordinate its glyph is drawn at,
+ * plus the render-only buoy bob so the fog-hole tracks the bobbing glyph. `t === null`
+ * disables the bob (reduced motion) — the fog then parts around the static positions.
+ * Nodes without a position (not yet placed) are skipped. Pure — unit-testable without
+ * a Canvas, and the SINGLE source both the fog obstacles and the glyph draw derive from.
+ */
+export function fogEntitiesFrom(
+  nodes: readonly GraphNode[],
+  positions: ReadonlyMap<string, Point>,
+  t: number | null,
+): FogFieldEntity[] {
+  const out: FogFieldEntity[] = []
+  for (const node of nodes) {
+    const centred = positions.get(node.displayId)
+    if (centred === undefined) continue
+    const v = centredToVirtual(centred)
+    const bob = t === null ? { x: 0, y: 0 } : bobOffset(v.x, v.y, t)
+    out.push({ x: v.x + bob.x, y: v.y + bob.y, kind: node.kind, name: node.name })
+  }
+  return out
+}
 
 /** Stable small hash of a string → used for a deterministic (non-animating) bow on
  *  each edge, so the "hand-drawn" wobble is fixed per link, not reshuffled per frame. */
@@ -71,36 +126,45 @@ function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, key: string
   ctx.stroke()
 }
 
-/** How to emphasise a node this frame — both keys are in `displayId` space (the
- *  render/selection id-space). Both fields are always passed (may be absent-as-
- *  `undefined`/`null`) — required-but-nullable keeps the render loop's object
- *  literal clean under `exactOptionalPropertyTypes`. */
+/** How to emphasise + animate the node layer this frame — all in `displayId` space
+ *  (the render/selection id-space). `t` is the buoy-bob clock in seconds (`null`
+ *  disables the bob, reduced motion); `showLabels` gates the name label (OFF during
+ *  generation — §3.4 — the glyphs are mono-ink shapes only; the reveal turns it on). */
 export interface NodeDecoration {
   selectedKey: string | undefined
   hoverKey: string | null
+  t: number | null
+  showLabels: boolean
 }
 
 /**
- * Draw every node as its per-kind square glyph plus a quiet name label, and return
- * the anchor points for the ghost-bloom field (so churn clusters near real nodes).
- * The hovered node is drawn raised (larger); the selected node gets a square frame.
+ * Draw every node as its per-kind square glyph, with a RENDER-only buoy bob applied
+ * to the draw position (the physics position is untouched). Optionally a quiet name
+ * label (reveal only). The hovered node is drawn raised (larger); the selected node
+ * gets a square frame.
  */
 export function drawNodes(
   ctx: CanvasRenderingContext2D,
   nodes: readonly GraphNode[],
   positions: ReadonlyMap<string, Point>,
   deco: NodeDecoration,
-): Point[] {
-  const points: Point[] = []
+): void {
   for (const node of nodes) {
     const p = positions.get(node.displayId)
     if (p === undefined) continue
-    points.push(p)
     const hovered = node.displayId === deco.hoverKey
     const selected = node.displayId === deco.selectedKey
-    drawNode(ctx, node, p, hovered, selected)
+    const bob = bobFor(p, deco.t)
+    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, hovered, selected, deco.showLabels)
   }
-  return points
+}
+
+/** The bob offset for a centred point (or zero when the bob is disabled). Kept beside
+ *  `fogEntitiesFrom`'s identical logic so the glyph and its fog-hole share one bob. */
+function bobFor(p: Point, t: number | null): Point {
+  if (t === null) return { x: 0, y: 0 }
+  const v = centredToVirtual(p)
+  return bobOffset(v.x, v.y, t)
 }
 
 function drawNode(
@@ -109,6 +173,7 @@ function drawNode(
   p: Point,
   hovered: boolean,
   selected: boolean,
+  showLabel: boolean,
 ): void {
   const half = GLYPH_HALF * (hovered ? HOVER_SCALE : 1)
   ctx.save()
@@ -117,7 +182,7 @@ function drawNode(
     ctx.strokeRect(-(half + SELECT_FRAME_PAD), -(half + SELECT_FRAME_PAD), (half + SELECT_FRAME_PAD) * 2, (half + SELECT_FRAME_PAD) * 2)
   }
   drawGlyph(ctx, node.kind, half)
-  drawLabel(ctx, node.name, half)
+  if (showLabel) drawLabel(ctx, node.name, half)
   ctx.restore()
 }
 

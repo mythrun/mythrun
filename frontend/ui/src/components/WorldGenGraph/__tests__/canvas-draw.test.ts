@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import {
+  LABEL_CAP_Y_OFFSET,
+  VIRTUAL_HEIGHT,
+  VIRTUAL_WIDTH,
+} from '@mythrun/client-core/worldgen'
 import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
-import { drawEdges, drawNodes, type Point } from '../canvas-draw.ts'
+import { bobOffset, centredToVirtual, drawEdges, drawNodes, fogEntitiesFrom, type Point } from '../canvas-draw.ts'
+import { entityObstacle } from '../../WorldGenFog/fog-obstacles.ts'
 
 // BUG 2.1 render-layer proof. The sim/render/edge id-space is `displayId`: node
 // positions are keyed by `displayId`, and edge endpoints are entity UUIDs (= the
@@ -116,15 +122,13 @@ describe('drawEdges — displayId ↔ UUID reconciliation (BUG 2.1)', () => {
 describe('drawNodes — displayId lookup', () => {
   it('draws a live-won node via its displayId (not its synthKey)', () => {
     const r = recorder()
-    const points = drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, {
+    drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, {
       selectedKey: undefined,
       hoverKey: null,
+      t: null, // no bob → the draw translate is the raw physics position
+      showLabels: false,
     })
-    // Both nodes resolve their position by displayId and are drawn.
-    expect(points).toEqual([
-      { x: -30, y: 0 },
-      { x: 30, y: 0 },
-    ])
+    // Both nodes resolve their position by displayId and are drawn there.
     expect(r.translates).toEqual([
       { x: -30, y: 0 },
       { x: 30, y: 0 },
@@ -133,10 +137,101 @@ describe('drawNodes — displayId lookup', () => {
 
   it('skips a node absent from the displayId-keyed positions', () => {
     const r = recorder()
-    const points = drawNodes(r.ctx, [liveWon], new Map(), {
+    drawNodes(r.ctx, [liveWon], new Map(), {
       selectedKey: undefined,
       hoverKey: null,
+      t: null,
+      showLabels: false,
     })
-    expect(points).toEqual([])
+    expect(r.translates).toEqual([])
+  })
+})
+
+// ── C5: the shared graph↔fog virtual space + render-only buoy bob ─────────────────────
+// The C5 crux in unit form: the graph and the fog share ONE 900×470 virtual space, so a
+// node's glyph and its fog-hole land on the identical coordinate. `fogEntitiesFrom` is
+// the single source the fog obstacles derive from, and it maps a centred sim point the
+// SAME way the draw translates it — (VW/2, VH/2). The buoy bob is a RENDER offset only.
+
+const cnode = (displayId: string, kind: string, name: string): GraphNode => ({
+  synthKey: displayId,
+  kind,
+  name,
+  displayId,
+  state: 'finalized',
+  lastEventIndex: 0,
+})
+
+describe('centredToVirtual — the shared graph↔fog translation', () => {
+  it('recentres a centred sim point into the fog top-left virtual space', () => {
+    expect(centredToVirtual({ x: 0, y: 0 })).toEqual({ x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT / 2 })
+    expect(centredToVirtual({ x: 100, y: -50 })).toEqual({
+      x: VIRTUAL_WIDTH / 2 + 100,
+      y: VIRTUAL_HEIGHT / 2 - 50,
+    })
+  })
+})
+
+describe('fogEntitiesFrom — fog obstacles from live node positions (C5 decision 3)', () => {
+  const nodeA = cnode('a', 'location', 'Ashfen Reach')
+  const nodeB = cnode('b', 'npc', 'Maeris Vale')
+  const nodes = [nodeA, nodeB]
+  const positions = new Map<string, Point>([
+    ['a', { x: 120, y: -30 }],
+    ['b', { x: -80, y: 60 }],
+  ])
+
+  it('maps each node to the SAME virtual coordinate the glyph is drawn at (no bob)', () => {
+    // drawNodes above proves the glyph translate is the centred position; the host then
+    // translates the context by (VW/2, VH/2). fogEntitiesFrom applies that same offset —
+    // so obstacle position === glyph draw position, in one virtual space.
+    const entities = fogEntitiesFrom(nodes, positions, null)
+    expect(entities[0]).toEqual({
+      x: VIRTUAL_WIDTH / 2 + 120,
+      y: VIRTUAL_HEIGHT / 2 - 30,
+      kind: 'location',
+      name: 'Ashfen Reach',
+    })
+    expect(entities[1]?.x).toBe(VIRTUAL_WIDTH / 2 - 80)
+    expect(entities[1]?.y).toBe(VIRTUAL_HEIGHT / 2 + 60)
+  })
+
+  it('a node at virtual (x,y) yields a FogObstacle whose capsule midline sits on it', () => {
+    const entity = fogEntitiesFrom([nodeA], positions, null)[0]
+    if (entity === undefined) throw new Error('expected a fog entity for the node')
+    const obstacle = entityObstacle(entity, 40, 0, 0)
+    // The reference anchors the capsule LABEL_CAP_Y_OFFSET above the marker; the box
+    // midline (y + h/2) lands there — on the node's virtual anchor's capsule.
+    expect(obstacle.y + obstacle.h / 2).toBeCloseTo(entity.y - LABEL_CAP_Y_OFFSET, 6)
+  })
+
+  it('skips nodes that have no position yet', () => {
+    const partial = new Map<string, Point>([['a', { x: 10, y: 20 }]])
+    expect(fogEntitiesFrom(nodes, partial, null)).toHaveLength(1)
+  })
+})
+
+describe('bobOffset / fogEntitiesFrom — buoy bob is a RENDER offset only (C5 decision 4)', () => {
+  it('is deterministic per (position, clock) and animates with the clock', () => {
+    const a = bobOffset(300, 200, 1.5)
+    expect(bobOffset(300, 200, 1.5)).toEqual(a) // pure
+    expect(bobOffset(300, 200, 2.5)).not.toEqual(a) // moves with time
+  })
+
+  it('adds the bob to the drawn/derived position WITHOUT mutating the physics positions', () => {
+    const nodes = [cnode('a', 'location', 'Ashfen Reach')]
+    const positions = new Map<string, Point>([['a', { x: 40, y: -10 }]])
+    const base = fogEntitiesFrom(nodes, positions, null)[0] // no bob
+    const bobbed = fogEntitiesFrom(nodes, positions, 3)[0] // same frame, with bob
+    if (base === undefined || bobbed === undefined) throw new Error('expected fog entities')
+
+    const v = centredToVirtual({ x: 40, y: -10 })
+    const bob = bobOffset(v.x, v.y, 3)
+    // The derived (drawn) position differs from the physics position by exactly the bob…
+    expect(bobbed.x).toBeCloseTo(base.x + bob.x, 6)
+    expect(bobbed.y).toBeCloseTo(base.y + bob.y, 6)
+    expect(bob.y).not.toBe(0) // the y bob is real, not a no-op
+    // …while the source positions map is untouched — bob never writes back to physics.
+    expect(positions.get('a')).toEqual({ x: 40, y: -10 })
   })
 })

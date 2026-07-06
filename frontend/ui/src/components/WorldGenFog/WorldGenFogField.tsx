@@ -18,7 +18,8 @@ import { useFogCanvas } from './use-fog-canvas.ts'
 export const WorldGenFogField = forwardRef<HTMLCanvasElement, WorldGenFogFieldProps>(
   function WorldGenFogField(
     {
-      entities,
+      entities = [],
+      entitiesSource,
       shownEntities,
       totalEntities,
       density = FOG_PARAMS.density,
@@ -39,7 +40,7 @@ export const WorldGenFogField = forwardRef<HTMLCanvasElement, WorldGenFogFieldPr
       [ref],
     )
 
-    useFogCanvas({ canvasRef, entities, shownEntities, totalEntities, density, reducedMotion })
+    useFogCanvas({ canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion })
 
     return (
       <canvas

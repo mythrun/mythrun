@@ -122,7 +122,11 @@ function repaint(ctx: CanvasRenderingContext2D, sim: FogSim, t: number, eff: num
 
 export interface FogCanvasParams {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
-  entities: FogFieldEntity[]
+  entities: readonly FogFieldEntity[]
+  /** A LIVE per-frame obstacle source. When set it supersedes `entities` and is read
+   *  each frame — the C5 integration seam that lets the fog-holes track the graph's
+   *  force-sim positions without a React re-render per frame. */
+  entitiesSource?: (() => readonly FogFieldEntity[]) | undefined
   shownEntities: number
   totalEntities: number
   density: number
@@ -130,21 +134,31 @@ export interface FogCanvasParams {
 }
 
 export function useFogCanvas(params: FogCanvasParams): void {
-  const { canvasRef, entities, shownEntities, totalEntities, density, reducedMotion } = params
+  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion } = params
 
   // Latest props the imperative closures read (useLatest idiom): refs so the rAF loop
   // always sees current values without re-binding every render.
   const simRef = useRef<FogSim | null>(null)
   const entitiesRef = useRef(entities)
+  const entitiesSourceRef = useRef(entitiesSource)
   const shownRef = useRef(shownEntities)
   const totalRef = useRef(totalEntities)
   const densityRef = useRef(density)
   const prevPosRef = useRef<Map<number, Pos>>(new Map())
   const simTimeRef = useRef(0)
   entitiesRef.current = entities
+  entitiesSourceRef.current = entitiesSource
   shownRef.current = shownEntities
   totalRef.current = totalEntities
   densityRef.current = density
+
+  // The obstacle set for THIS frame: the live source (when composed into a graph) or
+  // the static `entities` prop (standalone / the tuning story). Read fresh each frame.
+  const currentEntities = useCallback(
+    (): readonly FogFieldEntity[] =>
+      entitiesSourceRef.current ? entitiesSourceRef.current() : entitiesRef.current,
+    [],
+  )
 
   const getSim = useCallback((): FogSim => {
     simRef.current ??= createFogSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
@@ -164,13 +178,13 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
     // Positions are static during a settle, so the obstacles (vx/vy = 0) are built ONCE
     // and reused across every sub-step — no per-step re-measure.
-    const obstacles = buildObstacles(ctx, entitiesRef.current, prevPosRef.current, SUBSTEP_MS)
+    const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS)
     for (let i = 0; i < SETTLE_STEPS; i++) {
       sim.step(SUBSTEP_MS, obstacles, eff)
       simTimeRef.current += SUBSTEP_MS / 1000
     }
     repaint(ctx, sim, simTimeRef.current, eff)
-  }, [canvasRef, getSim])
+  }, [canvasRef, getSim, currentEntities])
 
   useEffect(() => {
     if (!reducedMotion) return
@@ -185,12 +199,12 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     sizeFogCanvas(canvas, ctx)
-    return startFogLoop(ctx, getSim(), { entitiesRef, shownRef, totalRef, densityRef, prevPosRef })
-  }, [reducedMotion, canvasRef, getSim])
+    return startFogLoop(ctx, getSim(), { getEntities: currentEntities, shownRef, totalRef, densityRef, prevPosRef })
+  }, [reducedMotion, canvasRef, getSim, currentEntities])
 }
 
 interface FogLoopDeps {
-  entitiesRef: React.RefObject<FogFieldEntity[]>
+  getEntities: () => readonly FogFieldEntity[]
   shownRef: React.RefObject<number>
   totalRef: React.RefObject<number>
   densityRef: React.RefObject<number>
@@ -202,7 +216,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { entitiesRef, shownRef, totalRef, densityRef, prevPosRef } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -210,7 +224,7 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     const dtMs = last === 0 ? SUBSTEP_MS : now - last
     last = now
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
-    const obstacles = buildObstacles(ctx, entitiesRef.current, prevPosRef.current, dtMs)
+    const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs)
     sim.step(dtMs, obstacles, eff)
     repaint(ctx, sim, (now - start) / 1000, eff)
     raf = window.requestAnimationFrame(frame)

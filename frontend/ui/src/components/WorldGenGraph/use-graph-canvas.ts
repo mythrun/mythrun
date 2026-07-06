@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useRef } from 'react'
-import { createForceSim, type ForceSim } from '@mythrun/client-core/worldgen'
-import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
-import { GhostBloomField } from './GhostBloomField.ts'
-import { drawEdges, drawNodes, type Point } from './canvas-draw.ts'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import {
+  createForceSim,
+  VIRTUAL_HEIGHT,
+  VIRTUAL_WIDTH,
+  type ForceSim,
+} from '@mythrun/client-core/worldgen'
+import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import { drawEdges, drawNodes, fogEntitiesFrom, type Point } from './canvas-draw.ts'
 import {
   hasFinePointer,
   nearestKey,
@@ -11,34 +15,26 @@ import {
   sizeCanvasForDpr,
 } from './canvas-util.ts'
 
-// The imperative Canvas controller for WorldGenGraph (MYT-89 C4). Owns the physics
-// (a persistent ForceSim), the ambient churn (a GhostBloomField), the rAF render
-// loop, DPR sizing, and fine-pointer hover/drag/select. Everything is guarded on a
-// live 2D context, so under jsdom (getContext → null) NOTHING here runs — the a11y
-// entity list is the whole testable + accessible surface. The FOLD never runs here:
-// nodes/edges arrive as props (the parent folds per SSE event); a change re-syncs.
+// The imperative Canvas controller for WorldGenGraph (MYT-89 C5). Owns the physics
+// (a persistent ForceSim in the 900×470 VIRTUAL space — the SAME space the fog renders
+// in, so a node's glyph and its fog-hole land on one coordinate), the buoy-bob clock,
+// the rAF render loop, DPR sizing, and — only in the interactive (reveal) phase —
+// fine-pointer hover/drag/select. Everything is guarded on a live 2D context, so under
+// jsdom (getContext → null) NOTHING here runs — the a11y entity list is the whole
+// testable + accessible surface. The FOLD never runs here: nodes/edges arrive as props
+// (the parent folds per SSE event); a change re-syncs.
+//
+// It ALSO exposes `getFogEntities()` — the live node positions (+ the render-only bob),
+// mapped into the fog's VIRTUAL space — which WorldGenGraph feeds to the fog layer each
+// frame (C5 decision 3). One force-sim, one bob clock: the obstacles the fog parts
+// around are derived from the identical positions the glyphs are drawn at.
 
-/** px radius a pointer must fall within to hit a node glyph. */
+/** px radius (VIRTUAL units) a pointer must fall within to hit a node glyph. */
 const HIT_RADIUS = 16
-/** px a pointer must travel before a press becomes a drag (vs a select tap). */
+/** px (client) a pointer must travel before a press becomes a drag (vs a select tap). */
 const DRAG_THRESHOLD = 4
 /** Bounded tick count to settle the layout for a static (reduced-motion) redraw. */
 const SETTLE_TICKS = 400
-
-// GEN-GRAPH LAYOUT SOURCE (spec §8.4): the GENERATION graph keeps the force-sim for
-// node placement — the persistent ForceSim below is the sole source of positions for
-// both the gen and reveal phases (they share this hook). BUG 2.2's viewport
-// containment (a boundary force + distanceMax + a per-tick clamp) lives inside that
-// sim, so it applies to both phases with no phase-specific gating.
-//
-// The sim is created lazily (getSim), on first sync, BEFORE the canvas has been
-// measured (sizeRef is still 0×0 at that point — a 0×0 containment box would collapse
-// every node onto the origin). So we seed it with a CONSTANT logical viewport, 4:3 to
-// match the canvas's `aspect-[4/3]`. Phase C (§3.6) replaces this constant with the
-// real virtual coordinate space (a constant logical width, CSS-scaled); B2 only needs
-// a sensible default here so the containment box is non-degenerate.
-const DEFAULT_SIM_WIDTH = 1200
-const DEFAULT_SIM_HEIGHT = 900
 
 interface DragState {
   /** The dragged node's `displayId` (the render/selection id-space). */
@@ -56,6 +52,16 @@ export interface GraphCanvasParams {
   selectedKey: string | undefined
   onSelect: (displayId: string) => void
   reducedMotion: boolean
+  /** Reveal phase (§3.4): shows node labels + attaches fine-pointer selection. During
+   *  generation (default `false`) the graph is inert — mono-ink glyphs, no labels, no
+   *  Canvas selection (selection belongs to the reveal). */
+  interactive: boolean
+}
+
+export interface GraphCanvas {
+  /** Live node positions (+ the render-only bob) mapped into the fog's VIRTUAL space —
+   *  the fog layer's per-frame obstacle source (C5 decision 3). Stable identity. */
+  getFogEntities: () => FogFieldEntity[]
 }
 
 /** Tick the layout to convergence — a bounded loop (d3's alpha decays), never an
@@ -64,8 +70,8 @@ function settle(sim: ForceSim): void {
   for (let i = 0; i < SETTLE_TICKS; i++) sim.tick()
 }
 
-export function useGraphCanvas(params: GraphCanvasParams): void {
-  const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion } = params
+export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
+  const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion, interactive } = params
 
   // Latest props/state the imperative closures read (the useLatest idiom): refs so
   // the rAF loop + pointer listeners always see current values without re-binding.
@@ -75,62 +81,98 @@ export function useGraphCanvas(params: GraphCanvasParams): void {
   const selectedRef = useRef(selectedKey)
   const onSelectRef = useRef(onSelect)
   const reducedRef = useRef(reducedMotion)
+  const interactiveRef = useRef(interactive)
   const hoverRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
+  const clockRef = useRef(0) // buoy-bob clock (seconds); 0 until the loop runs.
+  const settledRef = useRef(false) // reduced-motion: has the current graph been settled?
   nodesRef.current = nodes
   edgesRef.current = edges
   selectedRef.current = selectedKey
   onSelectRef.current = onSelect
   reducedRef.current = reducedMotion
+  interactiveRef.current = interactive
 
+  // The sim lives in the fog's VIRTUAL space (C5 §3.6) — created lazily on first sync.
+  // B2's containment (boundary force + distanceMax + per-tick clamp) now uses the real
+  // virtual dims, so no node draws outside the CSS-scaled pane (BUG 2.2 in pixels).
   const getSim = useCallback((): ForceSim => {
-    simRef.current ??= createForceSim({ width: DEFAULT_SIM_WIDTH, height: DEFAULT_SIM_HEIGHT })
+    simRef.current ??= createForceSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
     return simRef.current
   }, [])
+
+  // Reduced motion: settle the sim to convergence ONCE per graph change, idempotently —
+  // whoever reads first (the fog's static settle via getFogEntities, or the graph's own
+  // static paint) triggers it; the flag makes the other a no-op, so cross-hook effect
+  // ordering doesn't matter. Under motion this never runs (the rAF loop drives tick()).
+  const ensureSettled = useCallback((): void => {
+    const sim = simRef.current
+    if (sim === null || !reducedRef.current || settledRef.current) return
+    settle(sim)
+    settledRef.current = true
+  }, [])
+
+  // Live fog obstacles (C5 decision 3): the current node positions (+ render-only bob,
+  // disabled under reduced motion) in the fog's VIRTUAL space — the SAME positions the
+  // glyphs are drawn at. Stable identity so the fog effect never re-binds on it.
+  const getFogEntities = useCallback((): FogFieldEntity[] => {
+    const sim = simRef.current
+    if (sim === null) return []
+    if (reducedRef.current) ensureSettled()
+    const t = reducedRef.current ? null : clockRef.current
+    return fogEntitiesFrom(nodesRef.current, sim.positions(), t)
+  }, [ensureSettled])
 
   const applySize = useCallback((canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
     sizeRef.current = sizeCanvasForDpr(canvas, ctx)
   }, [])
 
-  // Draw one frame of the graph (edges + glyphs), centred, in the resolved ink.
-  // Returns the node anchor points so the caller can cluster ghost churn near them.
-  const paintFrame = useCallback((ctx: CanvasRenderingContext2D, ink: string): Point[] => {
-    const { cssW, cssH } = sizeRef.current
-    ctx.clearRect(0, 0, cssW, cssH)
+  // Draw one frame of the graph (edges + glyphs) in the VIRTUAL space, in the resolved
+  // ink. `t` is the bob clock (null under reduced motion → no bob); `interactive`
+  // enables the reveal's name labels (OFF during generation — §3.4).
+  const paintFrame = useCallback((ctx: CanvasRenderingContext2D, ink: string): void => {
+    ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
     ctx.save()
-    ctx.translate(cssW / 2, cssH / 2)
+    ctx.translate(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2)
     ctx.strokeStyle = ink
     ctx.fillStyle = ink
     const positions = getSim().positions()
     drawEdges(ctx, edgesRef.current, positions)
-    const points = drawNodes(ctx, nodesRef.current, positions, {
+    drawNodes(ctx, nodesRef.current, positions, {
       selectedKey: selectedRef.current,
       hoverKey: hoverRef.current,
+      t: reducedRef.current ? null : clockRef.current,
+      showLabels: interactiveRef.current,
     })
     ctx.restore()
-    return points
   }, [getSim])
 
   // A single static repaint of the current state (reduced motion + on resize): size
-  // the canvas, resolve ink, draw once. No ghost churn, no loop.
+  // the canvas, resolve ink, settle if needed, draw once. No churn, no loop.
   const staticPaint = useCallback((): void => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
+    ensureSettled()
     paintFrame(ctx, resolveInk(canvas))
-  }, [canvasRef, applySize, paintFrame])
+  }, [canvasRef, applySize, ensureSettled, paintFrame])
 
-  // Re-sync the physics whenever the folded graph changes; in reduced motion also
-  // settle + repaint statically (the loop that would otherwise pick it up is off).
+  // Re-sync the physics whenever the folded graph changes. In a LAYOUT effect (runs
+  // before the fog child's effects) so a reduced-motion fog settle reads an already-
+  // synced sim; the settle itself is deferred to `ensureSettled` (idempotent).
+  useLayoutEffect(() => {
+    getSim().sync(nodes, edges)
+    settledRef.current = false
+  }, [nodes, edges, getSim])
+
+  // Reduced-motion static redraw: settle (once) + paint on any graph change. The motion
+  // loop that would otherwise pick a change up is off in this mode.
   useEffect(() => {
-    const sim = getSim()
-    sim.sync(nodes, edges)
     if (!reducedMotion) return
-    settle(sim)
     staticPaint()
-  }, [nodes, edges, reducedMotion, getSim, staticPaint])
+  }, [nodes, edges, reducedMotion, staticPaint])
 
   // The motion render loop. Off entirely under reduced motion (and when there's no
   // 2D context — jsdom). The loop body lives in startMotionLoop (module scope).
@@ -140,14 +182,15 @@ export function useGraphCanvas(params: GraphCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
-    return startMotionLoop(ctx, canvas, { getSim, paintFrame, sizeRef })
+    return startMotionLoop(ctx, canvas, { getSim, paintFrame, clockRef })
   }, [reducedMotion, canvasRef, applySize, paintFrame, getSim])
 
-  // Fine-pointer interaction: hover-raise, drag-to-pin, tap-to-select. Attached only
-  // with a live context + a FINE pointer + motion on — a coarse (touch) pointer and
-  // reduced motion both select via the list, never the Canvas.
+  // Fine-pointer interaction (reveal only): hover-raise, drag-to-pin, tap-to-select.
+  // Attached only when INTERACTIVE + a live context + a FINE pointer + motion on — a
+  // coarse (touch) pointer and reduced motion both select via the list. During
+  // generation (interactive === false) the Canvas is inert (§3.4 gate).
   useEffect(() => {
-    if (reducedMotion || !hasFinePointer()) return
+    if (!interactive || reducedMotion || !hasFinePointer()) return
     const canvas = canvasRef.current
     if (canvas === null) return
     if (canvas.getContext('2d') === null) return
@@ -158,66 +201,71 @@ export function useGraphCanvas(params: GraphCanvasParams): void {
       dragRef,
       onSelectRef,
     })
-  }, [reducedMotion, canvasRef, getSim])
+  }, [interactive, reducedMotion, canvasRef, getSim])
 
   // Repaint on container resize, honouring the current mode (static vs let-the-loop-
   // handle-it). Mount-only; reads the latest mode via ref. jsdom's ResizeObserver is
   // a no-op shim, so this is inert there.
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (canvas === null || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => {
-      if (reducedRef.current) {
-        staticPaint()
-        return
-      }
-      const ctx = canvas.getContext('2d')
-      if (ctx !== null) applySize(canvas, ctx)
-    })
-    observer.observe(canvas)
-    return () => {
-      observer.disconnect()
+  useEffect(
+    () => observeResize(canvasRef.current, { reducedRef, staticPaint, applySize }),
+    [canvasRef, applySize, staticPaint],
+  )
+
+  return { getFogEntities }
+}
+
+interface ResizeDeps {
+  reducedRef: React.RefObject<boolean>
+  staticPaint: () => void
+  applySize: (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void
+}
+
+/** Observe container resize and repaint in the current mode (static settle vs re-size-
+ *  and-let-the-loop-handle-it). Returns the disconnect teardown (or undefined when
+ *  there's no canvas / no ResizeObserver — jsdom). Module-scoped so the hook stays lean. */
+function observeResize(canvas: HTMLCanvasElement | null, deps: ResizeDeps): (() => void) | undefined {
+  const { reducedRef, staticPaint, applySize } = deps
+  if (canvas === null || typeof ResizeObserver === 'undefined') return undefined
+  const observer = new ResizeObserver(() => {
+    if (reducedRef.current) {
+      staticPaint()
+      return
     }
-  }, [canvasRef, applySize, staticPaint])
+    const ctx = canvas.getContext('2d')
+    if (ctx !== null) applySize(canvas, ctx)
+  })
+  observer.observe(canvas)
+  return () => {
+    observer.disconnect()
+  }
 }
 
 interface MotionLoopDeps {
   getSim: () => ForceSim
-  paintFrame: (ctx: CanvasRenderingContext2D, ink: string) => Point[]
-  sizeRef: React.RefObject<{ cssW: number; cssH: number }>
+  paintFrame: (ctx: CanvasRenderingContext2D, ink: string) => void
+  clockRef: React.RefObject<number>
 }
 
-/** Run the rAF churn loop: each frame tick the sim, repaint the graph, then spawn +
- *  render ambient ghost blooms near the node points. Returns the cancel teardown.
- *  Module-scoped so the hook body stays lean.
+/** Run the rAF loop: each frame advance the bob clock, tick the sim, and repaint the
+ *  graph (edges + mono-ink glyphs with the render-only buoy bob). Returns the cancel
+ *  teardown. Module-scoped so the hook body stays lean.
  *
- *  The theme ink is re-resolved EACH frame (not captured once) so a light/dark
- *  toggle mid-generation repaints the Canvas immediately — the Canvas is the one
- *  surface Tailwind can't reach, and a captured ink would stay stale until remount.
- *  A single computed-style read per frame is the accepted cost (C4 review). */
+ *  The theme ink is re-resolved EACH frame (not captured once) so a light/dark toggle
+ *  mid-generation repaints the Canvas immediately — the Canvas is the one surface
+ *  Tailwind can't reach, and a captured ink would stay stale until remount. A single
+ *  computed-style read per frame is the accepted cost (C4 review). */
 function startMotionLoop(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   deps: MotionLoopDeps,
 ): () => void {
-  const { getSim, paintFrame, sizeRef } = deps
-  const ghost = new GhostBloomField()
+  const { getSim, paintFrame, clockRef } = deps
   let raf = 0
-  let last = 0
+  const start = performance.now()
   const frame = (now: number): void => {
-    const ink = resolveInk(canvas)
+    clockRef.current = (now - start) / 1000
     getSim().tick()
-    const points = paintFrame(ctx, ink)
-    const dt = last === 0 ? 16 : now - last
-    last = now
-    const { cssW, cssH } = sizeRef.current
-    ctx.save()
-    ctx.translate(cssW / 2, cssH / 2)
-    ctx.fillStyle = ink
-    ghost.spawn(dt, points)
-    ghost.update(now)
-    ghost.render(ctx)
-    ctx.restore()
+    paintFrame(ctx, resolveInk(canvas))
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)

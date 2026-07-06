@@ -45,8 +45,15 @@ export interface FogFieldEntity {
  */
 export interface WorldGenFogFieldProps extends Omit<BaseProps, 'children'> {
   /** The currently-shown entities the fog parts around (virtual-space positions). One
-   *  `FogObstacle` is built per entity each frame. */
-  entities: FogFieldEntity[]
+   *  `FogObstacle` is built per entity each frame. Optional when `entitiesSource` is
+   *  provided (a LIVE per-frame source supersedes it); defaults to none. */
+  entities?: FogFieldEntity[]
+  /** A LIVE per-frame obstacle source (C5 integration): when set, the fog reads it EACH
+   *  frame instead of the static `entities` prop, so the fog-holes track the graph's
+   *  force-sim positions (+ the render-only buoy bob) without a React re-render per
+   *  frame. The composer (WorldGenGraph) derives it from the shared force-sim in the
+   *  fog's VIRTUAL space, so obstacle and glyph land on one coordinate. */
+  entitiesSource?: () => readonly FogFieldEntity[]
   /** Fade NUMERATOR — how many entities are shown. Typically `entities.length`, but
    *  passed explicitly so the fade progress can be driven by the caller's own metric
    *  independent of the exact obstacle set. */

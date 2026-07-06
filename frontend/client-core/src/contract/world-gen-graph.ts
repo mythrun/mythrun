@@ -1,5 +1,6 @@
 import type { BaseProps } from './index.ts'
 import type { GraphEdge, GraphNode } from '../worldgen/graph-reducers.ts'
+import type { WorldGenStatusCardProps } from './world-gen-status.ts'
 
 // Re-export the graph model types so a consumer reads the node/edge shape off the
 // same contract surface it reads the props from (the graph model lives in the
@@ -27,6 +28,12 @@ export type { GraphNode, GraphEdge, GraphNodeState } from '../worldgen/graph-red
  * endpoint-space === `displayId` (the synthKey pre-finalize, the real entity UUID
  * after). Post-gen a `displayId` IS the entity id, so a consumer can share it
  * directly with an entity-keyed surface (e.g. the reveal wiki) with no bridge.
+ *
+ * TWO PHASES (§3.4). The DEFAULT is the GENERATION graph: a decorative fog layer
+ * behind the mono-ink shape glyphs, a top-left status card, and NO entity list / NO
+ * selection (that experience belongs to the reveal). The REVEAL opts in with
+ * `interactive` — which turns on the accessible entity list + selection (Canvas tap
+ * and list activation) and the on-glyph name labels.
  */
 export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
   /** The current node set (the folded entities, in chronological arrival order). */
@@ -37,18 +44,36 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  matching entity-list item (`aria-current`) and emphasised in the Canvas. */
   selectedKey?: string
   /** Fired when an entity is chosen (an entity-list item, or a fine-pointer Canvas
-   *  tap). Neutral — carries the entity's `displayId`, never a DOM event. */
+   *  tap). Neutral — carries the entity's `displayId`, never a DOM event. Only fires
+   *  when `interactive` (the reveal); the generation graph is inert. */
   onSelect: (displayId: string) => void
   /** Honour the user's reduced-motion preference: no requestAnimationFrame churn
-   *  loop, no ambient ghost blooms — the physics ticks to convergence once per
-   *  `nodes`/`edges` change and the graph is drawn static (still accurate). */
+   *  loop, no buoy bob — the physics ticks to convergence once per `nodes`/`edges`
+   *  change and the graph (and its fog) are drawn static (still accurate). */
   reducedMotion?: boolean
+  /** GATE (§3.4). `false` (default) = the GENERATION graph: no entity list, no
+   *  selection (Canvas taps are inert), no on-glyph labels. `true` = the REVEAL:
+   *  renders the accessible entity list, wires selection (list + fine-pointer Canvas
+   *  tap), and draws the name labels. Preserves the `displayId` selection contract —
+   *  it is only GATED OFF during generation, never changed. */
+  interactive?: boolean
+  /** The world-gen status card (C4) shown top-left of the graph pane during
+   *  generation. When provided, rendered as a DOM overlay over the fog + graph
+   *  canvases; omit it (e.g. the reveal) to hide it. */
+  status?: WorldGenStatusCardProps
+  /** Fade NUMERATOR for the fog (how many entities are shown). Defaults to
+   *  `nodes.length` — the fog thins as the graph fills (§3.2). */
+  shownEntities?: number
+  /** Fade DENOMINATOR for the fog (the full expected graph size). As
+   *  `shownEntities/totalEntities` → 1 the fog fades to nothing; omitted / `0`
+   *  disables the fade (the fog holds its base density). */
+  totalEntities?: number
   /** Accessible label for the entity list — an i18n key the consumer resolves.
-   *  The Canvas is `aria-hidden`, so this list is the graph's whole accessible
-   *  name. The DS owns no copy (§ components-live-in-the-design-system); the
-   *  consuming app supplies the i18n'd value. */
-  listLabel: string
+   *  Only used when `interactive`; the DS owns no copy (§ components-live-in-the-
+   *  design-system), so the consuming app supplies the i18n'd value. */
+  listLabel?: string
   /** Empty-state note shown in the list before any entity has streamed in — an
-   *  i18n key the consumer resolves (the DS owns no copy). */
-  emptyLabel: string
+   *  i18n key the consumer resolves (the DS owns no copy). Only used when
+   *  `interactive`. */
+  emptyLabel?: string
 }

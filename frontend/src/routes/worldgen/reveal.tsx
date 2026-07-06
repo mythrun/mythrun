@@ -147,8 +147,12 @@ export function WorldReveal({
           for auto-fill — and collapse to side-by-side even at 375px.) Very wide
           viewports keep empty trailing tracks; cosmetically fine at two panes. */}
       <Grid columns="auto-fill" minColumnPx={340} gap={4}>
+        {/* The reveal graph is INTERACTIVE (§3.4): the accessible entity list + shared
+            selection (graph ↔ wiki) are the reveal experience — so it opts into the
+            component's default-gated behaviour. */}
         <WorldGenGraph
           data-testid="reveal-graph"
+          interactive
           nodes={nodes}
           edges={edges}
           onSelect={setSelectedEntityId}

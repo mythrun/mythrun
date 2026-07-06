@@ -32,7 +32,11 @@ export function GeneratingView({ nodes, edges }: GeneratingViewProps): React.JSX
     <Stack gap={4} data-testid="worldgen-generating">
       {/* `selectedKey` is spread conditionally — under exactOptionalPropertyTypes
           the optional prop rejects an explicit `undefined`. */}
+      {/* `interactive` keeps the accessible entity list + selection this view has today.
+          C7 wires the true generation gate (gated list/selection + the status card) off
+          the widened stream; until then this preserves the shipped behaviour. */}
       <WorldGenGraph
+        interactive
         nodes={nodes}
         edges={edges}
         onSelect={setSelectedKey}
