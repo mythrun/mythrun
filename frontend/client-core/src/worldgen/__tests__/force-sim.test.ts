@@ -244,9 +244,13 @@ describe('ForceSim viewport containment (BUG 2.2)', () => {
     // containment (a boundary force + distanceMax + the per-tick clamp) the cloud
     // blows well past the half-dimensions and nodes draw off-screen. A deliberately
     // tiny viewport makes the escape unmissable; the assertion is the hard guarantee.
+    // `margin: 0` pins the FULL-edge clamp this test was written for (the containment
+    // margin — MYT-89 follow-up — has its own inset test below); without it the default
+    // margin would inset the bound past this tiny viewport's half-height and the test
+    // would collapse to the centre line, no longer exercising the ±half clamp.
     const width = 100
     const height = 80
-    const sim = create({ width, height })
+    const sim = create({ width, height, params: { margin: 0 } })
 
     const many: GraphNode[] = []
     for (let i = 0; i < 30; i++) many.push(node(`n-${String(i)}`))
@@ -259,6 +263,57 @@ describe('ForceSim viewport containment (BUG 2.2)', () => {
       expect(Math.abs(p.x), `${key} escaped on x`).toBeLessThanOrEqual(halfW)
       expect(Math.abs(p.y), `${key} escaped on y`).toBeLessThanOrEqual(halfH)
     }
+  })
+})
+
+describe('ForceSim containment margin inset (MYT-89 follow-up)', () => {
+  it('holds settled nodes inside the INSET bound ±(half − margin), strictly within ±half', () => {
+    // A CSS-style containment margin: the per-tick clamp insets from the full
+    // half-dimensions to ±(half − margin), so a boundary node settles a label-safe
+    // distance BEFORE the frame edge (its NAME clears the viewport instead of clipping).
+    // A dense mutually-repelling cloud (pure outward pressure) packs against the inset
+    // bound; every node must land within it — and thus STRICTLY inside the full ±half.
+    // Deterministic LCG seeding so the settle is reproducible.
+    let s = 0x2f6e2b1
+    const random = (): number => {
+      s = (s * 1103515245 + 12345) & 0x7fffffff
+      return s / 0x7fffffff
+    }
+    const width = 200
+    const height = 160
+    const margin = 40
+    const sim = create({ width, height, params: { margin }, random })
+
+    const many: GraphNode[] = []
+    for (let i = 0; i < 30; i++) many.push(node(`n-${String(i)}`))
+    sim.sync(many, [])
+    for (let i = 0; i < 500; i++) sim.tick()
+
+    const halfW = width / 2 // 100
+    const halfH = height / 2 // 80
+    const boundW = halfW - margin // 60
+    const boundH = halfH - margin // 40
+    // The inset is a REAL inset — strictly inside the full half on both axes.
+    expect(boundW).toBeLessThan(halfW)
+    expect(boundH).toBeLessThan(halfH)
+
+    const pts = [...sim.positions().values()]
+    for (const p of pts) {
+      // Within the inset bound — and therefore strictly inside the full ±half.
+      expect(Math.abs(p.x)).toBeLessThanOrEqual(boundW)
+      expect(Math.abs(p.y)).toBeLessThanOrEqual(boundH)
+      expect(Math.abs(p.x)).toBeLessThan(halfW)
+      expect(Math.abs(p.y)).toBeLessThan(halfH)
+    }
+
+    // The inset is the ACTIVE bound, not incidental centring: the outward pressure
+    // packs at least one node AGAINST it on each axis. A broken clamp still using the
+    // full half would let a node past boundW/boundH and the per-node loop above fails;
+    // this guards the opposite — that the margin isn't so aggressive nothing reaches it.
+    const maxAbsX = Math.max(...pts.map((p) => Math.abs(p.x)))
+    const maxAbsY = Math.max(...pts.map((p) => Math.abs(p.y)))
+    expect(maxAbsX).toBeGreaterThan(boundW - 1)
+    expect(maxAbsY).toBeGreaterThan(boundH - 1)
   })
 })
 

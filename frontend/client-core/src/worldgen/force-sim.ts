@@ -88,6 +88,14 @@ export interface ForceParams {
    *  centre. Bigger = real initial spread (breaks the stacked-at-origin symmetry);
    *  small = a streaming node emerges near centre and flies out organically. */
   seedJitter: number
+  /** Containment INSET (virtual px) — a CSS-style margin the node cloud is held
+   *  inside (MYT-89 follow-up). The per-tick clamp bounds tighten from the full
+   *  half-dimensions to `±(halfW − margin) / ±(halfH − margin)`, so a boundary node
+   *  settles a label-safe distance BEFORE the frame edge and its NAME (drawn beside
+   *  the glyph — see `canvas-draw.ts` `drawLabel`) clears the viewport instead of
+   *  clipping. Picked to clear a typical label; Miklos dials it in the Storybook
+   *  spread tuner. `0` restores the pre-margin full-edge clamp. */
+  margin: number
 }
 
 /** The LOCKED force defaults — the MYT-89 audit #4 re-tune that FILLS 900×470
@@ -101,6 +109,7 @@ export const FORCE_PARAMS: ForceParams = {
   boundaryStrength: 0.03,
   collideRadius: 40,
   seedJitter: 90,
+  margin: 50,
 }
 
 /** The slider envelopes (`min`/`max`/`step`) the spread-tuning harness exposes for
@@ -113,6 +122,7 @@ export const FORCE_PARAM_RANGES = {
   boundaryStrength: { min: 0, max: 0.2, step: 0.005 },
   collideRadius: { min: 0, max: 90, step: 1 },
   seedJitter: { min: 0, max: 400, step: 5 },
+  margin: { min: 0, max: 150, step: 5 },
 } as const
 
 // VIEWPORT CONTAINMENT (MYT-89 Phase B, BUG 2.2). The repulsion cloud has no
@@ -123,8 +133,10 @@ export const FORCE_PARAM_RANGES = {
 //      node toward the centre lines so containment reads as a soft settle;
 //   2. a `distanceMax` on the charge (`chargeDistanceMax`) so far-apart pairs stop
 //      repelling — caps the long-range accumulation that lets the cloud inflate;
-//   3. a per-tick hard clamp of every node to the half-dimensions — the guarantee
-//      that NO node ever draws outside `[−w/2, w/2] × [−h/2, h/2]`, even mid-settle.
+//   3. a per-tick hard clamp of every node to the INSET half-dimensions (the full
+//      half less `margin`) — the guarantee that NO node ever draws outside
+//      `[−(w/2−m), w/2−m] × [−(h/2−m), h/2−m]`, even mid-settle, so a boundary node's
+//      LABEL clears the frame edge (MYT-89 follow-up — the CSS-style containment margin).
 // Applies to BOTH the generation and reveal graphs (they share this sim); there is
 // no phase-specific gating.
 
@@ -222,6 +234,17 @@ export function create(opts: {
   const random = opts.random ?? Math.random
   const params: ForceParams = { ...FORCE_PARAMS, ...opts.params }
 
+  // CONTAINMENT INSET (MYT-89 follow-up) — a CSS-style margin: the clamp bounds inset
+  // from the full half-dimensions to `±(half − margin)` so a boundary node settles a
+  // label-safe distance before the frame edge and its NAME clears the viewport (names
+  // now render during generation — audit #3 — which made edge-clipping visible).
+  // `Math.max(0, …)` guards a degenerate margin ≥ half from inverting the bound (it
+  // just collapses to the centre line). The soft `boundX/boundY` forces pull toward
+  // the centre (0), which is inside ANY inset, so they need no adjustment — the CLAMP
+  // is the mechanism that guarantees the inset bound.
+  const boundW = Math.max(0, halfW - params.margin)
+  const boundH = Math.max(0, halfH - params.margin)
+
   // The persistent state: `byKey` is the source of truth for identity; `nodes`
   // is the SAME array handed to d3 every sync (mutated in place — survivor
   // object references are reused, never rebuilt).
@@ -230,16 +253,17 @@ export function create(opts: {
   const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
   const simulation = buildSimulation(nodes, linkForce, params)
 
-  /** Advance one step, then HARD-clamp every node into the centred draw space.
-   *  The boundary force + distanceMax keep the settle smooth; this clamp is the
-   *  guarantee that no node is ever reported (or drawn) outside the viewport. */
+  /** Advance one step, then HARD-clamp every node into the INSET draw space
+   *  (`±boundW / ±boundH` = the full half-dimensions less the `margin`). The boundary
+   *  force + distanceMax keep the settle smooth; this clamp is the guarantee that no
+   *  node — and thus no label — is ever reported (or drawn) inside the frame's margin. */
   function tick(): void {
     simulation.tick()
     for (const simNode of nodes) {
-      if (simNode.x < -halfW) simNode.x = -halfW
-      else if (simNode.x > halfW) simNode.x = halfW
-      if (simNode.y < -halfH) simNode.y = -halfH
-      else if (simNode.y > halfH) simNode.y = halfH
+      if (simNode.x < -boundW) simNode.x = -boundW
+      else if (simNode.x > boundW) simNode.x = boundW
+      if (simNode.y < -boundH) simNode.y = -boundH
+      else if (simNode.y > boundH) simNode.y = boundH
     }
   }
 

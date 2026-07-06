@@ -204,7 +204,7 @@ export const Populated: Story = {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Spread-tuning harness (MYT-89 audit #4) — the SAME UX as the fog tuner
-// (WorldGenFogField.stories.tsx). A realistic ~24-node graph with the six force
+// (WorldGenFogField.stories.tsx). A realistic ~24-node graph with the seven force
 // params exposed as LIVE sliders; slide them and the layout re-seeds + re-spreads.
 // The copy block hands the current values back so Miklos can lock them into
 // `FORCE_PARAMS`. Fog is faded to nothing (shown === total) so the spread reads clean.
@@ -240,7 +240,7 @@ function Slider(props: {
   )
 }
 
-// The six force knobs, in slider order — placeholder labels (the DS owns no copy).
+// The seven force knobs, in slider order — placeholder labels (the DS owns no copy).
 const FORCE_KEYS: readonly (keyof ForceParams)[] = [
   'chargeStrength',
   'chargeDistanceMax',
@@ -248,6 +248,7 @@ const FORCE_KEYS: readonly (keyof ForceParams)[] = [
   'boundaryStrength',
   'collideRadius',
   'seedJitter',
+  'margin',
 ]
 const FORCE_LABELS: Record<keyof ForceParams, string> = {
   chargeStrength: '[ph: charge]',
@@ -256,6 +257,7 @@ const FORCE_LABELS: Record<keyof ForceParams, string> = {
   boundaryStrength: '[ph: boundary]',
   collideRadius: '[ph: collide]',
   seedJitter: '[ph: seed jitter]',
+  margin: '[ph: margin]',
 }
 
 // A realistic synthetic world (~24 named entities across the whole glyph vocabulary +
@@ -300,7 +302,7 @@ const TUNER_EDGES: GraphEdge[] = [
   edge('te7', 's/road', 's/world', 'within'),
 ]
 
-/** The tuning harness: six force sliders driving `WorldGenGraph.forceParams`, a live
+/** The tuning harness: seven force sliders driving `WorldGenGraph.forceParams`, a live
  *  spread of the synthetic world, and a copy-paste block of the current values (drop
  *  straight into `FORCE_PARAMS`). Each slider change re-seeds the sim (fresh spread). */
 function GraphSpreadTuner(): React.JSX.Element {
@@ -361,7 +363,7 @@ function GraphSpreadTuner(): React.JSX.Element {
   )
 }
 
-// THE spread-tuning surface — slide the six force knobs and watch the ~24-node world
+// THE spread-tuning surface — slide the seven force knobs and watch the ~24-node world
 // re-seed + re-spread live; copy the settled values back into `FORCE_PARAMS` to lock them.
 export const SpreadTuning: Story = {
   render: () => <GraphSpreadTuner />,

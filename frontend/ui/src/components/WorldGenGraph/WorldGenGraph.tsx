@@ -68,24 +68,30 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       className={cn('flex min-w-0 flex-col gap-[var(--space-4)]', interactive && 'sm:flex-row')}
     >
-      {/* The graph pane: fog behind + graph canvas on top + the status-card overlay, all
-          in one positioned box at the fog's native 900×470 aspect so the fixed virtual
-          render CSS-scales uniformly (both canvases share the box → the fog-holes line up
-          with the glyphs). The canvas is aria-hidden — its meaning is carried by the list
-          (reveal) / the aria-live surface (generation, E1). */}
-      <div className="relative aspect-[90/47] min-w-0 flex-1 overflow-hidden">
-        <WorldGenFogField
-          entitiesSource={getFogEntities}
-          shownEntities={shown}
-          totalEntities={total}
-          reducedMotion={reducedMotion}
-        />
-        <canvas
-          ref={canvasRef}
-          aria-hidden="true"
-          className="absolute inset-0 block h-full w-full"
-        />
-        {status !== undefined && <WorldGenStatusCard {...status} />}
+      {/* CSS-style outer margin (MYT-89 follow-up): the pane sits INSET from its container
+          with page-background breathing room all around — the whole graph view is held in
+          an inset band. Padding on this (transparent) wrapper is the margin; the pane box
+          inside pulls in, so the fog + nodes both inset together. */}
+      <div className="min-w-0 flex-1 p-[var(--space-4)]">
+        {/* The graph pane: fog behind + graph canvas on top + the status-card overlay, all
+            in one positioned box at the fog's native 900×470 aspect so the fixed virtual
+            render CSS-scales uniformly (both canvases share the box → the fog-holes line up
+            with the glyphs). The canvas is aria-hidden — its meaning is carried by the list
+            (reveal) / the aria-live surface (generation, E1). */}
+        <div className="relative aspect-[90/47] w-full overflow-hidden">
+          <WorldGenFogField
+            entitiesSource={getFogEntities}
+            shownEntities={shown}
+            totalEntities={total}
+            reducedMotion={reducedMotion}
+          />
+          <canvas
+            ref={canvasRef}
+            aria-hidden="true"
+            className="absolute inset-0 block h-full w-full"
+          />
+          {status !== undefined && <WorldGenStatusCard {...status} />}
+        </div>
       </div>
       {/* The accessible + selectable surface — the REVEAL only (§3.4 gate). */}
       {interactive && (
