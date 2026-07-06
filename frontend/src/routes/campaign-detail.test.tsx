@@ -151,14 +151,30 @@ function renderDetail(): void {
 }
 
 describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
-  it('renders the streaming world-gen graph while generating', () => {
+  it('renders the gated streaming world-gen view while generating', () => {
     mockStream.mockReturnValue(
-      streamValue({ status: 'generating', phase: 'world_gen', nodes: NODES }),
+      streamValue({
+        status: 'generating',
+        phase: 'world_gen',
+        nodes: NODES,
+        // C7: the generation graph is GATED (no entity list); the status card,
+        // fed the stream's stages, narrates the running stage instead.
+        stages: [
+          {
+            stage: 'concept_intake',
+            status: 'running',
+            userId: null,
+            costUsd: 0,
+            startedAt: null,
+            completedAt: null,
+          },
+        ],
+      }),
     )
     renderDetail()
-    // The accessible entity list (WorldGenGraph's a11y surface) carries a node name.
-    expect(screen.getByText('Ashfen Reach')).toBeDefined()
     expect(screen.getByTestId('worldgen-generating')).toBeDefined()
+    // The status card resolves the running stage id → its i18n friendly label.
+    expect(screen.getByText(i18n.t('worldGen.stage.concept_intake'))).toBeDefined()
   })
 
   it('renders a Retry that calls retry() on a retryable failure', () => {
@@ -197,9 +213,12 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1 })
     mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
     renderDetail()
-    // The campaign page: world identity + both MYT-89 boundary seams.
+    // The campaign page: world identity + both MYT-89 boundary seams. The world
+    // name renders only after the async campaigns fetch resolves, so await it
+    // (findBy) before the synchronous sibling assertions — a bare getByTestId here
+    // races the fetch and flakes under full-suite load.
     expect(await screen.findByTestId('route-campaign-detail')).toBeDefined()
-    expect(screen.getByTestId('campaign-world-name').textContent).toBe('Emberdeep Hollow')
+    expect((await screen.findByTestId('campaign-world-name')).textContent).toBe('Emberdeep Hollow')
     expect(screen.getByTestId('seam-invite')).toBeDefined()
     expect(screen.getByTestId('seam-character')).toBeDefined()
     // The reveal must NOT show once the situation is chosen.

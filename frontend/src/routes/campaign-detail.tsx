@@ -123,12 +123,13 @@ export function CampaignDetailRoute({
   // The route only matches with an `:id`; `?? ''` keeps the hook calls
   // unconditional (hooks can't branch) without a non-null assertion.
   const { id = '' } = useParams<{ id: string }>()
-  const { nodes, edges, status, phase, retry } = useWorldGenStream(ctx, id)
+  const { nodes, edges, status, phase, stages, costUsd, retry } = useWorldGenStream(ctx, id)
   // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
   const worldReady = status === 'complete' && phase === 'world_ready'
   const chosen = useSituationChosen(ctx, id, worldReady, fetchSituations)
 
-  if (status === 'generating') return <GeneratingView nodes={nodes} edges={edges} />
+  if (status === 'generating')
+    return <GeneratingView nodes={nodes} edges={edges} stages={stages} costUsd={costUsd} />
   if (status === 'failed') return <FailedView onRetry={() => void retry()} />
   if (status === 'terminal') return <TerminalView />
 

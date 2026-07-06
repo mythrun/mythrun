@@ -170,14 +170,28 @@
     "settings": "[ph_settings_screen]"
   },
   "worldGen": {
-    "shaping": "[ph: your world is taking shape]",
     "listLabel": "[ph: entities in your forming world]",
     "emptyLabel": "[ph: the world is still taking shape]",
     "failedTitle": "[ph: the world stalled]",
     "failedBody": "[ph: the making was interrupted — you can pick it back up]",
     "retry": "[ph: try again]",
     "terminalTitle": "[ph: this world can't be made]",
-    "terminalBody": "[ph: this one can't continue — start a new campaign]"
+    "terminalBody": "[ph: this one can't continue — start a new campaign]",
+    "statusTitle": "[ph: weaving your world]",
+    "statusDone": "[ph: your world is ready]",
+    "statusProgress": "[ph: world generation progress]",
+    "stage": {
+      "concept_intake": "[ph: reading your idea]",
+      "world_color": "[ph: setting the palette]",
+      "vocabulary_intake": "[ph: learning the local tongue]",
+      "world_and_factions": "[ph: raising the powers]",
+      "locations_and_npcs": "[ph: settling people and places]",
+      "entity_relationships": "[ph: drawing the ties]",
+      "starting_situation": "[ph: finding your opening]",
+      "random_tables": "[ph: seeding the unexpected]",
+      "coherence_pass": "[ph: reconciling the whole]",
+      "embed_world": "[ph: committing it to memory]"
+    }
   },
   "worldReveal": {
     "title": "[ph: your world]",
