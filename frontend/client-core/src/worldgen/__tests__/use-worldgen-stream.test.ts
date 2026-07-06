@@ -191,9 +191,9 @@ describe('useWorldGenStream', () => {
         cumulativeCostUsd: 0.05,
       })
     })
-    const completedAt = (): number =>
+    const completedCount = (): number =>
       result.current.stages.filter((s) => s.status === 'completed').length
-    expect(completedAt()).toBe(0)
+    expect(completedCount()).toBe(0)
     expect(result.current.costUsd).toBe(0.05)
 
     // Live progression: complete stage 1, start + complete a stage the
@@ -215,7 +215,7 @@ describe('useWorldGenStream', () => {
     })
 
     // Advanced PAST the snapshot: one complete, a new running stage appended.
-    expect(completedAt()).toBe(1)
+    expect(completedCount()).toBe(1)
     expect(result.current.stages).toHaveLength(2)
     expect(result.current.stages.find((s) => s.status === 'running')?.stage).toBe('world_color')
 
@@ -232,7 +232,7 @@ describe('useWorldGenStream', () => {
     })
 
     expect(result.current.stages).toHaveLength(2)
-    expect(completedAt()).toBe(2)
+    expect(completedCount()).toBe(2)
     expect(result.current.stages.every((s) => s.status === 'completed')).toBe(true)
     // The completed stages carry their live cost + a derived completedAt.
     expect(result.current.stages.find((s) => s.stage === 'world_color')?.costUsd).toBe(0.2)
