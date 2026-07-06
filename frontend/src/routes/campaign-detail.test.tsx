@@ -122,7 +122,16 @@ const NODES: WorldGenStream['nodes'] = [
 ]
 
 function streamValue(overrides: Partial<WorldGenStream>): WorldGenStream {
-  return { phase: null, nodes: [], edges: [], status: 'generating', retry: vi.fn(), ...overrides }
+  return {
+    phase: null,
+    nodes: [],
+    edges: [],
+    status: 'generating',
+    stages: [],
+    costUsd: null,
+    retry: vi.fn(),
+    ...overrides,
+  }
 }
 
 function renderDetail(): void {

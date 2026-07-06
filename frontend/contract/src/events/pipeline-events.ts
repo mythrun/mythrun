@@ -85,6 +85,23 @@ export type PipelinePhase =
   | 'complete'
   | 'failed'
 
+// Per-stage progress carried by the SSE first-frame snapshot payload (the
+// `PhaseAndStages` shape). Mirror of `StageEntry` in
+// backend/src/sse/derive-phase.ts — kept structurally identical so the snapshot
+// stage array round-trips onto this wire type. `startedAt`/`completedAt` are
+// ISO-8601 strings (or null for stages that haven't started/completed);
+// `userId` is null for world-scoped stages, set for per-player charcreation
+// rows. The generation status card (MYT-89 C4) renders this off
+// `useWorldGenStream`.
+export interface StageProgress {
+  readonly stage: string
+  readonly status: 'pending' | 'running' | 'completed' | 'failed'
+  readonly userId: string | null
+  readonly costUsd: number
+  readonly startedAt: string | null
+  readonly completedAt: string | null
+}
+
 // Discriminated-union of event payload shapes. Field naming uses
 // `T | null` (not `T?`) consistently so JSON round-trips don't muddle
 // snapshot fields with event payload fields.

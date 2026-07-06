@@ -35,6 +35,8 @@ vi.mock('@mythrun/client-core', async (importOriginal) => {
         nodes: [],
         edges: [],
         status: 'complete',
+        stages: [],
+        costUsd: null,
         retry: () => Promise.resolve(),
       }),
     ),

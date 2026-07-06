@@ -7,7 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
-import type { PipelineEvent, PipelinePhase } from '@mythrun/contract/events'
+import type { PipelineEvent, PipelinePhase, StageProgress } from '@mythrun/contract/events'
 import type { ApiContext } from '../api/endpoint.ts'
 import { isHttpError } from '../api/errors.ts'
 import { getWorldSnapshot, resumeGeneration, type WorldGenSnapshot } from '../api/campaigns.ts'
@@ -42,6 +42,12 @@ export interface WorldGenStream {
   readonly nodes: GraphNode[]
   readonly edges: GraphEdge[]
   readonly status: WorldGenStatus
+  /** Per-stage progress from the first-frame snapshot (the C4 status card reads
+   *  this). Empty until the first snapshot frame lands. */
+  readonly stages: readonly StageProgress[]
+  /** Cumulative generation spend from the snapshot's `cumulativeCostUsd`, or
+   *  `null` when the payload omits it. */
+  readonly costUsd: number | null
   readonly retry: () => Promise<void>
 }
 
@@ -94,11 +100,33 @@ function statusForPhase(phase: PipelinePhase | null): WorldGenStatus {
   }
 }
 
-/** Pull the phase off the first-frame `snapshot` payload (a PhaseAndStages). */
-function phaseFromSnapshot(raw: unknown): PipelinePhase | null {
-  if (typeof raw !== 'object' || raw === null || !('phase' in raw)) return null
-  const phase: unknown = raw.phase
-  return typeof phase === 'string' ? (phase as PipelinePhase) : null
+/** The progress the first-frame `snapshot` payload (a PhaseAndStages) carries:
+ *  its `phase`, per-stage `stages[]`, and `cumulativeCostUsd` (as `costUsd`). */
+interface SnapshotProgress {
+  readonly phase: PipelinePhase | null
+  readonly stages: readonly StageProgress[]
+  readonly costUsd: number | null
+}
+
+/** Parse the first-frame snapshot payload into its phase + per-stage progress +
+ *  cumulative cost. Guards the raw shape the same way the old `phaseFromSnapshot`
+ *  did — a non-object, or a payload missing a field, yields the empty/null
+ *  default — and trusts the wire-union shape of the present fields (the same
+ *  `as`-narrowing this code already applies to `phase`, since the snapshot is
+ *  our own backend's serialized `PhaseAndStages`). */
+function parseSnapshotProgress(raw: unknown): SnapshotProgress {
+  if (typeof raw !== 'object' || raw === null) {
+    return { phase: null, stages: [], costUsd: null }
+  }
+  const phase =
+    'phase' in raw && typeof raw.phase === 'string' ? (raw.phase as PipelinePhase) : null
+  const stages =
+    'stages' in raw && Array.isArray(raw.stages) ? (raw.stages as readonly StageProgress[]) : []
+  const costUsd =
+    'cumulativeCostUsd' in raw && typeof raw.cumulativeCostUsd === 'number'
+      ? raw.cumulativeCostUsd
+      : null
+  return { phase, stages, costUsd }
 }
 
 /** Convert a persisted world-snapshot into finalized seed nodes/edges. Persisted
@@ -203,6 +231,8 @@ export function useWorldGenStream(
 
   const [events, setEvents] = useState<PipelineEvent[]>([])
   const [phase, setPhase] = useState<PipelinePhase | null>(null)
+  const [stages, setStages] = useState<readonly StageProgress[]>([])
+  const [costUsd, setCostUsd] = useState<number | null>(null)
   const [seed, setSeed] = useState<GraphSeed | null>(null)
   const [override, setOverride] = useState<WorldGenStatus | null>(null)
 
@@ -223,8 +253,10 @@ export function useWorldGenStream(
     })
     const offSnapshot = client.onSnapshot((raw) => {
       if (!mountedRef.current) return
-      const initial = phaseFromSnapshot(raw)
-      if (initial !== null) setPhase(initial)
+      const snapshot = parseSnapshotProgress(raw)
+      if (snapshot.phase !== null) setPhase(snapshot.phase)
+      setStages(snapshot.stages)
+      setCostUsd(snapshot.costUsd)
     })
     client.open(streamPath(campaignId))
     return () => {
@@ -256,5 +288,5 @@ export function useWorldGenStream(
   )
   const status = override ?? statusForPhase(phase)
 
-  return { phase, nodes, edges, status, retry }
+  return { phase, nodes, edges, status, stages, costUsd, retry }
 }

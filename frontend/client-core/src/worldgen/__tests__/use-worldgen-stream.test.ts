@@ -119,6 +119,64 @@ describe('useWorldGenStream', () => {
     expect(result.current.status).toBe('generating')
   })
 
+  it('exposes per-stage progress and cumulative cost from the first-frame snapshot', () => {
+    const mock = makeMockClient()
+    const stages = [
+      {
+        stage: 'concept_intake',
+        status: 'completed' as const,
+        userId: null,
+        costUsd: 0.12,
+        startedAt: '2026-06-19T10:00:00.000Z',
+        completedAt: '2026-06-19T10:00:05.000Z',
+      },
+      {
+        stage: 'world_and_factions',
+        status: 'running' as const,
+        userId: null,
+        costUsd: 0,
+        startedAt: '2026-06-19T10:00:05.000Z',
+        completedAt: null,
+      },
+    ]
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    // Before any frame the hook reports an empty, cost-less snapshot.
+    expect(result.current.stages).toEqual([])
+    expect(result.current.costUsd).toBeNull()
+
+    act(() => {
+      mock.emitSnapshot({ phase: 'world_gen', stages, cumulativeCostUsd: 3.75 })
+    })
+
+    expect(result.current.stages).toEqual(stages)
+    expect(result.current.costUsd).toBe(3.75)
+  })
+
+  it('exposes costUsd as null when the snapshot payload omits cumulativeCostUsd', () => {
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({ phase: 'world_gen', stages: [] })
+    })
+
+    expect(result.current.stages).toEqual([])
+    expect(result.current.costUsd).toBeNull()
+  })
+
   it('fetches the world-snapshot once and seeds the graph at world_snapshot_ready', async () => {
     const mock = makeMockClient()
     const createClient = () => mock.client
