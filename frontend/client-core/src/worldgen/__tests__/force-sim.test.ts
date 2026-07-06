@@ -85,6 +85,38 @@ describe('ForceSim node-identity preservation', () => {
     expect(after.size).toBe(22)
   })
 
+  it('keeps a settled node at its position when it finalizes (synthKey stable, displayId synthKey→UUID)', () => {
+    // The post-finalize reality: a live-won node keeps its `${stage}/…` synthKey but
+    // its `displayId` swaps from that synthKey to the real entity UUID. The sim keys
+    // INTERNAL identity on the STABLE synthKey, so the node keeps its object ref and
+    // its settled position across the finalize — it must NOT be delete-then-reseeded
+    // to centre (the regression this test guards). Positions are reported in the
+    // EXTERNAL displayId space, which is the thing that swaps.
+    const synthKey = 'world_and_factions/factions/0'
+    const uuid = '018f7b21-dddd-7000-8000-000000000004'
+    const sim = create()
+
+    // Pre-finalize: displayId === synthKey. Settle a two-node layout off-origin.
+    sim.sync([node(synthKey), node('b')], [])
+    for (let i = 0; i < 50; i++) sim.tick()
+
+    const settled = sim.positions().get(synthKey)
+    if (settled === undefined) throw new Error('node not present pre-finalize')
+    // Off-origin, so the equality assertion below is meaningful (not 0,0 == 0,0).
+    expect(Math.hypot(settled.x, settled.y)).toBeGreaterThan(0)
+
+    // Finalize: SAME synthKey, displayId synthKey→UUID.
+    sim.sync([heteroNode(synthKey, uuid), node('b')], [])
+
+    const after = sim.positions()
+    // The external key moved from the synthKey to the UUID (displayId space)…
+    expect(after.has(synthKey)).toBe(false)
+    const moved = after.get(uuid)
+    if (moved === undefined) throw new Error('node not present post-finalize')
+    // …but the settled position is IDENTICAL — the node did NOT teleport to centre.
+    expect(moved).toEqual(settled)
+  })
+
   it('drops a synthKey that is absent from the next sync', () => {
     const sim = create()
 
