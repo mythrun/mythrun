@@ -363,6 +363,91 @@ describe('ForceSim containment margin inset (MYT-89 follow-up)', () => {
   })
 })
 
+describe('ForceSim box-aware containment (MYT-89 label-clip fix)', () => {
+  // The bug: the per-tick clamp bounded the ICON point, so a node's NAME (drawn to the RIGHT of
+  // the icon — box.right px past it — and offset vertically) could clip out of the viewport even
+  // with the icon safely inside. The fix clamps the whole icon+label BOX into the inset bound, not
+  // the icon point. A viewport where the clamp is easy to reason about: half = 200, margin 50 →
+  // bound = 150. Pinning a node past an edge then ticking once is the cleanest driver: d3 seats a
+  // pinned node at x = fx during the integration step, then the per-tick clamp bounds it, so
+  // `positions()` reports the clamped coordinate deterministically (one tick, no settle needed).
+  const CONTAIN = { width: 400, height: 400, params: { margin: 50 } }
+  const BOUND = 150 // half (200) − margin (50)
+
+  it('clamps a RIGHT-extending box so the LABEL edge stays in-frame, not just the icon', () => {
+    const sim = create(CONTAIN)
+    sim.sync([node('a')], [])
+    const b = box(100) // wide right label: right = 11 + 100 = 111
+    sim.setBoxes(new Map<string, NodeBox>([['a', b]]))
+    sim.pin('a', 1000, 0) // way past the right edge
+    sim.tick()
+
+    // The icon insets to `bound − box.right`, so the box's RIGHT edge lands exactly ON the inset
+    // bound (x + box.right = BOUND) — the NAME clears the frame. Pre-fix the icon sat at ±BOUND
+    // and the label ran off; the exact value guards against both under- and over-clamping.
+    expect(sim.positions().get('a')?.x).toBeCloseTo(BOUND - b.right, 6)
+  })
+
+  it('clamps a LEFT-extending box so its left edge stays in-frame', () => {
+    // Mirror of the right case: a box whose LEFT extent dominates (a left-hung label). The icon
+    // insets to the RIGHT by |box.left| so the box's left edge lands on −BOUND (x + box.left).
+    const sim = create(CONTAIN)
+    sim.sync([node('a')], [])
+    const b: NodeBox = { left: -100, right: 5, top: -15.5, bottom: 9.5 }
+    sim.setBoxes(new Map<string, NodeBox>([['a', b]]))
+    sim.pin('a', -1000, 0)
+    sim.tick()
+
+    expect(sim.positions().get('a')?.x).toBeCloseTo(-BOUND - b.left, 6)
+  })
+
+  it('clamps the box on the Y axis too (top/bottom extents)', () => {
+    // The vertical mirror — the label clear-window (top/bottom) is held inside the inset so a node
+    // near the top edge doesn't clip its label window above the icon (box top edge lands on −BOUND).
+    const sim = create(CONTAIN)
+    sim.sync([node('a')], [])
+    const b: NodeBox = { left: -5, right: 5, top: -40, bottom: 20 }
+    sim.setBoxes(new Map<string, NodeBox>([['a', b]]))
+    sim.pin('a', 0, -1000) // past the top edge
+    sim.tick()
+
+    expect(sim.positions().get('a')?.y).toBeCloseTo(-BOUND - b.top, 6)
+  })
+
+  it('falls back to the icon-point clamp for a node with NO measured box (unchanged)', () => {
+    // A node the ui hasn't measured yet (box === undefined) keeps the pre-fix behaviour: the ICON
+    // point is clamped to ±bound (no box to inset by). The existing containment suites also rely
+    // on this — they never set boxes.
+    const sim = create(CONTAIN)
+    sim.sync([node('a')], []) // no setBoxes → box stays undefined
+    sim.pin('a', 1000, 1000)
+    sim.tick()
+
+    expect(sim.positions().get('a')?.x).toBeCloseTo(BOUND, 6)
+    expect(sim.positions().get('a')?.y).toBeCloseTo(BOUND, 6)
+  })
+
+  it('centres a box WIDER than the available span instead of inverting the bound', () => {
+    // A label wider than the whole inset span (rare: a name wider than the viewport). The computed
+    // upper bound falls BELOW the lower — clamping to either edge would be arbitrary and could
+    // invert. Instead the box is centred in the span, overflowing symmetrically. bound = 50 here;
+    // the asymmetric box (left −100, right +300) centres at ((−50 − −100) + (50 − 300)) / 2 = −100,
+    // independent of which edge it is driven toward.
+    const sim = create({ width: 200, height: 200, params: { margin: 50 } }) // bound = 50
+    sim.sync([node('a')], [])
+    const b: NodeBox = { left: -100, right: 300, top: -15.5, bottom: 9.5 }
+    sim.setBoxes(new Map<string, NodeBox>([['a', b]]))
+
+    sim.pin('a', 1000, 0)
+    sim.tick()
+    expect(sim.positions().get('a')?.x).toBeCloseTo(-100, 6)
+
+    sim.pin('a', -1000, 0)
+    sim.tick()
+    expect(sim.positions().get('a')?.x).toBeCloseTo(-100, 6)
+  })
+})
+
 describe('ForceSim spread (MYT-89 audit #4)', () => {
   it('spreads a burst to FILL the space (not a central clump), contained + non-overlapping', () => {
     // The audit-#4 bug: nodes clumped in the centre of the 900×470 draw space. The

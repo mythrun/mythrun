@@ -349,16 +349,43 @@ function buildSimulation(
     .stop()
 }
 
+/** Clamp ONE axis so the node's BOX — signed extents `lo` (≤ 0) / `hi` (≥ 0) from the node
+ *  position — stays inside `[−bound, bound]`. The box spans `[pos + lo, pos + hi]`; holding it
+ *  inside gives `pos ∈ [−bound − lo, bound − hi]` (the `lo`/`hi` sign moves each end INWARD, so
+ *  the box, not the icon point, clears the edge). When the box is WIDER than the available span
+ *  the upper bound falls BELOW the lower (an inverted range) — centre the box in the span rather
+ *  than inverting (a label wider than the viewport overflows symmetrically; rare). */
+function clampBoxAxis(pos: number, lo: number, hi: number, bound: number): number {
+  const lower = -bound - lo // lo ≤ 0 → lower moves inward by |lo|
+  const upper = bound - hi // hi ≥ 0 → upper moves inward by hi
+  if (upper < lower) return (lower + upper) / 2 // box wider than span → centre, don't invert
+  if (pos < lower) return lower
+  if (pos > upper) return upper
+  return pos
+}
+
 /** HARD-clamp every node into the INSET draw space (`±boundW / ±boundH` = the full
  *  half-dimensions less the `margin`). The boundary force + distanceMax keep the settle
  *  smooth; this clamp is the GUARANTEE that no node — and thus no label — is ever reported
- *  (or drawn) outside the frame's margin (MYT-89 BUG 2.2). Module-scoped so `tick` stays lean. */
+ *  (or drawn) outside the frame's margin (MYT-89 BUG 2.2). For a node whose icon+label BOX the
+ *  ui has measured, the whole BOX (not just the icon point) is held inside the inset — a
+ *  right-extending label can no longer clip out even with the icon in frame (MYT-89 label-clip
+ *  fix, `box.right`/`box.left`/`box.top`/`box.bottom` are signed offsets from the node position).
+ *  A not-yet-measured node (`box === undefined`) falls back to the plain icon-point clamp.
+ *  Module-scoped so `tick` stays lean. */
 function clampNodes(nodes: SimNode[], boundW: number, boundH: number): void {
   for (const simNode of nodes) {
-    if (simNode.x < -boundW) simNode.x = -boundW
-    else if (simNode.x > boundW) simNode.x = boundW
-    if (simNode.y < -boundH) simNode.y = -boundH
-    else if (simNode.y > boundH) simNode.y = boundH
+    const box = simNode.box
+    if (box === undefined) {
+      // No measured label yet — clamp the icon point (the pre-fix behaviour, unchanged).
+      if (simNode.x < -boundW) simNode.x = -boundW
+      else if (simNode.x > boundW) simNode.x = boundW
+      if (simNode.y < -boundH) simNode.y = -boundH
+      else if (simNode.y > boundH) simNode.y = boundH
+      continue
+    }
+    simNode.x = clampBoxAxis(simNode.x, box.left, box.right, boundW)
+    simNode.y = clampBoxAxis(simNode.y, box.top, box.bottom, boundH)
   }
 }
 
