@@ -5,6 +5,8 @@
 // (stage, user_id) — already DISTINCT ON'd — so this function doesn't
 // need to dedupe.
 
+import { WORLD_GEN_STAGES } from '@mythrun/contract/events'
+
 export type PipelinePhase =
   | 'not_started'
   | 'world_gen'
@@ -63,23 +65,16 @@ export interface PhaseAndStages {
 // Stage taxonomy — order-preserving for the snapshot display.
 // Worldgen stages run on the world; charcreation stages run per-player;
 // post-creation stages are campaign-scoped (campaign_id set, user_id null).
-export const WORLDGEN_STAGES = [
-  'concept_intake',
-  'world_color', // MYT-87 T8 — runs right after concept_intake
-  'vocabulary_intake', // myth-pfke
-  'world_and_factions',
-  'locations_and_npcs',
-  'entity_relationships',
-  'starting_situation',
-  'random_tables',
-  'coherence_pass',
-  // MYT-71 T10: the terminal embed stage writes a pipeline_runs row AFTER
-  // coherence_pass and BEFORE worlds.status flips to 'complete'. Classifying it
-  // 'worldgen' (ordered last) keeps derivePhase from (a) dropping it to
-  // 'unknown' and making it invisible to the dev-tool phase panel, and (b)
-  // reading world-gen as "done" at coherence_pass while embedding still runs.
-  'embed_world',
-] as const
+//
+// MYT-89 audit ③: the world-gen list is the canonical WORLD_GEN_STAGES from
+// @mythrun/contract/events. This module used to carry a hand-maintained
+// 10-stage copy that had DRIFTED — it omitted `entity_consolidation` (stage
+// 4b), so an entity_consolidation pipeline_runs row fell through stageScope()
+// to the 'unknown' bucket (invisible to phase computation, sorted first). The
+// aliased canonical list fixes that. computePhase's phase-map semantics are
+// UNCHANGED: it keys on specific stage names (a legitimate subset), not the
+// full list, so widening the list from 10→11 only corrects bucketing/order.
+export const WORLDGEN_STAGES = WORLD_GEN_STAGES
 
 export const CHARCREATION_STAGES = [
   'location_selection',

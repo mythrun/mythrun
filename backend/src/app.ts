@@ -26,6 +26,7 @@ import { authRoutes } from './routes/auth.js'
 import { createCognitoOAuthClient } from './auth/cognito-oauth-client.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
 import { sessionPrepsPlugin } from './routes/session-preps.js'
+import { worldgenRoutes } from './routes/worldgen.js'
 import { devCreditsRoutes } from './routes/dev-credits.js'
 import { devFireTurnRoutes } from './routes/dev-fire-turn.js'
 import { devPrepProseRoutes } from './routes/dev-prep-prose.js'
@@ -480,6 +481,13 @@ export const buildApp = async (
     pool: deps.pg,
     sessionPrepQueue: deps.sessionPrepQueue,
   })
+
+  // MYT-89 audit ③: GET /api/worldgen/stage-timings — global historical
+  // avg-per-stage durations for the generation loading-bar ETA. Registered
+  // after the access-control + requireOnboarded chain so it inherits the JWT +
+  // onboarded gates; it is NOT campaign-scoped (no requireCampaignMember
+  // preHandler), so any onboarded caller reads the aggregate telemetry.
+  await app.register(worldgenRoutes, { pool: deps.pg })
 
   // Dev-only routes (MYT-51 T11 credits + MYT-62 T5 prep-prose). The plugins
   // self-gate on AUTH_MODE === 'bypass' (defense in depth — Roc-C1); this

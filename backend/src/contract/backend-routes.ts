@@ -76,6 +76,11 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/session-preps/:prepId' },
   { method: 'POST', path: '/api/campaigns/:campaignId/reset-prep' },
 
+  // World-gen ETA (MYT-89 audit ③). Global aggregate (not campaign-scoped, not a
+  // pipeline-status surface) — historical avg-per-stage durations for the
+  // generation loading bar. Onboarded-auth; no campaign membership required.
+  { method: 'GET', path: '/api/worldgen/stage-timings' },
+
   // Sessions. All four share one radix param node, which Fastify prints as
   // the 3-way merge `:id|:campaignId|:sessionId` (the routes name the param
   // differently: ws-ticket :id, start/active :campaignId, messages

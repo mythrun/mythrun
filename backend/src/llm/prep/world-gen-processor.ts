@@ -55,6 +55,11 @@ import { worldsNs } from '../../repo/worlds.js'
 import type { ClientLike } from '../../repo/_types.js'
 import type { ClaimRequest, ClaimResult } from '../../repo/pipeline-runs.js'
 import type { PipelineEvent } from '../../contract/pipeline-events.js'
+// Canonical world-gen stage taxonomy — single source in @mythrun/contract
+// (MYT-89 audit ③). This module's stage loop is the *order authority* the
+// contract list mirrors; re-exported below for back-compat (the loop + the
+// processor test reference WORLD_GEN_STAGES / WorldGenStage from here).
+import { WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/contract/events'
 import {
   VocabularyRegistrySchema,
   type VocabularyRegistry,
@@ -74,29 +79,11 @@ const SEED_TABLES_PLACEHOLDER =
   '  - Always travels with a working animal.\n' +
   '  - Carries a token from someone they failed.'
 
-export const WORLD_GEN_STAGES = [
-  'concept_intake',
-  // MYT-87 T8: pick the world's two-stop WorldColor dither identity. Placed
-  // right after concept_intake so tone/themes are loaded for the vibe inputs;
-  // a cheap Haiku one-shot with a contrast-guarded re-roll, persists color_from
-  // /color_to via worlds.setColorPair.
-  'world_color',
-  'vocabulary_intake',
-  'world_and_factions',
-  'locations_and_npcs',
-  'entity_relationships',
-  'entity_consolidation',
-  'starting_situation',
-  'random_tables',
-  'coherence_pass',
-  // MYT-71 T10: terminal embed stage — runs AFTER all content stages, BEFORE
-  // worlds.status flips to 'complete', so a finished world is semantically
-  // searchable on completion. TOTAL (catches all embed errors, never fails the
-  // world); Voyage spend is OFF the Anthropic cost cap (always reports $0).
-  'embed_world',
-] as const
-
-export type WorldGenStage = (typeof WORLD_GEN_STAGES)[number]
+// Re-export the canonical taxonomy so existing importers (the stage loop and
+// world-gen-processor.test.ts) keep their `WORLD_GEN_STAGES` / `WorldGenStage`
+// import path. The list itself lives in @mythrun/contract/events; the loop's
+// iteration order below is what that list mirrors.
+export { WORLD_GEN_STAGES, type WorldGenStage }
 
 export interface WorldGenJobPayload {
   readonly campaignId: string

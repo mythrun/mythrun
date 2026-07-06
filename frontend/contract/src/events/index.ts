@@ -5,3 +5,4 @@
 // the backend now consumes them via `@mythrun/contract/events`.
 export * from './session-events.js'
 export * from './pipeline-events.js'
+export * from './worldgen-stages.js'

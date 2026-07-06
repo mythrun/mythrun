@@ -1,8 +1,10 @@
 // backend/src/sse/__tests__/derive-phase.test.ts
 import { describe, expect, it } from 'vitest'
+import { WORLD_GEN_STAGES } from '@mythrun/contract/events'
 import {
   CHARCREATION_STAGES,
   POSTCREATION_STAGES,
+  WORLDGEN_STAGES,
   deriveCardPhase,
   derivePhase,
   type CampaignRow,
@@ -10,6 +12,19 @@ import {
   type WorldRow,
   type PipelineRunRow,
 } from '../derive-phase.js'
+
+// MYT-89 audit ③: derive-phase's world-gen stage list is the canonical contract
+// taxonomy — no local drift copy. The 10-vs-11 drift (missing
+// entity_consolidation) is gone.
+describe('WORLDGEN_STAGES sources the canonical contract taxonomy', () => {
+  it('is the @mythrun/contract WORLD_GEN_STAGES (single source, no local copy)', () => {
+    expect(WORLDGEN_STAGES).toBe(WORLD_GEN_STAGES)
+  })
+
+  it('includes entity_consolidation (the drift the 10-stage copy omitted)', () => {
+    expect([...WORLDGEN_STAGES]).toContain('entity_consolidation')
+  })
+})
 
 const baseCampaign: CampaignRow = {
   id: 'cmp-1',

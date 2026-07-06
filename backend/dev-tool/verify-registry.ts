@@ -215,6 +215,13 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // panel here. Never registered in production (mythrunEnv gate).
   { method: 'GET', path: '/api/dev/api-cost' },
 
+  // GET /api/worldgen/stage-timings (MYT-89 audit ③): global historical
+  // avg-per-stage durations for the generation loading-bar ETA. Its consumer is
+  // the generation status card in the MAIN WEB APP (a Frontend ticket), not a
+  // dev-tool inspector panel — so it has no page panel here. The averaging SQL +
+  // cold-start [] path are covered by the backend repo + route tests.
+  { method: 'GET', path: '/api/worldgen/stage-timings' },
+
   // NOTE (MYT-75 T10): GET /ws/session/:sessionId is NO LONGER exempt — the
   // combat L1 inspector (`combat` panel, System page) is a real panel that
   // exercises it. The panel mounts to `ready` synchronously and opens the live

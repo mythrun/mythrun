@@ -18,6 +18,16 @@ export interface FailedRunRow {
   readonly error: string | null
 }
 
+// MYT-89 audit ③: one historical average-duration row per stage, feeding the
+// world-gen loading-bar ETA. `avgMs` is a non-negative integer (Postgres
+// `::int` cast over avg(...) of positive durations). Structurally mirrors
+// `StageTiming` in @mythrun/contract/rest (the wire shape) — the route sends
+// this repo result verbatim; the data layer stays decoupled from the contract.
+export interface StageTiming {
+  readonly stage: string
+  readonly avgMs: number
+}
+
 // Sentinel user_id the unique index folds user_id=NULL onto. Held here as a
 // local constant; interpolated into the ON CONFLICT projection (it's a fixed
 // literal, never user input). Mirrors the value the world-gen processor used
@@ -181,6 +191,15 @@ export interface PipelineRunsRepo {
    * sumCharacterCreationStageCosts — the character-integration cap pre-flight.
    */
   readonly sumCharacterCreationStageCosts: (campaignId: string) => Promise<number>
+  /**
+   * MYT-89 audit ③ — world-gen loading-bar ETA source. Returns the historical
+   * average stage duration (completed_at − started_at, in ms) per stage across
+   * ALL completed pipeline_runs, GROUP BY stage. NOT stage-filtered (the FE
+   * intersects the result with the WORLD_GEN_STAGES taxonomy); rows missing
+   * either timestamp are excluded so a half-written row can't skew the average.
+   * Cold-start (no completed history) → []. A global aggregate, so no id param.
+   */
+  readonly avgDurationPerStage: () => Promise<readonly StageTiming[]>
 }
 
 interface PipelineRunRowRaw {
@@ -419,6 +438,21 @@ const SUM_CHARACTER_CREATION_COSTS_QUERY = `SELECT COALESCE(SUM(cost_usd), 0)::f
        AND status = 'completed'
        AND stage IN ('character_concept', 'character_sheet', 'character_integration')`
 
+// MYT-89 audit ③: per-stage average duration (ms) across all completed runs.
+// `extract(epoch from interval)` yields seconds (float); ×1000 → ms; the `::int`
+// cast lands avg_ms in JS as a number (avoids the NUMERIC-as-string quirk). Rows
+// missing either timestamp are excluded so a partial row can't skew the average.
+// No completed rows → GROUP BY yields zero rows → the method returns [].
+const AVG_DURATION_PER_STAGE_QUERY = `
+  SELECT stage,
+         avg(extract(epoch from (completed_at - started_at)) * 1000)::int AS avg_ms
+    FROM pipeline_runs
+   WHERE status = 'completed'
+     AND completed_at IS NOT NULL
+     AND started_at IS NOT NULL
+   GROUP BY stage
+`
+
 // Composable binder: every method is a single statement over a ClientLike
 // (pool OR an in-flight tx client) — no `pool.connect()`, no advisory lock —
 // so all three are transaction-bindable. pipelineRuns participates in
@@ -579,6 +613,12 @@ export function pipelineRunsNs(c: ClientLike): PipelineRunsRepo {
        * one row; kept for TS optional-chain narrowing without a non-null assert. */
       return result.rows[0]?.total ?? 0
       /* c8 ignore stop */
+    },
+    async avgDurationPerStage(): Promise<readonly StageTiming[]> {
+      const result = await c.query<{ stage: string; avg_ms: number }>(
+        AVG_DURATION_PER_STAGE_QUERY,
+      )
+      return result.rows.map((r) => ({ stage: r.stage, avgMs: r.avg_ms }))
     },
   }
 }

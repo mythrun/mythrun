@@ -580,4 +580,67 @@ describe('pipeline-runs repo', () => {
       )
     })
   })
+
+  // MYT-89 audit ③: per-stage average duration for the world-gen loading-bar
+  // ETA. The query is GLOBAL (GROUP BY stage, no id scope), so each test uses a
+  // per-invocation UNIQUE stage name — the response's row for that stage
+  // aggregates ONLY this test's seeded rows, immune to other files' /prior
+  // runs' pipeline_runs rows.
+  describe('avgDurationPerStage', () => {
+    // Insert a completed pipeline_runs row for `stage` on a fresh world with a
+    // known duration. Distinct worlds per call so two rows can share a stage
+    // without tripping idx_pipeline_runs_unique (world_id, stage, user_id).
+    async function insertCompletedRun(stage: string, durationSeconds: number): Promise<void> {
+      const { worldId } = await insertCampaign()
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, completed_at, user_id)
+         VALUES ($1, $2, $3, 'completed', now() - ($4 || ' seconds')::interval, now(), NULL)`,
+        [uuidv7(), worldId, stage, String(durationSeconds)],
+      )
+    }
+
+    it('averages completed durations per stage (ms), returning avgMs as a number', async () => {
+      const stage = `myt89-avg-${uuidv7().slice(-12)}`
+      await insertCompletedRun(stage, 2) // 2000ms
+      await insertCompletedRun(stage, 4) // 4000ms → avg 3000ms
+      const rows = await pipelineRunsNs(pool).avgDurationPerStage()
+      const mine = rows.find((r) => r.stage === stage)
+      expect(mine).toBeDefined()
+      expect(typeof mine?.avgMs).toBe('number')
+      expect(mine?.avgMs).toBe(3000)
+    })
+
+    it("excludes non-completed and missing-timestamp rows from the average", async () => {
+      const stage = `myt89-excl-${uuidv7().slice(-12)}`
+      await insertCompletedRun(stage, 6) // 6000ms — the ONLY row that should count
+      // A 'failed' row with a real duration (status filter must drop it).
+      const { worldId: wFailed } = await insertCampaign()
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, completed_at, user_id)
+         VALUES ($1, $2, $3, 'failed', now() - interval '100 seconds', now(), NULL)`,
+        [uuidv7(), wFailed, stage],
+      )
+      // A 'running' row (completed_at NULL) — the completed_at IS NOT NULL guard drops it.
+      const { worldId: wRunning } = await insertCampaign()
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, completed_at, user_id)
+         VALUES ($1, $2, $3, 'running', now() - interval '100 seconds', NULL, NULL)`,
+        [uuidv7(), wRunning, stage],
+      )
+      const rows = await pipelineRunsNs(pool).avgDurationPerStage()
+      const mine = rows.find((r) => r.stage === stage)
+      // Average is 6000, not skewed by the 100s failed/running rows.
+      expect(mine?.avgMs).toBe(6000)
+    })
+
+    it('returns [] on empty history (cold-start: GROUP BY yields zero rows)', async () => {
+      // Deterministic via a stub client — the live query is global, so a real
+      // DB is never truly empty under parallel test load. The map-over-[] is the
+      // cold-start path the FE relies on.
+      const emptyClient = {
+        query: () => Promise.resolve({ rows: [], rowCount: 0 }),
+      } as unknown as Parameters<typeof pipelineRunsNs>[0]
+      expect(await pipelineRunsNs(emptyClient).avgDurationPerStage()).toEqual([])
+    })
+  })
 })
