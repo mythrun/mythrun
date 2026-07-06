@@ -39,6 +39,9 @@ vi.mock('@mythrun/client-core', async (importOriginal) => {
     // identity (worldName + worldColors), found by id.
     getStartingSituations: vi.fn().mockResolvedValue({ situations: [], chosenIndex: null }),
     getMyCampaigns: vi.fn().mockResolvedValue({ campaigns: [] }),
+    // The ETA history (audit ③): the route fetches it once while generating.
+    // Cold-start `[]` → the status card shows the bars with no estimate.
+    getStageTimings: vi.fn().mockResolvedValue([]),
   }
 })
 

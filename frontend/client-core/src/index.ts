@@ -159,6 +159,14 @@ export type {
   WorldGenStreamDeps,
 } from './worldgen/use-worldgen-stream.ts'
 
+// World-gen ETA (MYT-89 audit ③): the stage-timings endpoint + the pure
+// remaining-time math the generation loading bar turns into a data-driven "time
+// left". `StageTiming`/`StageTimingsResponse` re-export the wire shape off the
+// same barrel so a consumer reads the endpoint + its type from one place.
+export { getStageTimings } from './api/worldgen.ts'
+export { remainingStageMs } from './worldgen/stage-eta.ts'
+export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
+
 // OAuth/PKCE helpers (MYT-84) — the canonical oauth API consumed by the sign-in +
 // callback screens. State persistence + the Cognito Hosted UI config are injected
 // once at boot via configureOAuth; the web store impl (sessionStorage) lives in

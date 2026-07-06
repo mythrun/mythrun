@@ -1,25 +1,31 @@
 import { forwardRef } from 'react'
 import { cva } from 'class-variance-authority'
+import { WORLD_GEN_STAGES } from '@mythrun/contract/events'
 import type { StageProgress, WorldGenStatusCardProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 
-// WorldGenStatusCard (MYT-89 Phase C, C4) — a DOM overlay pinned top-left of the graph
-// pane so the ~2-minute pre-entity generation stretch reads as PROGRESS, not a hang.
-// It reads the stream's `stages[]` (B4 `StageProgress`) + `costUsd` and shows: the
-// current (running) stage's friendly label, a completed/total percent, and a PAPER-
-// REGISTER working indicator.
+// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥) — a DOM overlay pinned top-left
+// of the graph pane so the ~2-minute pre-entity generation stretch reads as PROGRESS,
+// not a hang. It shows: the current (running) stage's friendly label, a completed/total
+// percent, an optional data-driven "time left", and a PAPER-REGISTER working indicator.
 //
-// The working indicator IS the percent bar: a segmented SQUARE bar, one cell per stage
-// — completed cells solid ink, the running cell ember + `animate-pulse` (an opacity
-// fade, the brand's ONLY sanctioned motion — §4), pending cells a faint track. NO
-// circle, NO spinner, NO dots (hard brand rule). At 100% no cell is running, so the
-// pulse stops and the bar rests full. Colour is never the sole signal: the running
-// cell is distinct by fill (ember) even with motion reduced, and the label/percent/
-// progressbar aria carry the meaning.
+// The working indicator IS the percent bar: a segmented SQUARE bar with a FIXED count —
+// one cell per canonical `WORLD_GEN_STAGES` stage (all 11 known from frame one, NOT
+// grown one bar per stream stage; audit ③). The stream's `stages[]` only ADVANCES each
+// cell's fill: a cell is completed cells solid ink, the running cell ember +
+// `animate-pulse` (an opacity fade, the brand's ONLY sanctioned motion — §4), and a
+// stage not yet seen in the stream a faint pending track. NO circle, NO spinner, NO
+// dots (hard brand rule). Percent is `completedCount / 11` (fixed denominator). At 100%
+// no cell is running, so the pulse stops and the bar rests full. Colour is never the
+// sole signal: the running cell is distinct by fill (ember) even with motion reduced,
+// and the label/percent/progressbar aria carry the meaning.
 //
-// The card self-positions `absolute` inside its host pane (documented on the contract),
-// is `pointer-events-none` (a readout, never intercepting graph interaction), and caps
-// its width so it fits a ~375px pane without overflow.
+// Cost is NOT rendered (audit ⑥): the player never sees API spend; the dev ticker owns
+// cost. The card self-positions `absolute` inside its host pane (documented on the
+// contract), is `pointer-events-none` (a readout, never intercepting graph
+// interaction), and caps its width so it fits a ~375px pane without overflow.
+
+const TOTAL_STAGES = WORLD_GEN_STAGES.length // 11 — the FIXED bar count + % denominator
 
 const CARD_CLASS = cn(
   'pointer-events-none absolute left-[var(--space-3)] top-[var(--space-3)] z-10',
@@ -32,7 +38,7 @@ const ROW_CLASS = 'flex items-baseline justify-between gap-[var(--space-2)]'
 const LABEL_CLASS = 'font-body text-sm font-medium text-ink leading-[1.3] min-w-0'
 const PERCENT_CLASS = 'font-ui text-xs tabular-nums text-ink-secondary shrink-0'
 const BAR_CLASS = 'flex h-[6px] w-full gap-[2px]'
-const COST_CLASS = 'font-ui text-xs tabular-nums text-ink-tertiary leading-none'
+const ETA_CLASS = 'font-ui text-xs tabular-nums text-ink-tertiary leading-none'
 
 // Per-cell fill: solid ink = done, ember + pulse = the working cell, faint track =
 // pending. Square (0px radius), full-height, equal-width segments.
@@ -62,29 +68,42 @@ function resolveStageLabel(stage: string, stageLabels?: Readonly<Record<string, 
   return stageLabels?.[stage] ?? `[ph: ${stage}]`
 }
 
+/** One of the FIXED 11 bars: its canonical stage id + the fill state derived from
+ *  the matching stream entry (or `pending` when the stream hasn't reached it). */
+interface Bar {
+  readonly stage: string
+  readonly state: CellState
+}
+
 interface Progress {
-  readonly total: number
+  readonly bars: readonly Bar[]
   readonly completed: number
   readonly percent: number
-  readonly running: StageProgress | undefined
+  /** The canonical stage id currently running (from the stream), if any. */
+  readonly running: string | undefined
   readonly isComplete: boolean
 }
 
-/** Percent is a simple completed/total (v1 stage weighting) — the running stage
- *  counts as in-flight, not partial. */
+/** Seed the FIXED 11 bars from the `WORLD_GEN_STAGES` taxonomy (known from frame
+ *  one) and advance each cell's fill from its matching stream entry. Percent is
+ *  `completedCount / 11` — a fixed denominator, never the growing stream length. */
 function computeProgress(stages: readonly StageProgress[]): Progress {
-  const total = stages.length
-  const completed = stages.filter((s) => s.status === 'completed').length
-  const percent = total === 0 ? 0 : Math.round((completed / total) * 100)
-  const running = stages.find((s) => s.status === 'running')
-  return { total, completed, percent, running, isComplete: total > 0 && completed === total }
+  const statusByStage = new Map(stages.map((s) => [s.stage, s.status]))
+  const bars: Bar[] = WORLD_GEN_STAGES.map((stage) => ({
+    stage,
+    state: cellState(statusByStage.get(stage) ?? 'pending'),
+  }))
+  const completed = bars.filter((b) => b.state === 'completed').length
+  const percent = Math.round((completed / TOTAL_STAGES) * 100)
+  const running = bars.find((b) => b.state === 'running')?.stage
+  return { bars, completed, percent, running, isComplete: completed === TOTAL_STAGES }
 }
 
 export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardProps>(
   function WorldGenStatusCard(
     {
       stages,
-      costUsd,
+      etaLabel,
       stageLabels,
       titleLabel = '[ph: weaving your world]',
       doneLabel = '[ph: your world is ready]',
@@ -93,19 +112,18 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
     },
     ref,
   ) {
-    const { total, percent, running, isComplete } = computeProgress(stages)
-    // Nothing to show before the first snapshot frame (the stage set is empty).
-    if (total === 0) return null
+    const { bars, percent, running, isComplete } = computeProgress(stages)
 
     // The main line: the running stage while generating, the done label at 100%, else
-    // the first not-yet-complete stage (a brief lull between stages).
-    const nextIncomplete = stages.find((s) => s.status !== 'completed')
+    // the first not-yet-complete canonical stage (a brief lull between stages, or the
+    // pre-first-frame state where the stream is still empty).
+    const nextIncomplete = bars.find((b) => b.state !== 'completed')?.stage
     const currentLabel = running
-      ? resolveStageLabel(running.stage, stageLabels)
+      ? resolveStageLabel(running, stageLabels)
       : isComplete
         ? doneLabel
-        : nextIncomplete
-          ? resolveStageLabel(nextIncomplete.stage, stageLabels)
+        : nextIncomplete !== undefined
+          ? resolveStageLabel(nextIncomplete, stageLabels)
           : doneLabel
     const percentText = `${String(percent)}%`
 
@@ -130,21 +148,16 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
           data-testid="worldgen-status-bar"
           className={BAR_CLASS}
         >
-          {stages.map((s) => {
-            const state = cellState(s.status)
-            return (
-              <span
-                key={s.stage}
-                aria-hidden="true"
-                data-cell-state={state}
-                className={cn(cell({ state }))}
-              />
-            )
-          })}
+          {bars.map((b) => (
+            <span
+              key={b.stage}
+              aria-hidden="true"
+              data-cell-state={b.state}
+              className={cn(cell({ state: b.state }))}
+            />
+          ))}
         </div>
-        {costUsd !== undefined && costUsd !== null && (
-          <span className={COST_CLASS}>{`$${costUsd.toFixed(2)}`}</span>
-        )}
+        {etaLabel !== undefined && <span className={ETA_CLASS}>{etaLabel}</span>}
       </div>
     )
   },

@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import { axe } from 'jest-axe'
-import type { StageProgress } from '@mythrun/contract/events'
+import { WORLD_GEN_STAGES, type StageProgress } from '@mythrun/contract/events'
 import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 
 // WorldGenStatusCard is a DOM overlay (top-left of the graph pane) that turns the
-// long pre-entity generation stretch into legible PROGRESS. It reads the stream's
-// `stages[]` (B4 `StageProgress`) + `costUsd` and renders: the CURRENT (running)
-// stage's friendly label, a completed/total percent, and a PAPER-REGISTER working
-// indicator — a segmented SQUARE bar whose running cell pulses (opacity fade, the
-// brand's only sanctioned motion). Hard brand rule: NO circles / spinners / dots.
-// These tests pin the percent math, the running-vs-done label, the square (non-
-// circular) indicator, the stage-label resolution + `[ph:]` fallback, and cost.
+// long pre-entity generation stretch into legible PROGRESS. It renders a FIXED
+// 11-bar indicator seeded from the canonical WORLD_GEN_STAGES taxonomy (known from
+// frame one, audit ③) — the stream's `stages[]` only ADVANCES each bar's fill. It
+// shows: the CURRENT (running) stage's friendly label, a completed/11 percent, an
+// optional data-driven "time left", and a PAPER-REGISTER segmented SQUARE bar whose
+// running cell pulses (opacity fade, the brand's only sanctioned motion). Hard brand
+// rule: NO circles / spinners / dots. Cost is NOT rendered (audit ⑥). These tests pin
+// the fixed 11-bar count + %/11 math, the running-vs-done label, the square (non-
+// circular) indicator, the stage-label resolution + `[ph:]` fallback, and the ETA.
+
+const TOTAL = WORLD_GEN_STAGES.length // 11
 
 const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   stage: id,
@@ -22,16 +26,19 @@ const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   completedAt: null,
 })
 
-// 5 stages, 2 completed, 1 running → 40%. The running one is the "current" stage.
-const MID: readonly StageProgress[] = [
+// A SHORT stream: only 3 canonical stages have appeared (2 completed, 1 running).
+// The card must still render 11 bars — the taxonomy seeds the count, the stream only
+// advances fills. 2 completed / 11 → 18%.
+const SHORT: readonly StageProgress[] = [
   stage('concept_intake', 'completed'),
   stage('world_color', 'completed'),
   stage('vocabulary_intake', 'running'),
-  stage('entity_relationships', 'pending'),
-  stage('entity_details', 'pending'),
 ]
 
-const DONE: readonly StageProgress[] = MID.map((s) => stage(s.stage, 'completed'))
+const EXPECTED_SHORT_PERCENT = Math.round((2 / TOTAL) * 100) // 18
+
+// Every canonical stage completed → 100%, the done state.
+const DONE: readonly StageProgress[] = WORLD_GEN_STAGES.map((s) => stage(s, 'completed'))
 
 const LABELS = {
   stageLabels: {
@@ -40,37 +47,49 @@ const LABELS = {
   doneLabel: '[ph: world ready]',
 }
 
-describe('WorldGenStatusCard — progress', () => {
-  it('shows the RUNNING stage friendly label + completed/total percent', () => {
-    const { getByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+describe('WorldGenStatusCard — FIXED 11 bars from the taxonomy (audit ③)', () => {
+  it('renders all 11 bars from frame one even when the stream is short', () => {
+    const { container } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
+    expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
+    // The remaining 8 canonical stages have not appeared in the stream → pending.
+    expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 3)
+  })
+
+  it('renders 11 pending bars at 0% before the first snapshot frame (empty stream)', () => {
+    const { container, getByText } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
+    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
+    expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL)
+    expect(getByText('0%')).toBeInTheDocument()
+  })
+
+  it('computes percent as completed / 11 (fixed denominator), NOT over the stream length', () => {
+    const { getByText, getByRole } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    expect(getByText(`${String(EXPECTED_SHORT_PERCENT)}%`)).toBeInTheDocument()
+    expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_SHORT_PERCENT))
+  })
+
+  it('shows the RUNNING stage friendly label', () => {
+    const { getByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(getByText('[ph: naming things]')).toBeInTheDocument()
-    expect(getByText('40%')).toBeInTheDocument()
   })
 
   it('falls back to a `[ph: <stage>]` placeholder for an unmapped stage (DS owns no copy)', () => {
-    const { getByText } = render(<WorldGenStatusCard stages={MID} />)
+    const { getByText } = render(<WorldGenStatusCard stages={SHORT} />)
     expect(getByText('[ph: vocabulary_intake]')).toBeInTheDocument()
   })
 
-  it('exposes the percent through a determinate progressbar (aria-valuenow)', () => {
-    const { getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+  it('exposes the percent through a determinate progressbar', () => {
+    const { getByRole } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     const bar = getByRole('progressbar')
-    expect(bar).toHaveAttribute('aria-valuenow', '40')
     expect(bar).toHaveAttribute('aria-valuemin', '0')
     expect(bar).toHaveAttribute('aria-valuemax', '100')
-  })
-
-  it('renders one segmented cell per stage, the running one flagged', () => {
-    const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
-    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(MID.length)
-    expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(2)
-    expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
-    expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(2)
   })
 })
 
 describe('WorldGenStatusCard — done state', () => {
-  it('shows 100% and the done label when every stage has completed', () => {
+  it('shows 100% and the done label when every canonical stage has completed', () => {
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
     expect(getByText('100%')).toBeInTheDocument()
     expect(getByText('[ph: world ready]')).toBeInTheDocument()
@@ -84,57 +103,63 @@ describe('WorldGenStatusCard — done state', () => {
   })
 })
 
+describe('WorldGenStatusCard — data-driven ETA (audit ③)', () => {
+  it('renders the resolved "time left" when supplied', () => {
+    const { getByText } = render(
+      <WorldGenStatusCard stages={SHORT} etaLabel="[ph: ~2m left]" {...LABELS} />,
+    )
+    expect(getByText('[ph: ~2m left]')).toBeInTheDocument()
+  })
+
+  it('renders NO estimate when etaLabel is omitted (cold-start / no history)', () => {
+    const { queryByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    expect(queryByText(/left/)).toBeNull()
+  })
+})
+
+describe('WorldGenStatusCard — cost removed (audit ⑥)', () => {
+  it('never renders an API-spend readout (no `$…`)', () => {
+    // No `costUsd` prop exists anymore; assert no dollar figure leaks under any state.
+    const { queryByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    expect(queryByText(/\$/)).toBeNull()
+  })
+})
+
 describe('WorldGenStatusCard — paper register (NO circle / spinner)', () => {
   it('the working indicator is a SQUARE segmented bar, never a circle or spinner', () => {
-    const { container, getByTestId } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
-    // The bar exists and is the working-indicator surface.
+    const { container, getByTestId } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(getByTestId('worldgen-status-bar')).toBeInTheDocument()
-    // No spinner grid, no SVG icon, no circular (rounded-full) element anywhere.
     expect(container.querySelector('[data-spinner-grid]')).toBeNull()
     expect(container.querySelector('svg')).toBeNull()
     expect(container.querySelector('.rounded-full')).toBeNull()
-    // Every segmented cell is square (0px radius).
     for (const cell of container.querySelectorAll('[data-cell-state]')) {
       expect(cell).toHaveClass('rounded-none')
     }
   })
 
   it('pulses (opacity fade) ONLY the running cell — the brand-sanctioned motion', () => {
-    const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    const { container } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(container.querySelector('[data-cell-state="running"]')).toHaveClass('animate-pulse')
     for (const cell of container.querySelectorAll('[data-cell-state="completed"]')) {
       expect(cell).not.toHaveClass('animate-pulse')
     }
-    // Never a rotating/sliding/scaling animation (the §4 motion rule).
     const html = container.innerHTML
     expect(html).not.toMatch(/animate-spin|animate-bounce|animate-ping|translate|rotate|scale-/)
   })
 })
 
-describe('WorldGenStatusCard — cost + chrome', () => {
-  it('renders the cumulative cost when supplied, hides it when null', () => {
-    const { getByText, queryByText, rerender } = render(
-      <WorldGenStatusCard stages={MID} costUsd={0.42} {...LABELS} />,
-    )
-    expect(getByText('$0.42')).toBeInTheDocument()
-    rerender(<WorldGenStatusCard stages={MID} costUsd={null} {...LABELS} />)
-    expect(queryByText(/\$/)).toBeNull()
-  })
-
+describe('WorldGenStatusCard — chrome', () => {
   it('passes through a data-testid', () => {
     const { getByTestId } = render(
-      <WorldGenStatusCard stages={MID} data-testid="status-card" {...LABELS} />,
+      <WorldGenStatusCard stages={SHORT} data-testid="status-card" {...LABELS} />,
     )
     expect(getByTestId('status-card')).toBeInTheDocument()
   })
 
-  it('renders nothing for an empty stage set (before the first snapshot frame)', () => {
-    const { container } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
-    expect(container.querySelector('[data-testid="worldgen-status-bar"]')).toBeNull()
-  })
-
   it('has no a11y violations (generating + done)', async () => {
-    const generating = render(<WorldGenStatusCard stages={MID} costUsd={0.42} {...LABELS} />)
+    const generating = render(
+      <WorldGenStatusCard stages={SHORT} etaLabel="[ph: ~2m left]" {...LABELS} />,
+    )
     expect(await axe(generating.container)).toHaveNoViolations()
     generating.unmount()
     const done = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)

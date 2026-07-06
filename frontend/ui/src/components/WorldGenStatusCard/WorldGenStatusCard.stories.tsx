@@ -1,15 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { WORLD_GEN_STAGES } from '@mythrun/contract/events'
 import type { StageProgress } from '@mythrun/client-core/contract'
 import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 
 // WorldGenStatusCard — the generation status/loading overlay pinned top-left of the
 // graph pane. It turns the long pre-entity stretch (the first ~2 minutes, before any
 // named entity arrives) into legible PROGRESS: the current (running) stage's friendly
-// label, a completed/total percent, and a PAPER-REGISTER segmented square bar whose
-// running cell pulses (opacity fade — the brand's only sanctioned motion; NO spinner,
-// NO circle). At 100% the pulse stops and the bar rests full. Every label is a `[ph:]`
-// i18n key (the DS owns no copy). These specimens render it inside a mock graph pane
-// so the `absolute` overlay pins correctly.
+// label, a completed/11 percent, an optional data-driven "time left", and a PAPER-
+// REGISTER segmented square bar of a FIXED 11 cells (one per canonical WORLD_GEN_STAGES
+// stage, known from frame one — the stream only advances the fills) whose running cell
+// pulses (opacity fade — the brand's only sanctioned motion; NO spinner, NO circle). At
+// 100% the pulse stops and the bar rests full. Cost is NOT shown (the player never sees
+// API spend). Every label is a `[ph:]` i18n key (the DS owns no copy). These specimens
+// render it inside a mock graph pane so the `absolute` overlay pins correctly.
 
 const meta: Meta<typeof WorldGenStatusCard> = {
   title: 'Patterns/WorldGenStatusCard',
@@ -32,22 +35,12 @@ const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   completedAt: null,
 })
 
-// The seven-stage world-gen pipeline, built at a chosen point of progress.
-const STAGE_IDS = [
-  'concept_intake',
-  'world_color',
-  'vocabulary_intake',
-  'entity_relationships',
-  'entity_details',
-  'fact_generation',
-  'coherence_pass',
-] as const
-
-/** Build the stage set with the first `done` completed, the next one running (unless
- *  all are done), the rest pending. */
+// The canonical 11-stage world-gen pipeline (the taxonomy the card seeds its FIXED
+// bars from), built at a chosen point of progress. Only the first `done` stages have
+// appeared in the "stream" — the card fills the rest as pending from the taxonomy.
 function stagesAt(done: number): StageProgress[] {
-  return STAGE_IDS.map((id, i) =>
-    stage(id, i < done ? 'completed' : i === done ? 'running' : 'pending'),
+  return WORLD_GEN_STAGES.slice(0, Math.min(done + 1, WORLD_GEN_STAGES.length)).map((id, i) =>
+    stage(id, i < done ? 'completed' : 'running'),
   )
 }
 
@@ -56,10 +49,14 @@ const STAGE_LABELS: Record<string, string> = {
   concept_intake: '[ph: shaping the concept]',
   world_color: '[ph: colouring the world]',
   vocabulary_intake: '[ph: naming things]',
+  world_and_factions: '[ph: raising the powers]',
+  locations_and_npcs: '[ph: settling people and places]',
   entity_relationships: '[ph: drawing connections]',
-  entity_details: '[ph: filling in detail]',
-  fact_generation: '[ph: gathering lore]',
+  entity_consolidation: '[ph: resolving the ties]',
+  starting_situation: '[ph: finding your opening]',
+  random_tables: '[ph: seeding the unexpected]',
   coherence_pass: '[ph: making it hold together]',
+  embed_world: '[ph: committing it to memory]',
 }
 
 // A mock graph pane (the `relative` host the overlay pins inside).
@@ -74,11 +71,11 @@ function Pane({ children }: { children: React.ReactNode }): React.JSX.Element {
 }
 
 // EARLY — the first stage running, nothing completed yet (the "is this hung?" window
-// the card exists to answer). The bar shows a single pulsing ember cell.
+// the card exists to answer). 11 bars from frame one; a single pulsing ember cell.
 export const Early: Story = {
   render: () => (
     <Pane>
-      <WorldGenStatusCard stages={stagesAt(0)} stageLabels={STAGE_LABELS} costUsd={0.02} />
+      <WorldGenStatusCard stages={stagesAt(0)} stageLabels={STAGE_LABELS} etaLabel="[ph: ~4m left]" />
     </Pane>
   ),
 }
@@ -87,7 +84,16 @@ export const Early: Story = {
 export const Mid: Story = {
   render: () => (
     <Pane>
-      <WorldGenStatusCard stages={stagesAt(4)} stageLabels={STAGE_LABELS} costUsd={0.41} />
+      <WorldGenStatusCard stages={stagesAt(5)} stageLabels={STAGE_LABELS} etaLabel="[ph: ~2m left]" />
+    </Pane>
+  ),
+}
+
+// NO ESTIMATE — cold-start (no history): the bars, but no "time left" line.
+export const NoEstimate: Story = {
+  render: () => (
+    <Pane>
+      <WorldGenStatusCard stages={stagesAt(3)} stageLabels={STAGE_LABELS} />
     </Pane>
   ),
 }
@@ -97,10 +103,9 @@ export const Complete: Story = {
   render: () => (
     <Pane>
       <WorldGenStatusCard
-        stages={stagesAt(STAGE_IDS.length)}
+        stages={stagesAt(WORLD_GEN_STAGES.length)}
         stageLabels={STAGE_LABELS}
         doneLabel="[ph: your world is ready]"
-        costUsd={0.63}
       />
     </Pane>
   ),

@@ -101,11 +101,13 @@ export type { GhostHookListProps, GhostHookItem } from './ghost-hook-list.ts'
 // is re-exported here so consumers read the node shape off the contract surface.
 export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
 
-// WorldGenStatusCard (MYT-89 Phase C, C4) — the generation status/loading OVERLAY
-// pinned top-left of the graph pane: the current (running) stage's friendly label, a
-// completed/total percent, and a PAPER-REGISTER segmented square bar (the running cell
-// pulses; NO spinner/circle). Reads the stream's `stages[]` (B4 `StageProgress`, re-
-// exported here so a consumer reads it off the same contract surface) + `costUsd`.
+// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥) — the generation status/loading
+// OVERLAY pinned top-left of the graph pane: the current (running) stage's friendly
+// label, a completed/11 percent, an optional data-driven "time left", and a PAPER-
+// REGISTER segmented square bar of a FIXED 11 cells (one per canonical WORLD_GEN_STAGES
+// stage; the running cell pulses; NO spinner/circle). Reads the stream's `stages[]` (B4
+// `StageProgress`, re-exported here so a consumer reads it off the same contract
+// surface) to advance the fills. Cost is NOT shown (the player never sees API spend).
 export type { WorldGenStatusCardProps, StageProgress } from './world-gen-status.ts'
 
 // WorldGenFogField (MYT-89 Phase C, C3) — the decorative fog layer BEHIND the

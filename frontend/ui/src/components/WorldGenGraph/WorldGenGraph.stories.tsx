@@ -118,7 +118,6 @@ function statusFor(count: number): WorldGenStatusCardProps {
   }))
   return {
     stages,
-    costUsd: Number((count * 0.006).toFixed(3)),
     stageLabels: STAGE_LABELS,
     titleLabel: '[ph: weaving your world]',
     doneLabel: '[ph: your world is ready]',

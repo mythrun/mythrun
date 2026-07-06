@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Stack, Heading, Text, Button } from '@mythrun/ui'
 import {
   getStartingSituations,
+  getStageTimings,
   useApiContext,
   useWorldGenStream,
   type ApiContext,
+  type StageTiming,
   type StartingSituationsResponse,
 } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
@@ -34,6 +36,37 @@ import { CampaignPage } from './campaign-page.tsx'
 
 /** The situations source — defaults to the real endpoint; tests substitute it. */
 type FetchSituations = (ctx: ApiContext, campaignId: string) => Promise<StartingSituationsResponse>
+
+/** The stage-timings source (the ETA history) — defaults to the real endpoint. */
+type FetchTimings = (ctx: ApiContext) => Promise<readonly StageTiming[]>
+
+/** Fetch the historical per-stage timings ONCE while generating — the data-driven
+ *  ETA source the status card renders a rough "time left" from. `null` until it
+ *  resolves and on ANY failure (cold-start `[]` also yields no estimate downstream),
+ *  so the card degrades to bars-only. Gated to the generating window so no other
+ *  phase fetches. */
+function useStageTimings(
+  ctx: ApiContext,
+  active: boolean,
+  fetchTimings: FetchTimings,
+): readonly StageTiming[] | null {
+  const [timings, setTimings] = useState<readonly StageTiming[] | null>(null)
+  useEffect(() => {
+    if (!active) return
+    let alive = true
+    void fetchTimings(ctx)
+      .then((res) => {
+        if (alive) setTimings(res)
+      })
+      .catch(() => {
+        if (alive) setTimings(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [ctx, active, fetchTimings])
+  return timings
+}
 
 /** Whether the owner has already chosen a starting situation. `loading` is the
  *  brief resolve window; `not-chosen` and a fetch failure both fall to the reveal
@@ -114,22 +147,31 @@ function SettlingView(): React.JSX.Element {
 export interface CampaignDetailRouteProps {
   /** The chosen-situation source — defaults to the real endpoint; tests substitute it. */
   fetchSituations?: FetchSituations
+  /** The stage-timings source (the ETA history) — defaults to the real endpoint;
+   *  tests substitute it. */
+  fetchTimings?: FetchTimings
 }
 
 export function CampaignDetailRoute({
   fetchSituations = getStartingSituations,
+  fetchTimings = getStageTimings,
 }: CampaignDetailRouteProps = {}): React.JSX.Element {
   const ctx = useApiContext()
   // The route only matches with an `:id`; `?? ''` keeps the hook calls
   // unconditional (hooks can't branch) without a non-null assertion.
   const { id = '' } = useParams<{ id: string }>()
-  const { nodes, edges, status, phase, stages, costUsd, retry } = useWorldGenStream(ctx, id)
+  const { nodes, edges, status, phase, stages, retry } = useWorldGenStream(ctx, id)
   // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
   const worldReady = status === 'complete' && phase === 'world_ready'
   const chosen = useSituationChosen(ctx, id, worldReady, fetchSituations)
+  // The ETA history: fetched once while generating, fed to the status card.
+  const generating = status === 'generating'
+  const stageTimings = useStageTimings(ctx, generating, fetchTimings)
 
-  if (status === 'generating')
-    return <GeneratingView nodes={nodes} edges={edges} stages={stages} costUsd={costUsd} />
+  if (generating)
+    return (
+      <GeneratingView nodes={nodes} edges={edges} stages={stages} stageTimings={stageTimings} />
+    )
   if (status === 'failed') return <FailedView onRetry={() => void retry()} />
   if (status === 'terminal') return <TerminalView />
 

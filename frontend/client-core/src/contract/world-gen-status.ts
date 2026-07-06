@@ -18,22 +18,28 @@ export type { StageProgress } from '@mythrun/contract/events'
  * running cell pulses (an opacity fade, the brand's only sanctioned motion). Hard brand
  * rule: no circles, no spinner, no dots. The indicator stops at 100%.
  *
- * It reads the stream's `stages[]` (the B4 `StageProgress[]` from the first-frame
- * snapshot) + optional cumulative `costUsd`. This is a DOM overlay (§3.3), NOT a
- * canvas surface — it composes over the C3 fog + C4 graph canvases.
+ * It reads the stream's `stages[]` (the B4 `StageProgress[]`), advancing the fill of
+ * a FIXED 11-bar loading indicator seeded from the canonical `WORLD_GEN_STAGES`
+ * taxonomy (MYT-89 audit ③ — all bars known from frame one, not grown one per stage).
+ * This is a DOM overlay (§3.3), NOT a canvas surface — it composes over the C3 fog +
+ * C4 graph canvases.
  *
- * Platform-neutral (§9): `stages`/`costUsd` are plain data; every label is an i18n
- * KEY the consumer resolves (the DS owns no copy). No className/style/DOM events. The
- * card positions itself `absolute` inside its host pane, so drop it into the graph
- * pane's `relative` container and it pins top-left.
+ * Platform-neutral (§9): `stages` is plain data; every label is an i18n KEY the
+ * consumer resolves (the DS owns no copy). No className/style/DOM events. The card
+ * positions itself `absolute` inside its host pane, so drop it into the graph pane's
+ * `relative` container and it pins top-left. Cost is NOT rendered here (audit ⑥ — the
+ * player never sees API spend; the dev ticker owns cost).
  */
 export interface WorldGenStatusCardProps extends Omit<BaseProps, 'children'> {
-  /** Per-stage progress from the stream's first-frame snapshot (B4). The percent is
-   *  `completed / total` over this array; the running entry is the "current" stage. */
+  /** Per-stage progress from the stream (B4). Advances the FIXED 11-bar indicator's
+   *  fill: a canonical `WORLD_GEN_STAGES` bar matches its stream entry's status, or is
+   *  `pending` until it appears. The percent is `completedCount / 11` (fixed
+   *  denominator); the running entry marks the "current" stage. */
   stages: readonly StageProgress[]
-  /** Cumulative generation spend (the stream's `costUsd`). Rendered subtly (a
-   *  dev/observability readout) when a number; `null`/omitted hides it. */
-  costUsd?: number | null
+  /** i18n key (already resolved): a rough data-driven "time left" (e.g. `~3m left`),
+   *  computed by the consumer from the stage-timings history. Omitted → no estimate
+   *  (cold-start / no history), so the card shows just the bars. */
+  etaLabel?: string
   /** Map from raw stage id (`vocabulary_intake`) → an i18n'd FRIENDLY label the
    *  consumer resolves. An unmapped stage falls back to a `[ph: <stage>]` placeholder
    *  (the DS owns no copy). */

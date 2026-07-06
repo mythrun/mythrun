@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
+import type { StageTiming } from '@mythrun/client-core'
 import type { StageProgress, WorldGenGraphProps } from '@mythrun/ui'
 import { i18n } from '../../i18n/config.ts'
 import { GeneratingView } from './generating.tsx'
@@ -8,7 +9,8 @@ import { GeneratingView } from './generating.tsx'
 // GeneratingView is the SOLE production consumer of <WorldGenGraph> during
 // generation. C7 wires it to the GATED, fog-forward experience (§3.3/§3.4): the
 // graph is `interactive={false}` (no entity list / no selection), the status card
-// is fed the stream's `stages[]` + `costUsd` + a `[ph:]` stage-label map, and the
+// is fed the stream's `stages[]` + a `[ph:]` stage-label map + a data-driven ETA
+// label (from the route's stage-timings; audit ③) and NO cost (audit ⑥), and the
 // fog FADE is keyed off STAGE progress (completed/total) so it reaches 0 (fog gone)
 // at completion. WorldGenGraph is mocked to a props spy — its own rendering is
 // covered by its unit test; here we assert the props are threaded through.
@@ -56,13 +58,13 @@ const stage = (id: string, status: StageProgress['status']): StageProgress => ({
 
 interface RenderOpts {
   readonly stages?: readonly StageProgress[]
-  readonly costUsd?: number | null
+  readonly stageTimings?: readonly StageTiming[] | null
 }
 
-function renderGenerating({ stages = [], costUsd = null }: RenderOpts = {}): void {
+function renderGenerating({ stages = [], stageTimings = null }: RenderOpts = {}): void {
   render(
     <I18nextProvider i18n={i18n}>
-      <GeneratingView nodes={[]} edges={[]} stages={stages} costUsd={costUsd} />
+      <GeneratingView nodes={[]} edges={[]} stages={stages} stageTimings={stageTimings} />
     </I18nextProvider>,
   )
 }
@@ -108,19 +110,22 @@ describe('GeneratingView — gated generation (§3.4)', () => {
 })
 
 describe('GeneratingView — status card wiring (§3.3)', () => {
-  it('feeds the status card the stream stages + cost', () => {
+  it('feeds the status card the stream stages, and NO cost (audit ⑥)', () => {
     const stages = [stage('concept_intake', 'running')]
-    renderGenerating({ stages, costUsd: 1.25 })
+    renderGenerating({ stages })
     const { status } = lastGraphProps()
     expect(status?.stages).toEqual(stages)
-    expect(status?.costUsd).toBe(1.25)
+    // Cost is never passed to the user card — the player never sees API spend.
+    expect((status as Record<string, unknown> | undefined)?.costUsd).toBeUndefined()
   })
 
   it('supplies an i18n stage-label map the card resolves (DS owns no copy)', () => {
     renderGenerating({ stages: [stage('concept_intake', 'running')] })
     const labels = lastGraphProps().status?.stageLabels
-    // Real backend worldgen stage ids resolve to their i18n'd friendly labels.
+    // Real backend worldgen stage ids resolve to their i18n'd friendly labels —
+    // incl. entity_consolidation (stage 4b) so the 11th taxonomy bar has a label.
     expect(labels?.concept_intake).toBe(i18n.t('worldGen.stage.concept_intake'))
+    expect(labels?.entity_consolidation).toBe(i18n.t('worldGen.stage.entity_consolidation'))
     expect(labels?.embed_world).toBe(i18n.t('worldGen.stage.embed_world'))
   })
 
@@ -130,6 +135,36 @@ describe('GeneratingView — status card wiring (§3.3)', () => {
     expect(status?.titleLabel).toBe(i18n.t('worldGen.statusTitle'))
     expect(status?.doneLabel).toBe(i18n.t('worldGen.statusDone'))
     expect(status?.progressLabel).toBe(i18n.t('worldGen.statusProgress'))
+  })
+})
+
+describe('GeneratingView — data-driven ETA (audit ③)', () => {
+  it('computes a "time left" label from the timings + completed stages', () => {
+    const stages = [stage('concept_intake', 'completed'), stage('world_color', 'running')]
+    // world_color remains at 120_000ms; every other un-completed stage has no timing
+    // → 0. Total remaining 120s → 2 minutes → the minutes ETA copy.
+    const stageTimings: StageTiming[] = [{ stage: 'world_color', avgMs: 120_000 }]
+    renderGenerating({ stages, stageTimings })
+    expect(lastGraphProps().status?.etaLabel).toBe(i18n.t('worldGen.statusEta', { minutes: 2 }))
+  })
+
+  it('uses the seconds copy in the final under-a-minute stretch', () => {
+    const stages = [stage('coherence_pass', 'running')]
+    const stageTimings: StageTiming[] = [{ stage: 'coherence_pass', avgMs: 30_000 }]
+    renderGenerating({ stages, stageTimings })
+    expect(lastGraphProps().status?.etaLabel).toBe(
+      i18n.t('worldGen.statusEtaShort', { seconds: 30 }),
+    )
+  })
+
+  it('feeds NO etaLabel on cold-start (empty timings) — the card shows no estimate', () => {
+    renderGenerating({ stages: [stage('concept_intake', 'running')], stageTimings: [] })
+    expect(lastGraphProps().status?.etaLabel).toBeUndefined()
+  })
+
+  it('feeds NO etaLabel before the timings resolve (null)', () => {
+    renderGenerating({ stages: [stage('concept_intake', 'running')], stageTimings: null })
+    expect(lastGraphProps().status?.etaLabel).toBeUndefined()
   })
 })
 
