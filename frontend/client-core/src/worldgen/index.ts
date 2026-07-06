@@ -10,6 +10,12 @@ export { create as createForceSim } from './force-sim.ts'
 export type { ForceSim } from './force-sim.ts'
 export { createFogSim } from './fog-sim.ts'
 export type { FogSim, FogObstacle } from './fog-sim.ts'
+// The LOCKED fog params + every render-side constant (C1). Pure data (no DOM), so it
+// rides this UI-safe subpath: the fog RENDER surface (@mythrun/ui's fog-draw +
+// WorldGenFogField, C3) consumes the cloud/coverage/fade/label constants WITHOUT
+// importing from @mythrun/ui (the dependency direction is ui→client-core). The module
+// header calls this out — "C3/C4 consume the render-side constants".
+export * from './fog-params.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 

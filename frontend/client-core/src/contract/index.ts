@@ -101,6 +101,13 @@ export type { GhostHookListProps, GhostHookItem } from './ghost-hook-list.ts'
 // is re-exported here so consumers read the node shape off the contract surface.
 export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
 
+// WorldGenFogField (MYT-89 Phase C, C3) — the decorative fog layer BEHIND the
+// streaming graph: rolling clouds that part/close around entity labels and fade to
+// nothing as the graph fills. `FogFieldEntity` (the caller's plain-data label) +
+// `FogObstacle` (the pre-built box, for a caller that maps entities itself) are
+// re-exported here so consumers read the fog model off the same contract surface.
+export type { WorldGenFogFieldProps, FogFieldEntity, FogObstacle } from './world-gen-fog.ts'
+
 // WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their
 // newly-generated world through: a grouped tree (factions/locations/npcs/items,
 // nested locations), each entity opening to its facts, over a borderless search

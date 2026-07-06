@@ -80,6 +80,13 @@ export { GhostHookList } from './components/GhostHookList/GhostHookList.tsx'
 // rAF churn for a static settle-to-convergence redraw.
 export { WorldGenGraph } from './components/WorldGenGraph/WorldGenGraph.tsx'
 
+// WorldGenFogField (MYT-89 Phase C, C3) — the decorative fog layer of the world-gen
+// loading experience: rolling clouds that part/close around the streaming entity labels
+// and fade to nothing as the graph fills. An aria-hidden canvas that sits BEHIND the
+// graph canvas (§5, layered canvases); the fixed-timestep sim + crisp Bayer paint + the
+// 900×470 virtual space live inside, driven by plain `FogFieldEntity[]` + fade counts.
+export { WorldGenFogField } from './components/WorldGenFog/WorldGenFogField.tsx'
+
 // WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their newly
 // generated world through: a borderless search field over a grouped tree
 // (factions/locations/npcs/items, nested locations indent under their parent), each
@@ -191,6 +198,9 @@ export type {
   GraphNode,
   GraphEdge,
   GraphNodeState,
+  WorldGenFogFieldProps,
+  FogFieldEntity,
+  FogObstacle,
   WorldWikiProps,
   WikiViewModel,
   WikiGroup,
