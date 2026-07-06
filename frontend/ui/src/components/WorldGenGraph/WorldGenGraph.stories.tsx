@@ -210,10 +210,12 @@ export const Populated: Story = {
 // `FORCE_PARAMS`. Fog is faded to nothing (shown === total) so the spread reads clean.
 // ──────────────────────────────────────────────────────────────────────────
 
-/** A dev-tuning range control (placeholder labels per the brand i18n rule). Mirrors the
- *  fog tuner's Slider; duplicated (not shared) — throwaway harness chrome. */
+/** A dev-tuning range control (placeholder labels per the brand i18n rule; the `help`
+ *  line is plain English — this is a dev-only tuning harness, not user-facing copy).
+ *  Mirrors the fog tuner's Slider; duplicated (not shared) — throwaway harness chrome. */
 function Slider(props: {
   label: string
+  help: string
   min: number
   max: number
   step: number
@@ -222,21 +224,24 @@ function Slider(props: {
   readout: string
 }): React.JSX.Element {
   return (
-    <label className="flex items-center gap-[var(--space-2)] font-mono text-[12px] text-ink">
-      <span className="w-36">{props.label}</span>
-      <input
-        type="range"
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={props.value}
-        onChange={(e) => {
-          props.onChange(Number(e.target.value))
-        }}
-        className="flex-1"
-      />
-      <span className="w-14 text-right text-ink-secondary">{props.readout}</span>
-    </label>
+    <div className="flex flex-col gap-[var(--space-1)]">
+      <label className="flex items-center gap-[var(--space-2)] font-mono text-[12px] text-ink">
+        <span className="w-36">{props.label}</span>
+        <input
+          type="range"
+          min={props.min}
+          max={props.max}
+          step={props.step}
+          value={props.value}
+          onChange={(e) => {
+            props.onChange(Number(e.target.value))
+          }}
+          className="flex-1"
+        />
+        <span className="w-14 text-right text-ink-secondary">{props.readout}</span>
+      </label>
+      <p className="pl-36 text-[11px] leading-snug text-ink-secondary">{props.help}</p>
+    </div>
   )
 }
 
@@ -258,6 +263,19 @@ const FORCE_LABELS: Record<keyof ForceParams, string> = {
   collideRadius: '[ph: collide]',
   seedJitter: '[ph: seed jitter]',
   margin: '[ph: margin]',
+}
+// Plain-English help text under each knob so the tuning is legible WHILE sliding (this
+// harness is dev-only — not user-facing product copy, so real prose, not `[ph:]` labels).
+const FORCE_DESCRIPTIONS: Record<keyof ForceParams, string> = {
+  chargeStrength: 'How hard nodes shove each other apart. More negative = wider spread.',
+  chargeDistanceMax: 'How far that shove reaches. Higher = even spread; lower = local clumps.',
+  centerStrength:
+    "Pulls the whole cluster toward the frame's middle (positions it, doesn't compress). 0 = let repulsion + margin decide.",
+  boundaryStrength:
+    'Gentle inward pull on every node. Higher = tighter/compact; lower = looser/wider.',
+  collideRadius: "Each node's personal-space bubble (minimum gap). Bigger = more room between nodes.",
+  seedJitter: 'How scattered a node starts when it appears. Higher = emerges more spread out.',
+  margin: 'How far nodes stay clear of the frame edge (the breathing-room band). Higher = bigger margin.',
 }
 
 // A realistic synthetic world (~24 named entities across the whole glyph vocabulary +
@@ -316,6 +334,7 @@ function GraphSpreadTuner(): React.JSX.Element {
             <Slider
               key={k}
               label={FORCE_LABELS[k]}
+              help={FORCE_DESCRIPTIONS[k]}
               min={FORCE_PARAM_RANGES[k].min}
               max={FORCE_PARAM_RANGES[k].max}
               step={FORCE_PARAM_RANGES[k].step}
