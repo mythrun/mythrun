@@ -1,10 +1,13 @@
 import {
   forceCenter,
+  forceCollide,
   forceLink,
   forceManyBody,
   forceSimulation,
   forceX,
   forceY,
+  type ForceLink,
+  type Simulation,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
@@ -47,31 +50,83 @@ import type { GraphEdge, GraphNode } from './graph-reducers.ts'
  *  layout back to life without the settled graph snapping. */
 const REHEAT_ALPHA = 0.3
 
-/** New nodes are seeded within ±(SEED_JITTER/2) of the layout centre so they fly
- *  out organically instead of arriving from d3's phyllotaxis spiral. */
-const SEED_JITTER = 2
+// ──────────────────────────────────────────────────────────────────────────
+// TUNABLE FORCE PARAMS (MYT-89 audit #4 — the spread re-tune)
+// The graph used to CLUMP in the centre: weak repulsion (charge −30, capped at
+// `distanceMax` = half-height, which truncated cross-cloud repulsion) fighting a
+// full-strength `forceCenter` + an inward `forceX/Y(0)`, with new nodes seeded
+// STACKED at ±1px of origin. The re-tune below SPREADS the graph to FILL the
+// 900×470 space. Every knob is a `create` param (merged over `FORCE_PARAMS`), so
+// the Storybook spread-tuning harness dials the exact feel live — the values Miklos
+// lands on replace these defaults, which then become the locked spec.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** The tunable forces. `create` merges a caller's partial override over
+ *  `FORCE_PARAMS`; each field maps to one d3-force setting. Threaded end-to-end so
+ *  the harness re-seeds the live graph as the sliders move — production omits them
+ *  (→ the locked defaults). */
+export interface ForceParams {
+  /** `forceManyBody().strength` — node↔node repulsion (negative = repel). More
+   *  negative pushes the cloud OUT to fill the space (was d3's −30 default). */
+  chargeStrength: number
+  /** `forceManyBody().distanceMax` (px) — the range beyond which a pair stops
+   *  repelling. Too small (the old half-height cap) truncates cross-space repulsion
+   *  → a central clump; raised here so repulsion reaches across the width. */
+  chargeDistanceMax: number
+  /** `forceCenter().strength` — the whole-cloud centring pull. High = the main
+   *  clumping force; 0 = off (the per-node boundary pull below handles centring). */
+  centerStrength: number
+  /** `forceX(0)/forceY(0).strength` — a gentle per-node inward pull toward each
+   *  centre line. Low, so the cloud fills the space rather than collapsing to a ball;
+   *  the hard clamp (not this force) is what guarantees the bound. */
+  boundaryStrength: number
+  /** `forceCollide().radius` (px) — the per-node keep-out radius, so glyphs + their
+   *  labels never overlap (min centre-to-centre spacing ≈ 2×). Miklos wants room for
+   *  labels; d3's `forceCollide(r)` resolves centres to ≥ r_a + r_b apart. */
+  collideRadius: number
+  /** New-node seed spread: a node seeds at a random offset within ±(seedJitter/2) of
+   *  centre. Bigger = real initial spread (breaks the stacked-at-origin symmetry);
+   *  small = a streaming node emerges near centre and flies out organically. */
+  seedJitter: number
+}
+
+/** The LOCKED force defaults — the MYT-89 audit #4 re-tune that FILLS 900×470
+ *  instead of clumping. A balanced starting point (spread, contained, room for
+ *  labels); Miklos finalises the exact feel via the Storybook spread-tuning harness,
+ *  and the values he lands on replace these. */
+export const FORCE_PARAMS: ForceParams = {
+  chargeStrength: -120,
+  chargeDistanceMax: 800,
+  centerStrength: 0,
+  boundaryStrength: 0.03,
+  collideRadius: 40,
+  seedJitter: 90,
+}
+
+/** The slider envelopes (`min`/`max`/`step`) the spread-tuning harness exposes for
+ *  each force param — mirrors `FOG_PARAM_RANGES`. `FORCE_PARAMS` holds the default
+ *  within each. */
+export const FORCE_PARAM_RANGES = {
+  chargeStrength: { min: -400, max: 0, step: 5 },
+  chargeDistanceMax: { min: 100, max: 1400, step: 20 },
+  centerStrength: { min: 0, max: 1, step: 0.02 },
+  boundaryStrength: { min: 0, max: 0.2, step: 0.005 },
+  collideRadius: { min: 0, max: 90, step: 1 },
+  seedJitter: { min: 0, max: 400, step: 5 },
+} as const
 
 // VIEWPORT CONTAINMENT (MYT-89 Phase B, BUG 2.2). The repulsion cloud has no
 // natural bound — `forceCenter` only removes net drift, it does not pull inward —
 // so a dense graph can push nodes off-screen ("should be impossible"). Three
 // layers, weakest→hardest:
-//   1. a gentle inward `forceX(0)`/`forceY(0)` (BOUNDARY_STRENGTH) that biases the
-//      whole cloud toward the centre so containment reads as a soft settle;
-//   2. a `distanceMax` on the charge so far-apart pairs stop repelling — caps the
-//      long-range accumulation that otherwise lets the cloud expand unboundedly;
+//   1. a gentle inward `forceX(0)`/`forceY(0)` (`boundaryStrength`) that biases each
+//      node toward the centre lines so containment reads as a soft settle;
+//   2. a `distanceMax` on the charge (`chargeDistanceMax`) so far-apart pairs stop
+//      repelling — caps the long-range accumulation that lets the cloud inflate;
 //   3. a per-tick hard clamp of every node to the half-dimensions — the guarantee
 //      that NO node ever draws outside `[−w/2, w/2] × [−h/2, h/2]`, even mid-settle.
 // Applies to BOTH the generation and reveal graphs (they share this sim); there is
 // no phase-specific gating.
-
-/** Inward pull toward the centre line on each axis. Gentle (well under d3's 0.1
- *  forceX default) so a normal graph still fills the space rather than collapsing
- *  to a tight ball — the hard clamp, not this force, is what guarantees the bound. */
-const BOUNDARY_STRENGTH = 0.04
-
-/** Fraction of the smaller half-dimension beyond which two nodes no longer repel.
- *  Keeps repulsion local so the cloud can't inflate from long-range 1/d² tails. */
-const CHARGE_RANGE_FACTOR = 1
 
 /** A d3 simulation node carrying BOTH identities: the stable internal `synthKey`
  *  (d3's link-resolver id, never changes → position continuity) and the current
@@ -110,23 +165,62 @@ export interface ForceSim {
   unpin(displayId: string): void
 }
 
-function seedNode(synthKey: string, displayId: string): SimNode {
+function seedNode(
+  synthKey: string,
+  displayId: string,
+  jitter: number,
+  random: () => number,
+): SimNode {
   return {
     synthKey,
     displayId,
-    x: (Math.random() - 0.5) * SEED_JITTER,
-    y: (Math.random() - 0.5) * SEED_JITTER,
+    x: (random() - 0.5) * jitter,
+    y: (random() - 0.5) * jitter,
     vx: 0,
     vy: 0,
   }
 }
 
-export function create(opts: { width: number; height: number }): ForceSim {
+/** Build the STOPPED d3 simulation with the re-tuned spread forces (MYT-89 audit #4):
+ *  charge (`chargeStrength` + `chargeDistanceMax`), the link force, a centre pull
+ *  (`centerStrength`), `forceCollide` (`collideRadius` — no overlap, room for labels),
+ *  and the per-axis inward boundary pull (`boundaryStrength`). `.stop()` because C4's
+ *  render loop drives `tick()`, not d3's internal timer. */
+function buildSimulation(
+  nodes: SimNode[],
+  linkForce: ForceLink<SimNode, SimLink>,
+  params: ForceParams,
+): Simulation<SimNode, SimLink> {
+  return forceSimulation<SimNode, SimLink>(nodes)
+    .force(
+      'charge',
+      forceManyBody<SimNode>()
+        .strength(params.chargeStrength)
+        .distanceMax(params.chargeDistanceMax),
+    )
+    .force('link', linkForce)
+    .force('center', forceCenter<SimNode>().strength(params.centerStrength))
+    .force('collide', forceCollide<SimNode>().radius(params.collideRadius))
+    .force('boundX', forceX<SimNode>(0).strength(params.boundaryStrength))
+    .force('boundY', forceY<SimNode>(0).strength(params.boundaryStrength))
+    .stop()
+}
+
+export function create(opts: {
+  width: number
+  height: number
+  /** Injectable RNG for deterministic seeding (tests); defaults to `Math.random`. */
+  random?: () => number
+  /** Partial force overrides, merged over `FORCE_PARAMS` — the spread-tuning harness
+   *  passes the live slider values; production omits it (→ the locked defaults). */
+  params?: Partial<ForceParams>
+}): ForceSim {
   // The centred draw space: nodes live in `[−halfW, halfW] × [−halfH, halfH]`
   // (the host translates the canvas by (w/2, h/2) before drawing raw sim coords).
   const halfW = opts.width / 2
   const halfH = opts.height / 2
-  const chargeRange = (Math.min(opts.width, opts.height) / 2) * CHARGE_RANGE_FACTOR
+  const random = opts.random ?? Math.random
+  const params: ForceParams = { ...FORCE_PARAMS, ...opts.params }
 
   // The persistent state: `byKey` is the source of truth for identity; `nodes`
   // is the SAME array handed to d3 every sync (mutated in place — survivor
@@ -134,13 +228,7 @@ export function create(opts: { width: number; height: number }): ForceSim {
   const byKey = new Map<string, SimNode>()
   const nodes: SimNode[] = []
   const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
-  const simulation = forceSimulation<SimNode, SimLink>(nodes)
-    .force('charge', forceManyBody<SimNode>().distanceMax(chargeRange))
-    .force('link', linkForce)
-    .force('center', forceCenter<SimNode>())
-    .force('boundX', forceX<SimNode>(0).strength(BOUNDARY_STRENGTH))
-    .force('boundY', forceY<SimNode>(0).strength(BOUNDARY_STRENGTH))
-    .stop() // manual control — C4's render loop drives tick(), not d3's timer.
+  const simulation = buildSimulation(nodes, linkForce, params)
 
   /** Advance one step, then HARD-clamp every node into the centred draw space.
    *  The boundary force + distanceMax keep the settle smooth; this clamp is the
@@ -165,7 +253,10 @@ export function create(opts: { width: number; height: number }): ForceSim {
     for (const graphNode of incoming) {
       const existing = byKey.get(graphNode.synthKey)
       if (existing === undefined) {
-        byKey.set(graphNode.synthKey, seedNode(graphNode.synthKey, graphNode.displayId))
+        byKey.set(
+          graphNode.synthKey,
+          seedNode(graphNode.synthKey, graphNode.displayId, params.seedJitter, random),
+        )
       } else {
         existing.displayId = graphNode.displayId // refresh the external id (finalize swap); position is untouched.
       }

@@ -41,6 +41,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     totalEntities,
     listLabel,
     emptyLabel,
+    forceParams,
     'data-testid': dataTestId,
   },
   ref,
@@ -55,6 +56,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     reducedMotion,
     interactive,
     showLabels,
+    forceParams,
   })
 
   const shown = shownEntities ?? nodes.length
@@ -78,7 +80,11 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
           totalEntities={total}
           reducedMotion={reducedMotion}
         />
-        <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0 block h-full w-full" />
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          className="absolute inset-0 block h-full w-full"
+        />
         {status !== undefined && <WorldGenStatusCard {...status} />}
       </div>
       {/* The accessible + selectable surface — the REVEAL only (§3.4 gate). */}

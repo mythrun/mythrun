@@ -3,10 +3,17 @@ import {
   createForceSim,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
+  type ForceParams,
   type ForceSim,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
-import { drawEdges, drawNodes, edgeDrawProgress, fogEntitiesFrom, type Point } from './canvas-draw.ts'
+import {
+  drawEdges,
+  drawNodes,
+  edgeDrawProgress,
+  fogEntitiesFrom,
+  type Point,
+} from './canvas-draw.ts'
 import {
   hasFinePointer,
   nearestKey,
@@ -62,6 +69,12 @@ export interface GraphCanvasParams {
    *  so names show DURING generation too — the fog already reserves a label-sized keep-out
    *  per node, so drawing the name closes that visible mismatch. Type stays shape-only. */
   showLabels: boolean
+  /** OVERRIDE the force-sim spread params, merged over `FORCE_PARAMS` (MYT-89 audit #4).
+   *  The Storybook spread-tuning harness passes live slider values; a change RE-SEEDS the
+   *  sim (fresh spread). `undefined` in production → the locked defaults. Required-with-
+   *  `undefined` (not optional) to match the `selectedKey` idiom under
+   *  `exactOptionalPropertyTypes` — WorldGenGraph forwards the prop unconditionally. */
+  forceParams: Partial<ForceParams> | undefined
 }
 
 export interface GraphCanvas {
@@ -76,8 +89,16 @@ function settle(sim: ForceSim): void {
   for (let i = 0; i < SETTLE_TICKS; i++) sim.tick()
 }
 
+/** Create a fresh force-sim in the fog's VIRTUAL space with the given spread overrides
+ *  (merged over `FORCE_PARAMS` inside `createForceSim`). Module-scoped so the hook's
+ *  `getSim` stays a one-liner. */
+function makeSim(params: Partial<ForceParams>): ForceSim {
+  return createForceSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT, params })
+}
+
 export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
-  const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion, interactive, showLabels } = params
+  const { canvasRef, nodes, edges, selectedKey, onSelect, reducedMotion, interactive, showLabels } =
+    params
 
   // Latest props/state the imperative closures read (the useLatest idiom): refs so
   // the rAF loop + pointer listeners always see current values without re-binding.
@@ -98,6 +119,9 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // appear-time), the draw-in lerps from. Advanced/stamped per frame in the motion loop.
   const edgeDrawRef = useRef<EdgeDrawState>({ clockMs: 0, appear: new Map() })
   const settledRef = useRef(false) // reduced-motion: has the current graph been settled?
+  // Latest spread-tuner overrides, normalised to `{}` (never undefined) so `getSim`
+  // passes them to `createForceSim` unconditionally under exactOptionalPropertyTypes.
+  const forceParamsRef = useRef<Partial<ForceParams>>(params.forceParams ?? {})
   nodesRef.current = nodes
   edgesRef.current = edges
   selectedRef.current = selectedKey
@@ -105,12 +129,13 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   reducedRef.current = reducedMotion
   interactiveRef.current = interactive
   showLabelsRef.current = showLabels
+  forceParamsRef.current = params.forceParams ?? {}
 
-  // The sim lives in the fog's VIRTUAL space (C5 §3.6) — created lazily on first sync.
-  // B2's containment (boundary force + distanceMax + per-tick clamp) now uses the real
-  // virtual dims, so no node draws outside the CSS-scaled pane (BUG 2.2 in pixels).
+  // The sim lives in the fog's VIRTUAL space (C5 §3.6) — created lazily on first sync
+  // with the latest force params. B2's containment (boundary force + distanceMax + per-
+  // tick clamp) uses the real virtual dims, so no node draws outside the pane (BUG 2.2).
   const getSim = useCallback((): ForceSim => {
-    simRef.current ??= createForceSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
+    simRef.current ??= makeSim(forceParamsRef.current)
     return simRef.current
   }, [])
 
@@ -140,31 +165,37 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // canvas prep the draw paths share. `resolveInk` reads `getComputedStyle`, which the
   // motion loop used to call EVERY frame (MYT-89 audit #2); caching it here (+ on a theme
   // flip, via the observer below) lets the loop read the ref instead.
-  const applySize = useCallback((canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
-    sizeRef.current = sizeCanvasForDpr(canvas, ctx)
-    inkRef.current = resolveInk(canvas)
-  }, [])
+  const applySize = useCallback(
+    (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
+      sizeRef.current = sizeCanvasForDpr(canvas, ctx)
+      inkRef.current = resolveInk(canvas)
+    },
+    [],
+  )
 
   // Draw one frame of the graph (edges + glyphs) in the VIRTUAL space, in the resolved
   // ink. `t` is the bob clock (null under reduced motion → no bob); `showLabels` draws the
   // node name beside each glyph (ON during generation too — MYT-89 audit #3, decoupled
   // from `interactive`).
-  const paintFrame = useCallback((ctx: CanvasRenderingContext2D, ink: string): void => {
-    ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
-    ctx.save()
-    ctx.translate(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2)
-    ctx.strokeStyle = ink
-    ctx.fillStyle = ink
-    const positions = getSim().positions()
-    paintEdges(ctx, edgesRef.current, positions, edgeDrawRef.current, reducedRef.current)
-    drawNodes(ctx, nodesRef.current, positions, {
-      selectedKey: selectedRef.current,
-      hoverKey: hoverRef.current,
-      t: reducedRef.current ? null : clockRef.current,
-      showLabels: showLabelsRef.current,
-    })
-    ctx.restore()
-  }, [getSim])
+  const paintFrame = useCallback(
+    (ctx: CanvasRenderingContext2D, ink: string): void => {
+      ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+      ctx.save()
+      ctx.translate(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2)
+      ctx.strokeStyle = ink
+      ctx.fillStyle = ink
+      const positions = getSim().positions()
+      paintEdges(ctx, edgesRef.current, positions, edgeDrawRef.current, reducedRef.current)
+      drawNodes(ctx, nodesRef.current, positions, {
+        selectedKey: selectedRef.current,
+        hoverKey: hoverRef.current,
+        t: reducedRef.current ? null : clockRef.current,
+        showLabels: showLabelsRef.current,
+      })
+      ctx.restore()
+    },
+    [getSim],
+  )
 
   // A single static repaint of the current state (reduced motion + on resize): size
   // the canvas, resolve ink, settle if needed, draw once. No churn, no loop.
@@ -176,6 +207,14 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     ensureSettled()
     paintFrame(ctx, inkRef.current)
   }, [canvasRef, applySize, ensureSettled, paintFrame])
+
+  // Spread-tuner re-seed (MYT-89 audit #4): a force-param change RE-SEEDS the sim (fresh
+  // spread) rather than merging (which would keep the old settled positions). Keyed on the
+  // serialised params; the body is module-scoped (mirrors observeResize/observeThemeInk).
+  const forceKey = JSON.stringify(forceParamsRef.current)
+  useLayoutEffect(() => {
+    reseedOnForceChange({ simRef, getSim, nodesRef, edgesRef, settledRef })
+  }, [forceKey, getSim])
 
   // Re-sync the physics whenever the folded graph changes. In a LAYOUT effect (runs
   // before the fog child's effects) so a reduced-motion fog settle reads an already-
@@ -221,9 +260,34 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   )
 
   // Re-resolve the cached ink on a light/dark flip (MYT-89 audit #2). Body at module scope.
-  useEffect(() => observeThemeInk({ canvasRef, inkRef, reducedRef, staticPaint }), [canvasRef, staticPaint])
+  useEffect(
+    () => observeThemeInk({ canvasRef, inkRef, reducedRef, staticPaint }),
+    [canvasRef, staticPaint],
+  )
 
   return { getFogEntities }
+}
+
+interface ReseedDeps {
+  simRef: React.RefObject<ForceSim | null>
+  getSim: () => ForceSim
+  nodesRef: React.RefObject<GraphNode[]>
+  edgesRef: React.RefObject<GraphEdge[]>
+  settledRef: React.RefObject<boolean>
+}
+
+/** Spread-tuner re-seed (MYT-89 audit #4): DISPOSE the sim (null the ref) then rebuild it
+ *  via `getSim` with the latest force params, re-syncing the current graph — a FRESH spread,
+ *  not a merge (which would keep the old settled positions and hide the change). A NO-OP on
+ *  mount (`simRef` still null — the graph sync effect does the initial create with these same
+ *  params); production never changes forceParams, so this runs once and does nothing. Module-
+ *  scoped so the hook body stays lean (mirrors observeResize/observeThemeInk). */
+function reseedOnForceChange(deps: ReseedDeps): void {
+  const { simRef, getSim, nodesRef, edgesRef, settledRef } = deps
+  if (simRef.current === null) return
+  simRef.current = null
+  getSim().sync(nodesRef.current, edgesRef.current)
+  settledRef.current = false
 }
 
 interface ThemeInkDeps {
@@ -262,7 +326,10 @@ interface ResizeDeps {
 /** Observe container resize and repaint in the current mode (static settle vs re-size-
  *  and-let-the-loop-handle-it). Returns the disconnect teardown (or undefined when
  *  there's no canvas / no ResizeObserver — jsdom). Module-scoped so the hook stays lean. */
-function observeResize(canvas: HTMLCanvasElement | null, deps: ResizeDeps): (() => void) | undefined {
+function observeResize(
+  canvas: HTMLCanvasElement | null,
+  deps: ResizeDeps,
+): (() => void) | undefined {
   const { reducedRef, staticPaint, applySize } = deps
   if (canvas === null || typeof ResizeObserver === 'undefined') return undefined
   const observer = new ResizeObserver(() => {
@@ -315,7 +382,11 @@ function paintEdges(
  *  starts here. Because edges arrive incrementally over the SSE stream they self-stagger;
  *  the coherence_pass batch arrives together and snaps together. Seed edges (arrivalIndex
  *  -1) are skipped — they render full immediately, never a draw-in. */
-function recordEdgeAppearances(edges: readonly GraphEdge[], appear: Map<string, number>, nowMs: number): void {
+function recordEdgeAppearances(
+  edges: readonly GraphEdge[],
+  appear: Map<string, number>,
+  nowMs: number,
+): void {
   for (const edge of edges) {
     if (edge.arrivalIndex < 0) continue
     if (!appear.has(edge.synthKey)) appear.set(edge.synthKey, nowMs)
@@ -396,7 +467,10 @@ export function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDe
       hoverRef.current = nearestKey(getSim().positions(), localOf(e), HIT_RADIUS)
       return
     }
-    if (!drag.moved && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) > DRAG_THRESHOLD) {
+    if (
+      !drag.moved &&
+      Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) > DRAG_THRESHOLD
+    ) {
       drag.moved = true
     }
     if (drag.moved) {

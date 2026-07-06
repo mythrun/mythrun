@@ -1,5 +1,6 @@
 import type { BaseProps } from './index.ts'
 import type { GraphEdge, GraphNode } from '../worldgen/graph-reducers.ts'
+import type { ForceParams } from '../worldgen/force-sim.ts'
 import type { WorldGenStatusCardProps } from './world-gen-status.ts'
 
 // Re-export the graph model types so a consumer reads the node/edge shape off the
@@ -81,4 +82,10 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  i18n key the consumer resolves (the DS owns no copy). Only used when
    *  `interactive`. */
   emptyLabel?: string
+  /** OVERRIDE the force-sim spread params (charge, distanceMax, centre, boundary,
+   *  collide, seed jitter), merged over the locked `FORCE_PARAMS` defaults. The
+   *  Storybook spread-tuning harness (MYT-89 audit #4) passes the live slider values
+   *  so Miklos dials the exact spread feel; changing them RE-SEEDS the layout (fresh
+   *  spread, not a merge). Production omits this — the locked defaults fill the space. */
+  forceParams?: Partial<ForceParams>
 }

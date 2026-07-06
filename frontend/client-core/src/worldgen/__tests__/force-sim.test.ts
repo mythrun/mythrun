@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { create } from '../force-sim.ts'
+import { create, FORCE_PARAMS } from '../force-sim.ts'
 import type { GraphNode, GraphEdge } from '../graph-reducers.ts'
 
 // The world-gen graph populates live as entities stream in over ~10 minutes.
@@ -31,18 +31,21 @@ function node(synthKey: string, name = synthKey): GraphNode {
  *  post-finalize reality: a live-won node keeps its `${stage}/…` synthKey but its
  *  `displayId` swaps to the real entity UUID. Edges reference that UUID. */
 function heteroNode(synthKey: string, displayId: string): GraphNode {
-  return { synthKey, kind: 'faction', name: displayId, displayId, state: 'finalized', lastEventIndex: 0 }
+  return {
+    synthKey,
+    kind: 'faction',
+    name: displayId,
+    displayId,
+    state: 'finalized',
+    lastEventIndex: 0,
+  }
 }
 
 function edge(synthKey: string, from: string, to: string): GraphEdge {
   return { synthKey, from, to, relationship: 'allied', arrivalIndex: 0, sourceStage: 'weave' }
 }
 
-function dist(
-  positions: Map<string, { x: number; y: number }>,
-  a: string,
-  b: string,
-): number {
+function dist(positions: Map<string, { x: number; y: number }>, a: string, b: string): number {
   const pa = positions.get(a)
   const pb = positions.get(b)
   if (pa === undefined || pb === undefined) throw new Error('missing node')
@@ -68,11 +71,13 @@ describe('ForceSim node-identity preservation', () => {
     const after = sim.positions()
     expect(after.get('a')).toEqual(settled)
 
-    // The genuinely-new node exists, seeded NEAR CENTRE (small jitter) so it
-    // flies out organically rather than snapping in from d3's phyllotaxis spiral.
+    // The genuinely-new node exists, seeded within the JITTER ENVELOPE near centre
+    // (max hypot = (seedJitter/2)·√2 < seedJitter) so it flies out organically from
+    // the middle rather than snapping in from d3's phyllotaxis spiral. The exact
+    // envelope is the tunable `seedJitter` (MYT-89 audit #4), not the old ±1px.
     const fresh = after.get('c')
     if (fresh === undefined) throw new Error('c not present')
-    expect(Math.hypot(fresh.x, fresh.y)).toBeLessThan(5)
+    expect(Math.hypot(fresh.x, fresh.y)).toBeLessThan(FORCE_PARAMS.seedJitter)
   })
 
   it('preserves every survivor when a burst of new nodes arrives at once', () => {
@@ -174,7 +179,11 @@ describe('ForceSim link force', () => {
     const sim = create(VIEWPORT)
 
     sim.sync(
-      [heteroNode('world_and_factions/factions/0', uuidA), heteroNode(uuidB, uuidB), heteroNode(uuidC, uuidC)],
+      [
+        heteroNode('world_and_factions/factions/0', uuidA),
+        heteroNode(uuidB, uuidB),
+        heteroNode(uuidC, uuidC),
+      ],
       [edge('e-ab', uuidA, uuidB)],
     )
     for (let i = 0; i < 300; i++) sim.tick()
@@ -250,5 +259,58 @@ describe('ForceSim viewport containment (BUG 2.2)', () => {
       expect(Math.abs(p.x), `${key} escaped on x`).toBeLessThanOrEqual(halfW)
       expect(Math.abs(p.y), `${key} escaped on y`).toBeLessThanOrEqual(halfH)
     }
+  })
+})
+
+describe('ForceSim spread (MYT-89 audit #4)', () => {
+  it('spreads a burst to FILL the space (not a central clump), contained + non-overlapping', () => {
+    // The audit-#4 bug: nodes clumped in the centre of the 900×470 draw space. The
+    // re-tuned DEFAULTS (stronger charge, wider distanceMax, no centre pull, forceCollide,
+    // real seed jitter) must instead SPREAD the graph to fill the space. Deterministic
+    // seeding (an injected LCG) so the settled layout is reproducible — big seedJitter
+    // means no coincident nodes, so d3's internal coincidence jiggle never fires either.
+    let s = 0x2f6e2b1
+    const random = (): number => {
+      s = (s * 1103515245 + 12345) & 0x7fffffff
+      return s / 0x7fffffff
+    }
+    const width = 900
+    const height = 470
+    const sim = create({ width, height, random })
+
+    const many: GraphNode[] = []
+    for (let i = 0; i < 24; i++) many.push(node(`n-${String(i)}`))
+    sim.sync(many, [])
+    for (let i = 0; i < 600; i++) sim.tick()
+
+    const pts = [...sim.positions().values()]
+    const xs = pts.map((p) => p.x)
+    const ys = pts.map((p) => p.y)
+    const xSpan = Math.max(...xs) - Math.min(...xs)
+    const ySpan = Math.max(...ys) - Math.min(...ys)
+
+    // SPREAD: the settled bounding box covers a large fraction of the space on BOTH
+    // axes — the re-tune fills 900×470 rather than clumping near centre.
+    expect(xSpan).toBeGreaterThan(0.5 * width) // > 450 of 900
+    expect(ySpan).toBeGreaterThan(0.5 * height) // > 235 of 470
+
+    // CONTAINMENT (B2 intact): the per-tick hard clamp still bounds the now-much-stronger
+    // repulsion — no node escapes the centred draw space.
+    const halfW = width / 2
+    const halfH = height / 2
+    for (const p of pts) {
+      expect(Math.abs(p.x)).toBeLessThanOrEqual(halfW)
+      expect(Math.abs(p.y)).toBeLessThanOrEqual(halfH)
+    }
+
+    // NO OVERLAP: forceCollide keeps every pair apart. d3's forceCollide(r) resolves
+    // centres to ≥ r_a + r_b (≈ 2r) apart, so ≥ collideRadius is the robust guard that
+    // the collide force is present + working (room for labels, no stacked glyphs).
+    const r = FORCE_PARAMS.collideRadius
+    pts.forEach((a, i) => {
+      pts.slice(i + 1).forEach((b) => {
+        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(r)
+      })
+    })
   })
 })
