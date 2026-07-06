@@ -25,6 +25,21 @@ const DRAG_THRESHOLD = 4
 /** Bounded tick count to settle the layout for a static (reduced-motion) redraw. */
 const SETTLE_TICKS = 400
 
+// GEN-GRAPH LAYOUT SOURCE (spec §8.4): the GENERATION graph keeps the force-sim for
+// node placement — the persistent ForceSim below is the sole source of positions for
+// both the gen and reveal phases (they share this hook). BUG 2.2's viewport
+// containment (a boundary force + distanceMax + a per-tick clamp) lives inside that
+// sim, so it applies to both phases with no phase-specific gating.
+//
+// The sim is created lazily (getSim), on first sync, BEFORE the canvas has been
+// measured (sizeRef is still 0×0 at that point — a 0×0 containment box would collapse
+// every node onto the origin). So we seed it with a CONSTANT logical viewport, 4:3 to
+// match the canvas's `aspect-[4/3]`. Phase C (§3.6) replaces this constant with the
+// real virtual coordinate space (a constant logical width, CSS-scaled); B2 only needs
+// a sensible default here so the containment box is non-degenerate.
+const DEFAULT_SIM_WIDTH = 1200
+const DEFAULT_SIM_HEIGHT = 900
+
 interface DragState {
   /** The dragged node's `displayId` (the render/selection id-space). */
   key: string
@@ -70,7 +85,7 @@ export function useGraphCanvas(params: GraphCanvasParams): void {
   reducedRef.current = reducedMotion
 
   const getSim = useCallback((): ForceSim => {
-    simRef.current ??= createForceSim()
+    simRef.current ??= createForceSim({ width: DEFAULT_SIM_WIDTH, height: DEFAULT_SIM_HEIGHT })
     return simRef.current
   }, [])
 

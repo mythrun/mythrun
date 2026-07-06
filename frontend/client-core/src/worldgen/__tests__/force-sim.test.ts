@@ -9,6 +9,13 @@ import type { GraphNode, GraphEdge } from '../graph-reducers.ts'
 // new synthKeys are seeded near centre, and removed ones drop out. These tests
 // prove that node-identity guarantee against the real d3-force wrapper.
 
+// A viewport big enough that the small graphs these identity/link/pin tests build
+// never reach the containment boundary — so containment (BUG 2.2) is invisible to
+// them and they assert the same behaviour they always did (a pin at (100, 200) is
+// well within the ±2000 half-dimensions). The dedicated containment suite below
+// uses a deliberately tiny viewport to force the escape-then-clamp.
+const VIEWPORT = { width: 4000, height: 4000 }
+
 function node(synthKey: string, name = synthKey): GraphNode {
   return {
     synthKey,
@@ -44,7 +51,7 @@ function dist(
 
 describe('ForceSim node-identity preservation', () => {
   it('keeps a survivor at its settled position across a sync that adds a node', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     sim.sync([node('a'), node('b')], [])
     for (let i = 0; i < 50; i++) sim.tick()
@@ -69,7 +76,7 @@ describe('ForceSim node-identity preservation', () => {
   })
 
   it('preserves every survivor when a burst of new nodes arrives at once', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     sim.sync([node('a'), node('b')], [])
     for (let i = 0; i < 50; i++) sim.tick()
@@ -94,7 +101,7 @@ describe('ForceSim node-identity preservation', () => {
     // EXTERNAL displayId space, which is the thing that swaps.
     const synthKey = 'world_and_factions/factions/0'
     const uuid = '018f7b21-dddd-7000-8000-000000000004'
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     // Pre-finalize: displayId === synthKey. Settle a two-node layout off-origin.
     sim.sync([node(synthKey), node('b')], [])
@@ -118,7 +125,7 @@ describe('ForceSim node-identity preservation', () => {
   })
 
   it('drops a synthKey that is absent from the next sync', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     sim.sync([node('a'), node('b')], [])
     for (let i = 0; i < 10; i++) sim.tick()
@@ -133,7 +140,7 @@ describe('ForceSim node-identity preservation', () => {
 
 describe('ForceSim link force', () => {
   it('pulls a linked pair closer than the unlinked pairs under identical forces', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     // a-b linked; a-c and b-c only repel. Same global charge/centre forces act
     // on all three, so the linked side must end up the shortest.
@@ -146,7 +153,7 @@ describe('ForceSim link force', () => {
   })
 
   it('ignores an edge whose endpoint is not a known node (no crash)', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
     expect(() => {
       sim.sync([node('a')], [edge('e-ax', 'a', 'ghost')])
       for (let i = 0; i < 10; i++) sim.tick()
@@ -164,7 +171,7 @@ describe('ForceSim link force', () => {
     const uuidA = '018f7b21-aaaa-7000-8000-000000000001'
     const uuidB = '018f7b21-bbbb-7000-8000-000000000002'
     const uuidC = '018f7b21-cccc-7000-8000-000000000003'
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     sim.sync(
       [heteroNode('world_and_factions/factions/0', uuidA), heteroNode(uuidB, uuidB), heteroNode(uuidC, uuidC)],
@@ -181,7 +188,7 @@ describe('ForceSim link force', () => {
 
 describe('ForceSim pin / unpin', () => {
   it('fixes a node at the pin across ticks, then frees it on unpin', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
 
     sim.sync([node('a'), node('b')], [])
     sim.pin('a', 100, 200)
@@ -197,7 +204,7 @@ describe('ForceSim pin / unpin', () => {
   })
 
   it('is a no-op when pinning a synthKey that is not in the sim', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
     sim.sync([node('a')], [])
 
     // A drag-pin racing a `stage-reset` that already dropped the node: the pin
@@ -210,7 +217,7 @@ describe('ForceSim pin / unpin', () => {
   })
 
   it('is a no-op when unpinning a synthKey that is not in the sim', () => {
-    const sim = create()
+    const sim = create(VIEWPORT)
     sim.sync([node('a')], [])
 
     expect(() => {
@@ -218,5 +225,30 @@ describe('ForceSim pin / unpin', () => {
     }).not.toThrow()
     expect(sim.positions().has('ghost')).toBe(false)
     expect(sim.positions().size).toBe(1)
+  })
+})
+
+describe('ForceSim viewport containment (BUG 2.2)', () => {
+  it('keeps every node inside the centred draw space under strong repulsion', () => {
+    // BUG 2.2: nodes escape the viewport ("should be impossible"). A dense cloud of
+    // mutually-repelling nodes with NO links is pure outward pressure — before
+    // containment (a boundary force + distanceMax + the per-tick clamp) the cloud
+    // blows well past the half-dimensions and nodes draw off-screen. A deliberately
+    // tiny viewport makes the escape unmissable; the assertion is the hard guarantee.
+    const width = 100
+    const height = 80
+    const sim = create({ width, height })
+
+    const many: GraphNode[] = []
+    for (let i = 0; i < 30; i++) many.push(node(`n-${String(i)}`))
+    sim.sync(many, [])
+    for (let i = 0; i < 500; i++) sim.tick()
+
+    const halfW = width / 2
+    const halfH = height / 2
+    for (const [key, p] of sim.positions()) {
+      expect(Math.abs(p.x), `${key} escaped on x`).toBeLessThanOrEqual(halfW)
+      expect(Math.abs(p.y), `${key} escaped on y`).toBeLessThanOrEqual(halfH)
+    }
   })
 })

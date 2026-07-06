@@ -3,6 +3,8 @@ import {
   forceLink,
   forceManyBody,
   forceSimulation,
+  forceX,
+  forceY,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
@@ -48,6 +50,28 @@ const REHEAT_ALPHA = 0.3
 /** New nodes are seeded within ±(SEED_JITTER/2) of the layout centre so they fly
  *  out organically instead of arriving from d3's phyllotaxis spiral. */
 const SEED_JITTER = 2
+
+// VIEWPORT CONTAINMENT (MYT-89 Phase B, BUG 2.2). The repulsion cloud has no
+// natural bound — `forceCenter` only removes net drift, it does not pull inward —
+// so a dense graph can push nodes off-screen ("should be impossible"). Three
+// layers, weakest→hardest:
+//   1. a gentle inward `forceX(0)`/`forceY(0)` (BOUNDARY_STRENGTH) that biases the
+//      whole cloud toward the centre so containment reads as a soft settle;
+//   2. a `distanceMax` on the charge so far-apart pairs stop repelling — caps the
+//      long-range accumulation that otherwise lets the cloud expand unboundedly;
+//   3. a per-tick hard clamp of every node to the half-dimensions — the guarantee
+//      that NO node ever draws outside `[−w/2, w/2] × [−h/2, h/2]`, even mid-settle.
+// Applies to BOTH the generation and reveal graphs (they share this sim); there is
+// no phase-specific gating.
+
+/** Inward pull toward the centre line on each axis. Gentle (well under d3's 0.1
+ *  forceX default) so a normal graph still fills the space rather than collapsing
+ *  to a tight ball — the hard clamp, not this force, is what guarantees the bound. */
+const BOUNDARY_STRENGTH = 0.04
+
+/** Fraction of the smaller half-dimension beyond which two nodes no longer repel.
+ *  Keeps repulsion local so the cloud can't inflate from long-range 1/d² tails. */
+const CHARGE_RANGE_FACTOR = 1
 
 /** A d3 simulation node carrying BOTH identities: the stable internal `synthKey`
  *  (d3's link-resolver id, never changes → position continuity) and the current
@@ -97,7 +121,13 @@ function seedNode(synthKey: string, displayId: string): SimNode {
   }
 }
 
-export function create(): ForceSim {
+export function create(opts: { width: number; height: number }): ForceSim {
+  // The centred draw space: nodes live in `[−halfW, halfW] × [−halfH, halfH]`
+  // (the host translates the canvas by (w/2, h/2) before drawing raw sim coords).
+  const halfW = opts.width / 2
+  const halfH = opts.height / 2
+  const chargeRange = (Math.min(opts.width, opts.height) / 2) * CHARGE_RANGE_FACTOR
+
   // The persistent state: `byKey` is the source of truth for identity; `nodes`
   // is the SAME array handed to d3 every sync (mutated in place — survivor
   // object references are reused, never rebuilt).
@@ -105,10 +135,25 @@ export function create(): ForceSim {
   const nodes: SimNode[] = []
   const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
   const simulation = forceSimulation<SimNode, SimLink>(nodes)
-    .force('charge', forceManyBody<SimNode>())
+    .force('charge', forceManyBody<SimNode>().distanceMax(chargeRange))
     .force('link', linkForce)
     .force('center', forceCenter<SimNode>())
+    .force('boundX', forceX<SimNode>(0).strength(BOUNDARY_STRENGTH))
+    .force('boundY', forceY<SimNode>(0).strength(BOUNDARY_STRENGTH))
     .stop() // manual control — C4's render loop drives tick(), not d3's timer.
+
+  /** Advance one step, then HARD-clamp every node into the centred draw space.
+   *  The boundary force + distanceMax keep the settle smooth; this clamp is the
+   *  guarantee that no node is ever reported (or drawn) outside the viewport. */
+  function tick(): void {
+    simulation.tick()
+    for (const simNode of nodes) {
+      if (simNode.x < -halfW) simNode.x = -halfW
+      else if (simNode.x > halfW) simNode.x = halfW
+      if (simNode.y < -halfH) simNode.y = -halfH
+      else if (simNode.y > halfH) simNode.y = halfH
+    }
+  }
 
   function mergeNodes(incoming: GraphNode[]): void {
     // Identity is the STABLE `synthKey`, so a finalize (displayId synthKey→UUID)
@@ -194,7 +239,7 @@ export function create(): ForceSim {
 
   return {
     sync,
-    tick: () => void simulation.tick(),
+    tick,
     positions,
     pin,
     unpin,

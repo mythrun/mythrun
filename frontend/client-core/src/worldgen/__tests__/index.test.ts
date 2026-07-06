@@ -16,7 +16,7 @@ describe('@mythrun/client-core/worldgen barrel', () => {
   })
 
   it('createForceSim returns a working ForceSim instance', () => {
-    const sim = createForceSim()
+    const sim = createForceSim({ width: 4000, height: 4000 })
     sim.sync(
       [
         {
