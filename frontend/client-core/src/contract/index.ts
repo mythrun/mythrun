@@ -101,6 +101,13 @@ export type { GhostHookListProps, GhostHookItem } from './ghost-hook-list.ts'
 // is re-exported here so consumers read the node shape off the contract surface.
 export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
 
+// WorldGenStatusCard (MYT-89 Phase C, C4) — the generation status/loading OVERLAY
+// pinned top-left of the graph pane: the current (running) stage's friendly label, a
+// completed/total percent, and a PAPER-REGISTER segmented square bar (the running cell
+// pulses; NO spinner/circle). Reads the stream's `stages[]` (B4 `StageProgress`, re-
+// exported here so a consumer reads it off the same contract surface) + `costUsd`.
+export type { WorldGenStatusCardProps, StageProgress } from './world-gen-status.ts'
+
 // WorldGenFogField (MYT-89 Phase C, C3) — the decorative fog layer BEHIND the
 // streaming graph: rolling clouds that part/close around entity labels and fade to
 // nothing as the graph fills. `FogFieldEntity` (the caller's plain-data label) +

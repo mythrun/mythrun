@@ -87,6 +87,12 @@ export { WorldGenGraph } from './components/WorldGenGraph/WorldGenGraph.tsx'
 // 900×470 virtual space live inside, driven by plain `FogFieldEntity[]` + fade counts.
 export { WorldGenFogField } from './components/WorldGenFog/WorldGenFogField.tsx'
 
+// WorldGenStatusCard (MYT-89 Phase C, C4) — the generation status/loading overlay
+// pinned top-left of the graph pane: the current stage's friendly label, a completed/
+// total percent, and a PAPER-REGISTER segmented square bar (the running cell pulses;
+// NO spinner/circle). A DOM overlay (§3.3) reading the stream's `stages[]` + `costUsd`.
+export { WorldGenStatusCard } from './components/WorldGenStatusCard/WorldGenStatusCard.tsx'
+
 // WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their newly
 // generated world through: a borderless search field over a grouped tree
 // (factions/locations/npcs/items, nested locations indent under their parent), each
@@ -201,6 +207,8 @@ export type {
   WorldGenFogFieldProps,
   FogFieldEntity,
   FogObstacle,
+  WorldGenStatusCardProps,
+  StageProgress,
   WorldWikiProps,
   WikiViewModel,
   WikiGroup,
