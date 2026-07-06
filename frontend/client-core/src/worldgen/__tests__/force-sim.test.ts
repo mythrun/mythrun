@@ -20,6 +20,13 @@ function node(synthKey: string, name = synthKey): GraphNode {
   }
 }
 
+/** A node whose render identity (`displayId`) differs from its `synthKey` — the
+ *  post-finalize reality: a live-won node keeps its `${stage}/…` synthKey but its
+ *  `displayId` swaps to the real entity UUID. Edges reference that UUID. */
+function heteroNode(synthKey: string, displayId: string): GraphNode {
+  return { synthKey, kind: 'faction', name: displayId, displayId, state: 'finalized', lastEventIndex: 0 }
+}
+
 function edge(synthKey: string, from: string, to: string): GraphEdge {
   return { synthKey, from, to, relationship: 'allied' }
 }
@@ -112,6 +119,31 @@ describe('ForceSim link force', () => {
       sim.sync([node('a')], [edge('e-ax', 'a', 'ghost')])
       for (let i = 0; i < 10; i++) sim.tick()
     }).not.toThrow()
+  })
+
+  it('connects a live-won node to a seed-only node across a UUID edge (BUG 2.1)', () => {
+    // The BUG 2.1 reconciliation: nodes render/simulate in `displayId` space, and
+    // edges reference entity UUIDs (= the endpoints' `displayId`). A live-won node
+    // keeps a `${stage}/…` synthKey but a UUID displayId; a seed-only node's
+    // synthKey IS its UUID. Keying the sim on synthKey (the old behaviour) made
+    // `buildLinks` look the edge's UUID endpoints up in a synthKey map and MISS —
+    // the edge dropped, so nothing pulled the pair together. Keyed on displayId the
+    // edge is retained and the linked pair settles closer than an unlinked control.
+    const uuidA = '018f7b21-aaaa-7000-8000-000000000001'
+    const uuidB = '018f7b21-bbbb-7000-8000-000000000002'
+    const uuidC = '018f7b21-cccc-7000-8000-000000000003'
+    const sim = create()
+
+    sim.sync(
+      [heteroNode('world_and_factions/factions/0', uuidA), heteroNode(uuidB, uuidB), heteroNode(uuidC, uuidC)],
+      [edge('e-ab', uuidA, uuidB)],
+    )
+    for (let i = 0; i < 300; i++) sim.tick()
+
+    const p = sim.positions()
+    // Positions are keyed by displayId (the UUID) — the render/edge id-space.
+    expect(dist(p, uuidA, uuidB)).toBeLessThan(dist(p, uuidA, uuidC))
+    expect(dist(p, uuidA, uuidB)).toBeLessThan(dist(p, uuidB, uuidC))
   })
 })
 

@@ -33,7 +33,10 @@ function hash(s: string): number {
 }
 
 /** Draw every edge whose endpoints both have a position, as a faint hand-drawn ink
- *  arc (a quadratic bowed off the straight line by a stable per-edge offset). */
+ *  arc (a quadratic bowed off the straight line by a stable per-edge offset). Edge
+ *  endpoints are entity UUIDs and `positions` is keyed by `displayId` (also the
+ *  UUID once finalized) — the two id-spaces are reconciled, so the lookup matches
+ *  (BUG 2.1: keying nodes on synthKey made this miss and drop every edge). */
 export function drawEdges(
   ctx: CanvasRenderingContext2D,
   edges: readonly GraphEdge[],
@@ -68,9 +71,10 @@ function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, key: string
   ctx.stroke()
 }
 
-/** How to emphasise a node this frame. Both fields are always passed (may be
- *  absent-as-`undefined`/`null`) — required-but-nullable keeps the render loop's
- *  object literal clean under `exactOptionalPropertyTypes`. */
+/** How to emphasise a node this frame — both keys are in `displayId` space (the
+ *  render/selection id-space). Both fields are always passed (may be absent-as-
+ *  `undefined`/`null`) — required-but-nullable keeps the render loop's object
+ *  literal clean under `exactOptionalPropertyTypes`. */
 export interface NodeDecoration {
   selectedKey: string | undefined
   hoverKey: string | null
@@ -89,11 +93,11 @@ export function drawNodes(
 ): Point[] {
   const points: Point[] = []
   for (const node of nodes) {
-    const p = positions.get(node.synthKey)
+    const p = positions.get(node.displayId)
     if (p === undefined) continue
     points.push(p)
-    const hovered = node.synthKey === deco.hoverKey
-    const selected = node.synthKey === deco.selectedKey
+    const hovered = node.displayId === deco.hoverKey
+    const selected = node.displayId === deco.selectedKey
     drawNode(ctx, node, p, hovered, selected)
   }
   return points

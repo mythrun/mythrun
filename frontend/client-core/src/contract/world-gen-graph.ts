@@ -19,21 +19,26 @@ export type { GraphNode, GraphEdge, GraphNodeState } from '../worldgen/graph-red
  * (survivors keep their settled position; new entities fly in near centre).
  *
  * Platform-neutral (§9): `nodes`/`edges` are plain data, `onSelect` is a neutral
- * `synthKey` callback (never a DOM event), `reducedMotion` is a plain boolean. No
+ * `displayId` callback (never a DOM event), `reducedMotion` is a plain boolean. No
  * className/style/raw DOM events. The Canvas itself is a raw leaf (Tailwind can't
  * reach it), so it is `aria-hidden` and the entity list carries all meaning.
+ *
+ * SELECTION ID-SPACE is `displayId` (BUG 2.1): node render-identity === edge
+ * endpoint-space === `displayId` (the synthKey pre-finalize, the real entity UUID
+ * after). Post-gen a `displayId` IS the entity id, so a consumer can share it
+ * directly with an entity-keyed surface (e.g. the reveal wiki) with no bridge.
  */
 export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
   /** The current node set (the folded entities, in chronological arrival order). */
   nodes: GraphNode[]
   /** The current edge set (the folded, resolved relationships). */
   edges: GraphEdge[]
-  /** The `synthKey` of the currently-selected entity, if any — reflected on the
+  /** The `displayId` of the currently-selected entity, if any — reflected on the
    *  matching entity-list item (`aria-current`) and emphasised in the Canvas. */
   selectedKey?: string
   /** Fired when an entity is chosen (an entity-list item, or a fine-pointer Canvas
-   *  tap). Neutral — carries the entity's `synthKey`, never a DOM event. */
-  onSelect: (synthKey: string) => void
+   *  tap). Neutral — carries the entity's `displayId`, never a DOM event. */
+  onSelect: (displayId: string) => void
   /** Honour the user's reduced-motion preference: no requestAnimationFrame churn
    *  loop, no ambient ghost blooms — the physics ticks to convergence once per
    *  `nodes`/`edges` change and the graph is drawn static (still accurate). */

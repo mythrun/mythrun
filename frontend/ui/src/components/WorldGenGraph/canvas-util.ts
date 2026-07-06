@@ -47,7 +47,9 @@ export function pointerToLocal(
   }
 }
 
-/** The `synthKey` of the node nearest `local` within `radius` px, or null. */
+/** The `displayId` of the node nearest `local` within `radius` px, or null.
+ *  `positions` is keyed by `displayId` (the render/selection id-space), so the
+ *  returned key threads straight into `pin`/`onSelect` without translation. */
 export function nearestKey(
   positions: ReadonlyMap<string, Point>,
   local: Point,

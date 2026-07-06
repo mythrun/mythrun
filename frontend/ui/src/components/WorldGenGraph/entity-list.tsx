@@ -25,8 +25,9 @@ const KIND_CLASS = 'shrink-0 font-ui text-[0.65rem] uppercase tracking-wide text
 
 export interface EntityListProps {
   nodes: GraphNode[]
+  /** The selected node's `displayId` (the shared render/selection id-space). */
   selectedKey: string | undefined
-  onSelect: (synthKey: string) => void
+  onSelect: (displayId: string) => void
   /** Accessible label for the list — an i18n'd value supplied by the consumer. */
   listLabel: string
   /** Empty-state note before any entity has arrived — supplied by the consumer. */
@@ -48,13 +49,13 @@ export function EntityList({
         </li>
       )}
       {nodes.map((node) => {
-        const selected = node.synthKey === selectedKey
+        const selected = node.displayId === selectedKey
         return (
-          <li key={node.synthKey}>
+          <li key={node.displayId}>
             <button
               type="button"
               onClick={() => {
-                onSelect(node.synthKey)
+                onSelect(node.displayId)
               }}
               aria-current={selected ? 'true' : undefined}
               data-selected={selected ? 'true' : undefined}

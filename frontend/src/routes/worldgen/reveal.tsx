@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Stack, Grid, Heading, Text, Button, WorldGenGraph, WorldWiki } from '@mythrun/ui'
 import {
   getWorldSnapshot,
@@ -19,35 +19,15 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 // `toWikiViewModel`), with SHARED SELECTION, an explore prompt, and a Continue →
 // that leads to the starting-situation pick (D4).
 //
-// SHARED SELECTION bridges two id spaces: the graph selects by `synthKey`, the
-// wiki by entity id. Post-gen every node is finalized, so a node carries BOTH —
-// its `synthKey` and its real entity id in `displayId`. One `selectedEntityId`
-// state is the source of truth; the id↔synthKey maps (built from the nodes)
-// translate at each edge. Flat 1-bit paper register; all UI composes @mythrun/ui.
+// SHARED SELECTION is single-id-space (BUG 2.1): the graph selects by `displayId`
+// and, post-gen, every node is finalized so its `displayId` IS its real entity id
+// — the same id the wiki keys on. One `selectedEntityId` state feeds both surfaces
+// directly, no synthKey↔id bridge. Flat 1-bit paper register; all UI @mythrun/ui.
 
 /** Fetches the FULL known-tier snapshot (the widened `getWorldSnapshot` returns
  *  entities + facts + entityHierarchy) — injected so tests substitute a resolved
  *  fixture. World-gen is complete here, so the endpoint never 409s. */
 type FetchSnapshot = (ctx: ApiContext, campaignId: string) => Promise<WorldSnapshot>
-
-type RevealNode = WorldGenStream['nodes'][number]
-
-/** The two-way bridge between the graph's `synthKey` space and the wiki's entity
- *  id space. Built from the settled nodes: each finalized node carries both. */
-interface IdBridge {
-  readonly synthKeyToEntityId: ReadonlyMap<string, string>
-  readonly entityIdToSynthKey: ReadonlyMap<string, string>
-}
-
-function buildIdBridge(nodes: readonly RevealNode[]): IdBridge {
-  const synthKeyToEntityId = new Map<string, string>()
-  const entityIdToSynthKey = new Map<string, string>()
-  for (const node of nodes) {
-    synthKeyToEntityId.set(node.synthKey, node.displayId)
-    entityIdToSynthKey.set(node.displayId, node.synthKey)
-  }
-  return { synthKeyToEntityId, entityIdToSynthKey }
-}
 
 interface WikiModelState {
   readonly model: WikiViewModel | null
@@ -146,12 +126,9 @@ export function WorldReveal({
   const [selectedEntityId, setSelectedEntityId] = useState<string | undefined>(undefined)
   const [query, setQuery] = useState('')
   const wiki = useWikiModel(campaignId, fetchSnapshot)
-  const { synthKeyToEntityId, entityIdToSynthKey } = useMemo(() => buildIdBridge(nodes), [nodes])
 
-  // The graph is keyed by synthKey; translate the shared entity-id selection.
-  const selectedKey =
-    selectedEntityId !== undefined ? entityIdToSynthKey.get(selectedEntityId) : undefined
-
+  // The graph now selects in `displayId` space, which post-gen IS the entity id —
+  // the same id the wiki keys on. So the shared selection needs no translation.
   const handleContinue = (): void => {
     if (onContinue) onContinue()
     else void navigate(`/campaigns/${campaignId}/situation`)
@@ -174,13 +151,11 @@ export function WorldReveal({
           data-testid="reveal-graph"
           nodes={nodes}
           edges={edges}
-          onSelect={(synthKey) => {
-            setSelectedEntityId(synthKeyToEntityId.get(synthKey))
-          }}
+          onSelect={setSelectedEntityId}
           reducedMotion={prefersReducedMotion}
           listLabel={t('worldReveal.graphLabel')}
           emptyLabel={t('worldReveal.graphEmpty')}
-          {...(selectedKey !== undefined ? { selectedKey } : {})}
+          {...(selectedEntityId !== undefined ? { selectedKey: selectedEntityId } : {})}
         />
         <WikiPanel
           state={wiki}

@@ -15,10 +15,19 @@ import type { GraphEdge, GraphNode } from './graph-reducers.ts'
 //
 // The whole point is NODE-IDENTITY PRESERVATION. `sync` MERGES the incoming
 // derived graph into a PERSISTENT internal array of d3 sim-node objects keyed by
-// `synthKey`: a survivor keeps its exact object reference (and thus its settled
+// `displayId`: a survivor keeps its exact object reference (and thus its settled
 // `x/y/vx/vy`), a genuinely-new key is seeded near centre, a vanished key drops
 // out. We therefore NEVER hand d3 a freshly-mapped array of new objects — that
 // zeroes every position and teleports the whole graph on every arrival.
+//
+// SIM/RENDER IDENTITY IS `displayId`, NOT `synthKey` (BUG 2.1 reconciliation).
+// Nodes carry both: a `${stage}/…` `synthKey` (the reducer's fold key, which
+// `stage-reset` prefix-deletes) and a `displayId` (the synthKey until finalize,
+// then the real entity UUID). EDGES reference entity UUIDs. Keying the sim on
+// synthKey made `buildLinks` look a UUID endpoint up in a synthKey map and miss —
+// every cross-node edge dropped. Keying on `displayId` reconciles the two spaces:
+// node render-identity === edge endpoint-space === `displayId`. `synthKey` stays
+// on the GraphNode model; the sim simply doesn't key on it.
 //
 // The sim is NOT auto-run on a timer (`.stop()` at construction, no `.restart()`
 // on reheat) — C4's render loop drives `tick()`. Reheat is a modest `alpha()`
@@ -33,19 +42,21 @@ const REHEAT_ALPHA = 0.3
  *  out organically instead of arriving from d3's phyllotaxis spiral. */
 const SEED_JITTER = 2
 
-/** A d3 simulation node carrying its stable `synthKey` identity. `vx/vy/fx/fy`
- *  are the d3-managed fields (see SimulationNodeDatum). `x`/`y` are NARROWED to
- *  required: `seedNode` always assigns finite coordinates and d3 only reassigns
- *  them when `isNaN` (never our case), so a sim node's position is always defined
- *  — `positions()` needs no `?? 0` defensiveness. */
+/** A d3 simulation node carrying its stable `displayId` identity (the render/edge
+ *  id-space). `vx/vy/fx/fy` are the d3-managed fields (see SimulationNodeDatum).
+ *  `x`/`y` are NARROWED to required: `seedNode` always assigns finite coordinates
+ *  and d3 only reassigns them when `isNaN` (never our case), so a sim node's
+ *  position is always defined — `positions()` needs no `?? 0` defensiveness. */
 interface SimNode extends SimulationNodeDatum {
-  synthKey: string
+  displayId: string
   x: number
   y: number
 }
 
-/** A d3 link datum. `source`/`target` are seeded as `synthKey` strings and
- *  resolved to node objects by d3 via the `id` accessor on (re-)initialisation. */
+/** A d3 link datum. `source`/`target` are seeded as `displayId` strings (the edge
+ *  endpoints are entity UUIDs = the endpoints' `displayId`) and resolved to node
+ *  objects by d3 via the `id` accessor on (re-)initialisation. `synthKey` is the
+ *  edge's own stable id (unused by the node resolver). */
 interface SimLink extends SimulationLinkDatum<SimNode> {
   synthKey: string
 }
@@ -56,17 +67,17 @@ export interface ForceSim {
   sync(nodes: GraphNode[], edges: GraphEdge[]): void
   /** Advance the simulation one step. Driven by the render loop (C4). */
   tick(): void
-  /** synthKey → current position. */
+  /** displayId → current position. */
   positions(): Map<string, { x: number; y: number }>
   /** Fix a node at (x, y) — drag-to-pin (C4). */
-  pin(synthKey: string, x: number, y: number): void
+  pin(displayId: string, x: number, y: number): void
   /** Release a pinned node back to the simulation. */
-  unpin(synthKey: string): void
+  unpin(displayId: string): void
 }
 
-function seedNode(synthKey: string): SimNode {
+function seedNode(displayId: string): SimNode {
   return {
-    synthKey,
+    displayId,
     x: (Math.random() - 0.5) * SEED_JITTER,
     y: (Math.random() - 0.5) * SEED_JITTER,
     vx: 0,
@@ -80,7 +91,7 @@ export function create(): ForceSim {
   // object references are reused, never rebuilt).
   const byKey = new Map<string, SimNode>()
   const nodes: SimNode[] = []
-  const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
+  const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.displayId)
   const simulation = forceSimulation<SimNode, SimLink>(nodes)
     .force('charge', forceManyBody<SimNode>())
     .force('link', linkForce)
@@ -88,12 +99,12 @@ export function create(): ForceSim {
     .stop() // manual control — C4's render loop drives tick(), not d3's timer.
 
   function mergeNodes(incoming: GraphNode[]): void {
-    const wanted = new Set(incoming.map((n) => n.synthKey))
+    const wanted = new Set(incoming.map((n) => n.displayId))
     for (const key of [...byKey.keys()]) {
       if (!wanted.has(key)) byKey.delete(key)
     }
     for (const graphNode of incoming) {
-      if (!byKey.has(graphNode.synthKey)) byKey.set(graphNode.synthKey, seedNode(graphNode.synthKey))
+      if (!byKey.has(graphNode.displayId)) byKey.set(graphNode.displayId, seedNode(graphNode.displayId))
     }
     nodes.length = 0
     for (const simNode of byKey.values()) nodes.push(simNode)
@@ -118,20 +129,20 @@ export function create(): ForceSim {
   function positions(): Map<string, { x: number; y: number }> {
     const out = new Map<string, { x: number; y: number }>()
     for (const simNode of byKey.values()) {
-      out.set(simNode.synthKey, { x: simNode.x, y: simNode.y })
+      out.set(simNode.displayId, { x: simNode.x, y: simNode.y })
     }
     return out
   }
 
-  function pin(synthKey: string, x: number, y: number): void {
-    const simNode = byKey.get(synthKey)
+  function pin(displayId: string, x: number, y: number): void {
+    const simNode = byKey.get(displayId)
     if (simNode === undefined) return
     simNode.fx = x
     simNode.fy = y
   }
 
-  function unpin(synthKey: string): void {
-    const simNode = byKey.get(synthKey)
+  function unpin(displayId: string): void {
+    const simNode = byKey.get(displayId)
     if (simNode === undefined) return
     simNode.fx = null
     simNode.fy = null

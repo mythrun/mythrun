@@ -12,10 +12,13 @@ import { WorldReveal } from './reveal.tsx'
 // wiki with SHARED SELECTION. The wiki model is fetched via an injected
 // `fetchSnapshot` (default `getWorldSnapshot`); the graph nodes arrive as props.
 // These tests inject a resolved snapshot and assert: both surfaces render, a
-// selection in EITHER surface highlights the matching entity in the other (the
-// id↔synthKey bridge, exercised on FINALIZED nodes whose synthKey ≠ entity id),
-// and Continue fires its intent. WorldGenGraph's Canvas is a jsdom no-op (its
-// meaning lives in the accessible entity list); only that list is queried.
+// selection in EITHER surface highlights the matching entity in the other (BUG
+// 2.1: single `displayId` id-space — post-gen a finalized node's `displayId` IS
+// its entity id, so no synthKey↔id bridge; the FINALIZED-node fixture keeps
+// synthKey ≠ displayId to prove the graph keys selection on displayId, not
+// synthKey), and Continue fires its intent. WorldGenGraph's Canvas is a jsdom
+// no-op (its meaning lives in the accessible entity list); only that list is
+// queried.
 
 // ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; the platform builtin can shadow jsdom's real Storage.
@@ -67,9 +70,9 @@ afterEach(() => {
 })
 
 // Finalized nodes whose synthKey ≠ displayId — the post-gen reality: the graph
-// selects by `synthKey`, the wiki by entity id (= the finalized node's
-// `displayId`). The reveal must bridge the two; distinct values prove the map is
-// real (an identity map would pass even if the bridge were a no-op).
+// selects by `displayId` (= the finalized node's entity id), the wiki by entity
+// id, so ONE id feeds both with no bridge. Distinct synthKey/displayId values
+// prove selection keys on displayId (a synthKey-keyed graph would never match).
 const NODES: WorldGenStream['nodes'] = [
   { synthKey: 's1/reach', kind: 'location', name: 'Ashfen Reach', displayId: 'ent-loc-1', state: 'finalized', lastEventIndex: 0 },
   { synthKey: 's2/maeris', kind: 'npc', name: 'Maeris Vale', displayId: 'ent-npc-1', state: 'finalized', lastEventIndex: 1 },
@@ -137,11 +140,11 @@ describe('WorldReveal — settled graph beside the wiki', () => {
 })
 
 describe('WorldReveal — shared selection (graph ↔ wiki)', () => {
-  it('choosing a graph entity highlights the matching wiki entity (synthKey → id)', async () => {
+  it('choosing a graph entity highlights the matching wiki entity (displayId = id)', async () => {
     renderReveal()
     const wiki = await screen.findByTestId('reveal-wiki')
     const graph = screen.getByTestId('reveal-graph')
-    // Choose Maeris Vale in the GRAPH: synthKey s2/maeris → entity id ent-npc-1.
+    // Choose Maeris Vale in the GRAPH: its displayId ent-npc-1 IS the entity id.
     fireEvent.click(within(graph).getByRole('button', { name: /Maeris Vale/i }))
     // The WIKI entity ent-npc-1 becomes current and opens to its fact.
     const wikiBtn = within(wiki).getByRole('button', { name: 'Maeris Vale' })
@@ -149,11 +152,11 @@ describe('WorldReveal — shared selection (graph ↔ wiki)', () => {
     expect(within(wiki).getByText('Harbourmaster of the Reach.')).toBeDefined()
   })
 
-  it('choosing a wiki entity highlights the matching graph node (id → synthKey)', async () => {
+  it('choosing a wiki entity highlights the matching graph node (id = displayId)', async () => {
     renderReveal()
     const wiki = await screen.findByTestId('reveal-wiki')
     const graph = screen.getByTestId('reveal-graph')
-    // Choose Maeris Vale in the WIKI: entity id ent-npc-1 → graph synthKey s2/maeris.
+    // Choose Maeris Vale in the WIKI: entity id ent-npc-1 = graph node displayId.
     fireEvent.click(within(wiki).getByRole('button', { name: 'Maeris Vale' }))
     const graphBtn = within(graph).getByRole('button', { name: /Maeris Vale/i })
     expect(graphBtn.getAttribute('aria-current')).toBe('true')

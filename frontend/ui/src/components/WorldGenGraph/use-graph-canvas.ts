@@ -26,6 +26,7 @@ const DRAG_THRESHOLD = 4
 const SETTLE_TICKS = 400
 
 interface DragState {
+  /** The dragged node's `displayId` (the render/selection id-space). */
   key: string
   moved: boolean
   downX: number
@@ -36,8 +37,9 @@ export interface GraphCanvasParams {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
   nodes: GraphNode[]
   edges: GraphEdge[]
+  /** The selected node's `displayId`, if any (matches `positions()` / node ids). */
   selectedKey: string | undefined
-  onSelect: (synthKey: string) => void
+  onSelect: (displayId: string) => void
   reducedMotion: boolean
 }
 
@@ -214,7 +216,7 @@ interface PointerDeps {
   sizeRef: React.RefObject<{ cssW: number; cssH: number }>
   hoverRef: React.RefObject<string | null>
   dragRef: React.RefObject<DragState | null>
-  onSelectRef: React.RefObject<(synthKey: string) => void>
+  onSelectRef: React.RefObject<(displayId: string) => void>
 }
 
 /** Wire pointermove/down/up/leave on the canvas; returns the teardown. Split out of

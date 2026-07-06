@@ -73,7 +73,7 @@ describe('WorldGenGraph — accessible entity list', () => {
     expect(getAllByRole('button')).toHaveLength(FIXTURE.length)
   })
 
-  it('calls onSelect(synthKey) when an item is activated (click)', async () => {
+  it('calls onSelect(displayId) when an item is activated (click)', async () => {
     stubGetContext(null)
     const onSelect = vi.fn()
     const user = userEvent.setup()
@@ -82,7 +82,7 @@ describe('WorldGenGraph — accessible entity list', () => {
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('s2/maeris')
   })
 
-  it('calls onSelect(synthKey) on keyboard activation (Enter)', async () => {
+  it('calls onSelect(displayId) on keyboard activation (Enter)', async () => {
     stubGetContext(null)
     const onSelect = vi.fn()
     const user = userEvent.setup()
@@ -90,6 +90,41 @@ describe('WorldGenGraph — accessible entity list', () => {
     getByRole('button', { name: /Ashfen Reach/ }).focus()
     await user.keyboard('{Enter}')
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('s1/reach')
+  })
+
+  it('selects by displayId (not synthKey) once a node is finalized (BUG 2.1)', async () => {
+    // A finalized node whose synthKey ≠ displayId: selection is in displayId space
+    // (the entity id), so onSelect emits displayId and aria-current keys on it.
+    stubGetContext(null)
+    const finalized: GraphNode = {
+      synthKey: 'world_and_factions/factions/0',
+      kind: 'faction',
+      name: 'The Tallow Guild',
+      displayId: 'ent-fac-1',
+      state: 'finalized',
+      lastEventIndex: 0,
+    }
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole, rerender } = render(
+      <WorldGenGraph nodes={[finalized]} edges={[]} onSelect={onSelect} {...LABELS} />,
+    )
+    await user.click(getByRole('button', { name: /Tallow Guild/ }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('ent-fac-1')
+
+    // selectedKey is the displayId → aria-current; the synthKey must NOT match.
+    rerender(<WorldGenGraph nodes={[finalized]} edges={[]} selectedKey="ent-fac-1" onSelect={onSelect} {...LABELS} />)
+    expect(getByRole('button', { name: /Tallow Guild/ })).toHaveAttribute('aria-current', 'true')
+    rerender(
+      <WorldGenGraph
+        nodes={[finalized]}
+        edges={[]}
+        selectedKey="world_and_factions/factions/0"
+        onSelect={onSelect}
+        {...LABELS}
+      />,
+    )
+    expect(getByRole('button', { name: /Tallow Guild/ })).not.toHaveAttribute('aria-current')
   })
 
   it('marks the selected item via aria-current', () => {
