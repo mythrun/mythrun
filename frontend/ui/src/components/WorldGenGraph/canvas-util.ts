@@ -1,4 +1,9 @@
-import { DPR_CAP, type StaticKeepOut, type VirtualDims } from '@mythrun/client-core/worldgen'
+import {
+  DPR_CAP,
+  type CameraPoint,
+  type StaticKeepOut,
+  type VirtualDims,
+} from '@mythrun/client-core/worldgen'
 import type { Point } from './canvas-draw.ts'
 
 // Small DOM/geometry helpers for the WorldGenGraph Canvas (MYT-89 C5). Kept out of
@@ -79,12 +84,15 @@ export function resolveLabelFont(canvas: HTMLCanvasElement): string {
 /** Size the backing store to the ELEMENT's real client pixels × (capped) DPR — full-pane
  *  resolution, so the render is crisp on a wide/retina pane instead of an upscaled fixed
  *  virtual store (MYT-89 audit #2). The context is scaled by `(cssW / virtual.width) ×
- *  dpr` so draw code stays in the shared VIRTUAL space; `virtualDims` derives the virtual
- *  box from the pane's OWN aspect, so one width-derived uniform scale fits both axes at
- *  any pane shape (the responsive fix — no aspect-locked box needed). Mirrors the fog's
- *  `sizeFogCanvas` (same element dims + same scale) so the two layered canvases stay
- *  pixel-aligned. Returns the current CSS box (the size the ELEMENT occupies), which the
- *  pointer mapping needs to convert client px → virtual. */
+ *  dpr` so draw code stays in the shared VIRTUAL space; `virtual` is the dims the PANE
+ *  maps to — the camera VIEW under the T1b pannable camera (world units per CSS px; the
+ *  world itself may be larger and pans behind), which with the camera disengaged is
+ *  exactly the whole pane-adaptive space. `virtualDims` derives the box from the pane's
+ *  OWN aspect, so one width-derived uniform scale fits both axes at any pane shape (the
+ *  responsive fix — no aspect-locked box needed). Mirrors the fog's `sizeFogCanvas`
+ *  (same element dims + same scale) so the two layered canvases stay pixel-aligned.
+ *  Returns the current CSS box (the size the ELEMENT occupies), which the pointer
+ *  mapping needs to convert client px → virtual. */
 export function sizeCanvasForDpr(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
@@ -136,23 +144,28 @@ export function cardKeepOut(
   }
 }
 
-/** Convert a pointer event to the graph's CENTRED VIRTUAL coordinate space (the space
- *  `sim.positions()` reports in). The canvas ELEMENT is CSS-scaled from the virtual
- *  render, so a client-px offset maps to virtual units by the pane→virtual ratio, then
- *  we recentre by the half-dimensions (the host translates the context by (vw/2, vh/2)). */
+/** Convert a pointer event to the graph's CENTRED WORLD coordinate space (the space
+ *  `sim.positions()` reports in). The canvas ELEMENT is CSS-scaled from the VIEW (the
+ *  camera's window onto the world — MYT-89 T1b), so a client-px offset maps to view
+ *  units by the pane→view ratio, then shifts by the CAMERA (the view's top-left world
+ *  coordinate), then recentres by the WORLD half-dimensions (the host translates the
+ *  context by (worldW/2 − camX, worldH/2 − camY)). With the camera disengaged
+ *  (camera {0,0}, world === view) this is exactly the pre-camera mapping. */
 export function pointerToLocal(
   event: PointerEvent,
   canvas: HTMLCanvasElement,
   cssW: number,
   cssH: number,
-  virtual: VirtualDims,
+  view: VirtualDims,
+  camera: CameraPoint,
+  world: VirtualDims,
 ): Point {
   const rect = canvas.getBoundingClientRect()
-  const scaleX = virtual.width / Math.max(1, cssW)
-  const scaleY = virtual.height / Math.max(1, cssH)
+  const scaleX = view.width / Math.max(1, cssW)
+  const scaleY = view.height / Math.max(1, cssH)
   return {
-    x: (event.clientX - rect.left) * scaleX - virtual.width / 2,
-    y: (event.clientY - rect.top) * scaleY - virtual.height / 2,
+    x: (event.clientX - rect.left) * scaleX + camera.x - world.width / 2,
+    y: (event.clientY - rect.top) * scaleY + camera.y - world.height / 2,
   }
 }
 

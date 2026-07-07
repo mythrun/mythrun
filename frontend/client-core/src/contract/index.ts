@@ -122,7 +122,7 @@ export type { WorldGenLoadingProps } from './world-gen-loading.ts'
 // nothing as the graph fills. `FogFieldEntity` (the caller's plain-data label) +
 // `FogObstacle` (the pre-built box, for a caller that maps entities itself) are
 // re-exported here so consumers read the fog model off the same contract surface.
-export type { WorldGenFogFieldProps, FogFieldEntity, FogObstacle } from './world-gen-fog.ts'
+export type { WorldGenFogFieldProps, WorldGenCameraSource, FogFieldEntity, FogObstacle } from './world-gen-fog.ts'
 
 // WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their
 // newly-generated world through: a grouped tree (factions/locations/npcs/items,

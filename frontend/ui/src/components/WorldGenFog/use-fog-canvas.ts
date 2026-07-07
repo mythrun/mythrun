@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef } from 'react'
 import {
+  cameraWorldDims,
   createFogSim,
   DPR_CAP,
   FADE_EXPONENT,
   FOG_PARAMS,
-  virtualDims,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   WIND_BASE,
+  type CameraPoint,
   type FogObstacle,
   type FogSim,
   type VirtualDims,
   type VirtualGrowth,
+  type WorldSeat,
 } from '@mythrun/client-core/worldgen'
-import type { FogFieldEntity } from '@mythrun/client-core/contract'
+import type { FogFieldEntity, WorldGenCameraSource } from '@mythrun/client-core/contract'
 import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
 import { entityObstacle } from './fog-obstacles.ts'
 import { paintFog } from './fog-draw.ts'
@@ -118,23 +120,24 @@ export function fogBackingStore(
 
 /** Size the backing store to the ELEMENT's client pixels × DPR, CAPPED at the fog's
  *  canonical 2×-virtual envelope (`fogBackingStore` — the MYT-89 framerate fix). The
- *  context is scaled so draw code stays in the shared VIRTUAL space; the virtual dims
- *  derive from the pane's OWN aspect (`virtualDims`), so one width-derived uniform scale
- *  fits both axes at any pane shape. The graph's `sizeCanvasForDpr` sizes off the same
- *  element in the same virtual space (at full pane resolution — the cap is fog-only), so
- *  the two layered canvases stay aligned — the fog-holes track the glyphs (BUG 2.2 stays
- *  closed: drawn in virtual units, the resolution is an implementation detail of each
- *  layer). */
+ *  context is scaled so draw code stays in the shared VIRTUAL space; `view` is the
+ *  dims the PANE maps to — the camera's window under the T1b pannable camera (the
+ *  world pans behind it via the per-paint camera translate), which with the camera
+ *  disengaged is exactly the whole pane-adaptive space. The graph's `sizeCanvasForDpr`
+ *  sizes off the same element with the same view (at full pane resolution — the cap is
+ *  fog-only), so the two layered canvases stay aligned — the fog-holes track the
+ *  glyphs (BUG 2.2 stays closed: drawn in virtual units, the resolution is an
+ *  implementation detail of each layer). */
 function sizeFogCanvas(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
-  virtual: VirtualDims,
+  view: VirtualDims,
 ): void {
   const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1)
   const rect = canvas.getBoundingClientRect()
   const cssW = Math.max(1, Math.round(rect.width))
   const cssH = Math.max(1, Math.round(rect.height))
-  const store = fogBackingStore(cssW, cssH, dpr, virtual.width)
+  const store = fogBackingStore(cssW, cssH, dpr, view.width)
   canvas.width = store.width
   canvas.height = store.height
   ctx.setTransform(store.scale, 0, 0, store.scale, 0, 0)
@@ -191,14 +194,25 @@ function buildObstacles(
   return out
 }
 
-/** Clear the canvas and paint the sim's current density as crisp fog quads at clock `t`. */
+/** The identity camera (no source / disengaged) — the pre-camera render, unchanged. */
+const CAMERA_IDENTITY: CameraPoint = { x: 0, y: 0 }
+
+/** Clear the canvas and paint the sim's current density as crisp fog quads at clock
+ *  `t`, seen through the CAMERA (MYT-89 T1b): the whole paint translates by the
+ *  camera offset — the same offset the graph canvas translates by this frame — so a
+ *  fog-hole stays on its glyph at every camera position (one camera, both layers,
+ *  C5). The world-rect clear covers the view at any clamped camera (camera ≥ 0 and
+ *  world ≥ view on both axes). Identity camera → exactly the pre-camera paint. */
 function repaint(
   ctx: CanvasRenderingContext2D,
   sim: FogSim,
   t: number,
   eff: number,
   virtual: VirtualDims,
+  camera: CameraPoint,
 ): void {
+  ctx.save()
+  ctx.translate(-camera.x, -camera.y)
   ctx.clearRect(0, 0, virtual.width, virtual.height)
   paintFog(ctx, sim.density(), sim.gw, sim.gh, {
     wx: WIND.wx,
@@ -208,6 +222,7 @@ function repaint(
     fogColor: FOG_PARAMS.fogColor,
     fogAlpha: FOG_PARAMS.fogAlpha,
   })
+  ctx.restore()
 }
 
 export interface FogCanvasParams {
@@ -222,14 +237,23 @@ export interface FogCanvasParams {
   density: number
   reducedMotion: boolean
   /** Density-aware virtual-space growth (MYT-89 density redesign): the SAME growth
-   *  input the composing graph feeds `virtualDims`, so both layers derive identical
-   *  dims from the shared pane box while the space grows with the node count (C5).
-   *  `undefined` (standalone fog) → the fixed shipped space. */
+   *  input the composing graph feeds the dims derivation, so both layers derive
+   *  identical dims from the shared pane box while the space grows with the node
+   *  count (C5). `undefined` (standalone fog) → the fixed shipped space. */
   growth?: VirtualGrowth | undefined
+  /** The camera-world SEAT input (T1b): the SAME `seatFrom` derivation the composing
+   *  graph feeds `cameraWorldDims`, so both layers agree on when (and how far) the
+   *  world outgrows the pane. `undefined` (standalone fog) → never engages. */
+  seat?: WorldSeat | undefined
+  /** The SHARED camera (T1b) — the graph hook's source. Read each frame under motion
+   *  (same rAF timestamp → the identical position the graph painted); subscribed for
+   *  static repaints under reduced motion (a manual pan / arrival snap has no loop).
+   *  `undefined` (standalone fog) → the identity camera. */
+  camera?: WorldGenCameraSource | undefined
 }
 
 export function useFogCanvas(params: FogCanvasParams): void {
-  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth } = params
+  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth, seat, camera } = params
 
   // Latest props the imperative closures read (useLatest idiom): refs so the rAF loop
   // always sees current values without re-binding every render.
@@ -248,18 +272,27 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // canvas in the same document) so the fog reserves the width the graph collides on + draws.
   const labelFontRef = useRef('')
   const simTimeRef = useRef(0)
-  // The CURRENT pane-adaptive virtual dims (MYT-89 responsive fix). Derived from THIS
-  // canvas's box through the SAME `virtualDims` the graph hook uses — both canvases fill
-  // the same pane, so the two layers compute identical dims and stay aligned (C5).
+  // The CURRENT WORLD dims (pane-adaptive, MYT-89 responsive fix; seat-grown under the
+  // T1b camera). Derived from THIS canvas's box through the SAME `cameraWorldDims` the
+  // graph hook uses — both canvases fill the same pane, so the two layers compute
+  // identical dims and stay aligned (C5).
   const virtualRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
-  // The density-aware growth input for `virtualDims` (undefined → the fixed space).
+  // The camera VIEW dims (T1b) — what the pane's CSS box maps to (the backing-store
+  // scale); equal to the world whenever the camera is disengaged.
+  const viewRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
+  // The density-aware growth + camera-seat inputs (undefined → the fixed space).
   const growthRef = useRef<VirtualGrowth | undefined>(growth)
+  const seatRef = useRef<WorldSeat | undefined>(seat)
+  // The shared camera source (undefined → the identity camera).
+  const cameraRef = useRef<WorldGenCameraSource | undefined>(camera)
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
   shownRef.current = shownEntities
   totalRef.current = totalEntities
   densityRef.current = density
   growthRef.current = growth
+  seatRef.current = seat
+  cameraRef.current = camera
 
   // The obstacle set for THIS frame: the live source (when composed into a graph) or
   // the static `entities` prop (standalone / the tuning story). Read fresh each frame.
@@ -269,20 +302,44 @@ export function useFogCanvas(params: FogCanvasParams): void {
     [],
   )
 
-  // Measure the pane → derive the shared virtual dims (with the density growth) → on a
-  // dims CHANGE re-size the live sim (grid + area-scaled particles re-derive, the
-  // overlapping density is preserved — no flash) + the backing store. Returns whether
-  // the dims changed. The graph hook runs the same derivation off the same pane box
-  // with the same growth, so the layers agree at every size and density.
+  // The camera for a render moment: the shared source (advancing its drift at most
+  // once per rAF timestamp — the graph loop calls it with the same time and reads the
+  // identical value, C5), or the identity when standalone.
+  const cameraAt = useCallback(
+    (frameMs: number): CameraPoint => cameraRef.current?.current(frameMs) ?? CAMERA_IDENTITY,
+    [],
+  )
+
+  // Measure the pane → derive the shared WORLD + VIEW dims (with the density growth +
+  // the camera seat — T1b) → on a dims CHANGE re-size the live sim (grid + area-scaled
+  // particles re-derive, the overlapping density is preserved — no flash) + the
+  // backing store (scaled by the VIEW: the pane maps to the camera's window; the world
+  // pans behind it). Returns whether the dims changed. The graph hook runs the same
+  // derivation off the same pane box with the same growth+seat, so the layers agree
+  // at every size, density, and camera position.
   const syncFogDims = useCallback(
     (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): boolean => {
       const rect = canvas.getBoundingClientRect()
-      const next = virtualDims(Math.round(rect.width), Math.round(rect.height), growthRef.current)
-      const current = virtualRef.current
-      if (next.width === current.width && next.height === current.height) return false
-      virtualRef.current = next
-      simRef.current?.setSize(next.width, next.height)
-      sizeFogCanvas(canvas, ctx, next)
+      const next = cameraWorldDims(
+        Math.round(rect.width),
+        Math.round(rect.height),
+        growthRef.current,
+        seatRef.current,
+      )
+      const world = virtualRef.current
+      const view = viewRef.current
+      if (
+        next.world.width === world.width &&
+        next.world.height === world.height &&
+        next.view.width === view.width &&
+        next.view.height === view.height
+      ) {
+        return false
+      }
+      virtualRef.current = next.world
+      viewRef.current = next.view
+      simRef.current?.setSize(next.world.width, next.world.height)
+      sizeFogCanvas(canvas, ctx, next.view)
       return true
     },
     [],
@@ -293,7 +350,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // and the store must track the element's real pixels.
   const applyFogSize = useCallback(
     (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
-      if (!syncFogDims(canvas, ctx)) sizeFogCanvas(canvas, ctx, virtualRef.current)
+      if (!syncFogDims(canvas, ctx)) sizeFogCanvas(canvas, ctx, viewRef.current)
     },
     [syncFogDims],
   )
@@ -325,19 +382,48 @@ export function useFogCanvas(params: FogCanvasParams): void {
       sim.step(SUBSTEP_MS, obstacles, eff)
       simTimeRef.current += SUBSTEP_MS / 1000
     }
-    repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current)
-  }, [canvasRef, applyFogSize, getSim, currentEntities])
+    repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current, cameraAt(performance.now()))
+  }, [canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
 
-  // The growth key: a primitive fingerprint of the growth input, so the effects below
-  // re-run when the DERIVED dims may have moved (a node arrival past the start count),
-  // not on every render's fresh object identity.
+  // Repaint the CURRENT settled state at the current camera — the reduced-motion
+  // camera-move path (T1b): a manual pan / arrival snap moved the camera but nothing
+  // else (obstacles are world-space; the density needs no re-settle), so this is a
+  // pure re-render. Falls back to a full settle when the sim hasn't run yet.
+  const repaintStatic = useCallback((): void => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d') ?? null
+    const sim = simRef.current
+    if (canvas === null || ctx === null) return
+    if (sim === null) {
+      settleStatic()
+      return
+    }
+    const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
+    repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current, cameraAt(performance.now()))
+  }, [canvasRef, settleStatic, cameraAt])
+
+  // The dims key: a primitive fingerprint of the growth + seat inputs, so the effects
+  // below re-run when the DERIVED dims may have moved (a node arrival past the start
+  // count; the camera world growing with the seat), not on every render's fresh
+  // object identity.
   const growthKey =
     growth === undefined ? '' : `${String(growth.nodeCount)}/${String(growth.startCount)}/${String(growth.perNode)}`
+  const seatKey = seat === undefined ? '' : `${String(seat.nodeCount)}/${String(seat.areaPerLabel)}`
+  const dimsKey = `${growthKey}|${seatKey}`
 
   useEffect(() => {
     if (!reducedMotion) return
     settleStatic()
-  }, [reducedMotion, entities, shownEntities, totalEntities, density, growthKey, settleStatic])
+  }, [reducedMotion, entities, shownEntities, totalEntities, density, dimsKey, settleStatic])
+
+  // Reduced-motion camera moves (T1b): a manual pan / arrival snap has no rAF loop to
+  // pick it up — subscribe to the shared camera's discrete mutations and re-render the
+  // settled state at the new position (the graph's static painter does the same, so
+  // the two layers move together).
+  useEffect(() => {
+    if (!reducedMotion || camera === undefined) return
+    return camera.subscribe(repaintStatic)
+  }, [reducedMotion, camera, repaintStatic])
 
   // Density growth under MOTION: when the node count moves the virtual space, re-derive
   // the dims + re-size the sim/backing store (guarded — a growth step that doesn't
@@ -348,7 +434,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     syncFogDims(canvas, ctx)
-  }, [reducedMotion, growthKey, canvasRef, syncFogDims])
+  }, [reducedMotion, dimsKey, canvasRef, syncFogDims])
 
   // The motion loop: fixed-timestep step + crisp repaint each rAF frame. Off entirely
   // under reduced motion (and with no 2D context — jsdom). Loop body at module scope.
@@ -368,23 +454,27 @@ export function useFogCanvas(params: FogCanvasParams): void {
       widthCacheRef,
       labelFontRef,
       virtualRef,
+      cameraAt,
     })
-  }, [reducedMotion, canvasRef, applyFogSize, getSim, currentEntities])
+  }, [reducedMotion, canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
 
   // WEB-FONT invalidation (mirrors the graph hook): widths memoized before the DS serif
   // loads are fallback-font widths — once fonts are ready, drop the memo so the next
-  // frame's obstacles re-measure at the true label extents.
+  // frame's obstacles re-measure at the true label extents. Under reduced motion no
+  // frame is coming — re-settle + repaint at the true widths now (T1 review fix #2:
+  // the cleared cache alone left the stale fallback-width frame up).
   useEffect(() => {
     if (!('fonts' in document)) return // jsdom has no FontFaceSet
     let cancelled = false
     void document.fonts.ready.then(() => {
       if (cancelled) return
       widthCacheRef.current.clear()
+      if (reducedMotion) settleStatic()
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reducedMotion, settleStatic])
 
   // Re-size the backing store (and, via `applyFogSize`, the virtual dims + the sim) on
   // container resize — parity with the graph's `observeResize`; both size off the same
@@ -432,8 +522,10 @@ interface FogLoopDeps {
   prevPosRef: React.RefObject<Map<number, Pos>>
   widthCacheRef: React.RefObject<Map<string, number>>
   labelFontRef: React.RefObject<string>
-  /** The CURRENT pane-adaptive virtual dims (the repaint's clear bounds). */
+  /** The CURRENT world dims (the repaint's clear bounds). */
   virtualRef: React.RefObject<VirtualDims>
+  /** The shared camera at a frame timestamp (identity when standalone — T1b). */
+  cameraAt: (frameMs: number) => CameraPoint
 }
 
 /** Run the fixed-timestep rAF loop: each frame, compute the real dt + clock, build the
@@ -441,7 +533,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef, cameraAt } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -451,7 +543,9 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
     const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current, labelFontRef.current)
     sim.step(dtMs, obstacles, eff)
-    repaint(ctx, sim, (now - start) / 1000, eff, virtualRef.current)
+    // The shared camera at THIS rAF timestamp — the graph loop reads the same source
+    // with the same time, so both layers translate identically this frame (C5).
+    repaint(ctx, sim, (now - start) / 1000, eff, virtualRef.current, cameraAt(now))
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)

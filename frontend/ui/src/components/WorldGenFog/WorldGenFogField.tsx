@@ -25,6 +25,8 @@ export const WorldGenFogField = forwardRef<HTMLCanvasElement, WorldGenFogFieldPr
       density = FOG_PARAMS.density,
       reducedMotion = false,
       growth,
+      seat,
+      camera,
       'data-testid': dataTestId,
     },
     ref,
@@ -41,7 +43,7 @@ export const WorldGenFogField = forwardRef<HTMLCanvasElement, WorldGenFogFieldPr
       [ref],
     )
 
-    useFogCanvas({ canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth })
+    useFogCanvas({ canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth, seat, camera })
 
     return (
       <canvas

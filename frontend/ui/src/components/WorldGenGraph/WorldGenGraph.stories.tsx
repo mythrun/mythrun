@@ -240,7 +240,10 @@ export const MaxDensity: Story = {
   render: () => <StreamingDemo arrivals={MAX_DENSITY_ARRIVALS} totalNodes={MAX_DENSITY_TOTAL} />,
 }
 
-// The same real load in a ~375px phone column — the form factor the tiering exists for.
+// The same real load in a ~375px phone column — the form factor the T1b pannable
+// camera exists for: the world stops shrinking to the glass, renders at full legible
+// scale (every label seated), and the pane becomes a one-finger-drag camera over it,
+// auto-following the newest arrival while the user's hand is idle.
 export const MaxDensityNarrow: Story = {
   name: 'Max density, narrow pane (~375px)',
   render: () => (
@@ -249,6 +252,17 @@ export const MaxDensityNarrow: Story = {
       totalNodes={MAX_DENSITY_TOTAL}
       paneClassName="w-[343px]"
     />
+  ),
+}
+
+// Max density under REDUCED MOTION (view at a phone-sized viewport): no rAF loops, no
+// auto-follow drift — the camera SNAPS to each new arrival's settled position (one
+// discrete reposition per arrival), and a manual drag still pans (each move repaints
+// the settled graph + fog statically, in lockstep).
+export const MaxDensityReduced: Story = {
+  name: 'Max density, reduced motion',
+  render: () => (
+    <StreamingDemo reducedMotion arrivals={MAX_DENSITY_ARRIVALS} totalNodes={MAX_DENSITY_TOTAL} />
   ),
 }
 

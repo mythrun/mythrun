@@ -1,5 +1,5 @@
 import type { GraphNode } from './graph-reducers.ts'
-import type { VirtualDims, VirtualGrowth } from './virtual-space.ts'
+import type { VirtualDims, VirtualGrowth, WorldSeat } from './virtual-space.ts'
 
 // Label tiering (MYT-89 density redesign): WHICH nodes wear their name at the current
 // graph density. A real generation lands ~46 entities (measured across the dev worlds:
@@ -76,6 +76,16 @@ export function growthFrom(
 ): VirtualGrowth {
   const p = { ...DENSITY_PARAMS, ...params }
   return { nodeCount, startCount: p.growthStartCount, perNode: p.growthPerNode }
+}
+
+/** The SEAT input for `cameraWorldDims` (MYT-89 T1b — the pannable camera), derived
+ *  from the CURRENT node count + the (possibly overridden) density knobs. ONE
+ *  derivation both layers (graph + fog) call with the same count — the `growthFrom`
+ *  pattern — so the two render hooks compute identical world dims and the C5 shared-
+ *  space invariant extends to the camera world. */
+export function seatFrom(nodeCount: number, params?: Partial<DensityParams>): WorldSeat {
+  const p = { ...DENSITY_PARAMS, ...params }
+  return { nodeCount, areaPerLabel: p.areaPerLabel }
 }
 
 /** How many labels the current virtual space affords: `(area − reservedArea) /

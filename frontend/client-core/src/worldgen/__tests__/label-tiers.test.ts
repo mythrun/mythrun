@@ -6,6 +6,7 @@ import {
   growthFrom,
   labelBudget,
   labeledDisplayIds,
+  seatFrom,
 } from '../label-tiers.ts'
 
 // Label tiering (MYT-89 density redesign). A real generation lands ~46 entities —
@@ -137,5 +138,15 @@ describe('growthFrom — the shared graph↔fog growth derivation (C5)', () => {
       startCount: 5,
       perNode: 20,
     })
+  })
+})
+
+describe('seatFrom — the shared graph↔fog camera-world seat derivation (T1b)', () => {
+  it('derives the seat input from the node count + the locked density defaults', () => {
+    expect(seatFrom(46)).toEqual({ nodeCount: 46, areaPerLabel: DENSITY_PARAMS.areaPerLabel })
+  })
+
+  it('honours partial overrides (the tuning harness)', () => {
+    expect(seatFrom(10, { areaPerLabel: 9000 })).toEqual({ nodeCount: 10, areaPerLabel: 9000 })
   })
 })

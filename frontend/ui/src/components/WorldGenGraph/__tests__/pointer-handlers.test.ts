@@ -67,20 +67,28 @@ function ptr(clientX: number, clientY: number): PointerEvent {
   return { clientX, clientY, pointerId: 1 } as unknown as PointerEvent
 }
 
-/** Build the PointerDeps for the given sim / onSelect / interactive flag. The virtual
- *  dims match the CSS box (the pane-adaptive space at a reference-sized pane), so the
- *  client→virtual mapping stays 1:1 for these tests. `setFocus` is a spy — the density
- *  redesign's name-reveal seam. */
+/** Build the PointerDeps for the given sim / onSelect / interactive flag. The world +
+ *  view dims match the CSS box (the pane-adaptive space at a reference-sized pane, the
+ *  camera disengaged at identity), so the client→virtual mapping stays 1:1 for these
+ *  tests. `setFocus` / `panBy` / `deferFollow` are spies — the density redesign's
+ *  name-reveal seam + the T1b camera seam. `engaged` flips the camera on (the world
+ *  larger than the pane — drags pan). */
 function deps(
   sim: ForceSim,
   onSelect: (id: string) => void,
   interactive: boolean,
   setFocus: (id: string | null) => void = vi.fn(),
+  options?: { engaged?: boolean; panBy?: (dx: number, dy: number) => void; deferFollow?: () => void },
 ): PointerDeps {
   return {
     getSim: () => sim,
     sizeRef: { current: { cssW: VIRTUAL_WIDTH, cssH: VIRTUAL_HEIGHT } },
     virtualRef: { current: { width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT } },
+    viewRef: { current: { width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT } },
+    readCamera: () => ({ x: 0, y: 0 }),
+    isEngaged: () => options?.engaged ?? false,
+    panBy: options?.panBy ?? vi.fn(),
+    deferFollow: options?.deferFollow ?? vi.fn(),
     hoverRef: { current: null },
     dragRef: { current: null },
     onSelectRef: { current: onSelect },
@@ -182,21 +190,108 @@ describe('attachPointerHandlers — drag lives during generation (MYT-89 audit #
     fire('pointerup', ptr(CENTRE.x + 20, CENTRE.y))
     expect(setFocus).not.toHaveBeenCalled()
   })
+
+  it('camera ENGAGED: a drag from EMPTY fog pans the camera (node drag keeps priority)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim, pin } = stubSim(NODE_POSITIONS)
+    const panBy = vi.fn()
+    attachPointerHandlers(canvas, deps(sim, vi.fn(), false, vi.fn(), { engaged: true, panBy }))
+
+    fire('pointerdown', ptr(CENTRE.x + 300, CENTRE.y)) // empty fog — arms the camera drag
+    fire('pointermove', ptr(CENTRE.x + 320, CENTRE.y + 10))
+    expect(panBy).toHaveBeenCalledExactlyOnceWith(20, 10)
+    expect(pin).not.toHaveBeenCalled()
+    fire('pointerup', ptr(CENTRE.x + 320, CENTRE.y + 10))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y)) // a glyph hit — the NODE drag wins
+    fire('pointermove', ptr(CENTRE.x + 15, CENTRE.y))
+    expect(pin).toHaveBeenCalledWith('n1', 15, 0)
+    expect(panBy).toHaveBeenCalledTimes(1) // no further pans
+  })
+
+  it('camera DISENGAGED: an empty-fog drag pans nothing (desktop unchanged)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const panBy = vi.fn()
+    attachPointerHandlers(canvas, deps(sim, vi.fn(), false, vi.fn(), { engaged: false, panBy }))
+
+    fire('pointerdown', ptr(CENTRE.x + 300, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 340, CENTRE.y))
+    expect(panBy).not.toHaveBeenCalled()
+  })
+
+  it('a NODE drag defers the auto-follow (the hand owns the view — T1b)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const deferFollow = vi.fn()
+    attachPointerHandlers(canvas, deps(sim, vi.fn(), false, vi.fn(), { engaged: true, deferFollow }))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 15, CENTRE.y))
+    expect(deferFollow).toHaveBeenCalled()
+  })
 })
 
-// ── The TAP-only surface (density redesign — mobile) ───────────────────────────────────
-// Touch used to be gated off entirely (canvas drag fights page scroll). The tap surface
-// is the deliberate resolution: pointerdown/up with a movement-slop gate, NO capture, NO
-// preventDefault, no move handling — a scroll gesture travels past the slop (or fires
-// pointercancel) and is ignored, so the page scrolls as if the canvas weren't there,
-// while a genuine TAP focuses the glyph (promotes its name into the label tier).
+// ── The TAP+PAN surface (density redesign mobile + the T1b camera) ─────────────────────
+// Touch used to be gated off entirely (canvas drag fights page scroll). Camera
+// DISENGAGED (the world fits the pane) the shipped tap-only behaviour holds:
+// pointerdown/up with a movement-slop gate, NO capture, NO preventDefault, panning
+// inert — a scroll gesture travels past the slop (or fires pointercancel) and is
+// ignored, so the page scrolls as if the canvas weren't there, while a genuine TAP
+// focuses the glyph. Camera ENGAGED (T1b — the world larger than the pane; the hook
+// also sets `touch-action: none`): the canvas owns touch — a one-finger drag PANS the
+// camera, and a press within the slop stays a tap.
 
-describe('attachTapHandlers — coarse-pointer tap (tap-not-drag)', () => {
-  it('attaches only down/up/cancel — no move handler, nothing to fight a scroll', () => {
+describe('attachTapHandlers — coarse-pointer tap + camera pan', () => {
+  it('attaches down/move/up/cancel (the move handler is inert while disengaged)', () => {
     const { canvas, handlers } = stubCanvas()
     const { sim } = stubSim(NODE_POSITIONS)
     attachTapHandlers(canvas, deps(sim, vi.fn(), false))
-    expect(Object.keys(handlers).sort()).toEqual(['pointercancel', 'pointerdown', 'pointerup'])
+    expect(Object.keys(handlers).sort()).toEqual(['pointercancel', 'pointerdown', 'pointermove', 'pointerup'])
+  })
+
+  it('camera DISENGAGED: movement past the slop never pans (the page owns the scroll)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const panBy = vi.fn()
+    attachTapHandlers(canvas, deps(sim, vi.fn(), false, vi.fn(), { engaged: false, panBy }))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 40, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 80, CENTRE.y))
+    expect(panBy).not.toHaveBeenCalled()
+  })
+
+  it('camera ENGAGED: a drag past the slop PANS by incremental deltas, rebased at the slop edge', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const panBy = vi.fn()
+    const setFocus = vi.fn()
+    attachTapHandlers(canvas, deps(sim, vi.fn(), false, setFocus, { engaged: true, panBy }))
+
+    fire('pointerdown', ptr(100, 100))
+    fire('pointermove', ptr(103, 100)) // inside the slop — not yet a pan
+    expect(panBy).not.toHaveBeenCalled()
+    fire('pointermove', ptr(120, 100)) // past the slop — the pan ARMS here (no jump)
+    expect(panBy).not.toHaveBeenCalled()
+    fire('pointermove', ptr(135, 110)) // …and pans by the delta since the arm point
+    expect(panBy).toHaveBeenCalledExactlyOnceWith(15, 10)
+    fire('pointerup', ptr(135, 110)) // a pan never taps
+    expect(setFocus).not.toHaveBeenCalled()
+  })
+
+  it('camera ENGAGED: a press within the slop is still a TAP (focus + reveal select)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const onSelect = vi.fn()
+    const setFocus = vi.fn()
+    attachTapHandlers(canvas, deps(sim, onSelect, true, setFocus, { engaged: true }))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 3, CENTRE.y)) // sub-slop jitter
+    fire('pointerup', ptr(CENTRE.x + 3, CENTRE.y))
+    expect(setFocus).toHaveBeenCalledExactlyOnceWith('n1')
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('n1')
   })
 
   it('a TAP on a glyph focuses it; a tap on empty fog clears the focus', () => {

@@ -1,5 +1,5 @@
 import { forwardRef, useRef } from 'react'
-import { growthFrom } from '@mythrun/client-core/worldgen'
+import { growthFrom, seatFrom } from '@mythrun/client-core/worldgen'
 import type { WorldGenGraphProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { WorldGenFogField } from '../WorldGenFog/WorldGenFogField.tsx'
@@ -55,7 +55,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
   // redesign): nodes are shoved out from under the card, so no entity name spends the
   // generation occluded (on a phone the card spans ~70% of the pane width).
   const cardRef = useRef<HTMLDivElement>(null)
-  const { getFogEntities } = useGraphCanvas({
+  const { getFogEntities, camera } = useGraphCanvas({
     canvasRef,
     nodes,
     edges,
@@ -71,11 +71,13 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
 
   const shown = shownEntities ?? nodes.length
   const total = totalEntities ?? 0
-  // Density-aware virtual-space growth (MYT-89 density redesign): the ONE growth
-  // derivation BOTH layers size their shared virtual space from — the graph hook
-  // re-derives it internally from the same inputs, and the fog receives it here — so
-  // the C5 fog↔glyph alignment holds while the space grows with the node count.
+  // Density-aware virtual-space growth (MYT-89 density redesign) + the camera-world
+  // SEAT (T1b): the ONE pair of derivations BOTH layers size their shared spaces from
+  // — the graph hook re-derives them internally from the same inputs, and the fog
+  // receives them here — so the C5 fog↔glyph alignment holds while the space grows
+  // with the node count AND while the world outgrows the pane (the pannable camera).
   const growth = growthFrom(nodes.length, densityParams)
+  const seat = seatFrom(nodes.length, densityParams)
 
   return (
     <div
@@ -103,6 +105,8 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
             totalEntities={total}
             reducedMotion={reducedMotion}
             growth={growth}
+            seat={seat}
+            camera={camera}
           />
           <canvas
             ref={canvasRef}

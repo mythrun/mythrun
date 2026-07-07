@@ -1,5 +1,5 @@
 import type { BaseProps } from './index.ts'
-import type { VirtualGrowth } from '../worldgen/virtual-space.ts'
+import type { CameraPoint, VirtualGrowth, WorldSeat } from '../worldgen/virtual-space.ts'
 
 // Re-export the obstacle shape off the same contract surface a consumer reads the
 // props from (the fluid brain lives in the DOM-free `../worldgen`, the render
@@ -49,6 +49,25 @@ export interface FogFieldEntity {
  * motion static settle. All the fluid numerics live in the DOM-free `FogSim`
  * (client-core); this contract is the platform-neutral prop surface.
  */
+/**
+ * The SHARED camera over the world-gen virtual space (MYT-89 T1b — the pannable
+ * viewport). The graph hook owns the one camera; the fog layer reads it through this
+ * source, so both canvases translate by the identical offset every frame (the C5
+ * one-camera guarantee — a virtual point lands on the same screen pixel in each layer
+ * at every camera position).
+ */
+export interface WorldGenCameraSource {
+  /** The camera for render frame `frameMs` (the rAF timestamp). Advances any
+   *  auto-follow drift AT MOST ONCE per distinct timestamp — both layers' loops call
+   *  this with the same frame time and read the identical position, whichever runs
+   *  first. */
+  current: (frameMs: number) => CameraPoint
+  /** Subscribe to DISCRETE camera mutations (a manual pan, a reduced-motion snap, the
+   *  engage recentre) — the seam a STATIC (reduced-motion) layer repaints on, since it
+   *  has no per-frame loop to pick the move up. Returns the unsubscribe. */
+  subscribe: (listener: () => void) => () => void
+}
+
 export interface WorldGenFogFieldProps extends Omit<BaseProps, 'children'> {
   /** The currently-shown entities the fog parts around (virtual-space positions). One
    *  `FogObstacle` is built per entity each frame. Optional when `entitiesSource` is
@@ -75,6 +94,15 @@ export interface WorldGenFogFieldProps extends Omit<BaseProps, 'children'> {
    *  dims from the shared pane box while the space grows with the node count (the C5
    *  alignment invariant). Omitted (standalone fog) → the fixed shipped space. */
   growth?: VirtualGrowth
+  /** The camera-world SEAT input (MYT-89 T1b): the SAME `seatFrom` derivation the
+   *  composing graph feeds `cameraWorldDims`, so both layers agree on when the world
+   *  outgrows the pane and on the grown world's dims. Omitted (standalone fog) → the
+   *  world always fits the pane (no camera). */
+  seat?: WorldSeat
+  /** The SHARED camera (T1b): the graph hook's camera source. The fog translates its
+   *  paint by the same offset the graph does — one camera, both layers (C5). Omitted
+   *  (standalone fog) → the identity camera. */
+  camera?: WorldGenCameraSource
   /** Honour the user's reduced-motion preference: no requestAnimationFrame loop —
    *  settle the density to convergence once and repaint only when the entity count
    *  changes. NOT a blanket freeze: the fade-with-entities signal (the progress

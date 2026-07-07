@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import {
+  cameraWorldDims,
   createForceSim,
   growthFrom,
-  virtualDims,
+  seatFrom,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   type DensityParams,
@@ -11,8 +12,15 @@ import {
   type StaticKeepOut,
   type VirtualDims,
   type VirtualGrowth,
+  type WorldSeat,
 } from '@mythrun/client-core/worldgen'
-import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import type {
+  FogFieldEntity,
+  GraphEdge,
+  GraphNode,
+  WorldGenCameraSource,
+} from '@mythrun/client-core/contract'
+import { createCameraController, type CameraController } from './camera-state.ts'
 import {
   drawEdges,
   drawNodes,
@@ -94,6 +102,10 @@ export interface GraphCanvas {
   /** Live node positions (+ the render-only bob) mapped into the fog's VIRTUAL space —
    *  the fog layer's per-frame obstacle source (C5 decision 3). Stable identity. */
   getFogEntities: () => FogFieldEntity[]
+  /** The SHARED camera over the world (MYT-89 T1b): the graph hook owns the one
+   *  camera; the fog layer reads it through this source so both canvases translate by
+   *  the identical offset each frame (one camera, both layers — C5). Stable identity. */
+  camera: WorldGenCameraSource
 }
 
 /** Tick the layout to convergence — a bounded loop (d3's alpha decays), never an
@@ -129,11 +141,14 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const focusRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
-  // The CURRENT pane-adaptive virtual dims (MYT-89 responsive fix) — the shared space
-  // the sim, the draw, the pointer mapping, and the fog-entity mapping all speak.
-  // Starts at the reference dims (the jsdom/unmeasured fallback `virtualDims` also
-  // returns) and follows the pane via `syncVirtual`.
+  // The CURRENT WORLD dims (pane-adaptive, MYT-89 responsive fix; seat-grown under the
+  // T1b camera) — the shared space the sim, the draw, the pointer mapping, and the
+  // fog-entity mapping all speak. Starts at the reference dims (the jsdom/unmeasured
+  // fallback `cameraWorldDims` also returns) and follows the pane via `syncVirtual`.
   const virtualRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
+  // The camera VIEW dims (T1b): the pane's window onto the world. Equal to the world
+  // whenever the camera is disengaged (desktop; phones early in a generation).
+  const viewRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
   // Memoized label widths (name → measured px at the resolved DS label font) for the collision
   // boxes, mirroring the fog's own width cache so the graph's box and the fog's obstacle derive
   // identical geometry (same font, same widths, one shared `labelBoxExtents`).
@@ -151,9 +166,12 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // collision measure, and the fog-entity mapping (one set, three surfaces).
   const labeledRef = useRef<ReadonlySet<string>>(new Set<string>())
   const densityRef = useRef<Partial<DensityParams>>(params.densityParams ?? {})
-  // Density-aware growth for `virtualDims` (recomputed every render — cheap, pure):
-  // the SAME derivation WorldGenGraph hands the fog, so the layers agree (C5).
+  // Density-aware growth for the dims derivation (recomputed every render — cheap,
+  // pure): the SAME derivation WorldGenGraph hands the fog, so the layers agree (C5).
   const growthRef = useRef<VirtualGrowth>(growthFrom(0))
+  // The camera-world SEAT input (T1b): what the world must seat — the trigger + sizing
+  // for the pannable camera. Same shared-derivation pattern as `growthRef`.
+  const seatRef = useRef<WorldSeat>(seatFrom(0))
   // Resolved DS label font ("`${px}px ${family}`" from `--font-body`/`--text-sm`), cached on
   // first use (family/size don't animate or flip with the theme). The draw, the collision-box
   // measure, and the fog all key off this ONE string, so the reserved box bounds the drawn label.
@@ -176,18 +194,47 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   forceParamsRef.current = params.forceParams ?? {}
   densityRef.current = params.densityParams ?? {}
   growthRef.current = growthFrom(nodes.length, densityRef.current)
+  seatRef.current = seatFrom(nodes.length, densityRef.current)
 
-  // Track the pane → virtual dims (MYT-89 responsive fix): measure the canvas box,
-  // derive the shared virtual space via `virtualDims` (+ the density-aware growth —
-  // the space widens with the node count), and on a CHANGE re-size the live sim (the
-  // containment bounds follow) + drop the reduced-motion settle flag so a static graph
+  // The ONE camera over the world (T1b — created once; reads the live refs). Owns
+  // where the viewport looks while the world is larger than the pane: manual pans,
+  // the auto-follow drift toward the newest arrival, the reduced-motion snap, and
+  // the pan-bounds clamp. Its `source` is handed to the fog layer (one camera, both
+  // layers — C5). A pure render transform: the sim never sees it.
+  const cameraCtlRef = useRef<CameraController | null>(null)
+  cameraCtlRef.current ??= createCameraController({
+    worldRef: virtualRef,
+    viewRef,
+    reducedRef,
+    nodesRef,
+    simRef,
+    sizeRef,
+  })
+  const cameraCtl = cameraCtlRef.current
+
+  // Track the pane → world/view dims (MYT-89 responsive fix + the T1b camera):
+  // measure the canvas box, derive the shared spaces via `cameraWorldDims` (the
+  // density-aware growth widens the space with the node count; the SEAT stops the
+  // world shrinking below what the label budget needs — the camera engages instead),
+  // and on a CHANGE re-size the live sim (the containment bounds follow), sync the
+  // camera bounds, and drop the reduced-motion settle flag so a static graph
   // re-settles into the new space. The fog hook derives its dims from the SAME pane
-  // box through the SAME function with the SAME growth, so the two layers agree (C5)
-  // at any size and any density. Returns whether the dims changed (the caller re-sizes
-  // the backing store). Body at module scope (`trackVirtualDims`).
+  // box through the SAME function with the SAME growth+seat, so the two layers agree
+  // (C5) at any size and any density. Returns whether the dims changed (the caller
+  // re-sizes the backing store). Body at module scope (`trackWorldDims`).
   const syncVirtual = useCallback(
-    (): boolean => trackVirtualDims({ canvasRef, virtualRef, simRef, settledRef, growthRef }),
-    [canvasRef],
+    (): boolean =>
+      trackWorldDims({
+        canvasRef,
+        virtualRef,
+        viewRef,
+        simRef,
+        settledRef,
+        growthRef,
+        seatRef,
+        camera: cameraCtl,
+      }),
+    [canvasRef, cameraCtl],
   )
 
   // The sim lives in the fog's VIRTUAL space (C5 §3.6 — pane-adaptive) — created lazily
@@ -227,7 +274,9 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
 
   // The status-card keep-out (density redesign): measure the card into a sim keep-out
   // + reserve its area from the label budget. Body at module scope (graph-label-state's
-  // `syncCardKeepOut`); re-run on graph syncs + sizes; a no-op when the box hasn't moved.
+  // `syncCardKeepOut`); re-run on graph syncs + sizes; a no-op when the box hasn't
+  // moved. With the T1b camera engaged the keep-out is DROPPED — a pane-anchored
+  // overlay can't be a world-space keep-out (its footprint would move with every pan).
   const keepOutElRef = params.keepOutRef
   const syncKeepOuts = useCallback((): void => {
     syncCardKeepOut({
@@ -235,10 +284,11 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       sim: simRef.current,
       card: keepOutElRef?.current ?? null,
       virtual: virtualRef.current,
+      engaged: cameraCtl.engaged(),
       labelRefs: labelRefsRef.current,
       settledRef,
     })
-  }, [canvasRef, keepOutElRef])
+  }, [canvasRef, keepOutElRef, cameraCtl])
 
 
   // Measure every node's CURRENT keep-out box (the SAME box the fog reserves —
@@ -282,16 +332,16 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   }, [ensureSettled])
 
   // Size the backing store to the pane AND cache the theme ink — the once-per-mount/resize
-  // canvas prep the draw paths share. `syncVirtual` FIRST: the virtual dims follow the
-  // pane (the sim's containment re-derives on a change), then the backing-store transform
-  // maps that fresh virtual space onto the pane pixels. `resolveInk` reads
-  // `getComputedStyle`, which the motion loop used to call EVERY frame (MYT-89 audit #2);
-  // caching it here (+ on a theme flip, via the observer below) lets the loop read the
-  // ref instead.
+  // canvas prep the draw paths share. `syncVirtual` FIRST: the world/view dims follow
+  // the pane (the sim's containment re-derives on a change), then the backing-store
+  // transform maps the fresh VIEW (the camera's window — the whole world when
+  // disengaged) onto the pane pixels. `resolveInk` reads `getComputedStyle`, which the
+  // motion loop used to call EVERY frame (MYT-89 audit #2); caching it here (+ on a
+  // theme flip, via the observer below) lets the loop read the ref instead.
   const applySize = useCallback(
     (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
       syncVirtual()
-      sizeRef.current = sizeCanvasForDpr(canvas, ctx, virtualRef.current)
+      sizeRef.current = sizeCanvasForDpr(canvas, ctx, viewRef.current)
       inkRef.current = resolveInk(canvas)
       edgeInkRef.current = resolveEdgeInk(canvas)
       paperRef.current = resolvePaper(canvas)
@@ -300,17 +350,24 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     [syncVirtual],
   )
 
-  // Draw one frame of the graph (edges + glyphs) in the VIRTUAL space. Edges stroke in
-  // the LIGHTER edge ink (`--ink-tertiary`) so the connection strings sit under the
-  // text; glyphs + labels in the full ink. `t` is the bob clock (null under reduced
-  // motion → no bob); `showLabels` draws the node name beside each glyph (ON during
-  // generation too — MYT-89 audit #3), gated per node by the label tier (`labeled`).
+  // Draw one frame of the graph (edges + glyphs) in the WORLD space, seen through the
+  // camera (T1b): the context clears the VIEW and translates the origin to the world
+  // centre MINUS the camera offset — with the camera disengaged (camera {0,0},
+  // world === view) that is exactly the pre-camera (vw/2, vh/2) translate. The fog
+  // layer translates by the same camera each frame, so the two canvases stay in
+  // lockstep at every camera position (C5). Edges stroke in the LIGHTER edge ink
+  // (`--ink-tertiary`) so the connection strings sit under the text; glyphs + labels
+  // in the full ink. `t` is the bob clock (null under reduced motion → no bob);
+  // `showLabels` draws the node name beside each glyph (ON during generation too —
+  // MYT-89 audit #3), gated per node by the label tier (`labeled`).
   const paintFrame = useCallback(
     (ctx: CanvasRenderingContext2D, ink: string): void => {
       const virtual = virtualRef.current
-      ctx.clearRect(0, 0, virtual.width, virtual.height)
+      const view = viewRef.current
+      const cam = cameraCtl.read()
+      ctx.clearRect(0, 0, view.width, view.height)
       ctx.save()
-      ctx.translate(virtual.width / 2, virtual.height / 2)
+      ctx.translate(virtual.width / 2 - cam.x, virtual.height / 2 - cam.y)
       const positions = getSim().positions()
       ctx.strokeStyle = edgeInkRef.current || ink
       paintEdges(ctx, edgesRef.current, positions, edgeDrawRef.current, reducedRef.current)
@@ -329,7 +386,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       })
       ctx.restore()
     },
-    [getSim],
+    [getSim, cameraCtl],
   )
 
   // A single static repaint of the current state (reduced motion + on resize): size
@@ -355,24 +412,27 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // Re-sync the physics whenever the folded graph changes. In a LAYOUT effect (runs
   // before the fog child's effects) so a reduced-motion fog settle reads an already-
   // synced sim; the settle itself is deferred to `ensureSettled` (idempotent).
-  // ORDER matters: the density growth may re-derive the virtual space (the world grows
-  // with the node count), the label tier depends on that area, and the boxes depend on
-  // the tier — dims → labels → sync → boxes. A dims change also re-sizes the backing
-  // store (the virtual→pane transform moved) via `applySize` under motion; the
-  // reduced-motion static repaint effect below re-sizes through `staticPaint`.
+  // ORDER matters: the density growth/seat may re-derive the world (it grows with the
+  // node count), the card keep-out reserves label-budget area, the label tier depends
+  // on both, and the boxes depend on the tier — dims → sync → keep-out → labels →
+  // boxes. The camera tracks the newest arrival (the auto-follow target — T1b). A
+  // dims change also re-sizes the backing store (the view→pane transform moved) via
+  // `applySize` under motion; the reduced-motion static repaint effect below re-sizes
+  // through its own path.
   useLayoutEffect(() => {
     const dimsChanged = syncVirtual()
-    refreshLabels()
     getSim().sync(nodes, edges)
-    applyBoxes()
     syncKeepOuts()
+    refreshLabels()
+    applyBoxes()
+    cameraCtl.trackArrivals(nodes)
     settledRef.current = false
     if (dimsChanged && !reducedRef.current) {
       const canvas = canvasRef.current
       const ctx = canvas?.getContext('2d') ?? null
       if (canvas !== null && ctx !== null) applySize(canvas, ctx)
     }
-  }, [nodes, edges, getSim, applyBoxes, syncVirtual, refreshLabels, applySize, syncKeepOuts, canvasRef])
+  }, [nodes, edges, getSim, applyBoxes, syncVirtual, refreshLabels, applySize, syncKeepOuts, canvasRef, cameraCtl])
 
   // Selection promotes a label (a pinned key in the tier): recompute the set + the
   // boxes and let the layout re-flow around the (possibly grown) box — a gentle reheat
@@ -404,35 +464,74 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     [promoteRepaint],
   )
 
-  // Reduced-motion static redraw: settle (once) + paint on any graph change. The motion
-  // loop that would otherwise pick a change up is off in this mode.
+  // Reduced-motion static redraw: settle (once), SNAP the camera to the newest
+  // arrival's settled position (T1b — the no-drift substitute for the auto-follow:
+  // one discrete reposition per arrival, no continuous animation; a no-op while the
+  // camera is disengaged or a manual pan hasn't idled out — the snap is clamped and
+  // notify-driven, so the fog's static painter follows), then paint. The motion loop
+  // that would otherwise pick a change up is off in this mode.
   useEffect(() => {
     if (!reducedMotion) return
-    staticPaint()
-  }, [nodes, edges, reducedMotion, staticPaint])
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d') ?? null
+    if (canvas === null || ctx === null) return
+    applySize(canvas, ctx)
+    ensureSettled()
+    cameraCtl.snapToTarget()
+    paintFrame(ctx, inkRef.current)
+  }, [nodes, edges, reducedMotion, canvasRef, applySize, ensureSettled, paintFrame, cameraCtl])
+
+  // Static repaint on a DISCRETE camera move (T1b, reduced motion only): a manual pan
+  // or an arrival snap has no rAF loop to pick it up — repaint the current settled
+  // state at the new camera. Under motion the loop repaints every frame; the
+  // subscription then never fires a paint (reducedRef gate).
+  useEffect(
+    () =>
+      cameraCtl.source.subscribe(() => {
+        if (reducedRef.current) staticPaint()
+      }),
+    [cameraCtl, staticPaint],
+  )
 
   // The motion render loop. Off entirely under reduced motion (and when there's no
   // 2D context — jsdom). The loop body lives in startMotionLoop (module scope).
+  // `advanceCamera` steps the auto-follow drift for this frame's timestamp (T1b);
+  // the fog loop calls the same source with the same rAF timestamp and reads the
+  // identical position (the idempotent per-timestamp advance — one camera, C5).
   useEffect(() => {
     if (reducedMotion) return
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applySize(canvas, ctx)
-    return startMotionLoop(ctx, { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef, inkRef })
-  }, [reducedMotion, canvasRef, applySize, paintFrame, getSim])
+    return startMotionLoop(ctx, {
+      getSim,
+      paintFrame,
+      clockRef,
+      edgesRef,
+      edgeDrawRef,
+      inkRef,
+      advanceCamera: (frameMs) => cameraCtl.source.current(frameMs),
+    })
+  }, [reducedMotion, canvasRef, applySize, paintFrame, getSim, cameraCtl])
 
   // Pointer interaction. FINE pointer + motion: hover-raise + drag-to-pin are LIVE
-  // (MYT-89 audit #5 — dragging a node through the fog is the toy) and a click focuses
-  // (name reveal) + selects (reveal-gated). COARSE pointer (touch) or reduced motion:
-  // a TAP-only surface — no capture, no drag, slop-gated so page scroll is untouched —
-  // that focuses the tapped node (its label is promoted into the tier) and selects in
-  // the reveal. Body at module scope.
+  // (MYT-89 audit #5 — dragging a node through the fog is the toy), a click focuses
+  // (name reveal) + selects (reveal-gated), and — camera engaged (T1b) — a drag from
+  // EMPTY fog pans the camera. COARSE pointer (touch) or reduced motion: the tap+pan
+  // surface — camera disengaged it is the shipped slop-gated tap (page scroll
+  // untouched); engaged, the canvas owns touch (one-finger drag pans, a <8px press
+  // taps). Body at module scope.
   useEffect(() => {
     const deps: PointerDeps = {
       getSim,
       sizeRef,
       virtualRef,
+      viewRef,
+      readCamera: cameraCtl.read,
+      isEngaged: cameraCtl.engaged,
+      panBy: cameraCtl.panBy,
+      deferFollow: cameraCtl.deferFollow,
       hoverRef,
       dragRef,
       onSelectRef,
@@ -440,33 +539,38 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       setFocus,
     }
     return setupPointerHandlers(canvasRef.current, reducedMotion, deps)
-  }, [reducedMotion, canvasRef, getSim, setFocus])
+  }, [reducedMotion, canvasRef, getSim, setFocus, cameraCtl])
 
-  // Repaint on container resize, honouring the current mode (static vs let-the-loop-
-  // handle-it). Mount-only; reads the latest mode via ref. jsdom's ResizeObserver is
-  // a no-op shim, so this is inert there.
-  useEffect(
-    () =>
-      observeResize(canvasRef.current, {
-        reducedRef,
-        staticPaint: () => {
-          staticPaint()
-          syncKeepOuts() // moved card box → settle flag drops; the next paint re-settles
-        },
-        applySize: (canvas, ctx) => {
-          applySize(canvas, ctx)
-          syncKeepOuts() // the card's pane-relative box moves with the pane
-        },
-      }),
-    [canvasRef, applySize, staticPaint, syncKeepOuts],
-  )
+  // Container resize: run the FULL re-derivation chain, in dependency order — dims +
+  // backing store (`applySize` → `syncVirtual`), the card keep-out (its pane-relative
+  // box moves with the pane), the label TIER (the budget is area-derived — a resize
+  // changes it), and the collision BOXES (a promoted label needs its full box in the
+  // keep-out set, or it rides icon-only until the next interaction — the T1 review
+  // fix: the old path never re-tiered/re-boxed on resize). Then repaint: statically
+  // under reduced motion (the loop is off — `staticPaint` re-settles into the new
+  // space), else let the running loop pick the new state up next frame. Mount-only;
+  // reads the latest mode via ref. jsdom's ResizeObserver is a no-op shim → inert.
+  const handleResize = useCallback((): void => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d') ?? null
+    if (canvas === null || ctx === null) return
+    applySize(canvas, ctx)
+    syncKeepOuts()
+    refreshLabels()
+    applyBoxes()
+    if (reducedRef.current) staticPaint()
+  }, [canvasRef, applySize, syncKeepOuts, refreshLabels, applyBoxes, staticPaint])
+
+  useEffect(() => observeResize(canvasRef.current, handleResize), [canvasRef, handleResize])
 
   // WEB-FONT invalidation (density redesign follow-up): the label widths memoized into
   // `boxWidthCacheRef` are measured at whatever font the Canvas resolves AT THE TIME —
   // before the DS serif loads that's the fallback serif, and the stale widths under-
   // reserve every box (drawn text overruns its collision/clamp box → edge-clipped
   // names). When the document's fonts finish loading, drop the memo, re-measure the
-  // boxes at the TRUE widths, and re-flow.
+  // boxes at the TRUE widths, and re-flow. Under reduced motion nothing else would
+  // repaint (the loop is off) — paint the re-measured state statically (T1 review
+  // fix #2: the settle flag alone left the stale frame up until an interaction).
   useEffect(() => {
     if (!('fonts' in document)) return // jsdom has no FontFaceSet
     let cancelled = false
@@ -476,11 +580,12 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       applyBoxes()
       settledRef.current = false
       simRef.current?.reheat()
+      if (reducedRef.current) staticPaint()
     })
     return () => {
       cancelled = true
     }
-  }, [applyBoxes])
+  }, [applyBoxes, staticPaint])
 
   // Re-resolve the cached inks on a light/dark flip (MYT-89 audit #2). Body at module scope.
   useEffect(
@@ -488,37 +593,63 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     [canvasRef, staticPaint],
   )
 
-  return { getFogEntities }
+  return { getFogEntities, camera: cameraCtl.source }
 }
 
-interface VirtualDimsDeps {
+interface WorldDimsDeps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
+  /** The WORLD dims the sim/labels/fog live in (seat-grown under the camera). */
   virtualRef: React.RefObject<VirtualDims>
+  /** The camera VIEW dims — the pane's window onto the world. */
+  viewRef: React.RefObject<VirtualDims>
   simRef: React.RefObject<ForceSim | null>
   settledRef: React.RefObject<boolean>
   /** The density-aware growth input (node count + knobs) — the space widens as the
    *  graph fills, so the dims re-derive on arrivals too, not just pane resizes. */
   growthRef: React.RefObject<VirtualGrowth>
+  /** The camera-world seat input (T1b) — the trigger + sizing for the camera. */
+  seatRef: React.RefObject<WorldSeat>
+  camera: CameraController
 }
 
-/** Measure the pane box → derive the shared virtual dims (`virtualDims`, with the
- *  density-aware growth) → on a change, store them, re-size the live sim (containment
- *  bounds re-derive + a gentle reheat so the layout migrates), and drop the
- *  reduced-motion settle flag (a static graph re-settles into the new space). Returns
- *  whether the dims CHANGED (the caller re-sizes the backing store — the virtual→pane
- *  transform moved). No-op-false with no canvas or when the dims are unchanged (jsdom's
- *  zero rect falls back to the reference dims — the ref's initial value). Module-scoped
- *  so the hook stays lean (mirrors observeResize/reseedOnForceChange). */
-function trackVirtualDims(deps: VirtualDimsDeps): boolean {
-  const { canvasRef, virtualRef, simRef, settledRef, growthRef } = deps
+/** Measure the pane box → derive the shared world + view dims (`cameraWorldDims`:
+ *  the density-aware growth widens the space with the node count; the SEAT stops the
+ *  world shrinking below what the label budget needs, engaging the camera — T1b) →
+ *  on a change, store them, sync the camera bounds (identity / engage-centre /
+ *  clamp), flip the canvas's touch ownership (`touch-action: none` while the camera
+ *  pans — the one-finger drag is ours; disengaged, the page keeps scroll), re-size
+ *  the live sim (containment bounds re-derive + a gentle reheat so the layout
+ *  migrates), and drop the reduced-motion settle flag (a static graph re-settles into
+ *  the new space). Returns whether the dims CHANGED (the caller re-sizes the backing
+ *  store — the view→pane transform moved). No-op-false with no canvas or when the
+ *  dims are unchanged (jsdom's zero rect falls back to the reference dims — the refs'
+ *  initial values). Module-scoped so the hook stays lean. */
+function trackWorldDims(deps: WorldDimsDeps): boolean {
+  const { canvasRef, virtualRef, viewRef, simRef, settledRef, growthRef, seatRef, camera } = deps
   const canvas = canvasRef.current
   if (canvas === null) return false
   const rect = canvas.getBoundingClientRect()
-  const next = virtualDims(Math.round(rect.width), Math.round(rect.height), growthRef.current)
-  const current = virtualRef.current
-  if (next.width === current.width && next.height === current.height) return false
-  virtualRef.current = next
-  simRef.current?.setSize(next.width, next.height)
+  const next = cameraWorldDims(
+    Math.round(rect.width),
+    Math.round(rect.height),
+    growthRef.current,
+    seatRef.current,
+  )
+  const world = virtualRef.current
+  const view = viewRef.current
+  if (
+    next.world.width === world.width &&
+    next.world.height === world.height &&
+    next.view.width === view.width &&
+    next.view.height === view.height
+  ) {
+    return false
+  }
+  virtualRef.current = next.world
+  viewRef.current = next.view
+  camera.syncBounds(next)
+  canvas.style.touchAction = next.engaged ? 'none' : ''
+  simRef.current?.setSize(next.world.width, next.world.height)
   settledRef.current = false
   return true
 }
@@ -579,29 +710,16 @@ function observeThemeInk(deps: ThemeInkDeps): (() => void) | undefined {
   }
 }
 
-interface ResizeDeps {
-  reducedRef: React.RefObject<boolean>
-  staticPaint: () => void
-  applySize: (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void
-}
-
-/** Observe container resize and repaint in the current mode (static settle vs re-size-
- *  and-let-the-loop-handle-it). Returns the disconnect teardown (or undefined when
- *  there's no canvas / no ResizeObserver — jsdom). Module-scoped so the hook stays lean. */
+/** Observe container resize and run the hook's full resize chain (`handleResize` —
+ *  dims, keep-out, re-tier, re-box, repaint). Returns the disconnect teardown (or
+ *  undefined when there's no canvas / no ResizeObserver — jsdom). Module-scoped so
+ *  the hook stays lean. */
 function observeResize(
   canvas: HTMLCanvasElement | null,
-  deps: ResizeDeps,
+  onResize: () => void,
 ): (() => void) | undefined {
-  const { reducedRef, staticPaint, applySize } = deps
   if (canvas === null || typeof ResizeObserver === 'undefined') return undefined
-  const observer = new ResizeObserver(() => {
-    if (reducedRef.current) {
-      staticPaint()
-      return
-    }
-    const ctx = canvas.getContext('2d')
-    if (ctx !== null) applySize(canvas, ctx)
-  })
+  const observer = new ResizeObserver(onResize)
   observer.observe(canvas)
   return () => {
     observer.disconnect()
@@ -622,6 +740,9 @@ interface MotionLoopDeps {
   edgesRef: React.RefObject<GraphEdge[]>
   edgeDrawRef: React.RefObject<EdgeDrawState>
   inkRef: React.RefObject<string>
+  /** Step the T1b camera's auto-follow drift for this frame's timestamp (idempotent
+   *  per timestamp — the fog loop calls the same source with the same rAF time). */
+  advanceCamera: (frameMs: number) => void
 }
 
 /** Paint the edge layer with the C6 draw-in: each edge reveals as a source→target penstroke
@@ -665,7 +786,7 @@ function recordEdgeAppearances(
  *  repaints in the new ink — the Canvas (the one surface Tailwind can't reach) still
  *  tracks the theme, without the per-frame cost. */
 function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): () => void {
-  const { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef, inkRef } = deps
+  const { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef, inkRef, advanceCamera } = deps
   let raf = 0
   const start = performance.now()
   const frame = (now: number): void => {
@@ -673,6 +794,7 @@ function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): (
     clockRef.current = elapsedMs / 1000
     edgeDrawRef.current.clockMs = elapsedMs
     recordEdgeAppearances(edgesRef.current, edgeDrawRef.current.appear, elapsedMs)
+    advanceCamera(now) // the auto-follow drift for THIS frame (paintFrame reads it)
     getSim().tick()
     paintFrame(ctx, inkRef.current)
     raf = window.requestAnimationFrame(frame)

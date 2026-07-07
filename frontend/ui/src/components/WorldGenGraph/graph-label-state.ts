@@ -91,6 +91,13 @@ export interface KeepOutSyncDeps {
   /** The status-card overlay element, or null (no card — e.g. the reveal). */
   card: HTMLElement | null
   virtual: VirtualDims
+  /** Whether the T1b camera is engaged (the world larger than the pane). The card is
+   *  a PANE-anchored overlay, so under a camera its world-space footprint MOVES with
+   *  every pan/drift — keeping a sim keep-out synced to it would reheat the layout
+   *  continuously. Engaged → the keep-out is dropped instead: the occlusion is
+   *  temporary and user-controlled (one pan moves anything out from under the card),
+   *  and the label budget gets the full world back. */
+  engaged: boolean
   labelRefs: LabelStateRefs
   settledRef: { current: boolean }
 }
@@ -100,12 +107,14 @@ export interface KeepOutSyncDeps {
  *  name spends the generation occluded (MYT-89 density redesign). Sub-pixel-jitter
  *  guarded: `setKeepOuts` reheats, so it only runs when the card's measured box
  *  actually MOVES (tracked in `labelRefs.keepOutRef`, which also feeds the label
- *  budget's reserved area). No card → clears any keep-out. */
+ *  budget's reserved area). No card — or the T1b camera engaged (a pane-anchored
+ *  overlay can't be a world-space keep-out; see `KeepOutSyncDeps.engaged`) → clears
+ *  any keep-out. */
 export function syncCardKeepOut(deps: KeepOutSyncDeps): void {
-  const { canvas, sim, card, virtual, labelRefs, settledRef } = deps
+  const { canvas, sim, card, virtual, engaged, labelRefs, settledRef } = deps
   if (sim === null || canvas === null) return
   const lastRef = labelRefs.keepOutRef
-  if (card === null) {
+  if (card === null || engaged) {
     if (lastRef.current !== null) {
       lastRef.current = null
       sim.setKeepOuts([])
