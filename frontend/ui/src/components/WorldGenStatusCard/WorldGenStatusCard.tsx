@@ -1,36 +1,39 @@
 import { forwardRef } from 'react'
 import { cva } from 'class-variance-authority'
-import { ENTITY_STAGES } from '@mythrun/contract/events'
+import { WATCHED_ENTITY_STAGES } from '@mythrun/contract/events'
 import type { StageProgress, WorldGenStatusCardProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 
-// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut) — a DOM
-// overlay pinned top-left of the graph pane so the entity-generation stretch reads as
-// PROGRESS, not a hang. It shows: the current (running) stage's friendly label, a
+// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut + reveal
+// timing) — a DOM overlay pinned top-left of the graph pane so the visible wait reads
+// as PROGRESS, not a hang. It shows: the current (running) stage's friendly label, a
 // completed/total percent, an optional data-driven "time left", and a PAPER-REGISTER
 // working indicator.
 //
 // The working indicator IS the percent bar: a segmented SQUARE bar with a FIXED count —
-// one cell per canonical `ENTITY_STAGES` stage (all 8 known from frame one, NOT grown
-// one bar per stream stage; audit ③). The PREP stages (concept_intake / world_color /
-// vocabulary_intake) are NOT bars here — the two-act flow shows the WorldGenLoading
-// screen for that stretch, so this card starts at the graph act's own beginning
-// (world_and_factions, the first entity-producing stage); a prep entry in the stream's
-// `stages[]` is simply ignored. The stream only ADVANCES each cell's fill: completed
-// cells solid ink, the running cell ember + `animate-pulse` (an opacity fade, the
-// brand's ONLY sanctioned motion — §4), and a stage not yet seen in the stream a faint
-// pending track. NO circle, NO spinner, NO dots (hard brand rule). Percent is
-// `completedCount / 8` (fixed entity-stage denominator). At 100% no cell is running, so
-// the pulse stops and the bar rests full. Colour is never the sole signal: the running
-// cell is distinct by fill (ember) even with motion reduced, and the label/percent/
-// progressbar aria carry the meaning.
+// one cell per canonical `WATCHED_ENTITY_STAGES` stage (all known from frame one, NOT
+// grown one bar per stream stage; audit ③). The PREP stages (concept_intake /
+// world_color / vocabulary_intake) are NOT bars here — the two-act flow shows the
+// WorldGenLoading screen for that stretch — and neither are the SILENT TAIL stages
+// (entity_consolidation → embed_world): the visible wait ends at the wiki-reveal
+// boundary (entity_relationships), so the bars hit 100% exactly at the moment the
+// route fires the reveal (a card that kept counting the tail would vanish at ~62%). A
+// prep or tail entry in the stream's `stages[]` is simply ignored. The stream only
+// ADVANCES each cell's fill: completed cells solid ink, the running cell ember +
+// `animate-pulse` (an opacity fade, the brand's ONLY sanctioned motion — §4), and a
+// stage not yet seen in the stream a faint pending track. NO circle, NO spinner, NO
+// dots (hard brand rule). Percent is `completedCount / TOTAL_STAGES` (fixed
+// watched-entity denominator). At 100% no cell is running, so the pulse stops and the
+// bar rests full. Colour is never the sole signal: the running cell is distinct by
+// fill (ember) even with motion reduced, and the label/percent/progressbar aria carry
+// the meaning.
 //
 // Cost is NOT rendered (audit ⑥): the player never sees API spend; the dev ticker owns
 // cost. The card self-positions `absolute` inside its host pane (documented on the
 // contract), is `pointer-events-none` (a readout, never intercepting graph
 // interaction), and caps its width so it fits a ~375px pane without overflow.
 
-const TOTAL_STAGES = ENTITY_STAGES.length // 8 — the FIXED bar count + % denominator
+const TOTAL_STAGES = WATCHED_ENTITY_STAGES.length // 3 — the FIXED bar count + % denominator
 
 const CARD_CLASS = cn(
   'pointer-events-none absolute left-[var(--space-3)] top-[var(--space-3)] z-10',
@@ -73,8 +76,9 @@ function resolveStageLabel(stage: string, stageLabels?: Readonly<Record<string, 
   return stageLabels?.[stage] ?? `[ph: ${stage}]`
 }
 
-/** One of the FIXED entity-stage bars: its canonical stage id + the fill state derived
- *  from the matching stream entry (or `pending` when the stream hasn't reached it). */
+/** One of the FIXED watched-entity bars: its canonical stage id + the fill state
+ *  derived from the matching stream entry (or `pending` when the stream hasn't
+ *  reached it). */
 interface Bar {
   readonly stage: string
   readonly state: CellState
@@ -89,13 +93,14 @@ interface Progress {
   readonly isComplete: boolean
 }
 
-/** Seed the FIXED 8 bars from the `ENTITY_STAGES` taxonomy (known from frame one)
- *  and advance each cell's fill from its matching stream entry — a PREP stage in the
- *  stream matches no bar, so it is ignored. Percent is `completedCount / 8` — a fixed
- *  entity-stage denominator, never the growing stream length. */
+/** Seed the FIXED bars from the `WATCHED_ENTITY_STAGES` taxonomy (known from frame
+ *  one) and advance each cell's fill from its matching stream entry — a PREP or
+ *  silent-TAIL stage in the stream matches no bar, so it is ignored. Percent is
+ *  `completedCount / TOTAL_STAGES` — a fixed watched-entity denominator, never the
+ *  growing stream length; it reaches 100% exactly at the wiki-reveal moment. */
 function computeProgress(stages: readonly StageProgress[]): Progress {
   const statusByStage = new Map(stages.map((s) => [s.stage, s.status]))
-  const bars: Bar[] = ENTITY_STAGES.map((stage) => ({
+  const bars: Bar[] = WATCHED_ENTITY_STAGES.map((stage) => ({
     stage,
     state: cellState(statusByStage.get(stage) ?? 'pending'),
   }))

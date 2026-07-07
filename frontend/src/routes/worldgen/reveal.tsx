@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Stack, Grid, Heading, Text, Button, WorldGenGraph, WorldWiki } from '@mythrun/ui'
 import {
+  completedTailStageCount,
   getWorldSnapshot,
   useApiContext,
   type ApiContext,
@@ -12,12 +13,24 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
 
-// The WORLD REVEAL (MYT-89 Phase D, D3) — where the `/campaigns/:id` route lands
-// the moment world-gen completes (it replaces C6's `CompleteHandoff` placeholder).
-// The owner sees their SETTLED world graph (C4's `WorldGenGraph`, fed the folded
+// The WORLD REVEAL (MYT-89 Phase D, D3 + reveal timing) — where the
+// `/campaigns/:id` route lands the moment the CONNECTIONS ARE WOVEN
+// (entity_relationships completes), not when the whole pipeline finishes. The
+// owner sees their world graph (C4's `WorldGenGraph`, fed the folded
 // nodes/edges) BESIDE the browsable wiki (D2's `WorldWiki`, over the D1
 // `toWikiViewModel`), with SHARED SELECTION, an explore prompt, and a Continue →
 // that leads to the starting-situation pick (D4).
+//
+// SILENT UPDATES (MYT-89 reveal timing): while the player explores, the
+// pipeline's tail stages (entity_consolidation → embed_world) keep running
+// behind this screen. Each tail completion bumps the `stages`-derived refetch
+// token and the wiki QUIETLY refetches its snapshot — consolidated ghosts and
+// coherence-pass reconciliations just appear in the data; no spinner takeover,
+// no layout jolt (the old model stays rendered until the fresh one resolves).
+// The graph absorbs the same patches through the stream's nodes/edges props.
+// The Continue affordance is gated (`continueReady`) until the pipeline
+// finishes — the starting-situation POST requires a complete world — and
+// appears quietly when it does.
 //
 // SHARED SELECTION is single-id-space (BUG 2.1): the graph selects by `displayId`
 // and, post-gen, every node is finalized so its `displayId` IS its real entity id
@@ -26,7 +39,11 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 
 /** Fetches the FULL known-tier snapshot (the widened `getWorldSnapshot` returns
  *  entities + facts + entityHierarchy) — injected so tests substitute a resolved
- *  fixture. World-gen is complete here, so the endpoint never 409s. */
+ *  fixture. The route mounts this screen only after the boundary stage
+ *  (entity_relationships) has committed — the same stage the endpoint's 409
+ *  gate checks — so the fetch never 409s. The known-tier filter is SERVER-side
+ *  (worldSnapshotView, enforced ignorance): fetching mid-tail serves the same
+ *  known-only projection as post-completion. */
 type FetchSnapshot = (ctx: ApiContext, campaignId: string) => Promise<WorldSnapshot>
 
 interface WikiModelState {
@@ -34,16 +51,24 @@ interface WikiModelState {
   readonly loading: boolean
 }
 
-/** Fetch the world snapshot once and normalize it to the wiki view model. A
- *  failed/transient fetch settles to a calm empty panel (never throws into the
- *  route). The `active` flag drops a late resolve after unmount. */
-function useWikiModel(campaignId: string, fetchSnapshot: FetchSnapshot): WikiModelState {
+/** Fetch the world snapshot and normalize it to the wiki view model; REFETCH
+ *  quietly whenever `refreshToken` bumps (a silent tail stage completed — the
+ *  reconciled world). Quiet by construction: `loading` is only ever true before
+ *  the FIRST settle, and the current model stays rendered until a fresh one
+ *  resolves (a refetch failure keeps the old model — the next tail completion
+ *  retries). A failed/transient first fetch settles to a calm empty panel
+ *  (never throws into the route). The `active` flag drops a late resolve after
+ *  unmount / a superseded refetch. */
+function useWikiModel(
+  campaignId: string,
+  fetchSnapshot: FetchSnapshot,
+  refreshToken: number,
+): WikiModelState {
   const ctx = useApiContext()
   const [model, setModel] = useState<WikiViewModel | null>(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     let active = true
-    setLoading(true)
     void fetchSnapshot(ctx, campaignId)
       .then((snapshot) => {
         if (!active) return
@@ -56,7 +81,7 @@ function useWikiModel(campaignId: string, fetchSnapshot: FetchSnapshot): WikiMod
     return () => {
       active = false
     }
-  }, [ctx, campaignId, fetchSnapshot])
+  }, [ctx, campaignId, fetchSnapshot, refreshToken])
   return { model, loading }
 }
 
@@ -101,8 +126,17 @@ function WikiPanel({ state, selectedEntityId, onSelect, query, onQuery }: WikiPa
 }
 
 export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'> {
-  /** The campaign whose settled world is being revealed. */
+  /** The campaign whose world is being revealed. */
   campaignId: string
+  /** The stream's folded per-stage progress — the silent-update driver: each
+   *  completed TAIL stage bumps the wiki's quiet refetch token. Omit (or pass a
+   *  static array) for a settled world — the wiki then fetches once. */
+  stages?: WorldGenStream['stages']
+  /** Whether the Continue affordance is offered. The route passes false while
+   *  the tail is still running (the starting-situation POST requires a complete
+   *  world); the button appears quietly on completion. Default true (a settled
+   *  world). */
+  continueReady?: boolean
   /** Continue intent — leads to the starting-situation pick (D4). Defaults to
    *  navigating to the situation route; injectable so callers/tests override. */
   onContinue?: () => void
@@ -110,10 +144,14 @@ export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'
   fetchSnapshot?: FetchSnapshot
 }
 
+const NO_STAGES: WorldGenStream['stages'] = []
+
 export function WorldReveal({
   campaignId,
   nodes,
   edges,
+  stages = NO_STAGES,
+  continueReady = true,
   onContinue,
   fetchSnapshot = getWorldSnapshot,
 }: WorldRevealProps): React.JSX.Element {
@@ -125,7 +163,11 @@ export function WorldReveal({
 
   const [selectedEntityId, setSelectedEntityId] = useState<string | undefined>(undefined)
   const [query, setQuery] = useState('')
-  const wiki = useWikiModel(campaignId, fetchSnapshot)
+  // The quiet refetch token: how many silent tail stages have completed. Each
+  // bump refetches the snapshot so the reconciled world surfaces while the
+  // player reads. Monotonic within a mount (stages only advance).
+  const wikiRefreshToken = completedTailStageCount(stages)
+  const wiki = useWikiModel(campaignId, fetchSnapshot, wikiRefreshToken)
 
   // The graph now selects in `displayId` space, which post-gen IS the entity id —
   // the same id the wiki keys on. So the shared selection needs no translation.
@@ -181,11 +223,16 @@ export function WorldReveal({
       <Text role="prose-body" as="p">
         {t('worldReveal.explorePrompt')}
       </Text>
-      <Stack direction="row">
-        <Button onPress={handleContinue} data-testid="reveal-continue">
-          {t('worldReveal.continue')}
-        </Button>
-      </Stack>
+      {/* The Continue appears QUIETLY once the pipeline finishes (the pick's POST
+          requires a complete world). While the tail runs, the explore prompt is the
+          whole call to action — exploring IS the intent of this screen. */}
+      {continueReady && (
+        <Stack direction="row">
+          <Button onPress={handleContinue} data-testid="reveal-continue">
+            {t('worldReveal.continue')}
+          </Button>
+        </Stack>
+      )}
     </Stack>
   )
 }

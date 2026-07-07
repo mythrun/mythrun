@@ -8,11 +8,12 @@ import { WorldGenLoading } from './WorldGenLoading.tsx'
 // pre-entity loading screen shown while the prep stages run — the DS Spinner (the
 // brand dither wave) + a FLAVOR line that cycles short playful loading messages
 // every few seconds (Claude-Code-"thinking" style). When entities start streaming
-// the consumer flips `revealReady` and the screen grows the "watch your world be
-// born" REVEAL button; pressing it fires `onReveal` (the consumer swaps to the
-// graph). These tests pin: the Spinner presence + label, the cycler's rotation +
+// the consumer flips `watchReady` and the screen grows the "watch your world be
+// born" WATCH button; pressing it fires `onWatch` (the consumer swaps to the
+// graph — formerly the "reveal" beat; "reveal" now names the wiki-reveal moment).
+// These tests pin: the Spinner presence + label, the cycler's rotation +
 // wrap-around (fake timers), the reduced-motion freeze (no timed swapping), the
-// reveal button's gating + press wiring, and the a11y surface.
+// watch button's gating + press wiring, and the a11y surface.
 
 const FLAVORS = [
   '[ph: worldgen flavor 1]',
@@ -129,32 +130,32 @@ describe('WorldGenLoading', () => {
     expect(clearInterval).toHaveBeenCalled()
   })
 
-  it('hides the reveal button during the pure prep act (revealReady omitted/false)', () => {
+  it('hides the watch button during the pure prep act (watchReady omitted/false)', () => {
     const { queryByRole, rerender } = render(<WorldGenLoading flavorLabels={FLAVORS} />)
     expect(queryByRole('button')).toBeNull()
-    rerender(<WorldGenLoading flavorLabels={FLAVORS} revealReady={false} />)
+    rerender(<WorldGenLoading flavorLabels={FLAVORS} watchReady={false} />)
     expect(queryByRole('button')).toBeNull()
   })
 
-  it('shows the reveal button once revealReady, and fires onReveal on press', () => {
-    const onReveal = vi.fn()
+  it('shows the watch button once watchReady, and fires onWatch on press', () => {
+    const onWatch = vi.fn()
     const { getByRole } = render(
       <WorldGenLoading
         flavorLabels={FLAVORS}
-        revealReady
-        revealLabel="[ph: watch your world be born]"
-        onReveal={onReveal}
+        watchReady
+        watchLabel="[ph: watch your world be born]"
+        onWatch={onWatch}
       />,
     )
     const button = getByRole('button', { name: '[ph: watch your world be born]' })
     fireEvent.click(button)
-    expect(onReveal).toHaveBeenCalledTimes(1)
+    expect(onWatch).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps cycling the flavor line while the reveal button is showing (gen keeps running)', () => {
+  it('keeps cycling the flavor line while the watch button is showing (gen keeps running)', () => {
     vi.useFakeTimers()
     const { getByText } = render(
-      <WorldGenLoading flavorLabels={FLAVORS} intervalMs={2000} revealReady onReveal={vi.fn()} />,
+      <WorldGenLoading flavorLabels={FLAVORS} intervalMs={2000} watchReady onWatch={vi.fn()} />,
     )
     act(() => {
       vi.advanceTimersByTime(2000)
@@ -163,7 +164,7 @@ describe('WorldGenLoading', () => {
   })
 
   it('never uses banned motion (no spin/slide/bounce — the brand rule)', () => {
-    const { container } = render(<WorldGenLoading flavorLabels={FLAVORS} revealReady />)
+    const { container } = render(<WorldGenLoading flavorLabels={FLAVORS} watchReady />)
     expect(container.innerHTML).not.toMatch(
       /animate-spin|animate-bounce|animate-ping|translate|rotate|scale-/,
     )
@@ -178,7 +179,7 @@ describe('WorldGenLoading', () => {
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
-  it('has no axe violations (prep act + reveal-ready act)', async () => {
+  it('has no axe violations (prep act + watch-ready act)', async () => {
     const prep = render(
       <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel="[ph: making your world]" />,
     )
@@ -188,9 +189,9 @@ describe('WorldGenLoading', () => {
       <WorldGenLoading
         flavorLabels={FLAVORS}
         spinnerLabel="[ph: making your world]"
-        revealReady
-        revealLabel="[ph: watch your world be born]"
-        onReveal={vi.fn()}
+        watchReady
+        watchLabel="[ph: watch your world be born]"
+        onWatch={vi.fn()}
       />,
     )
     expect(await axe(ready.container)).toHaveNoViolations()

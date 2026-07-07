@@ -10,10 +10,13 @@ import type { BaseProps } from './index.ts'
  * style), so the ~2-minute prep stretch reads as alive, not hung.
  *
  * When entities start streaming (the consumer detects the first entity stage /
- * the first node), `revealReady` flips true and the screen grows a REVEAL
+ * the first node), `watchReady` flips true and the screen grows a WATCH
  * button ("watch your world be born") — a deliberate beat: generation keeps
  * running regardless; pressing it just tells the consumer to swap to the graph
- * view (`onReveal`). The screen never transitions on its own.
+ * view (`onWatch`). The screen never transitions on its own. (Formerly the
+ * "reveal" button — renamed for MYT-89 reveal timing: "reveal" now names the
+ * wiki-reveal moment at the connection-weaving boundary, not this graph-entry
+ * beat.)
  *
  * Reduced motion: the Spinner already degrades to its static dither; the flavor
  * CYCLER also respects `prefers-reduced-motion` — when reduced, the label holds
@@ -33,11 +36,11 @@ export interface WorldGenLoadingProps extends Omit<BaseProps, 'children'> {
   /** i18n key: the Spinner's screen-reader label (the busy announcement — the
    *  flavor line is decorative; this carries the meaning to AT). */
   spinnerLabel?: string
-  /** Entities have started streaming → show the reveal button. Default false
+  /** Entities have started streaming → show the watch button. Default false
    *  (the pure prep act). */
-  revealReady?: boolean
-  /** i18n key: the reveal button's label (e.g. "watch your world be born"). */
-  revealLabel?: string
-  /** Pressed the reveal button — the consumer swaps to the graph view. */
-  onReveal?: () => void
+  watchReady?: boolean
+  /** i18n key: the watch button's label (e.g. "watch your world be born"). */
+  watchLabel?: string
+  /** Pressed the watch button — the consumer swaps to the graph view. */
+  onWatch?: () => void
 }

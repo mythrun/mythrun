@@ -101,20 +101,21 @@ export type { GhostHookListProps, GhostHookItem } from './ghost-hook-list.ts'
 // is re-exported here so consumers read the node shape off the contract surface.
 export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
 
-// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut) — the
-// generation status/loading OVERLAY pinned top-left of the graph pane: the current
-// (running) stage's friendly label, a completed/total percent, an optional data-driven
-// "time left", and a PAPER-REGISTER segmented square bar of a FIXED cell count (one per
-// canonical ENTITY_STAGES stage — the prep stages live in the loading screen; the
-// running cell pulses; NO spinner/circle). Reads the stream's `stages[]` (B4
-// `StageProgress`, re-exported here so a consumer reads it off the same contract
-// surface) to advance the fills. Cost is NOT shown (the player never sees API spend).
+// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut + reveal
+// timing) — the generation status/loading OVERLAY pinned top-left of the graph pane:
+// the current (running) stage's friendly label, a completed/total percent, an optional
+// data-driven "time left", and a PAPER-REGISTER segmented square bar of a FIXED cell
+// count (one per canonical WATCHED_ENTITY_STAGES stage — the prep stages live in the
+// loading screen, the silent tail runs behind the wiki reveal; the running cell
+// pulses; NO spinner/circle). Reads the stream's `stages[]` (B4 `StageProgress`,
+// re-exported here so a consumer reads it off the same contract surface) to advance
+// the fills. Cost is NOT shown (the player never sees API spend).
 export type { WorldGenStatusCardProps, StageProgress } from './world-gen-status.ts'
 
 // WorldGenLoading (MYT-89 two-act generating flow, act one) — the generic pre-entity
 // loading screen: the DS Spinner + a flavor line cycling short playful loading
-// messages, growing a "watch your world be born" reveal button once entities start
-// streaming (the consumer flips `revealReady` and swaps views on `onReveal`).
+// messages, growing a "watch your world be born" watch button once entities start
+// streaming (the consumer flips `watchReady` and swaps views on `onWatch`).
 export type { WorldGenLoadingProps } from './world-gen-loading.ts'
 
 // WorldGenFogField (MYT-89 Phase C, C3) — the decorative fog layer BEHIND the

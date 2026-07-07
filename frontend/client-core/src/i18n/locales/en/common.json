@@ -183,7 +183,7 @@
     "statusEta": "[ph: ~{{minutes}}m left]",
     "statusEtaShort": "[ph: ~{{seconds}}s left]",
     "loadingLabel": "[ph: making your world]",
-    "reveal": "[ph: watch your world be born]",
+    "watch": "[ph: watch your world be born]",
     "flavor1": "[ph: worldgen flavor 1]",
     "flavor2": "[ph: worldgen flavor 2]",
     "flavor3": "[ph: worldgen flavor 3]",

@@ -167,6 +167,13 @@ export { getStageTimings } from './api/worldgen.ts'
 export { remainingStageMs } from './worldgen/stage-eta.ts'
 export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
 
+// Wiki-reveal timing (MYT-89 reveal timing): the pure predicates the
+// campaign-detail route reads off the stream's folded `stages[]` —
+// `connectionsDone` fires the generating → reveal transition the moment
+// connection-weaving completes; `completedTailStageCount` is the reveal's
+// quiet wiki-refetch token as the silent tail stages land.
+export { completedTailStageCount, connectionsDone } from './worldgen/reveal-timing.ts'
+
 // OAuth/PKCE helpers (MYT-84) — the canonical oauth API consumed by the sign-in +
 // callback screens. State persistence + the Cognito Hosted UI config are injected
 // once at boot via configureOAuth; the web store impl (sessionStorage) lives in

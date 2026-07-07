@@ -28,14 +28,20 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //   - the graph is INERT (`interactive={false}`): no entity list, no selection —
 //     the fog + graph own the whole space (§3.4);
 //   - the WorldGenStatusCard (C4) is fed the stream's `stages[]` + a `[ph:]`
-//     stage-label map (ENTITY stages only — the prep stretch belongs to act one)
-//     + a data-driven ETA label (from the route's stage-timings fetch). Cost is
-//     NOT passed (audit ⑥ — the player never sees API spend);
+//     stage-label map (WATCHED entity stages only — the prep stretch belongs to
+//     act one, and the silent tail runs behind the wiki reveal) + a data-driven
+//     ETA label (from the route's stage-timings fetch). Cost is NOT passed
+//     (audit ⑥ — the player never sees API spend);
 //   - the FOG DRAIN is keyed off the ENTITY COUNT (MYT-89 spawn-drain, replacing
 //     the old stage-progress fade): `nodes.length / MIN_EXPECTED_ENTITIES` scales
 //     the fog's respawn flux down as entities arrive, so the wind carries the fog
 //     off the pane — fully gone by the DB-derived minimum entity count a real
 //     generation produces (before the pipeline's tail stages even finish).
+//
+// THIS VIEW ENDS AT THE WIKI-REVEAL MOMENT (MYT-89 reveal timing): the route
+// swaps it for the WorldReveal the instant connection-weaving
+// (entity_relationships) completes — the card's bars hit 100% exactly then; the
+// tail stages never render here.
 //
 // Flat 1-bit paper register — no chrome. The route owns the stream + the timings
 // fetch; this view owns the act state (a local, deliberate transition — never
@@ -68,14 +74,18 @@ const noSelect = (): void => {
 }
 
 /** The canonical entity-generation stage ids (the act-two act detector reads set
- *  membership per stream entry). */
+ *  membership per stream entry). NOTE: this is the GRAPH-ENTRY beat's detector —
+ *  deliberately the full ENTITY_STAGES slice, not the watched subset (any entity
+ *  stage underway means there is something to watch). Distinct from the
+ *  wiki-reveal boundary the route owns (`connectionsDone`). */
 const ENTITY_STAGE_SET: ReadonlySet<string> = new Set(ENTITY_STAGES)
 
-/** Whether entities have started appearing — the act-one → beat trigger. TRUE when
- *  the stream reports an ENTITY_STAGES stage underway (running/completed/failed —
- *  anything past pending), OR when the first node has already arrived (the
- *  entity-added event can land before the stage snapshot catches up; either signal
- *  suffices, so the button never lags the visible truth). */
+/** Whether entities have started appearing — the act-one → watch-beat trigger.
+ *  TRUE when the stream reports an ENTITY_STAGES stage underway
+ *  (running/completed/failed — anything past pending), OR when the first node has
+ *  already arrived (the entity-added event can land before the stage snapshot
+ *  catches up; either signal suffices, so the button never lags the visible
+ *  truth). */
 function entitiesStarted(
   stages: GeneratingViewProps['stages'],
   nodes: GeneratingViewProps['nodes'],
@@ -92,8 +102,8 @@ export function GeneratingView({
 }: GeneratingViewProps): React.JSX.Element {
   const { t } = useTranslation()
   // The act state: 'loading' (act one — the generic loading screen) until the
-  // player presses the reveal button, then 'graph' (act two) for the rest of the
-  // generation. A DELIBERATE transition — never automatic; re-entering mid-gen
+  // player presses the watch button, then 'graph' (act two) until the wiki
+  // reveal. A DELIBERATE transition — never automatic; re-entering mid-gen
   // restarts at the loading screen with the button already offered.
   const [act, setAct] = useState<'loading' | 'graph'>('loading')
   // The graph's Canvas rAF loop + fog sim run for the whole ~10-min generation; the
@@ -101,8 +111,10 @@ export function GeneratingView({
   // preference here (web layer — DOM `matchMedia`) and hand the graph the boolean.
   const prefersReducedMotion = usePrefersReducedMotion()
 
-  // Friendly per-stage labels for the status card (§3.3) — ENTITY stages only:
-  // since the two-act cut the card renders no prep bar, so prep labels would be
+  // Friendly per-stage labels for the status card (§3.3) — WATCHED entity stages
+  // only: since the two-act cut the card renders no prep bar, and since the
+  // reveal-timing cut (MYT-89) no tail bar either — the route swaps to the wiki
+  // reveal at the entity_relationships boundary, so prep/tail labels would be
   // dead data. The DS owns no copy, so the route resolves each backend stage id →
   // an i18n'd label; an unmapped stage falls back to a `[ph:]` placeholder inside
   // the card.
@@ -111,11 +123,6 @@ export function GeneratingView({
       world_and_factions: t('worldGen.stage.world_and_factions'),
       locations_and_npcs: t('worldGen.stage.locations_and_npcs'),
       entity_relationships: t('worldGen.stage.entity_relationships'),
-      entity_consolidation: t('worldGen.stage.entity_consolidation'),
-      starting_situation: t('worldGen.stage.starting_situation'),
-      random_tables: t('worldGen.stage.random_tables'),
-      coherence_pass: t('worldGen.stage.coherence_pass'),
-      embed_world: t('worldGen.stage.embed_world'),
     }),
     [t],
   )
@@ -142,9 +149,9 @@ export function GeneratingView({
     [stageTimings, stages, t],
   )
 
-  // ACT ONE — the generic loading screen, with the reveal button once entities
+  // ACT ONE — the generic loading screen, with the watch button once entities
   // start. The gen keeps streaming underneath (the route's hook stays mounted);
-  // revealing only swaps what this view renders.
+  // watching only swaps what this view renders.
   if (act === 'loading') {
     return (
       <Stack gap={4} data-testid="worldgen-generating">
@@ -152,9 +159,9 @@ export function GeneratingView({
           data-testid="worldgen-loading"
           flavorLabels={flavorLabels}
           spinnerLabel={t('worldGen.loadingLabel')}
-          revealReady={entitiesStarted(stages, nodes)}
-          revealLabel={t('worldGen.reveal')}
-          onReveal={() => {
+          watchReady={entitiesStarted(stages, nodes)}
+          watchLabel={t('worldGen.watch')}
+          onWatch={() => {
             setAct('graph')
           }}
         />

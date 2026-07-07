@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Stack, Heading, Text, Button } from '@mythrun/ui'
 import {
+  connectionsDone,
   getStartingSituations,
   getStageTimings,
   useApiContext,
@@ -19,8 +20,23 @@ import { CampaignPage } from './campaign-page.tsx'
 // target AND where the create flow lands after Begin (MYT-89 Phase C, C6). It is
 // PHASE-AWARE: it opens the world-gen status stream (`useWorldGenStream`, C5) and
 // branches on the coarse lifecycle so the SAME url is the returnable home for a
-// generating world, a failed/terminal one, the just-finished reveal (D3), and —
-// once a starting situation is chosen — the CAMPAIGN PAGE (D5).
+// generating world, a failed/terminal one, the reveal (D3), and — once a
+// starting situation is chosen — the CAMPAIGN PAGE (D5).
+//
+// THE WIKI-REVEAL MOMENT (MYT-89 reveal timing): the reveal fires the instant
+// connection-weaving (`entity_relationships`) COMPLETES — `connectionsDone` over
+// the stream's folded stages — NOT when the whole pipeline finishes. The silent
+// tail (consolidation → embed) keeps running behind the reveal while the owner
+// explores the wiki; the SSE stream stays open (the hook stays mounted), tail
+// completions quietly refresh the reveal's wiki snapshot (its `stages` prop),
+// and Continue appears only at full completion (`continueReady` — the
+// starting-situation POST requires a complete world). The world-snapshot
+// endpoint's 409 gate keys on the SAME boundary stage, and its known-tier
+// filter is server-side, so the earlier fetch is both available and
+// enforced-ignorance-safe. Once the mid-gen reveal has shown, the world_ready
+// flip must NOT interpose the settling line (that would unmount the exploring
+// owner's screen) — `sawMidGenRevealRef` keeps the reveal continuous through
+// the flip.
 //
 // THE POST-SITUATION SEAM: picking a starting situation (D4) does NOT advance the
 // pipeline phase — it only records `campaigns.starting_situation_index`, so the
@@ -164,14 +180,40 @@ export function CampaignDetailRoute({
   // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
   const worldReady = status === 'complete' && phase === 'world_ready'
   const chosen = useSituationChosen(ctx, id, worldReady, fetchSituations)
-  // The ETA history: fetched once while generating, fed to the status card.
   const generating = status === 'generating'
-  const stageTimings = useStageTimings(ctx, generating, fetchTimings)
+  // The wiki-reveal moment: connection-weaving has committed — the visible wait
+  // is over even though the silent tail is still running (`generating` holds).
+  const revealDuringGen = generating && connectionsDone(stages)
+  // The ETA history: fetched once during the watched stretch, fed to the status
+  // card. The reveal has no ETA — the wait is over.
+  const stageTimings = useStageTimings(ctx, generating && !revealDuringGen, fetchTimings)
+  // Once the mid-gen reveal has shown, the world_ready flip keeps rendering it
+  // straight through the chosen-flag resolve window (no settling interposition —
+  // the owner is mid-exploration; pre-pick the reveal IS the default anyway).
+  const sawMidGenRevealRef = useRef(false)
+  useEffect(() => {
+    if (revealDuringGen) sawMidGenRevealRef.current = true
+  }, [revealDuringGen])
 
-  if (generating)
+  // ONE reveal element for every branch that shows it: same type, same position →
+  // React keeps it MOUNTED across the generating → world_ready flip (selection,
+  // search, and the wiki model all survive). Continue appears only at completion.
+  const reveal = (
+    <WorldReveal
+      campaignId={id}
+      nodes={nodes}
+      edges={edges}
+      stages={stages}
+      continueReady={status === 'complete'}
+    />
+  )
+
+  if (generating) {
+    if (revealDuringGen) return reveal
     return (
       <GeneratingView nodes={nodes} edges={edges} stages={stages} stageTimings={stageTimings} />
     )
+  }
   if (status === 'failed') return <FailedView onRetry={() => void retry()} />
   if (status === 'terminal') return <TerminalView />
 
@@ -179,9 +221,8 @@ export function CampaignDetailRoute({
   // flag: the one-time reveal (D3) until a situation is picked, then the campaign
   // page (D5). Every later phase already has a situation → the campaign page.
   if (worldReady) {
-    if (chosen === 'loading') return <SettlingView />
-    if (chosen === 'not-chosen')
-      return <WorldReveal campaignId={id} nodes={nodes} edges={edges} />
+    if (chosen === 'loading') return sawMidGenRevealRef.current ? reveal : <SettlingView />
+    if (chosen === 'not-chosen') return reveal
   }
   return <CampaignPage campaignId={id} />
 }

@@ -87,19 +87,21 @@ export { WorldGenGraph } from './components/WorldGenGraph/WorldGenGraph.tsx'
 // 900×470 virtual space live inside, driven by plain `FogFieldEntity[]` + fade counts.
 export { WorldGenFogField } from './components/WorldGenFog/WorldGenFogField.tsx'
 
-// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut) — the
-// generation status/loading overlay pinned top-left of the graph pane: the current
-// stage's friendly label, a completed/total percent, an optional data-driven "time
-// left", and a PAPER-REGISTER segmented square bar of a FIXED cell count (one per
-// canonical ENTITY_STAGES stage — the prep stages live in WorldGenLoading; the running
-// cell pulses; NO spinner/circle). A DOM overlay (§3.3) reading the stream's
-// `stages[]` to advance the fills. Cost is NOT shown (the player never sees API spend).
+// WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut + reveal
+// timing) — the generation status/loading overlay pinned top-left of the graph pane:
+// the current stage's friendly label, a completed/total percent, an optional
+// data-driven "time left", and a PAPER-REGISTER segmented square bar of a FIXED cell
+// count (one per canonical WATCHED_ENTITY_STAGES stage — the prep stages live in
+// WorldGenLoading, the silent tail runs behind the wiki reveal; the running cell
+// pulses; NO spinner/circle). A DOM overlay (§3.3) reading the stream's `stages[]` to
+// advance the fills; the bars hit 100% exactly at the wiki-reveal moment. Cost is NOT
+// shown (the player never sees API spend).
 export { WorldGenStatusCard } from './components/WorldGenStatusCard/WorldGenStatusCard.tsx'
 
 // WorldGenLoading (MYT-89 two-act generating flow, act one) — the generic pre-entity
 // loading screen shown while the prep stages run: the DS Spinner + a flavor line
 // cycling short playful loading messages, growing the "watch your world be born"
-// reveal button once entities start streaming (`revealReady` → `onReveal`).
+// watch button once entities start streaming (`watchReady` → `onWatch`).
 export { WorldGenLoading } from './components/WorldGenLoading/WorldGenLoading.tsx'
 
 // WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their newly

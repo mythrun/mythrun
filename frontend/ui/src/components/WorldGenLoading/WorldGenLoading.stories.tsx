@@ -6,7 +6,7 @@ import { WorldGenLoading } from './WorldGenLoading.tsx'
 // there is nothing to draw — so the player gets the DS Spinner (the brand dither
 // wave) over a flavor line cycling short playful loading messages every ~3s
 // (Claude-Code-"thinking" style; a hard swap — no animated transition). When
-// entities start streaming, the "watch your world be born" reveal button appears:
+// entities start streaming, the "watch your world be born" watch button appears:
 // generation keeps running regardless; pressing it swaps the route to the graph
 // view. Every string is a `[ph:]` i18n key (the DS owns no copy). Under
 // prefers-reduced-motion the Spinner goes static and the cycler freezes on the
@@ -43,18 +43,18 @@ export const Prep: Story = {
   ),
 }
 
-// REVEAL READY — entities have started streaming: the "watch your world be born"
+// WATCH READY — entities have started streaming: the "watch your world be born"
 // button appears (the deliberate beat). The flavor line keeps cycling — generation
 // runs regardless; the button only swaps the view.
-export const RevealReady: Story = {
+export const WatchReady: Story = {
   render: () => (
     <div className="min-h-dvh bg-bg">
       <WorldGenLoading
         flavorLabels={FLAVORS}
         spinnerLabel="[ph: making your world]"
-        revealReady
-        revealLabel="[ph: watch your world be born]"
-        onReveal={() => {
+        watchReady
+        watchLabel="[ph: watch your world be born]"
+        onWatch={() => {
           /* the route swaps to the graph view */
         }}
       />

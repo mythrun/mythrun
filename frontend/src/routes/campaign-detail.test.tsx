@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { act, render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { useState } from 'react'
+import type { StageProgress } from '@mythrun/contract/events'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -137,9 +139,41 @@ function streamValue(overrides: Partial<WorldGenStream>): WorldGenStream {
   }
 }
 
-function renderDetail(): void {
+const st = (id: string, status: StageProgress['status']): StageProgress => ({
+  stage: id,
+  status,
+  userId: null,
+  costUsd: 0,
+  startedAt: null,
+  completedAt: null,
+})
+
+// The stream mid-tail: connection-weaving COMPLETED, the silent tail underway,
+// worlds.status still 'generating' — the wiki-reveal window (MYT-89 reveal timing).
+const CONNECTIONS_DONE_STAGES: readonly StageProgress[] = [
+  st('world_and_factions', 'completed'),
+  st('locations_and_npcs', 'completed'),
+  st('entity_relationships', 'completed'),
+  st('entity_consolidation', 'running'),
+]
+
+/** Renders the route; the returned `rerender` re-renders the SAME mounted route
+ *  IN PLACE (the mocked stream is re-read on each render, so
+ *  `mockStream.mockReturnValue(...)` + `rerender()` simulates a live SSE
+ *  phase/stage advance without a remount). The re-render is driven from INSIDE
+ *  a wrapper's state: React Router caches the route element, so an outer
+ *  `rerender(tree)` would bail out before ever reaching the route component. */
+function renderDetail(): { rerender: () => void } {
+  let bump: (() => void) | null = null
+  function LiveRoute(): React.JSX.Element {
+    const [, setVersion] = useState(0)
+    bump = () => {
+      setVersion((v) => v + 1)
+    }
+    return <CampaignDetailRoute />
+  }
   const router = createMemoryRouter(
-    [{ path: '/campaigns/:id', element: <CampaignDetailRoute /> }],
+    [{ path: '/campaigns/:id', element: <LiveRoute /> }],
     { initialEntries: ['/campaigns/c1'] },
   )
   render(
@@ -151,6 +185,13 @@ function renderDetail(): void {
       </ApiClientProvider>
     </ThemeProvider>,
   )
+  return {
+    rerender: () => {
+      act(() => {
+        bump?.()
+      })
+    },
+  }
 }
 
 describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
@@ -181,7 +222,73 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(screen.getByTestId('worldgen-loading')).toBeDefined()
     // Nodes exist → the "watch your world be born" button is offered (act one
     // holds until the player presses it — a deliberate beat, never automatic).
-    expect(screen.getByRole('button', { name: i18n.t('worldGen.reveal') })).toBeDefined()
+    expect(screen.getByRole('button', { name: i18n.t('worldGen.watch') })).toBeDefined()
+  })
+
+  it('stays on the generating view while entity_relationships is still RUNNING', () => {
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_gen',
+        nodes: NODES,
+        stages: [
+          st('world_and_factions', 'completed'),
+          st('locations_and_npcs', 'completed'),
+          st('entity_relationships', 'running'),
+        ],
+      }),
+    )
+    renderDetail()
+    // The connections are not woven yet — NO reveal, the wait continues.
+    expect(screen.getByTestId('worldgen-generating')).toBeDefined()
+    expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
+  })
+
+  it('fires the wiki reveal the MOMENT entity_relationships completes — mid-generation', async () => {
+    // The tail (consolidation → embed) is still running and worlds.status is
+    // still 'generating': the reveal shows anyway (MYT-89 reveal timing —
+    // embed_world completion is NOT required).
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_snapshot_ready',
+        nodes: NODES,
+        stages: CONNECTIONS_DONE_STAGES,
+      }),
+    )
+    renderDetail()
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    expect(screen.queryByTestId('worldgen-generating')).toBeNull()
+    // Continue is GATED until the pipeline completes (the situation POST needs a
+    // complete world) — the explore prompt is the whole call to action for now.
+    expect(screen.queryByTestId('reveal-continue')).toBeNull()
+  })
+
+  it('keeps the reveal mounted through the world_ready flip — no settling flash, Continue appears', async () => {
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_snapshot_ready',
+        nodes: NODES,
+        stages: CONNECTIONS_DONE_STAGES,
+      }),
+    )
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null })
+    const { rerender } = renderDetail()
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    // The tail finishes: the stream advances to world_ready. The owner is
+    // mid-exploration — the reveal must hold (no settling interposition), and
+    // Continue grows in quietly now that the pipeline is complete.
+    mockStream.mockReturnValue(
+      streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
+    )
+    rerender()
+    expect(screen.getByTestId('worldgen-reveal')).toBeDefined()
+    expect(screen.queryByTestId('campaign-settling')).toBeNull()
+    expect(screen.getByTestId('reveal-continue')).toBeDefined()
+    // Flush the chosen-flag fetch: still the reveal (nothing was picked).
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    expect(screen.queryByTestId('campaign-settling')).toBeNull()
   })
 
   it('renders a Retry that calls retry() on a retryable failure', () => {
@@ -210,6 +317,19 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
     // The settled graph's accessible entity list carries the node names.
     expect(screen.getByText('Ashfen Reach')).toBeDefined()
+    // The pipeline is complete → Continue is offered (the settled-world default).
+    expect(screen.getByTestId('reveal-continue')).toBeDefined()
+  })
+
+  it('shows the settling line (NOT the reveal) on a fresh world_ready load', () => {
+    // A fresh mount at world_ready (no mid-gen reveal was ever shown): the
+    // chosen-flag resolve window keeps today's settling gate, so an owner who
+    // already picked never sees a reveal flash.
+    mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'world_ready' }))
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1 })
+    renderDetail()
+    expect(screen.getByTestId('campaign-settling')).toBeDefined()
+    expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
   })
 
   it('renders the campaign page at world_ready once a situation is chosen', async () => {

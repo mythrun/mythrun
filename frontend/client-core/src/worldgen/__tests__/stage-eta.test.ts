@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { WORLD_GEN_STAGES, type StageProgress } from '@mythrun/contract/events'
+import { WATCHED_STAGES, WORLD_GEN_STAGES, type StageProgress } from '@mythrun/contract/events'
 import type { StageTiming } from '@mythrun/contract/rest'
 import { remainingStageMs } from '../stage-eta.ts'
 
-// remainingStageMs is the pure ETA math (MYT-89 audit ③): sum the historical
-// average durations for the canonical stages NOT yet completed. These pin the
-// graceful-degrade rules (cold-start / null → no estimate; missing timing → 0;
-// negative avgMs clamped) + the completed-subtraction over the 11 taxonomy stages.
+// remainingStageMs is the pure ETA math (MYT-89 audit ③ + reveal timing): sum
+// the historical average durations for the WATCHED stages NOT yet completed —
+// the visible wait ends at the wiki-reveal boundary (entity_relationships), so
+// the silent tail never counts (an ETA that included the tail would promise
+// minutes past the moment the reveal fires). These pin the graceful-degrade
+// rules (cold-start / null → no estimate; missing timing → 0; negative avgMs
+// clamped), the completed-subtraction, and the tail exclusion.
 
 const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   stage: id,
@@ -31,18 +34,36 @@ describe('remainingStageMs — no usable history degrades to no estimate', () =>
   })
 })
 
-describe('remainingStageMs — total remaining over the un-completed stages', () => {
-  it('sums avgMs for the stages NOT yet completed (all 11, none done)', () => {
-    // 11 stages × 10_000ms, nothing completed → the whole run remains.
-    expect(remainingStageMs(uniformTimings(10_000), [])).toBe(WORLD_GEN_STAGES.length * 10_000)
+describe('remainingStageMs — total remaining over the un-completed WATCHED stages', () => {
+  it('sums avgMs for the watched stages NOT yet completed (none done → the whole wait)', () => {
+    // 6 watched stages × 10_000ms, nothing completed → the whole visible wait
+    // remains. The 5 silent tail stages carry timings too — they never count.
+    expect(remainingStageMs(uniformTimings(10_000), [])).toBe(WATCHED_STAGES.length * 10_000)
   })
 
   it('excludes completed stages from the total', () => {
     const stages = [stage('concept_intake', 'completed'), stage('world_color', 'running')]
-    // 11 stages × 10_000, minus the one completed stage → 10 × 10_000.
+    // 6 watched × 10_000, minus the one completed stage → 5 × 10_000.
     expect(remainingStageMs(uniformTimings(10_000), stages)).toBe(
-      (WORLD_GEN_STAGES.length - 1) * 10_000,
+      (WATCHED_STAGES.length - 1) * 10_000,
     )
+  })
+
+  it('reaches 0 exactly at the reveal boundary — the tail promises no further wait', () => {
+    // Every watched stage completed, the tail not even started, tail timings
+    // present: the estimate is DONE (0 → the card shows no lingering "~Xm left"
+    // at the moment the reveal fires).
+    const allWatched = WATCHED_STAGES.map((s) => stage(s, 'completed'))
+    expect(remainingStageMs(uniformTimings(60_000), allWatched)).toBe(0)
+  })
+
+  it('ignores a tail-stage timing entirely (coherence_pass etc. are nobody’s wait)', () => {
+    const timings: StageTiming[] = [
+      { stage: 'entity_relationships', avgMs: 20_000 },
+      { stage: 'coherence_pass', avgMs: 999_999 }, // tail — excluded
+      { stage: 'embed_world', avgMs: 999_999 }, // tail — excluded
+    ]
+    expect(remainingStageMs(timings, [])).toBe(20_000)
   })
 
   it('counts a stage with no timing as 0 (never crashes)', () => {

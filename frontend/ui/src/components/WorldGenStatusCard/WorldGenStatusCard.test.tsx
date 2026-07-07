@@ -1,24 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import { axe } from 'jest-axe'
-import { ENTITY_STAGES, PREP_STAGES, type StageProgress } from '@mythrun/contract/events'
+import {
+  PREP_STAGES,
+  TAIL_STAGES,
+  WATCHED_ENTITY_STAGES,
+  type StageProgress,
+} from '@mythrun/contract/events'
 import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 
 // WorldGenStatusCard is a DOM overlay (top-left of the graph pane) that turns the
-// entity-generation act into legible PROGRESS. Since the two-act cut it renders a
-// FIXED 8-bar indicator seeded from the canonical ENTITY_STAGES slice (known from
-// frame one, audit ③) — the PREP stages (concept_intake / world_color /
-// vocabulary_intake) live in the WorldGenLoading screen now and get NO bar here; a
-// prep entry in the stream's `stages[]` is ignored. The stream only ADVANCES each
-// bar's fill. It shows: the CURRENT (running) stage's friendly label, a completed/8
-// percent, an optional data-driven "time left", and a PAPER-REGISTER segmented SQUARE
-// bar whose running cell pulses (opacity fade, the brand's only sanctioned motion).
-// Hard brand rule: NO circles / spinners / dots. Cost is NOT rendered (audit ⑥).
-// These tests pin the fixed 8-bar count + %/8 math, the prep-stage exclusion, the
+// VISIBLE WAIT into legible PROGRESS. Since the reveal-timing cut (MYT-89) it
+// renders a FIXED bar indicator seeded from the canonical WATCHED_ENTITY_STAGES
+// slice (known from frame one, audit ③) — the graph-act stages through the
+// wiki-reveal boundary (world_and_factions → locations_and_npcs →
+// entity_relationships). The PREP stages live in the WorldGenLoading screen and
+// get NO bar; the SILENT TAIL stages (entity_consolidation → embed_world) run
+// behind the wiki reveal and get NO bar either — the bars hit 100% exactly at the
+// reveal moment. A prep or tail entry in the stream's `stages[]` is ignored. The
+// stream only ADVANCES each bar's fill. It shows: the CURRENT (running) stage's
+// friendly label, a completed/total percent, an optional data-driven "time left",
+// and a PAPER-REGISTER segmented SQUARE bar whose running cell pulses (opacity
+// fade, the brand's only sanctioned motion). Hard brand rule: NO circles /
+// spinners / dots. Cost is NOT rendered (audit ⑥). These tests pin the fixed bar
+// count + % math, the prep/tail exclusion, 100%-at-the-reveal-moment, the
 // running-vs-done label, the square (non-circular) indicator, the stage-label
 // resolution + `[ph:]` fallback, and the ETA.
 
-const TOTAL = ENTITY_STAGES.length // 8
+const TOTAL = WATCHED_ENTITY_STAGES.length // 3
 
 const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   stage: id,
@@ -29,19 +38,24 @@ const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   completedAt: null,
 })
 
-// A SHORT stream: only 3 canonical entity stages have appeared (2 completed, 1
-// running). The card must still render 8 bars — the taxonomy seeds the count, the
-// stream only advances fills. 2 completed / 8 → 25%.
-const SHORT: readonly StageProgress[] = [
+// A SHORT stream: only the first watched entity stage has appeared (running). The
+// card must still render all 3 bars — the taxonomy seeds the count, the stream
+// only advances fills. 0 completed / 3 → 0%.
+const SHORT: readonly StageProgress[] = [stage('world_and_factions', 'running')]
+
+// Mid-wait: 2 of the 3 watched entity stages completed, the boundary stage
+// running. 2 / 3 → 67%.
+const MID: readonly StageProgress[] = [
   stage('world_and_factions', 'completed'),
   stage('locations_and_npcs', 'completed'),
   stage('entity_relationships', 'running'),
 ]
 
-const EXPECTED_SHORT_PERCENT = Math.round((2 / TOTAL) * 100) // 25
+const EXPECTED_MID_PERCENT = Math.round((2 / TOTAL) * 100) // 67
 
-// Every canonical entity stage completed → 100%, the done state.
-const DONE: readonly StageProgress[] = ENTITY_STAGES.map((s) => stage(s, 'completed'))
+// Every watched entity stage completed → 100%, the done state — the wiki-reveal
+// moment, even though the silent tail has not run at all.
+const DONE: readonly StageProgress[] = WATCHED_ENTITY_STAGES.map((s) => stage(s, 'completed'))
 
 const LABELS = {
   stageLabels: {
@@ -50,17 +64,16 @@ const LABELS = {
   doneLabel: '[ph: world ready]',
 }
 
-describe('WorldGenStatusCard — FIXED 8 bars from the ENTITY_STAGES taxonomy (audit ③)', () => {
-  it('renders all 8 entity-stage bars from frame one even when the stream is short', () => {
+describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxonomy', () => {
+  it('renders all 3 watched-entity bars from frame one even when the stream is short', () => {
     const { container } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
-    expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(2)
     expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
-    // The remaining 5 canonical entity stages have not appeared in the stream → pending.
-    expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 3)
+    // The remaining watched entity stages have not appeared in the stream → pending.
+    expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 1)
   })
 
-  it('renders 8 pending bars at 0% before the first snapshot frame (empty stream)', () => {
+  it('renders 3 pending bars at 0% before the first snapshot frame (empty stream)', () => {
     const { container, getByText } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL)
@@ -81,32 +94,50 @@ describe('WorldGenStatusCard — FIXED 8 bars from the ENTITY_STAGES taxonomy (a
     expect(getByText('0%')).toBeInTheDocument()
   })
 
-  it('computes percent as completed / 8 (fixed denominator), NOT over the stream length', () => {
-    const { getByText, getByRole } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
-    expect(getByText(`${String(EXPECTED_SHORT_PERCENT)}%`)).toBeInTheDocument()
-    expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_SHORT_PERCENT))
+  it('IGNORES silent-tail stream entries — the tail is nobody’s wait (reveal timing)', () => {
+    // Everything through the boundary completed AND tail stages underway: the card
+    // holds at 100% with no extra bars and no running cell — a tail entry never
+    // renders as progress-to-come.
+    const withTail: readonly StageProgress[] = [
+      ...DONE,
+      stage('entity_consolidation', 'completed'),
+      stage('coherence_pass', 'running'),
+    ]
+    const { container, getByText } = render(<WorldGenStatusCard stages={withTail} {...LABELS} />)
+    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
+    expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(TOTAL)
+    expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(0)
+    expect(getByText('100%')).toBeInTheDocument()
+  })
+
+  it('computes percent as completed / 3 (fixed denominator), NOT over the stream length', () => {
+    const { getByText, getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    expect(getByText(`${String(EXPECTED_MID_PERCENT)}%`)).toBeInTheDocument()
+    expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_MID_PERCENT))
   })
 
   it('shows the RUNNING stage friendly label', () => {
-    const { getByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    const { getByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(getByText('[ph: drawing the ties]')).toBeInTheDocument()
   })
 
   it('falls back to a `[ph: <stage>]` placeholder for an unmapped stage (DS owns no copy)', () => {
-    const { getByText } = render(<WorldGenStatusCard stages={SHORT} />)
+    const { getByText } = render(<WorldGenStatusCard stages={MID} />)
     expect(getByText('[ph: entity_relationships]')).toBeInTheDocument()
   })
 
   it('exposes the percent through a determinate progressbar', () => {
-    const { getByRole } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    const { getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     const bar = getByRole('progressbar')
     expect(bar).toHaveAttribute('aria-valuemin', '0')
     expect(bar).toHaveAttribute('aria-valuemax', '100')
   })
 })
 
-describe('WorldGenStatusCard — done state', () => {
-  it('shows 100% and the done label when every canonical entity stage has completed', () => {
+describe('WorldGenStatusCard — done state (the wiki-reveal moment)', () => {
+  it('hits 100% + the done label when the BOUNDARY stage completes — the tail not required', () => {
+    // No tail entry in the stream at all: the bars rest full the instant
+    // connection-weaving lands, which is exactly when the route fires the reveal.
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
     expect(getByText('100%')).toBeInTheDocument()
     expect(getByText('[ph: world ready]')).toBeInTheDocument()
@@ -118,18 +149,24 @@ describe('WorldGenStatusCard — done state', () => {
     expect(container.querySelector('[data-cell-state="running"]')).toBeNull()
     expect(container.querySelector('.animate-pulse')).toBeNull()
   })
+
+  it('never reaches 100% while the boundary stage is still running', () => {
+    const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    expect(queryByText('100%')).toBeNull()
+    expect(queryByText('[ph: world ready]')).toBeNull()
+  })
 })
 
 describe('WorldGenStatusCard — data-driven ETA (audit ③)', () => {
   it('renders the resolved "time left" when supplied', () => {
     const { getByText } = render(
-      <WorldGenStatusCard stages={SHORT} etaLabel="[ph: ~2m left]" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} etaLabel="[ph: ~2m left]" {...LABELS} />,
     )
     expect(getByText('[ph: ~2m left]')).toBeInTheDocument()
   })
 
   it('renders NO estimate when etaLabel is omitted (cold-start / no history)', () => {
-    const { queryByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText(/left/)).toBeNull()
   })
 })
@@ -137,14 +174,14 @@ describe('WorldGenStatusCard — data-driven ETA (audit ③)', () => {
 describe('WorldGenStatusCard — cost removed (audit ⑥)', () => {
   it('never renders an API-spend readout (no `$…`)', () => {
     // No `costUsd` prop exists anymore; assert no dollar figure leaks under any state.
-    const { queryByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText(/\$/)).toBeNull()
   })
 })
 
 describe('WorldGenStatusCard — paper register (NO circle / spinner)', () => {
   it('the working indicator is a SQUARE segmented bar, never a circle or spinner', () => {
-    const { container, getByTestId } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    const { container, getByTestId } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(getByTestId('worldgen-status-bar')).toBeInTheDocument()
     expect(container.querySelector('[data-spinner-grid]')).toBeNull()
     expect(container.querySelector('svg')).toBeNull()
@@ -155,7 +192,7 @@ describe('WorldGenStatusCard — paper register (NO circle / spinner)', () => {
   })
 
   it('pulses (opacity fade) ONLY the running cell — the brand-sanctioned motion', () => {
-    const { container } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
+    const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(container.querySelector('[data-cell-state="running"]')).toHaveClass('animate-pulse')
     for (const cell of container.querySelectorAll('[data-cell-state="completed"]')) {
       expect(cell).not.toHaveClass('animate-pulse')
@@ -168,18 +205,27 @@ describe('WorldGenStatusCard — paper register (NO circle / spinner)', () => {
 describe('WorldGenStatusCard — chrome', () => {
   it('passes through a data-testid', () => {
     const { getByTestId } = render(
-      <WorldGenStatusCard stages={SHORT} data-testid="status-card" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} data-testid="status-card" {...LABELS} />,
     )
     expect(getByTestId('status-card')).toBeInTheDocument()
   })
 
   it('has no a11y violations (generating + done)', async () => {
     const generating = render(
-      <WorldGenStatusCard stages={SHORT} etaLabel="[ph: ~2m left]" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} etaLabel="[ph: ~2m left]" {...LABELS} />,
     )
     expect(await axe(generating.container)).toHaveNoViolations()
     generating.unmount()
     const done = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
     expect(await axe(done.container)).toHaveNoViolations()
+  })
+})
+
+// TAIL_STAGES is imported to keep the tail-exclusion fixture honest if the
+// taxonomy ever grows; assert the fixture's tail ids really are tail stages.
+describe('fixture honesty', () => {
+  it('the tail fixture ids are canonical TAIL_STAGES members', () => {
+    expect(TAIL_STAGES).toContain('entity_consolidation')
+    expect(TAIL_STAGES).toContain('coherence_pass')
   })
 })

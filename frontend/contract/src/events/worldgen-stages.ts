@@ -69,3 +69,48 @@ export const PREP_STAGES: readonly WorldGenStage[] = WORLD_GEN_STAGES.slice(0, E
 /** The entity-generation stages (the graph act): `world_and_factions` — the
  *  first stage that emits `entity-added` — and everything after it. */
 export const ENTITY_STAGES: readonly WorldGenStage[] = WORLD_GEN_STAGES.slice(ENTITY_BOUNDARY)
+
+// ---------------------------------------------------------------------------
+// The WIKI-REVEAL boundary split (MYT-89 reveal timing).
+//
+// The player's visible wait ends the moment the connections are woven —
+// `entity_relationships` completing IS the wiki-reveal moment (the route swaps
+// the generating view for the world reveal there; the world-snapshot endpoint's
+// 409 gate and derive-phase's `world_snapshot_ready` both key on this same
+// stage). Everything after it (`entity_consolidation` → `embed_world`) is the
+// SILENT TAIL: it keeps running behind the reveal while the player explores the
+// wiki — nobody is watching a bar for it. Consolidated ghosts, the starting
+// situations, and the coherence-pass reconciliation surface as QUIET wiki/graph
+// updates, not as progress.
+//
+// NOTE this is a different boundary from the graph-entry beat above: the
+// PREP/ENTITY split marks where entities START (the "watch your world be born"
+// button); this split marks where the visible wait ENDS (the wiki reveal). All
+// slices are DERIVED from WORLD_GEN_STAGES — a single source, reassembly-tested
+// in worldgen-stages.test.ts, so a taxonomy reorder/addition can never drift
+// either split.
+//
+// Consumers:
+//   - the campaign-detail route transitions generating → reveal when the
+//     boundary stage completes (client-core's `connectionsDone`);
+//   - the WorldGenStatusCard seeds its fixed bars from WATCHED_ENTITY_STAGES —
+//     the bars hit 100% exactly at the reveal moment (a card whose bars kept
+//     counting the tail would vanish at ~62%);
+//   - the reveal quietly refetches its wiki snapshot as TAIL_STAGES complete
+//     (client-core's `completedTailStageCount`).
+export const REVEAL_BOUNDARY_STAGE: WorldGenStage = 'entity_relationships'
+const TAIL_BOUNDARY = WORLD_GEN_STAGES.indexOf(REVEAL_BOUNDARY_STAGE) + 1
+
+/** The visible wait: every canonical stage the player actually waits through,
+ *  ending at (and including) the reveal-boundary stage. */
+export const WATCHED_STAGES: readonly WorldGenStage[] = WORLD_GEN_STAGES.slice(0, TAIL_BOUNDARY)
+
+/** The status card's bar slice: the graph-act stages of the visible wait
+ *  (ENTITY_STAGES ∩ WATCHED_STAGES — `world_and_factions` through the
+ *  reveal-boundary stage). */
+export const WATCHED_ENTITY_STAGES: readonly WorldGenStage[] =
+  WATCHED_STAGES.slice(ENTITY_BOUNDARY)
+
+/** The silent tail: the stages that run behind the wiki reveal while the
+ *  player explores — their completions surface as quiet data refreshes. */
+export const TAIL_STAGES: readonly WorldGenStage[] = WORLD_GEN_STAGES.slice(TAIL_BOUNDARY)

@@ -13,10 +13,12 @@ import { Button } from '../Button/Button.tsx'
 // deliberately unanimated — the brand's only sanctioned motion is an opacity
 // fade, and the Spinner already owns the screen's motion.
 //
-// THE REVEAL BEAT: when entities start streaming, the consumer flips
-// `revealReady` and the screen grows the "watch your world be born" button.
-// Generation keeps running regardless — pressing it only fires `onReveal` (the
+// THE WATCH BEAT: when entities start streaming, the consumer flips
+// `watchReady` and the screen grows the "watch your world be born" button.
+// Generation keeps running regardless — pressing it only fires `onWatch` (the
 // consumer swaps to the graph view). The screen never transitions on its own.
+// (Formerly the "reveal" beat — renamed for MYT-89 reveal timing: "reveal" now
+// names the wiki-reveal moment at the connection-weaving boundary.)
 //
 // REDUCED MOTION: the Spinner degrades itself to a static dither; the CYCLER
 // also respects `prefers-reduced-motion` — when reduced, no interval starts and
@@ -26,7 +28,7 @@ import { Button } from '../Button/Button.tsx'
 //
 // a11y: the Spinner's `role="status"` + `spinnerLabel` carry the busy meaning to
 // AT. The flavor line is DECORATIVE prose (not a live region — announcing a new
-// line every few seconds would be noise), so it is aria-hidden; the reveal
+// line every few seconds would be noise), so it is aria-hidden; the watch
 // button is a real DS Button. The vertical footprint matches the graph pane's
 // (`clamp(18rem,62dvh,46rem)`) so the act-one → act-two swap doesn't jump.
 
@@ -53,9 +55,9 @@ export const WorldGenLoading = forwardRef<HTMLDivElement, WorldGenLoadingProps>(
       flavorLabels,
       intervalMs = DEFAULT_INTERVAL_MS,
       spinnerLabel,
-      revealReady = false,
-      revealLabel = '[ph: watch your world be born]',
-      onReveal,
+      watchReady = false,
+      watchLabel = '[ph: watch your world be born]',
+      onWatch,
       'data-testid': dataTestId,
     },
     ref,
@@ -107,12 +109,12 @@ export const WorldGenLoading = forwardRef<HTMLDivElement, WorldGenLoadingProps>(
             {flavor}
           </p>
         )}
-        {revealReady && (
+        {watchReady && (
           <Button
-            data-testid="worldgen-loading-reveal"
-            {...(onReveal !== undefined ? { onPress: onReveal } : {})}
+            data-testid="worldgen-loading-watch"
+            {...(onWatch !== undefined ? { onPress: onWatch } : {})}
           >
-            {revealLabel}
+            {watchLabel}
           </Button>
         )}
       </div>

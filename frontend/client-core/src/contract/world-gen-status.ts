@@ -20,11 +20,15 @@ export type { StageProgress } from '@mythrun/contract/events'
  * no spinner, no dots. The indicator stops at 100%.
  *
  * It reads the stream's `stages[]` (the B4 `StageProgress[]`), advancing the fill of
- * a FIXED 8-bar loading indicator seeded from the canonical `ENTITY_STAGES` slice of
- * the `WORLD_GEN_STAGES` taxonomy (MYT-89 audit ③ — all bars known from frame one, not
- * grown one per stage; prep-stage stream entries match no bar and are ignored). This
- * is a DOM overlay (§3.3), NOT a canvas surface — it composes over the C3 fog + C4
- * graph canvases.
+ * a FIXED bar indicator seeded from the canonical `WATCHED_ENTITY_STAGES` slice of
+ * the `WORLD_GEN_STAGES` taxonomy (MYT-89 audit ③ + reveal timing — all bars known
+ * from frame one, not grown one per stage). The card renders ONLY the visible wait:
+ * the graph-act stages through the wiki-reveal boundary (entity_relationships), so
+ * the bars hit 100% exactly at the moment the reveal fires. Prep-stage entries match
+ * no bar (the two-act loading screen owns that stretch) and SILENT TAIL entries
+ * (entity_consolidation → embed_world) match no bar either — they run behind the
+ * reveal and are nobody's wait. This is a DOM overlay (§3.3), NOT a canvas surface —
+ * it composes over the C3 fog + C4 graph canvases.
  *
  * Platform-neutral (§9): `stages` is plain data; every label is an i18n KEY the
  * consumer resolves (the DS owns no copy). No className/style/DOM events. The card
@@ -33,11 +37,11 @@ export type { StageProgress } from '@mythrun/contract/events'
  * player never sees API spend; the dev ticker owns cost).
  */
 export interface WorldGenStatusCardProps extends Omit<BaseProps, 'children'> {
-  /** Per-stage progress from the stream (B4). Advances the FIXED 8-bar indicator's
-   *  fill: a canonical `ENTITY_STAGES` bar matches its stream entry's status, or is
-   *  `pending` until it appears (prep-stage entries match no bar). The percent is
-   *  `completedCount / 8` (fixed denominator); the running entry marks the "current"
-   *  stage. */
+  /** Per-stage progress from the stream (B4). Advances the FIXED bar indicator's
+   *  fill: a canonical `WATCHED_ENTITY_STAGES` bar matches its stream entry's
+   *  status, or is `pending` until it appears (prep-stage and silent-tail entries
+   *  match no bar). The percent is `completedCount / watched-entity-count` (fixed
+   *  denominator); the running entry marks the "current" stage. */
   stages: readonly StageProgress[]
   /** i18n key (already resolved): a rough data-driven "time left" (e.g. `~3m left`),
    *  computed by the consumer from the stage-timings history. Omitted → no estimate
