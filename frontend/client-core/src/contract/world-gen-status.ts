@@ -43,10 +43,16 @@ export interface WorldGenStatusCardProps extends Omit<BaseProps, 'children'> {
    *  match no bar). The percent is `completedCount / watched-entity-count` (fixed
    *  denominator); the running entry marks the "current" stage. */
   stages: readonly StageProgress[]
-  /** i18n key (already resolved): a rough data-driven "time left" (e.g. `~3m left`),
-   *  computed by the consumer from the stage-timings history. Omitted → no estimate
-   *  (cold-start / no history), so the card shows just the bars. */
-  etaLabel?: string
+  /** The per-second COUNTDOWN line (already resolved, e.g. "~4:37 left") — the
+   *  consumer owns the 1s tick + the `~M:SS` formatting (from
+   *  `remainingWaitMs` over the stage-timings history) and re-supplies this
+   *  each second; it may hold when a stage overruns and jump at the next stage
+   *  event (MYT-89 waiting-feedback — replaces the old coarse minute-granular
+   *  estimate). Omitted → no countdown (cold-start / no history), so the card
+   *  shows just the bars. Rendered `aria-hidden`: a per-second change would be
+   *  live-region noise — the determinate progressbar carries the progress
+   *  semantics to AT. */
+  countdownLabel?: string
   /** Map from raw stage id (`vocabulary_intake`) → an i18n'd FRIENDLY label the
    *  consumer resolves. An unmapped stage falls back to a `[ph: <stage>]` placeholder
    *  (the DS owns no copy). */

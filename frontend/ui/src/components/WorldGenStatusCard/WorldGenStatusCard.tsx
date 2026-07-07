@@ -5,10 +5,21 @@ import type { StageProgress, WorldGenStatusCardProps } from '@mythrun/client-cor
 import { cn } from '../../lib/cn.ts'
 
 // WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut + reveal
-// timing) — a DOM overlay pinned top-left of the graph pane so the visible wait reads
-// as PROGRESS, not a hang. It shows: the current (running) stage's friendly label, a
-// completed/total percent, an optional data-driven "time left", and a PAPER-REGISTER
-// working indicator.
+// timing + waiting-feedback) — a DOM overlay pinned top-left of the graph pane so the
+// visible wait reads as PROGRESS, not a hang. It shows: the current (running) stage's
+// friendly label, a completed/total percent, an optional per-second COUNTDOWN, and a
+// PAPER-REGISTER working indicator.
+//
+// THE COUNTDOWN (MYT-89 waiting-feedback — replaces the old coarse minute-granular
+// ETA): `countdownLabel` is the consumer-ticked `~M:SS` to the wiki reveal (derived
+// from `remainingWaitMs` over the stage-timings history, re-supplied every second).
+// This card only RENDERS the string — a quiet mono/tabular line, no urgency
+// theatrics. It may hold when a stage overruns and jump at the next stage event;
+// that is the derivation's honest shape. aria-hidden: a line that changes every
+// second would be live-region noise — the determinate progressbar (label + percent
+// + valuetext) carries the progress semantics to AT, and the ticking number is
+// redundant with it for a listener. It still ticks under reduced motion: the number
+// is CONTENT (the remaining wait), not decoration.
 //
 // The working indicator IS the percent bar: a segmented SQUARE bar with a FIXED count —
 // one cell per canonical `WATCHED_ENTITY_STAGES` stage (all known from frame one, NOT
@@ -46,7 +57,9 @@ const ROW_CLASS = 'flex items-baseline justify-between gap-[var(--space-2)]'
 const LABEL_CLASS = 'font-body text-sm font-medium text-ink leading-[1.3] min-w-0'
 const PERCENT_CLASS = 'font-ui text-xs tabular-nums text-ink-secondary shrink-0'
 const BAR_CLASS = 'flex h-[6px] w-full gap-[2px]'
-const ETA_CLASS = 'font-ui text-xs tabular-nums text-ink-tertiary leading-none'
+// The countdown: quiet mono/tabular, paper register — mirrors the loading
+// screen's countdown line so the two waiting surfaces read as one voice.
+const COUNTDOWN_CLASS = 'font-ui text-xs tabular-nums text-ink-tertiary leading-none'
 
 // Per-cell fill: solid ink = done, ember + pulse = the working cell, faint track =
 // pending. Square (0px radius), full-height, equal-width segments.
@@ -114,7 +127,7 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
   function WorldGenStatusCard(
     {
       stages,
-      etaLabel,
+      countdownLabel,
       stageLabels,
       titleLabel = '[ph: weaving your world]',
       doneLabel = '[ph: your world is ready]',
@@ -168,7 +181,15 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
             />
           ))}
         </div>
-        {etaLabel !== undefined && <span className={ETA_CLASS}>{etaLabel}</span>}
+        {countdownLabel !== undefined && (
+          <span
+            aria-hidden="true"
+            data-testid="worldgen-status-countdown"
+            className={COUNTDOWN_CLASS}
+          >
+            {countdownLabel}
+          </span>
+        )}
       </div>
     )
   },

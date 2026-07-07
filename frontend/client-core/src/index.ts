@@ -159,12 +159,13 @@ export type {
   WorldGenStreamDeps,
 } from './worldgen/use-worldgen-stream.ts'
 
-// World-gen ETA (MYT-89 audit ③): the stage-timings endpoint + the pure
-// remaining-time math the generation loading bar turns into a data-driven "time
-// left". `StageTiming`/`StageTimingsResponse` re-export the wire shape off the
-// same barrel so a consumer reads the endpoint + its type from one place.
+// World-gen countdown (MYT-89 audit ③ + the waiting-feedback upgrade): the
+// stage-timings endpoint + the pure remaining-wait math the generating view
+// ticks into a per-second `~M:SS` countdown. `StageTiming`/
+// `StageTimingsResponse` re-export the wire shape off the same barrel so a
+// consumer reads the endpoint + its type from one place.
 export { getStageTimings } from './api/worldgen.ts'
-export { remainingStageMs } from './worldgen/stage-eta.ts'
+export { remainingWaitMs } from './worldgen/stage-eta.ts'
 export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
 
 // Wiki-reveal timing (MYT-89 reveal timing): the pure predicates the

@@ -62,12 +62,16 @@ function mockMatchMedia(reduced: boolean): void {
   })
 }
 
-const stage = (id: string, status: StageProgress['status']): StageProgress => ({
+const stage = (
+  id: string,
+  status: StageProgress['status'],
+  startedAt: string | null = null,
+): StageProgress => ({
   stage: id,
   status,
   userId: null,
   costUsd: 0,
-  startedAt: null,
+  startedAt,
   completedAt: null,
 })
 
@@ -148,19 +152,51 @@ describe('GeneratingView — act one: the prep loading screen', () => {
     expect(graphSpy).not.toHaveBeenCalled()
   })
 
-  it('cycles the `[ph:]` flavor lines every ~3s (Claude-Code-"thinking" style)', () => {
+  it('cycles ALL TWENTY `[ph:]` flavor lines every ~3s, each exactly once per pass (a shuffled permutation)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
+    // The twenty catalog lines the view must thread through (Miklos writes the
+    // real copy later). Literal keys — the typed catalog rejects dynamic ones.
+    const allFlavors = new Set([
+      i18n.t('worldGen.flavor1'),
+      i18n.t('worldGen.flavor2'),
+      i18n.t('worldGen.flavor3'),
+      i18n.t('worldGen.flavor4'),
+      i18n.t('worldGen.flavor5'),
+      i18n.t('worldGen.flavor6'),
+      i18n.t('worldGen.flavor7'),
+      i18n.t('worldGen.flavor8'),
+      i18n.t('worldGen.flavor9'),
+      i18n.t('worldGen.flavor10'),
+      i18n.t('worldGen.flavor11'),
+      i18n.t('worldGen.flavor12'),
+      i18n.t('worldGen.flavor13'),
+      i18n.t('worldGen.flavor14'),
+      i18n.t('worldGen.flavor15'),
+      i18n.t('worldGen.flavor16'),
+      i18n.t('worldGen.flavor17'),
+      i18n.t('worldGen.flavor18'),
+      i18n.t('worldGen.flavor19'),
+      i18n.t('worldGen.flavor20'),
+    ])
+    expect(allFlavors.size).toBe(20)
     renderGenerating({ stages: [stage('concept_intake', 'running')] })
-    expect(screen.getByText(i18n.t('worldGen.flavor1'))).toBeDefined()
-    act(() => {
-      vi.advanceTimersByTime(3000)
-    })
-    expect(screen.getByText(i18n.t('worldGen.flavor2'))).toBeDefined()
-    act(() => {
-      vi.advanceTimersByTime(3000)
-    })
-    expect(screen.getByText(i18n.t('worldGen.flavor3'))).toBeDefined()
+    const seen = new Set<string>()
+    const readFlavor = (): void => {
+      const text = screen.getByTestId('worldgen-loading-flavor').textContent
+      expect(allFlavors.has(text)).toBe(true)
+      seen.add(text)
+    }
+    readFlavor()
+    // 19 more ticks walk the REST of the permutation: every line shows exactly
+    // once before any repeats — 20 distinct lines seen, whatever the shuffle drew.
+    for (let tick = 0; tick < 19; tick++) {
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      readFlavor()
+    }
+    expect(seen.size).toBe(20)
   })
 
   it('offers NO watch button during the pure prep act', () => {
@@ -271,44 +307,133 @@ describe('GeneratingView — status card wiring (§3.3)', () => {
   })
 })
 
-describe('GeneratingView — data-driven ETA (audit ③)', () => {
-  it('computes a "time left" label from the timings + completed stages', () => {
+describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)', () => {
+  // A fixed clock: fake timers pin Date.now(), so startedAt offsets are exact.
+  const T0 = new Date('2026-07-07T12:00:00.000Z')
+  const ago = (ms: number): string => new Date(T0.getTime() - ms).toISOString()
+
+  it('shows a ticking ~M:SS countdown ON THE LOADING SCREEN (act one has the expectation too)', () => {
     mockMatchMedia(false)
-    // locations_and_npcs remains at 120_000ms; every other un-completed stage has
-    // no timing → 0. Total remaining 120s → 2 minutes → the minutes ETA copy.
-    const stages = [...ENTITY_UNDERWAY.slice(0, 3), stage('world_and_factions', 'completed'), stage('locations_and_npcs', 'running')]
-    const stageTimings: StageTiming[] = [{ stage: 'locations_and_npcs', avgMs: 120_000 }]
-    renderWatching({ stages, stageTimings })
-    expect(lastGraphProps().status?.etaLabel).toBe(i18n.t('worldGen.statusEta', { minutes: 2 }))
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    // concept_intake is 30s into its 60s average (30s left) + world_color's
+    // whole 35s ahead → 65s remain → "~1:05 left".
+    const stages = [stage('concept_intake', 'running', ago(30_000))]
+    const stageTimings: StageTiming[] = [
+      { stage: 'concept_intake', avgMs: 60_000 },
+      { stage: 'world_color', avgMs: 35_000 },
+    ]
+    renderGenerating({ stages, stageTimings })
+    const countdown = screen.getByTestId('worldgen-loading-countdown')
+    expect(countdown.textContent).toBe(i18n.t('worldGen.countdown', { time: '1:05' }))
+    // One real second later the number has walked down one second.
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(countdown.textContent).toBe(i18n.t('worldGen.countdown', { time: '1:04' }))
+    // …and keeps walking (the "feels like progress" beat).
+    act(() => {
+      vi.advanceTimersByTime(4000)
+    })
+    expect(countdown.textContent).toBe(i18n.t('worldGen.countdown', { time: '1:00' }))
   })
 
-  it('uses the seconds copy in the final under-a-minute stretch (the boundary stage)', () => {
+  it('feeds the TICKING countdown to the status card (replacing the coarse minute ETA)', () => {
     mockMatchMedia(false)
-    // Only the boundary stage (entity_relationships) remains with a timing — the
-    // visible wait's last stretch. A tail timing would NOT count (see stage-eta).
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    // locations_and_npcs is 20s into its 120s average → 100s left → "~1:40 left".
     const stages = [
       ...ENTITY_UNDERWAY.slice(0, 3),
       stage('world_and_factions', 'completed'),
-      stage('locations_and_npcs', 'completed'),
-      stage('entity_relationships', 'running'),
+      stage('locations_and_npcs', 'running', ago(20_000)),
     ]
-    const stageTimings: StageTiming[] = [{ stage: 'entity_relationships', avgMs: 30_000 }]
+    const stageTimings: StageTiming[] = [{ stage: 'locations_and_npcs', avgMs: 120_000 }]
     renderWatching({ stages, stageTimings })
-    expect(lastGraphProps().status?.etaLabel).toBe(
-      i18n.t('worldGen.statusEtaShort', { seconds: 30 }),
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '1:40' }),
+    )
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '1:39' }),
     )
   })
 
-  it('feeds NO etaLabel on cold-start (empty timings) — the card shows no estimate', () => {
+  it('HOLDS at the remaining-future floor while a stage overruns, then RESUMES on completion', () => {
     mockMatchMedia(false)
-    renderWatching({ stageTimings: [] })
-    expect(lastGraphProps().status?.etaLabel).toBeUndefined()
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    // locations_and_npcs has overrun its 60s average (90s elapsed): its own
+    // contribution clamps to 0, so the count HOLDS at the boundary stage's 30s.
+    const overrunning = [
+      ...ENTITY_UNDERWAY.slice(0, 3),
+      stage('world_and_factions', 'completed'),
+      stage('locations_and_npcs', 'running', ago(90_000)),
+    ]
+    const stageTimings: StageTiming[] = [
+      { stage: 'locations_and_npcs', avgMs: 60_000 },
+      { stage: 'entity_relationships', avgMs: 30_000 },
+    ]
+    const view = render(
+      <I18nextProvider i18n={i18n}>
+        <GeneratingView
+          nodes={[]}
+          edges={[]}
+          stages={overrunning}
+          stageTimings={stageTimings}
+        />
+      </I18nextProvider>,
+    )
+    watch()
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '0:30' }),
+    )
+    // Seconds pass; the overrun deepens; the count holds — never negative.
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '0:30' }),
+    )
+    // The stage completes (the next stream event): the boundary stage starts and
+    // the count RESUMES walking from its average.
+    const resumed = [
+      ...ENTITY_UNDERWAY.slice(0, 3),
+      stage('world_and_factions', 'completed'),
+      stage('locations_and_npcs', 'completed'),
+      stage('entity_relationships', 'running', new Date(T0.getTime() + 5000).toISOString()),
+    ]
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <GeneratingView nodes={[]} edges={[]} stages={resumed} stageTimings={stageTimings} />
+      </I18nextProvider>,
+    )
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '0:30' }),
+    )
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '0:28' }),
+    )
   })
 
-  it('feeds NO etaLabel before the timings resolve (null)', () => {
+  it('feeds NO countdown on cold-start (empty timings) — both surfaces show no estimate', () => {
+    mockMatchMedia(false)
+    renderGenerating({ stageTimings: [] })
+    expect(screen.queryByTestId('worldgen-loading-countdown')).toBeNull()
+    cleanup()
+    renderWatching({ stageTimings: [] })
+    expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
+  })
+
+  it('feeds NO countdown before the timings resolve (null)', () => {
     mockMatchMedia(false)
     renderWatching({ stageTimings: null })
-    expect(lastGraphProps().status?.etaLabel).toBeUndefined()
+    expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
   })
 })
 

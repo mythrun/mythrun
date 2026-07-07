@@ -57,6 +57,14 @@ export { MIN_EXPECTED_ENTITIES } from './entity-floor.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 
+// The pure remaining-wait derivation (MYT-89 waiting-feedback): historical
+// per-stage averages ∩ live stage statuses → the ms left in the visible wait
+// at a given `now`. Pure data (only type imports from @mythrun/contract), so
+// it rides this UI-safe subpath — the DS Storybook specimens drive it to
+// demonstrate the live countdown without pulling in the whole client brain.
+// The main barrel re-exports it for the app routes.
+export { remainingWaitMs } from './stage-eta.ts'
+
 // Wiki view model (MYT-89 Phase D): the pure normalizer that reshapes a
 // world-snapshot into the browsable model + the injected data-source seam.
 // DOM-free pure data (only a type import from @mythrun/contract), so it rides

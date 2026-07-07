@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { WATCHED_ENTITY_STAGES } from '@mythrun/contract/events'
+import { remainingWaitMs } from '@mythrun/client-core/worldgen'
 import type { StageProgress } from '@mythrun/client-core/contract'
 import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 
@@ -10,14 +12,17 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // (entity_consolidation → embed_world) runs behind the wiki reveal — this card renders
 // ONLY the watched entity stages (world_and_factions → entity_relationships): the
 // current (running) stage's friendly label, a completed/3 percent, an optional
-// data-driven "time left", and a PAPER-REGISTER segmented square bar of a FIXED 3
-// cells (one per canonical WATCHED_ENTITY_STAGES stage, known from frame one — the
-// stream only advances the fills) whose running cell pulses (opacity fade — the
-// brand's only sanctioned motion; NO spinner, NO circle). The bars hit 100% exactly at
-// the wiki-reveal moment: the pulse stops and the bar rests full. Cost is NOT shown
-// (the player never sees API spend). Every label is a `[ph:]` i18n key (the DS owns no
-// copy). These specimens render it inside a mock graph pane so the `absolute` overlay
-// pins correctly.
+// per-second COUNTDOWN (MYT-89 waiting-feedback — the consumer ticks + formats the
+// `~M:SS`; the Ticking specimen drives the REAL `remainingWaitMs` derivation through
+// a scripted overrun so the hold + the completion jump are visible), and a
+// PAPER-REGISTER segmented square bar of a FIXED 3 cells (one per canonical
+// WATCHED_ENTITY_STAGES stage, known from frame one — the stream only advances the
+// fills) whose running cell pulses (opacity fade — the brand's only sanctioned
+// motion; NO spinner, NO circle). The bars hit 100% exactly at the wiki-reveal
+// moment: the pulse stops and the bar rests full. Cost is NOT shown (the player
+// never sees API spend). Every label is a `[ph:]` i18n key (the DS owns no copy).
+// These specimens render it inside a mock graph pane so the `absolute` overlay pins
+// correctly.
 
 const meta: Meta<typeof WorldGenStatusCard> = {
   title: 'Patterns/WorldGenStatusCard',
@@ -69,12 +74,98 @@ function Pane({ children }: { children: React.ReactNode }): React.JSX.Element {
   )
 }
 
+// --- The live countdown harness -------------------------------------------
+// Drives the REAL `remainingWaitMs` derivation through a SCRIPTED stage
+// timeline, so the three countdown behaviours are all visible in one sitting:
+//   0–36s  world_and_factions runs against a 24s average → the count walks
+//          1:12→0:48, then the stage OVERRUNS 12s: the count HOLDS at 0:48
+//          (the remaining-future floor — never negative);
+//  36–60s  the completion event lands → locations_and_npcs starts; the count
+//          RESUMES walking 0:48→0:24 (a boundary jump, when it happens, is
+//          deliberate);
+//  60–90s  entity_relationships runs its 24s average with a 6s overrun → the
+//          count walks 0:24→0:00 and holds there ("any moment now") until the
+//          boundary completes — bars at 100%, the reveal moment. (In the app
+//          the route swaps to the reveal at that instant; the specimen just
+//          rests done.)
+
+const DEMO_TIMINGS = [
+  { stage: 'world_and_factions', avgMs: 24_000 },
+  { stage: 'locations_and_npcs', avgMs: 24_000 },
+  { stage: 'entity_relationships', avgMs: 24_000 },
+] as const
+
+/** The scripted ACTUAL spans (ms since demo start) — stage 1 overruns its 24s
+ *  average by 12s, stage 3 by 6s. */
+const DEMO_SPANS = [
+  { stage: 'world_and_factions', start: 0, end: 36_000 },
+  { stage: 'locations_and_npcs', start: 36_000, end: 60_000 },
+  { stage: 'entity_relationships', start: 60_000, end: 90_000 },
+] as const
+
+function demoStagesAt(startMs: number, nowMs: number): StageProgress[] {
+  const t = nowMs - startMs
+  return DEMO_SPANS.filter((span) => t >= span.start).map((span) => ({
+    stage: span.stage,
+    status: t >= span.end ? ('completed' as const) : ('running' as const),
+    userId: null,
+    costUsd: 0,
+    startedAt: new Date(startMs + span.start).toISOString(),
+    completedAt: t >= span.end ? new Date(startMs + span.end).toISOString() : null,
+  }))
+}
+
+/** Mirrors the app's `~M:SS` formatting (the words are i18n there; specimens
+ *  hold placeholder copy). */
+function formatCountdown(remainingMs: number | null): string | undefined {
+  if (remainingMs === null) return undefined
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `[ph: ~${String(minutes)}:${String(seconds).padStart(2, '0')} left]`
+}
+
+function TickingDemo(): React.JSX.Element {
+  const [startMs] = useState(() => Date.now())
+  const [nowMs, setNowMs] = useState(startMs)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNowMs(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(id)
+    }
+  }, [])
+  const stages = demoStagesAt(startMs, nowMs)
+  const countdownLabel = formatCountdown(remainingWaitMs(DEMO_TIMINGS, stages, nowMs))
+  return (
+    <Pane>
+      <WorldGenStatusCard
+        stages={stages}
+        stageLabels={STAGE_LABELS}
+        doneLabel="[ph: your world is ready]"
+        {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+      />
+    </Pane>
+  )
+}
+
+// TICKING — the live countdown against the scripted overrun timeline above:
+// per-second walk → the overrun HOLD → the completion jump → 100% at the reveal.
+export const Ticking: Story = {
+  render: () => <TickingDemo />,
+}
+
 // EARLY — the first entity stage running, nothing completed yet (the moment the
 // player enters the graph). 3 bars from frame one; a single pulsing ember cell.
 export const Early: Story = {
   render: () => (
     <Pane>
-      <WorldGenStatusCard stages={stagesAt(0)} stageLabels={STAGE_LABELS} etaLabel="[ph: ~4m left]" />
+      <WorldGenStatusCard
+        stages={stagesAt(0)}
+        stageLabels={STAGE_LABELS}
+        countdownLabel="[ph: ~4:12 left]"
+      />
     </Pane>
   ),
 }
@@ -84,7 +175,11 @@ export const Early: Story = {
 export const Mid: Story = {
   render: () => (
     <Pane>
-      <WorldGenStatusCard stages={stagesAt(2)} stageLabels={STAGE_LABELS} etaLabel="[ph: ~2m left]" />
+      <WorldGenStatusCard
+        stages={stagesAt(2)}
+        stageLabels={STAGE_LABELS}
+        countdownLabel="[ph: ~1:37 left]"
+      />
     </Pane>
   ),
 }

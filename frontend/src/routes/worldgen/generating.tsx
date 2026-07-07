@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
 import { ENTITY_STAGES } from '@mythrun/contract/events'
-import { remainingStageMs, type StageTiming, type WorldGenStream } from '@mythrun/client-core'
+import { remainingWaitMs, type StageTiming, type WorldGenStream } from '@mythrun/client-core'
 import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -15,8 +15,9 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //   ACT ONE (prep): while only the pre-entity prep stages (concept_intake /
 //   world_color / vocabulary_intake — `PREP_STAGES`) have run, there is nothing
 //   to draw — so the view shows the GENERIC loading screen (`WorldGenLoading`):
-//   the DS Spinner + a flavor line cycling short playful loading messages. No
-//   graph, no fog, no status card.
+//   the DS Spinner + a flavor line cycling twenty short playful loading messages
+//   in RANDOM order + the per-second countdown to the reveal. No graph, no fog,
+//   no status card.
 //
 //   THE BEAT: the moment entities START (the stream reports an ENTITY_STAGES
 //   stage underway, OR the first node arrives — whichever signal lands first),
@@ -29,9 +30,11 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //     the fog + graph own the whole space (§3.4);
 //   - the WorldGenStatusCard (C4) is fed the stream's `stages[]` + a `[ph:]`
 //     stage-label map (WATCHED entity stages only — the prep stretch belongs to
-//     act one, and the silent tail runs behind the wiki reveal) + a data-driven
-//     ETA label (from the route's stage-timings fetch). Cost is NOT passed
-//     (audit ⑥ — the player never sees API spend);
+//     act one, and the silent tail runs behind the wiki reveal) + the ticking
+//     per-second countdown (from the route's stage-timings fetch — MYT-89
+//     waiting-feedback; the player holds an expectation of the wait AT ALL
+//     TIMES, on both acts). Cost is NOT passed (audit ⑥ — the player never sees
+//     API spend);
 //   - the FOG DRAIN is keyed off the ENTITY COUNT (MYT-89 spawn-drain, replacing
 //     the old stage-progress fade): `nodes.length / MIN_EXPECTED_ENTITIES` scales
 //     the fog's respawn flux down as entities arrive, so the wind carries the fog
@@ -45,7 +48,7 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //
 // Flat 1-bit paper register — no chrome. The route owns the stream + the timings
 // fetch; this view owns the act state (a local, deliberate transition — never
-// automatic) and formats the ETA for display.
+// automatic), the countdown's 1-second tick, and the `~M:SS` formatting.
 
 /** The generation graph model + the status/fade inputs (folded by the route's
  *  `useWorldGenStream`) plus the route's historical stage timings (for the ETA). */
@@ -55,15 +58,42 @@ interface GeneratingViewProps extends Pick<WorldGenStream, 'nodes' | 'edges' | '
   readonly stageTimings?: readonly StageTiming[] | null
 }
 
-/** Format the rough remaining-ms into a resolved `[ph:]` ETA label, or `undefined`
- *  when there is no usable estimate (no history, or nothing left). Minutes when a
- *  minute-plus remains, seconds in the final stretch — the words + units are i18n. */
-function etaLabelFrom(remainingMs: number | null, t: TFunction): string | undefined {
+/** The 1-second tick behind the countdown (MYT-89 waiting-feedback): the current
+ *  epoch ms, refreshed by a REAL 1s interval (not per-rAF) while `active`. Each
+ *  tick re-derives the remaining wait from scratch, so a stage event landing
+ *  between ticks recalibrates on the next render, and the tick itself stops
+ *  costing anything when there is no countdown to show (cold-start). NOT gated
+ *  on reduced motion — the ticking number is CONTENT (the remaining wait), not
+ *  decoration; freezing it would show a wrong number. */
+function useNowMs(active: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    setNowMs(Date.now())
+    // Bare timer globals (not window.*) — universal across web + native (R1).
+    const id = setInterval(() => {
+      setNowMs(Date.now())
+    }, 1000)
+    return () => {
+      clearInterval(id)
+    }
+  }, [active])
+  return nowMs
+}
+
+/** Format the remaining wait into the ticking `~M:SS` countdown label, or
+ *  `undefined` when there is no usable estimate (no history) — the surfaces show
+ *  nothing rather than a fake number. 0 renders as `0:00` (the final-stage
+ *  overrun holds there — "any moment now" — until the reveal fires). The digits
+ *  are mechanical; the words around them are i18n. */
+function countdownLabelFrom(remainingMs: number | null, t: TFunction): string | undefined {
   if (remainingMs === null) return undefined
-  const totalSeconds = Math.round(remainingMs / 1000)
-  if (totalSeconds <= 0) return undefined
-  if (totalSeconds < 60) return t('worldGen.statusEtaShort', { seconds: totalSeconds })
-  return t('worldGen.statusEta', { minutes: Math.max(1, Math.round(totalSeconds / 60)) })
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return t('worldGen.countdown', {
+    time: `${String(minutes)}:${String(seconds).padStart(2, '0')}`,
+  })
 }
 
 /** The graph contract requires `onSelect`, but generation is GATED (§3.4) so it
@@ -128,7 +158,8 @@ export function GeneratingView({
   )
 
   // The act-one flavor lines — `[ph:]` placeholders cycled by WorldGenLoading
-  // every ~3s (the copy is Miklos's; six slots so the loop doesn't feel short).
+  // every ~3s in RANDOM order (the copy is Miklos's; twenty slots so the loop
+  // never feels short, shuffled so it never feels canned).
   const flavorLabels = useMemo<readonly string[]>(
     () => [
       t('worldGen.flavor1'),
@@ -137,16 +168,36 @@ export function GeneratingView({
       t('worldGen.flavor4'),
       t('worldGen.flavor5'),
       t('worldGen.flavor6'),
+      t('worldGen.flavor7'),
+      t('worldGen.flavor8'),
+      t('worldGen.flavor9'),
+      t('worldGen.flavor10'),
+      t('worldGen.flavor11'),
+      t('worldGen.flavor12'),
+      t('worldGen.flavor13'),
+      t('worldGen.flavor14'),
+      t('worldGen.flavor15'),
+      t('worldGen.flavor16'),
+      t('worldGen.flavor17'),
+      t('worldGen.flavor18'),
+      t('worldGen.flavor19'),
+      t('worldGen.flavor20'),
     ],
     [t],
   )
 
-  // The data-driven ETA (audit ③): a rough "time left" from the historical stage
-  // timings intersected with the live stage statuses. `null`/cold-start → undefined
-  // → the card shows no estimate. Recomputed as stages advance (fewer remain).
-  const etaLabel = useMemo(
-    () => etaLabelFrom(remainingStageMs(stageTimings, stages), t),
-    [stageTimings, stages, t],
+  // The per-second countdown (MYT-89 waiting-feedback, replacing the coarse
+  // minute-granular ETA): the remaining visible wait — historical stage averages
+  // ∩ live statuses, minus elapsed-in-the-running-stage — re-derived every tick
+  // and formatted `~M:SS`. Ticks only when there IS a usable history;
+  // `null`/cold-start → undefined → both surfaces show no estimate. It may HOLD
+  // when a stage overruns (the clamp) and JUMP at the next stage event —
+  // deliberate: an honest walk beats a smooth lie.
+  const hasTimings = stageTimings !== null && stageTimings.length > 0
+  const nowMs = useNowMs(hasTimings)
+  const countdownLabel = useMemo(
+    () => countdownLabelFrom(remainingWaitMs(stageTimings, stages, nowMs), t),
+    [stageTimings, stages, nowMs, t],
   )
 
   // ACT ONE — the generic loading screen, with the watch button once entities
@@ -159,6 +210,9 @@ export function GeneratingView({
           data-testid="worldgen-loading"
           flavorLabels={flavorLabels}
           spinnerLabel={t('worldGen.loadingLabel')}
+          // The countdown line (omit the key when there's no estimate —
+          // exactOptionalPropertyTypes forbids an explicit `undefined`).
+          {...(countdownLabel !== undefined ? { countdownLabel } : {})}
           watchReady={entitiesStarted(stages, nodes)}
           watchLabel={t('worldGen.watch')}
           onWatch={() => {
@@ -185,8 +239,9 @@ export function GeneratingView({
           doneLabel: t('worldGen.statusDone'),
           progressLabel: t('worldGen.statusProgress'),
           // Omit the key entirely when there's no estimate (exactOptionalPropertyTypes
-          // forbids an explicit `undefined` on an optional prop) → the card shows no ETA.
-          ...(etaLabel !== undefined ? { etaLabel } : {}),
+          // forbids an explicit `undefined` on an optional prop) → the card shows no
+          // countdown.
+          ...(countdownLabel !== undefined ? { countdownLabel } : {}),
         }}
         // Fog DRAIN keyed off the ENTITY COUNT (MYT-89 spawn-drain): every arrived
         // node ramps the fog's respawn flux down by 1/MIN_EXPECTED_ENTITIES — the

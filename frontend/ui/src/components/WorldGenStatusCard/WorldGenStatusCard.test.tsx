@@ -19,13 +19,15 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // behind the wiki reveal and get NO bar either — the bars hit 100% exactly at the
 // reveal moment. A prep or tail entry in the stream's `stages[]` is ignored. The
 // stream only ADVANCES each bar's fill. It shows: the CURRENT (running) stage's
-// friendly label, a completed/total percent, an optional data-driven "time left",
-// and a PAPER-REGISTER segmented SQUARE bar whose running cell pulses (opacity
-// fade, the brand's only sanctioned motion). Hard brand rule: NO circles /
-// spinners / dots. Cost is NOT rendered (audit ⑥). These tests pin the fixed bar
-// count + % math, the prep/tail exclusion, 100%-at-the-reveal-moment, the
-// running-vs-done label, the square (non-circular) indicator, the stage-label
-// resolution + `[ph:]` fallback, and the ETA.
+// friendly label, a completed/total percent, an optional per-second COUNTDOWN
+// (`countdownLabel`, MYT-89 waiting-feedback — the consumer ticks + formats it;
+// aria-hidden, the progressbar carries the semantics), and a PAPER-REGISTER
+// segmented SQUARE bar whose running cell pulses (opacity fade, the brand's only
+// sanctioned motion). Hard brand rule: NO circles / spinners / dots. Cost is NOT
+// rendered (audit ⑥). These tests pin the fixed bar count + % math, the prep/tail
+// exclusion, 100%-at-the-reveal-moment, the running-vs-done label, the square
+// (non-circular) indicator, the stage-label resolution + `[ph:]` fallback, and
+// the countdown line.
 
 const TOTAL = WATCHED_ENTITY_STAGES.length // 3
 
@@ -157,15 +159,25 @@ describe('WorldGenStatusCard — done state (the wiki-reveal moment)', () => {
   })
 })
 
-describe('WorldGenStatusCard — data-driven ETA (audit ③)', () => {
-  it('renders the resolved "time left" when supplied', () => {
-    const { getByText } = render(
-      <WorldGenStatusCard stages={MID} etaLabel="[ph: ~2m left]" {...LABELS} />,
+describe('WorldGenStatusCard — the per-second countdown (MYT-89 waiting-feedback)', () => {
+  it('renders the ticking countdown line when supplied, aria-hidden (the progressbar carries AT semantics)', () => {
+    const { getByTestId } = render(
+      <WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:14 left]" {...LABELS} />,
     )
-    expect(getByText('[ph: ~2m left]')).toBeInTheDocument()
+    const countdown = getByTestId('worldgen-status-countdown')
+    expect(countdown).toHaveTextContent('[ph: ~2:14 left]')
+    expect(countdown).toHaveAttribute('aria-hidden', 'true')
   })
 
-  it('renders NO estimate when etaLabel is omitted (cold-start / no history)', () => {
+  it('re-renders the countdown as the consumer ticks it (the per-second walk)', () => {
+    const { getByTestId, rerender } = render(
+      <WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:14 left]" {...LABELS} />,
+    )
+    rerender(<WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:13 left]" {...LABELS} />)
+    expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('[ph: ~2:13 left]')
+  })
+
+  it('renders NO countdown when countdownLabel is omitted (cold-start / no history)', () => {
     const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText(/left/)).toBeNull()
   })
@@ -212,7 +224,7 @@ describe('WorldGenStatusCard — chrome', () => {
 
   it('has no a11y violations (generating + done)', async () => {
     const generating = render(
-      <WorldGenStatusCard stages={MID} etaLabel="[ph: ~2m left]" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:14 left]" {...LABELS} />,
     )
     expect(await axe(generating.container)).toHaveNoViolations()
     generating.unmount()
