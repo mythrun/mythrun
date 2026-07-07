@@ -606,6 +606,26 @@ describe('ForceSim rectangular box collision (MYT-89 re-audit)', () => {
     expect(dy).toBeLessThan(boxW)
     expect(boxesDisjoint(pa, wide, pb, wide)).toBe(true)
   })
+
+  it('skips a not-yet-measured node (box undefined) in the pairwise collide, even beside a measured one', () => {
+    // A node the ui has NOT measured yet seeds `box: undefined` and must be ignored by collision
+    // until its label is measured. Here a MEASURED node (index 0, so it clears the outer guard and
+    // enters the inner pass) sits coincident with an UNMEASURED node (index 1); the inner
+    // `bBox === undefined` guard skips the pair, so they never separate. seedJitter 0 seeds both at
+    // the origin — two MEASURED boxes would be shoved apart (see the "packs tighter" test above), so
+    // staying coincident is the proof that the unmeasured node was skipped.
+    const sim = create({ width: 900, height: 470, params: COLLIDE_ONLY })
+    sim.sync([node('measured'), node('unmeasured')], [])
+    sim.setBoxes(new Map<string, NodeBox>([['measured', box(200)]])) // only 'measured' is measured
+    for (let i = 0; i < 200; i++) sim.tick()
+
+    const p = sim.positions()
+    const m = p.get('measured')
+    const u = p.get('unmeasured')
+    if (m === undefined || u === undefined) throw new Error('missing node')
+    expect(Math.hypot(u.x, u.y)).toBeLessThan(EPS) // unmeasured node never pushed
+    expect(Math.hypot(m.x, m.y)).toBeLessThan(EPS) // nor the measured one on its account
+  })
 })
 
 describe('ForceSim static keep-out (the status-card footprint, MYT-89 density)', () => {

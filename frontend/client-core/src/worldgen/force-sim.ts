@@ -342,7 +342,7 @@ function separateBoxes(
   halfPad: number,
 ): void {
   // `vx`/`vy` are typed optional by d3's SimulationNodeDatum, but every SimNode is seeded
-  // with numbers (`seedNode` sets 0; d3's initializeSimulation zeroes any NaN), so the
+  // with numbers (`seedNode` sets 0; d3's initializeNodes zeroes any NaN), so the
   // `?? 0` nullish arm is a type-required artifact, unreachable at runtime.
   /* v8 ignore next 4 */
   const avx = a.vx ?? 0
@@ -427,12 +427,14 @@ function boxCollide(padding: number, keepOuts: StaticKeepOut[]): Force<SimNode, 
         for (let j = i + 1; j < n; j++) {
           const b = simNodes[j]
           const bBox = b?.box
-          // `simNodes[j]` (j < n) is always defined, so the `b === undefined` / `b?.box`
-          // nullish arms are type-required but dead. (This line-level ignore also drops the
-          // co-located `bBox === undefined` arm, which IS exercised — an as-yet-unmeasured
-          // node — from the branch count.)
+          // `simNodes[j]` (j < n) is always defined, so this `b === undefined` guard (like the
+          // `b?.box` nullish above) is type-required but dead — ignored so the unreachable arm
+          // doesn't dent the branch count.
           /* v8 ignore next */
-          if (b === undefined || bBox === undefined) continue
+          if (b === undefined) continue
+          // The `bBox === undefined` arm IS live: a node seeds `box: undefined` until the ui
+          // measures its label, and stays out of collision until then — so it stays counted.
+          if (bBox === undefined) continue
           separateBoxes(a, aBox, b, bBox, halfPad)
         }
       }
