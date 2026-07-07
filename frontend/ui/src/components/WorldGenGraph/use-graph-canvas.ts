@@ -72,9 +72,10 @@ export interface GraphCanvasParams {
    *  so names show DURING generation too — the fog already reserves a label-sized keep-out
    *  per node, so drawing the name closes that visible mismatch. Type stays shape-only. */
   showLabels: boolean
-  /** OVERRIDE the force-sim spread params, merged over `FORCE_PARAMS` (MYT-89 audit #4).
-   *  The Storybook spread-tuning harness passes live slider values; a change RE-SEEDS the
-   *  sim (fresh spread). `undefined` in production → the locked defaults. Required-with-
+  /** OVERRIDE the force-sim params — the spread knobs (MYT-89 audit #4) plus the link
+   *  clustering knobs (MYT-89 untangle) — merged over `FORCE_PARAMS`. The Storybook
+   *  spread-tuning harness passes live slider values; a change RE-SEEDS the sim (fresh
+   *  spread). `undefined` in production → the locked defaults. Required-with-
    *  `undefined` (not optional) to match the `selectedKey` idiom under
    *  `exactOptionalPropertyTypes` — WorldGenGraph forwards the prop unconditionally. */
   forceParams: Partial<ForceParams> | undefined

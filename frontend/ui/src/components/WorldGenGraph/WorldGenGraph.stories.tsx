@@ -204,8 +204,9 @@ export const Populated: Story = {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Spread-tuning harness (MYT-89 audit #4) — the SAME UX as the fog tuner
-// (WorldGenFogField.stories.tsx). A realistic ~24-node graph with the seven force
-// params exposed as LIVE sliders; slide them and the layout re-seeds + re-spreads.
+// (WorldGenFogField.stories.tsx). A realistic ~24-node graph with the nine force
+// params exposed as LIVE sliders (the locked spread seven + the two clustering
+// knobs from the MYT-89 untangle); slide them and the layout re-seeds + re-spreads.
 // The copy block hands the current values back so Miklos can lock them into
 // `FORCE_PARAMS`. Fog is faded to nothing (shown === total) so the spread reads clean.
 // ──────────────────────────────────────────────────────────────────────────
@@ -245,10 +246,14 @@ function Slider(props: {
   )
 }
 
-// The seven force knobs, in slider order — placeholder labels (the DS owns no copy).
+// The nine force knobs, in slider order — placeholder labels (the DS owns no copy).
+// The spread seven (Miklos-locked) first, then the two clustering knobs (MYT-89
+// untangle): the link pull + rest length that group connected entities.
 const FORCE_KEYS: readonly (keyof ForceParams)[] = [
   'chargeStrength',
   'chargeDistanceMax',
+  'linkStrength',
+  'linkDistance',
   'centerStrength',
   'boundaryStrength',
   'collisionPadding',
@@ -258,6 +263,8 @@ const FORCE_KEYS: readonly (keyof ForceParams)[] = [
 const FORCE_LABELS: Record<keyof ForceParams, string> = {
   chargeStrength: '[ph: charge]',
   chargeDistanceMax: '[ph: charge range]',
+  linkStrength: '[ph: link pull]',
+  linkDistance: '[ph: link length]',
   centerStrength: '[ph: center]',
   boundaryStrength: '[ph: boundary]',
   collisionPadding: '[ph: box gap]',
@@ -269,6 +276,10 @@ const FORCE_LABELS: Record<keyof ForceParams, string> = {
 const FORCE_DESCRIPTIONS: Record<keyof ForceParams, string> = {
   chargeStrength: 'How hard nodes shove each other apart. More negative = wider spread.',
   chargeDistanceMax: 'How far that shove reaches. Higher = even spread; lower = local clumps.',
+  linkStrength:
+    'How hard a connection pulls its two entities together — the clustering dial. Higher = connected groups clump tighter (fewer tangled crossings); 0 = connections stop pulling and the layout ignores who relates to whom.',
+  linkDistance:
+    'The resting length of a connection. Lower = tighter, denser clumps; higher = looser, airier groups.',
   centerStrength:
     "Pulls the whole cluster toward the frame's middle (positions it, doesn't compress). 0 = let repulsion + margin decide.",
   boundaryStrength:
@@ -321,7 +332,7 @@ const TUNER_EDGES: GraphEdge[] = [
   edge('te7', 's/road', 's/world', 'within'),
 ]
 
-/** The tuning harness: seven force sliders driving `WorldGenGraph.forceParams`, a live
+/** The tuning harness: nine force sliders driving `WorldGenGraph.forceParams`, a live
  *  spread of the synthetic world, and a copy-paste block of the current values (drop
  *  straight into `FORCE_PARAMS`). Each slider change re-seeds the sim (fresh spread). */
 function GraphSpreadTuner(): React.JSX.Element {
@@ -383,7 +394,7 @@ function GraphSpreadTuner(): React.JSX.Element {
   )
 }
 
-// THE spread-tuning surface — slide the seven force knobs and watch the ~24-node world
+// THE spread-tuning surface — slide the nine force knobs and watch the ~24-node world
 // re-seed + re-spread live; copy the settled values back into `FORCE_PARAMS` to lock them.
 export const SpreadTuning: Story = {
   render: () => <GraphSpreadTuner />,

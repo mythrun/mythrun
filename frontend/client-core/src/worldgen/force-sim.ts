@@ -50,6 +50,16 @@ import type { GraphEdge, GraphNode } from './graph-reducers.ts'
  *  layout back to life without the settled graph snapping. */
 const REHEAT_ALPHA = 0.3
 
+/** Re-heat energy when a NEW EDGE arrives (MYT-89 untangle). A node arrival only
+ *  needs local accommodation (the gentle `REHEAT_ALPHA` above), but a new edge
+ *  changes the TOPOLOGY — expressing it may require nodes to migrate ACROSS the
+ *  packed layout (past the box-collision keep-outs) into their community. At 0.3
+ *  the sim measurably freezes in whatever arrival-ordered arrangement it settled
+ *  into (crossings barely drop on unlucky seeds); the hotter reheat gives the
+ *  Act-2 penstroke enough energy to re-organise into clusters as connections
+ *  form. Still below d3's fresh-sim 1.0, so it reads as a re-settle, not a reset. */
+const EDGE_REHEAT_ALPHA = 0.8
+
 // ──────────────────────────────────────────────────────────────────────────
 // TUNABLE FORCE PARAMS (MYT-89 audit #4 — the spread re-tune)
 // The graph used to CLUMP in the centre: weak repulsion (charge −30, capped at
@@ -59,6 +69,22 @@ const REHEAT_ALPHA = 0.3
 // 900×470 space. Every knob is a `create` param (merged over `FORCE_PARAMS`), so
 // the Storybook spread-tuning harness dials the exact feel live — the values Miklos
 // lands on replace these defaults, which then become the locked spec.
+//
+// LINK CLUSTERING (MYT-89 untangle — the anti-tangle re-tune). The spread re-tune
+// never touched the LINK force, so it ran on d3 defaults: rest length 30 (far
+// inside the icon+label box footprint) at strength ~1 (`1/min(degree)` — full
+// strength for any edge touching a leaf). A linear spring at `(L − 30) · ~1`
+// overpowers the locked −120 charge by orders of magnitude at any range — the
+// LONGEST edges (the sparse inter-community bridges) pulled HARDEST — so as the
+// Act-2 penstroke streamed edges in, the whole connected graph contracted into ONE
+// arrival-ordered contact mass and edges crossed chaotically (the visual tangle).
+// The fix is force-directed community clustering, the standard live-graph
+// approximation of (NP-hard) crossing minimisation: `linkDistance` sizes the rest
+// length to the box footprint, and `linkStrength` scales the spring DOWN so dense
+// intra-community subgraphs (many springs per node) still condense while a single
+// cross-link can no longer drag two communities together — the locked repulsion
+// holds the clumps apart, and the crossings fall out with the separation. The
+// locked spread params are UNTOUCHED; this is an addition, not a replacement.
 // ──────────────────────────────────────────────────────────────────────────
 
 /** The tunable forces. `create` merges a caller's partial override over
@@ -99,6 +125,22 @@ export interface ForceParams {
    *  clipping. Picked to clear a typical label; Miklos dials it in the Storybook
    *  spread tuner. `0` restores the pre-margin full-edge clamp. */
   margin: number
+  /** `forceLink().strength` MULTIPLIER over d3's degree-normalised default
+   *  (`1 / min(degree(source), degree(target))` — kept, it's the standard
+   *  hub-distortion guard) — the CLUSTERING knob (MYT-89 untangle). d3's untuned
+   *  ×1 overpowers the locked charge at any range, yanking the whole connected
+   *  graph into one arrival-ordered contact mass (the tangle). Scaled DOWN, dense
+   *  intra-community subgraphs (many springs per node) still condense while a
+   *  sparse cross-link can't drag two communities together — the locked repulsion
+   *  holds the clumps apart and edge crossings fall with the separation. `0` =
+   *  links exert no pull (layout ignores topology); `1` = the old d3 default. */
+  linkStrength: number
+  /** `forceLink().distance` (px) — the rest LENGTH a link relaxes to (MYT-89
+   *  untangle). d3's default (30) sits far inside the icon+label box footprint, so
+   *  every spring stayed maximally stretched and the LONGEST (inter-community)
+   *  edges pulled hardest. Sized to the box footprint instead, so connected nodes
+   *  settle adjacent and readable rather than grinding into collision contact. */
+  linkDistance: number
 }
 
 /** The LOCKED force defaults — the MYT-89 audit #4 re-tune that FILLS 900×470
@@ -113,6 +155,8 @@ export const FORCE_PARAMS: ForceParams = {
   collisionPadding: 3,
   seedJitter: 250,
   margin: 15,
+  linkStrength: 0.3,
+  linkDistance: 90,
 }
 
 /** The slider envelopes (`min`/`max`/`step`) the spread-tuning harness exposes for
@@ -126,6 +170,8 @@ export const FORCE_PARAM_RANGES = {
   collisionPadding: { min: 0, max: 80, step: 1 },
   seedJitter: { min: 0, max: 400, step: 5 },
   margin: { min: 0, max: 150, step: 5 },
+  linkStrength: { min: 0, max: 1, step: 0.05 },
+  linkDistance: { min: 30, max: 400, step: 10 },
 } as const
 
 // VIEWPORT CONTAINMENT (MYT-89 Phase B, BUG 2.2). The repulsion cloud has no
@@ -186,9 +232,15 @@ interface SimNode extends SimulationNodeDatum {
 /** A d3 link datum. `source`/`target` are seeded as `synthKey` strings (the edge's
  *  UUID endpoints translated to the endpoints' stable `synthKey` by `buildLinks`)
  *  and resolved to node objects by d3 via the `id` accessor on (re-)initialisation.
- *  `synthKey` here is the edge's OWN stable id (unused by the node resolver). */
+ *  `synthKey` here is the edge's OWN stable id (unused by the node resolver).
+ *  `strength` is the PRE-COMPUTED spring strength for this link — d3's
+ *  degree-normalised default (`1 / min(degree)`) scaled by the tunable
+ *  `linkStrength` multiplier, stamped by `buildLinks` (which already walks the
+ *  edge set and so computes the degrees d3 would) and read by the link force's
+ *  strength accessor (MYT-89 untangle). */
 interface SimLink extends SimulationLinkDatum<SimNode> {
   synthKey: string
+  strength: number
 }
 
 export interface ForceSim {
@@ -324,11 +376,13 @@ function boxCollide(padding: number): Force<SimNode, SimLink> {
 }
 
 /** Build the STOPPED d3 simulation with the re-tuned spread forces (MYT-89 audit #4):
- *  charge (`chargeStrength` + `chargeDistanceMax`), the link force, a centre pull
- *  (`centerStrength`), the rectangular box collide (`collisionPadding` — no icon/label
- *  overlap, the box is the keep-out unit), and the per-axis inward boundary pull
- *  (`boundaryStrength`). `.stop()` because C4's render loop drives `tick()`, not d3's
- *  internal timer. */
+ *  charge (`chargeStrength` + `chargeDistanceMax`), the CLUSTERING-tuned link force
+ *  (`linkDistance` rest length + the per-link `strength` `buildLinks` pre-computed
+ *  from `linkStrength` — the MYT-89 untangle, replacing d3's tangle-inducing
+ *  defaults), a centre pull (`centerStrength`), the rectangular box collide
+ *  (`collisionPadding` — no icon/label overlap, the box is the keep-out unit), and
+ *  the per-axis inward boundary pull (`boundaryStrength`). `.stop()` because C4's
+ *  render loop drives `tick()`, not d3's internal timer. */
 function buildSimulation(
   nodes: SimNode[],
   linkForce: ForceLink<SimNode, SimLink>,
@@ -341,7 +395,10 @@ function buildSimulation(
         .strength(params.chargeStrength)
         .distanceMax(params.chargeDistanceMax),
     )
-    .force('link', linkForce)
+    .force(
+      'link',
+      linkForce.distance(params.linkDistance).strength((link) => link.strength),
+    )
     .force('center', forceCenter<SimNode>().strength(params.centerStrength))
     .force('collide', boxCollide(params.collisionPadding))
     .force('boundX', forceX<SimNode>(0).strength(params.boundaryStrength))
@@ -387,6 +444,84 @@ function clampNodes(nodes: SimNode[], boundW: number, boundH: number): void {
     simNode.x = clampBoxAxis(simNode.x, box.left, box.right, boundW)
     simNode.y = clampBoxAxis(simNode.y, box.top, box.bottom, boundH)
   }
+}
+
+/** Pick the reheat energy for one `sync`: record every edge synthKey into `seen` and
+ *  return the hotter `EDGE_REHEAT_ALPHA` when any is NEW (a topology change needs
+ *  migration energy — see the constant's rationale), else the gentle `REHEAT_ALPHA`.
+ *  Module-scoped so the reheat plumbing is one line in `sync` (mirrors `makeBoxStore`). */
+function reheatAlpha(seen: Set<string>, edges: GraphEdge[]): number {
+  let hasNew = false
+  for (const e of edges) {
+    if (!seen.has(e.synthKey)) {
+      seen.add(e.synthKey)
+      hasNew = true
+    }
+  }
+  return hasNew ? EDGE_REHEAT_ALPHA : REHEAT_ALPHA
+}
+
+/** A mutable per-endpoint link count. SHARED BY REFERENCE between the degree tally
+ *  and every resolved link touching the endpoint, so after the resolve pass each
+ *  link reads its endpoints' FINAL degrees — no post-hoc map lookup (whose
+ *  `undefined` arm would be unreachable) needed. */
+interface DegreeCounter {
+  n: number
+}
+
+/** Get-or-create the endpoint's counter and count this link against it. */
+function tallyDegree(degrees: Map<string, DegreeCounter>, synthKey: string): DegreeCounter {
+  const existing = degrees.get(synthKey)
+  if (existing !== undefined) {
+    existing.n += 1
+    return existing
+  }
+  const fresh = { n: 1 }
+  degrees.set(synthKey, fresh)
+  return fresh
+}
+
+/** Translate the derived edges into d3 link data. Edge endpoints are entity UUIDs
+ *  (= the endpoints' `displayId`); each is translated through `toSynth` to the
+ *  endpoint's internal `synthKey` so d3's `id` resolver (keyed on synthKey) finds the
+ *  node. An edge with an unknown endpoint is DROPPED — a dangling endpoint would make
+ *  the resolver throw (`node not found`). Each link is stamped with its spring
+ *  strength (MYT-89 untangle): d3's degree-normalised default (`1 / min(degree)`,
+ *  counted over the SAME resolved link set d3 would count) scaled by the tunable
+ *  `linkStrength` multiplier. */
+function buildSimLinks(
+  edges: GraphEdge[],
+  toSynth: Map<string, string>,
+  linkStrength: number,
+): SimLink[] {
+  const degrees = new Map<string, DegreeCounter>()
+  const resolved: {
+    synthKey: string
+    source: string
+    target: string
+    sourceDeg: DegreeCounter
+    targetDeg: DegreeCounter
+  }[] = []
+  for (const e of edges) {
+    const source = toSynth.get(e.from)
+    const target = toSynth.get(e.to)
+    if (source === undefined || target === undefined) continue
+    resolved.push({
+      synthKey: e.synthKey,
+      source,
+      target,
+      sourceDeg: tallyDegree(degrees, source),
+      targetDeg: tallyDegree(degrees, target),
+    })
+  }
+  // The shared counters now hold the FINAL degrees, so each link's strength reads
+  // them directly — the exact `1 / min(degree)` d3 would compute, times the knob.
+  return resolved.map((link) => ({
+    synthKey: link.synthKey,
+    source: link.source,
+    target: link.target,
+    strength: linkStrength / Math.min(link.sourceDeg.n, link.targetDeg.n),
+  }))
 }
 
 /** The persistent icon+label box store: the ui-measured boxes keyed by the EXTERNAL
@@ -484,29 +619,20 @@ export function create(opts: {
     return out
   }
 
-  function buildLinks(edges: GraphEdge[]): SimLink[] {
-    // Edge endpoints are entity UUIDs (= the endpoints' `displayId`); translate each
-    // to the endpoint's internal `synthKey` so d3's `id` resolver (keyed on synthKey)
-    // finds the node. Drop an edge whose endpoint is unknown — a dangling endpoint
-    // would make the resolver throw (`node not found`).
-    const toSynth = displayIdToSynthKey()
-    const links: SimLink[] = []
-    for (const e of edges) {
-      const source = toSynth.get(e.from)
-      const target = toSynth.get(e.to)
-      if (source === undefined || target === undefined) continue
-      links.push({ synthKey: e.synthKey, source, target })
-    }
-    return links
-  }
+  // Edge synthKeys already seen — a sync carrying a NEW one is a topology change
+  // and gets the hotter `EDGE_REHEAT_ALPHA` via `reheatAlpha` (module scope).
+  const seenEdgeKeys = new Set<string>()
 
   function sync(incoming: GraphNode[], edges: GraphEdge[]): void {
     linkForce.links([]) // drop stale object refs before the node set changes.
     mergeNodes(incoming)
     applyBoxes() // re-attach the measured boxes to survivors + freshly-seeded nodes.
     simulation.nodes(nodes) // re-inits forces; survivors keep x/y/vx/vy (valid → not re-seeded).
-    linkForce.links(buildLinks(edges)) // resolves string endpoints against the current nodes.
-    simulation.alpha(REHEAT_ALPHA) // reheat WITHOUT restart — keeps the timer stopped.
+    // Resolve edge endpoints against the current nodes + stamp spring strengths.
+    linkForce.links(buildSimLinks(edges, displayIdToSynthKey(), params.linkStrength))
+    // Reheat WITHOUT restart — keeps the timer stopped. A new EDGE reheats hotter
+    // than a node arrival: topology changes need migration energy (MYT-89 untangle).
+    simulation.alpha(reheatAlpha(seenEdgeKeys, edges))
   }
 
   function positions(): Map<string, { x: number; y: number }> {

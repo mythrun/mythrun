@@ -82,10 +82,12 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  i18n key the consumer resolves (the DS owns no copy). Only used when
    *  `interactive`. */
   emptyLabel?: string
-  /** OVERRIDE the force-sim spread params (charge, distanceMax, centre, boundary,
-   *  collide, seed jitter), merged over the locked `FORCE_PARAMS` defaults. The
-   *  Storybook spread-tuning harness (MYT-89 audit #4) passes the live slider values
-   *  so Miklos dials the exact spread feel; changing them RE-SEEDS the layout (fresh
-   *  spread, not a merge). Production omits this — the locked defaults fill the space. */
+  /** OVERRIDE the force-sim params (the spread knobs — charge, distanceMax, centre,
+   *  boundary, collide, seed jitter, margin — plus the link CLUSTERING knobs, MYT-89
+   *  untangle: link pull + rest length), merged over the locked `FORCE_PARAMS`
+   *  defaults. The Storybook spread-tuning harness (MYT-89 audit #4) passes the live
+   *  slider values so Miklos dials the exact feel; changing them RE-SEEDS the layout
+   *  (fresh spread, not a merge). Production omits this — the locked defaults fill
+   *  the space and group connected entities. */
   forceParams?: Partial<ForceParams>
 }
