@@ -20,9 +20,15 @@
 //      space).
 //   3. DOUBLET SPATIAL-BUCKETING (§3.7): the doublet field decays ~1/r⁴, so a
 //      particle only feels the handful of doublets within a few RD. We bucket the
-//      doublets into a uniform grid and evaluate only the local neighbourhood —
-//      fidelity-preserving, and a real speedup as the canvas (and doublet count)
-//      grows.
+//      doublets into a uniform grid, evaluate only the local neighbourhood, and
+//      cull isotropically at the SAME 12·RD cutoff the bucket grid encodes —
+//      fidelity-preserving (far-field ≲1% of |wind|, see BUCKET_SIZE), and a real
+//      speedup as the canvas (and doublet count) grows. The candidate query runs
+//      once per occupied bucket CELL, not once per particle (every particle in a
+//      cell sees the identical 3×3 neighbourhood), and the hard capsule keep-out
+//      pre-rejects on the capsule's EXR-padded AABB before paying for a distance
+//      (MYT-89 framerate fix — advection dominated the profile at real-world
+//      obstacle counts; all three changes leave the per-particle math untouched).
 //   4. FADE-SKIP (§3.7): when the caller's `effectiveDensity` is ~0 (the fade has
 //      run the fog to nothing as the graph fills) the whole `step()` is skipped —
 //      no advection, the grid is left as-is. `effectiveDensity` is used for that
@@ -121,9 +127,16 @@ const EXR = FORCEFIELD_BASE_PX + FOG_PARAMS.margin
  *  the sim frame-rate-independent. */
 const FIXED_DT_MS = 1000 / 60
 const FIXED_DT_S = FIXED_DT_MS / 1000
-/** Cap on sub-steps per `step()` — a long stall (backgrounded tab) drops the
- *  backlog rather than spiralling into an unbounded catch-up loop. */
-const MAX_STEPS_PER_FRAME = 5
+/** Cap on sub-steps per `step()` — a stall drops the backlog rather than spiralling
+ *  into a catch-up loop. The cap is deliberately LOW (2, not the former 5): catch-up
+ *  sub-steps multiply per-frame cost exactly when the machine is already over budget,
+ *  which is an amplifier, not a recovery — a profiled 4×-throttled retina pane fell to
+ *  ~10 FPS at 11 obstacles because every frame ground through 5 sub-steps (MYT-89
+ *  framerate fix). At 2 the sim holds real-time pacing whenever the frame rate is
+ *  ≥ ~30 FPS and time-dilates gracefully below that; healthy 60/120Hz frames run
+ *  1 sub-step (or none) and never feel the cap. This is a production-port resilience
+ *  knob, not a reference-tuned constant (the prototype had no fixed timestep). */
+const MAX_STEPS_PER_FRAME = 2
 /** Below this `effectiveDensity` the fog is effectively gone → skip the step. */
 const FADE_EPS = 1e-6
 
@@ -131,6 +144,24 @@ const FADE_EPS = 1e-6
  *  ignores contributes ≲1% of |wind| (doublet ~U/12² and the wake-close, at the
  *  LOCKED close=0.1, is exp(-2)-small), so bucketing is fidelity-preserving. */
 const BUCKET_SIZE = 12 * RD
+/** The cutoff squared — `fieldVelocity` culls candidates isotropically at exactly
+ *  the 12·RD radius the bucket grid encodes. The 3×3 bucket window GUARANTEES every
+ *  doublet within the cutoff is a candidate, but (being a coarse window) also admits
+ *  extras up to ~3× the cutoff away depending on grid alignment; evaluating those
+ *  was pure cost inside the same ≲1% far-field bound the bucketing already accepts
+ *  (and grid-alignment-dependent — the cull is MORE uniform than the window it
+ *  replaces). MYT-89 framerate fix: at real-world obstacle counts this cuts the
+ *  per-particle candidate set ~2–3×. */
+const DOUBLET_CUTOFF2 = BUCKET_SIZE * BUCKET_SIZE
+
+// Precomputed wake/drag gate terms (loop-invariant products of LOCKED constants —
+// hoisted out of the per-candidate hot path; bit-identical arithmetic).
+const WAKE_GATE_A = WAKE_CLOSE.gateRdMul * RD
+const WAKE_DECAY_A = WAKE_CLOSE.decayA_RdMul * RD
+const WAKE_DECAY_B = WAKE_CLOSE.decayB_Rd2Mul * RD2
+const WAKE_PERP = WAKE_CLOSE.perpRdMul * RD
+const DRAG_R2 = WAKE_DRAG.radiusRd2Mul * RD2
+const DRAG_FALLOFF = WAKE_DRAG.falloffRdMul * RD
 /** Numeric bucket-key packing: offset absorbs negative (off-band) bucket indices,
  *  the stride keeps the two coordinates disjoint for any real canvas size. */
 const BUCKET_KEY_OFFSET = 4096
@@ -186,7 +217,9 @@ function turbulence(px: number, py: number, t: number): readonly [number, number
  *  incl. the `up = -c·(a²-b²)` / `vp = -2·c·a·b` expressions (the leading `-1` on
  *  `up`). The reference's `CLOSE>0` guard is dropped — CLOSE is the LOCKED 0.1 > 0,
  *  so the `a > 1.6·RD` downstream gate alone decides the wake-close. `doublets` is
- *  the bucket-filtered candidate set (a superset of those within the cutoff). */
+ *  the bucket-filtered candidate set (a superset of those within the cutoff);
+ *  candidates past `DOUBLET_CUTOFF2` are culled here, so the evaluated set is
+ *  exactly "everything within 12·RD" regardless of bucket-grid alignment. */
 export function fieldVelocity(
   px: number,
   py: number,
@@ -203,6 +236,7 @@ export function fieldVelocity(
     const dx = px - d.x
     const dy = py - d.y
     let r2 = dx * dx + dy * dy
+    if (r2 > DOUBLET_CUTOFF2) continue // past the 12·RD cutoff (≲1% far-field) — see DOUBLET_CUTOFF2
     if (r2 < RD2) r2 = RD2
     const a = dx * wind.wxu + dy * wind.wyu
     const b = -dx * wind.wyu + dy * wind.wxu
@@ -211,18 +245,14 @@ export function fieldVelocity(
     const vp = -DOUBLET_VP_COEFF * c * a * b
     vx += up * wind.wxu - vp * wind.wyu
     vy += up * wind.wyu + vp * wind.wxu
-    if (a > WAKE_CLOSE.gateRdMul * RD) {
-      const g =
-        CLOSE *
-        wind.U *
-        Math.exp(-a / (WAKE_CLOSE.decayA_RdMul * RD)) *
-        Math.exp((-b * b) / (WAKE_CLOSE.decayB_Rd2Mul * RD2))
-      const perp = -(b / (WAKE_CLOSE.perpRdMul * RD)) * g
+    if (a > WAKE_GATE_A) {
+      const g = CLOSE * wind.U * Math.exp(-a / WAKE_DECAY_A) * Math.exp((-b * b) / WAKE_DECAY_B)
+      const perp = -(b / WAKE_PERP) * g
       vx += perp * -wind.wyu
       vy += perp * wind.wxu
     }
-    if (r2 < WAKE_DRAG.radiusRd2Mul * RD2) {
-      const w = 1 - Math.sqrt(r2) / (WAKE_DRAG.falloffRdMul * RD)
+    if (r2 < DRAG_R2) {
+      const w = 1 - Math.sqrt(r2) / DRAG_FALLOFF
       vx += d.vx * w * WAKE_DRAG.coeff
       vy += d.vy * w * WAKE_DRAG.coeff
     }
@@ -384,40 +414,59 @@ function buildBuckets(doublets: readonly Doublet[]): Map<number, Doublet[]> {
   return m
 }
 
-/** Collect the doublets in the 3×3 bucket neighbourhood of (x,y) into `out` (reused
- *  scratch). Bucket size = cutoff, so the neighbourhood is a superset of every
- *  doublet within the cutoff and skips only strictly-farther ones. */
-function queryBuckets(buckets: Map<number, Doublet[]>, out: Doublet[], x: number, y: number): void {
-  out.length = 0
-  const bx = Math.floor(x / BUCKET_SIZE)
-  const by = Math.floor(y / BUCKET_SIZE)
+/** Collect the doublets in the 3×3 bucket neighbourhood of bucket cell (bx,by) into a
+ *  fresh array. Bucket size = cutoff, so the neighbourhood is a superset of every
+ *  doublet within the cutoff of ANY point in the cell (`fieldVelocity` then culls at
+ *  the exact radius). Runs once per occupied cell per sub-step (see `advect`). */
+function queryBuckets(buckets: Map<number, Doublet[]>, bx: number, by: number): Doublet[] {
+  const out: Doublet[] = []
   for (let oy = -1; oy <= 1; oy++) {
     for (let ox = -1; ox <= 1; ox++) {
       const bucket = buckets.get(bucketKey(bx + ox, by + oy))
       if (bucket) for (const d of bucket) out.push(d)
     }
   }
+  return out
 }
 
 /** Advect every particle one sub-step: field velocity → move → project out of each
- *  capsule (EXR keep-out) → respawn if off-band. */
+ *  capsule (EXR keep-out) → respawn if off-band.
+ *
+ *  Two structural perf moves (MYT-89 framerate fix), both math-preserving:
+ *  - the doublet-candidate query is memoised per bucket CELL: every particle in a
+ *    cell sees the identical 3×3 neighbourhood, so the query runs once per occupied
+ *    cell (a few dozen) instead of once per particle (thousands) — same arrays, same
+ *    order, same field;
+ *  - the capsule keep-out pre-rejects on the capsule's EXR-padded AABB: the EXR
+ *    stadium around the midline segment lies inside that box, so a particle outside
+ *    it has d ≥ EXR and `segd` would be a no-op — skipping it never skips a
+ *    projection that would have fired. */
 function advect(
   s: FogState,
   obstacles: readonly FogObstacle[],
   buckets: Map<number, Doublet[]>,
-  scratch: Doublet[],
 ): void {
   const { P } = s
+  const cellCandidates = new Map<number, Doublet[]>()
   for (let i = 0; i < s.n; i++) {
     const base = i * PARTICLE_STRIDE
     let X = cell(P, base)
     let Y = cell(P, base + 1)
-    queryBuckets(buckets, scratch, X, Y)
-    const [vx, vy] = fieldVelocity(X, Y, s.clock, scratch, s.wind)
+    const bx = Math.floor(X / BUCKET_SIZE)
+    const by = Math.floor(Y / BUCKET_SIZE)
+    const key = bucketKey(bx, by)
+    let candidates = cellCandidates.get(key)
+    if (candidates === undefined) {
+      candidates = queryBuckets(buckets, bx, by)
+      cellCandidates.set(key, candidates)
+    }
+    const [vx, vy] = fieldVelocity(X, Y, s.clock, candidates, s.wind)
     X += vx
     Y += vy
     for (const ob of obstacles) {
-      const [d, nx, ny] = segd(X, Y, ob.x, ob.y + ob.h / 2, ob.x + ob.w, ob.y + ob.h / 2)
+      const midY = ob.y + ob.h / 2
+      if (X < ob.x - EXR || X > ob.x + ob.w + EXR || Y < midY - EXR || Y > midY + EXR) continue
+      const [d, nx, ny] = segd(X, Y, ob.x, midY, ob.x + ob.w, midY)
       if (d < EXR) {
         X += nx * (EXR - d)
         Y += ny * (EXR - d)
@@ -475,10 +524,10 @@ function boxClear(s: FogState, obstacles: readonly FogObstacle[]): void {
   }
 }
 
-function subStep(s: FogState, obstacles: readonly FogObstacle[], scratch: Doublet[]): void {
+function subStep(s: FogState, obstacles: readonly FogObstacle[]): void {
   const doublets = buildDoublets(obstacles)
   const buckets = buildBuckets(doublets)
-  advect(s, obstacles, buckets, scratch)
+  advect(s, obstacles, buckets)
   splat(s)
   smooth(s)
   boxClear(s, obstacles)
@@ -495,8 +544,6 @@ export function createFogSim(opts: {
   random?: () => number
 }): FogSim {
   const s = createState(opts)
-  // One scratch buffer reused across every particle/sub-step (allocation-free).
-  const scratch: Doublet[] = []
   return {
     step(dtMs: number, obstacles: readonly FogObstacle[], effectiveDensity: number): void {
       if (effectiveDensity <= FADE_EPS) {
@@ -506,12 +553,16 @@ export function createFogSim(opts: {
       s.acc += dtMs
       let steps = 0
       while (s.acc >= FIXED_DT_MS && steps < MAX_STEPS_PER_FRAME) {
-        subStep(s, obstacles, scratch)
+        subStep(s, obstacles)
         s.acc -= FIXED_DT_MS
         steps += 1
       }
-      // Backlog past the cap (a long stall) is dropped to avoid a catch-up spiral.
-      if (s.acc >= FIXED_DT_MS) s.acc = 0
+      // Exiting AT the cap means overload — drop the ENTIRE remaining backlog
+      // (fractional included: float subtraction can leave it a hair under one
+      // sub-step, which the old `acc >= FIXED_DT_MS` check leaked into the next
+      // frame) to avoid a catch-up spiral. A healthy frame (steps < cap) keeps its
+      // sub-step remainder, so normal pacing still accumulates exactly.
+      if (steps === MAX_STEPS_PER_FRAME) s.acc = 0
     },
     density: () => s.dsm,
     gw: s.gw,

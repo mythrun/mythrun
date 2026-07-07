@@ -132,6 +132,19 @@ describe('fieldVelocity — the potential-flow field (verbatim gates)', () => {
     // Off the wake axis the wake-close perp term steers the flow differently.
     expect(Math.abs(onAxis[1] - offAxis[1])).toBeGreaterThan(0)
   })
+
+  it('culls a doublet beyond the 12·RD cutoff — the far field contributes exactly nothing', () => {
+    // The doublet cutoff is the SAME 12·RD the bucket grid documents (far-field ≲1% of
+    // |wind|). A doublet past it must leave the velocity bit-identical to no doublet at
+    // all — the isotropic cull, not merely a small contribution.
+    const far: Doublet[] = [{ x: 100 + 13 * RD, y: 100, vx: 5, vy: 5 }]
+    expect(fieldVelocity(100, 100, 0, far, UNIT_WEST)).toEqual(fieldVelocity(100, 100, 0, [], UNIT_WEST))
+  })
+
+  it('keeps a doublet inside the 12·RD cutoff (the near field is evaluated)', () => {
+    const near: Doublet[] = [{ x: 100 + 11 * RD, y: 100, vx: 0, vy: 0 }]
+    expect(fieldVelocity(100, 100, 0, near, UNIT_WEST)).not.toEqual(fieldVelocity(100, 100, 0, [], UNIT_WEST))
+  })
 })
 
 describe('isOffBand / inGrid / splatWeight / pickSpawn — helper branches', () => {
@@ -232,6 +245,23 @@ describe('FogSim — fixed timestep (frame-rate independent)', () => {
       sim.step(10000, [], 1)
     }).not.toThrow()
     expect(anyPositive(sim.density())).toBe(true)
+  })
+
+  it('caps catch-up at 2 sub-steps per call and drops the rest of the backlog', () => {
+    // The anti-jank valve (MYT-89 perf): catch-up sub-steps multiply per-frame cost
+    // exactly when the machine is already over budget, so the cap is LOW (2). A 50ms
+    // frame wants 3 sub-steps; it must run exactly 2 (matching two healthy 16.7ms
+    // frames) and DROP the remainder — time dilates under overload, never a spiral.
+    const a = createFogSim({ width: 300, height: 200, random: mulberry32(11) })
+    const b = createFogSim({ width: 300, height: 200, random: mulberry32(11) })
+    a.step(50, [], 1)
+    b.step(16.7, [], 1)
+    b.step(16.7, [], 1)
+    expect(Array.from(a.density())).toEqual(Array.from(b.density()))
+    // …and the dropped backlog doesn't leak into the next frame: both run 1 sub-step.
+    a.step(16.7, [], 1)
+    b.step(16.7, [], 1)
+    expect(Array.from(a.density())).toEqual(Array.from(b.density()))
   })
 })
 

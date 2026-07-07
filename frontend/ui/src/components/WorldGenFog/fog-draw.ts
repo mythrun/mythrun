@@ -65,6 +65,18 @@ export function cloud(px: number, py: number, wx: number, wy: number, t: number)
   return Math.max(0, CLOUD_CONTRAST_BASE + CLOUD_CONTRAST_GAIN * (n / CLOUD_NORM_DIVISOR))
 }
 
+/** A strict upper bound on `cloud()` (MYT-89 framerate fix): the octave sum `n` is at
+ *  most Σ|amp| (each `sin` ≤ 1), so `cloud ≤ base + gain·(Σamp / normDivisor)`; the tiny
+ *  epsilon absorbs float-summation round-up. Used ONLY to SKIP evaluating the three
+ *  `sin` octaves for cells that provably cannot clear their threshold even under a
+ *  maximal cloud — the paint decision for every non-skipped cell is the untouched
+ *  verbatim formula, so the painted set is bit-identical (the IFF test pins this). */
+const CLOUD_MAX =
+  CLOUD_CONTRAST_BASE +
+  CLOUD_CONTRAST_GAIN *
+    (CLOUD_OCTAVES.reduce((sum, octave) => sum + octave.amp, 0) / CLOUD_NORM_DIVISOR) +
+  1e-6
+
 /**
  * Paint the density grid as crisp fog quads. For each cell: coverage
  * `cov = (pd / COVERAGE_DIVISOR) · cloud(centre) · effectiveDensity`; fill a SOLID
@@ -72,6 +84,15 @@ export function cloud(px: number, py: number, wx: number, wy: number, t: number)
  * with `pd <= 0` (FogSim's box-clear zeroes them under labels) are skipped, so fog never
  * covers a label. The alpha is set ONCE — every painted quad is identical (crisp), never
  * a per-cell gradient — and restored to 1 so the next canvas layer starts clean.
+ *
+ * Two decision-identical fast paths (MYT-89 framerate fix):
+ * - `effectiveDensity ≤ 0` (the fade has run the fog to nothing — the whole post-gen
+ *   tail): `cov` is 0 for every cell and no non-negative threshold can be cleared, so
+ *   the grid walk is skipped entirely and the ctx is left untouched;
+ * - per cell, when even a MAXIMAL cloud could not clear the threshold
+ *   (`covBound ≤ thr`, see `CLOUD_MAX`), the three-octave `cloud()` eval is skipped —
+ *   the dominant paint-side JS cost on faint fog. Neither path can change which cells
+ *   paint; `cov`'s own expression (and float-op order) is untouched.
  */
 export function paintFog(
   ctx: FogPaintTarget,
@@ -80,16 +101,24 @@ export function paintFog(
   gh: number,
   opts: PaintFogOptions,
 ): void {
+  if (opts.effectiveDensity <= 0) return
   ctx.fillStyle = opts.fogColor
   ctx.globalAlpha = opts.fogAlpha
   for (let gy = 0; gy < gh; gy++) {
     for (let gx = 0; gx < gw; gx++) {
       const pd = density[gy * gw + gx] ?? 0
       if (pd <= 0) continue
+      const thr = thresholdAt(gx, gy)
+      const pdNorm = pd / COVERAGE_DIVISOR
+      // Bound-skip: float multiplication is monotone in each non-negative operand and
+      // this bound has the same association shape as `cov` below, so
+      // `cov ≤ covBound` always — a skipped cell could never have painted.
+      const covBound = pdNorm * CLOUD_MAX * opts.effectiveDensity
+      if (covBound <= thr) continue
       const px = gx * CELL_PX + CELL_CENTER_PX
       const py = gy * CELL_PX + CELL_CENTER_PX
-      const cov = (pd / COVERAGE_DIVISOR) * cloud(px, py, opts.wx, opts.wy, opts.t) * opts.effectiveDensity
-      if (cov > thresholdAt(gx, gy)) ctx.fillRect(gx * CELL_PX, gy * CELL_PX, CELL_PX, CELL_PX)
+      const cov = pdNorm * cloud(px, py, opts.wx, opts.wy, opts.t) * opts.effectiveDensity
+      if (cov > thr) ctx.fillRect(gx * CELL_PX, gy * CELL_PX, CELL_PX, CELL_PX)
     }
   }
   ctx.globalAlpha = 1

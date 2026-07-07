@@ -81,9 +81,10 @@ const OPTS = {
   fogAlpha: FOG_PARAMS.fogAlpha,
 }
 
-/** Recompute the paint decision independently (the reference formula) so the test
- *  asserts against the algorithm, not against paintFog's own output. */
-function predictedFills(density: Float32Array): Set<string> {
+/** Recompute the paint decision independently (the reference formula, with NO perf
+ *  shortcuts — no cloud bound-skip) so the test asserts against the algorithm, not
+ *  against paintFog's own output. */
+function predictedFills(density: Float32Array, effectiveDensity = OPTS.effectiveDensity): Set<string> {
   const out = new Set<string>()
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
@@ -91,7 +92,7 @@ function predictedFills(density: Float32Array): Set<string> {
       if (pd <= 0) continue
       const px = gx * CELL_PX + CELL_CENTER_PX
       const py = gy * CELL_PX + CELL_CENTER_PX
-      const cov = (pd / COVERAGE_DIVISOR) * cloud(px, py, 0, 0, 0) * OPTS.effectiveDensity
+      const cov = (pd / COVERAGE_DIVISOR) * cloud(px, py, 0, 0, 0) * effectiveDensity
       if (cov > thresholdAt(gx, gy)) out.add(key(gx * CELL_PX, gy * CELL_PX))
     }
   }
@@ -121,6 +122,29 @@ describe('paintFog — the crisp Bayer coverage decision', () => {
     const { target, fills } = recordingCtx()
     paintFog(target, density, GW, GH, OPTS)
     expect(fills).toHaveLength(0)
+  })
+
+  it('a thin fade (low effectiveDensity) still matches the reference formula exactly', () => {
+    // The perf bound-skip (skip cloud() when even a MAX cloud could not clear the
+    // threshold) fires most on faint fog — this pins that it is decision-IDENTICAL,
+    // never an approximation: painted set == the shortcut-free reference formula.
+    const density = seedDensity(GW, GH)
+    const { target, fills } = recordingCtx()
+    paintFog(target, density, GW, GH, { ...OPTS, effectiveDensity: 0.12 })
+    const painted = new Set(fills.map((f) => key(f.x, f.y)))
+    expect(painted).toEqual(predictedFills(density, 0.12))
+  })
+
+  it('paints nothing and leaves the ctx untouched once the fade reaches 0', () => {
+    // effectiveDensity 0 → cov is 0 for every cell → no cell can clear a (non-negative)
+    // threshold. The fast path must skip the whole grid walk WITHOUT touching canvas
+    // state (the faded-out layer costs nothing for the rest of the session).
+    const density = seedDensity(GW, GH)
+    const { target, fills, finalAlpha } = recordingCtx()
+    paintFog(target, density, GW, GH, { ...OPTS, effectiveDensity: 0 })
+    expect(fills).toHaveLength(0)
+    expect(finalAlpha()).toBe(1) // never written (the recording ctx starts at 1)
+    expect(target.fillStyle).toBe('') // never written
   })
 
   it('paints each cell as a full CELL_PX quad at the cell origin (no sub-cell geometry)', () => {

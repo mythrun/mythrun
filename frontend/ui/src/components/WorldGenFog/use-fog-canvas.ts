@@ -64,23 +64,61 @@ function effectiveDensity(shown: number, total: number, base: number): number {
   return base * Math.pow(remaining, FADE_EXPONENT)
 }
 
-/** Size the backing store to the ELEMENT's real client pixels × DPR — full-pane
- *  resolution (MYT-89 audit #2), so the fog is crisp instead of an upscaled fixed
- *  900×470. The context is scaled by `(cssW / VIRTUAL_WIDTH) × dpr` so draw code stays in
- *  the 900×470 VIRTUAL space; the `aspect-[90/47]` box keeps the height in step, so one
- *  width-derived uniform scale fits both axes. Mirrors the graph's `sizeCanvasForDpr`
- *  exactly (same element dims + same scale) so the two layered canvases stay pixel-aligned
- *  — the fog-holes track the glyphs (BUG 2.2 stays closed: drawn in virtual units, the
- *  resolution is the pane's, not baked in). */
+/** The fog layer's maximum render scale (device px per VIRTUAL px) — the reference
+ *  prototype's own envelope: its 900×470 canvas at its DPR cap of 2 (1800×940), the
+ *  resolution the fog's look was eye-tuned at. Numerically equal to DPR_CAP but a
+ *  distinct concept: DPR_CAP caps the DISPLAY ratio; this caps virtual→device blow-up. */
+const FOG_MAX_RENDER_SCALE = DPR_CAP
+
+/** The fog canvas's backing-store size + virtual→device scale (MYT-89 framerate fix).
+ *
+ *  The pane-resolution sizing (audit #2, the graph-blur fix) sized BOTH canvases to the
+ *  real pane pixels × dpr — which on a wide retina pane blew the fog's per-frame painted
+ *  area up ~2.6× (e.g. 2880×1504 vs the former 1800×940) for zero visible gain: the fog
+ *  is LOW-FREQUENCY dithered cloud quads whose canonical look was tuned at ≤ 2× the
+ *  900×470 virtual space, and it reads soft under CSS upscale BY DESIGN. So the fog layer
+ *  caps its render scale at `FOG_MAX_RENDER_SCALE` and lets CSS stretch that ONE layer to
+ *  the pane; at or under the envelope this is bit-identical to the full-res sizing. The
+ *  GRAPH canvas is deliberately NOT capped — full pane resolution is what keeps its
+ *  lines/labels crisp (the reason for the audit #2 change).
+ *
+ *  Alignment (BUG 2.2) survives the cap: both canvases fill the SAME CSS box and both
+ *  draw in the SAME 900×470 virtual space, so a virtual coordinate lands on the same
+ *  on-screen point in each layer — the cap only lowers the fog's device sampling of that
+ *  shared space (obstacle geometry, box-clear, and collision are all virtual-space math
+ *  and untouched). Pure — exported for unit test. */
+export function fogBackingStore(
+  cssW: number,
+  cssH: number,
+  dpr: number,
+): { width: number; height: number; scale: number } {
+  const paneScale = (cssW / VIRTUAL_WIDTH) * dpr
+  const scale = Math.min(paneScale, FOG_MAX_RENDER_SCALE)
+  const shrink = scale / paneScale // 1 when uncapped → cssW×dpr exactly, as before
+  return {
+    width: Math.round(cssW * dpr * shrink),
+    height: Math.round(cssH * dpr * shrink),
+    scale,
+  }
+}
+
+/** Size the backing store to the ELEMENT's client pixels × DPR, CAPPED at the fog's
+ *  canonical 2×-virtual envelope (`fogBackingStore` — the MYT-89 framerate fix). The
+ *  context is scaled so draw code stays in the 900×470 VIRTUAL space; the `aspect-[90/47]`
+ *  box keeps the height in step, so one width-derived uniform scale fits both axes. The
+ *  graph's `sizeCanvasForDpr` sizes off the same element in the same virtual space (at
+ *  full pane resolution — the cap is fog-only), so the two layered canvases stay aligned —
+ *  the fog-holes track the glyphs (BUG 2.2 stays closed: drawn in virtual units, the
+ *  resolution is an implementation detail of each layer). */
 function sizeFogCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
   const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1)
   const rect = canvas.getBoundingClientRect()
   const cssW = Math.max(1, Math.round(rect.width))
   const cssH = Math.max(1, Math.round(rect.height))
-  canvas.width = Math.round(cssW * dpr)
-  canvas.height = Math.round(cssH * dpr)
-  const scale = (cssW / VIRTUAL_WIDTH) * dpr
-  ctx.setTransform(scale, 0, 0, scale, 0, 0)
+  const store = fogBackingStore(cssW, cssH, dpr)
+  canvas.width = store.width
+  canvas.height = store.height
+  ctx.setTransform(store.scale, 0, 0, store.scale, 0, 0)
 }
 
 interface Pos {
@@ -244,10 +282,10 @@ export function useFogCanvas(params: FogCanvasParams): void {
     })
   }, [reducedMotion, canvasRef, getSim, currentEntities])
 
-  // Re-size the backing store to the pane on resize so the fog stays crisp after a layout
-  // change (MYT-89 audit #2) — parity with the graph's `observeResize`; both size to the
-  // same element, so they stay pixel-aligned. Body at module scope. Inert under jsdom (the
-  // ResizeObserver shim never fires).
+  // Re-size the backing store on container resize (capped at the fog envelope — see
+  // `fogBackingStore`) — parity with the graph's `observeResize`; both size off the same
+  // element and draw the same virtual space, so the layers stay aligned. Body at module
+  // scope. Inert under jsdom (the ResizeObserver shim never fires).
   useEffect(
     () => observeFogResize(canvasRef.current, { reducedMotion, settleStatic }),
     [canvasRef, reducedMotion, settleStatic],
