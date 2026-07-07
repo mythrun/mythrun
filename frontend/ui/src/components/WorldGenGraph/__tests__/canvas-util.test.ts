@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DPR_CAP, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
-import { sizeCanvasForDpr } from '../canvas-util.ts'
+import { cardKeepOut, resolveEdgeInk, sizeCanvasForDpr } from '../canvas-util.ts'
 
 /** The reference virtual dims — what `virtualDims` yields for a reference-aspect pane
  *  (the virtual space is PANE-ADAPTIVE now; `sizeCanvasForDpr` takes the current dims). */
@@ -124,5 +124,77 @@ describe('sizeCanvasForDpr — full-pane resolution (MYT-89 audit #2)', () => {
     sizeCanvasForDpr(canvas, ctx, { width: 343, height: 413 })
     expect(backing()).toEqual({ width: 686, height: 826 })
     expect(transform()?.a).toBe(2) // (343/343) × 2
+  })
+})
+
+// ── resolveEdgeInk — the LIGHTER edge stroke (MYT-89 density redesign) ──────────────────
+// The connection strings stroke in the `--ink-tertiary` DS step (the muted text tier) so
+// a label always reads over a crossing line; when the token is unresolved (a bare Canvas)
+// it falls back through `resolveInk` (`--ink`, then the element's own color). jsdom
+// doesn't resolve custom properties, so the computed style is stubbed per branch.
+
+describe('resolveEdgeInk — the lighter DS ink step for edges', () => {
+  const canvas = (): HTMLCanvasElement => document.createElement('canvas')
+
+  const styleWith = (vars: Record<string, string>, color: string): CSSStyleDeclaration =>
+    ({
+      getPropertyValue: (name: string) => vars[name] ?? '',
+      color,
+    }) as unknown as CSSStyleDeclaration
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  // Stub values are opaque strings, not colour literals (R3 keeps raw colours out of
+  // source; the resolver just passes whatever the token computes to through).
+  it('resolves the --ink-tertiary token (trimmed) when present', () => {
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(
+      styleWith({ '--ink-tertiary': ' tertiary-token ', '--ink': 'ink-token' }, 'element-color'),
+    )
+    expect(resolveEdgeInk(canvas())).toBe('tertiary-token')
+  })
+
+  it('falls back to the full ink (--ink) when the tertiary token is unresolved', () => {
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(
+      styleWith({ '--ink': 'ink-token' }, 'element-color'),
+    )
+    expect(resolveEdgeInk(canvas())).toBe('ink-token')
+  })
+
+  it('falls back to the element color when NO token resolves (bare Canvas / jsdom)', () => {
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue(styleWith({}, 'element-color'))
+    expect(resolveEdgeInk(canvas())).toBe('element-color')
+  })
+})
+
+// ── cardKeepOut — the status-card overlay's sim keep-out (density redesign) ─────────────
+// The card floats over the pane (on a phone ~70% of the width); its DOM box maps into a
+// CENTRED-virtual rect the sim shoves node boxes out of, so no entity name spends the
+// generation occluded under the card. Thin dead gutters against the pane's top/left edge
+// are swallowed (the shove-out must never fight the containment clamp over a strip no
+// glyph can occupy).
+
+describe('cardKeepOut — DOM box → centred-virtual keep-out', () => {
+  // A 686-CSS-px pane over a 343-wide virtual space → scale 0.5 (CSS→virtual).
+  const canvasRect = { left: 100, top: 50, width: 686, height: 826 }
+  const virtual = { width: 343, height: 413 }
+
+  it('maps the card box through the pane→virtual scale and recentres (+pad)', () => {
+    // Card well inside the pane (no gutter snap): 300..500 × 400..600 CSS.
+    const rect = cardKeepOut(canvasRect, { left: 300, top: 400, right: 500, bottom: 600 }, virtual)
+    // left: (300-100)*0.5 - 171.5 - 10 = -81.5; top: (400-50)*0.5 - 206.5 - 10 = -41.5
+    expect(rect.left).toBeCloseTo(-81.5, 6)
+    expect(rect.top).toBeCloseTo(-41.5, 6)
+    expect(rect.right).toBeCloseTo((500 - 100) * 0.5 - 171.5 + 10, 6)
+    expect(rect.bottom).toBeCloseTo((600 - 50) * 0.5 - 206.5 + 10, 6)
+  })
+
+  it('swallows the thin top-left gutter into the rect (the corner trap)', () => {
+    // The production card: pinned ~24 CSS px (12 virtual) from the pane's top-left —
+    // far less than a glyph box needs, so the rect snaps to the pane edge.
+    const rect = cardKeepOut(canvasRect, { left: 124, top: 74, right: 500, bottom: 200 }, virtual)
+    expect(rect.left).toBe(-virtual.width / 2)
+    expect(rect.top).toBe(-virtual.height / 2)
   })
 })

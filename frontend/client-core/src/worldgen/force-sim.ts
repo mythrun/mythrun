@@ -209,6 +209,20 @@ export interface NodeBox {
   bottom: number
 }
 
+/** An ABSOLUTE immovable rectangle (CENTRED virtual coords — the same space node
+ *  positions live in) that node boxes keep OUT of (MYT-89 density redesign): the DOM
+ *  status-card overlay's footprint. On a phone the card covers ~70% of the pane width,
+ *  so without this the top-left region is dead space — nodes and their names drift
+ *  under the card and stay occluded for the whole generation. The ui measures the
+ *  card's box and hands it over via `setKeepOuts`; the collision pass shoves NODES out
+ *  (the rect never moves). */
+export interface StaticKeepOut {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
 /** A d3 simulation node carrying BOTH identities: the stable internal `synthKey`
  *  (d3's link-resolver id, never changes → position continuity) and the current
  *  `displayId` (the external render/edge id-space, refreshed every `sync` — swaps
@@ -259,6 +273,14 @@ export interface ForceSim {
    *  streams in later still picks up its box, and a finalize (displayId swap) re-keys it.
    *  The rectangular collision force keeps every pair of boxes from overlapping. */
   setBoxes(boxes: Map<string, NodeBox>): void
+  /** Replace the set of ABSOLUTE keep-out rects (centred virtual coords) node boxes
+   *  are shoved out of — the DOM status-card overlay's footprint (empty = none). */
+  setKeepOuts(rects: readonly StaticKeepOut[]): void
+  /** Gentle reheat (the `sync` arrival energy, without a graph change) — used when a
+   *  node's collision box changes SHAPE in place (a label promotion/retirement: the
+   *  tap/click focus, a tier change), so the settled neighbours re-flow around the
+   *  new box instead of being shoved by the raw keep-out force alone. */
+  reheat(): void
   /** Advance the simulation one step. Driven by the render loop (C4). */
   tick(): void
   /** displayId → current position. */
@@ -350,13 +372,41 @@ function separateBoxes(
   }
 }
 
+/** Shove ONE node's box out of an immovable keep-out rect (the status-card footprint):
+ *  same projected-AABB test as `separateBoxes`, but the FULL overlap goes onto the
+ *  node's velocity (the rect never moves), along the minimum-overlap axis, away from
+ *  the rect's centre. */
+function separateFromStatic(a: SimNode, aBox: NodeBox, ko: StaticKeepOut, halfPad: number): void {
+  const avx = a.vx ?? 0
+  const avy = a.vy ?? 0
+  const ax = a.x + avx
+  const ay = a.y + avy
+
+  const overlapX =
+    Math.min(ax + aBox.right + halfPad, ko.right) - Math.max(ax + aBox.left - halfPad, ko.left)
+  if (overlapX <= 0) return
+  const overlapY =
+    Math.min(ay + aBox.bottom + halfPad, ko.bottom) - Math.max(ay + aBox.top - halfPad, ko.top)
+  if (overlapY <= 0) return
+
+  if (overlapX < overlapY) {
+    const dir = ax + (aBox.left + aBox.right) / 2 <= (ko.left + ko.right) / 2 ? -1 : 1
+    a.vx = avx + dir * overlapX
+  } else {
+    const dir = ay + (aBox.top + aBox.bottom) / 2 <= (ko.top + ko.bottom) / 2 ? -1 : 1
+    a.vy = avy + dir * overlapY
+  }
+}
+
 /** The rectangular keep-out force: an O(n²) pairwise pass over the CURRENT node set,
- *  separating every overlapping pair of icon+label boxes (`separateBoxes`). Nodes whose
- *  box the ui hasn't measured yet (`box === undefined`) are skipped. `padding` is the AIR
- *  between two boxes — split half onto each box's extents, so two boxes hold at least
- *  `padding` px apart. Built as a d3 `Force`: `initialize` captures the live node array
- *  (re-run on every `simulation.nodes()`), the call applies one separation pass per tick. */
-function boxCollide(padding: number): Force<SimNode, SimLink> {
+ *  separating every overlapping pair of icon+label boxes (`separateBoxes`), plus a pass
+ *  shoving every node box out of each STATIC keep-out rect (`keepOuts` — the status-card
+ *  footprint, mutated in place by `setKeepOuts`). Nodes whose box the ui hasn't measured
+ *  yet (`box === undefined`) are skipped. `padding` is the AIR between two boxes — split
+ *  half onto each box's extents, so two boxes hold at least `padding` px apart. Built as
+ *  a d3 `Force`: `initialize` captures the live node array (re-run on every
+ *  `simulation.nodes()`), the call applies one separation pass per tick. */
+function boxCollide(padding: number, keepOuts: StaticKeepOut[]): Force<SimNode, SimLink> {
   const halfPad = padding / 2
   let simNodes: SimNode[] = []
   return Object.assign(
@@ -366,6 +416,7 @@ function boxCollide(padding: number): Force<SimNode, SimLink> {
         const a = simNodes[i]
         const aBox = a?.box
         if (a === undefined || aBox === undefined) continue
+        for (const ko of keepOuts) separateFromStatic(a, aBox, ko, halfPad)
         for (let j = i + 1; j < n; j++) {
           const b = simNodes[j]
           const bBox = b?.box
@@ -394,6 +445,7 @@ function buildSimulation(
   nodes: SimNode[],
   linkForce: ForceLink<SimNode, SimLink>,
   params: ForceParams,
+  keepOuts: StaticKeepOut[],
 ): Simulation<SimNode, SimLink> {
   return forceSimulation<SimNode, SimLink>(nodes)
     .force(
@@ -407,7 +459,7 @@ function buildSimulation(
       linkForce.distance(params.linkDistance).strength((link) => link.strength),
     )
     .force('center', forceCenter<SimNode>().strength(params.centerStrength))
-    .force('collide', boxCollide(params.collisionPadding))
+    .force('collide', boxCollide(params.collisionPadding, keepOuts))
     .force('boundX', forceX<SimNode>(0).strength(params.boundaryStrength))
     .force('boundY', forceY<SimNode>(0).strength(params.boundaryStrength))
     .stop()
@@ -587,8 +639,11 @@ export function create(opts: {
   // object references are reused, never rebuilt).
   const byKey = new Map<string, SimNode>()
   const nodes: SimNode[] = []
+  // STATIC keep-outs (the status-card footprint): mutated in place by `setKeepOuts`
+  // so the collide force (which closes over the array) always reads the current set.
+  const keepOuts: StaticKeepOut[] = []
   const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
-  const simulation = buildSimulation(nodes, linkForce, params)
+  const simulation = buildSimulation(nodes, linkForce, params, keepOuts)
 
   // Icon+label box store (keyed by displayId); re-applied after every merge so a late node resolves its box.
   const { applyBoxes, setBoxes } = makeBoxStore(byKey)
@@ -660,6 +715,20 @@ export function create(opts: {
     simulation.alpha(Math.max(simulation.alpha(), REHEAT_ALPHA))
   }
 
+  /** Replace the static keep-out set (in place — the collide force closes over the
+   *  array) + reheat so a settled cloud migrates out from under a newly-measured card. */
+  function setKeepOuts(rects: readonly StaticKeepOut[]): void {
+    keepOuts.length = 0
+    for (const r of rects) keepOuts.push(r)
+    simulation.alpha(Math.max(simulation.alpha(), REHEAT_ALPHA))
+  }
+
+  /** Gentle reheat without a graph change — a box-shape change (label promotion /
+   *  retirement) re-flows the settled neighbours. Same energy as a node arrival. */
+  function reheat(): void {
+    simulation.alpha(Math.max(simulation.alpha(), REHEAT_ALPHA))
+  }
+
   function positions(): Map<string, { x: number; y: number }> {
     // Keyed by the EXTERNAL `displayId` so consumers resolve in displayId/UUID space
     // (drawNodes via `node.displayId`, drawEdges via UUID edge endpoints).
@@ -695,6 +764,8 @@ export function create(opts: {
     sync,
     setSize,
     setBoxes,
+    setKeepOuts,
+    reheat,
     tick,
     positions,
     pin,

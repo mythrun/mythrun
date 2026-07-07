@@ -70,3 +70,23 @@ describe('ForceSim setSize (the responsive pane resize, MYT-89)', () => {
     expect(after).toEqual(before)
   })
 })
+
+describe('ForceSim reheat (label promotion / retirement re-flow, MYT-89 density)', () => {
+  it('re-energises a settled layout so a box-shape change re-flows the neighbours', () => {
+    // Settle to convergence, then reheat WITHOUT any graph change: the next ticks
+    // must move nodes again (the forces have energy) — the settled positions drift,
+    // which is exactly what lets neighbours re-flow around a promoted label box.
+    const sim = create({ width: 400, height: 320 })
+    sim.sync([node('a'), node('b'), node('c')], [])
+    for (let i = 0; i < 600; i++) sim.tick()
+    const before = new Map([...sim.positions()].map(([k, p]) => [k, { ...p }]))
+
+    sim.reheat()
+    for (let i = 0; i < 50; i++) sim.tick()
+    const moved = [...sim.positions()].some(([k, p]) => {
+      const b = before.get(k)
+      return b !== undefined && Math.hypot(p.x - b.x, p.y - b.y) > 0.5
+    })
+    expect(moved).toBe(true)
+  })
+})

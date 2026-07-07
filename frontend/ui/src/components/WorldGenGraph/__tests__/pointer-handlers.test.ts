@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH, type ForceSim } from '@mythrun/client-core/worldgen'
-import { attachPointerHandlers, type PointerDeps } from '../pointer-handlers.ts'
+import { attachPointerHandlers, attachTapHandlers, type PointerDeps } from '../pointer-handlers.ts'
 import type { Point } from '../canvas-draw.ts'
 
 // MYT-89 audit #5 (drag live during generation). The pointer effect used to gate BOTH
@@ -69,8 +69,14 @@ function ptr(clientX: number, clientY: number): PointerEvent {
 
 /** Build the PointerDeps for the given sim / onSelect / interactive flag. The virtual
  *  dims match the CSS box (the pane-adaptive space at a reference-sized pane), so the
- *  client→virtual mapping stays 1:1 for these tests. */
-function deps(sim: ForceSim, onSelect: (id: string) => void, interactive: boolean): PointerDeps {
+ *  client→virtual mapping stays 1:1 for these tests. `setFocus` is a spy — the density
+ *  redesign's name-reveal seam. */
+function deps(
+  sim: ForceSim,
+  onSelect: (id: string) => void,
+  interactive: boolean,
+  setFocus: (id: string | null) => void = vi.fn(),
+): PointerDeps {
   return {
     getSim: () => sim,
     sizeRef: { current: { cssW: VIRTUAL_WIDTH, cssH: VIRTUAL_HEIGHT } },
@@ -79,6 +85,7 @@ function deps(sim: ForceSim, onSelect: (id: string) => void, interactive: boolea
     dragRef: { current: null },
     onSelectRef: { current: onSelect },
     interactiveRef: { current: interactive },
+    setFocus,
   }
 }
 
@@ -148,5 +155,102 @@ describe('attachPointerHandlers — drag lives during generation (MYT-89 audit #
 
     expect(pin).toHaveBeenCalledWith('n1', 20, 0)
     expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('a CLICK focuses the node (name reveal) — in both phases; empty press clears', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const setFocus = vi.fn()
+    attachPointerHandlers(canvas, deps(sim, vi.fn(), false, setFocus))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x, CENTRE.y)) // a click → focus n1
+    expect(setFocus).toHaveBeenCalledExactlyOnceWith('n1')
+
+    fire('pointerdown', ptr(CENTRE.x + 300, CENTRE.y)) // far from any node → clears
+    expect(setFocus).toHaveBeenLastCalledWith(null)
+  })
+
+  it('a DRAG never focuses (the name reveal is a deliberate tap, not a fling)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const setFocus = vi.fn()
+    attachPointerHandlers(canvas, deps(sim, vi.fn(), false, setFocus))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 20, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x + 20, CENTRE.y))
+    expect(setFocus).not.toHaveBeenCalled()
+  })
+})
+
+// ── The TAP-only surface (density redesign — mobile) ───────────────────────────────────
+// Touch used to be gated off entirely (canvas drag fights page scroll). The tap surface
+// is the deliberate resolution: pointerdown/up with a movement-slop gate, NO capture, NO
+// preventDefault, no move handling — a scroll gesture travels past the slop (or fires
+// pointercancel) and is ignored, so the page scrolls as if the canvas weren't there,
+// while a genuine TAP focuses the glyph (promotes its name into the label tier).
+
+describe('attachTapHandlers — coarse-pointer tap (tap-not-drag)', () => {
+  it('attaches only down/up/cancel — no move handler, nothing to fight a scroll', () => {
+    const { canvas, handlers } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    attachTapHandlers(canvas, deps(sim, vi.fn(), false))
+    expect(Object.keys(handlers).sort()).toEqual(['pointercancel', 'pointerdown', 'pointerup'])
+  })
+
+  it('a TAP on a glyph focuses it; a tap on empty fog clears the focus', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const setFocus = vi.fn()
+    attachTapHandlers(canvas, deps(sim, vi.fn(), false, setFocus))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x, CENTRE.y))
+    expect(setFocus).toHaveBeenCalledExactlyOnceWith('n1')
+
+    fire('pointerdown', ptr(CENTRE.x + 300, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x + 300, CENTRE.y))
+    expect(setFocus).toHaveBeenLastCalledWith(null)
+  })
+
+  it('a SCROLL (movement past the slop) is ignored — never a focus', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const setFocus = vi.fn()
+    attachTapHandlers(canvas, deps(sim, vi.fn(), false, setFocus))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x, CENTRE.y + 40)) // the finger travelled — a scroll
+    expect(setFocus).not.toHaveBeenCalled()
+  })
+
+  it('pointercancel (the browser took the gesture) voids the press', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const setFocus = vi.fn()
+    attachTapHandlers(canvas, deps(sim, vi.fn(), false, setFocus))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointercancel', ptr(CENTRE.x, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x, CENTRE.y))
+    expect(setFocus).not.toHaveBeenCalled()
+  })
+
+  it('a tap selects in the reveal (interactive) but never during generation', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim } = stubSim(NODE_POSITIONS)
+    const onSelect = vi.fn()
+    attachTapHandlers(canvas, deps(sim, onSelect, true))
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x, CENTRE.y))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('n1')
+
+    const gen = stubCanvas()
+    const genSelect = vi.fn()
+    attachTapHandlers(gen.canvas, deps(sim, genSelect, false))
+    gen.fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    gen.fire('pointerup', ptr(CENTRE.x, CENTRE.y))
+    expect(genSelect).not.toHaveBeenCalled()
   })
 })

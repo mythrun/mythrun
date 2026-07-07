@@ -6,7 +6,21 @@ import type {
   StageProgress,
   WorldGenStatusCardProps,
 } from '@mythrun/client-core/contract'
-import { FORCE_PARAM_RANGES, FORCE_PARAMS, type ForceParams } from '@mythrun/client-core/worldgen'
+import {
+  DENSITY_PARAM_RANGES,
+  DENSITY_PARAMS,
+  FORCE_PARAM_RANGES,
+  FORCE_PARAMS,
+  type DensityParams,
+  type ForceParams,
+} from '@mythrun/client-core/worldgen'
+import {
+  MAX_DENSITY_ARRIVALS,
+  MAX_DENSITY_EDGES,
+  MAX_DENSITY_NODES,
+  MAX_DENSITY_TOTAL,
+  type FixtureArrival,
+} from './max-density-fixture.ts'
 import { WorldGenGraph } from './WorldGenGraph.tsx'
 
 // WorldGenGraph — the live streaming graph shown during world generation. The GENERATION
@@ -48,12 +62,10 @@ const edge = (synthKey: string, from: string, to: string, relationship: string):
 
 // A scripted mini generation. Each arrival carries the delay (ms) BEFORE it lands —
 // deliberately bursty: a lull, then a cluster, mirroring how the prep pipeline emits
-// (a stage goes quiet, then dumps several entities at once).
-interface Arrival {
-  afterMs: number
-  node?: GraphNode
-  edge?: GraphEdge
-}
+// (a stage goes quiet, then dumps several entities at once). (The REALISTIC full-size
+// script — 46 nodes / 72 edges, the measured shape of a real generation — lives in
+// max-density-fixture.ts and shares this arrival shape.)
+type Arrival = FixtureArrival
 
 const ARRIVALS: Arrival[] = [
   { afterMs: 300, node: node('s1/world', 'world', 'Ashfen Reach') },
@@ -74,10 +86,13 @@ const ARRIVALS: Arrival[] = [
 const NODE_TOTAL = ARRIVALS.filter((a) => a.node !== undefined).length
 
 /** Fold the arrivals up to `count` into the cumulative node/edge sets. */
-function snapshotAt(count: number): { nodes: GraphNode[]; edges: GraphEdge[] } {
+function snapshotAt(
+  arrivals: readonly Arrival[],
+  count: number,
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
-  for (const arrival of ARRIVALS.slice(0, count)) {
+  for (const arrival of arrivals.slice(0, count)) {
     if (arrival.node !== undefined) nodes.push(arrival.node)
     if (arrival.edge !== undefined) edges.push(arrival.edge)
   }
@@ -85,29 +100,33 @@ function snapshotAt(count: number): { nodes: GraphNode[]; edges: GraphEdge[] } {
 }
 
 // A synthetic status card that advances with the generation — the top-left overlay that
-// keeps the pre-entity stretch legible. `[ph:]` labels (the DS owns no copy).
+// keeps the pre-entity stretch legible. `[ph:]` labels (the DS owns no copy). The ids
+// are the CANONICAL entity stages (the card renders one fixed bar per `ENTITY_STAGES`
+// entry and ignores unknown ids — fictional ids left the bar stuck at 0%).
 const STAGE_IDS = [
-  'concept_intake',
-  'world_color',
-  'vocabulary_intake',
+  'world_and_factions',
+  'locations_and_npcs',
   'entity_relationships',
-  'entity_details',
-  'fact_generation',
+  'entity_consolidation',
+  'starting_situation',
+  'random_tables',
   'coherence_pass',
+  'embed_world',
 ] as const
 const STAGE_LABELS: Record<string, string> = {
-  concept_intake: '[ph: shaping the concept]',
-  world_color: '[ph: colouring the world]',
-  vocabulary_intake: '[ph: naming things]',
+  world_and_factions: '[ph: raising the powers]',
+  locations_and_npcs: '[ph: peopling the world]',
   entity_relationships: '[ph: drawing connections]',
-  entity_details: '[ph: filling in detail]',
-  fact_generation: '[ph: writing the world]',
+  entity_consolidation: '[ph: settling names]',
+  starting_situation: '[ph: setting the scene]',
+  random_tables: '[ph: stocking surprises]',
   coherence_pass: '[ph: tidying up]',
+  embed_world: '[ph: committing to memory]',
 }
 
-function statusFor(count: number): WorldGenStatusCardProps {
-  // Map generation progress (0..ARRIVALS.length) onto the seven stages.
-  const done = Math.min(STAGE_IDS.length, Math.round((count / ARRIVALS.length) * STAGE_IDS.length))
+function statusFor(count: number, totalArrivals: number): WorldGenStatusCardProps {
+  // Map generation progress (0..totalArrivals) onto the seven stages.
+  const done = Math.min(STAGE_IDS.length, Math.round((count / totalArrivals) * STAGE_IDS.length))
   const stages: StageProgress[] = STAGE_IDS.map((id, i) => ({
     stage: id,
     status: i < done ? 'completed' : i === done ? 'running' : 'pending',
@@ -128,26 +147,32 @@ function statusFor(count: number): WorldGenStatusCardProps {
 function StreamingDemo({
   reducedMotion,
   paneClassName,
+  arrivals = ARRIVALS,
+  totalNodes = NODE_TOTAL,
 }: {
   reducedMotion?: boolean
   /** Constrain the graph's container — the responsive specimens (below) wrap the graph
    *  in a narrow fixed-width column to stand in for a phone / tall pane. Default: full
    *  width, exactly how the generating route hosts it. */
   paneClassName?: string
+  /** The arrival script (default: the small demo; the max-density specimens pass the
+   *  realistic 46-node/72-edge fixture). */
+  arrivals?: readonly Arrival[]
+  totalNodes?: number
 }): React.JSX.Element {
   const [count, setCount] = useState(1)
 
   useEffect(() => {
-    if (count >= ARRIVALS.length) return
+    if (count >= arrivals.length) return
     const id = setTimeout(() => {
       setCount((c) => c + 1)
-    }, ARRIVALS[count]?.afterMs ?? 800)
+    }, arrivals[count]?.afterMs ?? 800)
     return () => {
       clearTimeout(id)
     }
-  }, [count])
+  }, [count, arrivals])
 
-  const { nodes, edges } = snapshotAt(count)
+  const { nodes, edges } = snapshotAt(arrivals, count)
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
       <div className={paneClassName ?? 'w-full'}>
@@ -155,8 +180,8 @@ function StreamingDemo({
           nodes={nodes}
           edges={edges}
           onSelect={() => undefined}
-          status={statusFor(count)}
-          totalEntities={NODE_TOTAL}
+          status={statusFor(count, arrivals.length)}
+          totalEntities={totalNodes}
           listLabel="Entities in your forming world"
           emptyLabel="The world is still taking shape"
           {...(reducedMotion !== undefined ? { reducedMotion } : {})}
@@ -202,12 +227,37 @@ export const TallNarrowPane: Story = {
   render: () => <StreamingDemo paneClassName="w-[600px]" />,
 }
 
+// ── Max-density specimens (MYT-89 density redesign) ────────────────────────────────────
+// A REAL generation lands ~46 entities / ~72 relationships (measured from the dev
+// worlds) — these stream the realistic fixture at full density, compressed to ~35s. The
+// density machinery under test: label tiering (anchors + the freshest arrivals wear
+// names, everything else is glyph-only), the density-aware virtual-space growth (the
+// world grows as it fills), straight lighter-ink edges, and tap/click name reveal.
+
+// The realistic full generation on a desktop pane.
+export const MaxDensity: Story = {
+  name: 'Max density (realistic 46-entity gen)',
+  render: () => <StreamingDemo arrivals={MAX_DENSITY_ARRIVALS} totalNodes={MAX_DENSITY_TOTAL} />,
+}
+
+// The same real load in a ~375px phone column — the form factor the tiering exists for.
+export const MaxDensityNarrow: Story = {
+  name: 'Max density, narrow pane (~375px)',
+  render: () => (
+    <StreamingDemo
+      arrivals={MAX_DENSITY_ARRIVALS}
+      totalNodes={MAX_DENSITY_TOTAL}
+      paneClassName="w-[343px]"
+    />
+  ),
+}
+
 /** The REVEAL variant: `interactive` turns on the accessible + selectable entity list
  *  beside the settled graph (with on-glyph name labels). The fog is faded to nothing
  *  (shown === total). */
 function RevealDemo(): React.JSX.Element {
   const [selectedKey, setSelectedKey] = useState<string>()
-  const { nodes, edges } = snapshotAt(ARRIVALS.length)
+  const { nodes, edges } = snapshotAt(ARRIVALS, ARRIVALS.length)
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
       <WorldGenGraph
@@ -428,4 +478,103 @@ function GraphSpreadTuner(): React.JSX.Element {
 // re-seed + re-spread live; copy the settled values back into `FORCE_PARAMS` to lock them.
 export const SpreadTuning: Story = {
   render: () => <GraphSpreadTuner />,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Density-tuning harness (MYT-89 density redesign) — the SpreadTuning pattern
+// for the FOUR density knobs (label area budget, label floor, growth start,
+// growth rate), against the INSTANT realistic max-density fixture (46 nodes /
+// 72 edges). Slide and watch the label tier + the virtual-space growth respond
+// live; copy the values back into `DENSITY_PARAMS` to lock them. The locked
+// spread params are untouched — these are NEW dials.
+// ──────────────────────────────────────────────────────────────────────────
+
+const DENSITY_KEYS: readonly (keyof DensityParams)[] = [
+  'areaPerLabel',
+  'minLabels',
+  'growthStartCount',
+  'growthPerNode',
+]
+const DENSITY_LABELS: Record<keyof DensityParams, string> = {
+  areaPerLabel: '[ph: label area]',
+  minLabels: '[ph: label floor]',
+  growthStartCount: '[ph: growth start]',
+  growthPerNode: '[ph: growth rate]',
+}
+const DENSITY_DESCRIPTIONS: Record<keyof DensityParams, string> = {
+  areaPerLabel:
+    'Virtual px² one shown label needs to breathe — the label budget is area ÷ this. Bigger = fewer, airier names (anchors — world/factions/you — always keep theirs).',
+  minLabels: 'The label budget never drops below this, however tiny the pane.',
+  growthStartCount:
+    'Node count at which the virtual space starts growing. Below it the pane keeps the eye-approved desktop zoom.',
+  growthPerNode:
+    'Virtual px of extra width per node past the start. Higher = the world un-zooms toward 1:1 faster as it fills (labels never render below CSS-px size).',
+}
+
+/** The density harness: four sliders driving `densityParams` over the INSTANT
+ *  max-density world, plus the copy block. A slider change re-tiers + re-grows live
+ *  (no re-seed needed — the tier and the space are derived, not simulated). */
+function GraphDensityTuner(): React.JSX.Element {
+  const [params, setParams] = useState<DensityParams>({ ...DENSITY_PARAMS })
+  const snippet = DENSITY_KEYS.map((k) => `  ${k}: ${String(params[k])},`).join('\n')
+  return (
+    <div className="min-h-dvh bg-bg p-[var(--space-6)]">
+      <div className="mx-auto flex max-w-[1200px] flex-col gap-[var(--space-3)]">
+        <div className="flex flex-col gap-[var(--space-2)]">
+          {DENSITY_KEYS.map((k) => (
+            <Slider
+              key={k}
+              label={DENSITY_LABELS[k]}
+              help={DENSITY_DESCRIPTIONS[k]}
+              min={DENSITY_PARAM_RANGES[k].min}
+              max={DENSITY_PARAM_RANGES[k].max}
+              step={DENSITY_PARAM_RANGES[k].step}
+              value={params[k]}
+              onChange={(v) => {
+                setParams((p) => ({ ...p, [k]: v }))
+              }}
+              readout={String(params[k])}
+            />
+          ))}
+        </div>
+        <div className="flex items-start gap-[var(--space-3)]">
+          <pre className="flex-1 overflow-auto bg-surface p-[var(--space-3)] font-mono text-[12px] text-ink">{`{\n${snippet}\n}`}</pre>
+          <button
+            type="button"
+            className="border border-border-strong px-[var(--space-3)] py-[var(--space-2)] font-mono text-[12px] text-ink"
+            onClick={() => {
+              void navigator.clipboard.writeText(`{\n${snippet}\n}`)
+            }}
+          >
+            [ph: copy]
+          </button>
+          <button
+            type="button"
+            className="border border-border-strong px-[var(--space-3)] py-[var(--space-2)] font-mono text-[12px] text-ink"
+            onClick={() => {
+              setParams({ ...DENSITY_PARAMS })
+            }}
+          >
+            [ph: reset]
+          </button>
+        </div>
+        <div className="w-full">
+          <WorldGenGraph
+            nodes={[...MAX_DENSITY_NODES]}
+            edges={[...MAX_DENSITY_EDGES]}
+            densityParams={params}
+            shownEntities={MAX_DENSITY_NODES.length}
+            totalEntities={MAX_DENSITY_NODES.length}
+            onSelect={() => undefined}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// THE density-tuning surface — the realistic 46-entity world at once, with the four
+// density knobs live; copy the settled values back into `DENSITY_PARAMS` to lock them.
+export const DensityTuning: Story = {
+  render: () => <GraphDensityTuner />,
 }

@@ -5,7 +5,14 @@ import {
   LABEL_CLEAR_PAD,
   LABEL_TEXT_OFFSET_X,
 } from '@mythrun/client-core/worldgen'
-import { entityObstacle, markerSize } from './fog-obstacles.ts'
+import {
+  entityObstacle,
+  ICON_BOX_HALF,
+  iconBoxExtents,
+  labelBoxExtents,
+  markerSize,
+  nodeBoxExtents,
+} from './fog-obstacles.ts'
 
 // The obstacle GEOMETRY (MYT-89 C3) reconciles the reference's separate capsule + clear
 // window into the single FogObstacle box FogSim consumes. These pin the reconciliation:
@@ -69,5 +76,48 @@ describe('entityObstacle', () => {
     const loc = entityObstacle({ x: 300, y: 140, kind: 'LOCATION' }, tw, 0, 0)
     const fac = entityObstacle({ x: 300, y: 140, kind: 'FACTION' }, tw, 0, 0)
     expect(fac.w).toBeGreaterThan(loc.w)
+  })
+})
+
+// ── Label tiering (MYT-89 density redesign): the icon-only box ─────────────────────────
+// An UNLABELED node (its name isn't drawn at the current density tier) reserves only an
+// icon-sized keep-out — for the collision AND the fog hole (one geometry, two surfaces).
+// The shrink from the full icon+label box is what returns the screen real estate at a
+// real ~46-entity load; every SHOWN label keeps the full box (the no-overlap guarantee).
+
+describe('iconBoxExtents / nodeBoxExtents — the unlabeled keep-out', () => {
+  it('is a symmetric icon-sized box that contains every drawn glyph', () => {
+    const box = iconBoxExtents()
+    expect(box).toEqual({
+      left: -ICON_BOX_HALF,
+      right: ICON_BOX_HALF,
+      top: -ICON_BOX_HALF,
+      bottom: ICON_BOX_HALF,
+    })
+    // The tallest glyphs: the npc stack's head rises ~10px above the anchor and the pc
+    // frame reaches ±8 — the icon box must contain both (labels never overlap ICONS).
+    expect(ICON_BOX_HALF).toBeGreaterThanOrEqual(11)
+  })
+
+  it('nodeBoxExtents forks: labeled → the full icon+label box, unlabeled → icon-only', () => {
+    expect(nodeBoxExtents('LOCATION', 62, true)).toEqual(labelBoxExtents('LOCATION', 62))
+    expect(nodeBoxExtents('LOCATION', 62, false)).toEqual(iconBoxExtents())
+  })
+
+  it('an unlabeled entity yields the SMALL fog obstacle (the fog may roll over its name)', () => {
+    const labeled = entityObstacle({ x: 300, y: 140, kind: 'LOCATION', labeled: true }, 62, 0, 0)
+    const unlabeled = entityObstacle({ x: 300, y: 140, kind: 'LOCATION', labeled: false }, 62, 0, 0)
+    expect(unlabeled.w).toBe(ICON_BOX_HALF * 2)
+    expect(unlabeled.h).toBe(ICON_BOX_HALF * 2)
+    expect(unlabeled.w).toBeLessThan(labeled.w)
+    // Centred on the anchor (the icon), not the capsule offset.
+    expect(unlabeled.x + unlabeled.w / 2).toBe(300)
+    expect(unlabeled.y + unlabeled.h / 2).toBe(140)
+  })
+
+  it('an entity without the flag stays fully labeled (the pre-tiering callers)', () => {
+    const implicit = entityObstacle({ x: 300, y: 140, kind: 'LOCATION' }, 62, 0, 0)
+    const explicit = entityObstacle({ x: 300, y: 140, kind: 'LOCATION', labeled: true }, 62, 0, 0)
+    expect(implicit).toEqual(explicit)
   })
 })

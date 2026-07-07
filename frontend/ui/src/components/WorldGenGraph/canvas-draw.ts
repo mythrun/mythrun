@@ -27,9 +27,11 @@ const GLYPH_HALF = 6
 const HOVER_SCALE = 1.5
 const SELECT_FRAME_PAD = 5
 const LABEL_ALPHA = 0.62
-const EDGE_ALPHA = 0.4
-/** Deterministic per-edge bow (px) so links read hand-drawn without frame jitter. */
-const EDGE_BOW = 7
+/** Edge stroke alpha over the (already lighter) edge ink — the connection strings sit
+ *  UNDER the text: the host strokes them in the `--ink-tertiary` step (see
+ *  `resolveEdgeInk`) and this alpha keeps them a quiet web at real density (~70 edges),
+ *  so a label always reads over a crossing line. */
+const EDGE_ALPHA = 0.55
 
 // ── Act-2 penstroke edge draw-in (MYT-89 C6) ──────────────────────────────────────────
 // Edges are DRAWN, not popped in: on first appearance each reveals as a partial line from
@@ -103,14 +105,18 @@ export function bobOffset(x: number, y: number, t: number): Point {
  * label the fog parts around, at the SAME virtual coordinate its glyph is drawn at,
  * plus the render-only buoy bob so the fog-hole tracks the bobbing glyph. `t === null`
  * disables the bob (reduced motion) — the fog then parts around the static positions.
- * Nodes without a position (not yet placed) are skipped. Pure — unit-testable without
- * a Canvas, and the SINGLE source both the fog obstacles and the glyph draw derive from.
+ * `labeled` (label tiering) marks which nodes WEAR their name: an unlabeled node gets
+ * `labeled: false`, so the fog reserves only its icon-sized hole (omitted → all
+ * labeled, the pre-tiering behaviour). Nodes without a position (not yet placed) are
+ * skipped. Pure — unit-testable without a Canvas, and the SINGLE source both the fog
+ * obstacles and the glyph draw derive from.
  */
 export function fogEntitiesFrom(
   nodes: readonly GraphNode[],
   positions: ReadonlyMap<string, Point>,
   t: number | null,
   virtual: VirtualDims,
+  labeled?: ReadonlySet<string>,
 ): FogFieldEntity[] {
   const out: FogFieldEntity[] = []
   for (const node of nodes) {
@@ -118,24 +124,25 @@ export function fogEntitiesFrom(
     if (centred === undefined) continue
     const v = centredToVirtual(centred, virtual)
     const bob = t === null ? { x: 0, y: 0 } : bobOffset(v.x, v.y, t)
-    out.push({ x: v.x + bob.x, y: v.y + bob.y, kind: node.kind, name: node.name })
+    out.push({
+      x: v.x + bob.x,
+      y: v.y + bob.y,
+      kind: node.kind,
+      name: node.name,
+      labeled: labeled === undefined || labeled.has(node.displayId),
+    })
   }
   return out
 }
 
-/** Stable small hash of a string → used for a deterministic (non-animating) bow on
- *  each edge, so the "hand-drawn" wobble is fixed per link, not reshuffled per frame. */
-function hash(s: string): number {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
-  return h
-}
-
-/** Draw every edge whose endpoints both have a position, as a faint hand-drawn ink
- *  arc (a quadratic bowed off the straight line by a stable per-edge offset). Edge
- *  endpoints are entity UUIDs and `positions` is keyed by `displayId` (also the
- *  UUID once finalized) — the two id-spaces are reconciled, so the lookup matches
- *  (BUG 2.1: keying nodes on synthKey made this miss and drop every edge).
+/** Draw every edge whose endpoints both have a position, as a STRAIGHT quiet ink line
+ *  (the density redesign: the old per-edge quadratic bow read as tangle at a real
+ *  ~70-edge load; straight lines fit the ruled-paper register and cross cleanly). The
+ *  host strokes edges in a LIGHTER ink step than the label text (`resolveEdgeInk` →
+ *  `--ink-tertiary`) so a name always reads over a crossing line. Edge endpoints are
+ *  entity UUIDs and `positions` is keyed by `displayId` (also the UUID once finalized)
+ *  — the two id-spaces are reconciled, so the lookup matches (BUG 2.1: keying nodes on
+ *  synthKey made this miss and drop every edge).
  *
  *  `progressOf` (C6) returns each edge's [0,1] draw-in progress: the stroke reveals
  *  from source→target, its endpoint at `lerp(source, target, progress)` — a penstroke,
@@ -153,29 +160,20 @@ export function drawEdges(
     const a = positions.get(edge.from)
     const b = positions.get(edge.to)
     if (a === undefined || b === undefined) continue
-    drawEdge(ctx, a, b, edge.synthKey, progressOf ? progressOf(edge) : 1)
+    drawEdge(ctx, a, b, progressOf ? progressOf(edge) : 1)
   }
   ctx.restore()
 }
 
-/** One bowed link, revealed `progress` of the way source→target (C6): a quadratic curve
- *  from the source to `lerp(source, target, progress)`, its control point nudged
- *  perpendicular to that drawn segment by a stable ±EDGE_BOW so parallel links don't
- *  overlap flat. At `progress >= 1` the endpoint is the exact target — a crisp full line,
- *  bit-identical to the pre-C6 stroke (B1 parity), never a fade. */
-function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, key: string, progress: number): void {
+/** One STRAIGHT link, revealed `progress` of the way source→target (C6): a line from
+ *  the source to `lerp(source, target, progress)` — the penstroke draw-in is the same
+ *  endpoint lerp as before, just along the true segment. At `progress >= 1` the
+ *  endpoint is the exact target — a crisp full line, never a fade. */
+function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, progress: number): void {
   const end = progress >= 1 ? b : lerpPoint(a, b, progress)
-  const midX = (a.x + end.x) / 2
-  const midY = (a.y + end.y) / 2
-  const dx = end.x - a.x
-  const dy = end.y - a.y
-  const len = Math.hypot(dx, dy) || 1
-  const bow = ((hash(key) % 200) / 100 - 1) * EDGE_BOW // stable in [-EDGE_BOW, EDGE_BOW]
-  const cx = midX + (-dy / len) * bow
-  const cy = midY + (dx / len) * bow
   ctx.beginPath()
   ctx.moveTo(a.x, a.y)
-  ctx.quadraticCurveTo(cx, cy, end.x, end.y)
+  ctx.lineTo(end.x, end.y)
   ctx.stroke()
 }
 
@@ -186,8 +184,16 @@ function drawEdge(ctx: CanvasRenderingContext2D, a: Point, b: Point, key: string
 export interface NodeDecoration {
   selectedKey: string | undefined
   hoverKey: string | null
+  /** The sticky tap/click focus (MYT-89 density redesign): drawn raised like a hover
+   *  and always labeled — the mobile "show me this one's name" surface. */
+  focusKey: string | null
   t: number | null
   showLabels: boolean
+  /** WHICH nodes wear their name at the current density (label tiering) — anchors +
+   *  the freshest arrivals + pins, from `labeledDisplayIds`. `undefined` → every node
+   *  (the pre-tiering behaviour; the tuning stories can force it). Only consulted when
+   *  `showLabels` is on. */
+  labeled: ReadonlySet<string> | undefined
   /** The CURRENT pane-adaptive virtual dims (the bob phase seeds off the node's
    *  top-left-virtual position, shared with the fog's obstacle mapping). */
   virtual: VirtualDims
@@ -196,6 +202,12 @@ export interface NodeDecoration {
    *  mount and passes it every frame, so the label uses the SITE's typography and — measured
    *  at the same font as the collision box — never over/under-runs its reserved keep-out. */
   labelFont: string
+  /** The PAPER colour (`--bg` via `resolvePaper`) — the label's cartographic HALO: each
+   *  name is stroked in paper before its ink fill, so an edge crossing UNDER the text is
+   *  knocked out around the letterforms (the text always reads over the lines — MYT-89
+   *  density redesign). Still strictly two-tone paper+ink. Empty string → no halo
+   *  (a bare/jsdom Canvas). */
+  paper: string
 }
 
 /**
@@ -213,10 +225,12 @@ export function drawNodes(
   for (const node of nodes) {
     const p = positions.get(node.displayId)
     if (p === undefined) continue
-    const hovered = node.displayId === deco.hoverKey
+    const raised = node.displayId === deco.hoverKey || node.displayId === deco.focusKey
     const selected = node.displayId === deco.selectedKey
+    const showLabel =
+      deco.showLabels && (deco.labeled === undefined || deco.labeled.has(node.displayId))
     const bob = bobFor(p, deco.t, deco.virtual)
-    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, hovered, selected, deco.showLabels, deco.labelFont)
+    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, raised, selected, showLabel, deco)
   }
 }
 
@@ -235,7 +249,7 @@ function drawNode(
   hovered: boolean,
   selected: boolean,
   showLabel: boolean,
-  labelFont: string,
+  deco: NodeDecoration,
 ): void {
   const half = GLYPH_HALF * (hovered ? HOVER_SCALE : 1)
   ctx.save()
@@ -244,20 +258,33 @@ function drawNode(
     ctx.strokeRect(-(half + SELECT_FRAME_PAD), -(half + SELECT_FRAME_PAD), (half + SELECT_FRAME_PAD) * 2, (half + SELECT_FRAME_PAD) * 2)
   }
   drawGlyph(ctx, node.kind, half)
-  if (showLabel) drawLabel(ctx, node.name, labelFont)
+  if (showLabel) drawLabel(ctx, node.name, deco.labelFont, deco.paper)
   ctx.restore()
 }
 
+/** Halo stroke width (px) around the label letterforms — just wide enough to knock a
+ *  1px edge line out from under the text. */
+const LABEL_HALO_WIDTH = 3
+
 /** The quiet entity name to the right of the glyph — low-alpha ink, in the design-system
- *  label font (`labelFont`, resolved from `--font-body`/`--text-sm`). Drawn at the SHARED
+ *  label font (`labelFont`, resolved from `--font-body`/`--text-sm`), over a PAPER halo
+ *  (`paper` — `--bg`): the name is stroked in paper first, so a lighter edge line crossing
+ *  under the text is knocked out around the letterforms and the name always reads (the
+ *  density redesign; empty `paper` skips the halo). Drawn at the SHARED
  *  `LABEL_TEXT_OFFSET_X` (NOT a hover-scaled offset), so the label sits at one fixed x the
  *  collision box + fog keep-out reserve to exactly — the box's right edge is that offset plus
  *  this same-font `measureText` width, a hard no-overlap bound in every hover/select state. */
-function drawLabel(ctx: CanvasRenderingContext2D, name: string, labelFont: string): void {
+function drawLabel(ctx: CanvasRenderingContext2D, name: string, labelFont: string, paper: string): void {
   ctx.save()
-  ctx.globalAlpha = LABEL_ALPHA
   ctx.font = labelFont
   ctx.textBaseline = 'middle'
+  if (paper.length > 0) {
+    ctx.strokeStyle = paper
+    ctx.lineWidth = LABEL_HALO_WIDTH
+    ctx.lineJoin = 'round'
+    ctx.strokeText(name, LABEL_TEXT_OFFSET_X, 0)
+  }
+  ctx.globalAlpha = LABEL_ALPHA
   ctx.fillText(name, LABEL_TEXT_OFFSET_X, 0)
   ctx.restore()
 }

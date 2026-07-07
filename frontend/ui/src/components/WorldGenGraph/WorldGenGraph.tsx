@@ -1,4 +1,5 @@
 import { forwardRef, useRef } from 'react'
+import { growthFrom } from '@mythrun/client-core/worldgen'
 import type { WorldGenGraphProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { WorldGenFogField } from '../WorldGenFog/WorldGenFogField.tsx'
@@ -44,11 +45,16 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     listLabel,
     emptyLabel,
     forceParams,
+    densityParams,
     'data-testid': dataTestId,
   },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  // The status card's element — its footprint becomes a sim KEEP-OUT (density
+  // redesign): nodes are shoved out from under the card, so no entity name spends the
+  // generation occluded (on a phone the card spans ~70% of the pane width).
+  const cardRef = useRef<HTMLDivElement>(null)
   const { getFogEntities } = useGraphCanvas({
     canvasRef,
     nodes,
@@ -59,10 +65,17 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     interactive,
     showLabels,
     forceParams,
+    densityParams,
+    keepOutRef: cardRef,
   })
 
   const shown = shownEntities ?? nodes.length
   const total = totalEntities ?? 0
+  // Density-aware virtual-space growth (MYT-89 density redesign): the ONE growth
+  // derivation BOTH layers size their shared virtual space from — the graph hook
+  // re-derives it internally from the same inputs, and the fog receives it here — so
+  // the C5 fog↔glyph alignment holds while the space grows with the node count.
+  const growth = growthFrom(nodes.length, densityParams)
 
   return (
     <div
@@ -89,13 +102,14 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
             shownEntities={shown}
             totalEntities={total}
             reducedMotion={reducedMotion}
+            growth={growth}
           />
           <canvas
             ref={canvasRef}
             aria-hidden="true"
             className="absolute inset-0 block h-full w-full"
           />
-          {status !== undefined && <WorldGenStatusCard {...status} />}
+          {status !== undefined && <WorldGenStatusCard ref={cardRef} {...status} />}
         </div>
       </div>
       {/* The accessible + selectable surface — the REVEAL only (§3.4 gate). */}

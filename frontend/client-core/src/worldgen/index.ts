@@ -7,7 +7,7 @@
 // `@mythrun/client-core` barrel drags all of that in; this slice is pure data.
 
 export { create as createForceSim, FORCE_PARAMS, FORCE_PARAM_RANGES } from './force-sim.ts'
-export type { ForceSim, ForceParams, NodeBox } from './force-sim.ts'
+export type { ForceSim, ForceParams, NodeBox, StaticKeepOut } from './force-sim.ts'
 export { createFogSim } from './fog-sim.ts'
 export type { FogSim, FogObstacle } from './fog-sim.ts'
 // The LOCKED fog params + every render-side constant (C1). Pure data (no DOM), so it
@@ -20,7 +20,19 @@ export * from './fog-params.ts'
 // render hooks (graph + fog) use to size the shared virtual coordinate space from
 // the pane box, so the C5 fog↔graph alignment holds at every pane size/aspect.
 export { MAX_VIRTUAL_HEIGHT, virtualDims } from './virtual-space.ts'
-export type { VirtualDims } from './virtual-space.ts'
+export type { VirtualDims, VirtualGrowth } from './virtual-space.ts'
+// Label tiering + density-aware growth (MYT-89 density redesign): WHICH nodes wear a
+// label at the current density, and how the virtual space grows with the node count.
+// Pure geometry (DOM-free), shared by the graph render surface and its tuning harness.
+export {
+  ANCHOR_KINDS,
+  DENSITY_PARAMS,
+  DENSITY_PARAM_RANGES,
+  growthFrom,
+  labelBudget,
+  labeledDisplayIds,
+} from './label-tiers.ts'
+export type { DensityParams, LabelTierOptions } from './label-tiers.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 

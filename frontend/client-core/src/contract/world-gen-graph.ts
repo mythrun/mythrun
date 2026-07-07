@@ -1,6 +1,7 @@
 import type { BaseProps } from './index.ts'
 import type { GraphEdge, GraphNode } from '../worldgen/graph-reducers.ts'
 import type { ForceParams } from '../worldgen/force-sim.ts'
+import type { DensityParams } from '../worldgen/label-tiers.ts'
 import type { WorldGenStatusCardProps } from './world-gen-status.ts'
 
 // Re-export the graph model types so a consumer reads the node/edge shape off the
@@ -90,4 +91,9 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  (fresh spread, not a merge). Production omits this — the locked defaults fill
    *  the space and group connected entities. */
   forceParams?: Partial<ForceParams>
+  /** OVERRIDE the density knobs (MYT-89 density redesign — label tiering + virtual-
+   *  space growth), merged over the locked `DENSITY_PARAMS`. The Storybook density-
+   *  tuning harness passes live slider values (the SpreadTuning pattern); production
+   *  omits this — the locked defaults keep a real ~46-entity generation readable. */
+  densityParams?: Partial<DensityParams>
 }

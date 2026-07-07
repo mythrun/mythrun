@@ -35,12 +35,39 @@ export interface VirtualDims {
   height: number
 }
 
+/** DENSITY-AWARE GROWTH (MYT-89 density redesign): the input that lets the virtual
+ *  space GROW with the graph. A real generation lands ~46 entities — far more than the
+ *  900-wide reference space can seat with labels — so past `startCount` nodes, each
+ *  arrival widens the reference width by `perNode` virtual px: on a WIDE pane the
+ *  CSS upscale relaxes toward 1:1 (the world visibly grows as it fills; more virtual
+ *  area for the same pane), and the scale NEVER drops below 1 (virtual px never render
+ *  smaller than CSS px — the label legibility floor caps the growth). Sub-reference
+ *  panes (phones) are already 1:1 and unaffected. Derived from the node count via
+ *  `growthFrom` (label-tiers) — the ONE derivation both layers share (C5). */
+export interface VirtualGrowth {
+  /** The current graph node count. */
+  nodeCount: number
+  /** Node count at which growth starts (below it: exactly the shipped zoom). */
+  startCount: number
+  /** Virtual px of reference-width growth per node past `startCount`. */
+  perNode: number
+}
+
+/** The reference width, grown by the current density: `VIRTUAL_WIDTH` until
+ *  `startCount` nodes, then `+ perNode` per node. No growth input → the shipped
+ *  constant (every pre-density caller and the eye-approved low-count look). */
+function grownReferenceWidth(growth: VirtualGrowth | undefined): number {
+  if (growth === undefined) return VIRTUAL_WIDTH
+  return VIRTUAL_WIDTH + Math.max(0, growth.nodeCount - growth.startCount) * growth.perNode
+}
+
 /** The virtual-space dims for a pane of `cssW`×`cssH` CSS px. Scale is uniform (the
  *  pane aspect is preserved exactly) and never below 1 (virtual px never render smaller
  *  than CSS px — the legibility floor). An unmeasured pane (jsdom's zero rect, a
- *  pre-layout read) falls back to the reference dims. */
-export function virtualDims(cssW: number, cssH: number): VirtualDims {
+ *  pre-layout read) falls back to the reference dims. `growth` (optional) widens the
+ *  reference width with the node count — the density-aware growth above. */
+export function virtualDims(cssW: number, cssH: number, growth?: VirtualGrowth): VirtualDims {
   if (cssW <= 1 || cssH <= 1) return { width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT }
-  const scale = Math.max(1, cssW / VIRTUAL_WIDTH, cssH / MAX_VIRTUAL_HEIGHT)
+  const scale = Math.max(1, cssW / grownReferenceWidth(growth), cssH / MAX_VIRTUAL_HEIGHT)
   return { width: cssW / scale, height: cssH / scale }
 }

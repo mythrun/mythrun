@@ -11,6 +11,7 @@ import {
   type FogObstacle,
   type FogSim,
   type VirtualDims,
+  type VirtualGrowth,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity } from '@mythrun/client-core/contract'
 import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
@@ -177,7 +178,9 @@ function buildObstacles(
     const p = prev.get(i)
     const vx = p ? (entity.x - p.x) * perSubStep : 0
     const vy = p ? (entity.y - p.y) * perSubStep : 0
-    out.push(entityObstacle(entity, labelWidth(ctx, entity.name, widthCache), vx, vy))
+    // An UNLABELED entity (label tiering) reserves only its icon box — no text measure.
+    const textWidth = entity.labeled === false ? 0 : labelWidth(ctx, entity.name, widthCache)
+    out.push(entityObstacle(entity, textWidth, vx, vy))
     if (p) {
       p.x = entity.x
       p.y = entity.y
@@ -218,10 +221,15 @@ export interface FogCanvasParams {
   totalEntities: number
   density: number
   reducedMotion: boolean
+  /** Density-aware virtual-space growth (MYT-89 density redesign): the SAME growth
+   *  input the composing graph feeds `virtualDims`, so both layers derive identical
+   *  dims from the shared pane box while the space grows with the node count (C5).
+   *  `undefined` (standalone fog) → the fixed shipped space. */
+  growth?: VirtualGrowth | undefined
 }
 
 export function useFogCanvas(params: FogCanvasParams): void {
-  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion } = params
+  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth } = params
 
   // Latest props the imperative closures read (useLatest idiom): refs so the rAF loop
   // always sees current values without re-binding every render.
@@ -244,11 +252,14 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // canvas's box through the SAME `virtualDims` the graph hook uses — both canvases fill
   // the same pane, so the two layers compute identical dims and stay aligned (C5).
   const virtualRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
+  // The density-aware growth input for `virtualDims` (undefined → the fixed space).
+  const growthRef = useRef<VirtualGrowth | undefined>(growth)
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
   shownRef.current = shownEntities
   totalRef.current = totalEntities
   densityRef.current = density
+  growthRef.current = growth
 
   // The obstacle set for THIS frame: the live source (when composed into a graph) or
   // the static `entities` prop (standalone / the tuning story). Read fresh each frame.
@@ -258,22 +269,33 @@ export function useFogCanvas(params: FogCanvasParams): void {
     [],
   )
 
-  // Measure the pane → derive the shared virtual dims → size the backing store; on a
+  // Measure the pane → derive the shared virtual dims (with the density growth) → on a
   // dims CHANGE re-size the live sim (grid + area-scaled particles re-derive, the
-  // overlapping density is preserved — no flash). The graph hook runs the same
-  // derivation off the same pane box, so the layers agree at every size.
-  const applyFogSize = useCallback(
-    (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
+  // overlapping density is preserved — no flash) + the backing store. Returns whether
+  // the dims changed. The graph hook runs the same derivation off the same pane box
+  // with the same growth, so the layers agree at every size and density.
+  const syncFogDims = useCallback(
+    (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): boolean => {
       const rect = canvas.getBoundingClientRect()
-      const next = virtualDims(Math.round(rect.width), Math.round(rect.height))
+      const next = virtualDims(Math.round(rect.width), Math.round(rect.height), growthRef.current)
       const current = virtualRef.current
-      if (next.width !== current.width || next.height !== current.height) {
-        virtualRef.current = next
-        simRef.current?.setSize(next.width, next.height)
-      }
-      sizeFogCanvas(canvas, ctx, virtualRef.current)
+      if (next.width === current.width && next.height === current.height) return false
+      virtualRef.current = next
+      simRef.current?.setSize(next.width, next.height)
+      sizeFogCanvas(canvas, ctx, next)
+      return true
     },
     [],
+  )
+
+  // The mount/resize path: sync the dims AND (even when they're unchanged) re-size the
+  // backing store — a pane resize can move the CSS box without moving the virtual dims,
+  // and the store must track the element's real pixels.
+  const applyFogSize = useCallback(
+    (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
+      if (!syncFogDims(canvas, ctx)) sizeFogCanvas(canvas, ctx, virtualRef.current)
+    },
+    [syncFogDims],
   )
 
   const getSim = useCallback((): FogSim => {
@@ -306,10 +328,27 @@ export function useFogCanvas(params: FogCanvasParams): void {
     repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current)
   }, [canvasRef, applyFogSize, getSim, currentEntities])
 
+  // The growth key: a primitive fingerprint of the growth input, so the effects below
+  // re-run when the DERIVED dims may have moved (a node arrival past the start count),
+  // not on every render's fresh object identity.
+  const growthKey =
+    growth === undefined ? '' : `${String(growth.nodeCount)}/${String(growth.startCount)}/${String(growth.perNode)}`
+
   useEffect(() => {
     if (!reducedMotion) return
     settleStatic()
-  }, [reducedMotion, entities, shownEntities, totalEntities, density, settleStatic])
+  }, [reducedMotion, entities, shownEntities, totalEntities, density, growthKey, settleStatic])
+
+  // Density growth under MOTION: when the node count moves the virtual space, re-derive
+  // the dims + re-size the sim/backing store (guarded — a growth step that doesn't
+  // change the dims touches nothing, so the running fog never flashes needlessly).
+  useEffect(() => {
+    if (reducedMotion) return
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d') ?? null
+    if (canvas === null || ctx === null) return
+    syncFogDims(canvas, ctx)
+  }, [reducedMotion, growthKey, canvasRef, syncFogDims])
 
   // The motion loop: fixed-timestep step + crisp repaint each rAF frame. Off entirely
   // under reduced motion (and with no 2D context — jsdom). Loop body at module scope.
@@ -331,6 +370,21 @@ export function useFogCanvas(params: FogCanvasParams): void {
       virtualRef,
     })
   }, [reducedMotion, canvasRef, applyFogSize, getSim, currentEntities])
+
+  // WEB-FONT invalidation (mirrors the graph hook): widths memoized before the DS serif
+  // loads are fallback-font widths — once fonts are ready, drop the memo so the next
+  // frame's obstacles re-measure at the true label extents.
+  useEffect(() => {
+    if (!('fonts' in document)) return // jsdom has no FontFaceSet
+    let cancelled = false
+    void document.fonts.ready.then(() => {
+      if (cancelled) return
+      widthCacheRef.current.clear()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Re-size the backing store (and, via `applyFogSize`, the virtual dims + the sim) on
   // container resize — parity with the graph's `observeResize`; both size off the same

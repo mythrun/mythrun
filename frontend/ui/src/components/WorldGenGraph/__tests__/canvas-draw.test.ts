@@ -46,7 +46,10 @@ interface Recorder {
   ctx: CanvasRenderingContext2D
   strokes: number
   moves: Point[]
-  quads: { cx: number; cy: number; x: number; y: number }[]
+  /** Every `lineTo` endpoint — edges are STRAIGHT lines now (the density redesign
+   *  dropped the quadratic bow: straight strings read cleanly at a real ~70-edge load
+   *  and fit the ruled-paper register). */
+  lines: Point[]
   translates: Point[]
   /** Every `fillText(text, …)` call's text — the node-label draws (drawGlyph never
    *  fillTexts, only fill/stroke rects), so this is exactly the rendered names. */
@@ -57,6 +60,11 @@ interface Recorder {
   /** Every value assigned to `ctx.font` — so a test can assert the label draws in the
    *  resolved design-system font the host passes (not a bespoke literal). */
   fonts: string[]
+  /** Every `fillRect` call — the glyph geometry, so a test can assert the hover/focus
+   *  raise actually scales the drawn shape. */
+  rects: { x: number; y: number; w: number; h: number }[]
+  /** Every `strokeText` call — the paper HALO under each label (density redesign). */
+  strokeTexts: { text: string; x: number; y: number }[]
 }
 
 /** A recording 2D context: draw methods append to logs, everything else is a
@@ -66,11 +74,13 @@ function recorder(): Recorder {
   const r: Recorder = {
     strokes: 0,
     moves: [],
-    quads: [],
+    lines: [],
     translates: [],
     texts: [],
     fillTexts: [],
     fonts: [],
+    rects: [],
+    strokeTexts: [],
     ctx: undefined as unknown as CanvasRenderingContext2D,
   }
   const impl: Record<string, (...args: never[]) => void> = {
@@ -80,8 +90,8 @@ function recorder(): Recorder {
     moveTo: (x: number, y: number) => {
       r.moves.push({ x, y })
     },
-    quadraticCurveTo: (cx: number, cy: number, x: number, y: number) => {
-      r.quads.push({ cx, cy, x, y })
+    lineTo: (x: number, y: number) => {
+      r.lines.push({ x, y })
     },
     translate: (x: number, y: number) => {
       r.translates.push({ x, y })
@@ -89,6 +99,12 @@ function recorder(): Recorder {
     fillText: (text: string, x: number, y: number) => {
       r.texts.push(text)
       r.fillTexts.push({ text, x, y })
+    },
+    fillRect: (x: number, y: number, w: number, h: number) => {
+      r.rects.push({ x, y, w, h })
+    },
+    strokeText: (text: string, x: number, y: number) => {
+      r.strokeTexts.push({ text, x, y })
     },
   }
   r.ctx = new Proxy(
@@ -147,8 +163,16 @@ describe('drawEdges — displayId ↔ UUID reconciliation (BUG 2.1)', () => {
     // The single edge is stroked, from A's position to B's position.
     expect(r.strokes).toBe(1)
     expect(r.moves).toEqual([{ x: -30, y: 0 }])
-    expect(r.quads).toHaveLength(1)
-    expect(r.quads[0]).toMatchObject({ x: 30, y: 0 })
+    expect(r.lines).toEqual([{ x: 30, y: 0 }])
+  })
+
+  it('strokes a STRAIGHT line — source to target, no curve (the density redesign)', () => {
+    // The old draw bowed each edge with a quadratic control point; at a real ~70-edge
+    // load the bows read as tangle. The stroke is now exactly moveTo(a) → lineTo(b).
+    const r = recorder()
+    drawEdges(r.ctx, [edge], displayIdPositions)
+    expect(r.moves).toEqual([{ x: -30, y: 0 }])
+    expect(r.lines).toEqual([{ x: 30, y: 0 }])
   })
 
   it('drops the edge when positions are keyed by synthKey (the old bug)', () => {
@@ -181,21 +205,20 @@ describe('drawEdges — partial-line penstroke reveal (C6)', () => {
     // The pen starts at the source and has reached the MIDPOINT (half the length).
     expect(r.strokes).toBe(1)
     expect(r.moves).toEqual([{ x: -30, y: 0 }])
-    expect(r.quads).toHaveLength(1)
-    expect(r.quads[0]).toMatchObject({ x: 0, y: 0 }) // lerp({-30,0},{30,0},0.5)
+    expect(r.lines).toEqual([{ x: 0, y: 0 }]) // lerp({-30,0},{30,0},0.5)
   })
 
   it('at progress 1.0 strokes the full line to the target (B1 parity)', () => {
     const r = recorder()
     drawEdges(r.ctx, [edge], displayIdPositions, () => 1)
     expect(r.moves).toEqual([{ x: -30, y: 0 }])
-    expect(r.quads[0]).toMatchObject({ x: 30, y: 0 })
+    expect(r.lines).toEqual([{ x: 30, y: 0 }])
   })
 
   it('omitting the progress source renders every edge FULL (default 1)', () => {
     const r = recorder()
     drawEdges(r.ctx, [edge], displayIdPositions)
-    expect(r.quads[0]).toMatchObject({ x: 30, y: 0 })
+    expect(r.lines).toEqual([{ x: 30, y: 0 }])
   })
 })
 
@@ -239,9 +262,12 @@ describe('drawNodes — displayId lookup', () => {
     drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, {
       selectedKey: undefined,
       hoverKey: null,
+      focusKey: null,
       t: null, // no bob → the draw translate is the raw physics position
       showLabels: false,
+      labeled: undefined,
       labelFont: LABEL_FONT_STUB,
+      paper: '',
       virtual: REF_DIMS,
     })
     // Both nodes resolve their position by displayId and are drawn there.
@@ -256,9 +282,12 @@ describe('drawNodes — displayId lookup', () => {
     drawNodes(r.ctx, [liveWon], new Map(), {
       selectedKey: undefined,
       hoverKey: null,
+      focusKey: null,
       t: null,
       showLabels: false,
+      labeled: undefined,
       labelFont: LABEL_FONT_STUB,
+      paper: '',
       virtual: REF_DIMS,
     })
     expect(r.translates).toEqual([])
@@ -273,12 +302,18 @@ describe('drawNodes — displayId lookup', () => {
 // rendered as text — it stays conveyed by the glyph SHAPE.
 
 describe('drawNodes — name labels (MYT-89 audit #3)', () => {
-  const deco = (showLabels: boolean): Parameters<typeof drawNodes>[3] => ({
+  const deco = (
+    showLabels: boolean,
+    labeled?: ReadonlySet<string>,
+  ): Parameters<typeof drawNodes>[3] => ({
     selectedKey: undefined,
     hoverKey: null,
+    focusKey: null,
     t: null,
     showLabels,
+    labeled,
     labelFont: LABEL_FONT_STUB,
+    paper: '',
     virtual: REF_DIMS,
   })
 
@@ -302,6 +337,68 @@ describe('drawNodes — name labels (MYT-89 audit #3)', () => {
   })
 })
 
+// ── MYT-89 density redesign: the label TIER gates each node's name ─────────────────────
+// A real generation lands ~46 entities — far more names than the space can seat — so
+// `labeled` (from client-core's labeledDisplayIds) says WHICH nodes wear their name.
+// An excluded node keeps its glyph, drops its text. `undefined` = everyone (pre-tiering).
+
+describe('drawNodes — label tiering (density redesign)', () => {
+  const deco = (labeled: ReadonlySet<string> | undefined): Parameters<typeof drawNodes>[3] => ({
+    selectedKey: undefined,
+    hoverKey: null,
+    focusKey: null,
+    t: null,
+    showLabels: true,
+    labeled,
+    labelFont: LABEL_FONT_STUB,
+    paper: '',
+    virtual: REF_DIMS,
+  })
+
+  it('draws the name ONLY for nodes in the labeled set (glyphs stay for the rest)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, deco(new Set([liveWon.displayId])))
+    expect(r.texts).toEqual([liveWon.name]) // seedOnly's name is not drawn…
+    expect(r.translates).toHaveLength(2) // …but its glyph still is.
+  })
+
+  it('an undefined tier labels everyone (the pre-tiering behaviour)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon, seedOnly], displayIdPositions, deco(undefined))
+    expect(r.texts).toEqual([liveWon.name, seedOnly.name])
+  })
+
+  it('strokes a PAPER halo under each drawn name (edges never strike through text)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon], displayIdPositions, { ...deco(undefined), paper: 'paper-stub' })
+    // The halo strokes the SAME text at the SAME anchor, before the ink fill.
+    expect(r.strokeTexts).toEqual([{ text: liveWon.name, x: LABEL_TEXT_OFFSET_X, y: 0 }])
+    expect(r.fillTexts).toEqual([{ text: liveWon.name, x: LABEL_TEXT_OFFSET_X, y: 0 }])
+  })
+
+  it('skips the halo when no paper colour resolved (a bare/jsdom Canvas)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon], displayIdPositions, deco(undefined)) // paper: ''
+    expect(r.strokeTexts).toEqual([])
+    expect(r.texts).toEqual([liveWon.name])
+  })
+
+  it('raises the FOCUSED node exactly like a hover (the tap name-reveal reads lifted)', () => {
+    // The raise scales the glyph — the npc stack's fillRects grow. Focus must render
+    // bit-identically to hover, and both must differ from the resting glyph.
+    const rectsWith = (focusKey: string | null, hoverKey: string | null): Recorder['rects'] => {
+      const r = recorder()
+      drawNodes(r.ctx, [seedOnly], displayIdPositions, { ...deco(undefined), focusKey, hoverKey })
+      return r.rects
+    }
+    const resting = rectsWith(null, null)
+    const focused = rectsWith(seedOnly.displayId, null)
+    const hovered = rectsWith(null, seedOnly.displayId)
+    expect(focused).toEqual(hovered)
+    expect(focused).not.toEqual(resting)
+  })
+})
+
 // ── MYT-89 follow-up: DS label font + the collision box bounds the DRAWN label ─────────
 // The label used to DRAW at a bespoke `11px IBM Plex Mono` while the collision box + fog
 // keep-out MEASURED at `14px Georgia` — two invented fonts, and the box modelled the label
@@ -316,9 +413,12 @@ function drawLabelled(node: GraphNode, hovered: boolean, labelFont = LABEL_FONT_
   drawNodes(r.ctx, [node], displayIdPositions, {
     selectedKey: undefined,
     hoverKey: hovered ? node.displayId : null,
+    focusKey: null,
     t: null,
     showLabels: true,
+    labeled: undefined,
     labelFont,
+    paper: '',
     virtual: REF_DIMS,
   })
   return r
@@ -438,9 +538,19 @@ describe('fogEntitiesFrom — fog obstacles from live node positions (C5 decisio
       y: VIRTUAL_HEIGHT / 2 - 30,
       kind: 'location',
       name: 'Ashfen Reach',
+      labeled: true,
     })
     expect(entities[1]?.x).toBe(VIRTUAL_WIDTH / 2 - 80)
     expect(entities[1]?.y).toBe(VIRTUAL_HEIGHT / 2 + 60)
+  })
+
+  it('marks each entity with its label-tier state (density redesign): the fog hole follows', () => {
+    // Only node a wears its name → b's fog obstacle collapses to the icon box (the
+    // shell's `entityObstacle` fork); with NO tier passed, everyone is labeled.
+    const tiered = fogEntitiesFrom(nodes, positions, null, REF_DIMS, new Set(['a']))
+    expect(tiered.map((e) => e.labeled)).toEqual([true, false])
+    const untiered = fogEntitiesFrom(nodes, positions, null, REF_DIMS)
+    expect(untiered.map((e) => e.labeled)).toEqual([true, true])
   })
 
   it('a node at virtual (x,y) yields a FogObstacle whose capsule midline sits on it', () => {

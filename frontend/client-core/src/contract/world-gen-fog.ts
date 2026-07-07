@@ -1,4 +1,5 @@
 import type { BaseProps } from './index.ts'
+import type { VirtualGrowth } from '../worldgen/virtual-space.ts'
 
 // Re-export the obstacle shape off the same contract surface a consumer reads the
 // props from (the fluid brain lives in the DOM-free `../worldgen`, the render
@@ -28,6 +29,11 @@ export interface FogFieldEntity {
   /** Label text — measured (at the locked label font) to size the capsule the fog
    *  parts around and the box the density is cleared under. */
   name: string
+  /** Whether this entity currently WEARS its label (MYT-89 density redesign — label
+   *  tiering). `false` → the fog reserves only an ICON-sized hole (the name isn't
+   *  drawn, so fog may roll over where it would sit). Omitted → `true` (the
+   *  pre-tiering behaviour every standalone caller gets). */
+  labeled?: boolean
 }
 
 /**
@@ -64,6 +70,11 @@ export interface WorldGenFogFieldProps extends Omit<BaseProps, 'children'> {
   /** Base fog thickness before the fade (the reference `density` slider — the STARTING
    *  thickness when the fade is on). Defaults to the LOCKED `FOG_PARAMS.density`. */
   density?: number
+  /** Density-aware virtual-space growth (MYT-89 density redesign): the SAME growth
+   *  input the composing graph feeds `virtualDims`, so both layers derive identical
+   *  dims from the shared pane box while the space grows with the node count (the C5
+   *  alignment invariant). Omitted (standalone fog) → the fixed shipped space. */
+  growth?: VirtualGrowth
   /** Honour the user's reduced-motion preference: no requestAnimationFrame loop —
    *  settle the density to convergence once and repaint only when the entity count
    *  changes. NOT a blanket freeze: the fade-with-entities signal (the progress

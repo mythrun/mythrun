@@ -61,20 +61,51 @@ export function labelBoxExtents(kind: string, textWidth: number): NodeBox {
   }
 }
 
+/** Half-extent (px) of the ICON-ONLY box (MYT-89 density redesign — label tiering).
+ *  Sized to contain the TALLEST drawn glyph — the npc stack's head rises ~10px above
+ *  the anchor and the pc frame extends ±8 — plus a hair of air, so a shown label's
+ *  box can never overlap an unlabeled glyph's ink (the no-overlap guarantee covers
+ *  ICONS too, not just text). */
+export const ICON_BOX_HALF = 12
+
+/** The keep-out box for a node that does NOT wear its label (label tiering): just the
+ *  glyph, symmetric about the anchor. Both consumers (the force-sim's collision and
+ *  the fog's obstacle) use THIS for unlabeled nodes — one geometry, two surfaces, the
+ *  same C5 consistency `labelBoxExtents` gives labeled ones. The shrink from the full
+ *  icon+label box (~134×25 at a realistic name) is what returns the screen real estate
+ *  at real density (~46 entities). */
+export function iconBoxExtents(): NodeBox {
+  return {
+    left: -ICON_BOX_HALF,
+    right: ICON_BOX_HALF,
+    top: -ICON_BOX_HALF,
+    bottom: ICON_BOX_HALF,
+  }
+}
+
+/** The keep-out box for one node at its CURRENT label state: the full icon+label box
+ *  when the name is worn, the icon-only box when it isn't. The single fork both the
+ *  collision measure and the fog obstacle go through. */
+export function nodeBoxExtents(kind: string, textWidth: number, labeled: boolean): NodeBox {
+  return labeled ? labelBoxExtents(kind, textWidth) : iconBoxExtents()
+}
+
 /**
- * Build the `FogObstacle` box for one entity — the shared `labelBoxExtents` translated to
+ * Build the `FogObstacle` box for one entity — the shared `nodeBoxExtents` translated to
  * the marker anchor (virtual space), plus the box's PER-SUB-STEP motion (`vx`/`vy`, for the
  * wake-drag when a label moves). Output is bit-identical to the pre-refactor box: `x`/`y`
- * is the box top-left, `w`/`h` its size. The box midline lands on the reference capsule and
- * its top/bottom encode the ~`[-16, +9]` clear window (see module note).
+ * is the box top-left, `w`/`h` its size. For a LABELED entity the box midline lands on the
+ * reference capsule and its top/bottom encode the ~`[-16, +9]` clear window (see module
+ * note); an UNLABELED entity (label tiering — `labeled: false`) reserves only the
+ * icon-only box, so fog may roll where its unworn name would sit.
  */
 export function entityObstacle(
-  entity: { x: number; y: number; kind: string },
+  entity: { x: number; y: number; kind: string; labeled?: boolean },
   textWidth: number,
   vx: number,
   vy: number,
 ): FogObstacle {
-  const b = labelBoxExtents(entity.kind, textWidth)
+  const b = nodeBoxExtents(entity.kind, textWidth, entity.labeled !== false)
   return {
     x: entity.x + b.left,
     y: entity.y + b.top,

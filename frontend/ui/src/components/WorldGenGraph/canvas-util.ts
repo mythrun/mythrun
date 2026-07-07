@@ -1,4 +1,4 @@
-import { DPR_CAP, type VirtualDims } from '@mythrun/client-core/worldgen'
+import { DPR_CAP, type StaticKeepOut, type VirtualDims } from '@mythrun/client-core/worldgen'
 import type { Point } from './canvas-draw.ts'
 
 // Small DOM/geometry helpers for the WorldGenGraph Canvas (MYT-89 C5). Kept out of
@@ -24,6 +24,30 @@ export function resolveInk(canvas: HTMLCanvasElement): string {
   const style = getComputedStyle(canvas)
   const ink = style.getPropertyValue('--ink').trim()
   return ink.length > 0 ? ink : style.color
+}
+
+/** The EDGE stroke ink — a LIGHTER semantic step than the label text (`--ink-tertiary`,
+ *  the muted text tier; flips correctly under `.dark` like `--ink`), so the connection
+ *  strings sit visually UNDER the names and a label always reads over a crossing line
+ *  (the MYT-89 density redesign). Same technique as `resolveInk` (the Canvas is the one
+ *  surface Tailwind can't reach); falls back to the full ink when the token is
+ *  unresolved (a bare Canvas / jsdom — where no 2D context runs anyway). */
+export function resolveEdgeInk(canvas: HTMLCanvasElement): string {
+  const style = getComputedStyle(canvas)
+  const ink = style.getPropertyValue('--ink-tertiary').trim()
+  return ink.length > 0 ? ink : resolveInk(canvas)
+}
+
+/** The PAPER colour (`--bg`, the page ground; flips under `.dark`) — the label halo's
+ *  ink (the density redesign): each drawn name is stroked in paper before its ink
+ *  fill, so an edge crossing UNDER the text is knocked out around the letterforms
+ *  (the cartographic halo — still strictly two-tone paper+ink, no new colour). Falls
+ *  back to the element's own background; a transparent fallback ('rgba(0,0,0,0)')
+ *  simply strokes nothing — a harmless no-op on a bare Canvas. */
+export function resolvePaper(canvas: HTMLCanvasElement): string {
+  const style = getComputedStyle(canvas)
+  const paper = style.getPropertyValue('--bg').trim()
+  return paper.length > 0 ? paper : style.backgroundColor
 }
 
 /** Last-resort label font when the design-system tokens are unresolved (a bare Canvas /
@@ -75,6 +99,41 @@ export function sizeCanvasForDpr(
   const scale = (cssW / virtual.width) * dpr
   ctx.setTransform(scale, 0, 0, scale, 0, 0)
   return { cssW, cssH }
+}
+
+/** Air (virtual px) around the status card's keep-out rect, so labels don't graze it. */
+const KEEP_OUT_PAD = 10
+/** A gutter between the keep-out and a pane edge narrower than this (virtual px) can't
+ *  hold a glyph box — swallow it into the keep-out, so the shove-out never fights the
+ *  containment clamp over a dead strip (the corner trap). */
+const KEEP_OUT_GUTTER_SNAP = 48
+
+/** Map the status-card overlay's DOM box into a CENTRED-virtual `StaticKeepOut` rect
+ *  (MYT-89 density redesign): the card floats over the pane (on a phone it spans ~70%
+ *  of the width), so the sim shoves node boxes out from under it — no entity name
+ *  spends the generation occluded. Both rects come from `getBoundingClientRect` on the
+ *  SAME pane; the CSS→virtual scale is the pane→virtual ratio, then recentre by the
+ *  half-dimensions (the sim's coordinate space). A thin dead gutter between the rect
+ *  and the pane's left/top edge (the card is pinned top-left) is swallowed into the
+ *  rect. Pure — unit-testable. */
+export function cardKeepOut(
+  canvasRect: { left: number; top: number; width: number; height: number },
+  cardRect: { left: number; top: number; right: number; bottom: number },
+  virtual: VirtualDims,
+): StaticKeepOut {
+  const scale = virtual.width / Math.max(1, canvasRect.width)
+  const halfW = virtual.width / 2
+  const halfH = virtual.height / 2
+  let left = (cardRect.left - canvasRect.left) * scale - halfW - KEEP_OUT_PAD
+  let top = (cardRect.top - canvasRect.top) * scale - halfH - KEEP_OUT_PAD
+  if (left + halfW < KEEP_OUT_GUTTER_SNAP) left = -halfW
+  if (top + halfH < KEEP_OUT_GUTTER_SNAP) top = -halfH
+  return {
+    left,
+    top,
+    right: (cardRect.right - canvasRect.left) * scale - halfW + KEEP_OUT_PAD,
+    bottom: (cardRect.bottom - canvasRect.top) * scale - halfH + KEEP_OUT_PAD,
+  }
 }
 
 /** Convert a pointer event to the graph's CENTRED VIRTUAL coordinate space (the space
