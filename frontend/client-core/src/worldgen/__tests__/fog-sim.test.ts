@@ -15,11 +15,12 @@ import { CELL_PX, DOUBLET_RADIUS_PX, SPAWN_BOUND_PX } from '../fog-params.ts'
 
 // FogSim is the DOM-free fluid core (MYT-89 Phase C, C2): a verbatim port of the
 // fog-reference prototype's particle physics, hardened for production (fixed
-// timestep, area-scaled N, doublet bucketing, fade-skip). These tests pin the five
-// behaviours the brief calls out — determinism, exclusion, fixed-timestep,
-// fade-skip, wake rejoin — plus direct unit coverage of the branchy field helpers
-// (segd's epsilon guard, the doublet field's gates) that the integration path can
-// only reach probabilistically.
+// timestep, area-scaled N, doublet bucketing, the spawn-scale drain). These tests
+// pin the behaviours the brief calls out — determinism, exclusion, fixed-timestep,
+// the drain (the fog clears by NOT respawning: population targets, the dormant
+// fast-path, the reduced-motion population snap), wake rejoin — plus direct unit
+// coverage of the branchy field helpers (segd's epsilon guard, the doublet field's
+// gates) that the integration path can only reach probabilistically.
 
 /** Deterministic PRNG (mulberry32) so a seeded FogSim is byte-reproducible. */
 function mulberry32(seed: number): () => number {
@@ -265,19 +266,126 @@ describe('FogSim — fixed timestep (frame-rate independent)', () => {
   })
 })
 
-describe('FogSim — fade-skip (perf)', () => {
-  it('does no work when effectiveDensity is ~0 (fresh grid stays empty)', () => {
-    const sim = createFogSim({ width: 300, height: 200, random: mulberry32(3) })
-    sim.step(16.7, [], 0)
+describe('FogSim — spawn-scale drain (the fog clears by NOT respawning)', () => {
+  // A small canvas so particles cross (and the drain completes) quickly: the wind
+  // crosses ~0.7 px/sub-step, so the 90×60 field drains within a few hundred steps
+  // and the residual low-pass decays below the drain epsilon soon after.
+
+  it('drains the field EMPTY at spawnScale 0 — wind carries the fog off, nothing replaces it', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(31) })
+    for (let i = 0; i < 40; i++) sim.step(17, [], 1)
+    expect(anyPositive(sim.density())).toBe(true)
+    for (let i = 0; i < 1200; i++) sim.step(17, [], 0)
+    // Fully drained: the grid is EXACT zeros (the drain-complete transition zeroes
+    // the invisible residual so the paint's `pd <= 0` skip covers every cell).
     expect(anyPositive(sim.density())).toBe(false)
   })
 
-  it('leaves a built-up grid unchanged across a faded step', () => {
-    const sim = createFogSim({ width: 300, height: 200, random: mulberry32(3) })
-    for (let i = 0; i < 20; i++) sim.step(16.7, [], 1)
-    const before = Array.from(sim.density())
-    sim.step(16.7, [], 0)
-    expect(Array.from(sim.density())).toEqual(before)
+  it('goes DORMANT once drained — further steps leave the zeroed grid untouched', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(31) })
+    for (let i = 0; i < 1200; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false)
+    const grid = sim.density() // by-reference — the dormant path must not realloc
+    for (let i = 0; i < 50; i++) sim.step(17, [{ x: 30, y: 20, w: 20, h: 10, vx: 0, vy: 0 }], 0)
+    expect(sim.density()).toBe(grid)
+    expect(anyPositive(sim.density())).toBe(false)
+  })
+
+  it('holds a THINNER steady state at a mid scale (population tracks the target)', () => {
+    const sum = (d: Float32Array): number => {
+      let total = 0
+      for (const v of d) total += v
+      return total
+    }
+    const full = createFogSim({ width: 90, height: 60, random: mulberry32(7) })
+    const half = createFogSim({ width: 90, height: 60, random: mulberry32(7) })
+    for (let i = 0; i < 1200; i++) {
+      full.step(17, [], 1)
+      half.step(17, [], 0.5)
+    }
+    const fullSum = sum(full.density())
+    const halfSum = sum(half.density())
+    // Roughly half the particles → roughly half the integrated density: thinner
+    // than the full field but decidedly NOT empty (a drained-vs-dimmed distinction).
+    expect(halfSum).toBeGreaterThan(0.2 * fullSum)
+    expect(halfSum).toBeLessThan(0.8 * fullSum)
+  })
+
+  it('re-arms when the scale rises — new fog blows back in from the spawn edges', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(13) })
+    for (let i = 0; i < 1200; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false)
+    for (let i = 0; i < 600; i++) sim.step(17, [], 1)
+    expect(anyPositive(sim.density())).toBe(true)
+  })
+
+  it('stays deterministic for the same seed + spawn-scale schedule', () => {
+    const run = (): Float32Array => {
+      const sim = createFogSim({ width: 120, height: 90, random: mulberry32(23) })
+      for (let i = 0; i < 40; i++) sim.step(17, [], 1)
+      for (let i = 0; i < 120; i++) sim.step(17, [], 0.4)
+      for (let i = 0; i < 80; i++) sim.step(17, [], 0)
+      return sim.density().slice()
+    }
+    expect(maxAbsDiff(run(), run())).toBe(0)
+  })
+
+  it('carries the drain across a resize — retired slots survive; a grown field re-arms', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(53) })
+    for (let i = 0; i < 1200; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false)
+    // SHRINK while drained: every surviving slot stays retired (the dead-stack
+    // rebuild) and the dormant state carries over — still empty, still a no-op.
+    sim.setSize(60, 42)
+    for (let i = 0; i < 30; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false)
+    // GROW: the revealed area warm-starts fresh particles, so the sim wakes — fog
+    // is present again once the field steps at full spawn.
+    sim.setSize(240, 180)
+    for (let i = 0; i < 5; i++) sim.step(17, [], 1)
+    expect(anyPositive(sim.density())).toBe(true)
+  })
+})
+
+describe('FogSim — settlePopulation (the reduced-motion population snap)', () => {
+  it('snaps to EMPTY at scale 0 immediately (grid zeroed — a static drained sample)', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(41) })
+    for (let i = 0; i < 40; i++) sim.step(17, [], 1)
+    expect(anyPositive(sim.density())).toBe(true)
+    sim.settlePopulation(0)
+    expect(anyPositive(sim.density())).toBe(false)
+    // …and the follow-up settle steps stay empty (the dormant fast-path).
+    for (let i = 0; i < 30; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false)
+  })
+
+  it('revives FIELD-WIDE when snapped back up (a static sample, not an edge trickle)', () => {
+    const sim = createFogSim({ width: 300, height: 200, random: mulberry32(43) })
+    sim.settlePopulation(0)
+    sim.settlePopulation(1)
+    // A short settle must already populate the FAR interior — field-wide placement;
+    // edge-spawned revives could not reach mid-field in 30 sub-steps.
+    for (let i = 0; i < 30; i++) sim.step(17, [], 1)
+    const d = sim.density()
+    expect(windowAvg(d, sim.gw, sim.gh, 150, 100, 3)).toBeGreaterThan(0)
+  })
+
+  it('a mid-scale snap converges the settle to a thinner field than a full one', () => {
+    const sum = (d: Float32Array): number => {
+      let total = 0
+      for (const v of d) total += v
+      return total
+    }
+    const settle = (scale: number): number => {
+      const sim = createFogSim({ width: 90, height: 60, random: mulberry32(47) })
+      sim.settlePopulation(scale)
+      for (let i = 0; i < 120; i++) sim.step(17, [], scale)
+      return sum(sim.density())
+    }
+    const full = settle(1)
+    const third = settle(1 / 3)
+    expect(third).toBeGreaterThan(0)
+    expect(third).toBeLessThan(0.7 * full)
   })
 })
 

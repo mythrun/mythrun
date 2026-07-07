@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { DPR_CAP, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
-import { fogBackingStore } from './use-fog-canvas.ts'
+import { DPR_CAP, MIN_EXPECTED_ENTITIES, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
+import { fogBackingStore, fogSpawnScale } from './use-fog-canvas.ts'
 
 // The fog layer's backing-store sizing (MYT-89 framerate fix). The fog is LOW-FREQUENCY
 // dithered cloud quads — it never needs more device resolution than the reference
@@ -53,5 +53,27 @@ describe('fogBackingStore — the fog render-resolution cap', () => {
     // pane scale is the dpr (2 ≤ the cap) — the store is the full pane at retina res.
     const store = fogBackingStore(343, 413, 2, 343)
     expect(store).toEqual({ width: 686, height: 826, scale: 2 })
+  })
+})
+
+describe('fogSpawnScale — the entity-count → respawn-scale mapping (MYT-89 spawn-drain)', () => {
+  it('is FULL spawn (1) before any entity arrives', () => {
+    expect(fogSpawnScale(0, MIN_EXPECTED_ENTITIES)).toBe(1)
+  })
+
+  it('falls linearly with the arrived count (half the floor → half the spawn)', () => {
+    expect(fogSpawnScale(MIN_EXPECTED_ENTITIES / 2, MIN_EXPECTED_ENTITIES)).toBeCloseTo(0.5)
+  })
+
+  it('hits ZERO exactly at the entity floor — nothing spawns in from here on', () => {
+    expect(fogSpawnScale(MIN_EXPECTED_ENTITIES, MIN_EXPECTED_ENTITIES)).toBe(0)
+  })
+
+  it('clamps past the floor (real generations overshoot the conservative minimum)', () => {
+    expect(fogSpawnScale(MIN_EXPECTED_ENTITIES + 14, MIN_EXPECTED_ENTITIES)).toBe(0)
+  })
+
+  it('holds FULL spawn with no denominator (standalone fog — total 0 disables the drain)', () => {
+    expect(fogSpawnScale(5, 0)).toBe(1)
   })
 })

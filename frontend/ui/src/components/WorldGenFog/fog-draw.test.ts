@@ -13,7 +13,8 @@ import { cloud, paintFog, type FogPaintTarget } from './fog-draw.ts'
 
 // fog-draw is the CRISP Bayer paint (MYT-89 Phase C, C3): it turns FogSim's smoothed,
 // box-cleared density grid into solid fog quads via the cloud mask + coverage divisor +
-// fade + the LOCKED ordered-Bayer threshold. These tests pin the two things that make
+// the base density + the LOCKED ordered-Bayer threshold (no fade — the clear is the
+// sim's spawn drain). These tests pin the two things that make
 // it correct: (1) a cell is filled IFF `cov > thresholdAt(gx, gy)` (the reused ui Bayer
 // helper), and (2) every fill is CRISP — the fixed fog alpha, never a per-cell gradient.
 // Plus a Bayer-parity guard so the client-core physics copy and this render copy can't
@@ -76,7 +77,7 @@ const OPTS = {
   wx: 0,
   wy: 0,
   t: 0,
-  effectiveDensity: 1,
+  density: 1,
   fogColor: FOG_PARAMS.fogColor,
   fogAlpha: FOG_PARAMS.fogAlpha,
 }
@@ -84,7 +85,7 @@ const OPTS = {
 /** Recompute the paint decision independently (the reference formula, with NO perf
  *  shortcuts — no cloud bound-skip) so the test asserts against the algorithm, not
  *  against paintFog's own output. */
-function predictedFills(density: Float32Array, effectiveDensity = OPTS.effectiveDensity): Set<string> {
+function predictedFills(density: Float32Array, baseDensity = OPTS.density): Set<string> {
   const out = new Set<string>()
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
@@ -92,7 +93,7 @@ function predictedFills(density: Float32Array, effectiveDensity = OPTS.effective
       if (pd <= 0) continue
       const px = gx * CELL_PX + CELL_CENTER_PX
       const py = gy * CELL_PX + CELL_CENTER_PX
-      const cov = (pd / COVERAGE_DIVISOR) * cloud(px, py, 0, 0, 0) * effectiveDensity
+      const cov = (pd / COVERAGE_DIVISOR) * cloud(px, py, 0, 0, 0) * baseDensity
       if (cov > thresholdAt(gx, gy)) out.add(key(gx * CELL_PX, gy * CELL_PX))
     }
   }
@@ -124,24 +125,24 @@ describe('paintFog — the crisp Bayer coverage decision', () => {
     expect(fills).toHaveLength(0)
   })
 
-  it('a thin fade (low effectiveDensity) still matches the reference formula exactly', () => {
+  it('a thin base density still matches the reference formula exactly', () => {
     // The perf bound-skip (skip cloud() when even a MAX cloud could not clear the
     // threshold) fires most on faint fog — this pins that it is decision-IDENTICAL,
     // never an approximation: painted set == the shortcut-free reference formula.
     const density = seedDensity(GW, GH)
     const { target, fills } = recordingCtx()
-    paintFog(target, density, GW, GH, { ...OPTS, effectiveDensity: 0.12 })
+    paintFog(target, density, GW, GH, { ...OPTS, density: 0.12 })
     const painted = new Set(fills.map((f) => key(f.x, f.y)))
     expect(painted).toEqual(predictedFills(density, 0.12))
   })
 
-  it('paints nothing and leaves the ctx untouched once the fade reaches 0', () => {
-    // effectiveDensity 0 → cov is 0 for every cell → no cell can clear a (non-negative)
+  it('paints nothing and leaves the ctx untouched at density 0', () => {
+    // density 0 → cov is 0 for every cell → no cell can clear a (non-negative)
     // threshold. The fast path must skip the whole grid walk WITHOUT touching canvas
-    // state (the faded-out layer costs nothing for the rest of the session).
+    // state (a zeroed layer costs nothing).
     const density = seedDensity(GW, GH)
     const { target, fills, finalAlpha } = recordingCtx()
-    paintFog(target, density, GW, GH, { ...OPTS, effectiveDensity: 0 })
+    paintFog(target, density, GW, GH, { ...OPTS, density: 0 })
     expect(fills).toHaveLength(0)
     expect(finalAlpha()).toBe(1) // never written (the recording ctx starts at 1)
     expect(target.fillStyle).toBe('') // never written
@@ -184,14 +185,14 @@ describe('paintFog — CRISP, no gradient', () => {
     expect(finalAlpha()).toBe(1)
   })
 
-  it('a higher effectiveDensity (the fade UN-faded) never DROPS a painted cell', () => {
-    // The fade only scales cov DOWN as the graph fills; raising effectiveDensity can
-    // only add cells. A crisp threshold is monotone in cov, so the painted set grows.
+  it('a higher base density never DROPS a painted cell (monotone threshold)', () => {
+    // Raising the base density can only add cells: a crisp threshold is monotone in
+    // cov, so the painted set grows.
     const density = seedDensity(GW, GH)
     const faint = recordingCtx()
     const thick = recordingCtx()
-    paintFog(faint.target, density, GW, GH, { ...OPTS, effectiveDensity: 0.4 })
-    paintFog(thick.target, density, GW, GH, { ...OPTS, effectiveDensity: 1.2 })
+    paintFog(faint.target, density, GW, GH, { ...OPTS, density: 0.4 })
+    paintFog(thick.target, density, GW, GH, { ...OPTS, density: 1.2 })
     const faintSet = new Set(faint.fills.map((f) => key(f.x, f.y)))
     const thickSet = new Set(thick.fills.map((f) => key(f.x, f.y)))
     for (const cell of faintSet) expect(thickSet.has(cell)).toBe(true)

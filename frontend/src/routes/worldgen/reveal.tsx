@@ -6,7 +6,7 @@ import {
   type ApiContext,
   type WorldGenStream,
 } from '@mythrun/client-core'
-import { toWikiViewModel, type WikiViewModel } from '@mythrun/client-core/worldgen'
+import { MIN_EXPECTED_ENTITIES, toWikiViewModel, type WikiViewModel } from '@mythrun/client-core/worldgen'
 import type { WorldSnapshot } from '@mythrun/contract/rest'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
@@ -157,6 +157,13 @@ export function WorldReveal({
           edges={edges}
           onSelect={setSelectedEntityId}
           reducedMotion={prefersReducedMotion}
+          // The world is BORN — the fog is gone and stays gone (MYT-89 spawn-drain:
+          // a complete world's node count is past the entity floor, so the fog
+          // mounts already drained). Omitting these held base-density fog over the
+          // reveal (the 0-denominator "no drain" fallback) — a leftover from the
+          // pre-drain fade wiring, at odds with the reveal's fog-gone arc.
+          shownEntities={nodes.length}
+          totalEntities={MIN_EXPECTED_ENTITIES}
           listLabel={t('worldReveal.graphLabel')}
           emptyLabel={t('worldReveal.graphEmpty')}
           {...(selectedEntityId !== undefined ? { selectedKey: selectedEntityId } : {})}

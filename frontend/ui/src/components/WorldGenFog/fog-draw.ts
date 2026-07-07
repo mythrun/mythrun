@@ -12,10 +12,16 @@ import { thresholdAt } from '../Dither/bayer.ts'
 
 // The world-gen fog PAINT (MYT-89 Phase C, C3). FogSim (client-core) is the density
 // brain — `density()` returns the raw smoothed, box-cleared particle grid (`dsm`). This
-// helper renders it: the CLOUD mask, the `/COVERAGE_DIVISOR` coverage, the fade multiply,
-// and the LOCKED ordered-Bayer threshold that turns coverage into CRISP fog quads. None
-// of this lives in FogSim (the C2/C3 split); the algorithm is ported VERBATIM from the
-// reference `<script>` (its numbers live in `fog-params.ts`).
+// helper renders it: the CLOUD mask, the `/COVERAGE_DIVISOR` coverage, the base-density
+// multiply, and the LOCKED ordered-Bayer threshold that turns coverage into CRISP fog
+// quads. None of this lives in FogSim (the C2/C3 split); the algorithm is ported
+// VERBATIM from the reference `<script>` (its numbers live in `fog-params.ts`).
+//
+// The paint does NOT fade (MYT-89 spawn-drain redesign): the old stage-derived
+// `effectiveDensity` fade is gone — the fog CLEARS upstream, in the sim, by spawning
+// fewer particles as entities arrive (FogSim's `spawnScale`). The draw just paints
+// whatever density remains at the constant base thickness, so a thinning field reads
+// as fog BLOWING OFF the pane, never as a dimming layer.
 //
 // CRISP means: a cell is either a SOLID quad at the fixed fog alpha, or nothing — never
 // a per-cell fractional alpha (a gradient). The dither IS the gradient (the brand's
@@ -40,9 +46,10 @@ export interface PaintFogOptions {
   wy: number
   /** Clock (seconds) — the cloud field scrolls with `wind * CLOUD_WIND_SCROLL * t`. */
   t: number
-  /** The fade-applied base density (`EFF`) — the fog thins toward 0 as the graph fills.
-   *  Applied here (the fade is a RENDER concern), not inside FogSim. */
-  effectiveDensity: number
+  /** The BASE fog density (the reference `density` slider / `FOG_PARAMS.density`) —
+   *  a constant paint thickness. The clear is NOT here (no fade multiply): the sim
+   *  drains the particle field itself (spawn-scale), and this paints what remains. */
+  density: number
   /** The fog fill colour (`FOG_PARAMS.fogColor`). */
   fogColor: string
   /** The fixed fog quad alpha (`FOG_PARAMS.fogAlpha`) — the SAME for every cell. */
@@ -79,16 +86,18 @@ const CLOUD_MAX =
 
 /**
  * Paint the density grid as crisp fog quads. For each cell: coverage
- * `cov = (pd / COVERAGE_DIVISOR) · cloud(centre) · effectiveDensity`; fill a SOLID
- * `CELL_PX` quad at the fog colour + fixed alpha IFF `cov > thresholdAt(gx, gy)`. Cells
- * with `pd <= 0` (FogSim's box-clear zeroes them under labels) are skipped, so fog never
- * covers a label. The alpha is set ONCE — every painted quad is identical (crisp), never
- * a per-cell gradient — and restored to 1 so the next canvas layer starts clean.
+ * `cov = (pd / COVERAGE_DIVISOR) · cloud(centre) · density`; fill a SOLID `CELL_PX`
+ * quad at the fog colour + fixed alpha IFF `cov > thresholdAt(gx, gy)`. Cells with
+ * `pd <= 0` (FogSim's box-clear zeroes them under labels; a DRAINED sim zeroes the
+ * whole grid, so the fully-cleared steady state walks the grid in pure skips) are
+ * skipped, so fog never covers a label. The alpha is set ONCE — every painted quad is
+ * identical (crisp), never a per-cell gradient — and restored to 1 so the next canvas
+ * layer starts clean.
  *
  * Two decision-identical fast paths (MYT-89 framerate fix):
- * - `effectiveDensity ≤ 0` (the fade has run the fog to nothing — the whole post-gen
- *   tail): `cov` is 0 for every cell and no non-negative threshold can be cleared, so
- *   the grid walk is skipped entirely and the ctx is left untouched;
+ * - `density ≤ 0` (a zeroed base thickness): `cov` is 0 for every cell and no
+ *   non-negative threshold can be cleared, so the grid walk is skipped entirely and
+ *   the ctx is left untouched;
  * - per cell, when even a MAXIMAL cloud could not clear the threshold
  *   (`covBound ≤ thr`, see `CLOUD_MAX`), the three-octave `cloud()` eval is skipped —
  *   the dominant paint-side JS cost on faint fog. Neither path can change which cells
@@ -101,7 +110,7 @@ export function paintFog(
   gh: number,
   opts: PaintFogOptions,
 ): void {
-  if (opts.effectiveDensity <= 0) return
+  if (opts.density <= 0) return
   ctx.fillStyle = opts.fogColor
   ctx.globalAlpha = opts.fogAlpha
   for (let gy = 0; gy < gh; gy++) {
@@ -113,11 +122,11 @@ export function paintFog(
       // Bound-skip: float multiplication is monotone in each non-negative operand and
       // this bound has the same association shape as `cov` below, so
       // `cov ≤ covBound` always — a skipped cell could never have painted.
-      const covBound = pdNorm * CLOUD_MAX * opts.effectiveDensity
+      const covBound = pdNorm * CLOUD_MAX * opts.density
       if (covBound <= thr) continue
       const px = gx * CELL_PX + CELL_CENTER_PX
       const py = gy * CELL_PX + CELL_CENTER_PX
-      const cov = pdNorm * cloud(px, py, opts.wx, opts.wy, opts.t) * opts.effectiveDensity
+      const cov = pdNorm * cloud(px, py, opts.wx, opts.wy, opts.t) * opts.density
       if (cov > thr) ctx.fillRect(gx * CELL_PX, gy * CELL_PX, CELL_PX, CELL_PX)
     }
   }

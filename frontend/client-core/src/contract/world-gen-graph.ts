@@ -68,12 +68,14 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  generation. When provided, rendered as a DOM overlay over the fog + graph
    *  canvases; omit it (e.g. the reveal) to hide it. */
   status?: WorldGenStatusCardProps
-  /** Fade NUMERATOR for the fog (how many entities are shown). Defaults to
-   *  `nodes.length` — the fog thins as the graph fills (§3.2). */
+  /** Drain NUMERATOR for the fog (how many entities have arrived). Defaults to
+   *  `nodes.length` — the fog DRAINS as the graph fills (MYT-89 spawn-drain: fewer
+   *  particles spawn in; the wind carries the rest off the pane). */
   shownEntities?: number
-  /** Fade DENOMINATOR for the fog (the full expected graph size). As
-   *  `shownEntities/totalEntities` → 1 the fog fades to nothing; omitted / `0`
-   *  disables the fade (the fog holds its base density). */
+  /** Drain DENOMINATOR for the fog — the entity count at which the fog is fully
+   *  gone (production: `MIN_EXPECTED_ENTITIES`, the DB-derived floor). At
+   *  `shownEntities ≥ totalEntities` nothing respawns and the field empties;
+   *  omitted / `0` disables the drain (the fog holds its base density). */
   totalEntities?: number
   /** Accessible label for the entity list — an i18n key the consumer resolves.
    *  Only used when `interactive`; the DS owns no copy (§ components-live-in-the-

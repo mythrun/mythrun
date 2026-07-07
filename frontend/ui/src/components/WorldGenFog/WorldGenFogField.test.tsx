@@ -95,7 +95,8 @@ describe('WorldGenFogField — motion contract', () => {
     const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
     const { rerender } = render(<WorldGenFogField {...BASE} shownEntities={2} reducedMotion />)
     rerender(<WorldGenFogField {...BASE} shownEntities={3} reducedMotion />)
-    // Still no rAF — the fade-progress repaint is a synchronous settle, not a loop.
+    // Still no rAF — the drain-progress repaint is a synchronous settle (snapped to
+    // the new scaled population), not a loop.
     expect(raf).not.toHaveBeenCalled()
   })
 })

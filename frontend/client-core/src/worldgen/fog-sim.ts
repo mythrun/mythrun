@@ -29,10 +29,17 @@
 //      pre-rejects on the capsule's EXR-padded AABB before paying for a distance
 //      (MYT-89 framerate fix — advection dominated the profile at real-world
 //      obstacle counts; all three changes leave the per-particle math untouched).
-//   4. FADE-SKIP (§3.7): when the caller's `effectiveDensity` is ~0 (the fade has
-//      run the fog to nothing as the graph fills) the whole `step()` is skipped —
-//      no advection, the grid is left as-is. `effectiveDensity` is used for that
-//      perf skip ONLY; the fade math itself is a render concern (C3).
+//   4. SPAWN-SCALE DRAIN (MYT-89 fog clear redesign): the fog CLEARS by spawning
+//      fewer particles, never by dimming the paint. `step(dt, obstacles, spawnScale)`
+//      takes a [0, 1] scale on the RESPAWN population target (`round(N·spawnScale)`):
+//      a particle that drifts off-band respawns only while the alive population is
+//      at/under the target and RETIRES otherwise, so lowering the scale drains the
+//      field through the wind — at 0 nothing respawns and the wind carries the last
+//      of the fog off the edge. Retired particles cost nothing (advection + splat
+//      skip them), and once the field is fully drained (no particles, residual
+//      density decayed below visibility) the sim goes DORMANT: the whole `step()` is
+//      a no-op until the scale rises. The tuned physics are untouched — the scale
+//      gates WHO respawns, never how anything moves or paints.
 //
 // The RNG is injectable (`opts.random`, default `Math.random`) so tests are
 // deterministic. `Math.random` is fine in the client-core runtime — this is UI
@@ -89,8 +96,21 @@ export interface FogObstacle {
 
 export interface FogSim {
   /** Advance the fog by `dtMs` of real time against the current `obstacles`.
-   *  `effectiveDensity` gates the perf fade-skip only (≈0 → no work this call). */
-  step(dtMs: number, obstacles: readonly FogObstacle[], effectiveDensity: number): void
+   *  `spawnScale` ∈ [0, 1] scales the RESPAWN population target (`round(N·spawnScale)`,
+   *  the §4 drain): the warm-start population is untouched; a particle that drifts
+   *  off-band respawns only while the alive population is at/under the target and
+   *  retires otherwise. At 0 nothing respawns — the wind drains the field empty, then
+   *  the sim goes dormant (a no-op step) until the scale rises again. */
+  step(dtMs: number, obstacles: readonly FogObstacle[], spawnScale: number): void
+  /** Snap the alive population to `round(N·spawnScale)` NOW — the REDUCED-MOTION
+   *  enforcement (a static settle has no wind-time to drain/refill through). Excess
+   *  slots retire from the top index down (survivors keep their warm-start-uniform
+   *  spread); deficits revive FIELD-WIDE (warm-start placement — an edge spawn would
+   *  leave a static sample mostly empty). At target 0 the density grids are zeroed
+   *  too: the converged steady state of an empty population IS the empty field, and
+   *  a static sample wants that state immediately (no residual low-pass ghost). The
+   *  motion loop never calls this — it drains/refills through the respawn gate. */
+  settlePopulation(spawnScale: number): void
   /** Re-derive the sim for a new virtual size (the RESPONSIVE pane resize, MYT-89):
    *  grid dims + area-scaled particle count are recomputed, surviving particles keep
    *  flowing (grown slots warm-start across the new field; out-of-bound ones respawn
@@ -131,8 +151,13 @@ const FIXED_DT_S = FIXED_DT_MS / 1000
  *  1 sub-step (or none) and never feel the cap. This is a production-port resilience
  *  knob, not a reference-tuned constant (the prototype had no fixed timestep). */
 const MAX_STEPS_PER_FRAME = 2
-/** Below this `effectiveDensity` the fog is effectively gone → skip the step. */
-const FADE_EPS = 1e-6
+/** Drain-complete ceiling on the smoothed density: once the population is empty and
+ *  every `dsm` cell is at/under this, the residual is invisible — the worst-case cell
+ *  coverage is `(DRAIN_EPS / COVERAGE_DIVISOR) · cloudMax · density ≈ 0.003`, under
+ *  every real dither threshold — so the grid is zeroed ONCE (exact zeros are what the
+ *  paint's `pd <= 0` skip and the dormant fast-path key off; the low-pass alone only
+ *  decays asymptotically) and the sim goes dormant. */
+const DRAIN_EPS = 5e-4
 
 /** Numeric bucket-key packing: offset absorbs negative (off-band) bucket indices,
  *  the stride keeps the two coordinates disjoint for any real canvas size. */
@@ -174,6 +199,19 @@ interface FogState {
   random: () => number
   clock: number
   acc: number
+  /** Per-slot alive flag (1/0) — the §4 spawn-scale drain. A retired (0) slot is
+   *  skipped by advection AND the splat, so a drained particle costs nothing. */
+  alive: Uint8Array
+  /** Count of alive slots — compared against `round(n·spawnScale)` at each despawn. */
+  aliveCount: number
+  /** Stack of retired slot indices (retire pushes, revive pops) — O(1) slot reuse,
+   *  no scan. Invariant: `dead.length === n - aliveCount`. */
+  dead: number[]
+  /** Max smoothed-density cell after the last `smooth()` — the drain detector. */
+  dsmMax: number
+  /** Fully drained (no particles, grid zeroed): `step()` is a no-op while the
+   *  spawn target stays 0. */
+  drained: boolean
 }
 
 function computeWind(): Wind {
@@ -183,13 +221,18 @@ function computeWind(): Wind {
   return { wx, wy, U, wxu: wx / U, wyu: wy / U }
 }
 
+/** Place one slot uniformly across the WHOLE field — the warm-start placement (vs the
+ *  inflow-edge `spawn`). Shared by the initial warm start, resize-grown slots, and the
+ *  static (reduced-motion) revive. */
+function warmStartSlot(s: FogState, i: number): void {
+  s.P[i * PARTICLE_STRIDE] = s.random() * s.width
+  s.P[i * PARTICLE_STRIDE + 1] = s.random() * s.height
+}
+
 /** Warm-start: seed particles across the WHOLE field (not just the inflow edges) so
  *  the first frame is already full of fog. Ported from `reset()`. */
 function warmStart(s: FogState): void {
-  for (let i = 0; i < s.n; i++) {
-    s.P[i * PARTICLE_STRIDE] = s.random() * s.width
-    s.P[i * PARTICLE_STRIDE + 1] = s.random() * s.height
-  }
+  for (let i = 0; i < s.n; i++) warmStartSlot(s, i)
 }
 
 function spawn(s: FogState, i: number): void {
@@ -227,9 +270,64 @@ function createState(opts: { width: number; height: number; random?: () => numbe
     random: opts.random ?? Math.random,
     clock: 0,
     acc: 0,
+    alive: new Uint8Array(n).fill(1),
+    aliveCount: n,
+    dead: [],
+    dsmMax: 0,
+    drained: false,
   }
   warmStart(s)
   return s
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Spawn-scale drain (§4): the target-population respawn gate.
+//
+// MECHANISM CHOICE — a deterministic population TARGET, not probability gating:
+// on despawn the particle retires iff the alive population exceeds
+// `round(n·spawnScale)`, else it respawns exactly as before. Under a seeded RNG
+// this is fully deterministic AND exact (the population converges to precisely the
+// target, which the tests pin); probability-gated respawn (`random() < spawnScale`)
+// would consume an extra RNG draw per exit (perturbing every later spawn position)
+// and only converge in expectation. A retire consumes no RNG draw and a respawn
+// draws exactly what it always did, so at spawnScale 1 the sim is bit-identical to
+// the pre-drain behaviour.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** The alive-population target for a spawn scale (clamped to [0, 1]). */
+function targetAlive(s: FogState, spawnScale: number): number {
+  return Math.round(s.n * Math.min(1, Math.max(0, spawnScale)))
+}
+
+function retire(s: FogState, i: number): void {
+  s.alive[i] = 0
+  s.aliveCount -= 1
+  s.dead.push(i)
+}
+
+/** Pop the top of the dead-slot stack. In-bounds by construction (callers bound
+ *  their pops by `dead.length`); `Number()` collapses the noUncheckedIndexedAccess
+ *  widening like `cell()` does — an unreachable `?? 0` branch would sink the
+ *  branch-coverage gate and a non-null assertion is barred. */
+function popDead(s: FogState): number {
+  const i = Number(s.dead[s.dead.length - 1])
+  s.dead.pop()
+  return i
+}
+
+/** Raise the alive population toward `target` by re-arming retired slots, placed by
+ *  `place` — `spawn` under motion (new fog BLOWS IN from the wind edges rather than
+ *  popping into place) or `warmStartSlot` for the static settle. No-op when the
+ *  population is already at/over target. Production only ever LOWERS the scale
+ *  during a generation; this is the tuning-slider / re-arm path. */
+function reviveTo(s: FogState, target: number, place: (s: FogState, i: number) => void): void {
+  const take = Math.min(target - s.aliveCount, s.dead.length)
+  for (let k = 0; k < take; k++) {
+    const i = popDead(s)
+    s.alive[i] = 1
+    s.aliveCount += 1
+    place(s, i)
+  }
 }
 
 /** Build the doublet line for each obstacle along the box's horizontal midline
@@ -278,8 +376,10 @@ function queryBuckets(buckets: Map<number, Doublet[]>, bx: number, by: number): 
   return out
 }
 
-/** Advect every particle one sub-step: field velocity → move → project out of each
- *  capsule (EXR keep-out) → respawn if off-band.
+/** Advect every ALIVE particle one sub-step: field velocity → move → project out of
+ *  each capsule (EXR keep-out) → despawn if off-band (respawn while the population is
+ *  at/under `target`, retire above it — the §4 spawn-scale drain; a retired slot is
+ *  skipped entirely, so drained particles cost nothing).
  *
  *  Two structural perf moves (MYT-89 framerate fix), both math-preserving:
  *  - the doublet-candidate query is memoised per bucket CELL: every particle in a
@@ -294,10 +394,12 @@ function advect(
   s: FogState,
   obstacles: readonly FogObstacle[],
   buckets: Map<number, Doublet[]>,
+  target: number,
 ): void {
   const { P } = s
   const cellCandidates = new Map<number, Doublet[]>()
   for (let i = 0; i < s.n; i++) {
+    if (s.alive[i] === 0) continue
     const base = i * PARTICLE_STRIDE
     let X = cell(P, base)
     let Y = cell(P, base + 1)
@@ -322,7 +424,10 @@ function advect(
       }
     }
     if (isOffBand(X, Y, s.width, s.height)) {
-      spawn(s, i)
+      // The §4 respawn gate: at/under the target the recycle is exactly the
+      // reference behaviour; above it the slot retires and nothing replaces it.
+      if (s.aliveCount > target) retire(s, i)
+      else spawn(s, i)
     } else {
       P[base] = X
       P[base + 1] = Y
@@ -330,11 +435,12 @@ function advect(
   }
 }
 
-/** Splat every particle into `dens` with the 3×3 kernel (a fresh density field). */
+/** Splat every ALIVE particle into `dens` with the 3×3 kernel (a fresh density field). */
 function splat(s: FogState): void {
   const { P, dens, gw, gh } = s
   dens.fill(0)
   for (let i = 0; i < s.n; i++) {
+    if (s.alive[i] === 0) continue
     const cx = Math.trunc(cell(P, i * PARTICLE_STRIDE) / CELL_PX)
     const cy = Math.trunc(cell(P, i * PARTICLE_STRIDE + 1) / CELL_PX)
     for (let oy = -1; oy <= 1; oy++) {
@@ -349,13 +455,19 @@ function splat(s: FogState): void {
   }
 }
 
-/** Temporal low-pass toward the fresh density (steady-state smoothing). */
+/** Temporal low-pass toward the fresh density (steady-state smoothing). Tracks the
+ *  max smoothed cell as it goes (`dsmMax`, the §4 drain detector — one compare per
+ *  cell inside the loop that already touches every cell). */
 function smooth(s: FogState): void {
   const { dens, dsm } = s
+  let max = 0
   for (let k = 0; k < dsm.length; k++) {
     const cur = cell(dsm, k)
-    dsm[k] = cur + (cell(dens, k) - cur) * STEADY
+    const next = cur + (cell(dens, k) - cur) * STEADY
+    dsm[k] = next
+    if (next > max) max = next
   }
+  s.dsmMax = max
 }
 
 /** Force the smoothed density to 0 under each label box (padded for the bob), so
@@ -404,21 +516,100 @@ function resizeState(s: FogState, width: number, height: number): void {
   s.dsm = dsm
   s.topW = Math.abs(WIND_BASE[1]) * width
   s.rightW = Math.abs(WIND_BASE[0]) * height
+  // Alive flags follow the surviving slots; GROWN slots warm-start alive (a resize
+  // that reveals new area gets fog there — if the current spawn target is lower, the
+  // excess drains naturally through the §4 gate). Count + dead-stack rebuild below.
+  const alive = new Uint8Array(n)
+  alive.set(s.alive.subarray(0, Math.min(n, prevN)))
   // Warm-start ONLY the grown slots (survivors keep their positions/flow).
   for (let i = prevN; i < n; i++) {
-    s.P[i * PARTICLE_STRIDE] = s.random() * width
-    s.P[i * PARTICLE_STRIDE + 1] = s.random() * height
+    alive[i] = 1
+    warmStartSlot(s, i)
   }
+  s.alive = alive
+  s.aliveCount = 0
+  s.dead = []
+  for (let i = 0; i < n; i++) {
+    if (alive[i] === 1) s.aliveCount += 1
+    else s.dead.push(i)
+  }
+  // A drained sim stays dormant only if the resize added no particles (its zeroed
+  // density region copies over as zeros, so the grid invariant holds either way).
+  s.drained = s.drained && s.aliveCount === 0
 }
 
-function subStep(s: FogState, obstacles: readonly FogObstacle[]): void {
-  const doublets = buildDoublets(obstacles)
-  const buckets = buildBuckets(doublets)
-  advect(s, obstacles, buckets)
+function subStep(s: FogState, obstacles: readonly FogObstacle[], target: number): void {
+  reviveTo(s, target, spawn)
+  // With nothing alive there is nothing to advect (and no doublet field to build) —
+  // the tail of a drain only needs the splat (all-zero) + low-pass decay + box-clear.
+  if (s.aliveCount > 0) {
+    const doublets = buildDoublets(obstacles)
+    const buckets = buildBuckets(doublets)
+    advect(s, obstacles, buckets, target)
+  }
   splat(s)
   smooth(s)
   boxClear(s, obstacles)
   s.clock += FIXED_DT_S
+}
+
+/** One `FogSim.step` (module-scoped so the factory stays lean): the dormant fast-path,
+ *  the fixed-timestep accumulator loop, and the drain-complete transition. */
+function stepSim(
+  s: FogState,
+  dtMs: number,
+  obstacles: readonly FogObstacle[],
+  spawnScale: number,
+): void {
+  const target = targetAlive(s, spawnScale)
+  // DORMANT: fully drained and nothing to spawn — the whole call is a no-op (the §4
+  // "costs ~nothing" steady state; the paint side skips on the zeroed grid).
+  if (s.drained && target === 0) {
+    s.acc = 0
+    return
+  }
+  s.drained = false
+  s.acc += dtMs
+  let steps = 0
+  while (s.acc >= FIXED_DT_MS && steps < MAX_STEPS_PER_FRAME) {
+    subStep(s, obstacles, target)
+    s.acc -= FIXED_DT_MS
+    steps += 1
+  }
+  // Exiting AT the cap means overload — drop the ENTIRE remaining backlog
+  // (fractional included: float subtraction can leave it a hair under one
+  // sub-step, which the old `acc >= FIXED_DT_MS` check leaked into the next
+  // frame) to avoid a catch-up spiral. A healthy frame (steps < cap) keeps its
+  // sub-step remainder, so normal pacing still accumulates exactly.
+  if (steps === MAX_STEPS_PER_FRAME) s.acc = 0
+  // DRAIN-COMPLETE: population empty and the residual low-pass has decayed below
+  // visibility → zero the grid once (exact zeros for the paint/dormant skips) and
+  // go dormant until the spawn target rises.
+  if (target === 0 && s.aliveCount === 0 && s.dsmMax <= DRAIN_EPS) {
+    s.dsm.fill(0)
+    s.dens.fill(0)
+    s.dsmMax = 0
+    s.drained = true
+  }
+}
+
+/** `FogSim.settlePopulation` (module-scoped): the reduced-motion population snap —
+ *  see the interface doc. */
+function snapPopulation(s: FogState, spawnScale: number): void {
+  const target = targetAlive(s, spawnScale)
+  // Retire from the TOP slot down: the surviving prefix keeps its uniform spread.
+  for (let i = s.n - 1; i >= 0 && s.aliveCount > target; i--) {
+    if (s.alive[i] === 1) retire(s, i)
+  }
+  reviveTo(s, target, warmStartSlot)
+  if (target === 0) {
+    s.dsm.fill(0)
+    s.dens.fill(0)
+    s.dsmMax = 0
+    s.drained = true
+  } else {
+    s.drained = false
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -432,24 +623,11 @@ export function createFogSim(opts: {
 }): FogSim {
   const s = createState(opts)
   return {
-    step(dtMs: number, obstacles: readonly FogObstacle[], effectiveDensity: number): void {
-      if (effectiveDensity <= FADE_EPS) {
-        s.acc = 0
-        return
-      }
-      s.acc += dtMs
-      let steps = 0
-      while (s.acc >= FIXED_DT_MS && steps < MAX_STEPS_PER_FRAME) {
-        subStep(s, obstacles)
-        s.acc -= FIXED_DT_MS
-        steps += 1
-      }
-      // Exiting AT the cap means overload — drop the ENTIRE remaining backlog
-      // (fractional included: float subtraction can leave it a hair under one
-      // sub-step, which the old `acc >= FIXED_DT_MS` check leaked into the next
-      // frame) to avoid a catch-up spiral. A healthy frame (steps < cap) keeps its
-      // sub-step remainder, so normal pacing still accumulates exactly.
-      if (steps === MAX_STEPS_PER_FRAME) s.acc = 0
+    step(dtMs: number, obstacles: readonly FogObstacle[], spawnScale: number): void {
+      stepSim(s, dtMs, obstacles, spawnScale)
+    },
+    settlePopulation(spawnScale: number): void {
+      snapPopulation(s, spawnScale)
     },
     setSize(width: number, height: number): void {
       resizeState(s, width, height)

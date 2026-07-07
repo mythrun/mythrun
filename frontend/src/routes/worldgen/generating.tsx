@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
 import { ENTITY_STAGES } from '@mythrun/contract/events'
 import { remainingStageMs, type StageTiming, type WorldGenStream } from '@mythrun/client-core'
+import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
@@ -30,10 +31,11 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //     stage-label map (ENTITY stages only — the prep stretch belongs to act one)
 //     + a data-driven ETA label (from the route's stage-timings fetch). Cost is
 //     NOT passed (audit ⑥ — the player never sees API spend);
-//   - the FOG FADE is keyed off STAGE progress (completed/total over ALL
-//     reported stages), NOT entity count: `stages[]` is known and reaches
-//     all-completed at the end, so the fog is fully gone exactly at the reveal
-//     moment (§3.8).
+//   - the FOG DRAIN is keyed off the ENTITY COUNT (MYT-89 spawn-drain, replacing
+//     the old stage-progress fade): `nodes.length / MIN_EXPECTED_ENTITIES` scales
+//     the fog's respawn flux down as entities arrive, so the wind carries the fog
+//     off the pane — fully gone by the DB-derived minimum entity count a real
+//     generation produces (before the pipeline's tail stages even finish).
 //
 // Flat 1-bit paper register — no chrome. The route owns the stream + the timings
 // fetch; this view owns the act state (a local, deliberate transition — never
@@ -63,13 +65,6 @@ function etaLabelFrom(remainingMs: number | null, t: TFunction): string | undefi
  *  across renders (no needless re-sync churn). */
 const noSelect = (): void => {
   /* gated: generation never fires selection */
-}
-
-/** Count completed stages — the fog-fade numerator. Keyed off STAGE progress (not
- *  entity count): `stages[]` is known + reaches all-completed at the end, so the
- *  fog is guaranteed GONE by completion (the invariant, §3.2f / §3.8). */
-function completedStages(stages: GeneratingViewProps['stages']): number {
-  return stages.filter((s) => s.status === 'completed').length
 }
 
 /** The canonical entity-generation stage ids (the act-two act detector reads set
@@ -147,17 +142,6 @@ export function GeneratingView({
     [stageTimings, stages, t],
   )
 
-  // The ENTITY-act slice of the reported stages — the fog-fade inputs. Since the
-  // two-act cut, act two BEGINS at the first entity stage, so the fog fades over
-  // the entity stages only (full fog at the reveal moment, agreeing with the
-  // status card's entity-only percent) and still reaches fully-gone exactly when
-  // the last stage (embed_world) completes (§3.8 — the invariant holds: the
-  // entity slice ends where the pipeline ends).
-  const entityStages = useMemo(
-    () => stages.filter((s) => ENTITY_STAGE_SET.has(s.stage)),
-    [stages],
-  )
-
   // ACT ONE — the generic loading screen, with the reveal button once entities
   // start. The gen keeps streaming underneath (the route's hook stays mounted);
   // revealing only swaps what this view renders.
@@ -197,14 +181,14 @@ export function GeneratingView({
           // forbids an explicit `undefined` on an optional prop) → the card shows no ETA.
           ...(etaLabel !== undefined ? { etaLabel } : {}),
         }}
-        // Fog fade keyed off ENTITY-STAGE progress: `completed / reported` over the
-        // entity slice — the same signal the status card's percent uses (so fog +
-        // card agree), reaching 1 (fog fully gone) when every entity stage is
-        // complete (= pipeline done; embed_world is last). A length of 0 (just
-        // revealed, no entity stage reported yet) disables the fade → base-density
-        // fog — full fog at the birth of the world.
-        shownEntities={completedStages(entityStages)}
-        totalEntities={entityStages.length}
+        // Fog DRAIN keyed off the ENTITY COUNT (MYT-89 spawn-drain): every arrived
+        // node ramps the fog's respawn flux down by 1/MIN_EXPECTED_ENTITIES — the
+        // wind carries the fog off the pane and ever fewer particles replace it,
+        // fully gone by the DB-derived minimum a real generation produces (never a
+        // paint fade; the sim spawns less, the draw stays at base density). At 0
+        // nodes (just revealed) the scale is 1 — full fog at the birth of the world.
+        shownEntities={nodes.length}
+        totalEntities={MIN_EXPECTED_ENTITIES}
       />
     </Stack>
   )

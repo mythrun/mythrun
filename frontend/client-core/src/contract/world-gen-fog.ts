@@ -38,10 +38,11 @@ export interface FogFieldEntity {
 
 /**
  * The world-gen FOG layer (MYT-89 Phase C, C3) — the decorative rolling clouds that
- * part and close around the streaming entity labels, and FADE toward nothing as the
- * graph fills (the "chaos → order" arc). This is JUST the fog layer (§5, layered
- * canvases): it sits BEHIND the graph canvas (C4), owns its own Canvas, and never
- * renders the entities themselves — only the fog that routes around them.
+ * part and close around the streaming entity labels, and DRAIN toward nothing as the
+ * entities arrive (the "chaos → order" arc; MYT-89 spawn-drain — the wind carries the
+ * fog off the pane and ever fewer particles replace it). This is JUST the fog layer
+ * (§5, layered canvases): it sits BEHIND the graph canvas (C4), owns its own Canvas,
+ * and never renders the entities themselves — only the fog that routes around them.
  *
  * The shell owns the fixed-timestep sim loop, the obstacle construction (each entity →
  * a `FogObstacle`), the 900×470 VIRTUAL coordinate space + CSS scale (BUG 2.2: draw in
@@ -79,15 +80,20 @@ export interface WorldGenFogFieldProps extends Omit<BaseProps, 'children'> {
    *  frame. The composer (WorldGenGraph) derives it from the shared force-sim in the
    *  fog's VIRTUAL space, so obstacle and glyph land on one coordinate. */
   entitiesSource?: () => readonly FogFieldEntity[]
-  /** Fade NUMERATOR — how many entities are shown. Typically `entities.length`, but
-   *  passed explicitly so the fade progress can be driven by the caller's own metric
-   *  independent of the exact obstacle set. */
+  /** Drain NUMERATOR — how many entities have arrived. Typically `entities.length`,
+   *  but passed explicitly so the drain progress can be driven by the caller's own
+   *  metric independent of the exact obstacle set. */
   shownEntities: number
-  /** Fade DENOMINATOR — the full expected graph size. As `shownEntities/totalEntities`
-   *  → 1 the fog fades to nothing; `0` disables the fade (guards divide-by-zero). */
+  /** Drain DENOMINATOR — the entity count at which the fog is fully GONE (production:
+   *  `MIN_EXPECTED_ENTITIES`, the DB-derived floor). The sim's respawn flux scales by
+   *  `1 − shown/total` (MYT-89 spawn-drain): as entities arrive fewer particles spawn
+   *  in, the wind carries the rest off the pane, and at `shown ≥ total` nothing
+   *  respawns — the fog DRAINS to nothing (never a paint fade). `0` disables the
+   *  drain (full spawn — the fog holds). */
   totalEntities: number
-  /** Base fog thickness before the fade (the reference `density` slider — the STARTING
-   *  thickness when the fade is on). Defaults to the LOCKED `FOG_PARAMS.density`. */
+  /** Base fog thickness (the reference `density` slider) — a CONSTANT paint
+   *  multiplier; the clear is the spawn drain above, never a density fade. Defaults
+   *  to the LOCKED `FOG_PARAMS.density`. */
   density?: number
   /** Density-aware virtual-space growth (MYT-89 density redesign): the SAME growth
    *  input the composing graph feeds `virtualDims`, so both layers derive identical

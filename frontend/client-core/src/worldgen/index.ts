@@ -51,6 +51,9 @@ export {
   seatFrom,
 } from './label-tiers.ts'
 export type { DensityParams, LabelTierOptions } from './label-tiers.ts'
+// The world-gen entity floor (MYT-89 fog spawn-drain): the DB-derived minimum
+// entity count a completed generation produces — the fog-clear denominator.
+export { MIN_EXPECTED_ENTITIES } from './entity-floor.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 

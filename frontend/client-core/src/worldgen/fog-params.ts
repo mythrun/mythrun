@@ -235,9 +235,17 @@ export const TEMPORAL_SMOOTHING_DEFAULT = 0.03
 // ref: `EFF = FADE ? DENSITY*Math.pow(1 - NSHOWN/NMAX, 0.85) : DENSITY`. With
 // fade on, density scales toward zero as the graph fills. `NMAX` is the live
 // entity count, not a constant — only the exponent is.
+//
+// RETIRED IN PRODUCTION (MYT-89 spawn-drain): the shipped fog no longer fades its
+// paint — it CLEARS by scaling the sim's respawn population with the entity count
+// (`FogSim.step`'s `spawnScale`, keyed to `MIN_EXPECTED_ENTITIES`), so the wind
+// carries the fog off the pane and nothing replaces it. The constant below (and
+// `fadeAsGraphFills` in FOG_PARAMS) stays as the verbatim reference record — this
+// module copies the prototype, it never edits it.
 // ──────────────────────────────────────────────────────────────────────────
 
-/** ref: `Math.pow(1 - NSHOWN/NMAX, 0.85)`. Fade curve exponent. */
+/** ref: `Math.pow(1 - NSHOWN/NMAX, 0.85)`. Fade curve exponent (reference record —
+ *  unused by the shipped spawn-drain clear; see the section note). */
 export const FADE_EXPONENT = 0.85
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -381,7 +389,9 @@ export const FOG_PARAMS = {
   steady: 0.03,
   /** ref: `<input id=ents value="4">` / `let NSHOWN=4`. Initially-shown entities. */
   entities: 4,
-  /** brief LOCKED list "fade ON" (reference initial toggle is OFF — see NOTE). */
+  /** brief LOCKED list "fade ON" (reference initial toggle is OFF — see NOTE).
+   *  Reference record only since the MYT-89 spawn-drain: the shipped clear scales
+   *  the sim's respawn population instead of fading the paint. */
   fadeAsGraphFills: true,
   /** ref: `<input id=fogc value="#a89f8a">`. Fog fill colour. */
   fogColor: '#a89f8a',

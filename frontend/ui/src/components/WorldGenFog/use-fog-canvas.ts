@@ -3,7 +3,6 @@ import {
   cameraWorldDims,
   createFogSim,
   DPR_CAP,
-  FADE_EXPONENT,
   FOG_PARAMS,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
@@ -61,22 +60,17 @@ const SETTLE_STEPS = 120
 /** Floor on the frame dt (ms) so the per-sub-step velocity scale can't divide by ~0. */
 const MIN_DT_MS = 1
 
-/** The fade-applied base density (`EFF`): the fog thins toward 0 as the graph fills. The
- *  fade is a RENDER concern (not FogSim's), and is used for BOTH the sim's fade-skip and
- *  the paint. `remaining` is clamped to [0, 1] so an over-full count can't produce a NaN
- *  (`Math.pow(negative, 0.85)`). */
-/** The LOCKED fade toggle, read through a `boolean`-typed accessor so the branch below
- *  reads as a real config check (honoured if the locked param is ever flipped) rather
- *  than a statically-dead `!true` — a `const` initialised from the literal would narrow
- *  back to `true` and trip `no-unnecessary-condition`. */
-function fadeEnabled(): boolean {
-  return FOG_PARAMS.fadeAsGraphFills
-}
-
-function effectiveDensity(shown: number, total: number, base: number): number {
-  if (!fadeEnabled() || total <= 0) return base
-  const remaining = Math.max(0, Math.min(1, 1 - shown / total))
-  return base * Math.pow(remaining, FADE_EXPONENT)
+/** The sim's RESPAWN scale (MYT-89 spawn-drain — this REPLACES the old stage-derived
+ *  `effectiveDensity` fade): the fog clears in proportion to how many entities have
+ *  arrived — `1 − shown/total`, clamped to [0, 1] — by spawning FEWER particles, never
+ *  by dimming the paint (the draw stays pinned at the base density). Production feeds
+ *  `nodes.length / MIN_EXPECTED_ENTITIES`, so the respawn flux hits zero by the time a
+ *  real generation's minimum entity count has streamed in and the wind carries the
+ *  last of the fog off the pane. `total ≤ 0` (a standalone fog with no denominator) →
+ *  full spawn — the fog holds. Pure — exported for unit test. */
+export function fogSpawnScale(shown: number, total: number): number {
+  if (total <= 0) return 1
+  return Math.max(0, Math.min(1, 1 - shown / total))
 }
 
 /** The fog layer's maximum render scale (device px per VIRTUAL px) — the reference
@@ -207,7 +201,7 @@ function repaint(
   ctx: CanvasRenderingContext2D,
   sim: FogSim,
   t: number,
-  eff: number,
+  density: number,
   virtual: VirtualDims,
   camera: CameraPoint,
 ): void {
@@ -218,7 +212,9 @@ function repaint(
     wx: WIND.wx,
     wy: WIND.wy,
     t,
-    effectiveDensity: eff,
+    // The BASE density, pinned (no fade multiply): the clear lives in the sim's
+    // spawn drain — the paint draws whatever particle density remains, full-strength.
+    density,
     fogColor: FOG_PARAMS.fogColor,
     fogAlpha: FOG_PARAMS.fogAlpha,
   })
@@ -356,17 +352,27 @@ export function useFogCanvas(params: FogCanvasParams): void {
   )
 
   const getSim = useCallback((): FogSim => {
-    simRef.current ??= createFogSim({
-      width: virtualRef.current.width,
-      height: virtualRef.current.height,
-    })
+    if (simRef.current === null) {
+      simRef.current = createFogSim({
+        width: virtualRef.current.width,
+        height: virtualRef.current.height,
+      })
+      // Born at the CURRENT scaled population: the warm start seeds the full field,
+      // then the snap retires down to the mount-time target — so a LATE mount (a
+      // player re-entering a well-underway generation, or the drained end state)
+      // starts at the population the drain would have reached, not full fog that
+      // then spends ~20s blowing off.
+      simRef.current.settlePopulation(fogSpawnScale(shownRef.current, totalRef.current))
+    }
     return simRef.current
   }, [])
 
-  // Reduced motion: step the sim to convergence once against the current obstacles, then
-  // paint a single static frame. Re-runs on any entity-count / fade / density change (the
-  // effect deps), so the fade-with-entities PROGRESS signal is preserved — a static
-  // sample, not a blanket freeze.
+  // Reduced motion: snap the population to the CURRENT spawn scale (a static settle
+  // has no wind-time to drain through — `settlePopulation`), step the sim to
+  // convergence against the current obstacles, then paint a single static frame.
+  // Re-runs on any entity-count / density change (the effect deps), so the
+  // drain-with-entities PROGRESS signal is preserved — a static sample of the scaled
+  // population, not a blanket freeze.
   const settleStatic = useCallback((): void => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d') ?? null
@@ -374,15 +380,16 @@ export function useFogCanvas(params: FogCanvasParams): void {
     applyFogSize(canvas, ctx)
     labelFontRef.current ||= resolveLabelFont(canvas)
     const sim = getSim()
-    const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
+    const scale = fogSpawnScale(shownRef.current, totalRef.current)
+    sim.settlePopulation(scale)
     // Positions are static during a settle, so the obstacles (vx/vy = 0) are built ONCE
     // and reused across every sub-step — no per-step re-measure.
     const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS, widthCacheRef.current, labelFontRef.current)
     for (let i = 0; i < SETTLE_STEPS; i++) {
-      sim.step(SUBSTEP_MS, obstacles, eff)
+      sim.step(SUBSTEP_MS, obstacles, scale)
       simTimeRef.current += SUBSTEP_MS / 1000
     }
-    repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current, cameraAt(performance.now()))
+    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
   }, [canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
 
   // Repaint the CURRENT settled state at the current camera — the reduced-motion
@@ -398,8 +405,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       settleStatic()
       return
     }
-    const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
-    repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current, cameraAt(performance.now()))
+    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
   }, [canvasRef, settleStatic, cameraAt])
 
   // The dims key: a primitive fingerprint of the growth + seat inputs, so the effects
@@ -540,12 +546,15 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
   const frame = (now: number): void => {
     const dtMs = last === 0 ? SUBSTEP_MS : now - last
     last = now
-    const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
+    // The spawn scale for THIS frame: as entities arrive the respawn target falls
+    // and the field drains through the wind (a DRAINED sim makes step a no-op and
+    // the zeroed grid makes the paint pure skips — the steady state costs ~nothing).
+    const scale = fogSpawnScale(shownRef.current, totalRef.current)
     const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current, labelFontRef.current)
-    sim.step(dtMs, obstacles, eff)
+    sim.step(dtMs, obstacles, scale)
     // The shared camera at THIS rAF timestamp — the graph loop reads the same source
     // with the same time, so both layers translate identically this frame (C5).
-    repaint(ctx, sim, (now - start) / 1000, eff, virtualRef.current, cameraAt(now))
+    repaint(ctx, sim, (now - start) / 1000, densityRef.current, virtualRef.current, cameraAt(now))
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)

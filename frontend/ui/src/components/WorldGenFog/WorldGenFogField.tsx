@@ -6,7 +6,9 @@ import { useFogCanvas } from './use-fog-canvas.ts'
 
 // WorldGenFogField (MYT-89 Phase C, C3) — the decorative FOG layer of the world-gen
 // loading experience: rolling clouds that part and close around the streaming entity
-// labels and FADE toward nothing as the graph fills. This is JUST the fog layer (§5,
+// labels and DRAIN toward nothing as entities arrive (MYT-89 spawn-drain: the respawn
+// flux scales down with `shownEntities/totalEntities` and the wind carries the rest
+// off the pane — never a paint fade). This is JUST the fog layer (§5,
 // layered canvases): it renders an `absolute inset-0` canvas meant to sit BEHIND the
 // graph canvas in a shared positioned container, and never draws the entities themselves.
 //

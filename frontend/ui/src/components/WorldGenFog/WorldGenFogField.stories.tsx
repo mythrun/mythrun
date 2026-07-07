@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import {
   FOG_PARAM_RANGES,
   FOG_PARAMS,
+  MIN_EXPECTED_ENTITIES,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
 } from '@mythrun/client-core/worldgen'
@@ -10,12 +11,15 @@ import type { FogFieldEntity } from '@mythrun/client-core/contract'
 import { WorldGenFogField } from './WorldGenFogField.tsx'
 
 // WorldGenFogField — the decorative fog layer of the world-gen loading experience: rolling
-// clouds that part/close around the streaming entity labels and fade to nothing as the
-// graph fills. These specimens feed the reference's synthetic entity set and expose the
-// two knobs Miklos dialled the fog in with — DENSITY (starting thickness) and the shown-
-// ENTITY count (which drives both the obstacles the fog routes around AND the fade) — so
-// the fog can be tuned in isolation, mirroring the prototype's tuning UI. The fog canvas
-// is aria-hidden decoration; in production it sits BEHIND the graph canvas (§5).
+// clouds that part/close around the streaming entity labels and DRAIN to nothing as the
+// entities arrive (MYT-89 spawn-drain: the respawn flux scales down with the entity
+// count and the wind carries the rest off the pane — the fog visibly BLOWS OFF, never
+// dims). These specimens feed the reference's synthetic entity set and expose the two
+// knobs — DENSITY (paint thickness) and the shown-ENTITY count, which drives both the
+// obstacles the fog routes around AND the spawn scale against the REAL production
+// denominator (`MIN_EXPECTED_ENTITIES`): slide it to the floor and the field empties
+// exactly as a live generation's would. The fog canvas is aria-hidden decoration; in
+// production it sits BEHIND the graph canvas (§5).
 
 const meta: Meta<typeof WorldGenFogField> = {
   title: 'Patterns/WorldGenFogField',
@@ -94,9 +98,12 @@ function Slider(props: {
   )
 }
 
-/** The tuning harness: DENSITY + shown-ENTITY sliders driving the fog + its fade, mirroring
- *  the reference tuning UI. `shown` slices the first N entities as obstacles AND is the fade
- *  numerator (total = the full set), so raising it both re-routes the fog and thins it. */
+/** The tuning harness: DENSITY + arrived-ENTITY sliders. The entity slider drives the
+ *  SPAWN SCALE against the real production denominator — `shown/MIN_EXPECTED_ENTITIES`
+ *  (the DB-derived floor a real generation always reaches) — so at the slider's max the
+ *  respawn flux is ZERO and the wind drains the field empty, exactly the live arc. The
+ *  first N fixture entities double as the obstacles the fog routes around (the fixture
+ *  set is smaller than the floor, so past `TOTAL` only the scale keeps falling). */
 function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Element {
   const [density, setDensity] = useState<number>(FOG_PARAMS.density)
   const [shown, setShown] = useState<number>(FOG_PARAMS.entities)
@@ -117,22 +124,22 @@ function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Ele
           <Slider
             label="[ph: entities]"
             min={FOG_PARAM_RANGES.entities.min}
-            max={TOTAL}
+            max={MIN_EXPECTED_ENTITIES}
             step={FOG_PARAM_RANGES.entities.step}
             value={shown}
             onChange={(v) => {
               setShown(Math.round(v))
             }}
-            readout={`${String(shown)}/${String(TOTAL)}`}
+            readout={`${String(shown)}/${String(MIN_EXPECTED_ENTITIES)}`}
           />
         </div>
         {/* Pinned to the reference's exact 900×470 (see FogStage) — the tuner is the
             canonical look-check surface, not a responsive specimen. */}
         <div className="relative h-[470px] w-[900px] overflow-hidden bg-bg">
           <WorldGenFogField
-            entities={ENTS.slice(0, shown)}
+            entities={ENTS.slice(0, Math.min(shown, TOTAL))}
             shownEntities={shown}
-            totalEntities={TOTAL}
+            totalEntities={MIN_EXPECTED_ENTITIES}
             density={density}
             {...(reducedMotion !== undefined ? { reducedMotion } : {})}
           />
@@ -142,7 +149,8 @@ function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Ele
   )
 }
 
-// The tuning surface — slide DENSITY + ENTITIES and watch the fog re-route and fade.
+// The tuning surface — slide ENTITIES toward the floor and watch the fog re-route,
+// thin (fewer particles spawning in), and finally BLOW OFF the pane entirely.
 export const Tuning: Story = {
   render: () => <FogTuner />,
 }
@@ -154,14 +162,15 @@ export const Locked: Story = {
       <WorldGenFogField
         entities={ENTS.slice(0, FOG_PARAMS.entities)}
         shownEntities={FOG_PARAMS.entities}
-        totalEntities={TOTAL}
+        totalEntities={MIN_EXPECTED_ENTITIES}
       />
     </FogStage>
   ),
 }
 
-// Reduced motion: no rAF churn — the density settles to convergence and repaints only when
-// the entity count changes. The fade-with-entities progress signal is preserved (static).
+// Reduced motion: no rAF churn — the sim snaps to the CURRENT scaled population,
+// settles to convergence, and repaints only when the entity count changes. The
+// drain-with-entities progress signal is preserved (a static sample of the drain).
 export const ReducedMotion: Story = {
   name: 'Reduced motion',
   render: () => <FogTuner reducedMotion />,

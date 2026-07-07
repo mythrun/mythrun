@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { StageTiming } from '@mythrun/client-core'
+import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
 import type { StageProgress, WorldGenGraphProps } from '@mythrun/ui'
 import { i18n } from '../../i18n/config.ts'
 import { GeneratingView } from './generating.tsx'
@@ -18,8 +19,9 @@ import { GeneratingView } from './generating.tsx'
 //   ACT TWO (graph): the GATED, fog-forward experience (§3.3/§3.4): the graph is
 //   `interactive={false}`, the status card is fed the stream's `stages[]` + an
 //   ENTITY-only `[ph:]` stage-label map + a data-driven ETA label (audit ③) and
-//   NO cost (audit ⑥), and the fog FADE is keyed off ENTITY-stage progress so it
-//   holds full fog at the reveal and reaches 0 at completion.
+//   NO cost (audit ⑥), and the fog DRAIN is keyed off the ENTITY COUNT against
+//   the DB-derived floor (MYT-89 spawn-drain): full fog at the reveal, fully
+//   drained by MIN_EXPECTED_ENTITIES arrivals.
 //
 // WorldGenGraph is mocked to a props spy — its own rendering is covered by its
 // unit test; here we assert the act gating + the props threaded through.
@@ -296,33 +298,26 @@ describe('GeneratingView — data-driven ETA (audit ③)', () => {
   })
 })
 
-describe('GeneratingView — fog fade keyed off ENTITY-stage progress (§3.2f / §3.8)', () => {
-  it('holds FULL fog at the reveal moment (no entity stage completed yet)', () => {
+describe('GeneratingView — fog drain keyed off the ENTITY COUNT (MYT-89 spawn-drain)', () => {
+  it('holds FULL fog at the reveal moment (no entity arrived yet)', () => {
     mockMatchMedia(false)
-    renderRevealed() // prep complete, world_and_factions running
+    renderRevealed() // prep complete, world_and_factions running, zero nodes
     const props = lastGraphProps()
-    // shown/total = 0/1 over the ENTITY slice — the completed PREP stages do NOT
-    // advance the fade (full fog at the birth of the world).
+    // shown 0 over the ENTITY FLOOR — spawn scale 1: full fog at the birth of the
+    // world; stage progress no longer drives the clear at all.
     expect(props.shownEntities).toBe(0)
-    expect(props.totalEntities).toBe(1)
+    expect(props.totalEntities).toBe(MIN_EXPECTED_ENTITIES)
   })
 
-  it('derives shown/total from completed vs reported ENTITY stages mid-gen', () => {
+  it('feeds the ARRIVED NODE COUNT as the drain numerator mid-gen', () => {
     mockMatchMedia(false)
-    const stages = [
-      ...ENTITY_UNDERWAY.slice(0, 3), // prep, completed — excluded from the fade
-      stage('world_and_factions', 'completed'),
-      stage('locations_and_npcs', 'completed'),
-      stage('entity_relationships', 'running'),
-      stage('entity_consolidation', 'pending'),
-    ]
-    renderRevealed({ stages })
+    renderRevealed({ nodes: [node('The Salt Baron'), node('The Drowned Ward'), node('Bell-Wardens')] })
     const props = lastGraphProps()
-    expect(props.shownEntities).toBe(2)
-    expect(props.totalEntities).toBe(4)
+    expect(props.shownEntities).toBe(3)
+    expect(props.totalEntities).toBe(MIN_EXPECTED_ENTITIES)
   })
 
-  it('reaches FULL fade at completion — fog gone at the reveal moment (invariant)', () => {
+  it('the denominator is the DB-derived entity floor — a constant, never the stage count', () => {
     mockMatchMedia(false)
     const stages = [
       ...ENTITY_UNDERWAY.slice(0, 3),
@@ -331,22 +326,19 @@ describe('GeneratingView — fog fade keyed off ENTITY-stage progress (§3.2f / 
       stage('embed_world', 'completed'),
     ]
     renderRevealed({ stages })
-    const props = lastGraphProps()
-    // shown === total → remaining 0 → effectiveDensity 0 → fog fully gone.
-    expect(props.shownEntities).toBe(3)
-    expect(props.totalEntities).toBe(3)
-    expect(props.shownEntities).toBe(props.totalEntities)
-  })
-
-  it('disables the fade when no entity stage is reported yet (node-triggered reveal)', () => {
-    mockMatchMedia(false)
-    // The first node arrived before the stage snapshot caught up: reveal is
-    // offered by the node signal; the entity slice is still empty → total 0
-    // disables the fade in WorldGenFogField (base density fog).
-    renderGenerating({ nodes: [node('The Salt Baron')], stages: [stage('vocabulary_intake', 'running')] })
-    reveal()
+    // Every stage complete yet zero nodes: the old stage-keyed fade would report
+    // fully-gone here — the drain stays keyed to entities alone.
     const props = lastGraphProps()
     expect(props.shownEntities).toBe(0)
-    expect(props.totalEntities).toBe(0)
+    expect(props.totalEntities).toBe(MIN_EXPECTED_ENTITIES)
+  })
+
+  it('reaches the floor as the graph fills — nothing spawns from here (fog drains to gone)', () => {
+    mockMatchMedia(false)
+    const nodes = Array.from({ length: MIN_EXPECTED_ENTITIES }, (_, i) => node(`Entity ${String(i)}`))
+    renderRevealed({ nodes })
+    const props = lastGraphProps()
+    expect(props.shownEntities).toBe(MIN_EXPECTED_ENTITIES)
+    expect(props.totalEntities).toBe(MIN_EXPECTED_ENTITIES)
   })
 })

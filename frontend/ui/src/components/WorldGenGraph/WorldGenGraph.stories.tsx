@@ -192,15 +192,17 @@ function StreamingDemo({
 }
 
 // The generation graph growing live: the fog fills the space, parts around the streaming
-// glyphs, and fades as the graph fills — the status card tracks progress top-left. No
-// list, no selection (the gated generation experience, §3.4).
+// glyphs, and DRAINS as entities arrive (MYT-89 spawn-drain — fewer particles spawn in
+// per arrival and the wind blows the rest off the pane; the demo's denominator is its
+// own script length, production's is MIN_EXPECTED_ENTITIES) — the status card tracks
+// progress top-left. No list, no selection (the gated generation experience, §3.4).
 export const Generating: Story = {
   render: () => <StreamingDemo />,
 }
 
 // The same scripted generation with reduced motion: no rAF churn, no bob — the graph and
-// the fog settle to convergence and redraw statically on each arrival (the fade-with-
-// entities progress signal is preserved).
+// the fog settle to convergence and redraw statically on each arrival (the drain-with-
+// entities progress signal is preserved: each settle snaps to the scaled population).
 export const ReducedMotion: Story = {
   name: 'Reduced motion',
   render: () => <StreamingDemo reducedMotion />,
@@ -267,8 +269,8 @@ export const MaxDensityReduced: Story = {
 }
 
 /** The REVEAL variant: `interactive` turns on the accessible + selectable entity list
- *  beside the settled graph (with on-glyph name labels). The fog is faded to nothing
- *  (shown === total). */
+ *  beside the settled graph (with on-glyph name labels). The fog is drained to nothing
+ *  (shown === total → spawn scale 0 → the sim mounts empty). */
 function RevealDemo(): React.JSX.Element {
   const [selectedKey, setSelectedKey] = useState<string>()
   const { nodes, edges } = snapshotAt(ARRIVALS, ARRIVALS.length)
@@ -302,7 +304,8 @@ export const Populated: Story = {
 // params exposed as LIVE sliders (the locked spread seven + the two clustering
 // knobs from the MYT-89 untangle); slide them and the layout re-seeds + re-spreads.
 // The copy block hands the current values back so Miklos can lock them into
-// `FORCE_PARAMS`. Fog is faded to nothing (shown === total) so the spread reads clean.
+// `FORCE_PARAMS`. Fog is drained to nothing (shown === total → the sim mounts empty)
+// so the spread reads clean.
 // ──────────────────────────────────────────────────────────────────────────
 
 /** A dev-tuning range control (placeholder labels per the brand i18n rule; the `help`
