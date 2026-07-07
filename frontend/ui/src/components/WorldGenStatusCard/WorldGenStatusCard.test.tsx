@@ -1,21 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import { axe } from 'jest-axe'
-import { WORLD_GEN_STAGES, type StageProgress } from '@mythrun/contract/events'
+import { ENTITY_STAGES, PREP_STAGES, type StageProgress } from '@mythrun/contract/events'
 import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 
 // WorldGenStatusCard is a DOM overlay (top-left of the graph pane) that turns the
-// long pre-entity generation stretch into legible PROGRESS. It renders a FIXED
-// 11-bar indicator seeded from the canonical WORLD_GEN_STAGES taxonomy (known from
-// frame one, audit ③) — the stream's `stages[]` only ADVANCES each bar's fill. It
-// shows: the CURRENT (running) stage's friendly label, a completed/11 percent, an
-// optional data-driven "time left", and a PAPER-REGISTER segmented SQUARE bar whose
-// running cell pulses (opacity fade, the brand's only sanctioned motion). Hard brand
-// rule: NO circles / spinners / dots. Cost is NOT rendered (audit ⑥). These tests pin
-// the fixed 11-bar count + %/11 math, the running-vs-done label, the square (non-
-// circular) indicator, the stage-label resolution + `[ph:]` fallback, and the ETA.
+// entity-generation act into legible PROGRESS. Since the two-act cut it renders a
+// FIXED 8-bar indicator seeded from the canonical ENTITY_STAGES slice (known from
+// frame one, audit ③) — the PREP stages (concept_intake / world_color /
+// vocabulary_intake) live in the WorldGenLoading screen now and get NO bar here; a
+// prep entry in the stream's `stages[]` is ignored. The stream only ADVANCES each
+// bar's fill. It shows: the CURRENT (running) stage's friendly label, a completed/8
+// percent, an optional data-driven "time left", and a PAPER-REGISTER segmented SQUARE
+// bar whose running cell pulses (opacity fade, the brand's only sanctioned motion).
+// Hard brand rule: NO circles / spinners / dots. Cost is NOT rendered (audit ⑥).
+// These tests pin the fixed 8-bar count + %/8 math, the prep-stage exclusion, the
+// running-vs-done label, the square (non-circular) indicator, the stage-label
+// resolution + `[ph:]` fallback, and the ETA.
 
-const TOTAL = WORLD_GEN_STAGES.length // 11
+const TOTAL = ENTITY_STAGES.length // 8
 
 const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   stage: id,
@@ -26,45 +29,59 @@ const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   completedAt: null,
 })
 
-// A SHORT stream: only 3 canonical stages have appeared (2 completed, 1 running).
-// The card must still render 11 bars — the taxonomy seeds the count, the stream only
-// advances fills. 2 completed / 11 → 18%.
+// A SHORT stream: only 3 canonical entity stages have appeared (2 completed, 1
+// running). The card must still render 8 bars — the taxonomy seeds the count, the
+// stream only advances fills. 2 completed / 8 → 25%.
 const SHORT: readonly StageProgress[] = [
-  stage('concept_intake', 'completed'),
-  stage('world_color', 'completed'),
-  stage('vocabulary_intake', 'running'),
+  stage('world_and_factions', 'completed'),
+  stage('locations_and_npcs', 'completed'),
+  stage('entity_relationships', 'running'),
 ]
 
-const EXPECTED_SHORT_PERCENT = Math.round((2 / TOTAL) * 100) // 18
+const EXPECTED_SHORT_PERCENT = Math.round((2 / TOTAL) * 100) // 25
 
-// Every canonical stage completed → 100%, the done state.
-const DONE: readonly StageProgress[] = WORLD_GEN_STAGES.map((s) => stage(s, 'completed'))
+// Every canonical entity stage completed → 100%, the done state.
+const DONE: readonly StageProgress[] = ENTITY_STAGES.map((s) => stage(s, 'completed'))
 
 const LABELS = {
   stageLabels: {
-    vocabulary_intake: '[ph: naming things]',
+    entity_relationships: '[ph: drawing the ties]',
   },
   doneLabel: '[ph: world ready]',
 }
 
-describe('WorldGenStatusCard — FIXED 11 bars from the taxonomy (audit ③)', () => {
-  it('renders all 11 bars from frame one even when the stream is short', () => {
+describe('WorldGenStatusCard — FIXED 8 bars from the ENTITY_STAGES taxonomy (audit ③)', () => {
+  it('renders all 8 entity-stage bars from frame one even when the stream is short', () => {
     const { container } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(2)
     expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
-    // The remaining 8 canonical stages have not appeared in the stream → pending.
+    // The remaining 5 canonical entity stages have not appeared in the stream → pending.
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 3)
   })
 
-  it('renders 11 pending bars at 0% before the first snapshot frame (empty stream)', () => {
+  it('renders 8 pending bars at 0% before the first snapshot frame (empty stream)', () => {
     const { container, getByText } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL)
     expect(getByText('0%')).toBeInTheDocument()
   })
 
-  it('computes percent as completed / 11 (fixed denominator), NOT over the stream length', () => {
+  it('IGNORES prep-stage stream entries — no bar, no percent movement (the two-act cut)', () => {
+    // The whole prep act completed + the first entity stage running: the card still
+    // shows 0% (no prep bar exists to fill) with exactly one running entity bar.
+    const withPrep: readonly StageProgress[] = [
+      ...PREP_STAGES.map((s) => stage(s, 'completed')),
+      stage('world_and_factions', 'running'),
+    ]
+    const { container, getByText } = render(<WorldGenStatusCard stages={withPrep} {...LABELS} />)
+    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
+    expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(0)
+    expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
+    expect(getByText('0%')).toBeInTheDocument()
+  })
+
+  it('computes percent as completed / 8 (fixed denominator), NOT over the stream length', () => {
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(getByText(`${String(EXPECTED_SHORT_PERCENT)}%`)).toBeInTheDocument()
     expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_SHORT_PERCENT))
@@ -72,12 +89,12 @@ describe('WorldGenStatusCard — FIXED 11 bars from the taxonomy (audit ③)', (
 
   it('shows the RUNNING stage friendly label', () => {
     const { getByText } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
-    expect(getByText('[ph: naming things]')).toBeInTheDocument()
+    expect(getByText('[ph: drawing the ties]')).toBeInTheDocument()
   })
 
   it('falls back to a `[ph: <stage>]` placeholder for an unmapped stage (DS owns no copy)', () => {
     const { getByText } = render(<WorldGenStatusCard stages={SHORT} />)
-    expect(getByText('[ph: vocabulary_intake]')).toBeInTheDocument()
+    expect(getByText('[ph: entity_relationships]')).toBeInTheDocument()
   })
 
   it('exposes the percent through a determinate progressbar', () => {
@@ -89,7 +106,7 @@ describe('WorldGenStatusCard — FIXED 11 bars from the taxonomy (audit ③)', (
 })
 
 describe('WorldGenStatusCard — done state', () => {
-  it('shows 100% and the done label when every canonical stage has completed', () => {
+  it('shows 100% and the done label when every canonical entity stage has completed', () => {
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
     expect(getByText('100%')).toBeInTheDocument()
     expect(getByText('[ph: world ready]')).toBeInTheDocument()

@@ -154,14 +154,16 @@ function renderDetail(): void {
 }
 
 describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
-  it('renders the gated streaming world-gen view while generating', () => {
+  it('renders the two-act streaming world-gen view while generating', () => {
     mockStream.mockReturnValue(
       streamValue({
         status: 'generating',
         phase: 'world_gen',
         nodes: NODES,
-        // C7: the generation graph is GATED (no entity list); the status card,
-        // fed the stream's stages, narrates the running stage instead.
+        // The two-act flow: the route lands on the generic loading screen (act
+        // one); entities already exist in this fixture, so the reveal beat is
+        // offered. The act-two graph/status-card details are covered in
+        // generating.test.tsx.
         stages: [
           {
             stage: 'concept_intake',
@@ -176,8 +178,10 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     )
     renderDetail()
     expect(screen.getByTestId('worldgen-generating')).toBeDefined()
-    // The status card resolves the running stage id → its i18n friendly label.
-    expect(screen.getByText(i18n.t('worldGen.stage.concept_intake'))).toBeDefined()
+    expect(screen.getByTestId('worldgen-loading')).toBeDefined()
+    // Nodes exist → the "watch your world be born" button is offered (act one
+    // holds until the player presses it — a deliberate beat, never automatic).
+    expect(screen.getByRole('button', { name: i18n.t('worldGen.reveal') })).toBeDefined()
   })
 
   it('renders a Retry that calls retry() on a retryable failure', () => {
