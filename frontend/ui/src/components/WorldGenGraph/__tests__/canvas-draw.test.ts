@@ -25,6 +25,14 @@ import { entityObstacle, labelBoxExtents } from '../../WorldGenFog/fog-obstacles
  *  non-empty `font` value; the box-bounds guarantee below keys off the OFFSET, not the font. */
 const LABEL_FONT_STUB = '14px "Source Serif 4", ui-serif, Georgia, serif'
 
+/** The reference virtual dims — what `virtualDims` yields for a reference-sized (or
+ *  unmeasured) pane. The virtual space is PANE-ADAPTIVE now (MYT-89 responsive fix), so
+ *  the space-crossing helpers take the current dims explicitly; these tests pin the
+ *  translation at the reference and at a mobile-sized space. */
+const REF_DIMS = { width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT }
+/** A 1:1 mobile-pane virtual space (a ~375px phone: pane CSS px == virtual px). */
+const MOBILE_DIMS = { width: 343, height: 413 }
+
 // BUG 2.1 render-layer proof. The sim/render/edge id-space is `displayId`: node
 // positions are keyed by `displayId`, and edge endpoints are entity UUIDs (= the
 // endpoints' `displayId`). A live-won node keeps a `${stage}/…` synthKey but a
@@ -234,6 +242,7 @@ describe('drawNodes — displayId lookup', () => {
       t: null, // no bob → the draw translate is the raw physics position
       showLabels: false,
       labelFont: LABEL_FONT_STUB,
+      virtual: REF_DIMS,
     })
     // Both nodes resolve their position by displayId and are drawn there.
     expect(r.translates).toEqual([
@@ -250,6 +259,7 @@ describe('drawNodes — displayId lookup', () => {
       t: null,
       showLabels: false,
       labelFont: LABEL_FONT_STUB,
+      virtual: REF_DIMS,
     })
     expect(r.translates).toEqual([])
   })
@@ -269,6 +279,7 @@ describe('drawNodes — name labels (MYT-89 audit #3)', () => {
     t: null,
     showLabels,
     labelFont: LABEL_FONT_STUB,
+    virtual: REF_DIMS,
   })
 
   it('draws each node NAME when showLabels is true', () => {
@@ -308,6 +319,7 @@ function drawLabelled(node: GraphNode, hovered: boolean, labelFont = LABEL_FONT_
     t: null,
     showLabels: true,
     labelFont,
+    virtual: REF_DIMS,
   })
   return r
 }
@@ -389,10 +401,20 @@ const cnode = (displayId: string, kind: string, name: string): GraphNode => ({
 
 describe('centredToVirtual — the shared graph↔fog translation', () => {
   it('recentres a centred sim point into the fog top-left virtual space', () => {
-    expect(centredToVirtual({ x: 0, y: 0 })).toEqual({ x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT / 2 })
-    expect(centredToVirtual({ x: 100, y: -50 })).toEqual({
+    expect(centredToVirtual({ x: 0, y: 0 }, REF_DIMS)).toEqual({ x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT / 2 })
+    expect(centredToVirtual({ x: 100, y: -50 }, REF_DIMS)).toEqual({
       x: VIRTUAL_WIDTH / 2 + 100,
       y: VIRTUAL_HEIGHT / 2 - 50,
+    })
+  })
+
+  it('recentres against the CURRENT pane-adaptive dims (a mobile 1:1 space)', () => {
+    // The responsive fix: on a ~375px pane the virtual space IS the pane's CSS box, so
+    // the graph↔fog translation recentres by the mobile half-dimensions, not 900×470's.
+    expect(centredToVirtual({ x: 0, y: 0 }, MOBILE_DIMS)).toEqual({ x: 343 / 2, y: 413 / 2 })
+    expect(centredToVirtual({ x: 20, y: -10 }, MOBILE_DIMS)).toEqual({
+      x: 343 / 2 + 20,
+      y: 413 / 2 - 10,
     })
   })
 })
@@ -410,7 +432,7 @@ describe('fogEntitiesFrom — fog obstacles from live node positions (C5 decisio
     // drawNodes above proves the glyph translate is the centred position; the host then
     // translates the context by (VW/2, VH/2). fogEntitiesFrom applies that same offset —
     // so obstacle position === glyph draw position, in one virtual space.
-    const entities = fogEntitiesFrom(nodes, positions, null)
+    const entities = fogEntitiesFrom(nodes, positions, null, REF_DIMS)
     expect(entities[0]).toEqual({
       x: VIRTUAL_WIDTH / 2 + 120,
       y: VIRTUAL_HEIGHT / 2 - 30,
@@ -422,7 +444,7 @@ describe('fogEntitiesFrom — fog obstacles from live node positions (C5 decisio
   })
 
   it('a node at virtual (x,y) yields a FogObstacle whose capsule midline sits on it', () => {
-    const entity = fogEntitiesFrom([nodeA], positions, null)[0]
+    const entity = fogEntitiesFrom([nodeA], positions, null, REF_DIMS)[0]
     if (entity === undefined) throw new Error('expected a fog entity for the node')
     const obstacle = entityObstacle(entity, 40, 0, 0)
     // The reference anchors the capsule LABEL_CAP_Y_OFFSET above the marker; the box
@@ -432,7 +454,7 @@ describe('fogEntitiesFrom — fog obstacles from live node positions (C5 decisio
 
   it('skips nodes that have no position yet', () => {
     const partial = new Map<string, Point>([['a', { x: 10, y: 20 }]])
-    expect(fogEntitiesFrom(nodes, partial, null)).toHaveLength(1)
+    expect(fogEntitiesFrom(nodes, partial, null, REF_DIMS)).toHaveLength(1)
   })
 })
 
@@ -446,11 +468,11 @@ describe('bobOffset / fogEntitiesFrom — buoy bob is a RENDER offset only (C5 d
   it('adds the bob to the drawn/derived position WITHOUT mutating the physics positions', () => {
     const nodes = [cnode('a', 'location', 'Ashfen Reach')]
     const positions = new Map<string, Point>([['a', { x: 40, y: -10 }]])
-    const base = fogEntitiesFrom(nodes, positions, null)[0] // no bob
-    const bobbed = fogEntitiesFrom(nodes, positions, 3)[0] // same frame, with bob
+    const base = fogEntitiesFrom(nodes, positions, null, REF_DIMS)[0] // no bob
+    const bobbed = fogEntitiesFrom(nodes, positions, 3, REF_DIMS)[0] // same frame, with bob
     if (base === undefined || bobbed === undefined) throw new Error('expected fog entities')
 
-    const v = centredToVirtual({ x: 40, y: -10 })
+    const v = centredToVirtual({ x: 40, y: -10 }, REF_DIMS)
     const bob = bobOffset(v.x, v.y, 3)
     // The derived (drawn) position differs from the physics position by exactly the bob…
     expect(bobbed.x).toBeCloseTo(base.x + bob.x, 6)

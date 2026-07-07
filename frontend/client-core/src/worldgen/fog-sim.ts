@@ -41,23 +41,32 @@
 import {
   CELL_PX,
   DOUBLET_MIN_POINTS,
-  DOUBLET_RADIUS_PX,
   DOUBLET_SPACING_PX,
-  DOUBLET_VP_COEFF,
   FOG_PARAMS,
   FORCEFIELD_BASE_PX,
   LABEL_CLEAR_PAD,
   PARTICLE_COUNT,
   PARTICLE_STRIDE,
-  SPAWN_BOUND_PX,
-  SPLAT_KERNEL,
-  TURBULENCE,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
-  WAKE_CLOSE,
-  WAKE_DRAG,
   WIND_BASE,
 } from './fog-params.ts'
+import {
+  BUCKET_SIZE,
+  fieldVelocity,
+  isOffBand,
+  inGrid,
+  pickSpawn,
+  segd,
+  splatWeight,
+  type Doublet,
+  type Wind,
+} from './fog-field.ts'
+
+// The pure flow-field math lives in fog-field.ts (stateless, split for the module-size
+// rail); re-exported here so consumers + the unit tests keep one import surface.
+export { fieldVelocity, isOffBand, inGrid, pickSpawn, segd, splatWeight } from './fog-field.ts'
+export type { Doublet, Wind } from './fog-field.ts'
 
 // ──────────────────────────────────────────────────────────────────────────
 // Public surface
@@ -82,6 +91,13 @@ export interface FogSim {
   /** Advance the fog by `dtMs` of real time against the current `obstacles`.
    *  `effectiveDensity` gates the perf fade-skip only (≈0 → no work this call). */
   step(dtMs: number, obstacles: readonly FogObstacle[], effectiveDensity: number): void
+  /** Re-derive the sim for a new virtual size (the RESPONSIVE pane resize, MYT-89):
+   *  grid dims + area-scaled particle count are recomputed, surviving particles keep
+   *  flowing (grown slots warm-start across the new field; out-of-bound ones respawn
+   *  naturally via the off-band check), and the overlapping region of the smoothed
+   *  density is PRESERVED so a resize never flashes the fog to nothing. No-op when
+   *  the dims are unchanged. */
+  setSize(width: number, height: number): void
   /** The live GW×GH smoothed, box-cleared particle-density grid (`dsm`). Returned
    *  by reference for zero-alloc reads — treat it as read-only; it is overwritten
    *  in place each `step()`. */
@@ -90,35 +106,13 @@ export interface FogSim {
   readonly gh: number
 }
 
-/** One doublet (dipole) point along a label capsule, carrying the label's motion
- *  (`vx`/`vy`) for the wake-drag term. Exported for direct field unit tests. */
-export interface Doublet {
-  x: number
-  y: number
-  vx: number
-  vy: number
-}
-
-/** The slider-scaled wind, precomputed once: raw vector, magnitude `U`, and the
- *  unit vector (`wxu`/`wyu`) the doublet field rotates into/out of. */
-export interface Wind {
-  wx: number
-  wy: number
-  U: number
-  wxu: number
-  wyu: number
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Derived module constants (from the LOCKED fog params — everything the C2
 // `step()` signature does NOT surface as a runtime input is fixed here).
 // ──────────────────────────────────────────────────────────────────────────
 
 const SPEED = FOG_PARAMS.wind
-const CLOSE = FOG_PARAMS.close
 const STEADY = FOG_PARAMS.steady
-const RD = DOUBLET_RADIUS_PX
-const RD2 = RD * RD
 /** ref: `EXR=12+MARGIN`. Hard keep-out radius around a capsule. */
 const EXR = FORCEFIELD_BASE_PX + FOG_PARAMS.margin
 
@@ -140,161 +134,10 @@ const MAX_STEPS_PER_FRAME = 2
 /** Below this `effectiveDensity` the fog is effectively gone → skip the step. */
 const FADE_EPS = 1e-6
 
-/** Doublet bucket size (px) = spatial cutoff. At 12·RD the far-field a particle
- *  ignores contributes ≲1% of |wind| (doublet ~U/12² and the wake-close, at the
- *  LOCKED close=0.1, is exp(-2)-small), so bucketing is fidelity-preserving. */
-const BUCKET_SIZE = 12 * RD
-/** The cutoff squared — `fieldVelocity` culls candidates isotropically at exactly
- *  the 12·RD radius the bucket grid encodes. The 3×3 bucket window GUARANTEES every
- *  doublet within the cutoff is a candidate, but (being a coarse window) also admits
- *  extras up to ~3× the cutoff away depending on grid alignment; evaluating those
- *  was pure cost inside the same ≲1% far-field bound the bucketing already accepts
- *  (and grid-alignment-dependent — the cull is MORE uniform than the window it
- *  replaces). MYT-89 framerate fix: at real-world obstacle counts this cuts the
- *  per-particle candidate set ~2–3×. */
-const DOUBLET_CUTOFF2 = BUCKET_SIZE * BUCKET_SIZE
-
-// Precomputed wake/drag gate terms (loop-invariant products of LOCKED constants —
-// hoisted out of the per-candidate hot path; bit-identical arithmetic).
-const WAKE_GATE_A = WAKE_CLOSE.gateRdMul * RD
-const WAKE_DECAY_A = WAKE_CLOSE.decayA_RdMul * RD
-const WAKE_DECAY_B = WAKE_CLOSE.decayB_Rd2Mul * RD2
-const WAKE_PERP = WAKE_CLOSE.perpRdMul * RD
-const DRAG_R2 = WAKE_DRAG.radiusRd2Mul * RD2
-const DRAG_FALLOFF = WAKE_DRAG.falloffRdMul * RD
 /** Numeric bucket-key packing: offset absorbs negative (off-band) bucket indices,
  *  the stride keeps the two coordinates disjoint for any real canvas size. */
 const BUCKET_KEY_OFFSET = 4096
 const BUCKET_KEY_STRIDE = 100000
-
-// ──────────────────────────────────────────────────────────────────────────
-// Pure field helpers (no state) — exported for direct unit tests of the exact
-// epsilon/gate branches the integration path can only reach probabilistically.
-// ──────────────────────────────────────────────────────────────────────────
-
-/** Distance from point (px,py) to the segment (ax,ay)-(bx,by), plus the OUTWARD
- *  unit normal — the capsule keep-out direction. Ported VERBATIM, including the
- *  `d>0.001` epsilon guard: a point sitting exactly on the segment gets pushed
- *  straight up (nx=0, ny=-1) rather than dividing by zero. */
-export function segd(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): readonly [number, number, number] {
-  const dx = bx - ax
-  const dy = by - ay
-  const l2 = dx * dx + dy * dy
-  let t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0
-  t = t < 0 ? 0 : t > 1 ? 1 : t
-  const cx = ax + t * dx
-  const cy = ay + t * dy
-  const ex = px - cx
-  const ey = py - cy
-  const d = Math.hypot(ex, ey)
-  return [d, d > 0.001 ? ex / d : 0, d > 0.001 ? ey / d : -1]
-}
-
-/** Base turbulence perturbation (a small time-animated sinus curl). Ported verbatim
- *  from `turb`. */
-function turbulence(px: number, py: number, t: number): readonly [number, number] {
-  const a = TURBULENCE.k * px
-  const b = TURBULENCE.k * py
-  return [
-    Math.sin(a + t * TURBULENCE.x.timeFreqA) *
-      Math.cos(b * TURBULENCE.x.spatialMulB - t * TURBULENCE.x.timeFreqB) *
-      TURBULENCE.amp,
-    Math.cos(a * TURBULENCE.y.spatialMulA - t * TURBULENCE.y.timeFreqA) *
-      Math.sin(b + t * TURBULENCE.y.timeFreqB) *
-      TURBULENCE.amp,
-  ]
-}
-
-/** The flow velocity at (px,py): uniform wind + turbulence + each nearby doublet's
- *  potential-flow term + gated wake-close + wake-drag. Ported VERBATIM from `field`,
- *  incl. the `up = -c·(a²-b²)` / `vp = -2·c·a·b` expressions (the leading `-1` on
- *  `up`). The reference's `CLOSE>0` guard is dropped — CLOSE is the LOCKED 0.1 > 0,
- *  so the `a > 1.6·RD` downstream gate alone decides the wake-close. `doublets` is
- *  the bucket-filtered candidate set (a superset of those within the cutoff);
- *  candidates past `DOUBLET_CUTOFF2` are culled here, so the evaluated set is
- *  exactly "everything within 12·RD" regardless of bucket-grid alignment. */
-export function fieldVelocity(
-  px: number,
-  py: number,
-  t: number,
-  doublets: readonly Doublet[],
-  wind: Wind,
-): readonly [number, number] {
-  let vx = wind.wx
-  let vy = wind.wy
-  const [tx, ty] = turbulence(px, py, t)
-  vx += tx
-  vy += ty
-  for (const d of doublets) {
-    const dx = px - d.x
-    const dy = py - d.y
-    let r2 = dx * dx + dy * dy
-    if (r2 > DOUBLET_CUTOFF2) continue // past the 12·RD cutoff (≲1% far-field) — see DOUBLET_CUTOFF2
-    if (r2 < RD2) r2 = RD2
-    const a = dx * wind.wxu + dy * wind.wyu
-    const b = -dx * wind.wyu + dy * wind.wxu
-    const c = (wind.U * RD2) / (r2 * r2)
-    const up = -c * (a * a - b * b)
-    const vp = -DOUBLET_VP_COEFF * c * a * b
-    vx += up * wind.wxu - vp * wind.wyu
-    vy += up * wind.wyu + vp * wind.wxu
-    if (a > WAKE_GATE_A) {
-      const g = CLOSE * wind.U * Math.exp(-a / WAKE_DECAY_A) * Math.exp((-b * b) / WAKE_DECAY_B)
-      const perp = -(b / WAKE_PERP) * g
-      vx += perp * -wind.wyu
-      vy += perp * wind.wxu
-    }
-    if (r2 < DRAG_R2) {
-      const w = 1 - Math.sqrt(r2) / DRAG_FALLOFF
-      vx += d.vx * w * WAKE_DRAG.coeff
-      vy += d.vy * w * WAKE_DRAG.coeff
-    }
-  }
-  return [vx, vy]
-}
-
-/** True when a particle has drifted past the off-canvas spawn band (any edge). */
-export function isOffBand(x: number, y: number, width: number, height: number): boolean {
-  return (
-    x < -SPAWN_BOUND_PX ||
-    x > width + SPAWN_BOUND_PX ||
-    y < -SPAWN_BOUND_PX ||
-    y > height + SPAWN_BOUND_PX
-  )
-}
-
-/** True when a grid cell is inside the density grid. */
-export function inGrid(gx: number, gy: number, gw: number, gh: number): boolean {
-  return gx >= 0 && gy >= 0 && gx < gw && gy < gh
-}
-
-/** The 3×3 splat kernel weight for a neighbour offset: centre / edge / corner. */
-export function splatWeight(ox: number, oy: number): number {
-  if (ox === 0 && oy === 0) return SPLAT_KERNEL.center
-  if (ox !== 0 && oy !== 0) return SPLAT_KERNEL.corner
-  return SPLAT_KERNEL.edge
-}
-
-/** Flux-weighted spawn position on the top OR right edge (the two inflow edges for
- *  the down-and-left wind), just outside the band. Ported verbatim from `spawn`;
- *  the split ratio uses the BASE wind, which is scale-independent. */
-export function pickSpawn(
-  random: () => number,
-  width: number,
-  height: number,
-  topW: number,
-  rightW: number,
-): readonly [number, number] {
-  if (random() * (topW + rightW) < topW) return [random() * width, -SPAWN_BOUND_PX]
-  return [width + SPAWN_BOUND_PX, random() * height]
-}
 
 function bucketKey(bx: number, by: number): number {
   return (bx + BUCKET_KEY_OFFSET) * BUCKET_KEY_STRIDE + (by + BUCKET_KEY_OFFSET)
@@ -355,14 +198,20 @@ function spawn(s: FogState, i: number): void {
   s.P[i * PARTICLE_STRIDE + 1] = y
 }
 
+/** Area-scaled particle count for a canvas size (§3.6): density constant across sizes
+ *  (the prototype hard-coded N at the 900×470 virtual space). */
+function particleCount(width: number, height: number): number {
+  return Math.max(
+    0,
+    Math.round(PARTICLE_COUNT * ((width * height) / (VIRTUAL_WIDTH * VIRTUAL_HEIGHT))),
+  )
+}
+
 function createState(opts: { width: number; height: number; random?: () => number }): FogState {
   const { width, height } = opts
   const gw = Math.ceil(width / CELL_PX)
   const gh = Math.ceil(height / CELL_PX)
-  const n = Math.max(
-    0,
-    Math.round(PARTICLE_COUNT * ((width * height) / (VIRTUAL_WIDTH * VIRTUAL_HEIGHT))),
-  )
+  const n = particleCount(width, height)
   const s: FogState = {
     width,
     height,
@@ -524,6 +373,44 @@ function boxClear(s: FogState, obstacles: readonly FogObstacle[]): void {
   }
 }
 
+/** Re-derive the state for a new virtual size (the RESPONSIVE pane resize, MYT-89).
+ *  Grid dims + area-scaled N recompute exactly as `createState` would; the surviving
+ *  particle slots are KEPT (a particle now outside the new bounds respawns naturally
+ *  via `isOffBand` on its next advect) and grown slots warm-start across the NEW
+ *  field; the overlapping (gx, gy) region of the smoothed density `dsm` is copied
+ *  over so a resize never flashes the fog to nothing — the temporal low-pass blends
+ *  the new cells in from empty. No-op when the dims are unchanged. */
+function resizeState(s: FogState, width: number, height: number): void {
+  if (width === s.width && height === s.height) return
+  const gw = Math.ceil(width / CELL_PX)
+  const gh = Math.ceil(height / CELL_PX)
+  const n = particleCount(width, height)
+  const P = new Float32Array(n * PARTICLE_STRIDE)
+  P.set(s.P.subarray(0, Math.min(n, s.n) * PARTICLE_STRIDE))
+  const dsm = new Float32Array(gw * gh)
+  const gwMin = Math.min(gw, s.gw)
+  const ghMin = Math.min(gh, s.gh)
+  for (let gy = 0; gy < ghMin; gy++) {
+    for (let gx = 0; gx < gwMin; gx++) dsm[gy * gw + gx] = cell(s.dsm, gy * s.gw + gx)
+  }
+  const prevN = s.n
+  s.width = width
+  s.height = height
+  s.gw = gw
+  s.gh = gh
+  s.n = n
+  s.P = P
+  s.dens = new Float32Array(gw * gh)
+  s.dsm = dsm
+  s.topW = Math.abs(WIND_BASE[1]) * width
+  s.rightW = Math.abs(WIND_BASE[0]) * height
+  // Warm-start ONLY the grown slots (survivors keep their positions/flow).
+  for (let i = prevN; i < n; i++) {
+    s.P[i * PARTICLE_STRIDE] = s.random() * width
+    s.P[i * PARTICLE_STRIDE + 1] = s.random() * height
+  }
+}
+
 function subStep(s: FogState, obstacles: readonly FogObstacle[]): void {
   const doublets = buildDoublets(obstacles)
   const buckets = buildBuckets(doublets)
@@ -564,8 +451,17 @@ export function createFogSim(opts: {
       // sub-step remainder, so normal pacing still accumulates exactly.
       if (steps === MAX_STEPS_PER_FRAME) s.acc = 0
     },
+    setSize(width: number, height: number): void {
+      resizeState(s, width, height)
+    },
     density: () => s.dsm,
-    gw: s.gw,
-    gh: s.gh,
+    // Live getters (not captured values): a `setSize` re-derives the grid and the
+    // consumer's per-frame `sim.gw`/`sim.gh` reads must follow it.
+    get gw() {
+      return s.gw
+    },
+    get gh() {
+      return s.gh
+    },
   }
 }

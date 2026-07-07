@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH, type ForceSim } from '@mythrun/client-core/worldgen'
-import { attachPointerHandlers, type PointerDeps } from '../use-graph-canvas.ts'
+import { attachPointerHandlers, type PointerDeps } from '../pointer-handlers.ts'
 import type { Point } from '../canvas-draw.ts'
 
 // MYT-89 audit #5 (drag live during generation). The pointer effect used to gate BOTH
@@ -67,11 +67,14 @@ function ptr(clientX: number, clientY: number): PointerEvent {
   return { clientX, clientY, pointerId: 1 } as unknown as PointerEvent
 }
 
-/** Build the PointerDeps for the given sim / onSelect / interactive flag. */
+/** Build the PointerDeps for the given sim / onSelect / interactive flag. The virtual
+ *  dims match the CSS box (the pane-adaptive space at a reference-sized pane), so the
+ *  client→virtual mapping stays 1:1 for these tests. */
 function deps(sim: ForceSim, onSelect: (id: string) => void, interactive: boolean): PointerDeps {
   return {
     getSim: () => sim,
     sizeRef: { current: { cssW: VIRTUAL_WIDTH, cssH: VIRTUAL_HEIGHT } },
+    virtualRef: { current: { width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT } },
     hoverRef: { current: null },
     dragRef: { current: null },
     onSelectRef: { current: onSelect },

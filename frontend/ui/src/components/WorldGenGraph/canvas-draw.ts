@@ -1,4 +1,4 @@
-import { BUOY_BOB, LABEL_TEXT_OFFSET_X, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '@mythrun/client-core/worldgen'
+import { BUOY_BOB, LABEL_TEXT_OFFSET_X, type VirtualDims } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
 
 // Pure Canvas-2D draw helpers for the world-gen streaming graph (MYT-89 C5). The
@@ -7,12 +7,14 @@ import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/
 // host sets `ctx.strokeStyle`/`ctx.fillStyle` to the resolved theme ink before
 // calling (keeps R3 intact for a raw Canvas surface Tailwind can't reach).
 //
-// COORDINATE SPACE (C5 unification, §3.6): the graph shares the fog's 900×470
-// VIRTUAL space. The force-sim reports CENTRED positions in `[−VW/2, VW/2] ×
-// [−VH/2, VH/2]`; the host translates the context by (VW/2, VH/2) before calling,
-// so these draw in the centred space AND `centredToVirtual` (below) maps the exact
-// same point into the fog's top-left virtual space — one point, two surfaces, so a
-// node's glyph and its fog-hole land on the identical coordinate.
+// COORDINATE SPACE (C5 unification, §3.6): the graph shares the fog's VIRTUAL space —
+// PANE-ADAPTIVE since the MYT-89 responsive fix (`virtualDims`: sized from the pane, so
+// the graph fills any aspect and stays legible at 375px). The force-sim reports CENTRED
+// positions in `[−vw/2, vw/2] × [−vh/2, vh/2]`; the host translates the context by
+// (vw/2, vh/2) before calling, so these draw in the centred space AND `centredToVirtual`
+// (below) maps the exact same point into the fog's top-left virtual space — one point,
+// two surfaces, so a node's glyph and its fog-hole land on the identical coordinate.
+// The helpers that cross the two spaces take the CURRENT dims explicitly.
 
 /** A resolved node position in the host's (centred) canvas space. */
 export interface Point {
@@ -70,12 +72,13 @@ function lerpPoint(a: Point, b: Point, t: number): Point {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
 }
 
-/** Map a CENTRED sim point (`[−VW/2, VW/2] × [−VH/2, VH/2]`) into the fog's top-left
- *  VIRTUAL space (`[0, VW] × [0, VH]`). This is the exact translation the host applies
- *  to the graph context (`translate(VW/2, VH/2)`), so a node drawn here lands on the
- *  SAME virtual coordinate the fog obstacle is built at — the C5 coord unification. */
-export function centredToVirtual(p: Point): Point {
-  return { x: p.x + VIRTUAL_WIDTH / 2, y: p.y + VIRTUAL_HEIGHT / 2 }
+/** Map a CENTRED sim point (`[−vw/2, vw/2] × [−vh/2, vh/2]`) into the fog's top-left
+ *  VIRTUAL space (`[0, vw] × [0, vh]`) at the CURRENT pane-adaptive dims. This is the
+ *  exact translation the host applies to the graph context (`translate(vw/2, vh/2)`),
+ *  so a node drawn here lands on the SAME virtual coordinate the fog obstacle is built
+ *  at — the C5 coord unification, at every pane size. */
+export function centredToVirtual(p: Point, virtual: VirtualDims): Point {
+  return { x: p.x + virtual.width / 2, y: p.y + virtual.height / 2 }
 }
 
 /** The per-node buoy-bob OFFSET (px) at virtual position (x, y) and clock `t` (s) —
@@ -107,12 +110,13 @@ export function fogEntitiesFrom(
   nodes: readonly GraphNode[],
   positions: ReadonlyMap<string, Point>,
   t: number | null,
+  virtual: VirtualDims,
 ): FogFieldEntity[] {
   const out: FogFieldEntity[] = []
   for (const node of nodes) {
     const centred = positions.get(node.displayId)
     if (centred === undefined) continue
-    const v = centredToVirtual(centred)
+    const v = centredToVirtual(centred, virtual)
     const bob = t === null ? { x: 0, y: 0 } : bobOffset(v.x, v.y, t)
     out.push({ x: v.x + bob.x, y: v.y + bob.y, kind: node.kind, name: node.name })
   }
@@ -184,6 +188,9 @@ export interface NodeDecoration {
   hoverKey: string | null
   t: number | null
   showLabels: boolean
+  /** The CURRENT pane-adaptive virtual dims (the bob phase seeds off the node's
+   *  top-left-virtual position, shared with the fog's obstacle mapping). */
+  virtual: VirtualDims
   /** The entity-name label font as a Canvas `font` string, resolved from the design-system
    *  tokens (`resolveLabelFont` → `--font-body` at `--text-sm`). The host resolves it once at
    *  mount and passes it every frame, so the label uses the SITE's typography and — measured
@@ -208,16 +215,16 @@ export function drawNodes(
     if (p === undefined) continue
     const hovered = node.displayId === deco.hoverKey
     const selected = node.displayId === deco.selectedKey
-    const bob = bobFor(p, deco.t)
+    const bob = bobFor(p, deco.t, deco.virtual)
     drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, hovered, selected, deco.showLabels, deco.labelFont)
   }
 }
 
 /** The bob offset for a centred point (or zero when the bob is disabled). Kept beside
  *  `fogEntitiesFrom`'s identical logic so the glyph and its fog-hole share one bob. */
-function bobFor(p: Point, t: number | null): Point {
+function bobFor(p: Point, t: number | null, virtual: VirtualDims): Point {
   if (t === null) return { x: 0, y: 0 }
-  const v = centredToVirtual(p)
+  const v = centredToVirtual(p, virtual)
   return bobOffset(v.x, v.y, t)
 }
 

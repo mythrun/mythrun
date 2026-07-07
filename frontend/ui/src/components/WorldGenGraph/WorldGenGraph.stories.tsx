@@ -125,7 +125,16 @@ function statusFor(count: number): WorldGenStatusCardProps {
   }
 }
 
-function StreamingDemo({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Element {
+function StreamingDemo({
+  reducedMotion,
+  paneClassName,
+}: {
+  reducedMotion?: boolean
+  /** Constrain the graph's container — the responsive specimens (below) wrap the graph
+   *  in a narrow fixed-width column to stand in for a phone / tall pane. Default: full
+   *  width, exactly how the generating route hosts it. */
+  paneClassName?: string
+}): React.JSX.Element {
   const [count, setCount] = useState(1)
 
   useEffect(() => {
@@ -141,7 +150,7 @@ function StreamingDemo({ reducedMotion }: { reducedMotion?: boolean }): React.JS
   const { nodes, edges } = snapshotAt(count)
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
-      <div className="mx-auto w-full max-w-[900px]">
+      <div className={paneClassName ?? 'w-full'}>
         <WorldGenGraph
           nodes={nodes}
           edges={edges}
@@ -170,6 +179,27 @@ export const Generating: Story = {
 export const ReducedMotion: Story = {
   name: 'Reduced motion',
   render: () => <StreamingDemo reducedMotion />,
+}
+
+// ── Responsive specimens (MYT-89 responsive fix) ──────────────────────────────────────
+// The virtual space is PANE-ADAPTIVE: below the 900px reference width the graph renders
+// 1:1 with CSS px (legible 14px labels at a ~375px phone), and the pane height tracks
+// the viewport instead of an aspect lock — so a narrow pane is TALL (portrait graph) and
+// a wide desktop pane fills the fold without overflowing it. These specimens pin the two
+// non-desktop shapes; view them at any Storybook viewport (the pane height is dvh-based).
+
+// A ~375px phone column: the graph must be legible (full-size labels) + fill the tall
+// pane — the audit's "tiny letterboxed strip with 5px labels" is the regression state.
+export const NarrowPane: Story = {
+  name: 'Narrow pane (~375px)',
+  render: () => <StreamingDemo paneClassName="w-[343px]" />,
+}
+
+// A tall/narrow split-window pane (~600px): mid-width, still under the reference width →
+// still 1:1. Checks the aspect adaptation between phone and desktop.
+export const TallNarrowPane: Story = {
+  name: 'Tall narrow pane (~600px)',
+  render: () => <StreamingDemo paneClassName="w-[600px]" />,
 }
 
 /** The REVEAL variant: `interactive` turns on the accessible + selectable entity list

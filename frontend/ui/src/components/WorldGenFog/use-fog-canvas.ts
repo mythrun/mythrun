@@ -4,11 +4,13 @@ import {
   DPR_CAP,
   FADE_EXPONENT,
   FOG_PARAMS,
+  virtualDims,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   WIND_BASE,
   type FogObstacle,
   type FogSim,
+  type VirtualDims,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity } from '@mythrun/client-core/contract'
 import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
@@ -16,12 +18,22 @@ import { entityObstacle } from './fog-obstacles.ts'
 import { paintFog } from './fog-draw.ts'
 
 // The imperative Canvas controller for WorldGenFogField (MYT-89 C3). Owns the fluid sim
-// (a persistent FogSim in the 900×470 VIRTUAL space), the fixed-timestep rAF loop, the
-// per-frame obstacle construction (measure the label → build the FogObstacle box), and
-// the reduced-motion static settle. Everything is guarded on a live 2D context, so under
-// jsdom (getContext → null) NOTHING here runs — the decorative canvas is inert and the
-// component is just an aria-hidden layer. FogSim is the density brain; fog-draw is the
-// crisp Bayer paint; this hook is the glue + the DOM (sizing, measuring, timing).
+// (a persistent FogSim in the shared PANE-ADAPTIVE virtual space — `virtualDims`, the
+// MYT-89 responsive fix: 1:1 with CSS px on narrow panes, the reference width upscaled
+// on wide ones, the height always following the pane's own aspect), the fixed-timestep
+// rAF loop, the per-frame obstacle construction (measure the label → build the
+// FogObstacle box), and the reduced-motion static settle. Everything is guarded on a
+// live 2D context, so under jsdom (getContext → null) NOTHING here runs — the decorative
+// canvas is inert and the component is just an aria-hidden layer. FogSim is the density
+// brain; fog-draw is the crisp Bayer paint; this hook is the glue + the DOM (sizing,
+// measuring, timing).
+//
+// The FOG under a VARIABLE aspect stays eye-tuned-correct by construction: every fog
+// constant is per-virtual-px (wind, turbulence + cloud spatial frequencies, doublet
+// radius, cell size), the particle count AREA-SCALES (constant density — FogSim §3.6),
+// and the spawn flux weights derive from width/height. Scale-1 panes render the exact
+// grain the 900×470 reference was tuned at; wider panes CSS-upscale uniformly (the
+// pre-existing eye-approved desktop look).
 
 /** The LOCKED, scaled wind — constant (no runtime wind slider). Drives the cloud scroll,
  *  and mirrors FogSim's own internal `computeWind` so the clouds advect WITH the
@@ -91,8 +103,9 @@ export function fogBackingStore(
   cssW: number,
   cssH: number,
   dpr: number,
+  virtualW: number,
 ): { width: number; height: number; scale: number } {
-  const paneScale = (cssW / VIRTUAL_WIDTH) * dpr
+  const paneScale = (cssW / virtualW) * dpr
   const scale = Math.min(paneScale, FOG_MAX_RENDER_SCALE)
   const shrink = scale / paneScale // 1 when uncapped → cssW×dpr exactly, as before
   return {
@@ -104,18 +117,23 @@ export function fogBackingStore(
 
 /** Size the backing store to the ELEMENT's client pixels × DPR, CAPPED at the fog's
  *  canonical 2×-virtual envelope (`fogBackingStore` — the MYT-89 framerate fix). The
- *  context is scaled so draw code stays in the 900×470 VIRTUAL space; the `aspect-[90/47]`
- *  box keeps the height in step, so one width-derived uniform scale fits both axes. The
- *  graph's `sizeCanvasForDpr` sizes off the same element in the same virtual space (at
- *  full pane resolution — the cap is fog-only), so the two layered canvases stay aligned —
- *  the fog-holes track the glyphs (BUG 2.2 stays closed: drawn in virtual units, the
- *  resolution is an implementation detail of each layer). */
-function sizeFogCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
+ *  context is scaled so draw code stays in the shared VIRTUAL space; the virtual dims
+ *  derive from the pane's OWN aspect (`virtualDims`), so one width-derived uniform scale
+ *  fits both axes at any pane shape. The graph's `sizeCanvasForDpr` sizes off the same
+ *  element in the same virtual space (at full pane resolution — the cap is fog-only), so
+ *  the two layered canvases stay aligned — the fog-holes track the glyphs (BUG 2.2 stays
+ *  closed: drawn in virtual units, the resolution is an implementation detail of each
+ *  layer). */
+function sizeFogCanvas(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  virtual: VirtualDims,
+): void {
   const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1)
   const rect = canvas.getBoundingClientRect()
   const cssW = Math.max(1, Math.round(rect.width))
   const cssH = Math.max(1, Math.round(rect.height))
-  const store = fogBackingStore(cssW, cssH, dpr)
+  const store = fogBackingStore(cssW, cssH, dpr, virtual.width)
   canvas.width = store.width
   canvas.height = store.height
   ctx.setTransform(store.scale, 0, 0, store.scale, 0, 0)
@@ -171,8 +189,14 @@ function buildObstacles(
 }
 
 /** Clear the canvas and paint the sim's current density as crisp fog quads at clock `t`. */
-function repaint(ctx: CanvasRenderingContext2D, sim: FogSim, t: number, eff: number): void {
-  ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+function repaint(
+  ctx: CanvasRenderingContext2D,
+  sim: FogSim,
+  t: number,
+  eff: number,
+  virtual: VirtualDims,
+): void {
+  ctx.clearRect(0, 0, virtual.width, virtual.height)
   paintFog(ctx, sim.density(), sim.gw, sim.gh, {
     wx: WIND.wx,
     wy: WIND.wy,
@@ -216,6 +240,10 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // canvas in the same document) so the fog reserves the width the graph collides on + draws.
   const labelFontRef = useRef('')
   const simTimeRef = useRef(0)
+  // The CURRENT pane-adaptive virtual dims (MYT-89 responsive fix). Derived from THIS
+  // canvas's box through the SAME `virtualDims` the graph hook uses — both canvases fill
+  // the same pane, so the two layers compute identical dims and stay aligned (C5).
+  const virtualRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
   shownRef.current = shownEntities
@@ -230,8 +258,29 @@ export function useFogCanvas(params: FogCanvasParams): void {
     [],
   )
 
+  // Measure the pane → derive the shared virtual dims → size the backing store; on a
+  // dims CHANGE re-size the live sim (grid + area-scaled particles re-derive, the
+  // overlapping density is preserved — no flash). The graph hook runs the same
+  // derivation off the same pane box, so the layers agree at every size.
+  const applyFogSize = useCallback(
+    (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
+      const rect = canvas.getBoundingClientRect()
+      const next = virtualDims(Math.round(rect.width), Math.round(rect.height))
+      const current = virtualRef.current
+      if (next.width !== current.width || next.height !== current.height) {
+        virtualRef.current = next
+        simRef.current?.setSize(next.width, next.height)
+      }
+      sizeFogCanvas(canvas, ctx, virtualRef.current)
+    },
+    [],
+  )
+
   const getSim = useCallback((): FogSim => {
-    simRef.current ??= createFogSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
+    simRef.current ??= createFogSim({
+      width: virtualRef.current.width,
+      height: virtualRef.current.height,
+    })
     return simRef.current
   }, [])
 
@@ -243,7 +292,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
-    sizeFogCanvas(canvas, ctx)
+    applyFogSize(canvas, ctx)
     labelFontRef.current ||= resolveLabelFont(canvas)
     const sim = getSim()
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
@@ -254,8 +303,8 @@ export function useFogCanvas(params: FogCanvasParams): void {
       sim.step(SUBSTEP_MS, obstacles, eff)
       simTimeRef.current += SUBSTEP_MS / 1000
     }
-    repaint(ctx, sim, simTimeRef.current, eff)
-  }, [canvasRef, getSim, currentEntities])
+    repaint(ctx, sim, simTimeRef.current, eff, virtualRef.current)
+  }, [canvasRef, applyFogSize, getSim, currentEntities])
 
   useEffect(() => {
     if (!reducedMotion) return
@@ -269,7 +318,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
-    sizeFogCanvas(canvas, ctx)
+    applyFogSize(canvas, ctx)
     labelFontRef.current ||= resolveLabelFont(canvas)
     return startFogLoop(ctx, getSim(), {
       getEntities: currentEntities,
@@ -279,29 +328,32 @@ export function useFogCanvas(params: FogCanvasParams): void {
       prevPosRef,
       widthCacheRef,
       labelFontRef,
+      virtualRef,
     })
-  }, [reducedMotion, canvasRef, getSim, currentEntities])
+  }, [reducedMotion, canvasRef, applyFogSize, getSim, currentEntities])
 
-  // Re-size the backing store on container resize (capped at the fog envelope — see
-  // `fogBackingStore`) — parity with the graph's `observeResize`; both size off the same
-  // element and draw the same virtual space, so the layers stay aligned. Body at module
+  // Re-size the backing store (and, via `applyFogSize`, the virtual dims + the sim) on
+  // container resize — parity with the graph's `observeResize`; both size off the same
+  // element and derive the same virtual space, so the layers stay aligned. Body at module
   // scope. Inert under jsdom (the ResizeObserver shim never fires).
   useEffect(
-    () => observeFogResize(canvasRef.current, { reducedMotion, settleStatic }),
-    [canvasRef, reducedMotion, settleStatic],
+    () => observeFogResize(canvasRef.current, { reducedMotion, settleStatic, applyFogSize }),
+    [canvasRef, reducedMotion, settleStatic, applyFogSize],
   )
 }
 
 interface FogResizeDeps {
   reducedMotion: boolean
   settleStatic: () => void
+  applyFogSize: (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void
 }
 
-/** Re-size the fog backing store to the pane on container resize. Under reduced motion,
- *  re-settle + repaint (`settleStatic` sizes then paints once); under motion, just re-size
- *  (the running loop repaints into the new backing next frame). Returns the disconnect
- *  teardown (or undefined — no canvas / no ResizeObserver in jsdom). Module-scoped so the
- *  hook stays lean; mirrors the graph's `observeResize` so the two layers re-size together. */
+/** Re-size the fog backing store (+ the pane-adaptive virtual dims + the sim) on
+ *  container resize. Under reduced motion, re-settle + repaint (`settleStatic` sizes then
+ *  paints once); under motion, just re-size (the running loop repaints into the new
+ *  backing next frame). Returns the disconnect teardown (or undefined — no canvas / no
+ *  ResizeObserver in jsdom). Module-scoped so the hook stays lean; mirrors the graph's
+ *  `observeResize` so the two layers re-size together. */
 function observeFogResize(canvas: HTMLCanvasElement | null, deps: FogResizeDeps): (() => void) | undefined {
   if (canvas === null || typeof ResizeObserver === 'undefined') return undefined
   const observer = new ResizeObserver(() => {
@@ -310,7 +362,7 @@ function observeFogResize(canvas: HTMLCanvasElement | null, deps: FogResizeDeps)
       return
     }
     const ctx = canvas.getContext('2d')
-    if (ctx !== null) sizeFogCanvas(canvas, ctx)
+    if (ctx !== null) deps.applyFogSize(canvas, ctx)
   })
   observer.observe(canvas)
   return () => {
@@ -326,6 +378,8 @@ interface FogLoopDeps {
   prevPosRef: React.RefObject<Map<number, Pos>>
   widthCacheRef: React.RefObject<Map<string, number>>
   labelFontRef: React.RefObject<string>
+  /** The CURRENT pane-adaptive virtual dims (the repaint's clear bounds). */
+  virtualRef: React.RefObject<VirtualDims>
 }
 
 /** Run the fixed-timestep rAF loop: each frame, compute the real dt + clock, build the
@@ -333,7 +387,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -343,7 +397,7 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     const eff = effectiveDensity(shownRef.current, totalRef.current, densityRef.current)
     const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current, labelFontRef.current)
     sim.step(dtMs, obstacles, eff)
-    repaint(ctx, sim, (now - start) / 1000, eff)
+    repaint(ctx, sim, (now - start) / 1000, eff, virtualRef.current)
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)

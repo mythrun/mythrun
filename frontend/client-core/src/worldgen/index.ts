@@ -16,6 +16,11 @@ export type { FogSim, FogObstacle } from './fog-sim.ts'
 // importing from @mythrun/ui (the dependency direction is ui→client-core). The module
 // header calls this out — "C3/C4 consume the render-side constants".
 export * from './fog-params.ts'
+// The pane-adaptive virtual space (MYT-89 responsive fix): the ONE derivation both
+// render hooks (graph + fog) use to size the shared virtual coordinate space from
+// the pane box, so the C5 fog↔graph alignment holds at every pane size/aspect.
+export { MAX_VIRTUAL_HEIGHT, virtualDims } from './virtual-space.ts'
+export type { VirtualDims } from './virtual-space.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 

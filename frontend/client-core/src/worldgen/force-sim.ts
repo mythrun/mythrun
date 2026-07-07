@@ -247,6 +247,13 @@ export interface ForceSim {
   /** MERGE the derived graph into the persistent sim: survivors keep their
    *  position/momentum, new keys are seeded near centre, vanished keys drop. */
   sync(nodes: GraphNode[], edges: GraphEdge[]): void
+  /** Re-derive the containment for a new virtual size (the RESPONSIVE pane resize,
+   *  MYT-89): the per-tick clamp bounds recompute from the new half-dimensions (less
+   *  the locked `margin`) and the sim gets a gentle reheat so the settled cloud
+   *  migrates into the new space instead of freezing at the old bound. Positions are
+   *  otherwise untouched (no reseed — identity/continuity preserved). No-op when the
+   *  dims are unchanged. */
+  setSize(width: number, height: number): void
   /** Supply the measured icon+label collision box per `displayId` (the ui measures the
    *  text; the sim stays DOM-free). Stored and RE-APPLIED on every `sync`, so a node that
    *  streams in later still picks up its box, and a finalize (displayId swap) re-keys it.
@@ -553,12 +560,15 @@ export function create(opts: {
    *  passes the live slider values; production omits it (→ the locked defaults). */
   params?: Partial<ForceParams>
 }): ForceSim {
-  // The centred draw space: nodes live in `[−halfW, halfW] × [−halfH, halfH]`
-  // (the host translates the canvas by (w/2, h/2) before drawing raw sim coords).
-  const halfW = opts.width / 2
-  const halfH = opts.height / 2
   const random = opts.random ?? Math.random
   const params: ForceParams = { ...FORCE_PARAMS, ...opts.params }
+
+  // The centred draw space: nodes live in `[−halfW, halfW] × [−halfH, halfH]` (the
+  // host translates the canvas by (w/2, h/2) before drawing raw sim coords). MUTABLE
+  // (`setSize`): the pane-adaptive virtual space (MYT-89 responsive fix) re-derives
+  // these on a pane resize — the clamp bounds below follow.
+  let width = opts.width
+  let height = opts.height
 
   // CONTAINMENT INSET (MYT-89 follow-up) — a CSS-style margin: the clamp bounds inset
   // from the full half-dimensions to `±(half − margin)` so a boundary node settles a
@@ -568,8 +578,9 @@ export function create(opts: {
   // just collapses to the centre line). The soft `boundX/boundY` forces pull toward
   // the centre (0), which is inside ANY inset, so they need no adjustment — the CLAMP
   // is the mechanism that guarantees the inset bound.
-  const boundW = Math.max(0, halfW - params.margin)
-  const boundH = Math.max(0, halfH - params.margin)
+  const boundFor = (dim: number): number => Math.max(0, dim / 2 - params.margin)
+  let boundW = boundFor(width)
+  let boundH = boundFor(height)
 
   // The persistent state: `byKey` is the source of truth for identity; `nodes`
   // is the SAME array handed to d3 every sync (mutated in place — survivor
@@ -635,6 +646,20 @@ export function create(opts: {
     simulation.alpha(reheatAlpha(seenEdgeKeys, edges))
   }
 
+  /** Re-derive the containment bounds for a new virtual size + reheat gently so the
+   *  settled cloud migrates into (or back inside) the new space. The clamp is per-tick,
+   *  so a SHRINK re-contains everything on the very next tick; a GROW needs the reheat
+   *  for repulsion to spread the cloud into the new room. No reseed — every node keeps
+   *  its object identity and position (the same continuity guarantee as `sync`). */
+  function setSize(nextWidth: number, nextHeight: number): void {
+    if (nextWidth === width && nextHeight === height) return
+    width = nextWidth
+    height = nextHeight
+    boundW = boundFor(width)
+    boundH = boundFor(height)
+    simulation.alpha(Math.max(simulation.alpha(), REHEAT_ALPHA))
+  }
+
   function positions(): Map<string, { x: number; y: number }> {
     // Keyed by the EXTERNAL `displayId` so consumers resolve in displayId/UUID space
     // (drawNodes via `node.displayId`, drawEdges via UUID edge endpoints).
@@ -668,6 +693,7 @@ export function create(opts: {
 
   return {
     sync,
+    setSize,
     setBoxes,
     tick,
     positions,

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import {
   createForceSim,
+  virtualDims,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   type ForceParams,
   type ForceSim,
   type NodeBox,
+  type VirtualDims,
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
 import { labelBoxExtents } from '../WorldGenFog/fog-obstacles.ts'
@@ -16,19 +18,14 @@ import {
   fogEntitiesFrom,
   type Point,
 } from './canvas-draw.ts'
-import {
-  hasFinePointer,
-  nearestKey,
-  pointerToLocal,
-  resolveInk,
-  resolveLabelFont,
-  sizeCanvasForDpr,
-} from './canvas-util.ts'
+import { resolveInk, resolveLabelFont, sizeCanvasForDpr } from './canvas-util.ts'
+import { setupPointerHandlers, type DragState, type PointerDeps } from './pointer-handlers.ts'
 
 // The imperative Canvas controller for WorldGenGraph (MYT-89 C5). Owns the physics
-// (a persistent ForceSim in the 900×470 VIRTUAL space — the coordinate space the fog also
-// renders in, so a node's glyph and its fog-hole land on one coordinate; the RESOLUTION is
-// the pane's full pixels — audit #2), the buoy-bob clock, the rAF render loop, full-res
+// (a persistent ForceSim in the shared PANE-ADAPTIVE virtual space — `virtualDims`, the
+// coordinate space the fog also renders in, so a node's glyph and its fog-hole land on
+// one coordinate at every pane size; the RESOLUTION is the pane's full pixels — audit
+// #2), the buoy-bob clock, the rAF render loop, full-res
 // sizing, the cached theme ink, and fine-pointer hover/drag (live during generation too —
 // audit #5; only tap-to-select is reveal-gated). Everything is guarded on a live 2D
 // context, so under jsdom (getContext → null) NOTHING here runs — the a11y entity list is
@@ -40,20 +37,8 @@ import {
 // frame (C5 decision 3). One force-sim, one bob clock: the obstacles the fog parts
 // around are derived from the identical positions the glyphs are drawn at.
 
-/** px radius (VIRTUAL units) a pointer must fall within to hit a node glyph. */
-const HIT_RADIUS = 16
-/** px (client) a pointer must travel before a press becomes a drag (vs a select tap). */
-const DRAG_THRESHOLD = 4
 /** Bounded tick count to settle the layout for a static (reduced-motion) redraw. */
 const SETTLE_TICKS = 400
-
-interface DragState {
-  /** The dragged node's `displayId` (the render/selection id-space). */
-  key: string
-  moved: boolean
-  downX: number
-  downY: number
-}
 
 export interface GraphCanvasParams {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -93,11 +78,11 @@ function settle(sim: ForceSim): void {
   for (let i = 0; i < SETTLE_TICKS; i++) sim.tick()
 }
 
-/** Create a fresh force-sim in the fog's VIRTUAL space with the given spread overrides
- *  (merged over `FORCE_PARAMS` inside `createForceSim`). Module-scoped so the hook's
- *  `getSim` stays a one-liner. */
-function makeSim(params: Partial<ForceParams>): ForceSim {
-  return createForceSim({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT, params })
+/** Create a fresh force-sim in the shared VIRTUAL space at the CURRENT pane-adaptive
+ *  dims, with the given spread overrides (merged over `FORCE_PARAMS` inside
+ *  `createForceSim`). Module-scoped so the hook's `getSim` stays lean. */
+function makeSim(params: Partial<ForceParams>, virtual: VirtualDims): ForceSim {
+  return createForceSim({ width: virtual.width, height: virtual.height, params })
 }
 
 /** Measure each node's icon+label collision box (keyed by `displayId` for
@@ -142,6 +127,11 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const hoverRef = useRef<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sizeRef = useRef({ cssW: 0, cssH: 0 })
+  // The CURRENT pane-adaptive virtual dims (MYT-89 responsive fix) — the shared space
+  // the sim, the draw, the pointer mapping, and the fog-entity mapping all speak.
+  // Starts at the reference dims (the jsdom/unmeasured fallback `virtualDims` also
+  // returns) and follows the pane via `syncVirtual`.
+  const virtualRef = useRef<VirtualDims>({ width: VIRTUAL_WIDTH, height: VIRTUAL_HEIGHT })
   // Memoized label widths (name → measured px at the resolved DS label font) for the collision
   // boxes, mirroring the fog's own width cache so the graph's box and the fog's obstacle derive
   // identical geometry (same font, same widths, one shared `labelBoxExtents`).
@@ -168,13 +158,27 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   showLabelsRef.current = showLabels
   forceParamsRef.current = params.forceParams ?? {}
 
-  // The sim lives in the fog's VIRTUAL space (C5 §3.6) — created lazily on first sync
-  // with the latest force params. B2's containment (boundary force + distanceMax + per-
-  // tick clamp) uses the real virtual dims, so no node draws outside the pane (BUG 2.2).
+  // Track the pane → virtual dims (MYT-89 responsive fix): measure the canvas box,
+  // derive the shared virtual space via `virtualDims`, and on a CHANGE re-size the live
+  // sim (the containment bounds follow) + drop the reduced-motion settle flag so a
+  // static graph re-settles into the new space. The fog hook derives its dims from the
+  // SAME pane box through the SAME function, so the two layers agree (C5) at any size.
+  // Body at module scope (`trackVirtualDims`) so the hook stays lean.
+  const syncVirtual = useCallback((): void => {
+    trackVirtualDims({ canvasRef, virtualRef, simRef, settledRef })
+  }, [canvasRef])
+
+  // The sim lives in the fog's VIRTUAL space (C5 §3.6 — pane-adaptive) — created lazily
+  // on first sync with the latest force params AT the measured dims. B2's containment
+  // (boundary force + distanceMax + per-tick clamp) uses the real virtual dims, so no
+  // node draws outside the pane (BUG 2.2) at any pane size.
   const getSim = useCallback((): ForceSim => {
-    simRef.current ??= makeSim(forceParamsRef.current)
+    if (simRef.current === null) {
+      syncVirtual()
+      simRef.current = makeSim(forceParamsRef.current, virtualRef.current)
+    }
     return simRef.current
-  }, [])
+  }, [syncVirtual])
 
   // Measure every node's icon+label box (the SAME box the fog reserves — `measureBoxes` →
   // `labelBoxExtents`) and hand it to the sim's rectangular collide. A no-op under jsdom (no
@@ -210,20 +214,24 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     if (sim === null) return []
     if (reducedRef.current) ensureSettled()
     const t = reducedRef.current ? null : clockRef.current
-    return fogEntitiesFrom(nodesRef.current, sim.positions(), t)
+    return fogEntitiesFrom(nodesRef.current, sim.positions(), t, virtualRef.current)
   }, [ensureSettled])
 
   // Size the backing store to the pane AND cache the theme ink — the once-per-mount/resize
-  // canvas prep the draw paths share. `resolveInk` reads `getComputedStyle`, which the
-  // motion loop used to call EVERY frame (MYT-89 audit #2); caching it here (+ on a theme
-  // flip, via the observer below) lets the loop read the ref instead.
+  // canvas prep the draw paths share. `syncVirtual` FIRST: the virtual dims follow the
+  // pane (the sim's containment re-derives on a change), then the backing-store transform
+  // maps that fresh virtual space onto the pane pixels. `resolveInk` reads
+  // `getComputedStyle`, which the motion loop used to call EVERY frame (MYT-89 audit #2);
+  // caching it here (+ on a theme flip, via the observer below) lets the loop read the
+  // ref instead.
   const applySize = useCallback(
     (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
-      sizeRef.current = sizeCanvasForDpr(canvas, ctx)
+      syncVirtual()
+      sizeRef.current = sizeCanvasForDpr(canvas, ctx, virtualRef.current)
       inkRef.current = resolveInk(canvas)
       labelFontRef.current = resolveLabelFont(canvas)
     },
-    [],
+    [syncVirtual],
   )
 
   // Draw one frame of the graph (edges + glyphs) in the VIRTUAL space, in the resolved
@@ -232,9 +240,10 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // from `interactive`).
   const paintFrame = useCallback(
     (ctx: CanvasRenderingContext2D, ink: string): void => {
-      ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
+      const virtual = virtualRef.current
+      ctx.clearRect(0, 0, virtual.width, virtual.height)
       ctx.save()
-      ctx.translate(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2)
+      ctx.translate(virtual.width / 2, virtual.height / 2)
       ctx.strokeStyle = ink
       ctx.fillStyle = ink
       const positions = getSim().positions()
@@ -245,6 +254,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
         t: reducedRef.current ? null : clockRef.current,
         showLabels: showLabelsRef.current,
         labelFont: labelFontRef.current,
+        virtual,
       })
       ctx.restore()
     },
@@ -303,7 +313,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // the toy, available DURING generation). Only the tap-to-select `onSelect` call is gated
   // on `interactive` (reveal-only), inside `attachPointerHandlers`. Body at module scope.
   useEffect(() => {
-    const deps: PointerDeps = { getSim, sizeRef, hoverRef, dragRef, onSelectRef, interactiveRef }
+    const deps: PointerDeps = { getSim, sizeRef, virtualRef, hoverRef, dragRef, onSelectRef, interactiveRef }
     return setupPointerHandlers(canvasRef.current, reducedMotion, deps)
   }, [reducedMotion, canvasRef, getSim])
 
@@ -322,6 +332,32 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   )
 
   return { getFogEntities }
+}
+
+interface VirtualDimsDeps {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>
+  virtualRef: React.RefObject<VirtualDims>
+  simRef: React.RefObject<ForceSim | null>
+  settledRef: React.RefObject<boolean>
+}
+
+/** Measure the pane box → derive the shared virtual dims (`virtualDims`) → on a change,
+ *  store them, re-size the live sim (containment bounds re-derive + a gentle reheat so
+ *  the layout migrates), and drop the reduced-motion settle flag (a static graph
+ *  re-settles into the new space). No-op with no canvas or when the dims are unchanged
+ *  (jsdom's zero rect falls back to the reference dims — the ref's initial value).
+ *  Module-scoped so the hook stays lean (mirrors observeResize/reseedOnForceChange). */
+function trackVirtualDims(deps: VirtualDimsDeps): void {
+  const { canvasRef, virtualRef, simRef, settledRef } = deps
+  const canvas = canvasRef.current
+  if (canvas === null) return
+  const rect = canvas.getBoundingClientRect()
+  const next = virtualDims(Math.round(rect.width), Math.round(rect.height))
+  const current = virtualRef.current
+  if (next.width === current.width && next.height === current.height) return
+  virtualRef.current = next
+  simRef.current?.setSize(next.width, next.height)
+  settledRef.current = false
 }
 
 interface ReseedDeps {
@@ -474,87 +510,5 @@ function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): (
   raf = window.requestAnimationFrame(frame)
   return () => {
     window.cancelAnimationFrame(raf)
-  }
-}
-
-export interface PointerDeps {
-  getSim: () => ForceSim
-  sizeRef: React.RefObject<{ cssW: number; cssH: number }>
-  hoverRef: React.RefObject<string | null>
-  dragRef: React.RefObject<DragState | null>
-  onSelectRef: React.RefObject<(displayId: string) => void>
-  /** Gates ONLY tap-to-select (MYT-89 audit #5): a click fires `onSelect` in the reveal
-   *  (`true`), but is inert during generation (`false`). Drag-to-pin is live either way. */
-  interactiveRef: React.RefObject<boolean>
-}
-
-/** Attach the fine-pointer handlers when motion is on, a FINE pointer is present, and the
- *  canvas has a live 2D context; otherwise a no-op (a coarse/touch pointer, reduced motion,
- *  or jsdom → the entity list is the selection surface). Returns the teardown (or undefined).
- *  Module-scoped so the hook body stays lean (mirrors `observeResize`). NOT gated on
- *  `interactive` — drag is live during generation; only `onSelect` is reveal-gated (#5). */
-function setupPointerHandlers(
-  canvas: HTMLCanvasElement | null,
-  reducedMotion: boolean,
-  deps: PointerDeps,
-): (() => void) | undefined {
-  if (reducedMotion || !hasFinePointer() || canvas === null) return undefined
-  if (canvas.getContext('2d') === null) return undefined
-  return attachPointerHandlers(canvas, deps)
-}
-
-/** Wire pointermove/down/up/leave on the canvas; returns the teardown. Split out of
- *  the hook so the effect body stays small and this stays independently readable.
- *  Exported for unit test (jsdom can't drive real pointer capture through the effect). */
-export function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDeps): () => void {
-  const { getSim, sizeRef, hoverRef, dragRef, onSelectRef, interactiveRef } = deps
-  const localOf = (e: PointerEvent): Point =>
-    pointerToLocal(e, canvas, sizeRef.current.cssW, sizeRef.current.cssH)
-
-  const onDown = (e: PointerEvent): void => {
-    const key = nearestKey(getSim().positions(), localOf(e), HIT_RADIUS)
-    if (key === null) return
-    dragRef.current = { key, moved: false, downX: e.clientX, downY: e.clientY }
-    canvas.setPointerCapture(e.pointerId)
-  }
-  const onMove = (e: PointerEvent): void => {
-    const drag = dragRef.current
-    if (drag === null) {
-      hoverRef.current = nearestKey(getSim().positions(), localOf(e), HIT_RADIUS)
-      return
-    }
-    if (
-      !drag.moved &&
-      Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) > DRAG_THRESHOLD
-    ) {
-      drag.moved = true
-    }
-    if (drag.moved) {
-      const local = localOf(e)
-      getSim().pin(drag.key, local.x, local.y)
-    }
-  }
-  const onUp = (): void => {
-    const drag = dragRef.current
-    if (drag === null) return
-    if (!drag.moved) {
-      getSim().unpin(drag.key) // a tap (not a drag) releases any prior pin, always
-      if (interactiveRef.current) onSelectRef.current(drag.key) // …but only selects in the reveal
-    }
-    dragRef.current = null
-  }
-  const onLeave = (): void => {
-    hoverRef.current = null
-  }
-
-  canvas.addEventListener('pointerdown', onDown)
-  canvas.addEventListener('pointermove', onMove)
-  canvas.addEventListener('pointerup', onUp)
-  canvas.addEventListener('pointerleave', onLeave)
-  return () => {
-    canvas.removeEventListener('pointerdown', onDown)
-    canvas.removeEventListener('pointermove', onMove)
-    canvas.removeEventListener('pointerup', onUp)
-    canvas.removeEventListener('pointerleave', onLeave)
   }
 }

@@ -8,7 +8,9 @@ import { useGraphCanvas } from './use-graph-canvas.ts'
 
 // WorldGenGraph (MYT-89 Phase C, C5) — the live streaming graph shown during world
 // generation, the world-gen loading experience. The graph pane stacks THREE surfaces
-// in one shared 900×470 VIRTUAL coordinate space (§3.6):
+// in one shared PANE-ADAPTIVE virtual coordinate space (§3.6 + the MYT-89 responsive
+// fix, `virtualDims`: sized from the pane box, 1:1 with CSS px on narrow panes so the
+// graph is legible at 375px, the reference 900-wide space CSS-upscaled on wide panes):
 //   1. a FOG canvas BEHIND (WorldGenFogField, C3) — rolling clouds that part around the
 //      streaming labels and FADE as the graph fills. Fed LIVE obstacles derived from the
 //      force-sim (`getFogEntities`) so a node's fog-hole tracks its glyph exactly.
@@ -74,11 +76,14 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
           inside pulls in, so the fog + nodes both inset together. */}
       <div className="min-w-0 flex-1 p-[var(--space-4)]">
         {/* The graph pane: fog behind + graph canvas on top + the status-card overlay, all
-            in one positioned box at the fog's native 900×470 aspect so the fixed virtual
-            render CSS-scales uniformly (both canvases share the box → the fog-holes line up
-            with the glyphs). The canvas is aria-hidden — its meaning is carried by the list
-            (reveal) / the aria-live surface (generation, E1). */}
-        <div className="relative aspect-[90/47] w-full overflow-hidden">
+            in one positioned box (both canvases share the box → the fog-holes line up with
+            the glyphs). RESPONSIVE (MYT-89): no aspect lock — the width fills the container
+            and the HEIGHT tracks the viewport (clamped), so the pane is tall on a phone,
+            wide on a desktop, and never overflows the fold; the shared virtual space adapts
+            to the pane's own aspect (`virtualDims` — 1:1 CSS px below the reference width,
+            so labels stay legible at 375px). The canvas is aria-hidden — its meaning is
+            carried by the list (reveal) / the aria-live surface (generation, E1). */}
+        <div className="relative h-[clamp(18rem,62dvh,46rem)] w-full overflow-hidden">
           <WorldGenFogField
             entitiesSource={getFogEntities}
             shownEntities={shown}

@@ -334,3 +334,79 @@ describe('FogSim — particle recycling (long run, both spawn edges)', () => {
     for (const v of d) expect(Number.isFinite(v)).toBe(true)
   })
 })
+
+describe('FogSim — setSize (the responsive pane resize, MYT-89)', () => {
+  it('re-derives the grid dims (and the live gw/gh reads follow)', () => {
+    const sim = createFogSim({ width: 300, height: 120, random: mulberry32(7) })
+    expect(sim.gw).toBe(Math.ceil(300 / CELL_PX))
+    expect(sim.gh).toBe(Math.ceil(120 / CELL_PX))
+    sim.setSize(450, 240)
+    expect(sim.gw).toBe(Math.ceil(450 / CELL_PX))
+    expect(sim.gh).toBe(Math.ceil(240 / CELL_PX))
+    expect(sim.density().length).toBe(sim.gw * sim.gh)
+  })
+
+  it('preserves the overlapping smoothed density on GROW (no fade-to-black flash)', () => {
+    const sim = createFogSim({ width: 180, height: 120, random: mulberry32(11) })
+    for (let i = 0; i < 120; i++) sim.step(17, [], 1)
+    const gwBefore = sim.gw
+    const before = sim.density().slice()
+    sim.setSize(300, 240)
+    const after = sim.density()
+    // Every cell of the OLD grid keeps its exact smoothed value at its (gx, gy) in
+    // the new (wider-strided) grid; the new cells start empty and blend in.
+    for (let gy = 0; gy < Math.ceil(120 / CELL_PX); gy++) {
+      for (let gx = 0; gx < gwBefore; gx++) {
+        expect(after[gy * sim.gw + gx]).toBe(before[gy * gwBefore + gx])
+      }
+    }
+  })
+
+  it('preserves the overlapping smoothed density on SHRINK (bounded copy)', () => {
+    const sim = createFogSim({ width: 300, height: 240, random: mulberry32(13) })
+    for (let i = 0; i < 120; i++) sim.step(17, [], 1)
+    const gwBefore = sim.gw
+    const before = sim.density().slice()
+    sim.setSize(180, 120)
+    const after = sim.density()
+    for (let gy = 0; gy < sim.gh; gy++) {
+      for (let gx = 0; gx < sim.gw; gx++) {
+        expect(after[gy * sim.gw + gx]).toBe(before[gy * gwBefore + gx])
+      }
+    }
+  })
+
+  it('keeps stepping after a resize — the field stays populated + finite at the new size', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(17) })
+    for (let i = 0; i < 60; i++) sim.step(17, [], 1)
+    sim.setSize(240, 180) // grow: surviving particles keep flowing, new slots warm-start
+    for (let i = 0; i < 120; i++) sim.step(17, [], 1)
+    const d = sim.density()
+    expect(d.length).toBe(sim.gw * sim.gh)
+    expect(anyPositive(d)).toBe(true)
+    for (const v of d) expect(Number.isFinite(v)).toBe(true)
+    // …and the far (new) half of the grid actually receives fog (the warm-start
+    // seeded the grown field, not just the old corner).
+    const right = windowAvg(d, sim.gw, sim.gh, 200, 90, 2)
+    expect(right).toBeGreaterThan(0)
+  })
+
+  it('is a no-op for the same dims (state object untouched)', () => {
+    const sim = createFogSim({ width: 180, height: 120, random: mulberry32(19) })
+    for (let i = 0; i < 30; i++) sim.step(17, [], 1)
+    const before = sim.density() // by-reference read
+    sim.setSize(180, 120)
+    expect(sim.density()).toBe(before) // same Float32Array — nothing was realloc'd
+  })
+
+  it('stays deterministic across a resize for the same seed + call sequence', () => {
+    const run = (): Float32Array => {
+      const sim = createFogSim({ width: 120, height: 90, random: mulberry32(23) })
+      for (let i = 0; i < 40; i++) sim.step(17, [], 1)
+      sim.setSize(200, 90)
+      for (let i = 0; i < 40; i++) sim.step(17, [], 1)
+      return sim.density().slice()
+    }
+    expect(maxAbsDiff(run(), run())).toBe(0)
+  })
+})

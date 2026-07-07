@@ -49,13 +49,16 @@ const ENTS: FogFieldEntity[] = [
 
 const TOTAL = ENTS.length
 
-/** The fog stage — a paper-toned box at the fog's native 900×470 aspect, so the fixed
- *  virtual render CSS-scales uniformly (no overhang). The fog canvas is `absolute inset-0`
- *  inside it, exactly how it will layer behind the graph canvas. */
+/** The fog stage — a paper-toned box at EXACTLY the reference's 900×470 (the canonical
+ *  box the fog was eye-tuned in; the `ENTS` fixture coords are absolute in that space).
+ *  The production pane is responsive (`virtualDims` adapts the virtual space to the
+ *  pane), but THIS tuning/reference surface stays pinned to the prototype's own dims so
+ *  a look-check here diffs 1:1 against the reference. The fog canvas is `absolute
+ *  inset-0` inside it, exactly how it layers behind the graph canvas. */
 function FogStage({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
-      <div className="relative mx-auto aspect-[90/47] w-full max-w-[900px] overflow-hidden bg-bg">
+      <div className="relative mx-auto h-[470px] w-[900px] overflow-hidden bg-bg">
         {children}
       </div>
     </div>
@@ -123,7 +126,9 @@ function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Ele
             readout={`${String(shown)}/${String(TOTAL)}`}
           />
         </div>
-        <div className="relative aspect-[90/47] w-full overflow-hidden bg-bg">
+        {/* Pinned to the reference's exact 900×470 (see FogStage) — the tuner is the
+            canonical look-check surface, not a responsive specimen. */}
+        <div className="relative h-[470px] w-[900px] overflow-hidden bg-bg">
           <WorldGenFogField
             entities={ENTS.slice(0, shown)}
             shownEntities={shown}
