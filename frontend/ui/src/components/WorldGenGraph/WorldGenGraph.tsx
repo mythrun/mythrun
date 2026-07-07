@@ -13,8 +13,10 @@ import { useGraphCanvas } from './use-graph-canvas.ts'
 // fix, `virtualDims`: sized from the pane box, 1:1 with CSS px on narrow panes so the
 // graph is legible at 375px, the reference 900-wide space CSS-upscaled on wide panes):
 //   1. a FOG canvas BEHIND (WorldGenFogField, C3) — rolling clouds that part around the
-//      streaming labels and FADE as the graph fills. Fed LIVE obstacles derived from the
-//      force-sim (`getFogEntities`) so a node's fog-hole tracks its glyph exactly.
+//      streaming labels and CLEAR by spawn drain as the graph fills (the fog never dims its
+//      paint: the sim's respawn population scales toward zero as the entity count approaches
+//      the expected total, and the wind carries the last particles away). Fed LIVE obstacles
+//      derived from the force-sim (`getFogEntities`) so a node's fog-hole tracks its glyph exactly.
 //   2. a decorative graph Canvas on top (aria-hidden) — mono-ink square glyphs by kind,
 //      hand-drawn ink links, a render-only buoy bob; driven by a rAF loop over the
 //      persistent force-sim (BUG 2.2 containment lives in the sim, in virtual units).

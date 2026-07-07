@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { create, FORCE_PARAMS } from '../force-sim.ts'
-import type { ForceParams, NodeBox } from '../force-sim.ts'
+import type { ForceParams, NodeBox, StaticKeepOut } from '../force-sim.ts'
 import type { GraphNode, GraphEdge } from '../graph-reducers.ts'
 
 // The world-gen graph populates live as entities stream in over ~10 minutes.
@@ -605,5 +605,142 @@ describe('ForceSim rectangular box collision (MYT-89 re-audit)', () => {
     expect(dy).toBeLessThan(circleDiameter)
     expect(dy).toBeLessThan(boxW)
     expect(boxesDisjoint(pa, wide, pb, wide)).toBe(true)
+  })
+})
+
+describe('ForceSim static keep-out (the status-card footprint, MYT-89 density)', () => {
+  // The T1 declutter added an IMMOVABLE keep-out rect: the ui measures the DOM status-card
+  // overlay's box and hands it over via `setKeepOuts`, and the collide force shoves NODES out
+  // from under it (the rect never moves — `separateFromStatic` puts the FULL overlap on the
+  // node's velocity along the minimum-overlap axis). These tests drive that against the real
+  // sim: an immovable rect centred at the origin, a single node with a measured box (so the
+  // box-collide considers it), and COLLIDE_ONLY so ONLY the keep-out acts — the settle is
+  // attributable to `separateFromStatic` alone, not to charge/centre/boundary. Deterministic:
+  // no charge, no seed jitter, pin→seat→unpin gives an exact start.
+  const KO_VIEWPORT = { width: 1000, height: 1000 } // roomy: the ±100 starts never hit the clamp
+  const RECT: StaticKeepOut = { left: -50, top: -50, right: 50, bottom: 50 }
+  const SMALL: NodeBox = { left: -5, right: 5, top: -5, bottom: 5 } // a small symmetric box
+
+  /** The signed overlap of an offset box (at `p`) with a keep-out rect, per axis (positive =
+   *  overlap) — the same test `separateFromStatic` runs, so `≤ EPS on either axis` = cleared. */
+  function rectOverlap(p: Pos, b: NodeBox, ko: StaticKeepOut): { x: number; y: number } {
+    return {
+      x: Math.min(p.x + b.right, ko.right) - Math.max(p.x + b.left, ko.left),
+      y: Math.min(p.y + b.bottom, ko.bottom) - Math.max(p.y + b.top, ko.top),
+    }
+  }
+  function clearsRect(p: Pos, b: NodeBox, ko: StaticKeepOut): boolean {
+    const o = rectOverlap(p, b, ko)
+    return o.x <= EPS || o.y <= EPS
+  }
+
+  /** Seat a single boxed node at an exact (x, y) inside/near `rects`, release it, and settle
+   *  under the keep-out force alone. Pinning zeroes the node's velocity during the seat tick,
+   *  so the release starts from a clean, deterministic pose. */
+  function settleWithKeepOut(
+    startX: number,
+    startY: number,
+    nodeBox: NodeBox,
+    rects: readonly StaticKeepOut[],
+  ): Pos {
+    const sim = create({ ...KO_VIEWPORT, params: COLLIDE_ONLY })
+    sim.sync([node('a')], [])
+    sim.setBoxes(new Map<string, NodeBox>([['a', nodeBox]]))
+    sim.setKeepOuts(rects)
+    sim.pin('a', startX, startY)
+    sim.tick() // seat at the pinned start (velocity zeroed)
+    sim.unpin('a')
+    for (let i = 0; i < 600; i++) sim.tick()
+    const p = sim.positions().get('a')
+    if (p === undefined) throw new Error('missing node')
+    return p
+  }
+
+  it('shoves an overlapping node out along the X axis, in BOTH directions', () => {
+    // Near the LEFT edge of the rect (small x-overlap, full-height y-overlap) → the minimum-overlap
+    // axis is X, and the node centre sits left of the rect centre → pushed further LEFT (dir −1)
+    // until its box's RIGHT edge clears the rect's LEFT edge.
+    const left = settleWithKeepOut(-48, 0, SMALL, [RECT])
+    expect(left.x).toBeLessThan(-48) // migrated outward, not inward
+    expect(left.x + SMALL.right).toBeLessThanOrEqual(RECT.left + EPS)
+    expect(clearsRect(left, SMALL, RECT)).toBe(true)
+
+    // Mirror: near the RIGHT edge → pushed RIGHT (dir +1) until its box's LEFT edge clears the
+    // rect's RIGHT edge. Covers the other arm of the X-axis direction ternary.
+    const right = settleWithKeepOut(48, 0, SMALL, [RECT])
+    expect(right.x).toBeGreaterThan(48)
+    expect(right.x + SMALL.left).toBeGreaterThanOrEqual(RECT.right - EPS)
+    expect(clearsRect(right, SMALL, RECT)).toBe(true)
+  })
+
+  it('shoves an overlapping node out along the Y axis, in BOTH directions', () => {
+    // Near the TOP edge (small y-overlap, full-width x-overlap) → the minimum-overlap axis is Y,
+    // node centre above the rect centre → pushed UP (dir −1) until its box's BOTTOM clears the top.
+    const top = settleWithKeepOut(0, -48, SMALL, [RECT])
+    expect(top.y).toBeLessThan(-48)
+    expect(top.y + SMALL.bottom).toBeLessThanOrEqual(RECT.top + EPS)
+    expect(clearsRect(top, SMALL, RECT)).toBe(true)
+
+    // Mirror: near the BOTTOM edge → pushed DOWN (dir +1) until its box's TOP clears the bottom.
+    const bottom = settleWithKeepOut(0, 48, SMALL, [RECT])
+    expect(bottom.y).toBeGreaterThan(48)
+    expect(bottom.y + SMALL.top).toBeGreaterThanOrEqual(RECT.bottom - EPS)
+    expect(clearsRect(bottom, SMALL, RECT)).toBe(true)
+  })
+
+  it('leaves a node that already clears the rect on one axis untouched (both early returns)', () => {
+    // A box entirely LEFT of the rect: no x-overlap → `separateFromStatic` early-returns on
+    // `overlapX ≤ 0` and never touches the velocity. With no other force acting, the node holds
+    // its exact seeded pose.
+    const xClear = settleWithKeepOut(-100, 0, SMALL, [RECT])
+    expect(xClear.x).toBeCloseTo(-100, 6)
+    expect(xClear.y).toBeCloseTo(0, 6)
+
+    // A box that overlaps on x but is entirely ABOVE the rect: passes the x check, then
+    // early-returns on `overlapY ≤ 0`. Covers the second early-return arm.
+    const yClear = settleWithKeepOut(0, -100, SMALL, [RECT])
+    expect(yClear.x).toBeCloseTo(0, 6)
+    expect(yClear.y).toBeCloseTo(-100, 6)
+  })
+
+  it('replaces the keep-out set in place — a later setKeepOuts([]) drops the constraint', () => {
+    // `setKeepOuts` mutates the SAME array the collide force closed over (`length = 0` then push),
+    // so a second call REPLACES the set rather than appending. Arm a rect, then replace it with an
+    // empty set: a node parked dead-centre of the (now-cleared) rect must NOT be shoved.
+    const sim = create({ ...KO_VIEWPORT, params: COLLIDE_ONLY })
+    sim.sync([node('a')], [])
+    sim.setBoxes(new Map<string, NodeBox>([['a', SMALL]]))
+    sim.setKeepOuts([RECT])
+    sim.setKeepOuts([]) // replace in place → the constraint is gone
+    sim.pin('a', 0, 0) // dead centre of RECT — a live keep-out WOULD have pushed it out
+    sim.tick()
+    sim.unpin('a')
+    for (let i = 0; i < 600; i++) sim.tick()
+
+    const p = sim.positions().get('a')
+    if (p === undefined) throw new Error('missing node')
+    expect(p.x).toBeCloseTo(0, 6)
+    expect(p.y).toBeCloseTo(0, 6)
+    // Control: it is genuinely still inside RECT — so "not pushed" is the cleared set, not luck.
+    expect(clearsRect(p, SMALL, RECT)).toBe(false)
+  })
+
+  it('reheats a settled sim so the cloud migrates out from under a newly-measured card', () => {
+    // `setKeepOuts` bumps alpha (a settled sim would otherwise be frozen and never migrate out
+    // from under a card measured late). Settle to convergence, then hand over a keep-out placed
+    // FAR from every node (no push) — the reheat alone must re-energise the layout so nodes drift.
+    const sim = create(VIEWPORT)
+    sim.sync([node('a'), node('b'), node('c')], [])
+    for (let i = 0; i < 600; i++) sim.tick()
+    const before = new Map([...sim.positions()].map(([k, p]) => [k, { ...p }]))
+
+    sim.setKeepOuts([{ left: 1000, top: 1000, right: 1100, bottom: 1100 }]) // far corner → reheat only
+    for (let i = 0; i < 50; i++) sim.tick()
+
+    const moved = [...sim.positions()].some(([k, p]) => {
+      const b = before.get(k)
+      return b !== undefined && Math.hypot(p.x - b.x, p.y - b.y) > 0.5
+    })
+    expect(moved).toBe(true)
   })
 })

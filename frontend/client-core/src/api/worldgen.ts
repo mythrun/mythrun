@@ -15,8 +15,9 @@ const getStageTimingsEndpoint = defineEndpoint<StageTimingsResponse>({
 })
 
 /** Fetch the historical per-stage average durations (ms). `[]` on cold-start;
- *  the world-gen loading bar computes a rough remaining time from this + the
- *  live stage statuses (see `remainingStageMs`). */
+ *  the world-gen status card turns this + the live stage statuses into a
+ *  per-second countdown (see `remainingWaitMs`, re-derived each second by the
+ *  generating route). */
 export function getStageTimings(ctx: ApiContext): Promise<StageTimingsResponse> {
   return getStageTimingsEndpoint(undefined, ctx)
 }

@@ -101,7 +101,7 @@ function snapshotAt(
 
 // A synthetic status card that advances with the generation — the top-left overlay that
 // keeps the pre-entity stretch legible. `[ph:]` labels (the DS owns no copy). The ids
-// are the CANONICAL entity stages (the card renders one fixed bar per `ENTITY_STAGES`
+// are the CANONICAL entity stages (the card renders one fixed bar per `WATCHED_ENTITY_STAGES`
 // entry and ignores unknown ids — fictional ids left the bar stuck at 0%).
 const STAGE_IDS = [
   'world_and_factions',
@@ -344,8 +344,9 @@ function Slider(props: {
 }
 
 // The nine force knobs, in slider order — placeholder labels (the DS owns no copy).
-// The spread seven (Miklos-locked) first, then the two clustering knobs (MYT-89
-// untangle): the link pull + rest length that group connected entities.
+// The two clustering knobs (MYT-89 untangle — `linkStrength`/`linkDistance`, the link
+// pull + rest length that group connected entities) sit right after the two charge
+// knobs, interleaved among the Miklos-locked spread seven rather than grouped at the end.
 const FORCE_KEYS: readonly (keyof ForceParams)[] = [
   'chargeStrength',
   'chargeDistanceMax',

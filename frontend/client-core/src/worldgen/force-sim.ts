@@ -34,7 +34,7 @@ import type { GraphEdge, GraphNode } from './graph-reducers.ts'
 // `mergeNodes`, `linkForce.id`) on `synthKey` — a node keeps its object ref + its
 // settled position across a finalize, never teleporting to centre. But every
 // EXTERNAL surface speaks `displayId`: `positions()` is keyed by `displayId`,
-// `pin`/`unpin` take a `displayId`, and `buildLinks` translates each edge's UUID
+// `pin`/`unpin` take a `displayId`, and `buildSimLinks` translates each edge's UUID
 // endpoints to `synthKey` (via a displayId→synthKey map over the current nodes)
 // before linking. Net: node render-identity === edge endpoint-space === `displayId`
 // externally, while the physics keeps a stable internal key for position continuity.
@@ -244,12 +244,12 @@ interface SimNode extends SimulationNodeDatum {
 }
 
 /** A d3 link datum. `source`/`target` are seeded as `synthKey` strings (the edge's
- *  UUID endpoints translated to the endpoints' stable `synthKey` by `buildLinks`)
+ *  UUID endpoints translated to the endpoints' stable `synthKey` by `buildSimLinks`)
  *  and resolved to node objects by d3 via the `id` accessor on (re-)initialisation.
  *  `synthKey` here is the edge's OWN stable id (unused by the node resolver).
  *  `strength` is the PRE-COMPUTED spring strength for this link — d3's
  *  degree-normalised default (`1 / min(degree)`) scaled by the tunable
- *  `linkStrength` multiplier, stamped by `buildLinks` (which already walks the
+ *  `linkStrength` multiplier, stamped by `buildSimLinks` (which already walks the
  *  edge set and so computes the degrees d3 would) and read by the link force's
  *  strength accessor (MYT-89 untangle). */
 interface SimLink extends SimulationLinkDatum<SimNode> {
@@ -341,6 +341,10 @@ function separateBoxes(
   bBox: NodeBox,
   halfPad: number,
 ): void {
+  // `vx`/`vy` are typed optional by d3's SimulationNodeDatum, but every SimNode is seeded
+  // with numbers (`seedNode` sets 0; d3's initializeSimulation zeroes any NaN), so the
+  // `?? 0` nullish arm is a type-required artifact, unreachable at runtime.
+  /* v8 ignore next 4 */
   const avx = a.vx ?? 0
   const avy = a.vy ?? 0
   const bvx = b.vx ?? 0
@@ -377,6 +381,9 @@ function separateBoxes(
  *  node's velocity (the rect never moves), along the minimum-overlap axis, away from
  *  the rect's centre. */
 function separateFromStatic(a: SimNode, aBox: NodeBox, ko: StaticKeepOut, halfPad: number): void {
+  // As in `separateBoxes`: d3 always seeds vx/vy to numbers, so the `?? 0` nullish arm is
+  // type-required (SimulationNodeDatum types them optional) but unreachable at runtime.
+  /* v8 ignore next 2 */
   const avx = a.vx ?? 0
   const avy = a.vy ?? 0
   const ax = a.x + avx
@@ -420,6 +427,11 @@ function boxCollide(padding: number, keepOuts: StaticKeepOut[]): Force<SimNode, 
         for (let j = i + 1; j < n; j++) {
           const b = simNodes[j]
           const bBox = b?.box
+          // `simNodes[j]` (j < n) is always defined, so the `b === undefined` / `b?.box`
+          // nullish arms are type-required but dead. (This line-level ignore also drops the
+          // co-located `bBox === undefined` arm, which IS exercised — an as-yet-unmeasured
+          // node — from the branch count.)
+          /* v8 ignore next */
           if (b === undefined || bBox === undefined) continue
           separateBoxes(a, aBox, b, bBox, halfPad)
         }
@@ -435,7 +447,7 @@ function boxCollide(padding: number, keepOuts: StaticKeepOut[]): Force<SimNode, 
 
 /** Build the STOPPED d3 simulation with the re-tuned spread forces (MYT-89 audit #4):
  *  charge (`chargeStrength` + `chargeDistanceMax`), the CLUSTERING-tuned link force
- *  (`linkDistance` rest length + the per-link `strength` `buildLinks` pre-computed
+ *  (`linkDistance` rest length + the per-link `strength` `buildSimLinks` pre-computed
  *  from `linkStrength` — the MYT-89 untangle, replacing d3's tangle-inducing
  *  defaults), a centre pull (`centerStrength`), the rectangular box collide
  *  (`collisionPadding` — no icon/label overlap, the box is the keep-out unit), and
@@ -740,7 +752,7 @@ export function create(opts: {
   }
 
   /** The persistent `SimNode` for an external `displayId`, or undefined — the same
-   *  displayId→synthKey lookup `buildLinks` uses, then resolved to the sim node. */
+   *  displayId→synthKey lookup `buildSimLinks` uses, then resolved to the sim node. */
   function nodeByDisplayId(displayId: string): SimNode | undefined {
     const synthKey = displayIdToSynthKey().get(displayId)
     return synthKey === undefined ? undefined : byKey.get(synthKey)

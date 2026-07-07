@@ -51,7 +51,8 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 // automatic), the countdown's 1-second tick, and the `~M:SS` formatting.
 
 /** The generation graph model + the status/fade inputs (folded by the route's
- *  `useWorldGenStream`) plus the route's historical stage timings (for the ETA). */
+ *  `useWorldGenStream`) plus the route's historical stage timings (the input to
+ *  the per-second countdown). */
 interface GeneratingViewProps extends Pick<WorldGenStream, 'nodes' | 'edges' | 'stages'> {
   /** Historical per-stage average durations (the route's `getStageTimings` fetch),
    *  or `null` before it resolves / on cold-start → the card shows no estimate. */

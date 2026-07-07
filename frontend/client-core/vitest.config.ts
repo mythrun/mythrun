@@ -23,10 +23,11 @@ export default defineConfig({
       // intentionally NOT %-gated.
       //
       // Wave 1 (MYT-83) adds the data layer: the typed API client (`src/api/**`),
-      // zustand stores (`src/stores/**`), and the platform-capability interfaces
-      // (`src/platform/**`). They join the 100% gate here. The dirs are empty
-      // today (later tasks fill them); empty globs contribute no files and don't
-      // break the gate.
+      // zustand stores (`src/stores/**`), and the platform-capability layer
+      // (`src/platform/**` — the RUNTIME ports like `streaming-fetch.ts`; the
+      // types-only interface ports are excluded below). They join the 100% gate
+      // here. The dirs are empty today (later tasks fill them); empty globs
+      // contribute no files and don't break the gate.
       include: [
         'src/tokens/scales.ts',
         'src/api/**',
@@ -47,7 +48,23 @@ export default defineConfig({
         'src/worldgen/**/*.ts',
         'eslint-rules/**/*.js',
       ],
-      exclude: ['**/*.test.ts', '**/*.fixtures.ts'],
+      exclude: [
+        '**/*.test.ts',
+        '**/*.fixtures.ts',
+        // Types-only platform-capability PORTS (R1): `oauth-state-store.ts` and
+        // `secure-storage.ts` declare ONLY interfaces (plus a type-only import),
+        // so they ERASE to an empty module at compile time (esbuild emits 0 bytes).
+        // Nothing at runtime ever loads them — the `src/platform/**` include glob
+        // forces the un-executed source into the report, where v8 (having no
+        // execution record for a file with no emitted code) shows 0% and fails the
+        // gate. No test can ever "run" an empty module. Like the types-only contract
+        // barrel (`src/contract/index.ts`) and the build-time palette generator, they
+        // carry no runtime logic and are intentionally NOT %-gated. Their web/native
+        // IMPLEMENTATIONS (which DO have runtime code) live in @mythrun/web and are
+        // gated there.
+        'src/platform/oauth-state-store.ts',
+        'src/platform/secure-storage.ts',
+      ],
       thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
       // The `test:coverage` script RUN-excludes `*.wiring.test.ts` (the
       // vitest-v8 double-load gotcha: an integration test that loads a rule
