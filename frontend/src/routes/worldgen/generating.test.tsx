@@ -197,7 +197,10 @@ describe('GeneratingView — act one: the prep loading screen', () => {
       readFlavor()
     }
     expect(seen.size).toBe(20)
-  })
+    // 20 full re-renders of the loading view spend REAL time (fake timers only
+    // skip the waits): CI's slower CPU overruns vitest's 5s default — the
+    // home.test CoverDither precedent. Generous ceiling, not a slow test.
+  }, 20_000)
 
   it('offers NO watch button during the pure prep act', () => {
     mockMatchMedia(false)
