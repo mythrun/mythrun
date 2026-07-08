@@ -59,7 +59,7 @@ describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
     // No table is in the 'Other' cluster (the static map covers all current tables).
     const others = meta.tables.filter((t) => t.cluster === 'Other')
     expect(others).toEqual([])
-  })
+  }, 30_000)
 
   it('surfaces named UNIQUE constraint indexes (not just idx_*), and excludes primary keys', async () => {
     const meta = await extractSchema({ databaseUrl, migrationsDir })
@@ -84,7 +84,7 @@ describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
     // table has one on `id`; they'd be uniform noise.
     const anyPkey = meta.tables.some((t) => t.indexes.some((i) => i.name.endsWith('_pkey')))
     expect(anyPkey).toBe(false)
-  })
+  }, 30_000)
 
   it('pairs FK columns correctly for composite + multi-FK tables (no information_schema cross-product)', async () => {
     const meta = await extractSchema({ databaseUrl, migrationsDir })
@@ -122,7 +122,7 @@ describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
     const userCol = cc?.columns.find((c) => c.name === 'user_id')
     expect(userCol?.fk?.foreignTable).toBe('users')
     expect(userCol?.fk?.foreignColumn).toBe('id')
-  })
+  }, 30_000)
 
   it('cleans up the throwaway schema after extraction', async () => {
     await extractSchema({
@@ -134,5 +134,5 @@ describe.skipIf(databaseUrl === '')('extractSchema (integration)', () => {
       databaseUrl,
       migrationsDir,
     })
-  })
+  }, 30_000)
 })
