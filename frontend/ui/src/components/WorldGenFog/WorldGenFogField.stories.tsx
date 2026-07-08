@@ -153,6 +153,9 @@ function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Ele
 // thin (fewer particles spawning in), and finally BLOW OFF the pane entirely.
 export const Tuning: Story = {
   render: () => <FogTuner />,
+  // The tuner mirrors the eye-tuned reference at its native 900px — a
+  // wide-by-design dev harness, exempt from the 375px overflow gate.
+  parameters: { overflowGate: false },
 }
 
 // The fog at rest with the locked defaults (a quick read of the settled look).
@@ -166,6 +169,8 @@ export const Locked: Story = {
       />
     </FogStage>
   ),
+  // The fixed reference-size stage (900×470) — wide-by-design specimen.
+  parameters: { overflowGate: false },
 }
 
 // Reduced motion: no rAF churn — the sim snaps to the CURRENT scaled population,
@@ -174,4 +179,6 @@ export const Locked: Story = {
 export const ReducedMotion: Story = {
   name: 'Reduced motion',
   render: () => <FogTuner reducedMotion />,
+  // Same 900px tuner harness — wide-by-design, gate-exempt.
+  parameters: { overflowGate: false },
 }

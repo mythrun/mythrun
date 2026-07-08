@@ -339,6 +339,9 @@ export const NarrowPane: Story = {
 export const TallNarrowPane: Story = {
   name: 'Tall narrow pane (~600px)',
   render: () => <StreamingDemo paneClassName="w-[600px]" />,
+  // A fixed 600px pane specimen (aspect behavior pin) — wide-by-design at 375,
+  // exempt from the overflow gate; MobileFullBleed covers the true 375 surface.
+  parameters: { overflowGate: false },
 }
 
 // ── Max-density specimens (MYT-89 density redesign) ────────────────────────────────────

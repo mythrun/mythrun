@@ -12,5 +12,11 @@ type Story = StoryObj<typeof ScreenHarness>
 
 export const Default: Story = {
   render: () => <ScreenHarness entry="/campaigns/c-1" session="ready" />,
-  play: expectScreen('route-campaign-detail'),
+  // The harness has no SSE backend, so the status stream reconnects forever and
+  // the route deterministically holds the GENERATING act — that is this story's
+  // reachable screen state, and asserting it proves the route composition mounts
+  // through the frame. (The settled landing is covered by Screens/CampaignPage,
+  // which renders the component directly with an injected campaigns source —
+  // `route-campaign-detail` is unreachable through a dead-API route tree.)
+  play: expectScreen('worldgen-generating'),
 }
