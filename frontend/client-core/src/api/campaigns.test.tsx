@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { renderHook, waitFor } from '@testing-library/react'
-import { Suspense } from 'react'
+import { Component, Suspense } from 'react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ApiContext } from './endpoint.ts'
@@ -96,16 +96,28 @@ describe('useMyCampaigns', () => {
       ),
     )
 
-    // useSuspenseQuery throws into the error boundary; using the non-suspense
-    // path here would still surface .error, but to read the error legibly we
-    // capture it via the query result after it settles. A bare Suspense wrapper
-    // (no ErrorBoundary) would let the thrown error escape render, so we assert
-    // the error directly off the QueryClient cache instead of rendering it.
+    // useSuspenseQuery THROWS the rejection into render, so the wrapper needs a
+    // real ErrorBoundary to absorb it — a bare Suspense wrapper lets the error
+    // escape into React's global error channel, where vitest's unhandled-error
+    // catcher flags it nondeterministically (fast runs win the teardown race,
+    // slow CI runs lose it). The assertion still reads the error legibly off
+    // the QueryClient cache; the boundary exists only to contain the throw.
+    class SwallowBoundary extends Component<{ children: ReactNode }, { caught: boolean }> {
+      override state = { caught: false }
+      static getDerivedStateFromError(): { caught: boolean } {
+        return { caught: true }
+      }
+      override render(): ReactNode {
+        return this.state.caught ? <span>boundary</span> : this.props.children
+      }
+    }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>
         <ApiClientProvider value={testCtx}>
-          <Suspense fallback={<span>loading</span>}>{children}</Suspense>
+          <SwallowBoundary>
+            <Suspense fallback={<span>loading</span>}>{children}</Suspense>
+          </SwallowBoundary>
         </ApiClientProvider>
       </QueryClientProvider>
     )
