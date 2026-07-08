@@ -151,6 +151,44 @@ export function fieldVelocity(
   return [vx, vy]
 }
 
+/** Numeric bucket-key packing: offset absorbs negative (off-band) bucket indices,
+ *  the stride keeps the two coordinates disjoint for any real canvas size. */
+const BUCKET_KEY_OFFSET = 4096
+const BUCKET_KEY_STRIDE = 100000
+
+export function bucketKey(bx: number, by: number): number {
+  return (bx + BUCKET_KEY_OFFSET) * BUCKET_KEY_STRIDE + (by + BUCKET_KEY_OFFSET)
+}
+
+/** Bucket the doublets into the uniform `BUCKET_SIZE` grid (§3.7 spatial bucketing —
+ *  stateless, moved here from fog-sim for the module-size rail). */
+export function buildBuckets(doublets: readonly Doublet[]): Map<number, Doublet[]> {
+  const m = new Map<number, Doublet[]>()
+  for (const d of doublets) {
+    const key = bucketKey(Math.floor(d.x / BUCKET_SIZE), Math.floor(d.y / BUCKET_SIZE))
+    const bucket = m.get(key)
+    if (bucket) bucket.push(d)
+    else m.set(key, [d])
+  }
+  return m
+}
+
+/** Collect the doublets in the 3×3 bucket neighbourhood of bucket cell (bx,by) into a
+ *  fresh array. Bucket size = cutoff, so the neighbourhood is a superset of every
+ *  doublet within the cutoff of ANY point in the cell (`fieldVelocity` then culls at
+ *  the exact radius). Runs once per occupied cell per sub-step (see fog-sim's
+ *  `advect`). */
+export function queryBuckets(buckets: Map<number, Doublet[]>, bx: number, by: number): Doublet[] {
+  const out: Doublet[] = []
+  for (let oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      const bucket = buckets.get(bucketKey(bx + ox, by + oy))
+      if (bucket) for (const d of bucket) out.push(d)
+    }
+  }
+  return out
+}
+
 /** True when a particle has drifted past the off-canvas spawn band (any edge). */
 export function isOffBand(x: number, y: number, width: number, height: number): boolean {
   return (

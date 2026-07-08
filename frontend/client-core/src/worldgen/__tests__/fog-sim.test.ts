@@ -389,6 +389,102 @@ describe('FogSim — settlePopulation (the reduced-motion population snap)', () 
   })
 })
 
+describe('FogSim — settleDensity (the reduced-motion dsm=dens seed)', () => {
+  const sum = (d: Float32Array): number => {
+    let total = 0
+    for (const v of d) total += v
+    return total
+  }
+
+  it('a static birth (re-arm + seed) lands at the CONVERGED amplitude of a 120-step settle', () => {
+    // The temporal low-pass (STEADY 0.03) needs ~120 sub-steps to converge from
+    // zero; the static-birth sequence (retire-all → revive → seed) must land at
+    // the same integrated IN-GRID amplitude in one shot. The revive places over
+    // the band-extended rect — the region the steady distribution occupies (a
+    // particle exits/respawns only past ±SPAWN_BOUND_PX) — so the in-grid share
+    // matches what the wind-relaxed settle converges to; an on-canvas placement
+    // would over-concentrate the visible mass by the band fraction (~20% at
+    // these dims — the bug this pin exists to catch).
+    const settled = createFogSim({ width: 300, height: 200, random: mulberry32(61) })
+    for (let i = 0; i < 120; i++) settled.step(17, [], 1)
+    const seeded = createFogSim({ width: 300, height: 200, random: mulberry32(61) })
+    seeded.settlePopulation(0) // the static-birth re-arm: all slots re-place through
+    seeded.settlePopulation(1) // the band-wide static placement
+    seeded.settleDensity([])
+    const settledSum = sum(settled.density())
+    const seededSum = sum(seeded.density())
+    expect(seededSum).toBeGreaterThan(0.9 * settledSum)
+    expect(seededSum).toBeLessThan(1.1 * settledSum)
+  })
+
+  it('applies the box-clear — cells under a label box are exactly 0, fog elsewhere', () => {
+    const sim = createFogSim({ width: 480, height: 300, random: mulberry32(67) })
+    const ob = box(210, 135, 60, 30)
+    sim.settleDensity([ob])
+    const d = sim.density()
+    const gx = Math.trunc(240 / CELL_PX)
+    const gy = Math.trunc(150 / CELL_PX)
+    expect(d[gy * sim.gw + gx]).toBe(0)
+    expect(anyPositive(d)).toBe(true)
+  })
+
+  it('is TRANSPARENT to the particle system — an interleaved seed never perturbs the sim', () => {
+    // The animated-path safety pin: the seed touches ONLY the density grids — no
+    // particle moves, no RNG draw is consumed, the clock does not advance. Two
+    // sims with an extra seed interleaved into one must land bit-identical once
+    // both end on a seed (the seed makes dsm a pure function of the positions,
+    // so equal grids ⇔ equal particle states).
+    const ob = box(120, 90, 60, 30)
+    const a = createFogSim({ width: 300, height: 200, random: mulberry32(71) })
+    const b = createFogSim({ width: 300, height: 200, random: mulberry32(71) })
+    for (let i = 0; i < 20; i++) {
+      a.step(17, [ob], 1)
+      b.step(17, [ob], 1)
+    }
+    b.settleDensity([ob]) // the interleaved extra seed
+    a.step(17, [ob], 1)
+    b.step(17, [ob], 1)
+    a.settleDensity([ob])
+    b.settleDensity([ob])
+    expect(Array.from(a.density())).toEqual(Array.from(b.density()))
+  })
+
+  it('is idempotent — a second seed against the same state is bit-identical', () => {
+    const ob = box(120, 90, 60, 30)
+    const sim = createFogSim({ width: 300, height: 200, random: mulberry32(73) })
+    sim.settleDensity([ob])
+    const first = sim.density().slice()
+    sim.settleDensity([ob])
+    expect(Array.from(sim.density())).toEqual(Array.from(first))
+  })
+
+  it('keeps an EMPTY population empty (and does not wake the dormant fast-path)', () => {
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(79) })
+    sim.settlePopulation(0)
+    sim.settleDensity([])
+    expect(anyPositive(sim.density())).toBe(false)
+    // Still dormant: the next step must be the §4 no-op (same grid by reference,
+    // still zeroed) — the seed of an empty field must not clear the drained flag.
+    const grid = sim.density()
+    for (let i = 0; i < 30; i++) sim.step(17, [], 0)
+    expect(sim.density()).toBe(grid)
+    expect(anyPositive(sim.density())).toBe(false)
+  })
+
+  it('a population snap + seed samples the drain level (thinner field at a lower scale)', () => {
+    const seedAt = (scale: number): number => {
+      const sim = createFogSim({ width: 300, height: 200, random: mulberry32(83) })
+      sim.settlePopulation(scale)
+      sim.settleDensity([])
+      return sum(sim.density())
+    }
+    const full = seedAt(1)
+    const third = seedAt(1 / 3)
+    expect(third).toBeGreaterThan(0.2 * full)
+    expect(third).toBeLessThan(0.45 * full)
+  })
+})
+
 describe('FogSim — wake rejoin (the river closes, no permanent shadow)', () => {
   it(
     'parts around a label but closes back downstream (vs an obstacle-free flow)',

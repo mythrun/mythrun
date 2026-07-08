@@ -54,16 +54,20 @@ import {
   LABEL_CLEAR_PAD,
   PARTICLE_COUNT,
   PARTICLE_STRIDE,
+  SPAWN_BOUND_PX,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   WIND_BASE,
 } from './fog-params.ts'
 import {
   BUCKET_SIZE,
+  bucketKey,
+  buildBuckets,
   fieldVelocity,
   isOffBand,
   inGrid,
   pickSpawn,
+  queryBuckets,
   segd,
   splatWeight,
   type Doublet,
@@ -104,13 +108,29 @@ export interface FogSim {
   step(dtMs: number, obstacles: readonly FogObstacle[], spawnScale: number): void
   /** Snap the alive population to `round(N·spawnScale)` NOW — the REDUCED-MOTION
    *  enforcement (a static settle has no wind-time to drain/refill through). Excess
-   *  slots retire from the top index down (survivors keep their warm-start-uniform
-   *  spread); deficits revive FIELD-WIDE (warm-start placement — an edge spawn would
-   *  leave a static sample mostly empty). At target 0 the density grids are zeroed
+   *  slots retire from the top index down (survivors keep their uniform spread);
+   *  deficits revive across the BAND-EXTENDED rect (`bandStartSlot` — the steady
+   *  distribution's own footprint; an edge spawn would leave a static sample mostly
+   *  empty, an on-canvas one would over-concentrate the in-grid mass by the band
+   *  fraction). At target 0 the density grids are zeroed
    *  too: the converged steady state of an empty population IS the empty field, and
    *  a static sample wants that state immediately (no residual low-pass ghost). The
    *  motion loop never calls this — it drains/refills through the respawn gate. */
   settlePopulation(spawnScale: number): void
+  /** Snap the SMOOTHED density to converged AMPLITUDE now — the REDUCED-MOTION
+   *  instant-frame seed (dsm=dens). The temporal low-pass (`STEADY` 0.03) takes
+   *  ~120 sub-steps to converge from cold, but in steady state `dsm` tracks what
+   *  `dens` splats — so seeding it directly (splat the current particles, copy
+   *  `dens` into `dsm`, box-clear under the labels: the reference's per-frame
+   *  order minus the advection) lands a frame with the right drain level and
+   *  carve-outs in one call. It is an amplitude snap, not a full settle: the
+   *  converged TEXTURE (turbulence streaks, the inflow gradient) lives in the
+   *  particle DISTRIBUTION and still develops only through real `step`s — the
+   *  consumer matures those off the paint path (the ui fog-converge worker).
+   *  Touches ONLY the density grids: no particle moves, no RNG draw, the clock
+   *  stays put — interleaving it into a step sequence is provably transparent
+   *  (test-pinned), and the motion loop never calls it. */
+  settleDensity(obstacles: readonly FogObstacle[]): void
   /** Re-derive the sim for a new virtual size (the RESPONSIVE pane resize, MYT-89):
    *  grid dims + area-scaled particle count are recomputed, surviving particles keep
    *  flowing (grown slots warm-start across the new field; out-of-bound ones respawn
@@ -158,15 +178,6 @@ const MAX_STEPS_PER_FRAME = 2
  *  paint's `pd <= 0` skip and the dormant fast-path key off; the low-pass alone only
  *  decays asymptotically) and the sim goes dormant. */
 const DRAIN_EPS = 5e-4
-
-/** Numeric bucket-key packing: offset absorbs negative (off-band) bucket indices,
- *  the stride keeps the two coordinates disjoint for any real canvas size. */
-const BUCKET_KEY_OFFSET = 4096
-const BUCKET_KEY_STRIDE = 100000
-
-function bucketKey(bx: number, by: number): number {
-  return (bx + BUCKET_KEY_OFFSET) * BUCKET_KEY_STRIDE + (by + BUCKET_KEY_OFFSET)
-}
 
 /** Read a Float32Array element as a plain `number`. Under `noUncheckedIndexedAccess`
  *  every element read widens to `number | undefined`, but every index here is
@@ -222,8 +233,8 @@ function computeWind(): Wind {
 }
 
 /** Place one slot uniformly across the WHOLE field — the warm-start placement (vs the
- *  inflow-edge `spawn`). Shared by the initial warm start, resize-grown slots, and the
- *  static (reduced-motion) revive. */
+ *  inflow-edge `spawn`). Shared by the initial warm start and resize-grown slots (the
+ *  static revive places band-wide instead — `bandStartSlot`). */
 function warmStartSlot(s: FogState, i: number): void {
   s.P[i * PARTICLE_STRIDE] = s.random() * s.width
   s.P[i * PARTICLE_STRIDE + 1] = s.random() * s.height
@@ -233,6 +244,20 @@ function warmStartSlot(s: FogState, i: number): void {
  *  the first frame is already full of fog. Ported from `reset()`. */
 function warmStart(s: FogState): void {
   for (let i = 0; i < s.n; i++) warmStartSlot(s, i)
+}
+
+/** Place one slot uniformly across the BAND-EXTENDED rect — the STATIC (reduced-motion)
+ *  revive placement. The steady distribution the wind relaxes a warm start into spans
+ *  the canvas PLUS the ±SPAWN_BOUND_PX band (spawns land just outside it; a particle
+ *  only recycles once it drifts past it), so ~(W·H)/((W+2B)·(H+2B)) of the alive
+ *  population is in-grid at any instant — ~90% at the reference dims. A static sample
+ *  placed on-canvas would over-concentrate the visible mass by exactly that fraction
+ *  (the ANIMATED path relaxes the same overshoot away over the first seconds — the
+ *  reference's own warm start; a static frame has no wind-time to do it). Motion-path
+ *  placements (`spawn`, the create/resize `warmStartSlot`) are untouched. */
+function bandStartSlot(s: FogState, i: number): void {
+  s.P[i * PARTICLE_STRIDE] = s.random() * (s.width + 2 * SPAWN_BOUND_PX) - SPAWN_BOUND_PX
+  s.P[i * PARTICLE_STRIDE + 1] = s.random() * (s.height + 2 * SPAWN_BOUND_PX) - SPAWN_BOUND_PX
 }
 
 function spawn(s: FogState, i: number): void {
@@ -317,7 +342,7 @@ function popDead(s: FogState): number {
 
 /** Raise the alive population toward `target` by re-arming retired slots, placed by
  *  `place` — `spawn` under motion (new fog BLOWS IN from the wind edges rather than
- *  popping into place) or `warmStartSlot` for the static settle. No-op when the
+ *  popping into place) or `bandStartSlot` for the static settle. No-op when the
  *  population is already at/over target. Production only ever LOWERS the scale
  *  during a generation; this is the tuning-slider / re-arm path. */
 function reviveTo(s: FogState, target: number, place: (s: FogState, i: number) => void): void {
@@ -345,32 +370,6 @@ function buildDoublets(obstacles: readonly FogObstacle[]): Doublet[] {
     for (let j = 0; j < k; j++) {
       const tt = j / (k - 1)
       out.push({ x: ax + (bx - ax) * tt, y: ay + (by - ay) * tt, vx: ob.vx, vy: ob.vy })
-    }
-  }
-  return out
-}
-
-function buildBuckets(doublets: readonly Doublet[]): Map<number, Doublet[]> {
-  const m = new Map<number, Doublet[]>()
-  for (const d of doublets) {
-    const key = bucketKey(Math.floor(d.x / BUCKET_SIZE), Math.floor(d.y / BUCKET_SIZE))
-    const bucket = m.get(key)
-    if (bucket) bucket.push(d)
-    else m.set(key, [d])
-  }
-  return m
-}
-
-/** Collect the doublets in the 3×3 bucket neighbourhood of bucket cell (bx,by) into a
- *  fresh array. Bucket size = cutoff, so the neighbourhood is a superset of every
- *  doublet within the cutoff of ANY point in the cell (`fieldVelocity` then culls at
- *  the exact radius). Runs once per occupied cell per sub-step (see `advect`). */
-function queryBuckets(buckets: Map<number, Doublet[]>, bx: number, by: number): Doublet[] {
-  const out: Doublet[] = []
-  for (let oy = -1; oy <= 1; oy++) {
-    for (let ox = -1; ox <= 1; ox++) {
-      const bucket = buckets.get(bucketKey(bx + ox, by + oy))
-      if (bucket) for (const d of bucket) out.push(d)
     }
   }
   return out
@@ -601,7 +600,7 @@ function snapPopulation(s: FogState, spawnScale: number): void {
   for (let i = s.n - 1; i >= 0 && s.aliveCount > target; i--) {
     if (s.alive[i] === 1) retire(s, i)
   }
-  reviveTo(s, target, warmStartSlot)
+  reviveTo(s, target, bandStartSlot)
   if (target === 0) {
     s.dsm.fill(0)
     s.dens.fill(0)
@@ -610,6 +609,25 @@ function snapPopulation(s: FogState, spawnScale: number): void {
   } else {
     s.drained = false
   }
+}
+
+/** `FogSim.settleDensity` (module-scoped): the reduced-motion dsm=dens seed — see
+ *  the interface doc. Reuses the sub-step pipeline's own `splat`/`boxClear` and
+ *  mirrors `smooth`'s max-tracking (the §4 drain detector), so the seeded state is
+ *  exactly a converged low-pass over the current particle distribution. A drained
+ *  sim seeds an all-zero grid (nothing alive splats nothing), leaving the dormant
+ *  state intact. */
+function snapDensity(s: FogState, obstacles: readonly FogObstacle[]): void {
+  splat(s)
+  const { dens, dsm } = s
+  let max = 0
+  for (let k = 0; k < dsm.length; k++) {
+    const v = cell(dens, k)
+    dsm[k] = v
+    if (v > max) max = v
+  }
+  s.dsmMax = max
+  boxClear(s, obstacles)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -628,6 +646,9 @@ export function createFogSim(opts: {
     },
     settlePopulation(spawnScale: number): void {
       snapPopulation(s, spawnScale)
+    },
+    settleDensity(obstacles: readonly FogObstacle[]): void {
+      snapDensity(s, obstacles)
     },
     setSize(width: number, height: number): void {
       resizeState(s, width, height)

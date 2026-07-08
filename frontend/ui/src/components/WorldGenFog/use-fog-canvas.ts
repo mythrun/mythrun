@@ -17,6 +17,7 @@ import {
 import type { FogFieldEntity, WorldGenCameraSource } from '@mythrun/client-core/contract'
 import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
 import { entityObstacle } from './fog-obstacles.ts'
+import { createFogConvergence, type FogConvergence } from './fog-converge.ts'
 import { paintFog } from './fog-draw.ts'
 
 // The imperative Canvas controller for WorldGenFogField (MYT-89 C3). Owns the fluid sim
@@ -47,15 +48,31 @@ const WIND = { wx: WIND_BASE[0] * FOG_PARAMS.wind, wy: WIND_BASE[1] * FOG_PARAMS
  *  clean N-sub-step loop, and the per-sub-step velocity scale below is exact at 60Hz. */
 const SUBSTEP_MS = 1000 / 60
 
-/** Sub-steps to settle the density for a static (reduced-motion) redraw. The warm-start
- *  seeds particles field-wide, so the raw splat is populated from step 1 and the obstacle
- *  carve-outs settle in the particle distribution within ~40 steps; the temporal low-pass
- *  (`STEADY` 0.03/step) then tops the amplitude up to `(1 - 0.03)^120 ≈ 2.6%` residual by
- *  120 — the VISIBLE structure is fully converged and the last few % of a 0.5-alpha layer
- *  is imperceptible. Bounded (never open-ended). NOTE: this is a SYNCHRONOUS ~350ms block
- *  per entity-count change (each sub-step ≈ 2.8ms × 4800 particles); see the C3 report —
- *  a chunked / dsm-seeded settle is the production follow-up if that block is felt. */
-const SETTLE_STEPS = 120
+/** TOTAL sub-steps one static (reduced-motion) settle converges over — the same 120 the
+ *  old synchronous settle ran (`STEADY` 0.03/step → ~2.6% residual), and the same count
+ *  the animated path effectively integrates. The myth-9w7mw fix changes WHERE they run,
+ *  not how many: `SETTLE_STEPS` of them stay synchronous (below), the rest mature in the
+ *  background (`fog-converge`), so the per-event main-thread block collapses from ~340ms
+ *  to ~a frame while the RESTING frame stays the genuinely converged field. */
+const SETTLE_BUDGET = 120
+
+/** SYNCHRONOUS sub-steps per static settle, run before `settleDensity` (the dsm=dens
+ *  seed) snaps the temporal low-pass to converged amplitude for the INSTANT frame. The
+ *  population snap already places particles in the steady band-wide spread
+ *  (`settlePopulation`), so all the instant frame still needs real steps for is the
+ *  OBSTACLE keep-out: the first advect projects every particle out of the EXR capsules
+ *  (probe-measured: the projected rim then matches the settled flow's own stagnation
+ *  bulge), and the second is margin that lets that rim relax before the sample is
+ *  taken. ~3ms at reference dims. The remaining `SETTLE_BUDGET - SETTLE_STEPS` run
+ *  chunked off the paint path — the converged STRUCTURE (the turbulence-organized
+ *  streaks, the inflow→outflow gradient) only develops through real advection, which
+ *  no instantaneous seed can fake. */
+const SETTLE_STEPS = 2
+
+/** Background sub-steps per convergence macrotask (`fog-converge`): 2 ≈ 3ms at
+ *  reference dims on desktop — each chunk stays well under a frame budget even on a
+ *  several-fold-slower phone. */
+const CONVERGE_CHUNK_STEPS = 2
 
 /** Floor on the frame dt (ms) so the per-sub-step velocity scale can't divide by ~0. */
 const MIN_DT_MS = 1
@@ -254,6 +271,9 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // Latest props the imperative closures read (useLatest idiom): refs so the rAF loop
   // always sees current values without re-binding every render.
   const simRef = useRef<FogSim | null>(null)
+  // The reduced-motion background convergence worker (myth-9w7mw) — created on the
+  // first static settle, cancelled on unmount / a flip back to motion.
+  const convergenceRef = useRef<FogConvergence | null>(null)
   const entitiesRef = useRef(entities)
   const entitiesSourceRef = useRef(entitiesSource)
   const shownRef = useRef(shownEntities)
@@ -351,7 +371,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     [syncFogDims],
   )
 
-  const getSim = useCallback((): FogSim => {
+  const getSim = useCallback((staticBirth: boolean): FogSim => {
     if (simRef.current === null) {
       simRef.current = createFogSim({
         width: virtualRef.current.width,
@@ -361,25 +381,37 @@ export function useFogCanvas(params: FogCanvasParams): void {
       // then the snap retires down to the mount-time target — so a LATE mount (a
       // player re-entering a well-underway generation, or the drained end state)
       // starts at the population the drain would have reached, not full fog that
-      // then spends ~20s blowing off.
+      // then spends ~20s blowing off. A REDUCED-MOTION birth re-arms the WHOLE
+      // population first (retire-all, so the snap below revives through fog-sim's
+      // band-wide static placement): the on-canvas warm start over-concentrates the
+      // in-grid mass by the spawn-band fraction vs the steady distribution — the
+      // animated path relaxes that away over its first seconds; a static frame
+      // can't (`bandStartSlot`). A sim that already exists (a mid-session reduced-
+      // motion flip) is already steady-spread and is never re-armed.
+      if (staticBirth) simRef.current.settlePopulation(0)
       simRef.current.settlePopulation(fogSpawnScale(shownRef.current, totalRef.current))
     }
     return simRef.current
   }, [])
 
   // Reduced motion: snap the population to the CURRENT spawn scale (a static settle
-  // has no wind-time to drain through — `settlePopulation`), step the sim to
-  // convergence against the current obstacles, then paint a single static frame.
-  // Re-runs on any entity-count / density change (the effect deps), so the
-  // drain-with-entities PROGRESS signal is preserved — a static sample of the scaled
-  // population, not a blanket freeze.
+  // has no wind-time to drain through — `settlePopulation`), run the few sub-steps
+  // the keep-out needs against the current obstacles, snap the smoothed density to
+  // converged amplitude (`settleDensity`, the dsm=dens seed), and paint the INSTANT
+  // frame — drain level + label carve-outs correct within ~a frame of the change.
+  // The settle's remaining sub-steps then mature OFF the paint path (`fog-converge`,
+  // real physics in background macrotasks) and the completion repaint swaps in the
+  // genuinely converged field, so every RESTING frame matches what the old ~340ms
+  // blocking settle produced. Re-runs on any entity-count / density change (the
+  // effect deps) — each re-settle supersedes a mid-flight convergence with a fresh
+  // budget, exactly as each old settle ran its own full 120 sub-steps.
   const settleStatic = useCallback((): void => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d') ?? null
     if (canvas === null || ctx === null) return
     applyFogSize(canvas, ctx)
     labelFontRef.current ||= resolveLabelFont(canvas)
-    const sim = getSim()
+    const sim = getSim(true)
     const scale = fogSpawnScale(shownRef.current, totalRef.current)
     sim.settlePopulation(scale)
     // Positions are static during a settle, so the obstacles (vx/vy = 0) are built ONCE
@@ -389,7 +421,29 @@ export function useFogCanvas(params: FogCanvasParams): void {
       sim.step(SUBSTEP_MS, obstacles, scale)
       simTimeRef.current += SUBSTEP_MS / 1000
     }
+    sim.settleDensity(obstacles)
     repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
+    convergenceRef.current ??= createFogConvergence({
+      stepMs: SUBSTEP_MS,
+      budget: SETTLE_BUDGET - SETTLE_STEPS,
+      chunkSteps: CONVERGE_CHUNK_STEPS,
+    })
+    convergenceRef.current.request({
+      sim,
+      obstacles,
+      // Live scale: an arrival mid-budget re-settles (superseding this order), but
+      // the in-flight chunks stay drain-correct against the current count anyway.
+      scale: () => fogSpawnScale(shownRef.current, totalRef.current),
+      onSubStep: () => {
+        simTimeRef.current += SUBSTEP_MS / 1000
+      },
+      // The completion repaint: the REAL low-pass after the full budget — converged
+      // texture, current camera/density. The ctx is captured from this settle; the
+      // worker is cancelled on unmount, so a stale capture never paints.
+      onDone: () => {
+        repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
+      },
+    })
   }, [canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
 
   // Repaint the CURRENT settled state at the current camera — the reduced-motion
@@ -422,6 +476,16 @@ export function useFogCanvas(params: FogCanvasParams): void {
     settleStatic()
   }, [reducedMotion, entities, shownEntities, totalEntities, density, dimsKey, settleStatic])
 
+  // The background convergence's OWNER: stop it cold on unmount and on a reduced-
+  // motion → motion flip (React runs cleanups before the next effects, so the rAF
+  // loop — whose real stepping IS the convergence — never overlaps a live worker).
+  useEffect(() => {
+    if (!reducedMotion) return
+    return () => {
+      convergenceRef.current?.cancel()
+    }
+  }, [reducedMotion])
+
   // Reduced-motion camera moves (T1b): a manual pan / arrival snap has no rAF loop to
   // pick it up — subscribe to the shared camera's discrete mutations and re-render the
   // settled state at the new position (the graph's static painter does the same, so
@@ -451,7 +515,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
     if (canvas === null || ctx === null) return
     applyFogSize(canvas, ctx)
     labelFontRef.current ||= resolveLabelFont(canvas)
-    return startFogLoop(ctx, getSim(), {
+    return startFogLoop(ctx, getSim(false), {
       getEntities: currentEntities,
       shownRef,
       totalRef,
