@@ -21,12 +21,35 @@ export interface WikiFact {
   readonly content: string
 }
 
+/** One relationship edge as the snapshot carries it — mirrors the graph's
+ *  `WorldGenRelationshipSchema` (the known-tier edges Phase A put on the
+ *  world-snapshot wire). The wiki reads these to build RELATED links. */
+export interface WikiRelationship {
+  readonly sourceEntityId: string
+  readonly targetEntityId: string
+  readonly relationshipType: string
+}
+
+/** A RELATED cross-link on an entity's page: the OTHER endpoint of a
+ *  relationship, its id resolved to a display `name`, and the de-snaked
+ *  `relationshipType` as the `label`. */
+export interface WikiRelatedLink {
+  readonly entityId: string
+  readonly name: string
+  readonly label: string
+}
+
 /** One browsable entity. `children` is present only for a location that
- *  contains nested locations (omitted for leaves and non-location kinds). */
+ *  contains nested locations (omitted for leaves and non-location kinds).
+ *  `related` are the tiered relationship cross-links (both directions);
+ *  `hasBody` flags whether the composed known-tier facts are non-empty (the
+ *  wiki renders an empty-body entity as a bare page). */
 export interface WikiEntity {
   readonly id: string
   readonly name: string
   readonly facts: readonly WikiFact[]
+  readonly related: readonly WikiRelatedLink[]
+  readonly hasBody: boolean
   readonly children?: readonly WikiEntity[]
 }
 
@@ -41,11 +64,27 @@ export interface WikiViewModel {
 }
 
 /**
+ * The snapshot the wiki normalizes: the contract's known-tier `WorldSnapshot`
+ * WIDENED with the graph's relationship edges — the same superset the
+ * world-snapshot endpoint already returns as `WorldGenSnapshot` (client-core
+ * `api/campaigns`). `relationships` is OPTIONAL by design: a narrower source
+ * (a snapshot without edges) still normalizes to a wiki with no RELATED links
+ * rather than crashing, mirroring the module's defensive posture toward
+ * tier-filtered / absent data. Declared here (not on the contract) so the pure
+ * normalizer stays free of the api-layer type; a plain `WorldSnapshot` value is
+ * still assignable, so the existing D3 caller and the wide endpoint source both
+ * fit.
+ */
+export type WikiSnapshot = WorldSnapshot & {
+  readonly relationships?: readonly WikiRelationship[]
+}
+
+/**
  * The injected data-source SEAM. The consumer (D3) supplies the owner's
  * `getWorldSnapshot`; MYT-94 supplies a character-scoped server source through
  * the SAME type. The normalizer never fetches — it is handed a snapshot.
  */
-export type WikiDataSource = () => Promise<WorldSnapshot>
+export type WikiDataSource = () => Promise<WikiSnapshot>
 
 // World-lore group order. 'pc' is intentionally absent — a player character is
 // not world lore, so pc entities are omitted from the wiki (they never appear
@@ -68,6 +107,49 @@ function indexFactsByEntity(snapshot: WorldSnapshot): Map<string, readonly WikiF
   }
   for (const bucket of byEntity.values()) {
     bucket.sort((a, b) => a.id.localeCompare(b.id))
+  }
+  return byEntity
+}
+
+/** De-snake a snake_case relationship type into a display label: underscores →
+ *  spaces (`warded_by` → "warded by"). Mechanical string work (ZFC-safe), no
+ *  semantics — the reverse direction reuses the SAME label (v1: symmetric). */
+function deSnake(relationshipType: string): string {
+  return relationshipType.replace(/_/g, ' ')
+}
+
+/**
+ * entityId → its RELATED links, BOTH directions. Each edge contributes a link
+ * on both endpoints' pages (A lists B, B lists A) with the SAME de-snaked
+ * label. An endpoint missing from the snapshot's entity set (tier-filtered
+ * away — shouldn't happen per the tiering design, but handled defensively) is
+ * DROPPED silently rather than surfacing a nameless link. Links are ordered
+ * deterministically by target name, then id, then label.
+ */
+function indexRelatedByEntity(
+  snapshot: WikiSnapshot,
+  nameById: ReadonlyMap<string, string>,
+): Map<string, readonly WikiRelatedLink[]> {
+  const byEntity = new Map<string, WikiRelatedLink[]>()
+  const add = (ownerId: string, otherId: string, label: string): void => {
+    const otherName = nameById.get(otherId)
+    if (otherName === undefined) return // endpoint tier-filtered away → drop
+    const bucket = byEntity.get(ownerId) ?? []
+    bucket.push({ entityId: otherId, name: otherName, label })
+    byEntity.set(ownerId, bucket)
+  }
+  for (const rel of snapshot.relationships ?? []) {
+    const label = deSnake(rel.relationshipType)
+    add(rel.sourceEntityId, rel.targetEntityId, label)
+    add(rel.targetEntityId, rel.sourceEntityId, label)
+  }
+  for (const bucket of byEntity.values()) {
+    bucket.sort(
+      (a, b) =>
+        a.name.localeCompare(b.name) ||
+        a.entityId.localeCompare(b.entityId) ||
+        a.label.localeCompare(b.label),
+    )
   }
   return byEntity
 }
@@ -123,15 +205,19 @@ function toEntityNode(
   entity: WorldSnapshotEntity,
   layout: Layout,
   factsByEntity: ReadonlyMap<string, readonly WikiFact[]>,
+  relatedByEntity: ReadonlyMap<string, readonly WikiRelatedLink[]>,
 ): WikiEntity {
+  const facts = factsByEntity.get(entity.id) ?? []
   const base: WikiEntity = {
     id: entity.id,
     name: entity.name,
-    facts: factsByEntity.get(entity.id) ?? [],
+    facts,
+    related: relatedByEntity.get(entity.id) ?? [],
+    hasBody: facts.length > 0,
   }
   const kids = layout.childrenByParent.get(entity.id) ?? []
   if (kids.length === 0) return base
-  return { ...base, children: kids.map((k) => toEntityNode(k, layout, factsByEntity)) }
+  return { ...base, children: kids.map((k) => toEntityNode(k, layout, factsByEntity, relatedByEntity)) }
 }
 
 /**
@@ -140,14 +226,19 @@ function toEntityNode(
  * entity's facts. Deterministic throughout. Does NO tier filtering — see the
  * enforced-ignorance note at the top of this module.
  */
-export function toWikiViewModel(snapshot: WorldSnapshot): WikiViewModel {
+export function toWikiViewModel(snapshot: WikiSnapshot): WikiViewModel {
   const factsByEntity = indexFactsByEntity(snapshot)
+  const nameById = new Map(snapshot.entities.map((e) => [e.id, e.name]))
+  const relatedByEntity = indexRelatedByEntity(snapshot, nameById)
   const layout = layOut(snapshot)
   const groups: WikiGroup[] = []
   for (const kind of KIND_ORDER) {
     const roots = layout.rootsByKind.get(kind) ?? []
     if (roots.length === 0) continue
-    groups.push({ kind, entities: roots.map((e) => toEntityNode(e, layout, factsByEntity)) })
+    groups.push({
+      kind,
+      entities: roots.map((e) => toEntityNode(e, layout, factsByEntity, relatedByEntity)),
+    })
   }
   return { groups }
 }
