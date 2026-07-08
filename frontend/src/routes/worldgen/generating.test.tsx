@@ -257,6 +257,30 @@ describe('GeneratingView — reduced-motion wiring (act two)', () => {
   })
 })
 
+describe('GeneratingView — act two rides the FullBleedStage (MYT-89 audit v2)', () => {
+  // The OTHER half of the inset coupling: app-frame.test.tsx pins the AppFrame
+  // content box at `p-[var(--space-6)]`; this pins the act-two stage's bleed to
+  // the SAME token. If the route's `inset={6}` drifts (or the stage stops
+  // bleeding), the graph silently stops being edge-to-edge on phones without
+  // any other test noticing — this is that tripwire. FullBleedStage is REAL
+  // here (only WorldGenGraph is spied).
+
+  it('narrow viewport: the stage bleeds exactly the frame inset (--space-6)', () => {
+    // mockMatchMedia reports matches:false for every non-reduced-motion query —
+    // including the wide-viewport `(min-width: 640px)` read — so this renders
+    // the NARROW regime, where the stage's bleed branch is live.
+    mockMatchMedia(false)
+    renderWatching()
+    expect(screen.getByTestId('worldgen-generating').className).toContain('-m-[var(--space-6)]')
+  })
+
+  it('no matchMedia (wide/SSR default): the stage is a plain block — no bleed', () => {
+    if (typeof window !== 'undefined') Reflect.deleteProperty(window, 'matchMedia')
+    renderWatching()
+    expect(screen.getByTestId('worldgen-generating').className).not.toContain('-m-')
+  })
+})
+
 describe('GeneratingView — gated generation (§3.4)', () => {
   it('renders the graph GATED — interactive={false}, no C5 bridge', () => {
     mockMatchMedia(false)

@@ -11,7 +11,9 @@ import { i18n } from '../i18n/config.ts'
 // cancels EXACTLY this padding to render the world-gen graph edge-to-edge on
 // phones — if the frame's content padding moves off step 6, the stage stops
 // being full-bleed (or over-bleeds past the frame edge) and the pair must be
-// changed TOGETHER. This test is the tripwire for that coupling.
+// changed TOGETHER. This test is the frame-side tripwire; the route-side twin
+// (generating.test.tsx › "act two rides the FullBleedStage") pins the stage's
+// bleed to the same token.
 
 function renderFrame(): void {
   const router = createMemoryRouter([

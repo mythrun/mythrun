@@ -91,6 +91,13 @@ export function DevCostTicker(): React.JSX.Element | null {
         position: 'fixed',
         right: 8,
         bottom: 8,
+        // On narrow (phone-class) viewports the world-gen status footer owns the
+        // bottom edge (MYT-89 audit v2, a ~58px bar at the fold) — lift the ticker
+        // clear of it so dev phone audits can read the percent/countdown. Inline
+        // styles can't carry a media query, so the sibling <style> below overrides
+        // `bottom` under 640px (the DS's one narrow boundary); !important because
+        // this inline declaration wins otherwise. Dev-only chrome — a hardcoded
+        // clearance (footer 58px + air) is fine here.
         zIndex: 2147483647,
         display: 'flex',
         alignItems: 'center',
@@ -105,6 +112,7 @@ export function DevCostTicker(): React.JSX.Element | null {
         pointerEvents: 'auto',
       }}
     >
+      <style>{`@media (max-width: 639.98px) { [data-testid="dev-cost-ticker"] { bottom: 74px !important; } }`}</style>
       <span data-testid="dev-cost-ticker-value">API {display}</span>
       <button
         type="button"
