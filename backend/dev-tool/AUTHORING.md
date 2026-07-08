@@ -64,60 +64,73 @@ The harness does not click buttons or simulate user actions for action-only pane
 
 Maintained as a table here. The verifier subagent updates this section on each run.
 
-As of the myth-mbdc reorg, every (endpoint × method) gets its own
-single-purpose panel — no composite multi-route panels. The shell mounts
-exactly one panel into mainPane based on the sidebar leaf the user picks;
-panel modules self-register via `registerPanelMount(method, path, fn)`
-on import.
+As of the myth-0smu reorg, the sidebar is 6 entity-scoped **workflow pages**
+(campaigns, world, characters, users, billing, system), each composing several
+single-purpose panels. `main.ts` mounts exactly one page into mainPane based on
+the sidebar workflow the user picks; `PAGE_REGISTRY` in `verify-registry.ts`
+declares each page's panel list, and `PANEL_EXERCISES` records which backend
+route(s) each panel id covers (the route-exhaustion invariant unions those). The
+`Page` column below is the workflow page whose composition includes the panel.
 
-| Backend route | Panel | Pattern |
+| Backend route | Panel | Page |
 |---|---|---|
-| GET /health | health-live | fetch-on-mount |
-| GET /health/ready | health-ready | fetch-on-mount |
+| GET /health | health-live | system |
+| GET /health/ready | health-ready | system |
 | POST /api/users/register | (exempt — exercised by harness bootstrap + main.ts self-bootstrap) | — |
 | GET /api/users/check-username | (exempt — probe-helper embedded in register flow; backend tests exercise it) | — |
-| GET /api/users/me | users | action-only |
-| POST /api/campaigns | campaign-create | action-only |
-| GET /api/campaigns/mine | my-campaigns | fetch-on-mount |
-| GET /api/campaigns/:campaignId | campaign-details | event-driven |
-| DELETE /api/campaigns/:campaignId | campaign-delete | action-only |
-| PATCH /api/campaigns/:campaignId/name | campaign-rename | action-only |
-| POST /api/campaigns/:campaignId/resume | campaign-resume | action-only |
-| POST /api/campaigns/:campaignId/archive | campaign-archive | action-only |
-| GET /api/campaigns/:campaignId/status | status | action-only |
-| GET /api/campaigns/:campaignId/status/stream | status, live-events | action-only |
-| GET /api/campaigns/:campaignId/world-snapshot | world-snapshot | fetch-on-mount |
-| GET /api/campaigns/:campaignId/hierarchy | hierarchy | fetch-on-mount |
-| GET /api/campaigns/:campaignId/random-tables | random-tables | fetch-on-mount |
-| POST /api/campaigns/:campaignId/start-character-creation | start-character-creation | action-only |
-| POST /api/campaigns/:campaignId/characters | submit-character-concept | action-only |
-| GET /api/campaigns/:campaignId/characters | characters-roster | action-only |
-| GET /api/campaigns/:campaignId/characters/:charId | character-view | action-only |
-| GET /api/campaigns/:campaignId/starting-situations | starting-situations | action-only |
-| POST /api/campaigns/:campaignId/starting-situation | situation-pick | action-only |
-| GET /api/campaigns/:campaignId/character-creation-progress | character-creation-progress | action-only |
-| POST /api/campaigns/:campaignId/finalize-character-creation | finalize-character-creation | action-only |
-| GET /api/campaigns/:campaignId/members | members | action-only |
-| POST /api/campaigns/:campaignId/invites | invites | action-only |
-| GET /api/campaigns/:campaignId/invites | invites-list | action-only |
-| DELETE /api/campaigns/:campaignId/invites/:inviteCode | invite-revoke | action-only |
-| GET /api/invites/:inviteCode/preview | invite-preview | action-only |
-| POST /api/invites/:inviteCode/accept | invite-accept | action-only |
-| POST /api/sessions/:id/ws-ticket | session-ticket | action-only |
-| POST /api/sessions/:id/start | session-start | action-only |
-| GET /api/sessions/:id/active | session-active | action-only |
-| GET /api/sessions/:id/messages | session-messages | action-only |
-| GET /ws/session/:sessionId | (exempt — WS upgrade handshake, not a fetch-able HTTP endpoint; no JSDOM socket transport) | — |
-| GET /api/billing/skus | skus | action-only |
-| GET /api/billing/subscription | subscription | action-only |
-| GET /api/billing/balance | balance | action-only |
-| GET /api/billing/history | history | action-only |
-| POST /api/billing/checkout | checkout | action-only |
-| POST /api/billing/portal | portal | action-only |
-| POST /api/billing/upgrade-tier | upgrade-tier | action-only |
-| POST /api/dev/credits/grant | dev-credits-grant | action-only |
-| GET /api/dev/credits/me | dev-credits-me | action-only |
-| POST /api/dev/campaigns/:campaignId/fire-turn | fire-turn | action-only |
+| GET /api/users/me | users | users |
+| POST /api/campaigns | campaign-create | campaigns |
+| POST /api/campaigns/synthesize-preview | campaign-create | campaigns |
+| POST /api/campaigns/preview/:previewId/rework | campaign-create | campaigns |
+| GET /api/campaigns/mine | my-campaigns | campaigns |
+| GET /api/campaigns/:campaignId | campaign-details | campaigns |
+| DELETE /api/campaigns/:campaignId | campaign-delete | campaigns |
+| PATCH /api/campaigns/:campaignId/name | campaign-rename | campaigns |
+| POST /api/campaigns/:campaignId/resume | campaign-resume | campaigns |
+| POST /api/campaigns/:campaignId/archive | campaign-archive | campaigns |
+| GET /api/campaigns/:campaignId/status | status | world |
+| GET /api/campaigns/:campaignId/status/stream | status, live-events | world |
+| GET /api/campaigns/:campaignId/prep-status | (exempt — phase-only prep SSE; frontend loading screen + dev-tool drawer, no JSDOM page panel; E2E via MYT-64) | — |
+| GET /api/campaigns/:campaignId/world-snapshot | world-snapshot | world |
+| GET /api/campaigns/:campaignId/wiki | (exempt — player-facing campaign wiki; a Frontend ticket owns the UI, no dev-tool panel) | — |
+| GET /api/campaigns/:campaignId/transcript/search | (exempt — player-facing transcript FTS; a Frontend ticket owns the search box, no dev-tool panel) | — |
+| GET /api/campaigns/:campaignId/hierarchy | hierarchy | world |
+| GET /api/campaigns/:campaignId/random-tables | random-tables | world |
+| POST /api/campaigns/:campaignId/session-prep | session-prep-trigger | world |
+| GET /api/campaigns/:campaignId/session-preps | session-preps-list | world |
+| GET /api/campaigns/:campaignId/session-preps/:prepId | session-prep-view | world |
+| POST /api/campaigns/:campaignId/reset-prep | session-prep-reset | world |
+| GET /api/worldgen/stage-timings | (exempt — global stage-timing averages for the generation loading-bar ETA; a Frontend ticket owns the UI, no dev-tool panel) | — |
+| POST /api/campaigns/:campaignId/characters | submit-character-concept | characters |
+| GET /api/campaigns/:campaignId/characters | characters-roster | characters |
+| GET /api/campaigns/:campaignId/characters/:charId | character-view | characters |
+| GET /api/campaigns/:campaignId/starting-situations | starting-situations | characters |
+| POST /api/campaigns/:campaignId/starting-situation | situation-pick | characters |
+| GET /api/campaigns/:campaignId/character-creation-progress | character-creation-progress | characters |
+| POST /api/campaigns/:campaignId/finalize-character-creation | finalize-character-creation | characters |
+| GET /api/campaigns/:campaignId/members | members | characters |
+| POST /api/campaigns/:campaignId/invites | invites | users |
+| GET /api/campaigns/:campaignId/invites | invites-list | users |
+| DELETE /api/campaigns/:campaignId/invites/:inviteCode | invite-revoke | users |
+| GET /api/invites/:inviteCode/preview | invite-preview | users |
+| POST /api/invites/:inviteCode/accept | invite-accept | users |
+| POST /api/sessions/:id/ws-ticket | session-ticket | system |
+| POST /api/sessions/:id/start | session-start | system |
+| GET /api/sessions/:id/active | session-active | system |
+| GET /api/sessions/:id/messages | session-messages | system |
+| GET /ws/session/:sessionId | combat (MYT-75 T10 — L1 inspector; mounts `ready` synchronously, opens the live socket only on Connect click, so the JSDOM harness never reaches the socket) | system |
+| GET /api/billing/skus | skus | billing |
+| GET /api/billing/subscription | subscription | billing |
+| GET /api/billing/balance | balance | billing |
+| GET /api/billing/history | history | billing |
+| POST /api/billing/checkout | checkout | billing |
+| POST /api/billing/portal | portal | billing |
+| POST /api/billing/upgrade-tier | upgrade-tier | billing |
+| POST /api/dev/credits/grant | dev-credits-grant | billing |
+| GET /api/dev/credits/me | dev-credits-me | billing |
+| POST /api/dev/campaigns/:campaignId/fire-turn | fire-turn | system |
+| GET /api/dev/campaigns/:campaignId/prep-prose | (exempt — live prose SSE in the wire-log drawer, not a JSDOM page panel; E2E via MYT-64) | — |
+| GET /api/dev/api-cost | (exempt — dev/staging API-cost ticker; consumer is the DevCostTicker widget in the main web app, no dev-tool panel) | — |
 | POST /webhooks/stripe | (exempt — Stripe-signed consumer, no human UI possible) | — |
 
 Routes that intentionally have no UI panel live in `EXEMPT_ROUTES` in
@@ -245,8 +258,8 @@ You may NOT run:
 
      **Canonical smoke flow (only when E2E: required):**
      1. Resolve the dev sub via the dev tool's identity bootstrap (the same mechanism `backend/dev-tool/src/main.ts` uses — read it; the header is `x-mythrun-dev-sub`).
-     2. POST `/api/campaigns` with the body shape required by `CreateCampaignBodySchema` (see `backend/src/routes/campaigns.ts`): a discriminated `{world: {kind: 'new', source: {mode: 'freeform', concept: <≥20-char prompt>}}}`. As of myth-4lhr the name is NOT a body field — campaigns are inserted with a placeholder name and `concept_intake` auto-names from the LLM. Example concept: "a port city where wizards trade secrets for moonlight." Assert HTTP 201 + a campaign id + a world id in the response. If the response is not 201, inspect the body, root-cause the failure, fix or escalate. Do not proceed.
-     3. Open the SSE stream at `/api/campaigns/:campaignId/status/stream`. Read events until a terminal phase event (`world_snapshot_ready`, `world_ready`, or `failed`) arrives within a 3-minute budget. Tee the stream to a log so you can inspect event ordering on failure.
+     2. POST `/api/campaigns` with the body shape required by `CreateCampaignBodySchema` (see `backend/src/routes/campaigns.ts`): a discriminated `{world: {kind: 'new', source: {mode: 'freeform', concept: <≥20-char prompt>}}}`. As of myth-4lhr the name is NOT a body field — campaigns are inserted with a placeholder name and `concept_intake` auto-names from the LLM. Example concept: "a port city where wizards trade secrets for moonlight." Assert HTTP 201 + a campaign id in the response body (the response is `{campaignId}` only — the world id is NOT returned; resolve it from Postgres via `SELECT world_id FROM campaigns WHERE id=…` for the later DB checks). If the response is not 201, inspect the body, root-cause the failure, fix or escalate. Do not proceed.
+     3. Open the SSE stream at `/api/campaigns/:campaignId/status/stream` (tee to a log). **Terminal-state budget (updated 2026-07-08):** the real Opus pipeline now takes ~10–11 minutes to reach `world_snapshot_ready`/`world_ready` — the old 3-minute terminal budget is NOT achievable by waiting on the stream. Instead: (a) verify wire **liveness** within a ~2-minute budget — the stream opens, emits the initial `event: snapshot`, and pushes at least one incremental transition (`stage-completed` / `stage-started` / `cost-update`; note these arrive as bare `data:` events with no `event:` line, so don't grep only for `event:`), and `pipeline_runs` rows begin advancing with a fresh `credit_ledger` debit; then (b) corroborate **terminal** state from an already-completed world on the same code tree via psql (`worlds.status='complete'` with all pipeline stages `completed`, 0 failed, 0 stuck). Optionally let your own world run to completion in the background and re-check it before reporting. Report the liveness evidence + the corroborating terminal world.
      4. Query Postgres directly for:
         - `worlds.status` for the new world id — must be the terminal state matching the SSE event. Not `pending`, not `null`, not stuck mid-pipeline.
         - `pipeline_runs` entries for the new world id — every stage that fired should be `completed` or `failed` with a reason; no rows stuck `in_progress`.
