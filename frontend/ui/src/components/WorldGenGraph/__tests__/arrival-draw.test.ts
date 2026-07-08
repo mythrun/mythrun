@@ -272,16 +272,21 @@ describe('drawNodes — arrival gating (trace, then stamp)', () => {
   })
 
   it('mid-trace suppresses the selection frame too (the stamp is one beat)', () => {
+    // The frame is a strokeRect — asserted through the recorder's strokeRect log
+    // (the location glyph itself never strokeRects, so any entry IS the frame).
     const r = recorder()
     drawNodes(r.ctx, [arriving], positions, { ...deco(), selectedKey: arriving.displayId }, () => 0.5)
-    expect(r.strokes).toBe(1) // only the trace stroke — no strokeRect frame
+    expect(r.strokeRects).toEqual([]) // no frame mid-trace…
+    expect(r.strokes).toBe(1) // …only the trace penstroke
   })
 
   it('at completion the glyph, the label, and the frame land together', () => {
     const r = recorder()
-    drawNodes(r.ctx, [arriving], positions, deco(), () => 1)
+    drawNodes(r.ctx, [arriving], positions, { ...deco(), selectedKey: arriving.displayId }, () => 1)
     expect(r.rects.length).toBe(1) // the location square is filled
     expect(r.texts).toEqual([arriving.name]) // the name lands on the same beat
+    // …and the selection frame with them: GLYPH_HALF 6 + SELECT_FRAME_PAD 5 → ±11.
+    expect(r.strokeRects).toEqual([{ x: -11, y: -11, w: 22, h: 22 }])
   })
 
   it('omitting the progress source draws every node FULL (the pre-treatment default)', () => {

@@ -27,6 +27,10 @@ export interface Recorder {
   /** Every `fillRect` call — the glyph geometry, so a test can assert the hover/focus
    *  raise actually scales the drawn shape. */
   rects: { x: number; y: number; w: number; h: number }[]
+  /** Every `strokeRect` call — the selection FRAME and the stroked glyph rings
+   *  (world/campaign frames, the pc ring), so a test can assert a frame's real
+   *  presence/absence (the arrival trace must suppress it mid-trace). */
+  strokeRects: { x: number; y: number; w: number; h: number }[]
   /** Every `strokeText` call — the paper HALO under each label (density redesign). */
   strokeTexts: { text: string; x: number; y: number }[]
 }
@@ -41,6 +45,7 @@ export function recorder(): Recorder {
     fillTexts: [],
     fonts: [],
     rects: [],
+    strokeRects: [],
     strokeTexts: [],
     ctx: undefined as unknown as CanvasRenderingContext2D,
   }
@@ -63,6 +68,9 @@ export function recorder(): Recorder {
     },
     fillRect: (x: number, y: number, w: number, h: number) => {
       r.rects.push({ x, y, w, h })
+    },
+    strokeRect: (x: number, y: number, w: number, h: number) => {
+      r.strokeRects.push({ x, y, w, h })
     },
     strokeText: (text: string, x: number, y: number) => {
       r.strokeTexts.push({ text, x, y })
