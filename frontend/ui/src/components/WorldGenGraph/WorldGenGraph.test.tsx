@@ -52,6 +52,21 @@ function stubGetContext(value: CanvasRenderingContext2D | null): void {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(value)
 }
 
+/** Stub `matchMedia` to a chosen viewport regime (jsdom has none). `narrow: true`
+ *  fails the wide query (`min-width: 640px`) — the phone form factor; other queries
+ *  (`pointer: fine`) report `matches` so pointer paths stay live. The MQL carries
+ *  listener no-ops (useViewportNarrow subscribes to runtime changes). */
+function stubViewport(narrow: boolean): void {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(min-width: 640px)' ? !narrow : true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  )
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -211,6 +226,78 @@ describe('WorldGenGraph — reveal (interactive) entity list', () => {
   })
 })
 
+// A minimal status payload (the layout tests only care WHERE the card renders,
+// not what it shows — the card's own tests own that).
+const STATUS = { stages: [] }
+
+describe('WorldGenGraph — narrow-viewport layout (MYT-89 audit v2: full-bleed + footer)', () => {
+  // On a phone-class viewport (< 640px — the DS's one narrow regime, the same
+  // boundary the reveal's entity list stacks at) the generation graph goes
+  // FULL-BLEED: the 16px band is dropped and the status card leaves the canvas
+  // for a compact footer BELOW the pane (no in-canvas overlay → no sim keep-out).
+  // Desktop keeps the shipped layout exactly. The flip is form-factor-driven
+  // (a media condition) — NEVER camera-engagement-driven.
+
+  it('narrow + status: the card is a FOOTER below the pane, not an in-canvas overlay', () => {
+    stubViewport(true)
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} status={STATUS} />,
+    )
+    const footer = container.querySelector('[data-variant="footer"]')
+    expect(footer).not.toBeNull()
+    expect(container.querySelector('[data-variant="overlay"]')).toBeNull()
+    // The footer lives OUTSIDE the pane box (the canvases' shared parent) — the
+    // status is page chrome now, never occluding the world.
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.contains(footer)).toBe(false)
+  })
+
+  it('narrow: the band is gone — the pane goes edge-to-edge (reaches the reveal too)', () => {
+    stubViewport(true)
+    stubGetContext(null)
+    const { container } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    const band = container.querySelector('canvas')?.parentElement?.parentElement
+    expect(band?.className).not.toMatch(/p-\[var\(--space-4\)\]/)
+  })
+
+  it('narrow + status: the pane FLEXES to fill the stage instead of the viewport clamp', () => {
+    stubViewport(true)
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} status={STATUS} />,
+    )
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.className).toMatch(/flex-1/)
+    expect(pane?.className).not.toMatch(/clamp/)
+  })
+
+  it('narrow WITHOUT status (the reveal): no footer, and the clamp height stays', () => {
+    stubViewport(true)
+    stubGetContext(null)
+    const { container } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
+    expect(container.querySelector('[data-variant="footer"]')).toBeNull()
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.className).toMatch(/clamp/)
+  })
+
+  it('desktop + status: the shipped layout exactly — overlay in the pane, band on, no footer', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} status={STATUS} />,
+    )
+    const overlay = container.querySelector('[data-variant="overlay"]')
+    expect(overlay).not.toBeNull()
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.contains(overlay)).toBe(true)
+    expect(container.querySelector('[data-variant="footer"]')).toBeNull()
+    const band = pane?.parentElement
+    expect(band?.className).toMatch(/p-\[var\(--space-4\)\]/)
+    expect(pane?.className).toMatch(/clamp/)
+  })
+})
+
 describe('WorldGenGraph — motion contract', () => {
   it('reducedMotion renders WITHOUT starting a requestAnimationFrame loop', () => {
     stubGetContext(fakeCtx())
@@ -269,8 +356,9 @@ describe('WorldGenGraph — generation labels + drag (MYT-89 audit #3 / #5)', ()
   })
 
   it('attaches Canvas pointer handlers DURING generation (drag decoupled from #5)', () => {
-    // A fine pointer is required for Canvas drag; jsdom has no matchMedia, so stub it.
-    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }))
+    // A fine pointer is required for Canvas drag; jsdom has no matchMedia, so stub it
+    // (wide regime — the shipped desktop layout; `pointer: fine` matches).
+    stubViewport(false)
     stubGetContext(fakeCtx())
     vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
     const addSpy = vi.spyOn(HTMLCanvasElement.prototype, 'addEventListener')

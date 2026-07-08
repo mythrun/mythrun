@@ -21,6 +21,7 @@ import {
   MAX_DENSITY_TOTAL,
   type FixtureArrival,
 } from './max-density-fixture.ts'
+import { FullBleedStage } from '../FullBleedStage/FullBleedStage.tsx'
 import { WorldGenGraph } from './WorldGenGraph.tsx'
 
 // WorldGenGraph — the live streaming graph shown during world generation. The GENERATION
@@ -266,6 +267,75 @@ export const MaxDensityReduced: Story = {
   render: () => (
     <StreamingDemo reducedMotion arrivals={MAX_DENSITY_ARRIVALS} totalNodes={MAX_DENSITY_TOTAL} />
   ),
+}
+
+// ── The mobile full-bleed anatomy (MYT-89 audit v2) ────────────────────────────────────
+// The COMPLETE phone-screen composition the generating route builds: a mock app-frame
+// header + `--space-6` padded content box, the FullBleedStage cancelling that inset, and
+// the graph in its narrow layout — full-bleed pane (no band), the status as a compact
+// FOOTER at the fold. VIEW AT < 640px (a 375px viewport is the audited shape); at a wide
+// viewport this renders the shipped desktop layout inside the mock frame instead (the
+// stage and the graph both flip on the same media condition).
+
+/** The realistic max-density generation inside the mock frame + stage. `freezeAt`
+ *  pins the arrival index instead of streaming — a reproducible design-review
+ *  frame (early gen: thick fog, sparse graph; mid gen: dense, camera engaged). */
+function MobileFrameDemo({ freezeAt }: { freezeAt?: number }): React.JSX.Element {
+  const [count, setCount] = useState(freezeAt ?? 1)
+  useEffect(() => {
+    if (freezeAt !== undefined || count >= MAX_DENSITY_ARRIVALS.length) return
+    const id = setTimeout(() => {
+      setCount((c) => c + 1)
+    }, MAX_DENSITY_ARRIVALS[count]?.afterMs ?? 800)
+    return () => {
+      clearTimeout(id)
+    }
+  }, [count, freezeAt])
+  const { nodes, edges } = snapshotAt(MAX_DENSITY_ARRIVALS, count)
+  return (
+    <div className="min-h-dvh bg-bg">
+      <div className="flex items-baseline justify-between border-b border-border-strong bg-surface p-[var(--space-4)] font-ui text-sm text-ink">
+        <span>[ph: wordmark]</span>
+        <span>[ph: chrome]</span>
+      </div>
+      <div className="bg-surface p-[var(--space-6)]">
+        <FullBleedStage inset={6}>
+          <WorldGenGraph
+            nodes={nodes}
+            edges={edges}
+            onSelect={() => undefined}
+            status={{
+              ...statusFor(count, MAX_DENSITY_ARRIVALS.length),
+              countdownLabel: '[ph: ~4:12 left]',
+            }}
+            totalEntities={MAX_DENSITY_TOTAL}
+            listLabel="Entities in your forming world"
+            emptyLabel="The world is still taking shape"
+          />
+        </FullBleedStage>
+      </div>
+    </div>
+  )
+}
+
+// THE phone-screen specimen: header + full-bleed graph + status footer = one screen.
+export const MobileFullBleed: Story = {
+  name: 'Mobile full-bleed + footer (view at <640px)',
+  render: () => <MobileFrameDemo />,
+}
+
+// Frozen review frames of the same anatomy — the two states the audit cares about,
+// pinned so a design pass doesn't race the 35s stream. EARLY: a handful of entities,
+// the fog thick, the camera disengaged (the world still fits the pane), the first
+// stage running in the footer. MID: dense, the camera engaged (one-finger pan), the
+// boundary stage running.
+export const MobileFullBleedEarly: Story = {
+  name: 'Mobile full-bleed, early gen (frozen)',
+  render: () => <MobileFrameDemo freezeAt={6} />,
+}
+export const MobileFullBleedMid: Story = {
+  name: 'Mobile full-bleed, mid gen (frozen)',
+  render: () => <MobileFrameDemo freezeAt={35} />,
 }
 
 /** The REVEAL variant: `interactive` turns on the accessible + selectable entity list

@@ -207,3 +207,24 @@ export const Complete: Story = {
     </Pane>
   ),
 }
+
+// FOOTER — the narrow-viewport variant (MYT-89 audit v2): on a phone the graph
+// pane goes full-bleed and the status becomes this compact full-width bar at the
+// bottom of the screen — one label + countdown + percent row over the same fixed
+// square bars; no framing caption, no absolute pinning. The specimen mocks the
+// phone anatomy: a full-bleed pane above, the footer flush at the fold.
+export const Footer: Story = {
+  render: () => (
+    <div className="mx-auto flex h-dvh max-w-[375px] flex-col bg-bg">
+      <div className="relative min-h-0 flex-1 bg-bg p-[var(--space-3)] font-ui text-xs text-ink-tertiary">
+        [ph: the full-bleed graph pane]
+      </div>
+      <WorldGenStatusCard
+        variant="footer"
+        stages={stagesAt(1)}
+        stageLabels={STAGE_LABELS}
+        countdownLabel="[ph: ~3:41 left]"
+      />
+    </div>
+  ),
+}

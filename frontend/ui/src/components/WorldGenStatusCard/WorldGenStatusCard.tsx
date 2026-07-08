@@ -43,6 +43,14 @@ import { cn } from '../../lib/cn.ts'
 // cost. The card self-positions `absolute` inside its host pane (documented on the
 // contract), is `pointer-events-none` (a readout, never intercepting graph
 // interaction), and caps its width so it fits a ~375px pane without overflow.
+//
+// TWO VARIANTS (MYT-89 audit v2 — the mobile full-bleed fix). `overlay` (default)
+// is everything above. `footer` is the narrow-viewport treatment WorldGenGraph
+// selects on phone-class viewports: the pane goes full-bleed, so the status leaves
+// the canvas and becomes a compact full-width IN-FLOW bar below it — the SAME
+// substance (running-stage label, percent, fixed bars, countdown) in one
+// label+readout row over the bars, minus the framing caption (compactness is the
+// point: the footer reclaims real estate, it doesn't relocate the card verbatim).
 
 const TOTAL_STAGES = WATCHED_ENTITY_STAGES.length // 3 — the FIXED bar count + % denominator
 
@@ -52,6 +60,19 @@ const CARD_CLASS = cn(
   'rounded-none border border-border-strong bg-surface-overlay',
   'p-[var(--space-3)]',
 )
+// The FOOTER variant (MYT-89 audit v2 — the mobile full-bleed fix): a compact
+// full-width IN-FLOW bar the graph places below the pane on narrow viewports.
+// Same paper vocabulary (square bars, ember cell, mono readouts), no absolute
+// positioning (it is page chrome, not an overlay), a top rule instead of the
+// card border, and no framing caption — one label+readout row over the bars.
+const FOOTER_CLASS = cn(
+  'flex w-full min-w-0 shrink-0 flex-col gap-[var(--space-2)]',
+  'rounded-none border-t border-border-strong bg-surface-overlay',
+  'px-[var(--space-4)] py-[var(--space-3)]',
+)
+// The footer's single readout row: the running-stage label absorbs the shrink
+// (truncate), the countdown + percent hold their width on the right.
+const FOOTER_ROW_CLASS = 'flex items-baseline gap-[var(--space-3)]'
 const TITLE_CLASS = 'font-ui text-xs text-ink-tertiary leading-none'
 const ROW_CLASS = 'flex items-baseline justify-between gap-[var(--space-2)]'
 const LABEL_CLASS = 'font-body text-sm font-medium text-ink leading-[1.3] min-w-0'
@@ -123,12 +144,28 @@ function computeProgress(stages: readonly StageProgress[]): Progress {
   return { bars, completed, percent, running, isComplete: completed === TOTAL_STAGES }
 }
 
+/** The main line: the running stage while generating, the done label at 100%, else
+ *  the first not-yet-complete canonical stage (a brief lull between stages, or the
+ *  pre-first-frame state where the stream is still empty). */
+function currentLabelFrom(
+  progress: Progress,
+  doneLabel: string,
+  stageLabels?: Readonly<Record<string, string>>,
+): string {
+  const { bars, running, isComplete } = progress
+  if (running !== undefined) return resolveStageLabel(running, stageLabels)
+  if (isComplete) return doneLabel
+  const nextIncomplete = bars.find((b) => b.state !== 'completed')?.stage
+  return nextIncomplete !== undefined ? resolveStageLabel(nextIncomplete, stageLabels) : doneLabel
+}
+
 export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardProps>(
   function WorldGenStatusCard(
     {
       stages,
       countdownLabel,
       stageLabels,
+      variant = 'overlay',
       titleLabel = '[ph: weaving your world]',
       doneLabel = '[ph: your world is ready]',
       progressLabel = '[ph: world generation progress]',
@@ -136,60 +173,64 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
     },
     ref,
   ) {
-    const { bars, percent, running, isComplete } = computeProgress(stages)
+    const progress = computeProgress(stages)
+    const currentLabel = currentLabelFrom(progress, doneLabel, stageLabels)
+    const percentText = `${String(progress.percent)}%`
 
-    // The main line: the running stage while generating, the done label at 100%, else
-    // the first not-yet-complete canonical stage (a brief lull between stages, or the
-    // pre-first-frame state where the stream is still empty).
-    const nextIncomplete = bars.find((b) => b.state !== 'completed')?.stage
-    const currentLabel = running
-      ? resolveStageLabel(running, stageLabels)
-      : isComplete
-        ? doneLabel
-        : nextIncomplete !== undefined
-          ? resolveStageLabel(nextIncomplete, stageLabels)
-          : doneLabel
-    const percentText = `${String(percent)}%`
+    // The shared pieces both variants compose: the fixed segmented bar (the ONE
+    // progressbar, carrying the AT semantics) and the aria-hidden countdown line.
+    const bar = (
+      <div
+        role="progressbar"
+        aria-label={progressLabel}
+        aria-valuenow={progress.percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext={`${currentLabel} — ${percentText}`}
+        data-testid="worldgen-status-bar"
+        className={BAR_CLASS}
+      >
+        {progress.bars.map((b) => (
+          <span
+            key={b.stage}
+            aria-hidden="true"
+            data-cell-state={b.state}
+            className={cn(cell({ state: b.state }))}
+          />
+        ))}
+      </div>
+    )
+    const countdown = countdownLabel !== undefined && (
+      <span aria-hidden="true" data-testid="worldgen-status-countdown" className={COUNTDOWN_CLASS}>
+        {countdownLabel}
+      </span>
+    )
+    const testId = dataTestId !== undefined ? { 'data-testid': dataTestId } : {}
+
+    // FOOTER (narrow viewports): one label + countdown + percent row over the bars —
+    // no caption, no absolute pinning; the graph places it below the full-bleed pane.
+    if (variant === 'footer') {
+      return (
+        <div ref={ref} {...testId} data-variant="footer" className={FOOTER_CLASS}>
+          <div className={FOOTER_ROW_CLASS}>
+            <span className={cn(LABEL_CLASS, 'flex-1 truncate')}>{currentLabel}</span>
+            {countdown}
+            <span className={PERCENT_CLASS}>{percentText}</span>
+          </div>
+          {bar}
+        </div>
+      )
+    }
 
     return (
-      <div
-        ref={ref}
-        {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
-        className={CARD_CLASS}
-      >
+      <div ref={ref} {...testId} data-variant="overlay" className={CARD_CLASS}>
         <span className={TITLE_CLASS}>{titleLabel}</span>
         <div className={ROW_CLASS}>
           <span className={LABEL_CLASS}>{currentLabel}</span>
           <span className={PERCENT_CLASS}>{percentText}</span>
         </div>
-        <div
-          role="progressbar"
-          aria-label={progressLabel}
-          aria-valuenow={percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuetext={`${currentLabel} — ${percentText}`}
-          data-testid="worldgen-status-bar"
-          className={BAR_CLASS}
-        >
-          {bars.map((b) => (
-            <span
-              key={b.stage}
-              aria-hidden="true"
-              data-cell-state={b.state}
-              className={cn(cell({ state: b.state }))}
-            />
-          ))}
-        </div>
-        {countdownLabel !== undefined && (
-          <span
-            aria-hidden="true"
-            data-testid="worldgen-status-countdown"
-            className={COUNTDOWN_CLASS}
-          >
-            {countdownLabel}
-          </span>
-        )}
+        {bar}
+        {countdown}
       </div>
     )
   },

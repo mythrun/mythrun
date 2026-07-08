@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
+import { FullBleedStage, Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
 import { ENTITY_STAGES } from '@mythrun/contract/events'
 import { remainingWaitMs, type StageTiming, type WorldGenStream } from '@mythrun/client-core'
 import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
@@ -224,9 +224,14 @@ export function GeneratingView({
     )
   }
 
-  // ACT TWO — the fog-forward gated graph.
+  // ACT TWO — the fog-forward gated graph. The stage (MYT-89 audit v2) makes the
+  // graph OWN a phone screen: on narrow viewports it cancels the AppFrame's
+  // content inset and fills the viewport below the header — nav + full-bleed
+  // pane + the graph's status footer = exactly one screen. `inset={6}` MUST
+  // match the AppFrame content Box's `padding={6}` (app-frame.test.tsx pins the
+  // pair). On wide viewports the stage is a plain block — desktop unchanged.
   return (
-    <Stack gap={4} data-testid="worldgen-generating">
+    <FullBleedStage inset={6} data-testid="worldgen-generating">
       <WorldGenGraph
         interactive={false}
         nodes={nodes}
@@ -253,6 +258,6 @@ export function GeneratingView({
         shownEntities={nodes.length}
         totalEntities={MIN_EXPECTED_ENTITIES}
       />
-    </Stack>
+    </FullBleedStage>
   )
 }

@@ -19,6 +19,9 @@ export type { GridProps } from './grid.ts'
 export type { DividerProps } from './divider.ts'
 // Responsive show/hide switch (MYT-87) — `above`/`below` a named breakpoint.
 export type { ShowProps, Breakpoint } from './show.ts'
+// Narrow-viewport full-screen stage (MYT-89 audit v2) — cancels the host frame's
+// content inset and fills the viewport below the header on phone-class viewports.
+export type { FullBleedStageProps } from './full-bleed-stage.ts'
 
 // Typography-primitive contracts (MYT-82 Wave 1b).
 export type { TextProps, TextRole } from './text.ts'

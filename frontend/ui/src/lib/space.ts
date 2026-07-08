@@ -38,6 +38,23 @@ export const PADDING_CLASS: Record<SpaceToken, string> = {
 }
 
 /**
+ * All-sides NEGATIVE margin ("bleed") utility per SpaceToken — cancels a host
+ * container's same-step padding so a child renders edge-to-edge inside a padded
+ * frame (FullBleedStage). Full literals so the scanner generates them.
+ */
+export const BLEED_CLASS: Record<SpaceToken, string> = {
+  1: '-m-[var(--space-1)]',
+  2: '-m-[var(--space-2)]',
+  3: '-m-[var(--space-3)]',
+  4: '-m-[var(--space-4)]',
+  5: '-m-[var(--space-5)]',
+  6: '-m-[var(--space-6)]',
+  7: '-m-[var(--space-7)]',
+  8: '-m-[var(--space-8)]',
+  9: '-m-[var(--space-9)]',
+}
+
+/**
  * Grid `auto-fit` track utility per SpaceToken minimum column width: each cell
  * is at least `--space-N` wide and grows to fill. Full literals so the scanner
  * generates them.

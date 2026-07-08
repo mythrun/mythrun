@@ -37,6 +37,16 @@ export type { StageProgress } from '@mythrun/contract/events'
  * player never sees API spend; the dev ticker owns cost).
  */
 export interface WorldGenStatusCardProps extends Omit<BaseProps, 'children'> {
+  /** Layout variant (MYT-89 audit v2 — the mobile full-bleed fix). `overlay`
+   *  (default) is the shipped desktop card: `absolute`, pinned top-left of the
+   *  graph pane. `footer` is the narrow-viewport treatment: a compact full-width
+   *  in-flow bar the graph places BELOW the pane (the pane goes full-bleed; the
+   *  status never hovers over the world). Same substance either way — the
+   *  running-stage label, the percent, the fixed segmented bars, the countdown —
+   *  but the footer drops the framing caption (compactness is the point).
+   *  WorldGenGraph sets this itself from its viewport regime; consumers normally
+   *  omit it. */
+  variant?: 'overlay' | 'footer'
   /** Per-stage progress from the stream (B4). Advances the FIXED bar indicator's
    *  fill: a canonical `WATCHED_ENTITY_STAGES` bar matches its stream entry's
    *  status, or is `pending` until it appears (prep-stage and silent-tail entries

@@ -214,6 +214,76 @@ describe('WorldGenStatusCard — paper register (NO circle / spinner)', () => {
   })
 })
 
+describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile status footer)', () => {
+  // On a narrow viewport the graph pane goes full-bleed and the status leaves the
+  // canvas for a compact bottom bar: the SUBSTANCE (running-stage label, percent,
+  // the FIXED segmented square bars, the per-second countdown) is kept; the framing
+  // caption is dropped (the footer reclaims real estate, it doesn't relocate the
+  // card verbatim). The overlay stays the default — the shipped desktop card.
+
+  it('keeps the substance: running label, percent, all bars, the countdown', () => {
+    const { container, getByText, getByTestId } = render(
+      <WorldGenStatusCard
+        variant="footer"
+        stages={MID}
+        countdownLabel="[ph: ~2:14 left]"
+        {...LABELS}
+      />,
+    )
+    expect(container.querySelector('[data-variant="footer"]')).not.toBeNull()
+    expect(getByText('[ph: drawing the ties]')).toBeInTheDocument()
+    expect(getByText(`${String(EXPECTED_MID_PERCENT)}%`)).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
+    expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('[ph: ~2:14 left]')
+  })
+
+  it('drops the framing caption (compact — the title is overlay chrome)', () => {
+    const { queryByText } = render(
+      <WorldGenStatusCard
+        variant="footer"
+        stages={MID}
+        titleLabel="[ph: weaving your world]"
+        {...LABELS}
+      />,
+    )
+    expect(queryByText('[ph: weaving your world]')).toBeNull()
+  })
+
+  it('is a full-width in-flow bar, NOT an absolute overlay', () => {
+    const { container } = render(<WorldGenStatusCard variant="footer" stages={MID} {...LABELS} />)
+    const root = container.querySelector('[data-variant="footer"]')
+    expect(root?.className).not.toMatch(/absolute/)
+    expect(root?.className).toMatch(/w-full/)
+  })
+
+  it('defaults to the overlay variant — the shipped desktop card, unchanged', () => {
+    const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    const overlay = container.querySelector('[data-variant="overlay"]')
+    expect(overlay).not.toBeNull()
+    expect(overlay?.className).toMatch(/absolute/)
+    expect(container.querySelector('[data-variant="footer"]')).toBeNull()
+  })
+
+  it('keeps the paper register (square cells, pulse only on the running cell)', () => {
+    const { container } = render(<WorldGenStatusCard variant="footer" stages={MID} {...LABELS} />)
+    expect(container.querySelector('svg')).toBeNull()
+    expect(container.querySelector('.rounded-full')).toBeNull()
+    expect(container.querySelector('[data-cell-state="running"]')).toHaveClass('animate-pulse')
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <WorldGenStatusCard
+        variant="footer"
+        stages={MID}
+        countdownLabel="[ph: ~2:14 left]"
+        {...LABELS}
+      />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
 describe('WorldGenStatusCard — chrome', () => {
   it('passes through a data-testid', () => {
     const { getByTestId } = render(

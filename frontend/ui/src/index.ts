@@ -8,6 +8,11 @@ export { Divider } from './components/Divider/Divider.tsx'
 // Responsive show/hide switch (MYT-87) — toggles two visually distinct layouts at
 // a breakpoint (the hub's desktop grid ⊕ mobile index).
 export { Show } from './components/Show/Show.tsx'
+// FullBleedStage (MYT-89 audit v2) — the narrow-viewport full-screen stage:
+// cancels the host frame's content inset and fills the viewport below the
+// header, so a pannable surface (the world-gen graph) owns the phone screen.
+// Wide viewports render a plain block (desktop unchanged).
+export { FullBleedStage } from './components/FullBleedStage/FullBleedStage.tsx'
 
 // Typography primitives (MYT-82 Wave 1b).
 export { Text } from './components/Text/Text.tsx'
@@ -170,6 +175,7 @@ export type {
   DividerProps,
   ShowProps,
   Breakpoint,
+  FullBleedStageProps,
   SpaceToken,
   TextProps,
   TextRole,
