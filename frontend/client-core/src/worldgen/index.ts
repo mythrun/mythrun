@@ -75,5 +75,12 @@ export type {
   WikiGroup,
   WikiEntity,
   WikiFact,
+  WikiRelatedLink,
   WikiDataSource,
 } from './wiki-view-model.ts'
+
+// The wiki history stack (MYT-89 Phase D, D3): the platform-neutral navigation
+// brain D4's WorldWiki drives (push/back/home + per-entry scroll retention).
+// DOM-free React hook — rides this UI-safe subpath alongside the reducers.
+export { useWikiNavigation } from './use-wiki-navigation.ts'
+export type { WikiLocation, WikiNavigation } from './use-wiki-navigation.ts'
