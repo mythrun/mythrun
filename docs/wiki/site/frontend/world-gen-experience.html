@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World-gen experience · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="world-gen-experience">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html" class="active">World-gen experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › World-gen experience</div>
+        <article>
+<h1>World-gen experience</h1>
+
+<p class="lead">
+  What a player watches while their world is built, and the world they land in when it's done. The
+  phase-aware <code>/campaigns/:id</code> route runs a two-act generation — a quiet loading screen
+  while the early prep stages run, then a live graph of the world assembling itself out of drifting
+  fog — and flips to the browsable reveal the moment the connections are woven, ~10 minutes before
+  the pipeline actually finishes. The fog is a real fluid simulation, the graph a contained
+  force-directed layout, and both run in a DOM-free <code>client-core</code> brain that
+  <a href="./design-system.html">@mythrun/ui</a> paints onto layered canvases.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="2171pt" height="504pt"
+ viewBox="14.00 14.00 2156.00 489.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 485.44)">
+<title>frontend_world_gen_experience</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-471.04 2138.09,-471.04 2138.09,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_web</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-164.04 8,-404.04 691.26,-404.04 691.26,-164.04 8,-164.04"/>
+<text xml:space="preserve" text-anchor="middle" x="349.63" y="-390.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(the route)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_cc</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1375.3,-47.04 1375.3,-459.04 1787.36,-459.04 1787.36,-47.04 1375.3,-47.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1581.33" y="-445.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core/worldgen &#160;(the brain · DOM&#45;free · R1)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_ui</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="728.26,-173.04 728.26,-374.04 1338.3,-374.04 1338.3,-173.04 728.26,-173.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1033.28" y="-360.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/ui &#160;(the render · Canvas + DOM)</text>
+</g>
+<!-- route -->
+<g id="node1" class="node">
+<title>route</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="277.32,-234.08 8,-234.08 8,-164 277.32,-164 277.32,-234.08"/>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-215.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CampaignDetailRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-202.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/campaigns/:id · phase&#45;aware</text>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-189.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fold stream · fetch timings once ·</text>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-175.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reveal&#45;at&#45;connectionsDone</text>
+</g>
+<!-- act1 -->
+<g id="node2" class="node">
+<title>act1</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="687.95,-383.08 418.64,-383.08 418.64,-313 687.95,-313 687.95,-383.08"/>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-364.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GeneratingView · act one</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-351.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenLoading (spinner +</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-338.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">20 cycling flavor lines + countdown)</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-324.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ watch beat</text>
+</g>
+<!-- route&#45;&gt;act1 -->
+<g id="edge2" class="edge">
+<title>route&#45;&gt;act1</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M232.19,-234.75C285.07,-255.7 353.72,-282.26 415.34,-304.04 420.43,-305.84 425.65,-307.66 430.93,-309.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="430.13,-311.78 437.54,-311.71 431.71,-307.14 430.13,-311.78"/>
+</g>
+<!-- act2 -->
+<g id="node3" class="node">
+<title>act2</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="691.26,-295.48 415.34,-295.48 415.34,-238.6 691.26,-238.6 691.26,-295.48"/>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-276.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GeneratingView · act two</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-263.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FullBleedStage → WorldGenGraph</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-250.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">gated (inert) · status card / footer</text>
+</g>
+<!-- route&#45;&gt;act2 -->
+<g id="edge3" class="edge">
+<title>route&#45;&gt;act2</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M278.03,-221.4C319.05,-228.23 364.35,-235.76 406.12,-242.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="405.6,-245.11 412.91,-243.84 406.4,-240.28 405.6,-245.11"/>
+<text xml:space="preserve" text-anchor="middle" x="346.33" y="-244.13" font-family="Courier,monospace" font-size="10.00">watch</text>
+</g>
+<!-- rev -->
+<g id="node4" class="node">
+<title>rev</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="691.26,-220.48 415.34,-220.48 415.34,-163.6 691.26,-163.6 691.26,-220.48"/>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-201.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldReveal</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-188.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">settled graph BESIDE WorldWiki</text>
+<text xml:space="preserve" text-anchor="middle" x="553.3" y="-175.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">· shared selection · silent refetch</text>
+</g>
+<!-- route&#45;&gt;rev -->
+<g id="edge4" class="edge">
+<title>route&#45;&gt;rev</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M278.03,-196.74C319.05,-196.04 364.35,-195.26 406.12,-194.54"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="405.92,-197 412.88,-194.43 405.84,-192.1 405.92,-197"/>
+<text xml:space="preserve" text-anchor="middle" x="346.33" y="-199.37" font-family="Courier,monospace" font-size="10.00">connections woven</text>
+</g>
+<!-- stream -->
+<g id="node5" class="node">
+<title>stream</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1735.29,-103.48 1426.37,-103.48 1426.37,-46.6 1735.29,-46.6 1735.29,-103.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-84.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useWorldGenStream</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-71.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE fold → nodes/edges + stages ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-58.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connectionsDone · completedTailStageCount</text>
+</g>
+<!-- route&#45;&gt;stream -->
+<g id="edge1" class="edge">
+<title>route&#45;&gt;stream</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M226.46,-163.35C307.82,-131.56 436.28,-90.04 552.3,-90.04 552.3,-90.04 552.3,-90.04 1260.75,-90.04 1311.6,-90.04 1366.96,-88.12 1417.07,-85.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1417.04,-88.1 1423.9,-85.3 1416.79,-83.21 1417.04,-88.1"/>
+</g>
+<!-- api -->
+<g id="node15" class="node">
+<title>api</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2134.09,-70.08 1871.37,-70.08 1871.37,0 2134.09,0 2134.09,-70.08"/>
+<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-51.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API &#160;(other pages)</text>
+<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SSE status stream ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET /api/worldgen/stage&#45;timings ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET .../world&#45;snapshot (known&#45;tier)</text>
+</g>
+<!-- route&#45;&gt;api -->
+<g id="edge16" class="edge">
+<title>route&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M190.08,-163.26C262.98,-110.77 410.62,-19.04 552.3,-19.04 552.3,-19.04 552.3,-19.04 1581.83,-19.04 1675.46,-19.04 1780.75,-23.06 1862.47,-27.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1861.88,-29.5 1868.99,-27.4 1862.12,-24.6 1861.88,-29.5"/>
+<text xml:space="preserve" text-anchor="middle" x="1109.19" y="-22.04" font-family="Courier,monospace" font-size="10.00">timings + snapshot</text>
+</g>
+<!-- gcanvas -->
+<g id="node12" class="node">
+<title>gcanvas</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1037.18,-291.48 728.26,-291.48 728.26,-234.6 1037.18,-234.6 1037.18,-291.48"/>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-272.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenGraph</text>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-259.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">graph canvas (front) · penstroke edges ·</text>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-246.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">trace&#45;then&#45;stamp arrival · drag</text>
+</g>
+<!-- act2&#45;&gt;gcanvas -->
+<g id="edge5" class="edge">
+<title>act2&#45;&gt;gcanvas</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M691.73,-265.36C700.75,-265.25 709.87,-265.14 719,-265.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="718.95,-267.48 725.92,-264.94 718.89,-262.58 718.95,-267.48"/>
+</g>
+<!-- card -->
+<g id="node13" class="node">
+<title>card</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1037.18,-352.88 728.26,-352.88 728.26,-309.2 1037.18,-309.2 1037.18,-352.88"/>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-334.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenStatusCard</text>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-321.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">overlay | footer · fixed bars + countdown</text>
+</g>
+<!-- act2&#45;&gt;card -->
+<g id="edge6" class="edge">
+<title>act2&#45;&gt;card</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M691.73,-293.9C713.67,-298.19 736.25,-302.61 757.85,-306.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="757.28,-309.21 764.62,-308.15 758.22,-304.4 757.28,-309.21"/>
+</g>
+<!-- rev&#45;&gt;gcanvas -->
+<g id="edge7" class="edge">
+<title>rev&#45;&gt;gcanvas</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M688.89,-221.23C705.26,-224.78 722.03,-228.41 738.52,-231.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="737.98,-234.38 745.34,-233.47 739.02,-229.59 737.98,-234.38"/>
+</g>
+<!-- wiki -->
+<g id="node14" class="node">
+<title>wiki</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="994.27,-216.88 771.16,-216.88 771.16,-173.2 994.27,-173.2 994.27,-216.88"/>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-198.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldWiki</text>
+<text xml:space="preserve" text-anchor="middle" x="882.72" y="-185.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">grouped&#45;by&#45;kind tree + search</text>
+</g>
+<!-- rev&#45;&gt;wiki -->
+<g id="edge8" class="edge">
+<title>rev&#45;&gt;wiki</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M691.73,-193.3C715.01,-193.51 739.01,-193.73 761.79,-193.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="761.62,-196.39 768.65,-194 761.67,-191.49 761.62,-196.39"/>
+</g>
+<!-- stream&#45;&gt;api -->
+<g id="edge15" class="edge">
+<title>stream&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1735.8,-60.37C1777.21,-56.43 1821.75,-52.18 1862.32,-48.32"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1862.37,-50.78 1869.11,-47.67 1861.91,-45.9 1862.37,-50.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1829.37" y="-55.65" font-family="Courier,monospace" font-size="10.00">SSE fold</text>
+</g>
+<!-- fogsim -->
+<g id="node6" class="node">
+<title>fogsim</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1725.39,-437.48 1436.27,-437.48 1436.27,-380.6 1725.39,-380.6 1725.39,-437.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-418.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FogSim</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-405.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fluid sim: wind + doublets +</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-392.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Bayer density · fixed&#45;timestep · pure</text>
+</g>
+<!-- force -->
+<g id="node7" class="node">
+<title>force</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1738.59,-301.48 1423.07,-301.48 1423.07,-244.6 1738.59,-244.6 1738.59,-301.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-282.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ForceSim (d3&#45;force)</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-269.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">contained · box&#45;collision · clustering ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-256.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">displayId identity</text>
+</g>
+<!-- space -->
+<g id="node8" class="node">
+<title>space</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1725.39,-226.88 1436.27,-226.88 1436.27,-183.2 1725.39,-183.2 1725.39,-226.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-208.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">virtual&#45;space + camera</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-195.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">virtual coords · pannable mobile world</text>
+</g>
+<!-- wikivm -->
+<g id="node9" class="node">
+<title>wikivm</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1692.39,-164.88 1469.27,-164.88 1469.27,-121.2 1692.39,-121.2 1692.39,-164.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-146.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">toWikiViewModel</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-133.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">snapshot → browsable groups</text>
+</g>
+<!-- eta -->
+<g id="node10" class="node">
+<title>eta</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1718.79,-362.88 1442.87,-362.88 1442.87,-319.2 1718.79,-319.2 1718.79,-362.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-344.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">remainingWaitMs</text>
+<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-331.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">timings ∩ live stages → countdown</text>
+</g>
+<!-- fogfield -->
+<g id="node11" class="node">
+<title>fogfield</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1338.3,-352.88 1181.2,-352.88 1181.2,-309.2 1338.3,-309.2 1338.3,-352.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1259.75" y="-334.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenFogField</text>
+<text xml:space="preserve" text-anchor="middle" x="1259.75" y="-321.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fog canvas (behind)</text>
+</g>
+<!-- fogfield&#45;&gt;fogsim -->
+<g id="edge12" class="edge">
+<title>fogfield&#45;&gt;fogsim</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1317.85,-353.57C1336.01,-360.17 1356.32,-366.96 1375.3,-372.04 1391.92,-376.49 1409.46,-380.56 1426.98,-384.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1426.44,-386.64 1433.79,-385.66 1427.44,-381.84 1426.44,-386.64"/>
+</g>
+<!-- gcanvas&#45;&gt;force -->
+<g id="edge10" class="edge">
+<title>gcanvas&#45;&gt;force</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1037.83,-263.62C1130.44,-264.15 1250.63,-265.15 1357.3,-267.04 1375.56,-267.36 1394.67,-267.77 1413.68,-268.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1413.53,-270.67 1420.59,-268.39 1413.65,-265.77 1413.53,-270.67"/>
+</g>
+<!-- gcanvas&#45;&gt;space -->
+<g id="edge11" class="edge">
+<title>gcanvas&#45;&gt;space</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1037.78,-250.2C1153.62,-240.55 1311.58,-227.39 1427.1,-217.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1427.11,-220.22 1433.88,-217.2 1426.7,-215.34 1427.11,-220.22"/>
+</g>
+<!-- gcanvas&#45;&gt;fogfield -->
+<g id="edge9" class="edge">
+<title>gcanvas&#45;&gt;fogfield</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1037.88,-290.99C1083.62,-299.29 1132.09,-308.07 1171.94,-315.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1171.45,-317.7 1178.78,-316.54 1172.33,-312.88 1171.45,-317.7"/>
+<text xml:space="preserve" text-anchor="middle" x="1109.19" y="-315.8" font-family="Courier,monospace" font-size="10.00">layered</text>
+</g>
+<!-- card&#45;&gt;eta -->
+<g id="edge13" class="edge">
+<title>card&#45;&gt;eta</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M999.96,-308.47C1012.55,-305.76 1025.15,-302.92 1037.18,-300.04 1045.25,-298.11 1046.95,-296.16 1055.18,-295.04 1097.75,-289.24 1328.97,-298.67 1338.3,-300.04 1355.15,-302.52 1358.63,-306.54 1375.3,-310.04 1394.05,-313.98 1413.87,-317.63 1433.5,-320.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1433.1,-323.35 1440.4,-322.07 1433.9,-318.51 1433.1,-323.35"/>
+</g>
+<!-- wiki&#45;&gt;wikivm -->
+<g id="edge14" class="edge">
+<title>wiki&#45;&gt;wikivm</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M994.79,-186.74C1121.93,-177.25 1329.42,-161.75 1460.09,-151.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1459.97,-154.45 1466.77,-151.49 1459.61,-149.56 1459.97,-154.45"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The experience follows the frontend's own brain/render split (see
+  <a href="./design-system.html">the design system</a>). The
+  <strong><code>client-core/worldgen</code></strong> subpath is the platform-neutral brain — the SSE
+  fold, the fog fluid sim, the force graph, the pannable camera, the wiki normalizer, the countdown
+  math — none of it touches the DOM. <strong>@mythrun/ui</strong> turns that brain into pixels: a
+  fog canvas, a graph canvas, a status card, a loading screen, and the browsable wiki.
+  <strong>@mythrun/web</strong>'s <code>CampaignDetailRoute</code> composes them and owns the
+  lifecycle. The route consumes three backend surfaces — the campaign
+  <a href="../runtime/pipeline-status.html">status SSE stream</a>, the
+  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>,
+  and the owner
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  — and never reaches past a <code>client-core</code> hook to do it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why a DOM-free physics core</strong> — the fog sim and the force graph are pure
+  data-in/data-out simulations: obstacles and a clock go in, a density grid and node positions come
+  out. Keeping them in <code>client-core</code> (like the design system's contract layer) means the
+  same physics can be unit-tested with an injected RNG, driven by a Storybook tuning harness with
+  synthetic entities, and — when the native app is written — reused behind a native canvas without a
+  rewrite. The web layer owns only the platform-bound edges: the
+  <code>requestAnimationFrame</code> loop, device-pixel-ratio sizing, pointer events, and the
+  <code>prefers-reduced-motion</code> read.
+</aside>
+
+<h3 id="the-phase-aware-route">The phase-aware route</h3>
+
+<p>
+  <code>CampaignDetailRoute</code> is the home-hub card's click target and where the create flow
+  lands after a world starts generating. It opens the status stream through
+  <code>useWorldGenStream</code>, which folds the SSE frames into three things the whole experience
+  reads: the graph's <code>nodes</code> and <code>edges</code>, the per-stage
+  <code>stages</code> progress, and a coarse lifecycle <code>status</code>/<code>phase</code>. The
+  route branches on that lifecycle: a <em>generating</em> world shows the two-act generation; a
+  <em>failed</em> one shows a calm retryable resume screen; a <em>terminal</em> one a dead-end
+  nudge; and a finished world shows either the reveal or — once the owner has picked a starting
+  situation — the campaign page.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>world_ready</code> needs a second read</strong> — picking a starting situation
+  doesn't advance the pipeline phase (it only records an index on the campaign), so a just-generated
+  world and a world whose owner already picked look identical at the phase level: both are
+  <code>complete</code>/<code>world_ready</code>. The route disambiguates by fetching the
+  chosen-situation flag for exactly that one case; every later phase implies a situation is already
+  chosen and routes straight to the campaign page. A brief settling line covers the flag's resolve
+  window so the reveal-vs-page split never flashes the wrong surface.
+</aside>
+
+<h3 id="act-one-the-loading-screen">Act one — the loading screen</h3>
+
+<p>
+  Until the first entity-bearing stage runs there is nothing to draw — the early stages
+  (<code>concept_intake</code>, <code>world_color</code>, <code>vocabulary_intake</code>) produce
+  registry and tone context, never a graph node. So act one is a generic
+  <code>WorldGenLoading</code> screen: the design system's <code>Spinner</code>, a flavor line
+  cycling through twenty short messages in shuffled order, and the same per-second countdown the
+  graph will carry. The split between "prep" and "entity" stages is derived once from the canonical
+  <code>WORLD_GEN_STAGES</code> taxonomy (<code>PREP_STAGES</code> vs <code>ENTITY_STAGES</code> in
+  <code>@mythrun/contract/events</code>), so a taxonomy change can never drift the boundary.
+</p>
+
+<p>
+  The instant entities begin arriving — a first node, or an entity stage reported underway,
+  whichever lands first — the loading screen grows a "watch your world be born" button. Generation
+  keeps streaming underneath regardless; the button only <em>reveals</em> the graph. The transition
+  to act two is a deliberate press, never automatic, and re-entering a mid-generation world restarts
+  at the loading screen with the button already offered.
+</p>
+
+<h3 id="act-two-the-fog-and-the-graph">Act two — the fog and the graph</h3>
+
+<p>
+  Act two is the world assembling itself. Two canvases are layered: a fog field behind and the
+  entity graph in front. As each entity streams in, its node appears with a short "trace-then-stamp"
+  arrival — a penstroke traces the node's silhouette, then it fills — and as relationships arrive
+  their edges stroke in as straight penstrokes rather than snapping. The nodes lay out under a
+  force-directed simulation that clusters the graph as edges connect it, and the whole thing is
+  draggable. The status card sits over the canvas (a fixed-count progress bar plus the ticking
+  countdown); on a phone it drops out of the canvas into a compact footer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The fog is a fluid simulation, not a texture</strong> — <code>FogSim</code> advects tracer
+  particles through a velocity field of wind, turbulence, and potential-flow doublets around each
+  entity, bins them into a density grid, and renders that grid as a crisp ordered-Bayer dither in
+  the brand's 1-bit register — no alpha gradients. Every interlocking constant was dialed in by eye
+  in a reference prototype and ported verbatim; "close enough" was explicitly not the bar. The sim
+  runs on a fixed timestep so it looks identical at 60Hz and 120Hz, and its particle count scales
+  with canvas area so the tuned density holds at every pane size.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The fog clears by entity count, not by a fade</strong> — the atmosphere thins as the world
+  fills, but it does it by <em>starving the spawn</em>: every arrived node ramps the
+  particle-respawn flux down by one over <code>MIN_EXPECTED_ENTITIES</code> (the minimum entity
+  count a real generation produces, derived from real worlds), so the wind carries the existing fog
+  off the pane and ever fewer particles replace it. By the time the graph is full the fog is
+  genuinely gone — a physical clearing, not a global opacity dialed toward zero. The earlier
+  procedural <code>GhostBloomField</code> ambient layer was removed; the fog replaces it entirely.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>One virtual coordinate space, CSS-scaled</strong> — the fog constants are absolute pixels
+  tuned at a fixed reference size, so the sim and the graph both render into a shared virtual
+  coordinate space that is then CSS-scaled to the actual pane. That single derivation is what keeps
+  the fog's obstacles aligned with the graph's nodes at every width and aspect, and it is where the
+  "a node can never escape the viewport" containment closes in real pixels — the force sim clamps
+  each node's <em>box</em> (icon plus label) inside the virtual frame, and the shared scale carries
+  that guarantee to the screen.
+</aside>
+
+<p>
+  On a phone the graph does not shrink the world to fit — it becomes a camera over it. The full,
+  legible world is laid out at its natural size and the pane pans across it with one finger (the fog
+  panning in lockstep), gently following new arrivals until the player takes over. The
+  <code>FullBleedStage</code> primitive cancels the app frame's content inset so the pannable canvas
+  fills the screen edge-to-edge below the header, with the status footer as the only chrome.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A camera, not a shrink or a forced rotation</strong> — at real entity counts a whole world
+  squeezed into a 375px pane is unreadable, and forcing landscape is unenforceable in a mobile
+  browser (the orientation-lock API needs fullscreen and has no iOS support). Panning a full-scale
+  world keeps every label legible and tappable and degrades gracefully to portrait. The camera is
+  render-only: it moves what's drawn, never the true node positions the fog's clear-zones and the
+  hit targets key on.
+</aside>
+
+<h3 id="the-reveal-at-connections-done-not-at-the-end">The reveal — at connections-done, not at the end</h3>
+
+<p>
+  The visible wait ends the moment the connections are woven. When
+  <code>entity_relationships</code> completes (<code>connectionsDone</code> over the folded stages),
+  the route swaps the generating view for <code>WorldReveal</code> — even though the pipeline's tail
+  stages (<code>entity_consolidation</code> through <code>embed_world</code>) are still running. The
+  reveal is the settled graph beside a browsable <code>WorldWiki</code>: the world's entities
+  grouped by kind (places, factions, people, things) with search, each showing its known facts.
+  Selecting a node highlights its wiki entry and vice-versa — one shared selection, because after
+  generation every node's identity <em>is</em> its real entity id, so no id translation is needed.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reveal early, let the tail run silent</strong> — a player who watched a ten-minute build
+  shouldn't wait on <code>coherence_pass</code> and the embed write to see their world. Those tail
+  stages produce quiet refinements (consolidated ghost entities, a coherence tidy-up), not the
+  headline content, so the reveal fires at the connection-weaving boundary and the tail runs behind
+  it. Each tail completion quietly refetches the wiki snapshot — the reconciled world just appears,
+  no spinner takeover, the old model held on screen until the fresh one resolves — and the graph
+  absorbs the same patches through the still-open stream. The "Continue" affordance stays hidden
+  until the pipeline actually finishes, because the starting-situation step it leads to needs a
+  complete world.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
+  the owner world-snapshot at the same stage-4 boundary the endpoint's readiness gate keys on, so it
+  never races the 409. The known-tier filter is entirely
+  <a href="../runtime/world-gen.html#relationship-tiering">server-side</a>: the snapshot returns
+  only <code>known</code> entities, facts, <em>and relationships</em>, so fetching it while the tail
+  is still running serves exactly the same player-safe projection as fetching it after completion.
+  The client renders what it's given; it holds no secret it must remember to hide.
+</aside>
+
+<h3 id="waiting-feedback">Waiting feedback</h3>
+
+<p>
+  Both acts carry a per-second countdown so the player always holds an expectation of the wait. The
+  route fetches the
+  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>
+  once at the start; <code>remainingWaitMs</code> intersects those historical per-stage averages
+  with the live stage statuses and subtracts the time already spent in the running stage, and a real
+  one-second interval re-derives it. When a stage overruns, the countdown holds at its floor ("any
+  moment now") and jumps at the next stage event — an honest walk rather than a smooth lie. With no
+  timing history yet (cold start), the surfaces simply show no estimate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The status card counts only the watched stages</strong> — its fixed bars are seeded from
+  the entity stages the player actually waits through, so the bar reaches 100% exactly at the reveal
+  moment. A card that kept counting the silent tail would strand at ~60% and then vanish when the
+  reveal fired. The player never sees API cost on this card either — spend is a dev-tool concern,
+  not a player-facing number.
+</aside>
+
+<h3 id="reduced-motion-and-accessibility">Reduced motion and accessibility</h3>
+
+<p>
+  Every motion source honours <code>prefers-reduced-motion</code>, read once in the web layer and
+  handed to the brain as a boolean: the fog recomputes a static settled density on each entity-count
+  change (preserving the clearing-as-progress cue rather than freezing blank), the node bob stops,
+  and edges and arrivals appear instantly instead of stroking in. The reveal degrades its transition
+  to a short cross-fade. The countdown is <em>not</em> gated — it's content, not decoration, and
+  freezing it would show a wrong number. The Canvas graph is paired with an accessible model: an
+  <code>aria-live</code> announcement of entities as they arrive during generation, and in the
+  reveal the wiki's browse-by-kind is the guaranteed keyboard-and-screen-reader path to every entity
+  alongside a hidden roving-tabindex mirror of the graph's selection.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="watch-a-world-generate-locally">Watch a world generate locally</h3>
+<ol>
+  <li>
+    Bring up the stack: <code>pnpm db:up</code>, <code>pnpm dev</code> (backend + worker), and the
+    web app (<code>pnpm --filter @mythrun/web dev</code>). A real generation needs live Anthropic
+    credentials configured in <code>backend/.env.development</code>.
+  </li>
+  <li>
+    Sign in and create a campaign from the hub. The app routes to <code>/campaigns/:id</code> and
+    the loading screen appears while the prep stages run.
+  </li>
+  <li>
+    When the "watch your world be born" button appears, press it to enter act two and watch the fog
+    clear as entities and edges stream in. The world reveals the moment
+    <code>entity_relationships</code> completes; the wiki quietly reconciles as the tail finishes.
+  </li>
+  <li>
+    To inspect the underlying events, open the same campaign in the
+    <a href="../runtime/pipeline-status.html#watch-a-campaign-locally"
+      >dev tool's wire-log drawer</a
+    >
+    — it streams the identical SSE frames the graph is folding.
+  </li>
+</ol>
+
+<h3 id="re-tune-the-graph-spread">Re-tune the graph spread</h3>
+<ol>
+  <li>
+    Open the <code>WorldGenGraph</code> Storybook, which exposes a live tuning harness with sliders
+    over the force parameters (repulsion, link strength, collision padding, margin) and a
+    max-density fixture.
+  </li>
+  <li>
+    Dial the sliders against the dense fixture until the layout reads well, then copy the values
+    back into the locked <code>FORCE_PARAMS</code> defaults in <code>client-core/worldgen</code>.
+    The story is a dev-only surface; the committed defaults are the canonical spec.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The route reads the backend <a href="../runtime/world-gen.html">world-gen pipeline</a> through the
+  campaign <a href="../runtime/pipeline-status.html">status SSE stream</a>, the
+  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>,
+  and the owner
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  — whose known-tier filtering (including the
+  <a href="../runtime/world-gen.html#relationship-tiering">relationship tiering</a> that keeps a
+  secret connection between two public entities off the reveal) is the enforced-ignorance boundary
+  this experience relies on. The <a href="./campaign-hub.html">campaign hub</a> is where a card
+  routes in; the settled world hands off to the campaign page once a starting situation is chosen.
+  Every rendered piece is a <a href="./design-system.html">mythrunUI</a> component, and the SSE fold
+  rides the same <a href="./realtime-transport.html">client-core transport</a> primitives as the
+  rest of the app. Cover and node identity trace back to the
+  <a href="../world-campaign/world-color.html">world colour identity</a>.
+</p>
+
+<h2 id="appendix-the-modules">Appendix: the modules</h2>
+
+<h3 id="the-brain-client-core-worldgen">The brain — <code>client-core/worldgen</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>use-worldgen-stream.ts</code></td>
+    <td>
+      Folds the status SSE into <code>nodes</code>/<code>edges</code>/<code>stages</code> +
+      lifecycle; exposes <code>connectionsDone</code> and <code>completedTailStageCount</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>fog-sim.ts</code> · <code>fog-params.ts</code> · <code>fog-field.ts</code></td>
+    <td>
+      The DOM-free fluid fog core and its locked constants (pure, injectable RNG, fixed-timestep).
+    </td>
+  </tr>
+  <tr>
+    <td><code>force-sim.ts</code></td>
+    <td>
+      The contained d3-force wrapper — box-collision, clustering, viewport clamp, displayId
+      identity.
+    </td>
+  </tr>
+  <tr>
+    <td><code>virtual-space.ts</code></td>
+    <td>The shared virtual coordinate space + the pannable mobile camera.</td>
+  </tr>
+  <tr>
+    <td><code>label-tiers.ts</code> · <code>entity-floor.ts</code></td>
+    <td>Density-aware label budgeting; the entity-count floor the fog drain divides by.</td>
+  </tr>
+  <tr>
+    <td><code>stage-eta.ts</code> · <code>reveal-timing.ts</code></td>
+    <td>The remaining-wait countdown math; the connections-done / tail-stage boundaries.</td>
+  </tr>
+  <tr>
+    <td><code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code></td>
+    <td>SSE-event → node/edge reducers; snapshot → browsable wiki model.</td>
+  </tr>
+  <tr>
+    <td><code>api/worldgen.ts</code></td>
+    <td>The typed <code>getStageTimings</code> / <code>getWorldSnapshot</code> wire calls.</td>
+  </tr>
+</table>
+
+<h3 id="the-render-mythrun-ui">The render — <code>@mythrun/ui</code></h3>
+<table>
+  <tr>
+    <th>Component</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>WorldGenFogField</code></td>
+    <td>
+      The fog canvas (behind) — rAF/DPR/pointer shell over <code>FogSim</code> + the Bayer draw
+      helper.
+    </td>
+  </tr>
+  <tr>
+    <td><code>WorldGenGraph</code></td>
+    <td>
+      The graph canvas (front) — node/edge draw, penstroke edges, trace-then-stamp arrival, drag,
+      the gated generation vs interactive reveal modes, and the fog layer it composes.
+    </td>
+  </tr>
+  <tr>
+    <td><code>WorldGenStatusCard</code></td>
+    <td>The progress card — overlay on desktop, footer on a phone; fixed bars + countdown.</td>
+  </tr>
+  <tr>
+    <td><code>WorldGenLoading</code></td>
+    <td>Act one — spinner + cycling flavor lines + countdown + the watch beat.</td>
+  </tr>
+  <tr>
+    <td><code>WorldWiki</code></td>
+    <td>
+      The reveal's browsable world — entities grouped by kind, with search and shared selection.
+    </td>
+  </tr>
+  <tr>
+    <td><code>FullBleedStage</code></td>
+    <td>
+      The mobile full-bleed stage that cancels the app-frame inset (a general layout primitive).
+    </td>
+  </tr>
+</table>
+
+<h3 id="the-routes-mythrun-web">The routes — <code>@mythrun/web</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/campaign-detail.tsx</code></td>
+    <td>
+      The phase-aware <code>/campaigns/:id</code> orchestrator — stream, timings, reveal branching.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/worldgen/generating.tsx</code></td>
+    <td>The two-act generating view (loading → gated graph).</td>
+  </tr>
+  <tr>
+    <td><code>routes/worldgen/reveal.tsx</code></td>
+    <td>The reveal — settled graph beside the browsable wiki, silent tail refetch.</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/src/routes/campaign-detail.tsx</code>, <code>frontend/src/routes/worldgen/</code>,
+  <code>frontend/client-core/src/worldgen/</code>,
+  <code>frontend/client-core/src/api/worldgen.ts</code>,
+  <code>frontend/contract/src/events/worldgen-stages.ts</code>, and the <code>WorldGenFog</code> /
+  <code>WorldGenGraph</code> / <code>WorldGenStatusCard</code> / <code>WorldGenLoading</code> /
+  <code>WorldWiki</code> / <code>FullBleedStage</code> components under
+  <code>frontend/ui/src/components/</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-at-connections-done-not-at-the-end">The reveal — at connections-done, not at the end</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#reduced-motion-and-accessibility">Reduced motion and accessibility</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

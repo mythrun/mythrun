@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Design system</div>
         <article>
@@ -597,7 +597,14 @@
   <code>Card</code>/<code>Grid</code>/<code>Avatar</code>/<code>Text</code>/<code>Link</code>
   extensions above, while the campaign-specific <code>CampaignCard</code> that composes them stays a
   screen component. The line is reusability, not feature-adjacency — a book-cover card is a general
-  shape; "a campaign's card" is not.
+  shape; "a campaign's card" is not. The
+  <a href="./world-gen-experience.html">world-generation experience</a> drew the same line: it
+  contributed the general <code>FullBleedStage</code> layout primitive (a stage that cancels the
+  app-frame's content insets to run a canvas edge-to-edge on phones) and the
+  <code>useViewportNarrow</code> breakpoint hook to the system, while its fog-, graph-, status-card,
+  and loading composites (<code>WorldGenFog</code>, <code>WorldGenGraph</code>,
+  <code>WorldGenStatusCard</code>, <code>WorldGenLoading</code>) stay feature components documented
+  on that page.
 </p>
 
 <h2 id="responsive-by-construction">Responsive by construction</h2>

@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html" class="active">Campaign hub</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html" class="active">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Campaign hub</div>
         <article>
@@ -236,8 +236,9 @@
   <em>outside</em> that boundary, so a player can still act even if the number didn't load. The buy
   "+" and the settings gear route to an interim <code>/settings</code> until the dedicated buy flow
   ships; the frame's logomark and display-name slots remain chrome placeholders for now. The card's
-  click target is a thin interim campaign-detail stub — a real route, not a dead click — with the
-  modal/sheet body left to a later ticket.
+  click target is <code>/campaigns/:id</code> — the phase-aware
+  <a href="./world-gen-experience.html">world-generation experience</a>, which shows the live
+  generation graph while a world is still building and the settled reveal once it's done.
 </aside>
 
 <h2 id="integration-points">Integration points</h2>
@@ -250,7 +251,10 @@
   <code>CoverCard</code>, <code>CoverDither</code>, <code>Show</code>, the dashed <code>Card</code>,
   the <code>AvatarGroup</code> seals — is a <a href="./design-system.html">mythrunUI</a> primitive.
   The cover colours come from the
-  <a href="../world-campaign/world-color.html">world colour identity</a>.
+  <a href="../world-campaign/world-color.html">world colour identity</a>. Clicking a card routes to
+  <code>/campaigns/:id</code>, the
+  <a href="./world-gen-experience.html">world-generation experience</a> — the live generation graph
+  or the settled reveal, depending on where the world is.
 </p>
 
 <h2 id="appendix-the-screen-modules">Appendix: the screen modules</h2>
@@ -284,17 +288,12 @@
     <td><code>app/header-credits.tsx</code></td>
     <td><code>HeaderCredits</code> — the resilient live-balance slot</td>
   </tr>
-  <tr>
-    <td><code>routes/campaign-detail.tsx</code></td>
-    <td>Interim card click target (<code>/campaigns/:id</code>)</td>
-  </tr>
 </table>
 
 <h2 id="source">Source</h2>
 
 <p>
   <code>frontend/src/routes/home.tsx</code> · <code>frontend/src/routes/home/</code> ·
-  <code>frontend/src/routes/campaign-detail.tsx</code> ·
   <code>frontend/src/app/header-credits.tsx</code>
 </p>
 </article>

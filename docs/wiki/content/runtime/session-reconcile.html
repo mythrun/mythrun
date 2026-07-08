@@ -21,7 +21,7 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:4dedf63ec9b00aaad065451820a3ad99a330613dfd81b8b6deb90899af929ef4 -->
+<!-- source-hash: sha256:8b35ed527f166bc797ed5fb5500a219f1d62bb445a8635b81c5e82a89dec42dd -->
 <!-- last-ticket: MYT-74c -->
 
 <h1>End-of-session reconciliation</h1>
@@ -643,6 +643,20 @@
   <code>known</code>-tier relationships among them. It carries <strong>no prose kernels</strong> and
   <strong>no stat blocks</strong>.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Relationships are tier-filtered by their own <code>access_level</code>, not their endpoints
+    (MYT-89)</strong
+  >
+  — <code>relationships.listAmong</code> is passed <code>['known']</code> here, and the filter reads
+  the <em>relationship's</em> tier, not its endpoints'. Once relationships became player-facing, the
+  both-endpoints-known predicate was no longer enough: a <code>secret</code> connection between two
+  <code>known</code> entities would have surfaced. The relationship's own tier is what closes that
+  deterministic leak — see
+  <a href="./world-gen.html#relationship-tiering">relationship tiering</a> for where the tier is
+  assigned.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A purpose-built projection, not the owner snapshot's composition</strong> — the obvious

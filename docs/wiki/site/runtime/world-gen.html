@@ -1084,9 +1084,11 @@
   ordered tuple <code>concept_intake</code>, <code>world_color</code>,
   <code>vocabulary_intake</code>, <code>world_and_factions</code>, <code>locations_and_npcs</code>,
   <code>entity_relationships</code>, <code>entity_consolidation</code>,
-  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>. The list
-  carries three structured stages plus one resolution stage on top of the original seven
-  prose-bearing passes: <code>world_color</code> is stage 1.25 — a Sonnet pick of the world's
+  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>, and the
+  terminal <code>embed_world</code> stage (the semantic-index write, covered on
+  <a href="../data/world-store-retrieval.html">world-store retrieval</a>). The list carries three
+  structured stages plus one resolution stage on top of the original seven prose-bearing passes:
+  <code>world_color</code> is stage 1.25 — a Sonnet pick of the world's
   <a href="../world-campaign/world-color.html">two-colour cover identity</a>, persisted to
   <code>worlds.color_from</code>/<code>color_to</code> — <code>vocabulary_intake</code> is stage 1.5
   — it generates the per-world <a href="#vocabulary-registry">vocabulary registry</a> before any
@@ -1152,6 +1154,19 @@
     rethrows so BullMQ's retry policy fires.
   </li>
 </ol>
+
+<aside class="wiki-rationale">
+  <strong>One taxonomy, homed in the contract (MYT-89)</strong> — the eleven-stage tuple is no
+  longer hand-maintained here. It lives once in <code>@mythrun/contract/events</code>
+  (<code>WORLD_GEN_STAGES</code>); this processor re-exports it, the SSE
+  <a href="./pipeline-status.html#phase-derivation">phase-derivation</a> aliases it for its stage
+  bucketing, and the frontend
+  <a href="../frontend/world-gen-experience.html">generation status card</a> renders a fixed-count
+  loading bar off the same list. A drifted copy is what this consolidated:
+  <code>derive-phase</code> carried its own ten-stage list that had dropped
+  <code>entity_consolidation</code>, so a stage-4b run fell into the "unknown" bucket and sorted to
+  the front of the dev-tool status panel. A single source makes that class of drift impossible.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Cap injected at boot, not read per stage</strong> — the world-gen processor receives
@@ -1583,6 +1598,49 @@
   a retry of stage 4 cascade-deletes rows where
   <code>created_in = 'stage:entity_consolidation'</code>, so a fresh declaration set never pairs
   with an orphan ghost.
+</p>
+
+<h3 id="relationship-tiering">Relationship tiering — enforced ignorance on the edge</h3>
+
+<p>
+  Every relationship carries its own access tier. <code>relationships.access_level</code> (migration
+  031) is a <code>known</code> / <code>discoverable</code> / <code>secret</code> column mirroring
+  the tier already on <code>entities</code> and <code>facts</code>. Stage 4's
+  <code>relationshipItemSchema</code> makes <code>access_level</code> a required field, and the
+  prompt frames it precisely: a connection is <code>known</code> only if the connection
+  <em>itself</em> is public — <strong>independent of the two endpoints' tiers</strong>. Stage 4
+  carries the LLM-emitted tier into <code>relationships.access_level</code> at persist, and stamps
+  the same tier into the <code>entity_consolidation_pending</code> buffer so stage 4b materializes a
+  phantom edge at the tier stage 4 assigned it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two known entities can be secretly connected (MYT-89 §10)</strong> — the redesign made
+  relationships player-facing for the first time (the reveal's edge labels and the wiki's RELATED
+  footer). Before this, relationships had no tier, so the snapshot filtered them by their
+  <em>endpoints</em> alone: a <code>secret</code> connection between two <code>known</code> entities
+  passed the both-endpoints-surfaced predicate and would have surfaced on the happy path — a
+  <em>deterministic</em> enforced-ignorance leak, not the accepted LLM-gated risk on facts. Tiering
+  the edge itself closes it. A relationship's tier is about the <em>connection</em>, so "the abbot
+  and the harbormaster are both public figures" says nothing about whether "the abbot secretly
+  serves the harbormaster" is public.
+</aside>
+
+<p>
+  The consumers honor it. <code>relationships.listAmong</code> now takes an explicit tier list —
+  there is no insecure "return all" default — and both surfaces pass <code>['known']</code>: the
+  owner <a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a> view
+  (widened to all three tiers only under the dev bypass) and the member-readable
+  <a href="./session-reconcile.html#the-player-campaign-wiki">player campaign wiki</a>. Stage 7's
+  <code>coherence_pass</code> preserves the tier through a
+  <code>fix_relationship_by_name</code> (its <code>newAccessLevel</code> is optional — a fix that
+  doesn't touch the tier keeps the existing one rather than blanking it on the DELETE+INSERT
+  re-write) and requires an <code>access_level</code> on every
+  <code>add_relationship_by_name</code>. The one place the tier is a code literal is
+  <a href="./character-integration.html">character-integration</a> edges (PC→world and PC↔PC), which
+  bake <code>'known'</code> because a player-authored connection is non-secret by construction — the
+  same rationale as the facts those edges ride alongside. Migration 031 backfills every pre-existing
+  row to the safest tier (<code>secret</code>), so nothing surfaces until a stage re-tiers it.
 </p>
 
 <h3 id="per-item-drop-on-fail-validation">Per-item drop-on-fail validation</h3>
@@ -2245,6 +2303,33 @@
   the prompt constraint enforces the meaning.
 </aside>
 
+<h3 id="the-stage-timings-eta-endpoint">The stage-timings ETA endpoint</h3>
+
+<p>
+  <code>GET /api/worldgen/stage-timings</code> (MYT-89) is a small, global read the generation UI
+  fetches once at the start of a run to put a "time left" number on its loading bar. It answers with
+  the historical <strong>average duration per stage</strong> — <code>StageTiming[]</code> =
+  <code>{ stage, avgMs }[]</code> — computed by <code>pipelineRuns.avgDurationPerStage</code>: an
+  <code>avg(completed_at − started_at)</code> grouped by stage across <em>all</em> completed
+  <code>pipeline_runs</code>, excluding rows missing either timestamp so a half-written row can't
+  skew the mean. Cold-start (no completed history) returns <code>[]</code> and the bar simply shows
+  no estimate. The frontend
+  <a href="../frontend/world-gen-experience.html">generation experience</a> intersects the response
+  with the canonical <code>WORLD_GEN_STAGES</code> taxonomy and sums the not-yet-completed stages
+  into a countdown.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Global aggregate, not campaign-scoped</strong> — the route sits outside
+  <code>/api/campaigns</code> and carries no <code>requireCampaignMember</code> preHandler, only the
+  standard JWT + onboarded chain. The averages are non-sensitive telemetry with no per-user or
+  per-campaign scope — every generating world's ETA draws on the same fleet-wide history — so
+  scoping it to a campaign would add a membership check that guards nothing. It is not a
+  <a href="./pipeline-status.html">pipeline-status</a> surface either: those are live, per-campaign,
+  and SSE; this is a one-shot cross-campaign aggregate, so it lives on its own route rather than
+  riding the status plumbing.
+</aside>
+
 <h3 id="post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</h3>
 
 <p>
@@ -2673,7 +2758,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-name-resolver">Stage 4's name resolver</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:12px"><a href="#worker-resilience-two-layer-error-containment">Worker resilience: two-layer error containment</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-seven-routes">The seven routes</a></li><li style="padding-left:0"><a href="#the-pre-credit-validation-pipeline">The pre-credit validation pipeline</a></li><li style="padding-left:12px"><a href="#the-paint-job-validator">The paint-job validator</a></li><li style="padding-left:0"><a href="#the-credit-gate-transaction">The credit gate transaction</a></li><li style="padding-left:0"><a href="#the-seven-stages">The seven stages</a></li><li style="padding-left:12px"><a href="#the-unified-stage-handler-contract">The unified stage-handler contract</a></li><li style="padding-left:12px"><a href="#stage-taxonomy">Stage taxonomy</a></li><li style="padding-left:12px"><a href="#vocabulary-registry">Vocabulary registry</a></li><li style="padding-left:12px"><a href="#streaming-stages-and-the-partial-tree-iterator">Streaming stages and the partial-tree iterator</a></li><li style="padding-left:12px"><a href="#stage-3-s-three-pass-parent-resolver">Stage 3's three-pass parent resolver</a></li><li style="padding-left:12px"><a href="#stage-4-s-name-resolver">Stage 4's name resolver</a></li><li style="padding-left:12px"><a href="#relationship-tiering">Relationship tiering — enforced ignorance on the edge</a></li><li style="padding-left:12px"><a href="#per-item-drop-on-fail-validation">Per-item drop-on-fail validation</a></li><li style="padding-left:12px"><a href="#stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</a></li><li style="padding-left:12px"><a href="#the-structured-output-repair-chain">The structured-output repair chain</a></li><li style="padding-left:12px"><a href="#coherence-pass-and-its-cap-fire-exception">Coherence pass and its cap-fire exception</a></li><li style="padding-left:12px"><a href="#the-cost-cap-circuit-breaker">The cost-cap circuit breaker</a></li><li style="padding-left:12px"><a href="#worker-resilience-two-layer-error-containment">Worker resilience: two-layer error containment</a></li><li style="padding-left:0"><a href="#pipeline-events-on-the-wire">Pipeline events on the wire</a></li><li style="padding-left:0"><a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">The snapshot phase and the world-snapshot endpoint</a></li><li style="padding-left:12px"><a href="#three-tier-access-classification">Three-tier access classification</a></li><li style="padding-left:12px"><a href="#the-stage-timings-eta-endpoint">The stage-timings ETA endpoint</a></li><li style="padding-left:12px"><a href="#post-snapshot-deltas-on-the-same-channel">Post-snapshot deltas on the same channel</a></li><li style="padding-left:12px"><a href="#dev-mode-access-filter-bypass">Dev-mode access-filter bypass</a></li><li style="padding-left:0"><a href="#the-dev-tool-surface">The dev tool surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-world-gen">Diagnose a stuck world-gen</a></li><li style="padding-left:12px"><a href="#watch-the-cost-cap-fire">Watch the cost-cap fire (stages 1–6)</a></li><li style="padding-left:12px"><a href="#watch-the-stage-7-cap-fire-exception">Watch the stage-7 cap-fire exception</a></li><li style="padding-left:12px"><a href="#force-a-paint-job-rejection">Force a paint-job rejection</a></li><li style="padding-left:12px"><a href="#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a></li><li style="padding-left:12px"><a href="#recover-a-redis-blip-orphan">Recover a Redis-blip orphan</a></li><li style="padding-left:0"><a href="#integration-with-the-status-surface">Integration with the status surface</a></li><li style="padding-left:0"><a href="#out-of-scope">Out of scope</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -992,7 +992,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="relationships" id="schema-table-relationships">
   <summary>
     <span class="schema-table-name">relationships</span>
-    <span class="schema-table-meta">7 columns · 2 indexes · 0 CHECKs · 2 FKs</span>
+    <span class="schema-table-meta">8 columns · 2 indexes · 1 CHECK · 2 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1046,12 +1046,23 @@ END)</code></li>
         <td>—</td>
         <td>—</td>
       </tr>
+      <tr data-column-name="access_level">
+        <td><code>access_level</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td><code>'secret'::text</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
     <li><code>idx_relationships_source</code> — (source_entity_id)</li>
     <li><code>idx_relationships_target</code> — (target_entity_id)</li>
+  </ul>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((access_level = ANY (ARRAY['known'::text, 'discoverable'::text, 'secret'::text])))</code></li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="stat_block_actions" id="schema-table-stat_block_actions">

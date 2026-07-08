@@ -1,0 +1,67 @@
+digraph frontend_world_gen_experience {
+  // The player-facing world-generation experience (MYT-89): the phase-aware
+  // /campaigns/:id route drives a two-act generation (loading screen → live
+  // fog+graph) that flips to the browsable reveal the moment connections weave,
+  // while the pipeline's tail runs silently behind it. Mirrors the design-system
+  // split — a DOM-free client-core brain (the fog fluid sim, the force graph, the
+  // SSE fold, the wiki normalizer) rendered by @mythrun/ui Canvas/DOM, composed by
+  // the web route. The backend pipeline + SSE surface are other pages.
+  compound=true;
+
+  subgraph cluster_web {
+    label="@mythrun/web  (the route)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    route [label="CampaignDetailRoute\n/campaigns/:id · phase-aware\nfold stream · fetch timings once ·\nreveal-at-connectionsDone"];
+    act1 [label="GeneratingView · act one\nWorldGenLoading (spinner +\n20 cycling flavor lines + countdown)\n→ watch beat"];
+    act2 [label="GeneratingView · act two\nFullBleedStage → WorldGenGraph\ngated (inert) · status card / footer"];
+    rev [label="WorldReveal\nsettled graph BESIDE WorldWiki\n· shared selection · silent refetch"];
+  }
+
+  subgraph cluster_cc {
+    label="@mythrun/client-core/worldgen  (the brain · DOM-free · R1)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    stream [label="useWorldGenStream\nSSE fold → nodes/edges + stages ·\nconnectionsDone · completedTailStageCount"];
+    fogsim [label="FogSim\nfluid sim: wind + doublets +\nBayer density · fixed-timestep · pure"];
+    force [label="ForceSim (d3-force)\ncontained · box-collision · clustering ·\ndisplayId identity"];
+    space [label="virtual-space + camera\nvirtual coords · pannable mobile world"];
+    wikivm [label="toWikiViewModel\nsnapshot → browsable groups"];
+    eta [label="remainingWaitMs\ntimings ∩ live stages → countdown"];
+  }
+
+  subgraph cluster_ui {
+    label="@mythrun/ui  (the render · Canvas + DOM)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    fogfield [label="WorldGenFogField\nfog canvas (behind)"];
+    gcanvas [label="WorldGenGraph\ngraph canvas (front) · penstroke edges ·\ntrace-then-stamp arrival · drag"];
+    card [label="WorldGenStatusCard\noverlay | footer · fixed bars + countdown"];
+    wiki [label="WorldWiki\ngrouped-by-kind tree + search"];
+  }
+
+  api [label="API  (other pages)\nSSE status stream ·\nGET /api/worldgen/stage-timings ·\nGET .../world-snapshot (known-tier)", color="ember", fontcolor="ember"];
+
+  route -> stream [style="dotted"];
+  route -> act1;
+  route -> act2 [label="watch"];
+  route -> rev [label="connections woven"];
+  act2 -> gcanvas;
+  act2 -> card [style="dotted"];
+  rev -> gcanvas;
+  rev -> wiki;
+  gcanvas -> fogfield [label="layered", style="dotted"];
+  gcanvas -> force [style="dotted"];
+  gcanvas -> space [style="dotted"];
+  fogfield -> fogsim [style="dotted"];
+  card -> eta [style="dotted"];
+  wiki -> wikivm [style="dotted"];
+  stream -> api [label="SSE fold"];
+  route -> api [label="timings + snapshot"];
+}

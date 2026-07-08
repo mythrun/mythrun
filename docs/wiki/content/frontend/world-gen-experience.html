@@ -1,0 +1,421 @@
+<!-- source: frontend/src/routes/campaign-detail.tsx -->
+<!-- source: frontend/src/routes/worldgen/ -->
+<!-- source: frontend/client-core/src/worldgen/ -->
+<!-- source: frontend/client-core/src/api/worldgen.ts -->
+<!-- source: frontend/contract/src/events/worldgen-stages.ts -->
+<!-- source: frontend/ui/src/components/WorldGenFog/ -->
+<!-- source: frontend/ui/src/components/WorldGenGraph/ -->
+<!-- source: frontend/ui/src/components/WorldGenStatusCard/ -->
+<!-- source: frontend/ui/src/components/WorldGenLoading/ -->
+<!-- source: frontend/ui/src/components/WorldWiki/ -->
+<!-- source: frontend/ui/src/components/FullBleedStage/ -->
+<!-- source-hash: sha256:6bfd4731d54d1ed0d688d5f7863fddb77f0e83caa4487b71b56139aa5623aff9 -->
+<!-- source-hash: sha256:pending -->
+<!-- last-ticket: MYT-89 -->
+
+<h1>World-gen experience</h1>
+
+<p class="lead">
+  What a player watches while their world is built, and the world they land in when it's done. The
+  phase-aware <code>/campaigns/:id</code> route runs a two-act generation — a quiet loading screen
+  while the early prep stages run, then a live graph of the world assembling itself out of drifting
+  fog — and flips to the browsable reveal the moment the connections are woven, ~10 minutes before
+  the pipeline actually finishes. The fog is a real fluid simulation, the graph a contained
+  force-directed layout, and both run in a DOM-free <code>client-core</code> brain that
+  <a href="./design-system.html">@mythrun/ui</a> paints onto layered canvases.
+</p>
+
+<!-- @diagram: frontend/world-gen-experience -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The experience follows the frontend's own brain/render split (see
+  <a href="./design-system.html">the design system</a>). The
+  <strong><code>client-core/worldgen</code></strong> subpath is the platform-neutral brain — the SSE
+  fold, the fog fluid sim, the force graph, the pannable camera, the wiki normalizer, the countdown
+  math — none of it touches the DOM. <strong>@mythrun/ui</strong> turns that brain into pixels: a
+  fog canvas, a graph canvas, a status card, a loading screen, and the browsable wiki.
+  <strong>@mythrun/web</strong>'s <code>CampaignDetailRoute</code> composes them and owns the
+  lifecycle. The route consumes three backend surfaces — the campaign
+  <a href="../runtime/pipeline-status.html">status SSE stream</a>, the
+  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>,
+  and the owner
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  — and never reaches past a <code>client-core</code> hook to do it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why a DOM-free physics core</strong> — the fog sim and the force graph are pure
+  data-in/data-out simulations: obstacles and a clock go in, a density grid and node positions come
+  out. Keeping them in <code>client-core</code> (like the design system's contract layer) means the
+  same physics can be unit-tested with an injected RNG, driven by a Storybook tuning harness with
+  synthetic entities, and — when the native app is written — reused behind a native canvas without a
+  rewrite. The web layer owns only the platform-bound edges: the
+  <code>requestAnimationFrame</code> loop, device-pixel-ratio sizing, pointer events, and the
+  <code>prefers-reduced-motion</code> read.
+</aside>
+
+<h3>The phase-aware route</h3>
+
+<p>
+  <code>CampaignDetailRoute</code> is the home-hub card's click target and where the create flow
+  lands after a world starts generating. It opens the status stream through
+  <code>useWorldGenStream</code>, which folds the SSE frames into three things the whole experience
+  reads: the graph's <code>nodes</code> and <code>edges</code>, the per-stage
+  <code>stages</code> progress, and a coarse lifecycle <code>status</code>/<code>phase</code>. The
+  route branches on that lifecycle: a <em>generating</em> world shows the two-act generation; a
+  <em>failed</em> one shows a calm retryable resume screen; a <em>terminal</em> one a dead-end
+  nudge; and a finished world shows either the reveal or — once the owner has picked a starting
+  situation — the campaign page.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why <code>world_ready</code> needs a second read</strong> — picking a starting situation
+  doesn't advance the pipeline phase (it only records an index on the campaign), so a just-generated
+  world and a world whose owner already picked look identical at the phase level: both are
+  <code>complete</code>/<code>world_ready</code>. The route disambiguates by fetching the
+  chosen-situation flag for exactly that one case; every later phase implies a situation is already
+  chosen and routes straight to the campaign page. A brief settling line covers the flag's resolve
+  window so the reveal-vs-page split never flashes the wrong surface.
+</aside>
+
+<h3>Act one — the loading screen</h3>
+
+<p>
+  Until the first entity-bearing stage runs there is nothing to draw — the early stages
+  (<code>concept_intake</code>, <code>world_color</code>, <code>vocabulary_intake</code>) produce
+  registry and tone context, never a graph node. So act one is a generic
+  <code>WorldGenLoading</code> screen: the design system's <code>Spinner</code>, a flavor line
+  cycling through twenty short messages in shuffled order, and the same per-second countdown the
+  graph will carry. The split between "prep" and "entity" stages is derived once from the canonical
+  <code>WORLD_GEN_STAGES</code> taxonomy (<code>PREP_STAGES</code> vs <code>ENTITY_STAGES</code> in
+  <code>@mythrun/contract/events</code>), so a taxonomy change can never drift the boundary.
+</p>
+
+<p>
+  The instant entities begin arriving — a first node, or an entity stage reported underway,
+  whichever lands first — the loading screen grows a "watch your world be born" button. Generation
+  keeps streaming underneath regardless; the button only <em>reveals</em> the graph. The transition
+  to act two is a deliberate press, never automatic, and re-entering a mid-generation world restarts
+  at the loading screen with the button already offered.
+</p>
+
+<h3>Act two — the fog and the graph</h3>
+
+<p>
+  Act two is the world assembling itself. Two canvases are layered: a fog field behind and the
+  entity graph in front. As each entity streams in, its node appears with a short "trace-then-stamp"
+  arrival — a penstroke traces the node's silhouette, then it fills — and as relationships arrive
+  their edges stroke in as straight penstrokes rather than snapping. The nodes lay out under a
+  force-directed simulation that clusters the graph as edges connect it, and the whole thing is
+  draggable. The status card sits over the canvas (a fixed-count progress bar plus the ticking
+  countdown); on a phone it drops out of the canvas into a compact footer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The fog is a fluid simulation, not a texture</strong> — <code>FogSim</code> advects tracer
+  particles through a velocity field of wind, turbulence, and potential-flow doublets around each
+  entity, bins them into a density grid, and renders that grid as a crisp ordered-Bayer dither in
+  the brand's 1-bit register — no alpha gradients. Every interlocking constant was dialed in by eye
+  in a reference prototype and ported verbatim; "close enough" was explicitly not the bar. The sim
+  runs on a fixed timestep so it looks identical at 60Hz and 120Hz, and its particle count scales
+  with canvas area so the tuned density holds at every pane size.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The fog clears by entity count, not by a fade</strong> — the atmosphere thins as the world
+  fills, but it does it by <em>starving the spawn</em>: every arrived node ramps the
+  particle-respawn flux down by one over <code>MIN_EXPECTED_ENTITIES</code> (the minimum entity
+  count a real generation produces, derived from real worlds), so the wind carries the existing fog
+  off the pane and ever fewer particles replace it. By the time the graph is full the fog is
+  genuinely gone — a physical clearing, not a global opacity dialed toward zero. The earlier
+  procedural <code>GhostBloomField</code> ambient layer was removed; the fog replaces it entirely.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>One virtual coordinate space, CSS-scaled</strong> — the fog constants are absolute pixels
+  tuned at a fixed reference size, so the sim and the graph both render into a shared virtual
+  coordinate space that is then CSS-scaled to the actual pane. That single derivation is what keeps
+  the fog's obstacles aligned with the graph's nodes at every width and aspect, and it is where the
+  "a node can never escape the viewport" containment closes in real pixels — the force sim clamps
+  each node's <em>box</em> (icon plus label) inside the virtual frame, and the shared scale carries
+  that guarantee to the screen.
+</aside>
+
+<p>
+  On a phone the graph does not shrink the world to fit — it becomes a camera over it. The full,
+  legible world is laid out at its natural size and the pane pans across it with one finger (the fog
+  panning in lockstep), gently following new arrivals until the player takes over. The
+  <code>FullBleedStage</code> primitive cancels the app frame's content inset so the pannable canvas
+  fills the screen edge-to-edge below the header, with the status footer as the only chrome.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A camera, not a shrink or a forced rotation</strong> — at real entity counts a whole world
+  squeezed into a 375px pane is unreadable, and forcing landscape is unenforceable in a mobile
+  browser (the orientation-lock API needs fullscreen and has no iOS support). Panning a full-scale
+  world keeps every label legible and tappable and degrades gracefully to portrait. The camera is
+  render-only: it moves what's drawn, never the true node positions the fog's clear-zones and the
+  hit targets key on.
+</aside>
+
+<h3>The reveal — at connections-done, not at the end</h3>
+
+<p>
+  The visible wait ends the moment the connections are woven. When
+  <code>entity_relationships</code> completes (<code>connectionsDone</code> over the folded stages),
+  the route swaps the generating view for <code>WorldReveal</code> — even though the pipeline's tail
+  stages (<code>entity_consolidation</code> through <code>embed_world</code>) are still running. The
+  reveal is the settled graph beside a browsable <code>WorldWiki</code>: the world's entities
+  grouped by kind (places, factions, people, things) with search, each showing its known facts.
+  Selecting a node highlights its wiki entry and vice-versa — one shared selection, because after
+  generation every node's identity <em>is</em> its real entity id, so no id translation is needed.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reveal early, let the tail run silent</strong> — a player who watched a ten-minute build
+  shouldn't wait on <code>coherence_pass</code> and the embed write to see their world. Those tail
+  stages produce quiet refinements (consolidated ghost entities, a coherence tidy-up), not the
+  headline content, so the reveal fires at the connection-weaving boundary and the tail runs behind
+  it. Each tail completion quietly refetches the wiki snapshot — the reconciled world just appears,
+  no spinner takeover, the old model held on screen until the fresh one resolves — and the graph
+  absorbs the same patches through the still-open stream. The "Continue" affordance stays hidden
+  until the pipeline actually finishes, because the starting-situation step it leads to needs a
+  complete world.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
+  the owner world-snapshot at the same stage-4 boundary the endpoint's readiness gate keys on, so it
+  never races the 409. The known-tier filter is entirely
+  <a href="../runtime/world-gen.html#relationship-tiering">server-side</a>: the snapshot returns
+  only <code>known</code> entities, facts, <em>and relationships</em>, so fetching it while the tail
+  is still running serves exactly the same player-safe projection as fetching it after completion.
+  The client renders what it's given; it holds no secret it must remember to hide.
+</aside>
+
+<h3>Waiting feedback</h3>
+
+<p>
+  Both acts carry a per-second countdown so the player always holds an expectation of the wait. The
+  route fetches the
+  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>
+  once at the start; <code>remainingWaitMs</code> intersects those historical per-stage averages
+  with the live stage statuses and subtracts the time already spent in the running stage, and a real
+  one-second interval re-derives it. When a stage overruns, the countdown holds at its floor ("any
+  moment now") and jumps at the next stage event — an honest walk rather than a smooth lie. With no
+  timing history yet (cold start), the surfaces simply show no estimate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The status card counts only the watched stages</strong> — its fixed bars are seeded from
+  the entity stages the player actually waits through, so the bar reaches 100% exactly at the reveal
+  moment. A card that kept counting the silent tail would strand at ~60% and then vanish when the
+  reveal fired. The player never sees API cost on this card either — spend is a dev-tool concern,
+  not a player-facing number.
+</aside>
+
+<h3>Reduced motion and accessibility</h3>
+
+<p>
+  Every motion source honours <code>prefers-reduced-motion</code>, read once in the web layer and
+  handed to the brain as a boolean: the fog recomputes a static settled density on each entity-count
+  change (preserving the clearing-as-progress cue rather than freezing blank), the node bob stops,
+  and edges and arrivals appear instantly instead of stroking in. The reveal degrades its transition
+  to a short cross-fade. The countdown is <em>not</em> gated — it's content, not decoration, and
+  freezing it would show a wrong number. The Canvas graph is paired with an accessible model: an
+  <code>aria-live</code> announcement of entities as they arrive during generation, and in the
+  reveal the wiki's browse-by-kind is the guaranteed keyboard-and-screen-reader path to every entity
+  alongside a hidden roving-tabindex mirror of the graph's selection.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3>Watch a world generate locally</h3>
+<ol>
+  <li>
+    Bring up the stack: <code>pnpm db:up</code>, <code>pnpm dev</code> (backend + worker), and the
+    web app (<code>pnpm --filter @mythrun/web dev</code>). A real generation needs live Anthropic
+    credentials configured in <code>backend/.env.development</code>.
+  </li>
+  <li>
+    Sign in and create a campaign from the hub. The app routes to <code>/campaigns/:id</code> and
+    the loading screen appears while the prep stages run.
+  </li>
+  <li>
+    When the "watch your world be born" button appears, press it to enter act two and watch the fog
+    clear as entities and edges stream in. The world reveals the moment
+    <code>entity_relationships</code> completes; the wiki quietly reconciles as the tail finishes.
+  </li>
+  <li>
+    To inspect the underlying events, open the same campaign in the
+    <a href="../runtime/pipeline-status.html#watch-a-campaign-locally"
+      >dev tool's wire-log drawer</a
+    >
+    — it streams the identical SSE frames the graph is folding.
+  </li>
+</ol>
+
+<h3>Re-tune the graph spread</h3>
+<ol>
+  <li>
+    Open the <code>WorldGenGraph</code> Storybook, which exposes a live tuning harness with sliders
+    over the force parameters (repulsion, link strength, collision padding, margin) and a
+    max-density fixture.
+  </li>
+  <li>
+    Dial the sliders against the dense fixture until the layout reads well, then copy the values
+    back into the locked <code>FORCE_PARAMS</code> defaults in <code>client-core/worldgen</code>.
+    The story is a dev-only surface; the committed defaults are the canonical spec.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The route reads the backend <a href="../runtime/world-gen.html">world-gen pipeline</a> through the
+  campaign <a href="../runtime/pipeline-status.html">status SSE stream</a>, the
+  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>,
+  and the owner
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  — whose known-tier filtering (including the
+  <a href="../runtime/world-gen.html#relationship-tiering">relationship tiering</a> that keeps a
+  secret connection between two public entities off the reveal) is the enforced-ignorance boundary
+  this experience relies on. The <a href="./campaign-hub.html">campaign hub</a> is where a card
+  routes in; the settled world hands off to the campaign page once a starting situation is chosen.
+  Every rendered piece is a <a href="./design-system.html">mythrunUI</a> component, and the SSE fold
+  rides the same <a href="./realtime-transport.html">client-core transport</a> primitives as the
+  rest of the app. Cover and node identity trace back to the
+  <a href="../world-campaign/world-color.html">world colour identity</a>.
+</p>
+
+<h2>Appendix: the modules</h2>
+
+<h3>The brain — <code>client-core/worldgen</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>use-worldgen-stream.ts</code></td>
+    <td>
+      Folds the status SSE into <code>nodes</code>/<code>edges</code>/<code>stages</code> +
+      lifecycle; exposes <code>connectionsDone</code> and <code>completedTailStageCount</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>fog-sim.ts</code> · <code>fog-params.ts</code> · <code>fog-field.ts</code></td>
+    <td>
+      The DOM-free fluid fog core and its locked constants (pure, injectable RNG, fixed-timestep).
+    </td>
+  </tr>
+  <tr>
+    <td><code>force-sim.ts</code></td>
+    <td>
+      The contained d3-force wrapper — box-collision, clustering, viewport clamp, displayId
+      identity.
+    </td>
+  </tr>
+  <tr>
+    <td><code>virtual-space.ts</code></td>
+    <td>The shared virtual coordinate space + the pannable mobile camera.</td>
+  </tr>
+  <tr>
+    <td><code>label-tiers.ts</code> · <code>entity-floor.ts</code></td>
+    <td>Density-aware label budgeting; the entity-count floor the fog drain divides by.</td>
+  </tr>
+  <tr>
+    <td><code>stage-eta.ts</code> · <code>reveal-timing.ts</code></td>
+    <td>The remaining-wait countdown math; the connections-done / tail-stage boundaries.</td>
+  </tr>
+  <tr>
+    <td><code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code></td>
+    <td>SSE-event → node/edge reducers; snapshot → browsable wiki model.</td>
+  </tr>
+  <tr>
+    <td><code>api/worldgen.ts</code></td>
+    <td>The typed <code>getStageTimings</code> / <code>getWorldSnapshot</code> wire calls.</td>
+  </tr>
+</table>
+
+<h3>The render — <code>@mythrun/ui</code></h3>
+<table>
+  <tr>
+    <th>Component</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>WorldGenFogField</code></td>
+    <td>
+      The fog canvas (behind) — rAF/DPR/pointer shell over <code>FogSim</code> + the Bayer draw
+      helper.
+    </td>
+  </tr>
+  <tr>
+    <td><code>WorldGenGraph</code></td>
+    <td>
+      The graph canvas (front) — node/edge draw, penstroke edges, trace-then-stamp arrival, drag,
+      the gated generation vs interactive reveal modes, and the fog layer it composes.
+    </td>
+  </tr>
+  <tr>
+    <td><code>WorldGenStatusCard</code></td>
+    <td>The progress card — overlay on desktop, footer on a phone; fixed bars + countdown.</td>
+  </tr>
+  <tr>
+    <td><code>WorldGenLoading</code></td>
+    <td>Act one — spinner + cycling flavor lines + countdown + the watch beat.</td>
+  </tr>
+  <tr>
+    <td><code>WorldWiki</code></td>
+    <td>
+      The reveal's browsable world — entities grouped by kind, with search and shared selection.
+    </td>
+  </tr>
+  <tr>
+    <td><code>FullBleedStage</code></td>
+    <td>
+      The mobile full-bleed stage that cancels the app-frame inset (a general layout primitive).
+    </td>
+  </tr>
+</table>
+
+<h3>The routes — <code>@mythrun/web</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/campaign-detail.tsx</code></td>
+    <td>
+      The phase-aware <code>/campaigns/:id</code> orchestrator — stream, timings, reveal branching.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/worldgen/generating.tsx</code></td>
+    <td>The two-act generating view (loading → gated graph).</td>
+  </tr>
+  <tr>
+    <td><code>routes/worldgen/reveal.tsx</code></td>
+    <td>The reveal — settled graph beside the browsable wiki, silent tail refetch.</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/src/routes/campaign-detail.tsx</code>, <code>frontend/src/routes/worldgen/</code>,
+  <code>frontend/client-core/src/worldgen/</code>,
+  <code>frontend/client-core/src/api/worldgen.ts</code>,
+  <code>frontend/contract/src/events/worldgen-stages.ts</code>, and the <code>WorldGenFog</code> /
+  <code>WorldGenGraph</code> / <code>WorldGenStatusCard</code> / <code>WorldGenLoading</code> /
+  <code>WorldWiki</code> / <code>FullBleedStage</code> components under
+  <code>frontend/ui/src/components/</code>.
+</p>

@@ -1145,6 +1145,20 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong
+    >Relationships are tier-filtered by their own <code>access_level</code>, not their endpoints
+    (MYT-89)</strong
+  >
+  — <code>relationships.listAmong</code> is passed <code>['known']</code> here, and the filter reads
+  the <em>relationship's</em> tier, not its endpoints'. Once relationships became player-facing, the
+  both-endpoints-known predicate was no longer enough: a <code>secret</code> connection between two
+  <code>known</code> entities would have surfaced. The relationship's own tier is what closes that
+  deterministic leak — see
+  <a href="./world-gen.html#relationship-tiering">relationship tiering</a> for where the tier is
+  assigned.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>A purpose-built projection, not the owner snapshot's composition</strong> — the obvious
   shortcut is to point the player wiki at the existing <code>worldSnapshotView</code>. It leaks. The
   snapshot's <code>WorldSummary</code> includes the owner's raw freeform <code>concept</code> (the

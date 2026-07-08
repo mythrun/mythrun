@@ -1,9 +1,8 @@
 <!-- source: frontend/src/routes/home.tsx -->
 <!-- source: frontend/src/routes/home/ -->
-<!-- source: frontend/src/routes/campaign-detail.tsx -->
 <!-- source: frontend/src/app/header-credits.tsx -->
-<!-- source-hash: sha256:50629f242528b4f91357017ab0945bd38b51bab4a45084faee93f04bc2bef569 -->
-<!-- last-ticket: MYT-87 -->
+<!-- source-hash: sha256:ab4366d064fad1d850812f1c31db0c1333d986e685ca27a7c9b109c5796a6cd9 -->
+<!-- last-ticket: MYT-89 -->
 
 <h1>Campaign hub</h1>
 
@@ -105,8 +104,9 @@
   <em>outside</em> that boundary, so a player can still act even if the number didn't load. The buy
   "+" and the settings gear route to an interim <code>/settings</code> until the dedicated buy flow
   ships; the frame's logomark and display-name slots remain chrome placeholders for now. The card's
-  click target is a thin interim campaign-detail stub — a real route, not a dead click — with the
-  modal/sheet body left to a later ticket.
+  click target is <code>/campaigns/:id</code> — the phase-aware
+  <a href="./world-gen-experience.html">world-generation experience</a>, which shows the live
+  generation graph while a world is still building and the settled reveal once it's done.
 </aside>
 
 <h2>Integration points</h2>
@@ -119,7 +119,10 @@
   <code>CoverCard</code>, <code>CoverDither</code>, <code>Show</code>, the dashed <code>Card</code>,
   the <code>AvatarGroup</code> seals — is a <a href="./design-system.html">mythrunUI</a> primitive.
   The cover colours come from the
-  <a href="../world-campaign/world-color.html">world colour identity</a>.
+  <a href="../world-campaign/world-color.html">world colour identity</a>. Clicking a card routes to
+  <code>/campaigns/:id</code>, the
+  <a href="./world-gen-experience.html">world-generation experience</a> — the live generation graph
+  or the settled reveal, depending on where the world is.
 </p>
 
 <h2>Appendix: the screen modules</h2>
@@ -153,16 +156,11 @@
     <td><code>app/header-credits.tsx</code></td>
     <td><code>HeaderCredits</code> — the resilient live-balance slot</td>
   </tr>
-  <tr>
-    <td><code>routes/campaign-detail.tsx</code></td>
-    <td>Interim card click target (<code>/campaigns/:id</code>)</td>
-  </tr>
 </table>
 
 <h2>Source</h2>
 
 <p>
   <code>frontend/src/routes/home.tsx</code> · <code>frontend/src/routes/home/</code> ·
-  <code>frontend/src/routes/campaign-detail.tsx</code> ·
   <code>frontend/src/app/header-credits.tsx</code>
 </p>
