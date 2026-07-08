@@ -72,12 +72,12 @@ export function invitesNs(c: ClientLike) {
         campaign_name: string
         owner_username: string
         owner_display_name: string
-        expires_at: Date | null
+        valid: boolean
       }>(
         `SELECT c.name AS campaign_name,
                 u.username AS owner_username,
                 u.display_name AS owner_display_name,
-                ci.expires_at
+                (ci.expires_at IS NULL OR ci.expires_at > now()) AS valid
            FROM campaign_invites ci
            JOIN campaigns c ON c.id = ci.campaign_id
            JOIN users u ON u.id = ci.created_by
@@ -88,7 +88,10 @@ export function invitesNs(c: ClientLike) {
       )
       const row = result.rows[0]
       if (!row) return null
-      const valid = row.expires_at === null || row.expires_at > new Date()
+      // Validity is computed IN SQL so revoke (`expires_at = now()`, PG clock)
+      // and this read compare on the SAME clock — a Node-side `new Date()`
+      // comparison is skew-sensitive across the Docker-VM/host boundary.
+      const valid = row.valid
       return {
         campaignName: row.campaign_name,
         ownerUsername: row.owner_username,
@@ -261,9 +264,13 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
         await beginAndConfigure(client)
         inTransaction = true
 
-        // Step 1: Lock the invite row.
-        const inviteResult = await client.query<CampaignInviteDbRow>(
-          `SELECT * FROM campaign_invites WHERE invite_code = $1 FOR NO KEY UPDATE`,
+        // Step 1: Lock the invite row. `expired` is computed IN SQL so the
+        // check shares a clock with revoke's `expires_at = now()` stamp (a
+        // Node-side `new Date()` comparison is skew-sensitive across the
+        // Docker-VM/host boundary).
+        const inviteResult = await client.query<CampaignInviteDbRow & { expired: boolean }>(
+          `SELECT *, (expires_at IS NOT NULL AND expires_at <= now()) AS expired
+             FROM campaign_invites WHERE invite_code = $1 FOR NO KEY UPDATE`,
           [input.code],
         )
         const invite = inviteResult.rows[0]
@@ -288,7 +295,7 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
         }
 
         // Step 3: Expiry check, only for non-members.
-        if (invite.expires_at !== null && invite.expires_at <= new Date()) {
+        if (invite.expired) {
           await client.query('ROLLBACK')
           inTransaction = false
           return { revoked: true }

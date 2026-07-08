@@ -367,7 +367,7 @@ describe('invites repo (integration)', () => {
             query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
-              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+              if (sql.includes('FROM campaign_invites WHERE invite_code')) {
                 return Promise.resolve({ rows: [inviteRow], rowCount: 1 })
               }
               if (sql.startsWith('SELECT id FROM campaign_members')) {
@@ -419,7 +419,7 @@ describe('invites repo (integration)', () => {
             query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
-              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+              if (sql.includes('FROM campaign_invites WHERE invite_code')) {
                 return Promise.resolve({ rows: [inviteRow], rowCount: 1 })
               }
               if (sql.startsWith('SELECT id FROM campaign_members')) {
@@ -473,7 +473,7 @@ describe('invites repo (integration)', () => {
             query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
-              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+              if (sql.includes('FROM campaign_invites WHERE invite_code')) {
                 return Promise.resolve({ rows: [inviteRow], rowCount: 1 })
               }
               if (sql.startsWith('SELECT id FROM campaign_members')) {
@@ -516,7 +516,7 @@ describe('invites repo (integration)', () => {
             query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
-              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+              if (sql.includes('FROM campaign_invites WHERE invite_code')) {
                 return Promise.reject(
                   Object.assign(new Error('lock timeout'), { code: '55P03' }),
                 )
@@ -555,7 +555,7 @@ describe('invites repo (integration)', () => {
             query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
-              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+              if (sql.includes('FROM campaign_invites WHERE invite_code')) {
                 return Promise.reject(
                   Object.assign(new Error('statement timeout'), { code: '57014' }),
                 )
@@ -594,7 +594,7 @@ describe('invites repo (integration)', () => {
             query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
               const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
               if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
-              if (sql.startsWith('SELECT * FROM campaign_invites')) {
+              if (sql.includes('FROM campaign_invites WHERE invite_code')) {
                 return Promise.reject(new Error('select-invite exploded'))
               }
               if (sql.startsWith('ROLLBACK')) {
