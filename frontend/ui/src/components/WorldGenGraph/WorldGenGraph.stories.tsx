@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type {
   GraphEdge,
@@ -22,6 +22,8 @@ import {
   type FixtureArrival,
 } from './max-density-fixture.ts'
 import { FullBleedStage } from '../FullBleedStage/FullBleedStage.tsx'
+import { drawNodes, type Point } from './canvas-draw.ts'
+import { resolveInk, resolveLabelFont, resolvePaper, sizeCanvasForDpr } from './canvas-util.ts'
 import { WorldGenGraph } from './WorldGenGraph.tsx'
 
 // WorldGenGraph — the live streaming graph shown during world generation. The GENERATION
@@ -207,6 +209,115 @@ export const Generating: Story = {
 export const ReducedMotion: Story = {
   name: 'Reduced motion',
   render: () => <StreamingDemo reducedMotion />,
+}
+
+// ── Arrival treatment (MYT-89 audit v2): trace, then stamp ─────────────────────────────
+// An arriving node is DRAWN, not popped in: its silhouette traces itself in as a
+// penstroke (the same hand as the edge draw-ins, from a per-node hashed start corner),
+// then the solid ink + the name land together at completion. Two review surfaces: the
+// live replay (watch arrivals against the fog + edges, re-run at will) and the frozen
+// anatomy (every glyph kind at fixed trace progresses — screenshot-stable).
+
+/** The live generation with a replay control: re-mounts the streaming demo so the
+ *  arrival treatment can be watched repeatedly without reloading the story. `dense`
+ *  streams the realistic 46-entity fixture instead of the small demo script. */
+function ArrivalReplayDemo({ dense }: { dense?: boolean }): React.JSX.Element {
+  const [run, setRun] = useState(1)
+  return (
+    <div className="relative">
+      {dense === true ? (
+        <StreamingDemo key={run} arrivals={MAX_DENSITY_ARRIVALS} totalNodes={MAX_DENSITY_TOTAL} />
+      ) : (
+        <StreamingDemo key={run} />
+      )}
+      <button
+        type="button"
+        className="absolute right-[var(--space-6)] top-[var(--space-6)] z-10 border border-border-strong bg-surface px-[var(--space-3)] py-[var(--space-2)] font-mono text-[12px] text-ink"
+        onClick={() => {
+          setRun((r) => r + 1)
+        }}
+      >
+        [ph: replay]
+      </button>
+    </div>
+  )
+}
+
+// THE arrival-review surface: the scripted mini generation with a top-right replay
+// button — watch glyphs trace in among the drawing edges, as many times as needed.
+export const ArrivalReplay: Story = {
+  name: 'Arrival treatment (replay)',
+  render: () => <ArrivalReplayDemo />,
+}
+
+// The same replay over the realistic 46-entity fixture — the busyness check: mid-gen
+// arrival clusters must read as quiet pen marks, never as the graph churning.
+export const ArrivalReplayDense: Story = {
+  name: 'Arrival treatment, dense (replay)',
+  render: () => <ArrivalReplayDemo dense />,
+}
+
+/** Frozen trace anatomy: every glyph kind (rows) at five arrival progresses
+ *  (columns), drawn through the REAL draw path (`drawNodes` + a fixed progress per
+ *  specimen) onto a bare canvas. The last column is the completed stamp — solid ink
+ *  + the name landing together (the label gate made visible). Static and
+ *  deterministic, so design review doesn't race a 320ms animation. */
+function ArrivalAnatomyDemo(): React.JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d') ?? null
+    if (canvas === null || ctx === null) return
+    const kinds = ['world', 'faction', 'npc', 'pc', 'item', 'location']
+    const steps = [0.15, 0.35, 0.6, 0.85, 1]
+    const nodes: GraphNode[] = []
+    const positions = new Map<string, Point>()
+    const progressOf = new Map<string, number>()
+    kinds.forEach((kind, row) => {
+      steps.forEach((p, col) => {
+        const key = `anatomy/${kind}/${String(p)}`
+        nodes.push(node(key, kind, kind))
+        positions.set(key, { x: col * 120 - 240, y: row * 62 - 155 })
+        progressOf.set(key, p)
+      })
+    })
+    const dims = { width: 720, height: 400 }
+    sizeCanvasForDpr(canvas, ctx, dims)
+    ctx.translate(dims.width / 2, dims.height / 2)
+    const ink = resolveInk(canvas)
+    ctx.strokeStyle = ink
+    ctx.fillStyle = ink
+    drawNodes(
+      ctx,
+      nodes,
+      positions,
+      {
+        selectedKey: undefined,
+        hoverKey: null,
+        focusKey: null,
+        t: null,
+        showLabels: true,
+        labeled: undefined,
+        labelFont: resolveLabelFont(canvas),
+        paper: resolvePaper(canvas),
+        virtual: dims,
+      },
+      (n) => progressOf.get(n.synthKey) ?? 1,
+    )
+  })
+  return (
+    <div className="min-h-dvh bg-bg p-[var(--space-6)]">
+      <canvas ref={canvasRef} className="h-[400px] w-[720px] max-w-full" />
+    </div>
+  )
+}
+
+// The treatment's anatomy, frozen: rows = glyph kinds, columns = trace progress
+// 0.15 → 1. Verify the trace is crisp 1px ink (no alpha, no scaling) and that the
+// fill + name land ONLY in the final column.
+export const ArrivalAnatomy: Story = {
+  name: 'Arrival anatomy (frozen trace)',
+  render: () => <ArrivalAnatomyDemo />,
 }
 
 // ── Responsive specimens (MYT-89 responsive fix) ──────────────────────────────────────

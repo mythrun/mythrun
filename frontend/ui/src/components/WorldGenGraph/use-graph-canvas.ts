@@ -28,6 +28,7 @@ import {
   fogEntitiesFrom,
   type Point,
 } from './canvas-draw.ts'
+import { nodeArriveProgress, recordNodeAppearances, SEED_APPEAR_MS } from './arrival-draw.ts'
 import {
   measureNodeBoxes,
   refreshLabeled,
@@ -177,9 +178,16 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // measure, and the fog all key off this ONE string, so the reserved box bounds the drawn label.
   const labelFontRef = useRef('')
   const clockRef = useRef(0) // buoy-bob clock (seconds); 0 until the loop runs.
-  // C6 Act-2 penstroke state: the ms clock + each edge's first-seen ms (synthKey →
-  // appear-time), the draw-in lerps from. Advanced/stamped per frame in the motion loop.
-  const edgeDrawRef = useRef<EdgeDrawState>({ clockMs: 0, appear: new Map() })
+  // Draw-in state (C6 edges + the audit-v2 node arrivals): the ms clock plus each
+  // edge's and node's first-seen ms (synthKey → appear-time) their penstrokes lerp
+  // from. Advanced/stamped per frame in the motion loop; GC'd with the ref on unmount.
+  const drawInRef = useRef<DrawInState>({
+    clockMs: 0,
+    startMs: null,
+    edgeAppear: new Map(),
+    nodeAppear: new Map(),
+    nodesSeeded: false,
+  })
   const settledRef = useRef(false) // reduced-motion: has the current graph been settled?
   // Latest spread-tuner overrides, normalised to `{}` (never undefined) so `getSim`
   // passes them to `createForceSim` unconditionally under exactOptionalPropertyTypes.
@@ -369,21 +377,31 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       ctx.save()
       ctx.translate(virtual.width / 2 - cam.x, virtual.height / 2 - cam.y)
       const positions = getSim().positions()
+      const drawIn = drawInRef.current
       ctx.strokeStyle = edgeInkRef.current || ink
-      paintEdges(ctx, edgesRef.current, positions, edgeDrawRef.current, reducedRef.current)
+      paintEdges(ctx, edgesRef.current, positions, drawIn, reducedRef.current)
       ctx.strokeStyle = ink
       ctx.fillStyle = ink
-      drawNodes(ctx, nodesRef.current, positions, {
-        selectedKey: selectedRef.current,
-        hoverKey: hoverRef.current,
-        focusKey: focusRef.current,
-        t: reducedRef.current ? null : clockRef.current,
-        showLabels: showLabelsRef.current,
-        labeled: labeledRef.current,
-        labelFont: labelFontRef.current,
-        paper: paperRef.current,
-        virtual,
-      })
+      drawNodes(
+        ctx,
+        nodesRef.current,
+        positions,
+        {
+          selectedKey: selectedRef.current,
+          hoverKey: hoverRef.current,
+          focusKey: focusRef.current,
+          t: reducedRef.current ? null : clockRef.current,
+          showLabels: showLabelsRef.current,
+          labeled: labeledRef.current,
+          labelFont: labelFontRef.current,
+          paper: paperRef.current,
+          virtual,
+        },
+        // The audit-v2 arrival treatment: each node's trace progress from its
+        // first-seen stamp ("trace, then stamp" — arrival-draw.ts). Reduced motion
+        // resolves 1 (instant final state) through the same switch as the edges.
+        (node) => nodeArriveProgress(drawIn.nodeAppear.get(node.synthKey), drawIn.clockMs, reducedRef.current),
+      )
       ctx.restore()
     },
     [getSim, cameraCtl],
@@ -508,8 +526,9 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       getSim,
       paintFrame,
       clockRef,
+      nodesRef,
       edgesRef,
-      edgeDrawRef,
+      drawInRef,
       inkRef,
       advanceCamera: (frameMs) => cameraCtl.source.current(frameMs),
     })
@@ -726,19 +745,30 @@ function observeResize(
   }
 }
 
-/** The C6 Act-2 penstroke clock: the ms elapsed since the motion loop started, plus each
- *  edge's first-seen ms (synthKey → appear-time) its draw-in lerps from. One mutable ref. */
-interface EdgeDrawState {
+/** The draw-in clock + first-seen stamps (one mutable ref): the ms elapsed since the
+ *  FIRST motion frame, each edge's first-seen ms (the C6 penstroke) and each node's
+ *  (the audit-v2 arrival trace), both keyed on synthKey. `startMs` persists ACROSS
+ *  motion-loop restarts (a reduced-motion flip re-runs the loop effect) — resetting
+ *  the clock would strand every recorded appear-time in the future, freezing edge
+ *  penstrokes at 0 and leaving arrived glyphs invisible until the clock caught up. */
+interface DrawInState {
   clockMs: number
-  appear: Map<string, number>
+  startMs: number | null
+  edgeAppear: Map<string, number>
+  nodeAppear: Map<string, number>
+  /** Whether the node SEED pass ran: on the first motion frame, whatever nodes are
+   *  already present (a mid-gen reload's snapshot) are stamped SEED_APPEAR_MS —
+   *  render full instantly, the node counterpart of the edge arrivalIndex<0 rule. */
+  nodesSeeded: boolean
 }
 
 interface MotionLoopDeps {
   getSim: () => ForceSim
   paintFrame: (ctx: CanvasRenderingContext2D, ink: string) => void
   clockRef: React.RefObject<number>
+  nodesRef: React.RefObject<GraphNode[]>
   edgesRef: React.RefObject<GraphEdge[]>
-  edgeDrawRef: React.RefObject<EdgeDrawState>
+  drawInRef: React.RefObject<DrawInState>
   inkRef: React.RefObject<string>
   /** Step the T1b camera's auto-follow drift for this frame's timestamp (idempotent
    *  per timestamp — the fog loop calls the same source with the same rAF time). */
@@ -752,11 +782,11 @@ function paintEdges(
   ctx: CanvasRenderingContext2D,
   edges: readonly GraphEdge[],
   positions: ReadonlyMap<string, Point>,
-  state: EdgeDrawState,
+  state: DrawInState,
   reduced: boolean,
 ): void {
   drawEdges(ctx, edges, positions, (edge) =>
-    edgeDrawProgress(edge, state.appear.get(edge.synthKey), state.clockMs, reduced),
+    edgeDrawProgress(edge, state.edgeAppear.get(edge.synthKey), state.clockMs, reduced),
   )
 }
 
@@ -776,24 +806,33 @@ function recordEdgeAppearances(
   }
 }
 
-/** Run the rAF loop: each frame advance the clocks, stamp new edges' appear-times, tick
- *  the sim, and repaint the graph (edges drawing in + mono-ink glyphs with the render-only
- *  buoy bob). Returns the cancel teardown. Module-scoped so the hook body stays lean.
+/** Run the rAF loop: each frame advance the clocks, stamp new edges' and nodes'
+ *  appear-times, tick the sim, and repaint the graph (edges + arriving glyphs drawing
+ *  in as penstrokes, with the render-only buoy bob). Returns the cancel teardown.
+ *  Module-scoped so the hook body stays lean.
  *
- *  The theme ink is read from `inkRef` (cached), NOT re-resolved via `getComputedStyle`
- *  every frame (MYT-89 audit #2 — that per-frame style read was pure waste). The hook's
- *  MutationObserver refreshes the ref on a light/dark flip, so the very next frame
- *  repaints in the new ink — the Canvas (the one surface Tailwind can't reach) still
- *  tracks the theme, without the per-frame cost. */
+ *  The clock's origin lives in the STATE (`startMs`, set on the first frame ever), so
+ *  a loop restart (a reduced-motion flip) resumes the same monotonic clock instead of
+ *  resetting it under the recorded appear-times. The theme ink is read from `inkRef`
+ *  (cached), NOT re-resolved via `getComputedStyle` every frame (MYT-89 audit #2 —
+ *  that per-frame style read was pure waste). The hook's MutationObserver refreshes
+ *  the ref on a light/dark flip, so the very next frame repaints in the new ink — the
+ *  Canvas (the one surface Tailwind can't reach) still tracks the theme, without the
+ *  per-frame cost. */
 function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): () => void {
-  const { getSim, paintFrame, clockRef, edgesRef, edgeDrawRef, inkRef, advanceCamera } = deps
+  const { getSim, paintFrame, clockRef, nodesRef, edgesRef, drawInRef, inkRef, advanceCamera } = deps
   let raf = 0
-  const start = performance.now()
   const frame = (now: number): void => {
-    const elapsedMs = now - start
+    const state = drawInRef.current
+    state.startMs ??= now
+    const elapsedMs = now - state.startMs
     clockRef.current = elapsedMs / 1000
-    edgeDrawRef.current.clockMs = elapsedMs
-    recordEdgeAppearances(edgesRef.current, edgeDrawRef.current.appear, elapsedMs)
+    state.clockMs = elapsedMs
+    recordEdgeAppearances(edgesRef.current, state.edgeAppear, elapsedMs)
+    // Node arrivals: the very first pass stamps whatever is already present as SEED
+    // (a mid-gen reload renders full instantly); after that, first-seen = trace start.
+    recordNodeAppearances(nodesRef.current, state.nodeAppear, state.nodesSeeded ? elapsedMs : SEED_APPEAR_MS)
+    state.nodesSeeded = true
     advanceCamera(now) // the auto-follow drift for THIS frame (paintFrame reads it)
     getSim().tick()
     paintFrame(ctx, inkRef.current)
