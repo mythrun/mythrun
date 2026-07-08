@@ -128,4 +128,20 @@ describe('costAccountingMiddleware', () => {
     const out = await mw.wrapGenerate?.(args)
     expect(out).toBe(genResult)
   })
+
+  it('a malformed usage shape never throws out of the LLM call (counter untouched)', async () => {
+    // A provider surprise: `inputTokens` missing entirely — mapUsage's
+    // `.noCache` read throws, and the accountCost catch must swallow it.
+    const malformed = { outputTokens: { total: 5 } } as unknown as LanguageModelV3Usage
+    await expect(runGenerate(HAIKU_ID, malformed)).resolves.toBeUndefined()
+    expect(getTotalUsd()).toBe(0)
+  })
+
+  it('omitted usage counters (no cache activity) default to zero, not NaN', async () => {
+    // A call with no cache reads/writes omits those counters rather than
+    // reporting 0 — every `?? 0` arm in mapUsage must default cleanly.
+    const partial = { inputTokens: {}, outputTokens: {} } as unknown as LanguageModelV3Usage
+    await runGenerate(HAIKU_ID, partial)
+    expect(getTotalUsd()).toBe(0)
+  })
 })

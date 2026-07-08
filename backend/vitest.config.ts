@@ -47,6 +47,13 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   // InitiateCombatEvent, ResolveCombatEvent, CombatEvent). No executable code;
   // the combat tools + the worker (T7) import the types transitively.
   'src/session/combat/events.ts',
+  // MYT-73 working-set contract — type/interface-only (WorkingSetProvenance,
+  // WorkingSetProposal, WorkingSetItem). No executable code; the Scribe
+  // reconciler imports the types transitively.
+  'src/session/working-set/types.ts',
+  // MYT-74 retrieval contract — type/interface-only. No executable code;
+  // the retrieval search/graph modules import the types transitively.
+  'src/world/retrieval/types.ts',
   'src/contract/pipeline-jobs.ts',
   // Stripe SDK pricing-data fixture — module-level price tables that are
   // imported wholesale; the contract is "data is present + well-typed,"
