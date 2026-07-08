@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, userEvent, waitFor, within } from 'storybook/test'
 import { Drawer } from './Drawer.tsx'
 import { Button } from '../Button/Button.tsx'
 import { Text } from '../Text/Text.tsx'
@@ -55,10 +56,33 @@ export default meta
 type Story = StoryObj<typeof Drawer>
 
 // Default — closed: the whole affordance is the quiet paper tab at the right
-// edge. Click it, count a few, close, reopen — state survives.
+// edge. The play() drives the persistence journey itself (open → count to 2 →
+// close → reopen → the count SURVIVED), so the browser sweep proves
+// mount-persistence in real Chromium on every CI run. It ends by closing
+// again, leaving the closed resting state as the catalogue specimen. The
+// drawer portals to document.body, so queries scope there, not canvasElement.
 export const Default: Story = {
   args: {
     children: <PersistenceProbe />,
+  },
+  play: async () => {
+    const body = within(document.body)
+    await userEvent.click(body.getByRole('button', { name: 'drawer.open' }))
+    const probe = body.getByRole('button', { name: /demo\.count/ })
+    await userEvent.click(probe)
+    await userEvent.click(probe)
+    await expect(body.getByText('demo.count · 2')).toBeInTheDocument()
+    // Close — the probe must STAY MOUNTED (state alive), just hidden + inert.
+    await userEvent.click(body.getByRole('button', { name: 'drawer.close' }))
+    await waitFor(() => expect(body.queryByRole('dialog')).not.toBeInTheDocument())
+    await expect(body.getByText('demo.count · 2')).toBeInTheDocument()
+    // Reopen — the count resumes from 2, not 0. THE persistence assertion.
+    await userEvent.click(body.getByRole('button', { name: 'drawer.open' }))
+    await waitFor(() => expect(body.getByRole('dialog')).toBeInTheDocument())
+    await expect(body.getByText('demo.count · 2')).toBeInTheDocument()
+    // Rest closed — Default stays the closed-state specimen.
+    await userEvent.click(body.getByRole('button', { name: 'drawer.close' }))
+    await waitFor(() => expect(body.queryByRole('dialog')).not.toBeInTheDocument())
   },
 }
 

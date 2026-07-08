@@ -16,9 +16,22 @@ import type { BaseProps } from './index.ts'
  * The handle is part of the component (it IS the trigger): a square paper tab
  * that toggles the drawer and receives focus back when the sheet closes. Its
  * accessible name flips between `openLabel` (closed → summon) and `closeLabel`
- * (open → dismiss). Focus moves into the sheet on open, Tab is contained
- * inside while open, and `Esc` dismisses — Modal's conventions, as a side
- * sheet.
+ * (open → dismiss). Focus moves into the sheet on open and `Esc` dismisses.
+ * While open, Tab is CONTAINED (a wrap-at-the-edges loop) — deliberately
+ * weaker than Modal's hard trap. Mount-persistence forces the web impl to be
+ * non-modal (a force-mounted modal Radix Dialog would aria-hide + scroll-lock
+ * the whole app while the drawer is CLOSED), and non-modal means no
+ * document-level recapture: focus that leaves by non-Tab means (a pointer, a
+ * script) is not pulled back. Consequences a consumer beyond the fullscreen
+ * mobile reveal should know:
+ *  - No scroll lock: the page behind an open drawer stays scrollable.
+ *  - Focus-in fires on the closed→open TRANSITION only. A drawer mounted
+ *    already-open (`defaultOpen`) does not move focus on load — intentional,
+ *    the drawer is a summoned-from-closed pattern.
+ *  - The closed sheet stays mounted, so its dismiss listeners exist while
+ *    closed: when it is the topmost dismissable layer, a stray `Esc` keydown
+ *    gets its DOM default prevented (the impl swallows the spurious dismiss;
+ *    no `onOpenChange` fires).
  *
  * Controlled when `open` is supplied (pair with `onOpenChange`); uncontrolled
  * with `defaultOpen` otherwise. Open/close is the neutral `onOpenChange(open)`
