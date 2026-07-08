@@ -143,6 +143,10 @@ export type { WorldWikiProps, WikiViewModel, WikiGroup, WikiEntity, WikiFact } f
 // `onOpenChange`/`onChange`/`onSelect` booleans/values, i18n-key labels, no
 // className/style/raw DOM events. Triggers + panel content come in as slots.
 export type { ModalProps } from './modal.ts'
+// Drawer (MYT-89 Phase D) — the edge-handle side sheet. Same Radix Dialog
+// lineage as Modal, but MOUNT-PERSISTENT: children keep their state across
+// close/open (the sheet slides off-screen, it never unmounts).
+export type { DrawerProps } from './drawer.ts'
 export type { PopoverProps, PopoverSide } from './popover.ts'
 export type { TooltipProps, TooltipProviderProps, TooltipSide } from './tooltip.ts'
 export type { TabsProps, TabItem } from './tabs.ts'

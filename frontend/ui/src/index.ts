@@ -124,6 +124,10 @@ export { WorldWiki } from './components/WorldWiki/WorldWiki.tsx'
 // layering. DOM-free contracts (neutral onOpenChange/onChange/onSelect). Tooltip
 // ships its Provider (mount once at the app root).
 export { Modal } from './components/Modal/Modal.tsx'
+// Drawer (MYT-89 Phase D) — the edge-handle side sheet. Radix Dialog like Modal
+// but MOUNT-PERSISTENT: children keep their state across close/open (the sheet
+// slides off-screen inert; it never unmounts).
+export { Drawer } from './components/Drawer/Drawer.tsx'
 export { Popover } from './components/Popover/Popover.tsx'
 export { Tooltip, TooltipProvider } from './components/Tooltip/Tooltip.tsx'
 export { Tabs } from './components/Tabs/Tabs.tsx'
@@ -233,6 +237,7 @@ export type {
   WikiEntity,
   WikiFact,
   ModalProps,
+  DrawerProps,
   PopoverProps,
   PopoverSide,
   TooltipProps,
