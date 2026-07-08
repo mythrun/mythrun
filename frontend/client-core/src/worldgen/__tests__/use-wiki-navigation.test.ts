@@ -91,8 +91,11 @@ describe('useWikiNavigation', () => {
 
   it('setScroll on the home page is a no-op (home carries no scroll)', () => {
     const { result } = renderHook(() => useWikiNavigation())
+    const before = result.current.current
     act(() => { result.current.setScroll(80); })
-    expect(result.current.current).toEqual({ type: 'home' })
+    // Same location reference (state bailed out) — pins the docblock's
+    // "no re-render on a no-op update" claim, not just an equal value.
+    expect(result.current.current).toBe(before)
     expect(result.current.canBack).toBe(false)
   })
 
@@ -108,6 +111,16 @@ describe('useWikiNavigation', () => {
     act(() => { result.current.back(); })
     expect(result.current.current).toEqual({ type: 'home' })
     expect(result.current.canBack).toBe(false)
+  })
+
+  it('same-entity push at depth 2 is still a no-op (bail-out keys on current)', () => {
+    const { result } = renderHook(() => useWikiNavigation())
+    act(() => { result.current.push('entity-a'); })
+    act(() => { result.current.push('entity-b'); })
+    act(() => { result.current.push('entity-b'); })
+    // A single back() lands on A — the redundant B push added no entry.
+    act(() => { result.current.back(); })
+    expect(asEntity(result.current.current).entityId).toBe('entity-a')
   })
 
   it('a same-entity push preserves the current entry scroll', () => {
