@@ -172,6 +172,13 @@ export { DiscordMark } from './brand-marks/DiscordMark.tsx'
 export { ThemeProvider, useTheme } from './theme/theme-provider.tsx'
 export { ThemeToggle } from './components/ThemeToggle/ThemeToggle.tsx'
 
+// The DS's ONE narrow-viewport regime (< 640px — the exact complement of the
+// `sm:` variant), exported so a screen whose narrow layout is STRUCTURAL (a
+// different DOM — the reveal's wiki pane vs drawer, MYT-89 D5) flips on the
+// SAME boolean the DS components (FullBleedStage, WorldGenGraph) flip on
+// internally. One query, one regime — the app and the DS can never disagree.
+export { useViewportNarrow } from './lib/use-viewport-narrow.ts'
+
 export type {
   StackProps,
   BoxProps,

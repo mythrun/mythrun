@@ -1,28 +1,38 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
-import { ApiClientProvider, type ApiContext, type WorldGenStream } from '@mythrun/client-core'
+import {
+  ApiClientProvider,
+  type ApiContext,
+  type WorldGenSnapshot,
+  type WorldGenStream,
+} from '@mythrun/client-core'
 import type { StageProgress } from '@mythrun/contract/events'
-import type { WorldSnapshot } from '@mythrun/contract/rest'
 import { i18n } from '../../i18n/config.ts'
 import { WorldReveal } from './reveal.tsx'
 
-// The WORLD REVEAL (MYT-89 Phase D, D3 + reveal timing) — the graph BESIDE the
-// browsable wiki with SHARED SELECTION. The wiki model is fetched via an
-// injected `fetchSnapshot` (default `getWorldSnapshot`); the graph nodes arrive
-// as props. These tests inject a resolved snapshot and assert: both surfaces
-// render, a selection in EITHER surface highlights the matching entity in the
-// other (BUG 2.1: single `displayId` id-space — post-gen a finalized node's
-// `displayId` IS its entity id, so no synthKey↔id bridge; the FINALIZED-node
-// fixture keeps synthKey ≠ displayId to prove the graph keys selection on
-// displayId, not synthKey), Continue fires its intent + is GATED until the
-// pipeline completes, and the SILENT UPDATES: a completed tail stage in the
-// `stages` prop quietly refetches the wiki snapshot (old model stays rendered —
-// no loading takeover — until the fresh one resolves). WorldGenGraph's Canvas
-// is a jsdom no-op (its meaning lives in the accessible entity list); only that
-// list is queried.
+// The WORLD REVEAL (MYT-89 Phase D, D5 layout + reveal timing) — the graph
+// beside the browsable wiki with SHARED SELECTION; desktop lays them as a true
+// 50/50 (`Grid columns={2}`), a narrow viewport gets the full-bleed graph with
+// the wiki in the edge-handle Drawer. The wiki model is fetched via an
+// injected `fetchSnapshot` (default `getWorldSnapshot` — the RELATIONSHIP-
+// bearing `WorldGenSnapshot`, so RELATED cross-links populate); the graph
+// nodes arrive as props. These tests inject a resolved snapshot and assert:
+// both surfaces render, a selection in EITHER surface highlights the matching
+// entity in the other (BUG 2.1: single `displayId` id-space — post-gen a
+// finalized node's `displayId` IS its entity id, so no synthKey↔id bridge; the
+// FINALIZED-node fixture keeps synthKey ≠ displayId to prove the graph keys
+// selection on displayId, not synthKey), a re-tap of the SAME node re-opens
+// its page after a wiki back() (the one-shot push signal), Continue fires its
+// intent + is GATED until the pipeline completes, and the SILENT UPDATES: a
+// completed tail stage in the `stages` prop quietly refetches the wiki
+// snapshot (old model stays rendered — no loading takeover — until the fresh
+// one resolves). WorldGenGraph's Canvas is a jsdom no-op (its meaning lives in
+// the accessible entity list); only that list is queried. The viewport regime
+// is driven by a query-aware `matchMedia` stub (`mockViewport`); tests that
+// install none run wide (the no-matchMedia default — desktop).
 
 // ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; the platform builtin can shadow jsdom's real Storage.
@@ -71,7 +81,29 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  // Restore the no-matchMedia default (wide) for tests that install no stub.
+  if (typeof window !== 'undefined') Reflect.deleteProperty(window, 'matchMedia')
 })
+
+// jsdom has no matchMedia. Install a QUERY-AWARE stub so the DS's one narrow
+// regime (`(min-width: 640px)` — useViewportNarrow) resolves to the viewport
+// under test; every other query (reduced-motion, pointer) stays non-matching.
+function mockViewport({ narrow }: { narrow: boolean }): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query === '(min-width: 640px)' ? !narrow : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  })
+}
 
 // Finalized nodes whose synthKey ≠ displayId — the post-gen reality: the graph
 // selects by `displayId` (= the finalized node's entity id), the wiki by entity
@@ -82,7 +114,10 @@ const NODES: WorldGenStream['nodes'] = [
   { synthKey: 's2/maeris', kind: 'npc', name: 'Maeris Vale', displayId: 'ent-npc-1', state: 'finalized', lastEventIndex: 1 },
 ]
 
-const SNAPSHOT: WorldSnapshot = {
+// The snapshot is the RELATIONSHIP-BEARING `WorldGenSnapshot` — what the real
+// `getWorldSnapshot` returns (the D2-review re-type: a relationship-less source
+// is now a compile error, so the RELATED lists can't silently come up empty).
+const SNAPSHOT: WorldGenSnapshot = {
   entities: [
     { id: 'ent-loc-1', entityType: 'location', name: 'Ashfen Reach' },
     { id: 'ent-npc-1', entityType: 'npc', name: 'Maeris Vale' },
@@ -91,17 +126,24 @@ const SNAPSHOT: WorldSnapshot = {
     { id: 'fact-1', entityId: 'ent-npc-1', topic: 'Role', content: 'Harbourmaster of the Reach.' },
   ],
   entityHierarchy: [],
+  relationships: [
+    {
+      sourceEntityId: 'ent-npc-1',
+      targetEntityId: 'ent-loc-1',
+      relationshipType: 'harbourmaster_of',
+    },
+  ],
 }
 
 interface RevealOverrides {
-  fetchSnapshot?: () => Promise<WorldSnapshot>
+  fetchSnapshot?: () => Promise<WorldGenSnapshot>
   onContinue?: () => void
   stages?: readonly StageProgress[]
   continueReady?: boolean
 }
 
 interface RevealHandle {
-  fetchSnapshot: () => Promise<WorldSnapshot>
+  fetchSnapshot: () => Promise<WorldGenSnapshot>
   /** Re-render the SAME mounted reveal with new stages/continueReady — the
    *  route's live-stream updates, as the reveal experiences them. */
   update: (next: Pick<RevealOverrides, 'stages' | 'continueReady'>) => void
@@ -167,12 +209,74 @@ describe('WorldReveal — settled graph beside the wiki', () => {
 
   it('shows a calm loading placeholder before the snapshot resolves', () => {
     // A never-resolving fetch keeps the wiki panel in its loading state.
-    const pending = new Promise<WorldSnapshot>(() => {
+    const pending = new Promise<WorldGenSnapshot>(() => {
       /* deliberately never resolves */
     })
     renderReveal({ fetchSnapshot: vi.fn(() => pending) })
     expect(screen.getByText('[ph: settling your world]')).toBeDefined()
     expect(screen.queryByTestId('reveal-wiki')).toBeNull()
+  })
+
+  it('shows the honest UNAVAILABLE line when the snapshot fetch fails (never an error flash)', async () => {
+    // The owner-only endpoint 403s for a member (myth-0xwos) and any fetch can
+    // fail transiently — the panel settles to a calm unavailable line, distinct
+    // from "your world is empty", and never throws into the route.
+    renderReveal({ fetchSnapshot: vi.fn().mockRejectedValue(new Error('403 forbidden')) })
+    expect(await screen.findByText(i18n.t('worldReveal.unavailable'))).toBeDefined()
+    expect(screen.queryByTestId('reveal-wiki')).toBeNull()
+  })
+})
+
+describe('WorldReveal — desktop layout (true 50/50)', () => {
+  it('lays graph and wiki as a FIXED two-column grid (no auto-fill empty tracks)', async () => {
+    renderReveal()
+    const panes = screen.getByTestId('reveal-panes')
+    // `Grid columns={2}` → an inline `repeat(2, minmax(0, 1fr))` track: the two
+    // panes stretch to fill the full width; the old `auto-fill` template kept
+    // empty trailing tracks on wide viewports.
+    expect(panes.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))')
+    expect(within(panes).getByTestId('reveal-graph')).toBeDefined()
+    expect(await within(panes).findByTestId('reveal-wiki')).toBeDefined()
+  })
+
+  it('renders NO drawer on a wide viewport (the pane carries the wiki)', async () => {
+    renderReveal()
+    await screen.findByTestId('reveal-wiki')
+    expect(screen.queryByTestId('reveal-drawer')).toBeNull()
+  })
+})
+
+describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () => {
+  it('renders the graph in a full-bleed stage and the wiki in a CLOSED drawer', async () => {
+    mockViewport({ narrow: true })
+    renderReveal()
+    // The graph owns the glass: the FullBleedStage mechanism (the generating
+    // act's), not the desktop grid.
+    expect(within(screen.getByTestId('reveal-stage')).getByTestId('reveal-graph')).toBeDefined()
+    expect(screen.queryByTestId('reveal-panes')).toBeNull()
+    // The drawer sheet is closed (transform + inert — the Drawer contract) but
+    // its wiki child is MOUNTED, so reader state survives close→open.
+    const sheet = screen.getByTestId('reveal-drawer')
+    expect(sheet.getAttribute('data-state')).toBe('closed')
+    expect(sheet.hasAttribute('inert')).toBe(true)
+    expect(await within(sheet).findByTestId('reveal-wiki')).toBeDefined()
+  })
+
+  it('opens the drawer onto the entity page when a graph node is chosen', async () => {
+    mockViewport({ narrow: true })
+    renderReveal()
+    const sheet = screen.getByTestId('reveal-drawer')
+    await within(sheet).findByTestId('reveal-wiki')
+    fireEvent.click(
+      within(screen.getByTestId('reveal-graph')).getByRole('button', { name: /Maeris Vale/i }),
+    )
+    // The page pushes synchronously; the summon is deferred ONE macrotask past
+    // the tapping gesture (see handleGraphSelect — the Radix armed-dismiss
+    // interplay), so the open state needs a beat.
+    expect(within(sheet).getByRole('heading', { name: 'Maeris Vale' })).toBeDefined()
+    await waitFor(() => {
+      expect(sheet.getAttribute('data-state')).toBe('open')
+    })
   })
 })
 
@@ -197,6 +301,43 @@ describe('WorldReveal — shared selection (graph ↔ wiki)', () => {
     fireEvent.click(within(wiki).getByRole('button', { name: 'Maeris Vale' }))
     const graphBtn = within(graph).getByRole('button', { name: /Maeris Vale/i })
     expect(graphBtn.getAttribute('aria-current')).toBe('true')
+  })
+
+  it('re-opens the SAME page after backing out (tap → back → tap the same node)', async () => {
+    // `back()` reports nothing outward, so the push signal must be ONE-SHOT:
+    // a re-tap of the unchanged selection has to read as a fresh change or the
+    // wiki stays inert on home (the D4-review re-tap bug).
+    renderReveal()
+    const wiki = await screen.findByTestId('reveal-wiki')
+    const graph = screen.getByTestId('reveal-graph')
+    const tapMaeris = (): void => {
+      fireEvent.click(within(graph).getByRole('button', { name: /Maeris Vale/i }))
+    }
+    tapMaeris()
+    expect(within(wiki).getByRole('heading', { name: 'Maeris Vale' })).toBeDefined()
+    // Back out to home (the i18n-wired back label — obligation 2's wiring).
+    fireEvent.click(within(wiki).getByRole('button', { name: i18n.t('worldReveal.wikiBack') }))
+    expect(within(wiki).queryByRole('heading', { name: 'Maeris Vale' })).toBeNull()
+    tapMaeris()
+    expect(within(wiki).getByRole('heading', { name: 'Maeris Vale' })).toBeDefined()
+  })
+})
+
+describe('WorldReveal — RELATED cross-links (relationship-bearing snapshot)', () => {
+  it('populates RELATED from the snapshot relationships and hops on activation', async () => {
+    renderReveal()
+    const wiki = await screen.findByTestId('reveal-wiki')
+    fireEvent.click(within(wiki).getByRole('button', { name: 'Maeris Vale' }))
+    // The i18n-wired RELATED section label (obligation 2), then the other
+    // endpoint's name with the de-snaked relationship label.
+    expect(within(wiki).getByText(i18n.t('worldReveal.wikiRelated'))).toBeDefined()
+    const link = within(wiki).getByRole('button', { name: /Ashfen Reach/i })
+    expect(link.textContent).toContain('harbourmaster of')
+    fireEvent.click(link)
+    // The hop lands on Ashfen Reach — a factless entity, so the page shows the
+    // i18n-wired empty-body note (obligation 2's third label).
+    expect(within(wiki).getByRole('heading', { name: 'Ashfen Reach' })).toBeDefined()
+    expect(within(wiki).getByText(i18n.t('worldReveal.wikiEmptyBody'))).toBeDefined()
   })
 })
 
@@ -231,7 +372,7 @@ describe('WorldReveal — continue', () => {
 describe('WorldReveal — silent updates while the tail runs (MYT-89 reveal timing)', () => {
   // The reconciled world: the refetch returns an EXTRA fact (what a
   // coherence-pass patch or a consolidated ghost looks like from here).
-  const RECONCILED: WorldSnapshot = {
+  const RECONCILED: WorldGenSnapshot = {
     ...SNAPSHOT,
     facts: [
       ...SNAPSHOT.facts,
@@ -275,10 +416,10 @@ describe('WorldReveal — silent updates while the tail runs (MYT-89 reveal timi
     // The refetch never resolves: the reveal must keep showing the ORIGINAL
     // wiki (no spinner takeover, no loading placeholder, no empty state).
     let first = true
-    const pendingForever = new Promise<WorldSnapshot>(() => {
+    const pendingForever = new Promise<WorldGenSnapshot>(() => {
       /* deliberately never resolves */
     })
-    const fetchSnapshot = vi.fn((): Promise<WorldSnapshot> => {
+    const fetchSnapshot = vi.fn((): Promise<WorldGenSnapshot> => {
       if (first) {
         first = false
         return Promise.resolve(SNAPSHOT)
