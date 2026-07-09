@@ -186,6 +186,48 @@ describe('RevealTransition — skip', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 
+  it('fires the skip once when a pointer-down and key-down land in the same tick', () => {
+    const onDone = vi.fn()
+    renderMoment({ play: true, onDone })
+    advance(REVEAL_HOLD_MS)
+    expect(probe()).toBe('gust:false')
+    // Both skip triggers in ONE synchronous tick — before React re-renders and
+    // the effect tears the window listeners down. The settled state hasn't
+    // committed yet, so the closure guard is what collapses them to a single
+    // landing (raw dispatch, not two fireEvent calls, to keep it one tick).
+    act(() => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      document.body.dispatchEvent(new Event('keydown', { bubbles: true }))
+    })
+    expect(probe()).toBe('done:true')
+    expect(onDone).toHaveBeenCalledOnce()
+  })
+
+  it('does not swallow the skipping tap — what was under it still receives it', () => {
+    const onDone = vi.fn()
+    const onUnder = vi.fn()
+    render(
+      <RevealTransition data-testid="moment" play onDone={onDone}>
+        {(m) => (
+          <button type="button" data-testid="under" onPointerDown={onUnder}>
+            {`${m.phase}:${String(m.instant)}`}
+          </button>
+        )}
+      </RevealTransition>,
+    )
+    advance(REVEAL_HOLD_MS)
+    expect(screen.getByTestId('under').textContent).toBe('gust:false')
+    act(() => {
+      fireEvent.pointerDown(screen.getByTestId('under'))
+    })
+    // The window-capture skip listens without preventDefault (§3.8: "the event
+    // is never swallowed"), so the SAME tap both lands the skip AND reaches the
+    // control it fell on.
+    expect(screen.getByTestId('under').textContent).toBe('done:true')
+    expect(onUnder).toHaveBeenCalledOnce()
+    expect(onDone).toHaveBeenCalledOnce()
+  })
+
   it('after the moment ends, interactions no longer touch it', () => {
     const onDone = vi.fn()
     renderMoment({ play: true, onDone })

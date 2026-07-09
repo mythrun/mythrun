@@ -108,6 +108,11 @@ export function RevealTransition({
   })
   const onDoneRef = useRef(onDone)
   onDoneRef.current = onDone
+  // The skip's synchronous latch. `state.settled` only commits on re-render, so
+  // two skip triggers in one tick (a pointer-down and a key-down before React
+  // flushes) would both read it false and double-fire onDone. This ref lands
+  // synchronously, collapsing the burst to a single skip.
+  const skippedRef = useRef(false)
 
   // The timeline — scheduled once, on whichever render first latched (mount
   // above, or a later play=true via this effect). All timers die on unmount;
@@ -162,6 +167,8 @@ export function RevealTransition({
   useEffect(() => {
     if (state.settled) return
     const skip = (): void => {
+      if (skippedRef.current) return
+      skippedRef.current = true
       setState({ phase: 'done', instant: true, settled: true, entering: false })
       onDoneRef.current?.()
     }
