@@ -1,154 +1,148 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, within } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import type { WikiViewModel } from '@mythrun/client-core/contract'
 import { WorldWiki } from './WorldWiki.tsx'
+import { WIKI_FIXTURE_MODEL } from './wiki-fixture.ts'
 
-// WorldWiki is a browsable grouped tree over a borderless search field. Its whole
-// surface is DOM (no Canvas), so these tests exercise it directly: every group +
-// entity renders, a nested location indents UNDER its parent, activation (click +
-// keyboard) fires onSelect, `selectedId` marks + opens the entity to its facts,
-// and the `query` prop filters the tree (keeping a nested match's ancestor path).
+// The composed WorldWiki: WikiHome ⇄ WikiPage driven by the REAL
+// `useWikiNavigation` (D3) — these tests walk the wiki as a reader would.
+// Navigation (home row → page, related hop, back), the scroll round-trip
+// (the D3 contract's consumer side), the external graph-selection push
+// (`selectedId` — the reveal's graph↔wiki bridge), and the defensive
+// home-fallback when a silent refetch drops the current entity.
 
-const MODEL: WikiViewModel = {
-  groups: [
-    {
-      kind: 'faction',
-      entities: [
-        {
-          id: 'f1',
-          name: 'The Tallow Guild',
-          facts: [{ id: 'f1a', topic: 'Purpose', content: 'Renders tallow into rare unguents.' }],
-        },
-      ],
-    },
-    {
-      kind: 'location',
-      entities: [
-        {
-          id: 'l1',
-          name: 'Ashfen Reach',
-          facts: [{ id: 'l1a', topic: 'Terrain', content: 'A drowned delta of salt and reed.' }],
-          children: [
-            {
-              id: 'l2',
-              name: 'The Drowned Ward',
-              facts: [{ id: 'l2a', topic: 'Note', content: 'Flooded at every high tide.' }],
-            },
-          ],
-        },
-        { id: 'l3', name: 'Sunspire', facts: [] },
-      ],
-    },
-    { kind: 'npc', entities: [{ id: 'n1', name: 'Maeris Vale', facts: [] }] },
-    { kind: 'item', entities: [{ id: 'i1', name: 'The Salt Ledger', facts: [] }] },
-  ],
-}
-
-// The chrome labels are consumer-supplied (i18n) props — the DS owns no copy.
 const LABELS = {
   searchLabel: 'Search the world',
   searchPlaceholder: 'Search',
   emptyLabel: 'Nothing here',
+  backLabel: 'Back',
+  relatedLabel: 'Related',
+  emptyBodyLabel: 'Nothing recorded here yet',
   groupLabels: { faction: 'Factions', location: 'Locations', npc: 'People', item: 'Items' },
 } as const
 
-describe('WorldWiki — grouped tree', () => {
-  it('renders every group heading and entity from the model', () => {
-    const { getByRole, getByText } = render(<WorldWiki model={MODEL} onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />)
-    for (const heading of ['Factions', 'Locations', 'People', 'Items']) {
-      expect(getByRole('heading', { name: heading })).toBeInTheDocument()
-    }
-    for (const name of ['The Tallow Guild', 'Ashfen Reach', 'The Drowned Ward', 'Sunspire', 'Maeris Vale', 'The Salt Ledger']) {
-      expect(getByText(name)).toBeInTheDocument()
-    }
+function renderWiki(overrides: Partial<React.ComponentProps<typeof WorldWiki>> = {}) {
+  return render(
+    <WorldWiki model={WIKI_FIXTURE_MODEL} onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} {...overrides} />,
+  )
+}
+
+describe('WorldWiki — the composed journey', () => {
+  it('walks home → entity page → related hop → back → back → home', async () => {
+    const user = userEvent.setup()
+    const { getByRole, queryByRole } = renderWiki()
+
+    // Home: the search + browse landing.
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+
+    // Open an entity from a kind group → its page (heading + body).
+    await user.click(getByRole('button', { name: 'The Tallow Guild' }))
+    expect(getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
+    expect(queryByRole('textbox', { name: 'Search the world' })).toBeNull()
+
+    // Hop a RELATED link → the target's page.
+    await user.click(getByRole('button', { name: /Maeris Vale/ }))
+    expect(getByRole('heading', { name: 'Maeris Vale' })).toBeInTheDocument()
+
+    // Back → the guild page again; back again → home.
+    await user.click(getByRole('button', { name: 'Back' }))
+    expect(getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
+    await user.click(getByRole('button', { name: 'Back' }))
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
   })
 
-  it('renders a nested location UNDER its parent (indented, not top-level)', () => {
-    const { getByRole } = render(<WorldWiki model={MODEL} onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />)
-    const parentLi = getByRole('button', { name: 'Ashfen Reach' }).closest('li')
-    expect(parentLi).not.toBeNull()
-    // The child button lives inside the parent's <li> (nested), not as a sibling.
-    const childButton = within(parentLi as HTMLElement).getByRole('button', { name: 'The Drowned Ward' })
-    expect(childButton).toBeInTheDocument()
-    // And it sits in a nested <ul> that is itself contained by the parent <li>.
-    expect(parentLi).toContainElement(childButton.closest('ul'))
+  it('notifies onSelect for internal navigation, keeping the graph in step', async () => {
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = renderWiki({ onSelect })
+    await user.click(getByRole('button', { name: 'The Tallow Guild' }))
+    expect(onSelect).toHaveBeenLastCalledWith('f-guild')
+    await user.click(getByRole('button', { name: /Maeris Vale/ }))
+    expect(onSelect).toHaveBeenLastCalledWith('n-vale')
   })
 })
 
-describe('WorldWiki — selection', () => {
-  it('calls onSelect(id) when an entity is activated (click)', async () => {
-    const onSelect = vi.fn()
+describe('WorldWiki — scroll memory', () => {
+  it('round-trips the reader position: scroll, hop away, come back', async () => {
     const user = userEvent.setup()
-    const { getByRole } = render(<WorldWiki model={MODEL} onSelect={onSelect} onQuery={vi.fn()} {...LABELS} />)
-    await user.click(getByRole('button', { name: 'Maeris Vale' }))
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('n1')
-  })
+    const { getByRole } = renderWiki()
 
-  it('calls onSelect(id) on keyboard activation (Enter)', async () => {
-    const onSelect = vi.fn()
-    const user = userEvent.setup()
-    const { getByRole } = render(<WorldWiki model={MODEL} onSelect={onSelect} onQuery={vi.fn()} {...LABELS} />)
-    getByRole('button', { name: 'Ashfen Reach' }).focus()
-    await user.keyboard('{Enter}')
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('l1')
-  })
+    await user.click(getByRole('button', { name: 'The Tallow Guild' }))
+    const article = getByRole('article')
+    article.scrollTop = 140
 
-  it('marks the selected entity via aria-current (prop-driven, no internal state)', () => {
-    const { getByRole } = render(<WorldWiki model={MODEL} selectedId="n1" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />)
-    expect(getByRole('button', { name: 'Maeris Vale' })).toHaveAttribute('aria-current', 'true')
-    expect(getByRole('button', { name: 'Ashfen Reach' })).not.toHaveAttribute('aria-current')
-  })
+    // A fresh page starts at the top…
+    await user.click(getByRole('button', { name: /Maeris Vale/ }))
+    expect(getByRole('article').scrollTop).toBe(0)
 
-  it('opens the selected entity to its facts (and only the selected one)', () => {
-    const { getByText, queryByText } = render(
-      <WorldWiki model={MODEL} selectedId="l1" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,
-    )
-    // Ashfen Reach (l1) is selected — its fact topic + content render.
-    expect(getByText('Terrain')).toBeInTheDocument()
-    expect(getByText('A drowned delta of salt and reed.')).toBeInTheDocument()
-    // A non-selected entity's facts stay closed.
-    expect(queryByText('Renders tallow into rare unguents.')).toBeNull()
+    // …and back restores the recorded offset verbatim.
+    await user.click(getByRole('button', { name: 'Back' }))
+    expect(getByRole('article').scrollTop).toBe(140)
   })
 })
 
-describe('WorldWiki — search', () => {
-  it('calls onQuery when the search field is typed into', async () => {
-    const onQuery = vi.fn()
+describe('WorldWiki — external selection (the graph↔wiki bridge)', () => {
+  it('pushes the entity page when selectedId changes from outside', () => {
+    const { rerender, getByRole } = renderWiki()
+    rerender(
+      <WorldWiki
+        model={WIKI_FIXTURE_MODEL}
+        selectedId="l-spire"
+        onSelect={vi.fn()}
+        onQuery={vi.fn()}
+        {...LABELS}
+      />,
+    )
+    expect(getByRole('heading', { name: 'Sunspire' })).toBeInTheDocument()
+    // Sunspire is the empty-body specimen: the calm note + its related reading.
+    expect(getByRole('article')).toHaveTextContent('Nothing recorded here yet')
+    expect(getByRole('button', { name: /The Tallow Guild/ })).toBeInTheDocument()
+  })
+
+  it('dedups a re-selection of the entity already in view (no self-stack)', async () => {
     const user = userEvent.setup()
-    const { getByRole } = render(<WorldWiki model={MODEL} onSelect={vi.fn()} onQuery={onQuery} {...LABELS} />)
-    await user.type(getByRole('textbox', { name: 'Search the world' }), 'a')
-    expect(onQuery).toHaveBeenCalledWith('a')
-  })
-
-  it('filters the tree by the query prop, keeping a nested match ancestor path', () => {
-    const { getByText, queryByText } = render(
-      <WorldWiki model={MODEL} query="drowned" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,
+    const { rerender, getByRole } = renderWiki({ selectedId: 'l-spire' })
+    expect(getByRole('heading', { name: 'Sunspire' })).toBeInTheDocument()
+    // A re-render with the SAME selection must not stack the page on itself…
+    rerender(
+      <WorldWiki
+        model={WIKI_FIXTURE_MODEL}
+        selectedId="l-spire"
+        onSelect={vi.fn()}
+        onQuery={vi.fn()}
+        {...LABELS}
+      />,
     )
-    // The nested match + its ancestor stay visible…
-    expect(getByText('The Drowned Ward')).toBeInTheDocument()
-    expect(getByText('Ashfen Reach')).toBeInTheDocument()
-    // …while non-matching entities (and their now-empty groups) are hidden.
-    expect(queryByText('Sunspire')).toBeNull()
-    expect(queryByText('Maeris Vale')).toBeNull()
-    expect(queryByText('People')).toBeNull()
-    expect(queryByText('Locations')).toBeInTheDocument()
+    // …so one Back lands home, not on a second copy of the page.
+    await user.click(getByRole('button', { name: 'Back' }))
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
   })
+})
 
-  it('shows the empty-state note when the query matches nothing', () => {
-    const { getByText } = render(
-      <WorldWiki model={MODEL} query="zzzznomatch" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,
+describe('WorldWiki — silent-refetch resilience', () => {
+  it('falls back to home when the current entity leaves the model', () => {
+    const { rerender, getByRole } = renderWiki({ selectedId: 'n-vale' })
+    expect(getByRole('heading', { name: 'Maeris Vale' })).toBeInTheDocument()
+    const shrunk: WikiViewModel = {
+      groups: WIKI_FIXTURE_MODEL.groups.filter((group) => group.kind !== 'npc'),
+    }
+    rerender(
+      <WorldWiki model={shrunk} selectedId="n-vale" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,
     )
-    expect(getByText('Nothing here')).toBeInTheDocument()
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
   })
 })
 
 describe('WorldWiki — a11y', () => {
-  it('has no a11y violations', async () => {
-    const { container } = render(
-      <WorldWiki model={MODEL} selectedId="l1" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,
-    )
+  it('has no violations on home', async () => {
+    const { container } = renderWiki()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('has no violations on an entity page', async () => {
+    const { container } = renderWiki({ selectedId: 'f-guild' })
     expect(await axe(container)).toHaveNoViolations()
   })
 })

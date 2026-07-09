@@ -129,11 +129,18 @@ export type { WorldGenLoadingProps } from './world-gen-loading.ts'
 export type { WorldGenFogFieldProps, WorldGenCameraSource, FogFieldEntity, FogObstacle } from './world-gen-fog.ts'
 
 // WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their
-// newly-generated world through: a grouped tree (factions/locations/npcs/items,
-// nested locations), each entity opening to its facts, over a borderless search
-// field that filters by name. The `Wiki*` model types are re-exported here so a
-// consumer reads the model shape off the same contract surface as the props.
-export type { WorldWikiProps, WikiViewModel, WikiGroup, WikiEntity, WikiFact } from './world-wiki.ts'
+// newly-generated world through: a home landing (search + browse-by-kind groups,
+// nested locations) opening onto real entity PAGES (fact body, RELATED links,
+// back-nav with scroll memory). The `Wiki*` model types are re-exported here so
+// a consumer reads the model shape off the same contract surface as the props.
+export type {
+  WorldWikiProps,
+  WikiViewModel,
+  WikiGroup,
+  WikiEntity,
+  WikiFact,
+  WikiRelatedLink,
+} from './world-wiki.ts'
 
 // Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
 // Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip

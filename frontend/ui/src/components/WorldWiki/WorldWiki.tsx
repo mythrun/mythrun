@@ -1,106 +1,31 @@
-import { forwardRef } from 'react'
+import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { EntityKind } from '@mythrun/contract/rest'
 import type { WikiEntity, WorldWikiProps } from '@mythrun/client-core/contract'
-import { cn } from '../../lib/cn.ts'
-import { Text } from '../Text/Text.tsx'
-import { Heading } from '../Heading/Heading.tsx'
-import { Divider } from '../Divider/Divider.tsx'
-import { SeamlessInput } from '../SeamlessInput/SeamlessInput.tsx'
-import { filterWikiModel } from './filter-model.ts'
+import { useWikiNavigation } from '@mythrun/client-core/worldgen'
+import { WikiHome } from './WikiHome.tsx'
+import { WikiPage } from './WikiPage.tsx'
 
-// WorldWiki (MYT-89 Phase D) — the browsable wiki the owner explores their newly
-// generated world through. A borderless search field over a grouped tree
-// (factions/locations/npcs/items); nested locations indent under their parent via
-// nested <ul>s; the SELECTED entity opens to its facts. Flat 1-bit paper register:
-// no boxes/cards/circles — quiet Divider hairlines separate groups, a surface
-// token-swap marks the selected row. Selection + query are PROP-DRIVEN (D3 shares
-// `selectedId` with the graph), so this component holds no state of its own.
+// WorldWiki (MYT-89 Phase D, D4) — the browsable wiki as a real PLACE: a home
+// landing (search + browse-by-kind, WikiHome) opening onto per-entity pages
+// (fact body + RELATED cross-links + back, WikiPage). This shell owns the D3
+// `useWikiNavigation` stack INTERNALLY, so its outer surface stays the same
+// plain-data props the reveal already passes (model + selectedId/onSelect for
+// the graph↔wiki bridge, query/onQuery for the search).
 //
-// The DS owns no copy: the search label/placeholder, per-kind group headings, and
-// empty-state note arrive as `[ph: …]`-defaulted props. Entity names + facts are
-// DATA (from the model) and render as-is. Raw <ul>/<li>/<button> carry the tree
-// SEMANTICS + keyboard activation (native tab order, Enter/Space) — mirrors the
-// C4 EntityList; all TEXT flows through the Text/Heading primitives.
-
-const ITEM_CLASS = cn(
-  'flex w-full min-w-0 items-baseline text-left',
-  'bg-transparent text-ink rounded-none cursor-pointer select-none',
-  'px-[var(--space-3)] py-[var(--space-2)]',
-  'hover:bg-surface-hover active:bg-surface-active',
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
-)
-// Nested locations indent structurally: each deeper <ul> adds a left inset, so the
-// hierarchy reads from the layout — no per-depth computed style needed.
-const NESTED_LIST_CLASS = 'pl-[var(--space-4)]'
-// The opened-entity facts region: a quiet indented column, one fact per row
-// (mono topic label over serif prose content). No box — just inset + spacing.
-const FACTS_CLASS = 'flex flex-col gap-[var(--space-3)] px-[var(--space-3)] pb-[var(--space-3)] pl-[var(--space-5)]'
-
-/** Resolve a kind's heading copy from the consumer map, else a `[ph: …]` default. */
-function groupHeading(kind: EntityKind, groupLabels: WorldWikiProps['groupLabels']): string {
-  return groupLabels?.[kind] ?? `[ph: ${kind}]`
-}
-
-interface FactListProps {
-  entity: WikiEntity
-}
-
-/** The opened entity's facts as readable prose — topic label over its content. */
-function FactList({ entity }: FactListProps): React.JSX.Element | null {
-  if (entity.facts.length === 0) return null
-  return (
-    <div className={FACTS_CLASS}>
-      {entity.facts.map((fact) => (
-        <div key={fact.id}>
-          <Text role="ui-caption" as="p">
-            {fact.topic}
-          </Text>
-          <Text role="prose-body" as="p">
-            {fact.content}
-          </Text>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-interface EntityNodeProps {
-  entity: WikiEntity
-  selectedId: string | undefined
-  onSelect: (id: string) => void
-}
-
-/** One tree row: the selectable entity button, its facts when selected, and a
- *  nested <ul> of child entities (recursing) indented under it. */
-function EntityNode({ entity, selectedId, onSelect }: EntityNodeProps): React.JSX.Element {
-  const selected = entity.id === selectedId
-  const children = entity.children ?? []
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => {
-          onSelect(entity.id)
-        }}
-        aria-current={selected ? 'true' : undefined}
-        data-selected={selected ? 'true' : undefined}
-        className={cn(ITEM_CLASS, selected && 'bg-surface-active')}
-      >
-        <Text role="prose-body" truncate>
-          {entity.name}
-        </Text>
-      </button>
-      {selected && <FactList entity={entity} />}
-      {children.length > 0 && (
-        <ul className={NESTED_LIST_CLASS}>
-          {children.map((child) => (
-            <EntityNode key={child.id} entity={child} selectedId={selectedId} onSelect={onSelect} />
-          ))}
-        </ul>
-      )}
-    </li>
-  )
-}
+// SCROLL MEMORY: the shell holds the handle on WikiPage's scroll container and
+// reads its `scrollTop` into the stack (`setScroll`) right before every push —
+// internal (home row, related hop) and external (a graph tap) alike — so the
+// entry beneath retains where the reader was; `back()` restores it verbatim
+// (WikiPage re-seats on location change). Back pops without capturing: the
+// discarded entry's offset has nowhere to be restored to.
+//
+// THE BRIDGE: an EXTERNAL `selectedId` change pushes that entity's page (the
+// hook's same-entity no-op dedups a re-tap); internal navigation reports the
+// entity landed on through `onSelect`. Back/home report nothing — `onSelect`
+// carries an id, and D5 wires the full bidirectional selection. A page whose
+// entity left the model (a silent tail-stage refetch consolidated it away)
+// falls back to rendering home — pure render fallback, no state surgery; the
+// stack self-heals on the next navigation.
 
 export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function WorldWiki(
   {
@@ -113,49 +38,90 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
     searchPlaceholder = '[ph: search]',
     groupLabels,
     emptyLabel = '[ph: nothing here]',
+    backLabel = '[ph: back]',
+    relatedLabel = '[ph: related]',
+    emptyBodyLabel = '[ph: nothing recorded here yet]',
     'data-testid': dataTestId,
   },
   ref,
 ) {
-  const filtered = filterWikiModel(model, query ?? '')
+  const { current, push, back, setScroll } = useWikiNavigation()
+  const scrollRef = useRef<HTMLElement | null>(null)
+
+  // Record the page-in-view's scroll offset into its stack entry. A no-op on
+  // home (the stack retains no home scroll) and when no page is mounted.
+  const captureScroll = useCallback(() => {
+    setScroll(scrollRef.current?.scrollTop ?? 0)
+  }, [setScroll])
+
+  // Internal navigation: home rows + related hops land on an entity page and
+  // report it outward so the graph highlight keeps step.
+  const openEntity = useCallback(
+    (entityId: string) => {
+      captureScroll()
+      push(entityId)
+      onSelect(entityId)
+    },
+    [captureScroll, push, onSelect],
+  )
+
+  // External navigation (the graph tap): a `selectedId` CHANGE pushes that
+  // page. No `onSelect` echo — the selection came from outside. The hook's
+  // same-entity no-op dedups re-taps and the initial-mount push of a page
+  // already in view.
+  useEffect(() => {
+    if (selectedId === undefined) return
+    captureScroll()
+    push(selectedId)
+  }, [selectedId, captureScroll, push])
+
+  // id → entity + kind, nested children included — the page lookup. A nested
+  // location shares its group's kind.
+  const pages = useMemo(() => {
+    const byId = new Map<string, { entity: WikiEntity; kind: EntityKind }>()
+    const visit = (entity: WikiEntity, kind: EntityKind): void => {
+      byId.set(entity.id, { entity, kind })
+      for (const child of entity.children ?? []) visit(child, kind)
+    }
+    for (const group of model.groups) {
+      for (const entity of group.entities) visit(entity, group.kind)
+    }
+    return byId
+  }, [model])
+
+  const page = current.type === 'entity' ? pages.get(current.entityId) : undefined
+
   return (
     <div
       ref={ref}
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
-      className="flex min-w-0 flex-col gap-[var(--space-4)]"
+      className="flex max-h-full min-h-0 min-w-0 flex-col"
     >
-      <SeamlessInput
-        label={searchLabel}
-        value={query ?? ''}
-        onChange={onQuery}
-        placeholder={searchPlaceholder}
-      />
-      <div className="min-w-0 max-h-full overflow-y-auto">
-        {filtered.groups.length === 0 ? (
-          <Text role="prose-body" as="p">
-            {emptyLabel}
-          </Text>
-        ) : (
-          filtered.groups.map((group, index) => (
-            <section key={group.kind}>
-              {index > 0 && <Divider tone="border" />}
-              <Heading level={2} role="title">
-                {groupHeading(group.kind, groupLabels)}
-              </Heading>
-              <ul className="min-w-0">
-                {group.entities.map((entity) => (
-                  <EntityNode
-                    key={entity.id}
-                    entity={entity}
-                    selectedId={selectedId}
-                    onSelect={onSelect}
-                  />
-                ))}
-              </ul>
-            </section>
-          ))
-        )}
-      </div>
+      {current.type === 'entity' && page !== undefined ? (
+        <WikiPage
+          entity={page.entity}
+          kind={page.kind}
+          scroll={current.scroll}
+          scrollRef={scrollRef}
+          onBack={back}
+          onOpenRelated={openEntity}
+          backLabel={backLabel}
+          relatedLabel={relatedLabel}
+          emptyBodyLabel={emptyBodyLabel}
+        />
+      ) : (
+        <WikiHome
+          model={model}
+          selectedId={selectedId}
+          onOpen={openEntity}
+          query={query ?? ''}
+          onQuery={onQuery}
+          searchLabel={searchLabel}
+          searchPlaceholder={searchPlaceholder}
+          {...(groupLabels !== undefined ? { groupLabels } : {})}
+          emptyLabel={emptyLabel}
+        />
+      )}
     </div>
   )
 })

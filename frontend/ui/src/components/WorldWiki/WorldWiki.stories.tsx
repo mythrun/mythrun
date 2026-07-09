@@ -1,16 +1,18 @@
 import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import type { WikiViewModel } from '@mythrun/client-core/contract'
+import { expect, userEvent, within } from 'storybook/test'
 import { WorldWiki } from './WorldWiki.tsx'
+import { WIKI_FIXTURE_MODEL } from './wiki-fixture.ts'
 
-// WorldWiki — the browsable wiki the owner explores their newly-generated world
-// through. A borderless search field over a grouped tree (factions / locations /
-// npcs / items); nested locations indent under their parent; the selected entity
-// opens to its facts. Flat 1-bit paper register — hairline rules between groups, a
-// quiet surface swap on the selected row, no boxes/cards/circles.
+// WorldWiki — the browsable wiki the owner explores their newly-generated
+// world through, as a real PLACE: a home landing (search over browse-by-kind
+// groups) opening onto per-entity pages (mono kind tag over serif name, the
+// composed fact body, RELATED cross-links, a quiet back button with per-page
+// scroll memory). Flat 1-bit paper register — hairline rules, surface-swap
+// hover, no boxes/cards/chips.
 
 const meta: Meta<typeof WorldWiki> = {
-  title: 'Patterns/WorldWiki',
+  title: 'Patterns/WorldWiki/WorldWiki',
   component: WorldWiki,
   tags: ['autodocs'],
   parameters: { layout: 'fullscreen' },
@@ -21,50 +23,13 @@ export default meta
 
 type Story = StoryObj<typeof WorldWiki>
 
-// A small sample world with a nested location (Ashfen Reach → The Drowned Ward) and
-// a handful of facts, the shape `toWikiViewModel` (D1) produces from a snapshot.
-const MODEL: WikiViewModel = {
-  groups: [
-    {
-      kind: 'faction',
-      entities: [
-        {
-          id: 'f1',
-          name: 'The Tallow Guild',
-          facts: [
-            { id: 'f1a', topic: 'Purpose', content: '[placeholder for a faction purpose]' },
-            { id: 'f1b', topic: 'Reputation', content: '[placeholder for how the guild is regarded]' },
-          ],
-        },
-      ],
-    },
-    {
-      kind: 'location',
-      entities: [
-        {
-          id: 'l1',
-          name: 'Ashfen Reach',
-          facts: [{ id: 'l1a', topic: 'Terrain', content: '[placeholder for the terrain of the reach]' }],
-          children: [
-            {
-              id: 'l2',
-              name: 'The Drowned Ward',
-              facts: [{ id: 'l2a', topic: 'Note', content: '[placeholder for a note about the ward]' }],
-            },
-          ],
-        },
-        { id: 'l3', name: 'Sunspire', facts: [{ id: 'l3a', topic: 'Note', content: '[placeholder for a note about Sunspire]' }] },
-      ],
-    },
-    { kind: 'npc', entities: [{ id: 'n1', name: 'Maeris Vale', facts: [{ id: 'n1a', topic: 'Role', content: '[placeholder for a role]' }] }] },
-    { kind: 'item', entities: [{ id: 'i1', name: 'The Salt Ledger', facts: [] }] },
-  ],
-}
-
 const LABELS = {
   searchLabel: '[placeholder for the search field label]',
   searchPlaceholder: '[placeholder for the search hint]',
   emptyLabel: '[placeholder for the empty-results note]',
+  backLabel: '[placeholder for back]',
+  relatedLabel: '[placeholder for related]',
+  emptyBodyLabel: '[placeholder for the empty-page note]',
   groupLabels: {
     faction: '[placeholder for Factions]',
     location: '[placeholder for Locations]',
@@ -73,14 +38,14 @@ const LABELS = {
   },
 } as const
 
-function WikiDemo({ initialQuery = '' }: { initialQuery?: string }): React.JSX.Element {
+function WikiDemo({ paneClass = 'h-[70vh]' }: { paneClass?: string }): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>()
-  const [query, setQuery] = useState(initialQuery)
+  const [query, setQuery] = useState('')
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
-      <div className="mx-auto h-[70vh] max-w-sm">
+      <div className={`mx-auto max-w-sm ${paneClass}`}>
         <WorldWiki
-          model={MODEL}
+          model={WIKI_FIXTURE_MODEL}
           {...(selectedId !== undefined ? { selectedId } : {})}
           onSelect={setSelectedId}
           query={query}
@@ -92,15 +57,36 @@ function WikiDemo({ initialQuery = '' }: { initialQuery?: string }): React.JSX.E
   )
 }
 
-// The full tree, browsable: click an entity to open it to its facts; the nested
-// ward indents under its parent reach.
-export const Browsable: Story = {
+// The resting landing: search over the kind groups, every row a page opening.
+export const Home: Story = {
   render: () => <WikiDemo />,
 }
 
-// The search-narrowed state: a preset query filters the tree to the matches (and
-// the ancestor path of any nested hit); the field is live, so clearing it restores
-// the full tree.
-export const Filtered: Story = {
-  render: () => <WikiDemo initialQuery="ward" />,
+// The reader's journey, driven for real in the browser sweep: home → open The
+// Tallow Guild → scroll the page → hop its RELATED link to Maeris Vale → back
+// to the guild, where the SCROLL POSITION survives (the D3 stack's memory,
+// proven in real Chromium — the pane is a fixed 16rem so the guild page
+// genuinely overflows at every sweep viewport). The play() ends ON the
+// populated guild page, so the 375/1280 overflow gate measures the page view.
+export const Journey: Story = {
+  render: () => <WikiDemo paneClass="h-64" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: 'The Tallow Guild' }))
+    await expect(canvas.getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
+    // Scroll the page, remembering the browser-clamped real offset.
+    const article = canvasElement.querySelector('article')
+    if (article === null) throw new Error('the wiki page rendered no <article>')
+    article.scrollTop = 9999
+    const scrolled = article.scrollTop
+    await expect(scrolled).toBeGreaterThan(0)
+    // RELATED hop → the target's page, seated at the top.
+    await userEvent.click(canvas.getByRole('button', { name: /Maeris Vale/ }))
+    await expect(canvas.getByRole('heading', { name: 'Maeris Vale' })).toBeInTheDocument()
+    await expect(article.scrollTop).toBe(0)
+    // Back restores the guild page AND the reader's position, verbatim.
+    await userEvent.click(canvas.getByRole('button', { name: '[placeholder for back]' }))
+    await expect(canvas.getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
+    await expect(article.scrollTop).toBe(scrolled)
+  },
 }

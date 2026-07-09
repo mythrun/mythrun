@@ -177,15 +177,15 @@ describe('WorldReveal — settled graph beside the wiki', () => {
 })
 
 describe('WorldReveal — shared selection (graph ↔ wiki)', () => {
-  it('choosing a graph entity highlights the matching wiki entity (displayId = id)', async () => {
+  it('choosing a graph entity opens the matching wiki page (displayId = id)', async () => {
     renderReveal()
     const wiki = await screen.findByTestId('reveal-wiki')
     const graph = screen.getByTestId('reveal-graph')
     // Choose Maeris Vale in the GRAPH: its displayId ent-npc-1 IS the entity id.
     fireEvent.click(within(graph).getByRole('button', { name: /Maeris Vale/i }))
-    // The WIKI entity ent-npc-1 becomes current and opens to its fact.
-    const wikiBtn = within(wiki).getByRole('button', { name: 'Maeris Vale' })
-    expect(wikiBtn.getAttribute('aria-current')).toBe('true')
+    // The WIKI pushes ent-npc-1's PAGE (the D4 rebuild): its name as the title,
+    // its fact as the body.
+    expect(within(wiki).getByRole('heading', { name: 'Maeris Vale' })).toBeDefined()
     expect(within(wiki).getByText('Harbourmaster of the Reach.')).toBeDefined()
   })
 
