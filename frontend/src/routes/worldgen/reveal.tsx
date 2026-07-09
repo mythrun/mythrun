@@ -306,6 +306,10 @@ export function WorldReveal({
   // so re-delivering is always safe). Deferred while the panel is still the
   // loading line: the signal must survive until the wiki mounts and can
   // consume it on its first effect pass.
+  // COUPLING: this one-shot pattern relies on WorldWiki treating
+  // externalSelection as a jump signal — clearing it to undefined must NOT
+  // navigate home (WorldWiki's external-selection effect keys on the value
+  // changing to a defined id). A D4-side semantics change breaks re-tap here.
   useEffect(() => {
     if (wiki.model !== null && wikiPush !== undefined) setWikiPush(undefined)
   }, [wiki.model, wikiPush])
