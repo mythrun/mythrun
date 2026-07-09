@@ -44,6 +44,7 @@ import { runRandomTablesStage } from './stages/random-tables.js'
 import { runWorldAndFactionsStage } from './stages/world-and-factions.js'
 import { runLocationsAndNpcsStage } from './stages/locations-and-npcs.js'
 import { runEntityRelationshipsStage } from './stages/entity-relationships.js'
+import { runWorldIntroductionStage } from './stages/world-introduction.js'
 import { runEntityConsolidationStage } from './stages/entity-consolidation.js'
 import { runCoherencePassStage } from './stages/coherence-pass.js'
 import { runEmbedWorldStage } from './stages/embed-world.js'
@@ -208,15 +209,14 @@ export function createWorldGenProcessor(
           })
           setStage(stage)
           if (claim !== 'claimed') {
-            // myth-exac T18: on idempotent re-entry, re-publish
+            // myth-exac T18 / myth-zaqxh: on idempotent re-entry, re-publish
             // phase=world_snapshot_ready as soon as we walk past a completed
-            // stage-4b row. SSE subscribers that reconnected mid-job catch up
-            // on the snapshot-availability signal without needing the
-            // initial-frame snapshot of pipeline_runs. Stage 4b
-            // (entity_consolidation) is the new last entity-creating stage —
-            // it resolves stage-4's phantom declarations into real rows, so
-            // the snapshot is only safely fetchable after it commits.
-            if (stage === 'entity_consolidation' && claim === 'completed') {
+            // world_introduction row. SSE subscribers that reconnected mid-job
+            // catch up on the snapshot-availability signal without needing the
+            // initial-frame snapshot of pipeline_runs. world_introduction is the
+            // reveal boundary — the snapshot (which now carries the intro page)
+            // is fetchable once it commits.
+            if (stage === 'world_introduction' && claim === 'completed') {
               await publishEvent(deps, campaignId, {
                 type: 'phase',
                 phase: 'world_snapshot_ready',
@@ -256,16 +256,16 @@ export function createWorldGenProcessor(
               costUsd: result.costUsd,
             })
 
-            // myth-exac T18 + phantom-reconciliation P4.5: stage 4b
-            // (entity_consolidation) is the boundary where the world snapshot
-            // becomes fetchable — all real entities + hierarchy + relationships
-            // have committed AND any phantom references from stage 4 have been
-            // resolved into real rows (or dropped). Publish the phase
-            // immediately so subscribers can render the snapshot view ahead of
-            // worlds.status flipping to 'complete' (which only happens after
-            // stages 5-7 finish). On idempotent re-entry the equivalent emit
+            // myth-zaqxh: world_introduction is the reveal boundary — the world
+            // snapshot (which now carries the intro page) becomes fetchable the
+            // moment it commits. All the player-visible known-tier content
+            // (entities + facts + relationships + the intro) is present; the
+            // silent tail (entity_consolidation → embed_world) reconciles behind
+            // the reveal. Publish the phase immediately so subscribers render the
+            // snapshot ahead of worlds.status flipping to 'complete' (only after
+            // the tail finishes). On idempotent re-entry the equivalent emit
             // fires from the `claim !== 'claimed'` branch above.
-            if (stage === 'entity_consolidation') {
+            if (stage === 'world_introduction') {
               await publishEvent(deps, campaignId, {
                 type: 'phase',
                 phase: 'world_snapshot_ready',
@@ -547,6 +547,19 @@ async function dispatchStage(
       keyPrefix: deps.redisKeyPrefix,
       bypassAccessFilter: ctx.world.devBypassAccessFilter,
     })
+  }
+  if (stage === 'world_introduction') {
+    // myth-zaqxh: the intro page. Reads the KNOWN-tier slice itself (structural
+    // enforced ignorance lives in the handler's reads), so it only needs the
+    // world's public framing here.
+    const cost = await runWorldIntroductionStage(repo, {
+      worldId: ctx.world.id,
+      worldName: ctx.world.name,
+      tone: ctx.world.tone ?? '',
+      themes: ctx.world.themes ?? '',
+      vocabularyRegistry: ctx.world.vocabularyRegistry,
+    })
+    return wrapLegacyStage(cost)
   }
   if (stage === 'entity_consolidation') {
     return runEntityConsolidationStage(repo, {

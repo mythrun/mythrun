@@ -169,6 +169,7 @@ export const descriptions: Record<string, string> = {
   'worldGen.stage.world_and_factions': 'Friendly world-gen stage label (status card): the pipeline is generating the world overview and its major factions/powers. Terse, ~2-4 words, present continuous.',
   'worldGen.stage.locations_and_npcs': 'Friendly world-gen stage label (status card): the pipeline is generating the places and people (locations + NPCs). Terse, ~2-4 words, present continuous.',
   'worldGen.stage.entity_relationships': 'Friendly world-gen stage label (status card): the pipeline is drawing the relationships/ties between entities. Terse, ~2-4 words, present continuous.',
+  'worldGen.stage.world_introduction': 'Friendly world-gen stage label (status card): the pipeline is writing the world’s introduction page — the elevator-pitch prose the player opens on at the reveal (the reveal-boundary stage). Terse, ~2-4 words, present continuous.',
   'worldGen.stage.entity_consolidation': 'Friendly world-gen stage label (status card): the pipeline is resolving stage-4 phantom declarations into real entity rows (the last entity-creating stage). Terse, ~2-4 words, present continuous.',
   'worldGen.stage.starting_situation': 'Friendly world-gen stage label (status card): the pipeline is generating candidate opening situations for the campaign. Terse, ~2-4 words, present continuous.',
   'worldGen.stage.random_tables': 'Friendly world-gen stage label (status card): the pipeline is seeding the world\'s random/encounter tables. Terse, ~2-4 words, present continuous.',

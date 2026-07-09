@@ -24,8 +24,18 @@ export const WORLD_GEN_STAGES = [
   'world_and_factions',
   'locations_and_npcs',
   'entity_relationships',
-  // Stage 4b: resolves stage-4's phantom declarations into real rows — the new
-  // last entity-creating stage + the world-snapshot-ready boundary.
+  // myth-zaqxh: the world-introduction page — the elevator pitch every world
+  // opens on (title = the world name, a few prose paragraphs on how the world
+  // works, an ordered list of dig-deeper entities). Authored from the KNOWN-tier
+  // slice ONLY (enforced ignorance from birth — this page faces players).
+  // Positioned right AFTER entity_relationships so it reads the fully-woven
+  // known-tier graph, and BEFORE entity_consolidation so it becomes the reveal
+  // boundary: the visible wait now ends when the intro is written. Consolidation
+  // (which only ADDS phantom-resolution ghosts, never removes the entities the
+  // intro references) runs behind the reveal in the silent tail.
+  'world_introduction',
+  // Stage 4b: resolves stage-4's phantom declarations into real rows — the last
+  // entity-creating stage.
   'entity_consolidation',
   'starting_situation',
   'random_tables',
@@ -73,15 +83,17 @@ export const ENTITY_STAGES: readonly WorldGenStage[] = WORLD_GEN_STAGES.slice(EN
 // ---------------------------------------------------------------------------
 // The WIKI-REVEAL boundary split (MYT-89 reveal timing).
 //
-// The player's visible wait ends the moment the connections are woven —
-// `entity_relationships` completing IS the wiki-reveal moment (the route swaps
-// the generating view for the world reveal there; the world-snapshot endpoint's
-// 409 gate and derive-phase's `world_snapshot_ready` both key on this same
-// stage). Everything after it (`entity_consolidation` → `embed_world`) is the
-// SILENT TAIL: it keeps running behind the reveal while the player explores the
-// wiki — nobody is watching a bar for it. Consolidated ghosts, the starting
-// situations, and the coherence-pass reconciliation surface as QUIET wiki/graph
-// updates, not as progress.
+// The player's visible wait ends the moment the world's introduction page is
+// written — `world_introduction` completing IS the wiki-reveal moment (myth-zaqxh
+// moved the boundary here from `entity_relationships`: the reveal now waits for
+// the intro prose the player opens on). The route swaps the generating view for
+// the world reveal there; the world-snapshot endpoint's 409 gate and
+// derive-phase's `world_snapshot_ready` both key on this same stage. Everything
+// after it (`entity_consolidation` → `embed_world`) is the SILENT TAIL: it keeps
+// running behind the reveal while the player explores the wiki — nobody is
+// watching a bar for it. Consolidated ghosts, the starting situations, and the
+// coherence-pass reconciliation surface as QUIET wiki/graph updates, not as
+// progress.
 //
 // NOTE this is a different boundary from the graph-entry beat above: the
 // PREP/ENTITY split marks where entities START (the "watch your world be born"
@@ -98,7 +110,7 @@ export const ENTITY_STAGES: readonly WorldGenStage[] = WORLD_GEN_STAGES.slice(EN
 //     counting the tail would vanish at ~62%);
 //   - the reveal quietly refetches its wiki snapshot as TAIL_STAGES complete
 //     (client-core's `completedTailStageCount`).
-export const REVEAL_BOUNDARY_STAGE: WorldGenStage = 'entity_relationships'
+export const REVEAL_BOUNDARY_STAGE: WorldGenStage = 'world_introduction'
 const TAIL_BOUNDARY = WORLD_GEN_STAGES.indexOf(REVEAL_BOUNDARY_STAGE) + 1
 
 /** The visible wait: every canonical stage the player actually waits through,

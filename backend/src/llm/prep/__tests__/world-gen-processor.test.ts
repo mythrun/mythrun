@@ -45,6 +45,7 @@ import * as vocabularyIntakeModule from '../stages/vocabulary-intake.js'
 import * as worldAndFactionsModule from '../stages/world-and-factions.js'
 import * as locationsAndNpcsModule from '../stages/locations-and-npcs.js'
 import * as entityRelationshipsModule from '../stages/entity-relationships.js'
+import * as worldIntroductionModule from '../stages/world-introduction.js'
 // MYT-71 T10: the terminal embed_world stage calls embedWorld via the retrieval
 // barrel. Mock it at the module boundary so the processor's embed stage runs
 // (claims its pipeline_runs row, returns zero cost) without hitting real Voyage.
@@ -84,6 +85,10 @@ vi.mock('../stages/locations-and-npcs.js', async (importOriginal) => {
 vi.mock('../stages/entity-relationships.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../stages/entity-relationships.js')>()
   return { ...actual, runEntityRelationshipsStage: vi.fn() }
+})
+vi.mock('../stages/world-introduction.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../stages/world-introduction.js')>()
+  return { ...actual, runWorldIntroductionStage: vi.fn() }
 })
 // MYT-71 T10: mock the retrieval barrel's embedWorld so the terminal
 // embed_world stage runs through the loop without a real Voyage round-trip.
@@ -748,16 +753,17 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     capExhausted: false,
   } as const
 
-  it('publishes phase=world_snapshot_ready exactly once after stage 4 commits', async () => {
+  it('publishes phase=world_snapshot_ready exactly once after world_introduction commits', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    // Pre-stages 1, 1.5, 2, 3 as completed so the loop reaches stage 4
-    // fresh; the wave-4 module mocks won't fire because their atomic
-    // claims short-circuit on the pre-seeded 'completed' rows.
+    // myth-zaqxh: the reveal boundary is world_introduction. Pre-seed every
+    // stage through entity_relationships as completed so the loop reaches
+    // world_introduction fresh; that stage's commit is the snapshot-ready emit.
     for (const stage of [
       'concept_intake',
       'vocabulary_intake',
       'world_and_factions',
       'locations_and_npcs',
+      'entity_relationships',
     ] as const) {
       await pool.query(
         `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
@@ -766,11 +772,14 @@ describe('world-gen-processor (MYT-51 T7)', () => {
         [uuidv7(), worldId, stage],
       )
     }
-    // Stage 4 succeeds; stage 5 onward throws to halt the loop so the test
-    // doesn't have to drive stages 5-7 to completion.
-    vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage).mockResolvedValueOnce(
-      EMPTY_STAGE_RESULT,
-    )
+    // world_introduction succeeds (StageCostResult shape — wrapped by the
+    // dispatcher); entity_consolidation then skips (no pending phantoms) and
+    // starting_situation throws to halt the loop before the tail.
+    vi.mocked(worldIntroductionModule.runWorldIntroductionStage).mockResolvedValueOnce({
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    })
     vi.mocked(ai.generateText).mockRejectedValueOnce(
       new StageNotImplementedError('starting_situation'),
     )
@@ -779,19 +788,19 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     const proc = createWorldGenProcessor(deps)
     await proc(makeJob(campaignId))
 
-    // Stage 4 row should be completed (not pre-seeded; the mocked handler
-    // wrote nothing but markStageCompleted ran on the success path).
-    const stage4 = await pool.query<{ status: string }>(
+    // The world_introduction row should be completed (the mocked handler wrote
+    // nothing but markStageCompleted ran on the success path).
+    const introRow = await pool.query<{ status: string }>(
       `SELECT status FROM pipeline_runs
-        WHERE world_id = $1 AND stage = 'entity_relationships'`,
+        WHERE world_id = $1 AND stage = 'world_introduction'`,
       [worldId],
     )
-    expect(stage4.rows[0]?.status).toBe('completed')
+    expect(introRow.rows[0]?.status).toBe('completed')
 
-    // The dispatcher mock was invoked exactly once (no idempotent re-entry
-    // in this test) so the emit must fire from the fresh-commit branch.
+    // The boundary handler was invoked exactly once (no idempotent re-entry in
+    // this test) so the emit must fire from the fresh-commit branch.
     expect(
-      vi.mocked(entityRelationshipsModule.runEntityRelationshipsStage),
+      vi.mocked(worldIntroductionModule.runWorldIntroductionStage),
     ).toHaveBeenCalledTimes(1)
 
     const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
@@ -801,18 +810,19 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(snapshotReadyEmits).toHaveLength(1)
   })
 
-  it('re-publishes phase=world_snapshot_ready on retry re-entry when stage 4b is already completed', async () => {
+  it('re-publishes phase=world_snapshot_ready on retry re-entry when world_introduction is already completed', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
-    // Pre-stage 1, 1.5, 2, 3, 4, 4b all as completed. The loop walks past
-    // each via the `claim !== 'claimed'` branch; the entity_consolidation
-    // idempotent skip must emit world_snapshot_ready for reconnecting SSE
-    // subscribers.
+    // Pre-stage everything through world_introduction (the reveal boundary) as
+    // completed. The loop walks past each via the `claim !== 'claimed'` branch;
+    // the world_introduction idempotent skip must emit world_snapshot_ready for
+    // reconnecting SSE subscribers.
     for (const stage of [
       'concept_intake',
       'vocabulary_intake',
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      'world_introduction',
       'entity_consolidation',
     ] as const) {
       await pool.query(
@@ -903,6 +913,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      'world_introduction',
       'entity_consolidation',
       'starting_situation',
       'random_tables',

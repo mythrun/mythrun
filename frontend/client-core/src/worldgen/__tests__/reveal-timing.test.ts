@@ -29,34 +29,37 @@ describe('connectionsDone — the generating → reveal transition signal', () =
     expect(connectionsDone([stage('concept_intake', 'completed')])).toBe(false)
   })
 
-  it('is FALSE while entity_relationships is still RUNNING (no early transition)', () => {
+  it('is FALSE while world_introduction is still RUNNING (no early transition)', () => {
+    // myth-zaqxh: the boundary is the intro page. Connections are already drawn
+    // (entity_relationships completed), but the reveal waits for the intro.
     expect(
       connectionsDone([
-        stage('locations_and_npcs', 'completed'),
-        stage('entity_relationships', 'running'),
+        stage('entity_relationships', 'completed'),
+        stage('world_introduction', 'running'),
       ]),
     ).toBe(false)
   })
 
-  it('is TRUE the moment entity_relationships COMPLETES — embed_world is NOT required', () => {
+  it('is TRUE the moment world_introduction COMPLETES — the tail is NOT required', () => {
     // The tail (consolidation → embed) has not even started: the reveal fires anyway.
     expect(
       connectionsDone([
         stage('world_and_factions', 'completed'),
         stage('locations_and_npcs', 'completed'),
         stage('entity_relationships', 'completed'),
+        stage('world_introduction', 'completed'),
       ]),
     ).toBe(true)
   })
 
   it('stays TRUE while the silent tail runs and after it finishes', () => {
-    const base = [stage('entity_relationships', 'completed')]
-    expect(connectionsDone([...base, stage('coherence_pass', 'running')])).toBe(true)
+    const base = [stage('world_introduction', 'completed')]
+    expect(connectionsDone([...base, stage('entity_consolidation', 'running')])).toBe(true)
     expect(connectionsDone([...base, stage('embed_world', 'completed')])).toBe(true)
   })
 
-  it('a FAILED entity_relationships does not transition', () => {
-    expect(connectionsDone([stage('entity_relationships', 'failed')])).toBe(false)
+  it('a FAILED world_introduction does not transition', () => {
+    expect(connectionsDone([stage('world_introduction', 'failed')])).toBe(false)
   })
 })
 

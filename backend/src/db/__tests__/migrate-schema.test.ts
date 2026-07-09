@@ -332,6 +332,12 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
     check_clause: `CHECK (((jsonb_typeof(entity_consolidation_pending) = 'object'::text) AND (jsonb_typeof((entity_consolidation_pending -> 'declarations'::text)) = 'array'::text) AND (jsonb_typeof((entity_consolidation_pending -> 'relationships'::text)) = 'array'::text)))`,
   },
   {
+    // myth-zaqxh migration 032: worlds.introduction shape guard (NULL-tolerant,
+    // set-once by the world_introduction stage).
+    table_name: 'worlds',
+    check_clause: `CHECK (((introduction IS NULL) OR ((jsonb_typeof(introduction) = 'object'::text) AND (jsonb_typeof((introduction -> 'prose'::text)) = 'string'::text) AND (jsonb_typeof((introduction -> 'references'::text)) = 'array'::text))))`,
+  },
+  {
     table_name: 'worlds',
     check_clause: `CHECK ((moderation_status = ANY (ARRAY['unreviewed'::text, 'approved'::text, 'flagged'::text, 'removed'::text])))`,
   },
@@ -821,6 +827,7 @@ describe('schema-parity (integration)', () => {
       '029_session_messages_fts.sql',
       '030_world_color_identity.sql',
       '031_relationship_access_level.sql',
+      '032_world_introduction.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

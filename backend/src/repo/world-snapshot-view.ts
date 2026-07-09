@@ -36,15 +36,30 @@ import type { EntityHierarchyRow } from './entity-hierarchy.js'
 import { entityHierarchy } from './entity-hierarchy.js'
 import type { StatBlockRow } from './stat-blocks.js'
 import { statBlocks } from './stat-blocks.js'
-import { worldsNs, type WorldSummary } from './worlds.js'
+import { worldsNs, type WorldSummary, type WorldIntroductionRow } from './worlds.js'
 
 // The allowlist projection (the WorldSummary type + its column list) is
 // single-sourced in worlds.ts (`getSnapshotSummary`). Re-exported here for
 // back-compat — `WorldSummary` was historically declared in this module.
 export type { WorldSummary } from './worlds.js'
 
+// myth-zaqxh: the composed introduction page. `title` is the world's name
+// (mechanical); `references` are the intro's dig-deeper picks, RE-FILTERED here
+// against the served known-tier entity set (a reference to a non-served entity
+// is dropped — the same structural enforced-ignorance guarantee the rest of the
+// snapshot follows).
+export interface WorldSnapshotIntroduction {
+  readonly title: string
+  readonly prose: string
+  readonly references: readonly { readonly entityId: string; readonly name: string }[]
+}
+
 export interface WorldSnapshot {
   readonly world: WorldSummary
+  // Absent only for worlds generated before the world_introduction stage
+  // existed; the endpoint's 409 gate (keyed on that stage) means a served
+  // snapshot always carries it.
+  readonly introduction?: WorldSnapshotIntroduction
   readonly entities: readonly Entity[]
   readonly facts: readonly FactRow[]
   readonly relationships: readonly RelationshipRow[]
@@ -102,21 +117,23 @@ async function fetch(
   // rather than thread it through the existing repo.
   const statBlockIds = await readStatBlockIds(client, entityIds)
 
-  // 3+4+5+6+7. Parallel: facts, prose, hierarchy, stat blocks,
-  // relationships. listAmong, listByEntities (×2), and listByIds all
-  // short-circuit on empty input.
+  // 3+4+5+6+7+8. Parallel: facts, prose, hierarchy, stat blocks,
+  // relationships, and the intro row. listAmong, listByEntities (×2), and
+  // listByIds all short-circuit on empty input.
   const [
     factRows,
     proseRows,
     hierarchyRows,
     statBlockRows,
     relationshipRows,
+    introRow,
   ] = await Promise.all([
     facts.listByEntities(client, entityIds, { accessLevels }),
     proseKernels.listByEntities(client, entityIds),
     entityHierarchy.listForWorld(client, worldId),
     statBlocks.listByIds(client, statBlockIds),
     relationships.listAmong(client, entityIds, accessLevels),
+    worldsNs(client).getWorldIntroduction(worldId),
   ])
 
   // Hierarchy listForWorld returns every edge in the world; constrain
@@ -126,8 +143,11 @@ async function fetch(
     (h) => entityIdSet.has(h.parentEntityId) && entityIdSet.has(h.childEntityId),
   )
 
+  const introduction = composeIntroduction(summary.name, introRow, entityIdSet)
+
   return {
     world,
+    ...(introduction !== undefined ? { introduction } : {}),
     entities: entityRows,
     facts: factRows,
     relationships: relationshipRows,
@@ -135,6 +155,20 @@ async function fetch(
     entityHierarchy: hierarchyFiltered,
     statBlocks: statBlockRows,
   }
+}
+
+// Compose the wire introduction from the persisted row. The title is the world's
+// name (mechanical). References are RE-FILTERED against the served entity set —
+// a reference to a non-served entity is dropped (structural enforced ignorance
+// at the serving boundary, and a stale id can never dangle on the wire).
+function composeIntroduction(
+  title: string,
+  row: WorldIntroductionRow | null,
+  entityIdSet: ReadonlySet<string>,
+): WorldSnapshotIntroduction | undefined {
+  if (row === null) return undefined
+  const references = row.references.filter((r) => entityIdSet.has(r.entityId))
+  return { title, prose: row.prose, references }
 }
 
 // Inline helper rather than a new entities repo method — this read is

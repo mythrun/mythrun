@@ -52,7 +52,33 @@ export const WorldSnapshotHierarchyEdgeSchema = z.object({
 })
 export type WorldSnapshotHierarchyEdge = z.infer<typeof WorldSnapshotHierarchyEdgeSchema>
 
+// myth-zaqxh: the world-introduction page — the elevator-pitch prose every world
+// opens on at the reveal. `title` is the world's name (mechanical, not
+// LLM-invented); `prose` is a few paragraphs authored from the KNOWN-tier slice
+// ONLY (enforced ignorance from birth); `references` is an ordered list of
+// dig-deeper entities the intro points at, each resolved to a real snapshot
+// entity (dangling picks are dropped server-side, so every `entityId` here is a
+// member of `entities`).
+export const WorldSnapshotIntroReferenceSchema = z.object({
+  entityId: z.string(),
+  name: z.string(),
+})
+export type WorldSnapshotIntroReference = z.infer<typeof WorldSnapshotIntroReferenceSchema>
+
+export const WorldSnapshotIntroductionSchema = z.object({
+  title: z.string(),
+  prose: z.string(),
+  references: z.array(WorldSnapshotIntroReferenceSchema),
+})
+export type WorldSnapshotIntroduction = z.infer<typeof WorldSnapshotIntroductionSchema>
+
 export const WorldSnapshotSchema = z.object({
+  // Optional at the contract layer even though a 200 response ALWAYS carries it
+  // (the endpoint 409s until `world_introduction` commits, and the backend view
+  // always composes it). Kept optional so every pre-existing snapshot fixture —
+  // including the reveal/campaign-detail route tests that construct bare
+  // snapshots — keeps validating; consumers read it defensively.
+  introduction: WorldSnapshotIntroductionSchema.optional(),
   entities: z.array(WorldSnapshotEntitySchema),
   facts: z.array(WorldSnapshotFactSchema),
   entityHierarchy: z.array(WorldSnapshotHierarchyEdgeSchema),

@@ -358,6 +358,42 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     ])
   })
 
+  // myth-zaqxh: the composed introduction page.
+  it('composes the introduction (title = world name) and drops references to non-served entities', async () => {
+    const { worldId, known1, discoverable } = await seedFixture()
+    await pool.query(`UPDATE worlds SET introduction = $2::jsonb WHERE id = $1`, [
+      worldId,
+      JSON.stringify({
+        prose: 'Ashfall runs on debt and ash-glass.',
+        references: [
+          { entityId: known1, name: `${scope.id}-k1` },
+          // The discoverable entity is NOT in the non-bypass served set — this
+          // reference must be dropped at compose time (structural enforced
+          // ignorance at the serving boundary).
+          { entityId: discoverable, name: `${scope.id}-d` },
+        ],
+      }),
+    ])
+
+    const snap = await worldSnapshotView.fetch(pool, worldId, { bypass: false })
+    expect(snap.introduction?.title).toBe(scope.worldName(0))
+    expect(snap.introduction?.prose).toBe('Ashfall runs on debt and ash-glass.')
+    expect(snap.introduction?.references).toEqual([{ entityId: known1, name: `${scope.id}-k1` }])
+
+    // Under bypass the discoverable entity is served, so its reference survives.
+    const bypassed = await worldSnapshotView.fetch(pool, worldId, { bypass: true })
+    expect(bypassed.introduction?.references.map((r) => r.entityId).sort()).toEqual(
+      [known1, discoverable].sort(),
+    )
+  })
+
+  it('omits the introduction entirely for a world that has not run world_introduction', async () => {
+    const { worldId } = await seedFixture()
+    const snap = await worldSnapshotView.fetch(pool, worldId, { bypass: false })
+    expect(snap.introduction).toBeUndefined()
+    expect('introduction' in snap).toBe(false)
+  })
+
   it('throws when the world id does not exist', async () => {
     const missing = uuidv7()
     await expect(

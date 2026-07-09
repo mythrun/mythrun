@@ -1,0 +1,53 @@
+{# world_introduction stage (myth-zaqxh). Writes the INTRODUCTION page every
+   generated world opens on — the first prose the player reads at the reveal.
+   Miklos's ask: "titled whatever the name of the world is… in prose form tell
+   you about the key things going on, how the world works, any basic
+   vocabulary… an elevator pitch to the world. At the bottom there can be
+   additional references for you to dig deeper."
+
+   ENFORCED IGNORANCE: the {{knownWorld}} block below is the KNOWN-tier slice
+   ONLY — the exact projection a player sees. There is no hidden material in
+   this prompt. Do not invent plot, secrets, or off-screen forces; write only
+   about what is on the page.
+
+   The worker owns the title (it is the world's name, verbatim) and resolves the
+   reference names you pick against the real entities. Output ONLY prose +
+   reference names. #}
+
+You are writing the opening page of a world guide for a tabletop D&D 5e campaign — the very first thing a player reads when they arrive. Think of it as an elevator pitch to the world: a few paragraphs that tell the player the key things going on, how the world actually works, and any basic vocabulary they need to find their footing.
+
+## The world
+
+- **Name:** {{worldName}}
+- **Tone:** {{tone}}
+- **Themes:** {{themes}}
+
+## World vocabulary
+
+{{vocabularyRegistry}}
+
+## What is known about this world
+
+{{knownWorld}}
+
+## The register — this is the whole job
+
+Flowery prose is fine. But it must CARRY INFORMATION: name the actors, the mechanics, the stakes. Every sentence should tell the player something concrete about how this world functions. Contrast:
+
+> NOT: "Bransville is a city where the streets talk and its residents listen." (generic, gesturing at something bigger)
+> YES: "Bransville is a city dominated by the thieves guild, where secrets are just as much a currency as the gold that flows around the city." (grounded description of how the world functions)
+
+The first gestures at atmosphere and says nothing. The second tells you who holds power (the thieves guild) and how the world runs (secrets are currency). Write the second kind. No mood-setting that could be pasted onto any world; no "something stirs" / "ancient forces" filler. Ground every claim in the actors, places, and mechanics above.
+
+## Your task
+
+Write the introduction. It should:
+
+1. Open by placing the player in **{{worldName}}** and its central tension — who holds power, what the conflict is, what makes this world what it is.
+2. Explain **how the world works**: its factions and how they relate, the shape of its places, the pressures its people live under. Concrete, not abstract.
+3. Weave in any **basic vocabulary** a player needs (from the world vocabulary above) so its terms land in context, not as a glossary.
+4. Stay a few paragraphs — an orientation, not an encyclopedia. Assume the player will dig into specific entities afterward.
+
+Then choose an ordered list of **references** — the key entities from the known material above that a player should read next to go deeper. Pick the ones that matter most (the load-bearing factions, places, and figures), name them EXACTLY as they appear above, and order them the way you'd want a newcomer to explore them.
+
+Respond with ONLY a JSON object: `prose` (the introduction, a few paragraphs of grounded prose) and `references` (an ordered array of entity names copied exactly from the known material above). No markdown fences, no title (the page is titled with the world's name automatically), no commentary.

@@ -14,10 +14,10 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // renders a FIXED bar indicator seeded from the canonical WATCHED_ENTITY_STAGES
 // slice (known from frame one, audit ③) — the graph-act stages through the
 // wiki-reveal boundary (world_and_factions → locations_and_npcs →
-// entity_relationships). The PREP stages live in the WorldGenLoading screen and
-// get NO bar; the SILENT TAIL stages (entity_consolidation → embed_world) run
-// behind the wiki reveal and get NO bar either — the bars hit 100% exactly at the
-// reveal moment. A prep or tail entry in the stream's `stages[]` is ignored. The
+// entity_relationships → world_introduction, myth-zaqxh). The PREP stages live in
+// the WorldGenLoading screen and get NO bar; the SILENT TAIL stages
+// (entity_consolidation → embed_world) run behind the wiki reveal and get NO bar
+// either — the bars hit 100% exactly at the reveal moment. A prep or tail entry in the stream's `stages[]` is ignored. The
 // stream only ADVANCES each bar's fill. It shows: the CURRENT (running) stage's
 // friendly label, a completed/total percent, an optional per-second COUNTDOWN
 // (`countdownLabel`, MYT-89 waiting-feedback — the consumer ticks + formats it;
@@ -29,7 +29,7 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // (non-circular) indicator, the stage-label resolution + `[ph:]` fallback, and
 // the countdown line.
 
-const TOTAL = WATCHED_ENTITY_STAGES.length // 3
+const TOTAL = WATCHED_ENTITY_STAGES.length // 4 (myth-zaqxh added world_introduction)
 
 const stage = (id: string, status: StageProgress['status']): StageProgress => ({
   stage: id,
@@ -41,19 +41,19 @@ const stage = (id: string, status: StageProgress['status']): StageProgress => ({
 })
 
 // A SHORT stream: only the first watched entity stage has appeared (running). The
-// card must still render all 3 bars — the taxonomy seeds the count, the stream
-// only advances fills. 0 completed / 3 → 0%.
+// card must still render all 4 bars — the taxonomy seeds the count, the stream
+// only advances fills. 0 completed / 4 → 0%.
 const SHORT: readonly StageProgress[] = [stage('world_and_factions', 'running')]
 
-// Mid-wait: 2 of the 3 watched entity stages completed, the boundary stage
-// running. 2 / 3 → 67%.
+// Mid-wait: 2 of the 4 watched entity stages completed, a mid entity stage
+// running (the boundary is now world_introduction, not yet reached). 2 / 4 → 50%.
 const MID: readonly StageProgress[] = [
   stage('world_and_factions', 'completed'),
   stage('locations_and_npcs', 'completed'),
   stage('entity_relationships', 'running'),
 ]
 
-const EXPECTED_MID_PERCENT = Math.round((2 / TOTAL) * 100) // 67
+const EXPECTED_MID_PERCENT = Math.round((2 / TOTAL) * 100) // 50
 
 // Every watched entity stage completed → 100%, the done state — the wiki-reveal
 // moment, even though the silent tail has not run at all.
@@ -67,7 +67,7 @@ const LABELS = {
 }
 
 describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxonomy', () => {
-  it('renders all 3 watched-entity bars from frame one even when the stream is short', () => {
+  it('renders all 4 watched-entity bars from frame one even when the stream is short', () => {
     const { container } = render(<WorldGenStatusCard stages={SHORT} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
@@ -75,7 +75,7 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 1)
   })
 
-  it('renders 3 pending bars at 0% before the first snapshot frame (empty stream)', () => {
+  it('renders 4 pending bars at 0% before the first snapshot frame (empty stream)', () => {
     const { container, getByText } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL)
@@ -112,7 +112,7 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
     expect(getByText('100%')).toBeInTheDocument()
   })
 
-  it('computes percent as completed / 3 (fixed denominator), NOT over the stream length', () => {
+  it('computes percent as completed / 4 (fixed denominator), NOT over the stream length', () => {
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(getByText(`${String(EXPECTED_MID_PERCENT)}%`)).toBeInTheDocument()
     expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_MID_PERCENT))
@@ -152,7 +152,7 @@ describe('WorldGenStatusCard — done state (the wiki-reveal moment)', () => {
     expect(container.querySelector('.animate-pulse')).toBeNull()
   })
 
-  it('never reaches 100% while the boundary stage is still running', () => {
+  it('never reaches 100% before the boundary stage (world_introduction) completes', () => {
     const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText('100%')).toBeNull()
     expect(queryByText('[ph: world ready]')).toBeNull()

@@ -26,6 +26,8 @@ export interface FakeRepo {
     getEntityConsolidationPending: ReturnType<typeof vi.fn>
     setStartingSituations: ReturnType<typeof vi.fn>
     setStartingSituationEntries: ReturnType<typeof vi.fn>
+    setWorldIntroduction: ReturnType<typeof vi.fn>
+    getWorldIntroduction: ReturnType<typeof vi.fn>
   }
   campaigns: {
     setNameFromUntitled: ReturnType<typeof vi.fn>
@@ -36,11 +38,18 @@ export interface FakeRepo {
     deleteByWorldAndCreatedIn: ReturnType<typeof vi.fn>
     insert: ReturnType<typeof vi.fn>
   }
-  facts: { insertMany: ReturnType<typeof vi.fn> }
-  proseKernels: { insert: ReturnType<typeof vi.fn> }
+  facts: {
+    insertMany: ReturnType<typeof vi.fn>
+    listByEntities: ReturnType<typeof vi.fn>
+  }
+  proseKernels: {
+    insert: ReturnType<typeof vi.fn>
+    listByEntities: ReturnType<typeof vi.fn>
+  }
   relationships: {
     insertMany: ReturnType<typeof vi.fn>
     deleteByWorld: ReturnType<typeof vi.fn>
+    listAmong: ReturnType<typeof vi.fn>
   }
   entityHierarchy: {
     insert: ReturnType<typeof vi.fn>
@@ -76,6 +85,8 @@ export function makeFakeRepo(): FakeRepo {
       getEntityConsolidationPending: vi.fn().mockResolvedValue(null),
       setStartingSituations: vi.fn().mockResolvedValue(undefined),
       setStartingSituationEntries: vi.fn().mockResolvedValue(undefined),
+      setWorldIntroduction: vi.fn().mockResolvedValue(undefined),
+      getWorldIntroduction: vi.fn().mockResolvedValue(null),
     },
     campaigns: {
       setNameFromUntitled: vi.fn().mockResolvedValue(undefined),
@@ -86,13 +97,20 @@ export function makeFakeRepo(): FakeRepo {
       deleteByWorldAndCreatedIn: vi.fn().mockResolvedValue(undefined),
       insert: vi.fn().mockResolvedValue(undefined),
     },
-    facts: { insertMany: vi.fn().mockResolvedValue(undefined) },
-    proseKernels: { insert: vi.fn().mockResolvedValue(undefined) },
+    facts: {
+      insertMany: vi.fn().mockResolvedValue(undefined),
+      listByEntities: vi.fn().mockResolvedValue([]),
+    },
+    proseKernels: {
+      insert: vi.fn().mockResolvedValue(undefined),
+      listByEntities: vi.fn().mockResolvedValue([]),
+    },
     relationships: {
       insertMany: vi.fn().mockImplementation((rows: readonly unknown[]) =>
         Promise.resolve(rows.map((_r, i) => `rel-${String(i)}`)),
       ),
       deleteByWorld: vi.fn().mockResolvedValue(undefined),
+      listAmong: vi.fn().mockResolvedValue([]),
     },
     entityHierarchy: {
       insert: vi.fn().mockResolvedValue(undefined),

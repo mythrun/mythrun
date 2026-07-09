@@ -666,11 +666,12 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   // -------------------------------------------------------------------------
   // GET /api/campaigns/:campaignId/world-snapshot (myth-exac)
   //
-  // Returns the known-tier slice of a world's persisted content for the
-  // dev-tool wiki inspector. Owner-only. 409 until stage 4
-  // (entity_relationships) completes — entities + facts + relationships
-  // are only fully written once that stage commits, so any earlier read
-  // would surface a partial world.
+  // Returns the known-tier slice of a world's persisted content — the reveal's
+  // data source, incl. the introduction page. Owner-only. 409 until
+  // world_introduction (the reveal boundary, myth-zaqxh) completes: the intro
+  // is written there, and entities + facts + relationships are all committed by
+  // then, so any earlier read would surface a partial world (or a missing
+  // intro).
   //
   // Dev-mode bypass widens the projection to include the `discoverable`
   // and `secret` tiers, but ONLY when the requester is also in bypass-auth
@@ -699,12 +700,13 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (!campaign) return reply.code(404).send({ code: 'campaign_not_found' })
       /* c8 ignore stop */
 
-      // Pre-readiness gate: stage 4 (entity_relationships) must have
-      // committed for the snapshot to be coherent. Earlier stages leave
-      // the entity/relationships tables in a partial state.
+      // Pre-readiness gate: world_introduction (the reveal boundary) must have
+      // committed for the snapshot to be coherent AND carry the intro page.
+      // Earlier stages leave the entity/relationships tables partial and have no
+      // intro yet.
       const ready = await pipelineRunsRepo.isStageCompleted(
         campaign.worldId,
-        'entity_relationships',
+        'world_introduction',
       )
       if (!ready) return reply.code(409).send({ code: 'snapshot_not_ready' })
 

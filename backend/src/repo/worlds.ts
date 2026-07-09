@@ -637,7 +637,40 @@ export function worldsNs(c: ClientLike) {
         entriesJson,
       ])
     },
+
+    /**
+     * world-introduction (myth-zaqxh) persist — the intro page's prose +
+     * resolved dig-deeper references (migration 032). `introJson` is the
+     * caller-serialized JSON string `{ prose, references: [{ entityId, name }] }`
+     * (the title is NOT stored — it is the world's name). Set-once by the
+     * world_introduction stage.
+     */
+    setWorldIntroduction: async (id: string, introJson: string): Promise<void> => {
+      await c.query(`UPDATE worlds SET introduction = $2::jsonb WHERE id = $1`, [id, introJson])
+    },
+
+    /**
+     * world-introduction read (myth-zaqxh) — the persisted intro shape, or null
+     * when the column is null / the world is unknown. jsonb arrives already
+     * parsed. The generic stays caller-supplied (the snapshot view narrows it);
+     * the title is composed by the caller from the world's name.
+     */
+    getWorldIntroduction: async <T = WorldIntroductionRow>(id: string): Promise<T | null> => {
+      const result = await c.query<{ introduction: T | null }>(
+        `SELECT introduction FROM worlds WHERE id = $1`,
+        [id],
+      )
+      return result.rows[0]?.introduction ?? null
+    },
   }
+}
+
+/** The persisted `worlds.introduction` JSONB shape (migration 032). The title is
+ *  the world's name — NOT stored here; the snapshot view composes it. Each
+ *  reference is a dig-deeper entity the intro resolved to a real id. */
+export interface WorldIntroductionRow {
+  readonly prose: string
+  readonly references: readonly { readonly entityId: string; readonly name: string }[]
 }
 
 /** Back-compat factory — pool-bound `worlds` surface. Identical shape to the

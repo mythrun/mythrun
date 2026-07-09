@@ -170,12 +170,15 @@ const st = (id: string, status: StageProgress['status']): StageProgress => ({
   completedAt: null,
 })
 
-// The stream mid-tail: connection-weaving COMPLETED, the silent tail underway,
-// worlds.status still 'generating' — the wiki-reveal window (MYT-89 reveal timing).
+// The stream mid-tail: the introduction page is WRITTEN (world_introduction, the
+// reveal boundary — myth-zaqxh moved it here from entity_relationships), the
+// silent tail underway, worlds.status still 'generating' — the wiki-reveal window
+// (MYT-89 reveal timing).
 const CONNECTIONS_DONE_STAGES: readonly StageProgress[] = [
   st('world_and_factions', 'completed'),
   st('locations_and_npcs', 'completed'),
   st('entity_relationships', 'completed'),
+  st('world_introduction', 'completed'),
   st('entity_consolidation', 'running'),
 ]
 
@@ -266,7 +269,7 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
   })
 
-  it('fires the wiki reveal the MOMENT entity_relationships completes — mid-generation', async () => {
+  it('fires the wiki reveal the MOMENT world_introduction completes — mid-generation', async () => {
     // The tail (consolidation → embed) is still running and worlds.status is
     // still 'generating': the reveal shows anyway (MYT-89 reveal timing —
     // embed_world completion is NOT required).
@@ -384,8 +387,12 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     renderDetail()
     // The reveal mounts after the settling gate resolves; findBy flushes that.
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
-    // The settled graph's accessible entity list carries the node names.
-    expect(screen.getByText('Ashfen Reach')).toBeDefined()
+    // The settled world's CONTENT reached the reveal: the graph pane renders
+    // only once the folded nodes arrive (the first-fold gate — reveal.tsx holds
+    // it null at nodes=[]), so its presence proves the stream's entities landed.
+    // (The entity list this used to read names from was removed in audit v3;
+    // the Canvas carries the names now, unobservable under jsdom.)
+    expect(screen.getByTestId('reveal-graph')).toBeDefined()
     // The pipeline is complete → Continue is offered (the settled-world default).
     expect(screen.getByTestId('reveal-continue')).toBeDefined()
   })

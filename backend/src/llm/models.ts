@@ -8,7 +8,10 @@ import { costAccountingMiddleware } from './cost-middleware.js'
 // across model lines (capability shifts, prompt-caching behavior, etc.).
 const HAIKU_ID = 'claude-haiku-4-5-20251001'
 const SONNET_ID = 'claude-sonnet-4-6'
-const OPUS_ID = 'claude-opus-4-7'
+// Exported so cost-computing call sites reference the config constant instead of
+// re-typing the id string (CLAUDE.md: never hardcode model names). It doubles as
+// a `model-pricing.Model` pricing key.
+export const OPUS_ID = 'claude-opus-4-7'
 
 /**
  * Tier-named language model constants. Each is the underlying Anthropic

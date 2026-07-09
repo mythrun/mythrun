@@ -19,7 +19,7 @@ import {
 } from '../index.js'
 
 describe('WORLD_GEN_STAGES canonical taxonomy', () => {
-  it('lists the 11 world-gen stages in the real pipeline order', () => {
+  it('lists the 12 world-gen stages in the real pipeline order', () => {
     // The authority is the worker's stage loop
     // (backend/src/llm/prep/world-gen-processor.ts). Any reorder here MUST
     // mirror a reorder there — this list is the single source both consumers
@@ -31,6 +31,12 @@ describe('WORLD_GEN_STAGES canonical taxonomy', () => {
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      // myth-zaqxh: the world-introduction page — the first prose the player
+      // reads at the reveal. Positioned right AFTER entity_relationships so it
+      // authors from the fully-woven known-tier slice, and BEFORE
+      // entity_consolidation so it becomes the new reveal boundary (the visible
+      // wait now ends when the intro is written, not when the ties are drawn).
+      'world_introduction',
       'entity_consolidation',
       'starting_situation',
       'random_tables',
@@ -41,7 +47,7 @@ describe('WORLD_GEN_STAGES canonical taxonomy', () => {
 
   it('includes entity_consolidation (the stage the drifted 10-copy omitted)', () => {
     expect(WORLD_GEN_STAGES).toContain('entity_consolidation')
-    expect(WORLD_GEN_STAGES).toHaveLength(11)
+    expect(WORLD_GEN_STAGES).toHaveLength(12)
   })
 
   it('ends with embed_world immediately after coherence_pass', () => {
@@ -69,11 +75,12 @@ describe('PREP_STAGES / ENTITY_STAGES split (MYT-89 two-act generating flow)', (
     expect([...PREP_STAGES, ...ENTITY_STAGES]).toEqual([...WORLD_GEN_STAGES])
   })
 
-  it('covers the 8 entity-generation stages of the graph act', () => {
+  it('covers the 9 entity-generation stages of the graph act', () => {
     expect([...ENTITY_STAGES]).toEqual([
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      'world_introduction',
       'entity_consolidation',
       'starting_situation',
       'random_tables',
@@ -89,10 +96,12 @@ describe('PREP_STAGES / ENTITY_STAGES split (MYT-89 two-act generating flow)', (
 })
 
 describe('the WIKI-REVEAL boundary split (MYT-89 reveal timing)', () => {
-  it('places the boundary at entity_relationships — connection-weaving ends the visible wait', () => {
-    // The reveal moment fires the instant the connections are woven; everything
-    // after entity_relationships runs SILENTLY behind the wiki reveal.
-    expect(REVEAL_BOUNDARY_STAGE).toBe('entity_relationships')
+  it('places the boundary at world_introduction — the intro page ends the visible wait', () => {
+    // myth-zaqxh: the reveal moment now fires the instant the introduction page
+    // is written (the first prose the player reads); everything after
+    // world_introduction — starting with entity_consolidation — runs SILENTLY
+    // behind the wiki reveal.
+    expect(REVEAL_BOUNDARY_STAGE).toBe('world_introduction')
     expect(WATCHED_STAGES[WATCHED_STAGES.length - 1]).toBe(REVEAL_BOUNDARY_STAGE)
     expect(TAIL_STAGES[0]).toBe('entity_consolidation')
   })
@@ -105,6 +114,7 @@ describe('the WIKI-REVEAL boundary split (MYT-89 reveal timing)', () => {
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      'world_introduction',
     ])
   })
 
@@ -113,6 +123,7 @@ describe('the WIKI-REVEAL boundary split (MYT-89 reveal timing)', () => {
       'world_and_factions',
       'locations_and_npcs',
       'entity_relationships',
+      'world_introduction',
     ])
   })
 

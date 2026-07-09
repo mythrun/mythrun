@@ -15,7 +15,7 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // per-second COUNTDOWN (MYT-89 waiting-feedback — the consumer ticks + formats the
 // `~M:SS`; the Ticking specimen drives the REAL `remainingWaitMs` derivation through
 // a scripted overrun so the hold + the completion jump are visible), and a
-// PAPER-REGISTER segmented square bar of a FIXED 3 cells (one per canonical
+// PAPER-REGISTER segmented square bar of a FIXED 4 cells (one per canonical
 // WATCHED_ENTITY_STAGES stage, known from frame one — the stream only advances the
 // fills) whose running cell pulses (opacity fade — the brand's only sanctioned
 // motion; NO spinner, NO circle). The bars hit 100% exactly at the wiki-reveal
@@ -157,7 +157,7 @@ export const Ticking: Story = {
 }
 
 // EARLY — the first entity stage running, nothing completed yet (the moment the
-// player enters the graph). 3 bars from frame one; a single pulsing ember cell.
+// player enters the graph). 4 bars from frame one; a single pulsing ember cell.
 export const Early: Story = {
   render: () => (
     <Pane>

@@ -32,6 +32,7 @@ export type WorldGenStage =
   | 'world_and_factions'
   | 'locations_and_npcs'
   | 'entity_relationships'
+  | 'world_introduction'
   | 'entity_consolidation'
   | 'starting_situation'
   | 'random_tables'

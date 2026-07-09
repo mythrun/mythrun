@@ -220,15 +220,16 @@ function computePhase(input: {
     return 'world_gen_failed'
   }
 
-  // Snapshot-ready: stage 4 (entity_relationships) has committed but the
-  // world is still generating (stages 5-7 pending/running). The SSE
-  // initial frame surfaces this so mid-window subscribers learn the
-  // snapshot is fetchable even though worlds.status hasn't flipped yet.
-  // Must precede the `world_gen` running check, otherwise the running
-  // stage-5/6/7 row would shadow this branch.
+  // Snapshot-ready: world_introduction (the reveal boundary, myth-zaqxh) has
+  // committed but the world is still generating (the silent tail —
+  // entity_consolidation → embed_world — is still pending/running). The SSE
+  // initial frame surfaces this so mid-window subscribers learn the snapshot
+  // (which now carries the intro page) is fetchable even though worlds.status
+  // hasn't flipped yet. Must precede the `world_gen` running check, otherwise a
+  // running tail-stage row would shadow this branch.
   if (
     world.status === 'generating' &&
-    worldgen.some((r) => r.stage === 'entity_relationships' && r.status === 'completed')
+    worldgen.some((r) => r.stage === 'world_introduction' && r.status === 'completed')
   ) {
     return 'world_snapshot_ready'
   }

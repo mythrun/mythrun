@@ -3,7 +3,8 @@
 // myth-exac T20: integration tests for GET
 // /api/campaigns/:campaignId/world-snapshot.
 //
-// Owner-only. 409 until stage 4 (entity_relationships) completes. Bypass
+// Owner-only. 409 until world_introduction (the reveal boundary, myth-zaqxh)
+// completes — the snapshot now carries the intro page written there. Bypass
 // requires BOTH world.dev_bypass_access_filter=true AND the requester
 // being in bypass-auth (defense in depth) — a prod-auth user requesting
 // a dev-tool-created world still sees the known-tier projection only.
@@ -122,7 +123,7 @@ async function seedUser(pool: Pool, scope: TestScope, index: number): Promise<Se
 
 interface SeedOpts {
   readonly devBypassAccessFilter?: boolean
-  readonly entityRelationshipsStatus?: 'pending' | 'running' | 'completed' | 'failed' | null
+  readonly introductionStatus?: 'pending' | 'running' | 'completed' | 'failed' | null
 }
 
 interface SeededCampaign {
@@ -200,16 +201,17 @@ async function seedCampaignWithSnapshot(
     [uuidv7(), known1, known2],
   )
 
-  // Pipeline run for entity_relationships, world-scoped (user_id IS NULL).
-  // status === null means: don't seed the row at all (covers the "no row"
-  // case alongside pending / in_progress / failed).
-  const status = opts.entityRelationshipsStatus
+  // Pipeline run for world_introduction (the reveal boundary — the gate stage,
+  // myth-zaqxh), world-scoped (user_id IS NULL). status === null means: don't
+  // seed the row at all (covers the "no row" case alongside pending / running /
+  // failed).
+  const status = opts.introductionStatus
   if (status !== null && status !== undefined) {
     // Map external test labels to the actual DB enum.
     const dbStatus = status === 'running' ? 'running' : status
     await pool.query(
       `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
-       VALUES ($1, $2, 'entity_relationships', $3, now(), NULL)`,
+       VALUES ($1, $2, 'world_introduction', $3, now(), NULL)`,
       [uuidv7(), worldId, dbStatus],
     )
   }
@@ -289,18 +291,18 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
     vi.unstubAllEnvs()
   })
 
-  // Stage 4 hasn't committed → 409. Covers the four non-completed states:
-  // no row at all, pending (seeded but not started), running (in flight),
-  // failed (worker errored). All must keep the snapshot endpoint closed.
+  // world_introduction hasn't committed → 409. Covers the four non-completed
+  // states: no row at all, pending (seeded but not started), running (in
+  // flight), failed (worker errored). All must keep the snapshot endpoint closed.
   it.each<{ label: string; status: 'pending' | 'running' | 'failed' | null }>([
-    { label: 'no entity_relationships row exists', status: null },
-    { label: 'entity_relationships is pending', status: 'pending' },
-    { label: 'entity_relationships is running (in progress)', status: 'running' },
-    { label: 'entity_relationships is failed', status: 'failed' },
+    { label: 'no world_introduction row exists', status: null },
+    { label: 'world_introduction is pending', status: 'pending' },
+    { label: 'world_introduction is running (in progress)', status: 'running' },
+    { label: 'world_introduction is failed', status: 'failed' },
   ])('409 snapshot_not_ready when $label', async ({ status }) => {
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
-      entityRelationshipsStatus: status,
+      introductionStatus: status,
     })
     const res = await app.inject({
       method: 'GET',
@@ -311,10 +313,10 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
     expect(res.json()).toEqual({ code: 'snapshot_not_ready' })
   })
 
-  it('200 returns the known-tier projection when stage 4 is completed', async () => {
+  it('200 returns the known-tier projection when world_introduction is completed', async () => {
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
-      entityRelationshipsStatus: 'completed',
+      introductionStatus: 'completed',
     })
 
     const res = await app.inject({
@@ -354,7 +356,7 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
   it('403 not_campaign_owner for a non-owner member', async () => {
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
-      entityRelationshipsStatus: 'completed',
+      introductionStatus: 'completed',
     })
     const player = await seedUser(pool, scope, 1)
     await pool.query(
@@ -375,7 +377,7 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
   it('403 not_campaign_member for a stranger', async () => {
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
-      entityRelationshipsStatus: 'completed',
+      introductionStatus: 'completed',
     })
     const stranger = await seedUser(pool, scope, 2)
 
@@ -392,7 +394,7 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
       devBypassAccessFilter: true,
-      entityRelationshipsStatus: 'completed',
+      introductionStatus: 'completed',
     })
 
     const res = await app.inject({
@@ -425,7 +427,7 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
       devBypassAccessFilter: true,
-      entityRelationshipsStatus: 'completed',
+      introductionStatus: 'completed',
     })
     app = await buildNoBypassScopeApp(pool, redis, owner.devSub)
 

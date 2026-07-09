@@ -402,6 +402,27 @@ describe('worlds repo (integration)', () => {
       expect(got).toEqual({ declarations: [], relationships: [] })
     })
 
+    it('setWorldIntroduction then getWorldIntroduction round-trips the intro (myth-zaqxh)', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      const intro = {
+        prose: 'Ashfall runs on debt and ash-glass, and the Ashen Court taxes every gate.',
+        references: [{ entityId: '019dccef-0000-7000-8000-000000000abc', name: 'The Ashen Court' }],
+      }
+      await worlds.setWorldIntroduction(id, JSON.stringify(intro))
+      const got = await worlds.getWorldIntroduction(id)
+      expect(got).toEqual(intro)
+    })
+
+    it('getWorldIntroduction returns null for a fresh world (unset column) and an unknown world', async () => {
+      const worlds = createWorldsRepo(pool)
+      const id = await seedWorld()
+      expect(await worlds.getWorldIntroduction(id)).toBeNull()
+      expect(
+        await worlds.getWorldIntroduction('019dccef-0000-7000-8000-000000000000'),
+      ).toBeNull()
+    })
+
     it('setStartingSituations writes the picker prose blob (stage 6, TEXT column)', async () => {
       const worlds = createWorldsRepo(pool)
       const id = await seedWorld()

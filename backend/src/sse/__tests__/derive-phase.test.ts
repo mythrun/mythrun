@@ -283,11 +283,12 @@ describe('derivePhase', () => {
     expect(charConceptStages.map((s) => s.userId).sort()).toEqual(['usr-1', 'usr-2'])
   })
 
-  it('returns world_snapshot_ready when worldStatus is generating AND entity_relationships completed', () => {
-    // myth-exac T17: stage-4 (entity_relationships) has committed the snapshot
-    // and the world is fetchable, but stages 5-7 are still running so
-    // worlds.status remains 'generating'. The SSE initial frame must
-    // surface this so mid-window subscribers learn the snapshot is ready.
+  it('returns world_snapshot_ready when worldStatus is generating AND world_introduction completed', () => {
+    // myth-zaqxh: the reveal boundary is world_introduction. It has committed the
+    // snapshot (incl. the intro page) and the world is fetchable, but the silent
+    // tail is still running so worlds.status remains 'generating'. The SSE
+    // initial frame must surface this so mid-window subscribers learn the
+    // snapshot is ready.
     const result = derivePhase({
       campaign: baseCampaign,
       world: { ...baseWorld, status: 'generating' },
@@ -296,15 +297,17 @@ describe('derivePhase', () => {
         run({ stage: 'world_and_factions', status: 'completed' }),
         run({ stage: 'locations_and_npcs', status: 'completed' }),
         run({ stage: 'entity_relationships', status: 'completed' }),
-        run({ stage: 'starting_situation', status: 'running', completed_at: null }),
+        run({ stage: 'world_introduction', status: 'completed' }),
+        run({ stage: 'entity_consolidation', status: 'running', completed_at: null }),
       ],
     })
     expect(result.phase).toBe('world_snapshot_ready')
   })
 
-  it('still returns world_gen when entity_relationships is not yet completed', () => {
-    // Counterpoint to the snapshot_ready case: entity_relationships hasn't
-    // committed yet, so the snapshot isn't fetchable. Phase stays world_gen.
+  it('still returns world_gen after connections are drawn but before world_introduction commits', () => {
+    // myth-zaqxh boundary check: entity_relationships completing is NO LONGER
+    // enough — the snapshot isn't fetchable until the intro page is written, so
+    // with world_introduction still running the phase stays world_gen.
     const inProgress = derivePhase({
       campaign: baseCampaign,
       world: { ...baseWorld, status: 'generating' },
@@ -312,7 +315,8 @@ describe('derivePhase', () => {
         run({ stage: 'concept_intake', status: 'completed' }),
         run({ stage: 'world_and_factions', status: 'completed' }),
         run({ stage: 'locations_and_npcs', status: 'completed' }),
-        run({ stage: 'entity_relationships', status: 'running', completed_at: null }),
+        run({ stage: 'entity_relationships', status: 'completed' }),
+        run({ stage: 'world_introduction', status: 'running', completed_at: null }),
       ],
     })
     expect(inProgress.phase).toBe('world_gen')
@@ -350,7 +354,7 @@ describe('derivePhase', () => {
   // MYT-71 T10 lockstep: WORLDGEN_STAGES must include 'embed_world' (after
   // coherence_pass) so derivePhase classifies the terminal embed row as
   // 'worldgen' rather than dropping it to 'unknown'. With a running embed_world
-  // row and the world still 'generating' (and NO entity_relationships row so
+  // row and the world still 'generating' (and NO world_introduction row so
   // the earlier world_snapshot_ready branch can't shadow this), the phase must
   // stay 'world_gen' — which fires ONLY because the running embed row lands in
   // the worldgen bucket. If it were 'unknown' the bucket would have no
