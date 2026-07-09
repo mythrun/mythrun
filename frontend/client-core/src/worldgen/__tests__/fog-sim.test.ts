@@ -330,7 +330,7 @@ describe('FogSim — spawn-scale drain (the fog clears by NOT respawning)', () =
     expect(maxAbsDiff(run(), run())).toBe(0)
   })
 
-  it('carries the drain across a resize — retired slots survive; a grown field re-arms', () => {
+  it('carries the drain across a resize — retired slots survive; a raised scale re-arms', () => {
     const sim = createFogSim({ width: 90, height: 60, random: mulberry32(53) })
     for (let i = 0; i < 1200; i++) sim.step(17, [], 0)
     expect(anyPositive(sim.density())).toBe(false)
@@ -339,11 +339,45 @@ describe('FogSim — spawn-scale drain (the fog clears by NOT respawning)', () =
     sim.setSize(60, 42)
     for (let i = 0; i < 30; i++) sim.step(17, [], 0)
     expect(anyPositive(sim.density())).toBe(false)
-    // GROW: the revealed area warm-starts fresh particles, so the sim wakes — fog
-    // is present again once the field steps at full spawn.
+    // GROW: grown slots start DEAD while the field is drained (the reveal-invariant
+    // test below); RAISING the scale re-arms them through the §4 revive, so fog
+    // BLOWS IN from the spawn edges rather than popping into place (an edge spawn
+    // sits ±SPAWN_BOUND_PX off-canvas and needs ~15 sub-steps at the locked wind
+    // to reach the grid — hence more steps than a warm-start would need).
     sim.setSize(240, 180)
-    for (let i = 0; i < 5; i++) sim.step(17, [], 1)
+    for (let i = 0; i < 60; i++) sim.step(17, [], 1)
     expect(anyPositive(sim.density())).toBe(true)
+  })
+
+  it('a GROW while DRAINED spawns no live slots — the fog stays gone (the reveal invariant)', () => {
+    // The reveal moment's §3.8 hard invariant is "fog totally gone", and its desktop
+    // resolve re-seat GROWS the virtual pane on sub-floor worlds (the camera seat
+    // engaging at the half pane). Grown slots warm-starting ALIVE here painted a
+    // soft fog patch that drifted ~15–20s over the done state (the D6 review bug,
+    // myth-nlf25) — a drained field's resize must stay empty and DORMANT.
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(89) })
+    for (let i = 0; i < 1200; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false)
+    sim.setSize(240, 180) // the resolve re-seat: a sub-floor world's pane grows
+    expect(anyPositive(sim.density())).toBe(false) // the copied density region is zeros
+    const grid = sim.density() // by-reference — dormancy must survive the resize
+    for (let i = 0; i < 240; i++) sim.step(17, [], 0)
+    expect(anyPositive(sim.density())).toBe(false) // nothing revived — no soft patch
+    expect(sim.density()).toBe(grid) // still the §4 no-op (no realloc, no wake)
+  })
+
+  it('a GROW mid-drain still warm-starts grown slots — the gate keys on DORMANT, not the scale', () => {
+    // The gate's sharp edge: a draining-but-alive field keeps the pre-gate resize
+    // semantics — revealed area gets fog immediately and the excess drains through
+    // the §4 gate (fog is still visibly present, so there is no invariant to hold).
+    // Only the fully-drained dormant field (the reveal's done state) gates revival.
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(37) })
+    for (let i = 0; i < 40; i++) sim.step(17, [], 1)
+    for (let i = 0; i < 10; i++) sim.step(17, [], 0) // draining; population still alive
+    sim.setSize(240, 180)
+    sim.step(17, [], 0) // ONE sub-step: only warm-started slots can splat the far half
+    const d = sim.density()
+    expect(windowAvg(d, sim.gw, sim.gh, 200, 90, 3)).toBeGreaterThan(0)
   })
 })
 
@@ -578,6 +612,20 @@ describe('FogSim — setSize (the responsive pane resize, MYT-89)', () => {
         expect(after[gy * sim.gw + gx]).toBe(before[gy * gwBefore + gx])
       }
     }
+  })
+
+  it('a GROW on a LIVE field warm-starts the grown slots alive across the new field', () => {
+    // The drained gate's parity pin (myth-nlf25): a NON-drained resize is untouched
+    // by the gate — grown slots warm-start ALIVE across the whole new field, exactly
+    // as before. ONE sub-step is the sharp probe: an edge-spawned revive sits
+    // ±SPAWN_BOUND_PX off-canvas and cannot reach the far (new) half in one step,
+    // so density there proves the slots were warm-started live.
+    const sim = createFogSim({ width: 90, height: 60, random: mulberry32(29) })
+    for (let i = 0; i < 60; i++) sim.step(17, [], 1)
+    sim.setSize(240, 180)
+    sim.step(17, [], 1)
+    const d = sim.density()
+    expect(windowAvg(d, sim.gw, sim.gh, 200, 90, 3)).toBeGreaterThan(0)
   })
 
   it('keeps stepping after a resize — the field stays populated + finite at the new size', () => {

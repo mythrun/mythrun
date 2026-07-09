@@ -133,10 +133,11 @@ export interface FogSim {
   settleDensity(obstacles: readonly FogObstacle[]): void
   /** Re-derive the sim for a new virtual size (the RESPONSIVE pane resize, MYT-89):
    *  grid dims + area-scaled particle count are recomputed, surviving particles keep
-   *  flowing (grown slots warm-start across the new field; out-of-bound ones respawn
-   *  naturally via the off-band check), and the overlapping region of the smoothed
-   *  density is PRESERVED so a resize never flashes the fog to nothing. No-op when
-   *  the dims are unchanged. */
+   *  flowing (grown slots warm-start across the new field — unless the field is fully
+   *  DRAINED, where they start dead so the dormant "fog totally gone" state survives
+   *  the resize; out-of-bound ones respawn naturally via the off-band check), and the
+   *  overlapping region of the smoothed density is PRESERVED so a resize never
+   *  flashes the fog to nothing. No-op when the dims are unchanged. */
   setSize(width: number, height: number): void
   /** The live GW×GH smoothed, box-cleared particle-density grid (`dsm`). Returned
    *  by reference for zero-alloc reads — treat it as read-only; it is overwritten
@@ -488,9 +489,10 @@ function boxClear(s: FogState, obstacles: readonly FogObstacle[]): void {
  *  Grid dims + area-scaled N recompute exactly as `createState` would; the surviving
  *  particle slots are KEPT (a particle now outside the new bounds respawns naturally
  *  via `isOffBand` on its next advect) and grown slots warm-start across the NEW
- *  field; the overlapping (gx, gy) region of the smoothed density `dsm` is copied
- *  over so a resize never flashes the fog to nothing — the temporal low-pass blends
- *  the new cells in from empty. No-op when the dims are unchanged. */
+ *  field — except on a fully DRAINED field, where they start dead (the drain gate,
+ *  myth-nlf25); the overlapping (gx, gy) region of the smoothed density `dsm` is
+ *  copied over so a resize never flashes the fog to nothing — the temporal low-pass
+ *  blends the new cells in from empty. No-op when the dims are unchanged. */
 function resizeState(s: FogState, width: number, height: number): void {
   if (width === s.width && height === s.height) return
   const gw = Math.ceil(width / CELL_PX)
@@ -517,13 +519,19 @@ function resizeState(s: FogState, width: number, height: number): void {
   s.rightW = Math.abs(WIND_BASE[0]) * height
   // Alive flags follow the surviving slots; GROWN slots warm-start alive (a resize
   // that reveals new area gets fog there — if the current spawn target is lower, the
-  // excess drains naturally through the §4 gate). Count + dead-stack rebuild below.
+  // excess drains naturally through the §4 gate) — UNLESS the field is fully DRAINED:
+  // a dormant field's invariant is "fog totally gone" (the reveal moment's resolve
+  // re-seat grows the pane over exactly that state, myth-nlf25), so grown slots start
+  // DEAD and the sim stays dormant; a later scale rise re-arms them through the §4
+  // revive (fog blows in from the spawn edges). Count + dead-stack rebuild below.
   const alive = new Uint8Array(n)
   alive.set(s.alive.subarray(0, Math.min(n, prevN)))
   // Warm-start ONLY the grown slots (survivors keep their positions/flow).
-  for (let i = prevN; i < n; i++) {
-    alive[i] = 1
-    warmStartSlot(s, i)
+  if (!s.drained) {
+    for (let i = prevN; i < n; i++) {
+      alive[i] = 1
+      warmStartSlot(s, i)
+    }
   }
   s.alive = alive
   s.aliveCount = 0
@@ -532,8 +540,9 @@ function resizeState(s: FogState, width: number, height: number): void {
     if (alive[i] === 1) s.aliveCount += 1
     else s.dead.push(i)
   }
-  // A drained sim stays dormant only if the resize added no particles (its zeroed
-  // density region copies over as zeros, so the grid invariant holds either way).
+  // A drained sim stays dormant: grown slots start dead (the gate above), a shrink
+  // drops only retired slots, and the zeroed density region copies over as zeros —
+  // the `aliveCount === 0` term restates that invariant rather than deciding it.
   s.drained = s.drained && s.aliveCount === 0
 }
 
