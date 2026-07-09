@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import type { EntityKind } from '@mythrun/contract/rest'
 import type { WikiEntity } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { Text } from '../Text/Text.tsx'
@@ -36,9 +35,10 @@ const KIND_CLASS = 'font-ui text-[0.65rem] uppercase tracking-wide text-ink-tert
 export interface WikiPageProps {
   /** The entity this page shows. */
   entity: WikiEntity
-  /** Its world-lore kind — the mono tag over the name. Rendered as DATA (the
-   *  enum value), the entity-list precedent. */
-  kind: EntityKind
+  /** The kind tag over the name — COPY, resolved by the shell through the same
+   *  `groupLabels` map the home's group headings use (`resolveKindLabel`), so
+   *  both surfaces speak identical labels. Never the raw enum value. */
+  kindLabel: string
   /** The retained scroll offset (px) to seat the reader at — `WikiLocation.scroll`. */
   scroll?: number
   /** The shell's handle on the scroll container (it reads `scrollTop` at
@@ -56,7 +56,7 @@ export interface WikiPageProps {
 
 export function WikiPage({
   entity,
-  kind,
+  kindLabel,
   scroll = 0,
   scrollRef,
   onBack,
@@ -85,7 +85,7 @@ export function WikiPage({
         className="min-h-0 min-w-0 flex-1 overflow-y-auto px-[var(--space-3)] pb-[var(--space-4)]"
       >
         <header className="flex flex-col gap-[var(--space-1)] pb-[var(--space-4)] pt-[var(--space-2)]">
-          <p className={KIND_CLASS}>{kind}</p>
+          <p className={KIND_CLASS}>{kindLabel}</p>
           <Heading level={2} role="heading">
             {entity.name}
           </Heading>

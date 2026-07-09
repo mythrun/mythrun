@@ -40,7 +40,7 @@ type Story = StoryObj<typeof WikiPage>
 export const Populated: Story = {
   args: {
     entity: wikiFixtureEntity('f-guild'),
-    kind: 'faction',
+    kindLabel: '[placeholder for Factions]',
   },
 }
 
@@ -49,6 +49,6 @@ export const Populated: Story = {
 export const EmptyBody: Story = {
   args: {
     entity: wikiFixtureEntity('l-spire'),
-    kind: 'location',
+    kindLabel: '[placeholder for Locations]',
   },
 }

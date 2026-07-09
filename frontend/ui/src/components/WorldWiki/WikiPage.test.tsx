@@ -22,7 +22,7 @@ function renderPage(overrides: Partial<React.ComponentProps<typeof WikiPage>> = 
   return render(
     <WikiPage
       entity={wikiFixtureEntity('f-guild')}
-      kind="faction"
+      kindLabel="Faction"
       onBack={vi.fn()}
       onOpenRelated={vi.fn()}
       {...LABELS}
@@ -32,10 +32,12 @@ function renderPage(overrides: Partial<React.ComponentProps<typeof WikiPage>> = 
 }
 
 describe('WikiPage — title + body', () => {
-  it('renders the entity name as a heading with its kind tag', () => {
-    const { getByRole, getByText } = renderPage()
+  it('renders the entity name as a heading with its RESOLVED kind-tag copy', () => {
+    const { getByRole, getByText, queryByText } = renderPage()
     expect(getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
-    expect(getByText('faction')).toBeInTheDocument()
+    // The tag is the consumer-resolved label, never the raw enum value.
+    expect(getByText('Faction')).toBeInTheDocument()
+    expect(queryByText('faction')).toBeNull()
   })
 
   it('composes the body from the facts — topic over content, in order', () => {
@@ -49,7 +51,7 @@ describe('WikiPage — title + body', () => {
   it('shows the calm empty state for an empty-body entity — no fake prose', () => {
     const { getByText, queryByText } = renderPage({
       entity: wikiFixtureEntity('l-spire'),
-      kind: 'location',
+      kindLabel: 'Location',
     })
     expect(getByText('Nothing recorded here yet')).toBeInTheDocument()
     expect(queryByText(/placeholder for/)).toBeNull()
@@ -72,7 +74,7 @@ describe('WikiPage — related + back', () => {
   it('an empty-body entity still shows its related reading', () => {
     const { getByText, getByRole } = renderPage({
       entity: wikiFixtureEntity('l-spire'),
-      kind: 'location',
+      kindLabel: 'Location',
     })
     expect(getByText('Nothing recorded here yet')).toBeInTheDocument()
     expect(getByRole('button', { name: /The Tallow Guild/ })).toBeInTheDocument()
@@ -108,7 +110,7 @@ describe('WikiPage — scroll restore', () => {
     rerender(
       <WikiPage
         entity={wikiFixtureEntity('n-vale')}
-        kind="npc"
+        kindLabel="Person"
         onBack={vi.fn()}
         onOpenRelated={vi.fn()}
         scroll={0}

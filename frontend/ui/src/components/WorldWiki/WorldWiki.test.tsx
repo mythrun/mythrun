@@ -96,6 +96,10 @@ describe('WorldWiki — external selection (the graph↔wiki bridge)', () => {
       />,
     )
     expect(getByRole('heading', { name: 'Sunspire' })).toBeInTheDocument()
+    // The page's kind tag resolves through the SAME groupLabels map home uses —
+    // never the raw enum value.
+    expect(getByRole('article')).toHaveTextContent('Locations')
+    expect(getByRole('article')).not.toHaveTextContent(/\blocation\b/)
     // Sunspire is the empty-body specimen: the calm note + its related reading.
     expect(getByRole('article')).toHaveTextContent('Nothing recorded here yet')
     expect(getByRole('button', { name: /The Tallow Guild/ })).toBeInTheDocument()

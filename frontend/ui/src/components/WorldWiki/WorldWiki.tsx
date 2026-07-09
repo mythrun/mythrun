@@ -4,6 +4,7 @@ import type { WikiEntity, WorldWikiProps } from '@mythrun/client-core/contract'
 import { useWikiNavigation } from '@mythrun/client-core/worldgen'
 import { WikiHome } from './WikiHome.tsx'
 import { WikiPage } from './WikiPage.tsx'
+import { resolveKindLabel } from './kind-label.ts'
 
 // WorldWiki (MYT-89 Phase D, D4) — the browsable wiki as a real PLACE: a home
 // landing (search + browse-by-kind, WikiHome) opening onto per-entity pages
@@ -100,7 +101,7 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
       {current.type === 'entity' && page !== undefined ? (
         <WikiPage
           entity={page.entity}
-          kind={page.kind}
+          kindLabel={resolveKindLabel(page.kind, groupLabels)}
           scroll={current.scroll}
           scrollRef={scrollRef}
           onBack={back}

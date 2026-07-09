@@ -1,4 +1,3 @@
-import type { EntityKind } from '@mythrun/contract/rest'
 import type { WikiEntity, WikiViewModel, WorldWikiProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { Text } from '../Text/Text.tsx'
@@ -6,6 +5,7 @@ import { Heading } from '../Heading/Heading.tsx'
 import { Divider } from '../Divider/Divider.tsx'
 import { SeamlessInput } from '../SeamlessInput/SeamlessInput.tsx'
 import { filterWikiModel } from './filter-model.ts'
+import { resolveKindLabel } from './kind-label.ts'
 
 // WikiHome (MYT-89 D4) — the wiki's landing: the borderless search field over
 // browse-by-kind groups (factions/locations/npcs/items; nested locations
@@ -29,11 +29,6 @@ const ITEM_CLASS = cn(
 // Nested locations indent structurally: each deeper <ul> adds a left inset, so the
 // hierarchy reads from the layout — no per-depth computed style needed.
 const NESTED_LIST_CLASS = 'pl-[var(--space-4)]'
-
-/** Resolve a kind's heading copy from the consumer map, else a `[ph: …]` default. */
-function groupHeading(kind: EntityKind, groupLabels: WorldWikiProps['groupLabels']): string {
-  return groupLabels?.[kind] ?? `[ph: ${kind}]`
-}
 
 interface EntityNodeProps {
   entity: WikiEntity
@@ -118,7 +113,7 @@ export function WikiHome({
             <section key={group.kind}>
               {index > 0 && <Divider tone="border" />}
               <Heading level={2} role="title">
-                {groupHeading(group.kind, groupLabels)}
+                {resolveKindLabel(group.kind, groupLabels)}
               </Heading>
               <ul className="min-w-0">
                 {group.entities.map((entity) => (
