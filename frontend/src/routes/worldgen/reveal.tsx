@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Stack,
-  Grid,
   Heading,
   Text,
   Button,
@@ -9,22 +8,18 @@ import {
   FullBleedStage,
   VisuallyHidden,
   WorldGenGraph,
-  WorldWiki,
+  RevealPanes,
+  RevealFade,
+  revealPhaseAtLeast,
   useViewportNarrow,
 } from '@mythrun/ui'
-import {
-  completedTailStageCount,
-  getWorldSnapshot,
-  useApiContext,
-  type ApiContext,
-  type WorldGenSnapshot,
-  type WorldGenStream,
-} from '@mythrun/client-core'
-import { MIN_EXPECTED_ENTITIES, toWikiViewModel, type WikiViewModel } from '@mythrun/client-core/worldgen'
+import { completedTailStageCount, getWorldSnapshot, type WorldGenStream } from '@mythrun/client-core'
+import type { RevealMoment } from '@mythrun/client-core/contract'
+import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
 import { useTranslation } from 'react-i18next'
-import type { TFunction } from 'i18next'
 import { useNavigate } from 'react-router-dom'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
+import { WikiPanel, useWikiModel, type FetchSnapshot } from './reveal-wiki-panel.tsx'
 
 // The WORLD REVEAL (MYT-89 Phase D, D5 layout + reveal timing) — where the
 // `/campaigns/:id` route lands the moment the CONNECTIONS ARE WOVEN
@@ -32,9 +27,11 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //
 // TWO LAYOUT REGIMES, one structural flip (`useViewportNarrow` — the DS's one
 // narrow regime, the same boolean FullBleedStage flips on internally):
-//   • DESKTOP: a true 50/50 — `Grid columns={2}` lays the interactive graph
-//     (C4) beside the browsable wiki (D4), both stretching to fill (the old
-//     `auto-fill` template kept empty trailing tracks on wide viewports).
+//   • DESKTOP: a true 50/50 — `RevealPanes` (D6) lays the interactive graph
+//     (C4) beside the browsable wiki (D4) as two equal min-width-0 halves (the
+//     `Grid columns={2}` track behavior), and is HOW the moment's layout
+//     arrives: full-width graph easing to the left half while the wiki slides
+//     in from the right at `resolve`.
 //   • MOBILE (< 640px): the graph OWNS THE GLASS — the same `FullBleedStage`
 //     mechanism as the generating act (`inset={6}` cancels the AppFrame's
 //     content padding; the stage fills the viewport below the header), with a
@@ -44,6 +41,13 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //     MOUNTED across close→open, so the reader's page + scroll survive; the
 //     title/explore-prompt ride the sheet's own header, and Continue sits at
 //     the top of the sheet body.
+//
+// THE REVEAL MOMENT (D6, §3.8): the route wraps this screen in a
+// <RevealTransition> and hands the `moment` down; the layout stages itself
+// against its phase — the title fade at `settle`, the pane arrival / drawer
+// mount at `resolve`. The fog is born drained in every phase (`revealFogShown`
+// — the §3.8 fog-gone invariant, enforced from the swap). A mount without a
+// moment renders the settled end state instantly (the late arriver).
 //
 // SILENT UPDATES (MYT-89 reveal timing): while the player explores, the
 // pipeline's tail stages (entity_consolidation → embed_world) keep running
@@ -63,144 +67,65 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 // push signal — see the effect below). Flat 1-bit paper register; all UI
 // composes @mythrun/ui.
 
-/** Fetches the FULL known-tier snapshot. Typed as the RELATIONSHIP-BEARING
- *  `WorldGenSnapshot` (`getWorldSnapshot`'s actual response — assignable to the
- *  view model's `WikiSnapshot`): a relationship-less source is a COMPILE error,
- *  so the wiki's RELATED cross-links can never silently come up empty (the
- *  D2-review re-type). Injected so tests substitute a resolved fixture. The
- *  route mounts this screen only after the boundary stage
- *  (entity_relationships) has committed — the same stage the endpoint's 409
- *  gate checks — so the fetch never 409s. The known-tier filter is SERVER-side
- *  (worldSnapshotView, enforced ignorance): fetching mid-tail serves the same
- *  known-only projection as post-completion. */
-type FetchSnapshot = (ctx: ApiContext, campaignId: string) => Promise<WorldGenSnapshot>
+// The snapshot fetch/refetch model + the wiki panel live in reveal-wiki-panel.tsx
+// (extracted at the D6 module-size ceiling; composed here exactly as before).
 
-interface WikiModelState {
-  readonly model: WikiViewModel | null
-  readonly loading: boolean
-  /** The last (re)fetch REJECTED. Only rendered when no model has ever
-   *  resolved: the panel shows the honest UNAVAILABLE line (a member hitting
-   *  the owner-only snapshot endpoint 403s — myth-0xwos — and transient
-   *  failures look the same from here), never an error flash. */
-  readonly failed: boolean
-}
+/** The reveal moment a NON-PLAYED mount renders (the late arriver, a settled
+ *  world, every pre-D6 test): the end state, hard — no transitions. */
+const SETTLED_MOMENT: RevealMoment = { phase: 'done', instant: true }
 
-/** Fetch the world snapshot and normalize it to the wiki view model; REFETCH
- *  quietly whenever `refreshToken` bumps (a silent tail stage completed — the
- *  reconciled world). Quiet by construction: `loading` is only ever true before
- *  the FIRST settle, and the current model stays rendered until a fresh one
- *  resolves (a refetch failure keeps the old model — the next tail completion
- *  retries). A failed first fetch settles to the calm unavailable line (never
- *  throws into the route). The `active` flag drops a late resolve after
- *  unmount / a superseded refetch. */
-function useWikiModel(
-  campaignId: string,
-  fetchSnapshot: FetchSnapshot,
-  refreshToken: number,
-): WikiModelState {
-  const ctx = useApiContext()
-  const [state, setState] = useState<WikiModelState>({ model: null, loading: true, failed: false })
-  useEffect(() => {
-    let active = true
-    void fetchSnapshot(ctx, campaignId)
-      .then((snapshot) => {
-        if (!active) return
-        setState({ model: toWikiViewModel(snapshot), loading: false, failed: false })
-      })
-      .catch(() => {
-        if (active) setState((s) => ({ ...s, loading: false, failed: true }))
-      })
-    return () => {
-      active = false
-    }
-  }, [ctx, campaignId, fetchSnapshot, refreshToken])
-  return state
-}
-
-/** The calm single-line states of the wiki panel before a model exists:
- *  loading → the settling line; a failed fetch → the honest unavailable line;
- *  the (defensive) remainder → the empty line. */
-function panelLine(state: WikiModelState, t: TFunction): string {
-  if (state.loading) return t('worldReveal.loading')
-  return state.failed ? t('worldReveal.unavailable') : t('worldReveal.empty')
-}
-
-interface WikiPanelProps {
-  state: WikiModelState
-  /** The one-shot external push signal (a graph tap) — NOT the persistent
-   *  selection; see the one-shot effect in `WorldReveal`. */
-  externalSelection: string | undefined
-  onSelect: (entityId: string) => void
-  query: string
-  onQuery: (query: string) => void
-}
-
-/** The wiki side of the reveal: a calm `[ph: …]` line while the snapshot loads
- *  (or failed to), else the browsable `WorldWiki` with every chrome label
- *  resolved from the app catalog (the DS owns no copy). */
-function WikiPanel({ state, externalSelection, onSelect, query, onQuery }: WikiPanelProps): React.JSX.Element {
-  const { t } = useTranslation()
-  if (state.model === null) {
-    return (
-      <Text role="ui-caption" as="p">
-        {panelLine(state, t)}
-      </Text>
-    )
-  }
-  return (
-    <WorldWiki
-      data-testid="reveal-wiki"
-      model={state.model}
-      onSelect={onSelect}
-      query={query}
-      onQuery={onQuery}
-      searchLabel={t('worldReveal.wikiSearchLabel')}
-      searchPlaceholder={t('worldReveal.wikiSearchPlaceholder')}
-      emptyLabel={t('worldReveal.wikiEmpty')}
-      backLabel={t('worldReveal.wikiBack')}
-      relatedLabel={t('worldReveal.wikiRelated')}
-      emptyBodyLabel={t('worldReveal.wikiEmptyBody')}
-      groupLabels={{
-        faction: t('worldReveal.group.faction'),
-        location: t('worldReveal.group.location'),
-        npc: t('worldReveal.group.npc'),
-        item: t('worldReveal.group.item'),
-      }}
-      {...(externalSelection !== undefined ? { selectedId: externalSelection } : {})}
-    />
-  )
+/** The fog-drain NUMERATOR on the reveal — always "fully arrived", so the fog
+ *  is BORN DRAINED (`settlePopulation`'s mount path) whatever the world size:
+ *  the §3.8 hard invariant (fog totally gone), enforced from the swap. A
+ *  sub-floor world (< MIN_EXPECTED_ENTITIES) is the case this floors: keeping
+ *  its residual haze for a live gust was tried and cut on the D6 sequence
+ *  capture — the remounted sim's cold low-pass FADES THE HAZE BACK IN over the
+ *  moment's first seconds, and the wind then needs ~20s to carry it off, an
+ *  inverted arc. Born-drained also retires the permanent-residual-haze
+ *  artifact sub-floor worlds had on the settled reveal (D5's mobile shot).
+ *  Pure — exported for unit test. */
+export function revealFogShown(nodeCount: number): number {
+  return Math.max(nodeCount, MIN_EXPECTED_ENTITIES)
 }
 
 /** The pieces both layout regimes compose: the interactive graph, the wiki
- *  surface (a pane on desktop; the drawer's child on mobile), and the gated
- *  Continue affordance (`null` while the tail still runs). */
+ *  surface (a pane on desktop; the drawer's child on mobile), the gated
+ *  Continue affordance (`null` while the tail still runs), and the reveal
+ *  MOMENT the layout stages itself against (D6). */
 interface RevealChromeProps {
-  graph: React.JSX.Element
+  /** `null` until the first fold delivers nodes — see the graph const. */
+  graph: React.JSX.Element | null
   wikiPanel: React.JSX.Element
   continueAction: React.JSX.Element | null
+  moment: RevealMoment
 }
 
-/** Desktop: the true 50/50 — `Grid columns={2}` builds `repeat(2, minmax(0,
- *  1fr))`, so the two panes stretch to fill the full width (the old
- *  `auto-fill` template kept empty trailing tracks). */
-function DesktopReveal({ graph, wikiPanel, continueAction }: RevealChromeProps): React.JSX.Element {
+/** Desktop: the true 50/50, ARRIVING IN MOTION (D6). RevealPanes holds the
+ *  graph at full width through the moment and eases it to the left half while
+ *  the wiki slides in from the right at `resolve`, landing on the same
+ *  equal-halves track the old `Grid columns={2}` built. The title fades in at
+ *  `settle`, the explore prompt (and Continue) at `resolve` — whole-block
+ *  opacity fades with their space reserved from the first frame, so nothing
+ *  shifts mid-moment. A settled mount renders all of it visible, instantly. */
+function DesktopReveal({ graph, wikiPanel, continueAction, moment }: RevealChromeProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Stack gap={4} data-testid="worldgen-reveal">
-      <Heading level={1} role="title">
-        {t('worldReveal.title')}
-      </Heading>
-      <Grid columns={2} gap={4} data-testid="reveal-panes">
-        {graph}
-        {wikiPanel}
-      </Grid>
-      <Text role="prose-body" as="p">
-        {t('worldReveal.explorePrompt')}
-      </Text>
-      {/* The Continue appears QUIETLY once the pipeline finishes (the pick's POST
-          requires a complete world). While the tail runs, the explore prompt is the
-          whole call to action — exploring IS the intent of this screen. */}
-      {continueAction}
+      <RevealFade moment={moment} visibleFrom="settle">
+        <Heading level={1} role="title">
+          {t('worldReveal.title')}
+        </Heading>
+      </RevealFade>
+      <RevealPanes data-testid="reveal-panes" moment={moment} stage={graph} panel={wikiPanel} />
+      <RevealFade moment={moment} visibleFrom="resolve">
+        <Text role="prose-body" as="p">
+          {t('worldReveal.explorePrompt')}
+        </Text>
+        {/* The Continue appears QUIETLY once the pipeline finishes (the pick's POST
+            requires a complete world). While the tail runs, the explore prompt is the
+            whole call to action — exploring IS the intent of this screen. */}
+        {continueAction}
+      </RevealFade>
     </Stack>
   )
 }
@@ -214,12 +139,17 @@ interface MobileRevealProps extends RevealChromeProps {
  *  full-bleed mechanism (`inset={6}` MUST match the AppFrame content Box's
  *  `padding={6}`), placed directly under the (visually hidden) H1 so its top
  *  edge lands at the header's bottom — the same geometry the generation view
- *  holds, so the gen→reveal flip doesn't jolt the pane. The wiki rides the
- *  edge-handle Drawer: mount-persistent children (the reader's page + scroll
- *  survive close→open), the reveal title/prompt as the sheet's own header, and
- *  Continue at the top of the sheet body — every reveal affordance lives in
- *  the summonable sheet, keeping the base screen pure world. */
-function MobileReveal({ graph, wikiPanel, continueAction, open, onOpenChange }: MobileRevealProps): React.JSX.Element {
+ *  holds, so the gen→reveal flip doesn't jolt the pane (and the reveal moment
+ *  can rely on that continuity: the stage renders identically in EVERY phase).
+ *  The wiki rides the edge-handle Drawer: mount-persistent children (the
+ *  reader's page + scroll survive close→open), the reveal title/prompt as the
+ *  sheet's own header, and Continue at the top of the sheet body — every
+ *  reveal affordance lives in the summonable sheet, keeping the base screen
+ *  pure world. THE MOMENT (D6): the drawer mounts at `resolve` — §3.8's
+ *  "handle arrives at the right edge"; before that nothing occludes the
+ *  just-revealed world. Mount is monotonic (phases only advance), so the
+ *  mount-persistence contract is untouched once it exists. */
+function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenChange }: MobileRevealProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Stack data-testid="worldgen-reveal">
@@ -231,20 +161,22 @@ function MobileReveal({ graph, wikiPanel, continueAction, open, onOpenChange }: 
       <FullBleedStage inset={6} data-testid="reveal-stage">
         {graph}
       </FullBleedStage>
-      <Drawer
-        data-testid="reveal-drawer"
-        title={t('worldReveal.title')}
-        description={t('worldReveal.explorePrompt')}
-        openLabel={t('worldReveal.wikiOpen')}
-        closeLabel={t('worldReveal.wikiClose')}
-        open={open}
-        onOpenChange={onOpenChange}
-      >
-        <Stack gap={4}>
-          {continueAction}
-          {wikiPanel}
-        </Stack>
-      </Drawer>
+      {revealPhaseAtLeast(moment.phase, 'resolve') && (
+        <Drawer
+          data-testid="reveal-drawer"
+          title={t('worldReveal.title')}
+          description={t('worldReveal.explorePrompt')}
+          openLabel={t('worldReveal.wikiOpen')}
+          closeLabel={t('worldReveal.wikiClose')}
+          open={open}
+          onOpenChange={onOpenChange}
+        >
+          <Stack gap={4}>
+            {continueAction}
+            {wikiPanel}
+          </Stack>
+        </Drawer>
+      )}
     </Stack>
   )
 }
@@ -266,6 +198,11 @@ export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'
   onContinue?: () => void
   /** The snapshot source — defaults to the real endpoint; tests substitute it. */
   fetchSnapshot?: FetchSnapshot
+  /** The reveal MOMENT (D6) — the route's <RevealTransition> hands it down and
+   *  the layout stages itself against it (title/prompt fades, the desktop pane
+   *  arrival, the mobile drawer's mount, the fog's final gust). Default: the
+   *  settled end state — a reveal that never played (the late arriver). */
+  moment?: RevealMoment
 }
 
 const NO_STAGES: WorldGenStream['stages'] = []
@@ -278,6 +215,7 @@ export function WorldReveal({
   continueReady = true,
   onContinue,
   fetchSnapshot = getWorldSnapshot,
+  moment = SETTLED_MOMENT,
 }: WorldRevealProps): React.JSX.Element {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -351,7 +289,15 @@ export function WorldReveal({
     else void navigate(`/campaigns/${campaignId}/situation`)
   }
 
-  const graph = (
+  // The pane WAITS for the first fold (a late arriver's first render precedes
+  // the SSE snapshot): were the graph mounted at nodes=[], its fog would be
+  // born drained in a 0-count world and the count's arrival would GROW the
+  // pane-adaptive virtual space — the fog sim warm-starts grown slots ALIVE
+  // (its mid-generation resize semantics), resurrecting fog over a done
+  // reveal (caught live). Mounting at the real count births the fog drained
+  // at the real world size; later folds only merge/rename (never grow the
+  // count), so the space never grows post-mount.
+  const graph = nodes.length === 0 ? null : (
     <WorldGenGraph
       data-testid="reveal-graph"
       interactive
@@ -359,12 +305,12 @@ export function WorldReveal({
       edges={edges}
       onSelect={handleGraphSelect}
       reducedMotion={prefersReducedMotion}
-      // The world is BORN — the fog is gone and stays gone (MYT-89 spawn-drain:
-      // a complete world's node count is past the entity floor, so the fog
-      // mounts already drained). Omitting these held base-density fog over the
-      // reveal (the 0-denominator "no drain" fallback) — a leftover from the
-      // pre-drain fade wiring, at odds with the reveal's fog-gone arc.
-      shownEntities={nodes.length}
+      // The world is BORN — the fog is gone and STAYS gone, through its one
+      // clear mechanism (MYT-89 spawn-drain): the numerator is floored at the
+      // drain denominator so the fog mounts drained for EVERY world size (the
+      // §3.8 hard invariant, sub-floor residual included — see revealFogShown
+      // for why a live gust of the residual was cut).
+      shownEntities={revealFogShown(nodes.length)}
       totalEntities={MIN_EXPECTED_ENTITIES}
       listLabel={t('worldReveal.graphLabel')}
       emptyLabel={t('worldReveal.graphEmpty')}
@@ -394,10 +340,18 @@ export function WorldReveal({
         graph={graph}
         wikiPanel={wikiPanel}
         continueAction={continueAction}
+        moment={moment}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
       />
     )
   }
-  return <DesktopReveal graph={graph} wikiPanel={wikiPanel} continueAction={continueAction} />
+  return (
+    <DesktopReveal
+      graph={graph}
+      wikiPanel={wikiPanel}
+      continueAction={continueAction}
+      moment={moment}
+    />
+  )
 }

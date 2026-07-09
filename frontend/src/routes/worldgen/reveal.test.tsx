@@ -15,8 +15,8 @@ import { WorldReveal } from './reveal.tsx'
 
 // The WORLD REVEAL (MYT-89 Phase D, D5 layout + reveal timing) — the graph
 // beside the browsable wiki with SHARED SELECTION; desktop lays them as a true
-// 50/50 (`Grid columns={2}`), a narrow viewport gets the full-bleed graph with
-// the wiki in the edge-handle Drawer. The wiki model is fetched via an
+// 50/50 (`RevealPanes` at its settled state — D6), a narrow viewport gets the
+// full-bleed graph with the wiki in the edge-handle Drawer. The wiki model is fetched via an
 // injected `fetchSnapshot` (default `getWorldSnapshot` — the RELATIONSHIP-
 // bearing `WorldGenSnapshot`, so RELATED cross-links populate); the graph
 // nodes arrive as props. These tests inject a resolved snapshot and assert:
@@ -228,13 +228,18 @@ describe('WorldReveal — settled graph beside the wiki', () => {
 })
 
 describe('WorldReveal — desktop layout (true 50/50)', () => {
-  it('lays graph and wiki as a FIXED two-column grid (no auto-fill empty tracks)', async () => {
+  it('lays graph and wiki as a FIXED two-pane 50/50 (no auto-fill empty tracks)', async () => {
     renderReveal()
     const panes = screen.getByTestId('reveal-panes')
-    // `Grid columns={2}` → an inline `repeat(2, minmax(0, 1fr))` track: the two
-    // panes stretch to fill the full width; the old `auto-fill` template kept
-    // empty trailing tracks on wide viewports.
-    expect(panes.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))')
+    // The settled RevealPanes frame (D6): two equal-grow min-width-0 cells and
+    // the `--space-4` gutter — the same track behavior the old `Grid columns={2}`
+    // template produced (two panes stretching to fill the full width).
+    expect(panes.style.columnGap).toBe('var(--space-4)')
+    const cells = Array.from(panes.children) as HTMLElement[]
+    expect(cells).toHaveLength(2)
+    expect(cells[0]?.className).toContain('min-w-0')
+    expect(cells[1]?.className).toContain('min-w-0')
+    expect(cells[1]?.style.flexGrow).toBe('1')
     expect(within(panes).getByTestId('reveal-graph')).toBeDefined()
     expect(await within(panes).findByTestId('reveal-wiki')).toBeDefined()
   })

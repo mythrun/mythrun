@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Stack, Heading, Text, Button } from '@mythrun/ui'
+import { Stack, Heading, Text, Button, RevealTransition } from '@mythrun/ui'
 import {
   connectionsDone,
   getStartingSituations,
@@ -12,6 +12,7 @@ import {
 } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
+import { usePrefersReducedMotion } from '../platform/web/use-prefers-reduced-motion.ts'
 import { GeneratingView } from './worldgen/generating.tsx'
 import { WorldReveal } from './worldgen/reveal.tsx'
 import { CampaignPage } from './campaign-page.tsx'
@@ -177,6 +178,8 @@ export function CampaignDetailRoute({
   // unconditional (hooks can't branch) without a non-null assertion.
   const { id = '' } = useParams<{ id: string }>()
   const { nodes, edges, status, phase, stages, retry } = useWorldGenStream(ctx, id)
+  // The reveal moment collapses to its ~300ms fade under reduced motion (§3.8).
+  const prefersReducedMotion = usePrefersReducedMotion()
   // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
   const worldReady = status === 'complete' && phase === 'world_ready'
   const chosen = useSituationChosen(ctx, id, worldReady, fetchSituations)
@@ -197,15 +200,33 @@ export function CampaignDetailRoute({
 
   // ONE reveal element for every branch that shows it: same type, same position →
   // React keeps it MOUNTED across the generating → world_ready flip (selection,
-  // search, and the wiki model all survive). Continue appears only at completion.
+  // search, the wiki model AND the reveal moment's latch all survive). Continue
+  // appears only at completion.
+  //
+  // THE REVEAL MOMENT (D6, §3.8): the transition plays exactly when the WATCHER
+  // reaches the swap — `play={revealDuringGen}` is true on the very render that
+  // first swaps generating→reveal, and the transition latches on that first
+  // true, so the later world_ready flip (revealDuringGen → false) neither
+  // reverses nor restarts it (its own latch; `sawMidGenRevealRef` above keeps
+  // this same element rendered through the flip). A late arriver mounts the
+  // reveal with play=false forever → the settled end state, no beat.
   const reveal = (
-    <WorldReveal
-      campaignId={id}
-      nodes={nodes}
-      edges={edges}
-      stages={stages}
-      continueReady={status === 'complete'}
-    />
+    <RevealTransition
+      data-testid="reveal-moment"
+      play={revealDuringGen}
+      reducedMotion={prefersReducedMotion}
+    >
+      {(moment) => (
+        <WorldReveal
+          campaignId={id}
+          nodes={nodes}
+          edges={edges}
+          stages={stages}
+          continueReady={status === 'complete'}
+          moment={moment}
+        />
+      )}
+    </RevealTransition>
   )
 
   if (generating) {

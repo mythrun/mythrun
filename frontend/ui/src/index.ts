@@ -117,6 +117,25 @@ export { WorldGenLoading } from './components/WorldGenLoading/WorldGenLoading.ts
 // so D3 can wire the graph↔wiki shared selection through `selectedId`/`onSelect`.
 export { WorldWiki } from './components/WorldWiki/WorldWiki.tsx'
 
+// RevealTransition (MYT-89 Phase D, §3.8) — the gen→reveal reward moment: the
+// once-latched, skippable timeline (hold → gust → settle → resolve → done, or a
+// ~300ms reduced-motion surface fade) handed to consumers as a render-prop
+// `RevealMoment`; RevealPanes is the desktop full-width→50/50 arrival frame;
+// RevealFade the phase-keyed whole-block opacity fade (the sanctioned motion).
+// The named REVEAL_*_MS timings + the phase-order predicate ship for consumers
+// that stage their own pieces (drawer mount timing, the fog's drain flip).
+export {
+  RevealTransition,
+  RevealPanes,
+  RevealFade,
+  revealPhaseAtLeast,
+  REVEAL_HOLD_MS,
+  REVEAL_GUST_MS,
+  REVEAL_SETTLE_MS,
+  REVEAL_RESOLVE_MS,
+  REVEAL_REDUCED_FADE_MS,
+} from './components/RevealTransition/RevealTransition.tsx'
+
 // Overlays (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu. Each wraps
 // an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip / Tabs /
 // DropdownMenu): Radix supplies the a11y headline (focus trap + focus-RETURN,
@@ -243,6 +262,11 @@ export type {
   WikiGroup,
   WikiEntity,
   WikiFact,
+  RevealPhase,
+  RevealMoment,
+  RevealTransitionProps,
+  RevealPanesProps,
+  RevealFadeProps,
   ModalProps,
   DrawerProps,
   PopoverProps,

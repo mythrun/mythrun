@@ -117,7 +117,29 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  // Restore the no-matchMedia default for tests that install no stub (the
+  // reduced-motion case below installs one).
+  if (typeof window !== 'undefined') Reflect.deleteProperty(window, 'matchMedia')
 })
+
+// jsdom has no matchMedia. A QUERY-AWARE stub so one media condition can be
+// forced (reduced motion below); every other query stays non-matching.
+function mockMedia(matching: string): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: query === matching,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  })
+}
 
 // A modest fixture (2 nodes) — heavy graphs render slowly in jsdom and can
 // overrun CI's waitFor default (reference_heavy_svg_render_ci_waitfor_timeout).
@@ -289,6 +311,53 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     // Flush the chosen-flag fetch: still the reveal (nothing was picked).
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
     expect(screen.queryByTestId('campaign-settling')).toBeNull()
+  })
+
+  it('PLAYS the reveal moment on the mid-gen swap — the watcher gets the beat (D6)', async () => {
+    // The generating→reveal swap mounts the reveal inside a playing
+    // <RevealTransition>: the walk begins at `hold` (the swap breath). The
+    // moment belongs to the player who watched — this render IS that swap.
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_snapshot_ready',
+        nodes: NODES,
+        stages: CONNECTIONS_DONE_STAGES,
+      }),
+    )
+    renderDetail()
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    expect(screen.getByTestId('reveal-moment').getAttribute('data-reveal-phase')).toBe('hold')
+  })
+
+  it('does NOT play the moment for the late arriver (first mount on a complete world)', async () => {
+    mockStream.mockReturnValue(
+      streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
+    )
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null })
+    renderDetail()
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    // The final state, instantly — no walk for someone who didn't watch.
+    expect(screen.getByTestId('reveal-moment').getAttribute('data-reveal-phase')).toBe('done')
+  })
+
+  it('collapses the moment under reduced motion: layout final from the first frame', async () => {
+    mockMedia('(prefers-reduced-motion: reduce)')
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_snapshot_ready',
+        nodes: NODES,
+        stages: CONNECTIONS_DONE_STAGES,
+      }),
+    )
+    renderDetail()
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    // The §3.8 reduced path: no walk — done immediately (the ~300ms surface
+    // fade is the only motion, and base.css collapses even that for real OS
+    // preferences). Continue stays gated by the tail exactly as before.
+    expect(screen.getByTestId('reveal-moment').getAttribute('data-reveal-phase')).toBe('done')
+    expect(screen.queryByTestId('reveal-continue')).toBeNull()
   })
 
   it('renders a Retry that calls retry() on a retryable failure', () => {

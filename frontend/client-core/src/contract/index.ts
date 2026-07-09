@@ -142,6 +142,18 @@ export type {
   WikiRelatedLink,
 } from './world-wiki.ts'
 
+// RevealTransition (MYT-89 Phase D, §3.8) — the gen→reveal reward moment: the
+// timeline orchestrator (render-prop `RevealMoment`), the desktop two-pane
+// arrival frame, and the phase-keyed fade block. Plays once for the player who
+// watched; skippable by construction; reduced motion = a ~300ms surface fade.
+export type {
+  RevealPhase,
+  RevealMoment,
+  RevealTransitionProps,
+  RevealPanesProps,
+  RevealFadeProps,
+} from './reveal-transition.ts'
+
 // Overlay contracts (MYT-82 Wave 3b) — Modal / Popover / Tooltip / Tabs / Menu.
 // Each wraps an unstyled `radix-ui` overlay primitive (Dialog / Popover / Tooltip
 // / Tabs / DropdownMenu) in the web impl — Radix supplies the a11y headline
