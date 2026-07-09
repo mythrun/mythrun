@@ -74,7 +74,9 @@ interface ArrangementProps {
 
 /** The desktop reveal recipe: title fades at `settle`; RevealPanes re-seats
  *  the full-width graph to the left half while the wiki slides in at
- *  `resolve`; the prompt arrives with the layout. */
+ *  `resolve`; the prompt arrives with the layout. The graph FILLS its half
+ *  (fillHost — the row owns the vertical space) and never pans on desktop
+ *  (pannable false) — the app's audit-v3 regime props, mirrored exactly. */
 function DesktopArrangement({ moment, nodes, edges, reducedMotion }: ArrangementProps): React.JSX.Element {
   return (
     <Stack gap={4}>
@@ -86,14 +88,14 @@ function DesktopArrangement({ moment, nodes, edges, reducedMotion }: Arrangement
         stage={
           <WorldGenGraph
             interactive
+            pannable={false}
+            fillHost
             nodes={[...nodes]}
             edges={[...edges]}
             onSelect={() => undefined}
             reducedMotion={reducedMotion}
             shownEntities={fogShown(nodes.length)}
             totalEntities={MIN_EXPECTED_ENTITIES}
-            listLabel="reveal.graph.list"
-            emptyLabel="reveal.graph.empty"
           />
         }
         panel={<FauxWiki />}
@@ -121,8 +123,6 @@ function MobileArrangement({ moment, nodes, edges, reducedMotion }: ArrangementP
           reducedMotion={reducedMotion}
           shownEntities={fogShown(nodes.length)}
           totalEntities={MIN_EXPECTED_ENTITIES}
-          listLabel="reveal.graph.list"
-          emptyLabel="reveal.graph.empty"
         />
       </FullBleedStage>
       {revealPhaseAtLeast(moment.phase, 'resolve') && (

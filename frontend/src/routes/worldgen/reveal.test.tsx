@@ -10,6 +10,7 @@ import {
   type WorldGenStream,
 } from '@mythrun/client-core'
 import type { StageProgress } from '@mythrun/contract/events'
+import type { WorldGenGraphProps } from '@mythrun/client-core/contract'
 import { i18n } from '../../i18n/config.ts'
 import { WorldReveal } from './reveal.tsx'
 
@@ -23,16 +24,56 @@ import { WorldReveal } from './reveal.tsx'
 // both surfaces render, a selection in EITHER surface highlights the matching
 // entity in the other (BUG 2.1: single `displayId` id-space — post-gen a
 // finalized node's `displayId` IS its entity id, so no synthKey↔id bridge; the
-// FINALIZED-node fixture keeps synthKey ≠ displayId to prove the graph keys
+// FINALIZED-node fixture keeps synthKey ≠ displayId to prove the route keys
 // selection on displayId, not synthKey), a re-tap of the SAME node re-opens
 // its page after a wiki back() (the one-shot push signal), Continue fires its
 // intent + is GATED until the pipeline completes, and the SILENT UPDATES: a
 // completed tail stage in the `stages` prop quietly refetches the wiki
 // snapshot (old model stays rendered — no loading takeover — until the fresh
-// one resolves). WorldGenGraph's Canvas is a jsdom no-op (its meaning lives in
-// the accessible entity list); only that list is queried. The viewport regime
-// is driven by a query-aware `matchMedia` stub (`mockViewport`); tests that
-// install none run wide (the no-matchMedia default — desktop).
+// one resolves). The viewport regime is driven by a query-aware `matchMedia`
+// stub (`mockViewport`); tests that install none run wide (the no-matchMedia
+// default — desktop).
+//
+// THE GRAPH IS A TEST DOUBLE here (MYT-89 audit v3): the real WorldGenGraph is
+// Canvas-only — the entity list that used to be its jsdom-drivable surface was
+// removed (the wiki is the browse surface), and a Canvas tap cannot be driven
+// under jsdom (no 2D context, no layout). These are ROUTE tests: their subject
+// is the reveal's WIRING (selection plumbing, the one-shot wiki push, the
+// drawer summon, the regime props), so the double renders the same neutral
+// contract the real graph exposes — one button per node firing
+// `onSelect(displayId)` (the Canvas tap's contract shape) plus data attributes
+// mirroring the props under test. The real component's own behavior (tap
+// hit-testing, camera gating, layout classes) is pinned by its unit tests in
+// @mythrun/ui.
+vi.mock('@mythrun/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mythrun/ui')>()
+  const { createElement: h } = await import('react')
+  function GraphDouble(props: WorldGenGraphProps & { 'data-testid'?: string }) {
+    return h(
+      'div',
+      {
+        'data-testid': props['data-testid'],
+        'data-selected-key': props.selectedKey ?? '',
+        'data-pannable': String(props.pannable ?? true),
+        'data-fill-host': String(props.fillHost ?? false),
+      },
+      props.nodes.map((n) =>
+        h(
+          'button',
+          {
+            key: n.displayId,
+            type: 'button',
+            onClick: () => {
+              props.onSelect(n.displayId)
+            },
+          },
+          n.name,
+        ),
+      ),
+    )
+  }
+  return { ...actual, WorldGenGraph: GraphDouble }
+})
 
 // ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; the platform builtin can shadow jsdom's real Storage.
@@ -72,9 +113,10 @@ beforeAll(() => {
     configurable: true,
     writable: true,
   })
-  // jsdom's getContext THROWS ("Not implemented"); WorldGenGraph's canvas guard
-  // expects null. Stub it so the decorative Canvas is a no-op and only the
-  // accessible entity list renders (the same stub the graph's own test installs).
+  // jsdom's getContext THROWS ("Not implemented"); canvas-bearing components'
+  // guards expect null (the same stub the graph's own unit tests install). The
+  // graph itself is a test double here, but the stub keeps any other canvas
+  // (and a future de-mock) inert.
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
 })
 
@@ -196,7 +238,7 @@ function renderReveal(overrides: RevealOverrides = {}): RevealHandle {
 }
 
 describe('WorldReveal — settled graph beside the wiki', () => {
-  it('renders the graph entity list and the wiki groups', async () => {
+  it('renders the graph pane (fed the folded nodes) and the wiki groups', async () => {
     renderReveal()
     const graph = screen.getByTestId('reveal-graph')
     expect(within(graph).getByRole('button', { name: /Ashfen Reach/i })).toBeDefined()
@@ -249,6 +291,15 @@ describe('WorldReveal — desktop layout (true 50/50)', () => {
     await screen.findByTestId('reveal-wiki')
     expect(screen.queryByTestId('reveal-drawer')).toBeNull()
   })
+
+  it('desktop graph: camera gated OFF, pane fills its half (audit v3 regime props)', () => {
+    // The desktop reveal must FILL, never pan: pannable={false} zeroes the
+    // camera's seat; fillHost lets the pane take the RevealPanes row height.
+    renderReveal()
+    const graph = screen.getByTestId('reveal-graph')
+    expect(graph.getAttribute('data-pannable')).toBe('false')
+    expect(graph.getAttribute('data-fill-host')).toBe('true')
+  })
 })
 
 describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () => {
@@ -283,6 +334,14 @@ describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () =>
       expect(sheet.getAttribute('data-state')).toBe('open')
     })
   })
+
+  it('mobile graph: the pannable camera stays, no host-fill (audit v3 regime props)', () => {
+    mockViewport({ narrow: true })
+    renderReveal()
+    const graph = screen.getByTestId('reveal-graph')
+    expect(graph.getAttribute('data-pannable')).toBe('true')
+    expect(graph.getAttribute('data-fill-host')).toBe('false')
+  })
 })
 
 describe('WorldReveal — shared selection (graph ↔ wiki)', () => {
@@ -302,10 +361,11 @@ describe('WorldReveal — shared selection (graph ↔ wiki)', () => {
     renderReveal()
     const wiki = await screen.findByTestId('reveal-wiki')
     const graph = screen.getByTestId('reveal-graph')
-    // Choose Maeris Vale in the WIKI: entity id ent-npc-1 = graph node displayId.
+    // Choose Maeris Vale in the WIKI: entity id ent-npc-1 = graph node displayId
+    // — the route hands it straight to the graph's selectedKey (the double
+    // mirrors the prop; the real Canvas raises + pins the matching glyph).
     fireEvent.click(within(wiki).getByRole('button', { name: 'Maeris Vale' }))
-    const graphBtn = within(graph).getByRole('button', { name: /Maeris Vale/i })
-    expect(graphBtn.getAttribute('aria-current')).toBe('true')
+    expect(graph.getAttribute('data-selected-key')).toBe('ent-npc-1')
   })
 
   it('re-opens the SAME page after backing out (tap → back → tap the same node)', async () => {

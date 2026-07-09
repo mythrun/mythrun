@@ -13,8 +13,7 @@ export type { GraphNode, GraphEdge, GraphNodeState } from '../worldgen/graph-red
  * The live streaming graph shown during world generation (MYT-89 Phase C, C4) —
  * the world-gen loading experience. Named entities stream in over ~10 minutes as
  * the prep pipeline runs; this renders them as a force-directed graph that grows
- * without ever resetting its layout, plus an ACCESSIBLE entity list (the a11y +
- * keyboard + touch-selection surface) beside the decorative Canvas.
+ * without ever resetting its layout.
  *
  * The parent (the world-gen screen / `useWorldGenStream`, C5) folds the SSE
  * `PipelineEvent` stream into `nodes`/`edges` and passes them as props — the fold
@@ -24,7 +23,9 @@ export type { GraphNode, GraphEdge, GraphNodeState } from '../worldgen/graph-red
  * Platform-neutral (§9): `nodes`/`edges` are plain data, `onSelect` is a neutral
  * `displayId` callback (never a DOM event), `reducedMotion` is a plain boolean. No
  * className/style/raw DOM events. The Canvas itself is a raw leaf (Tailwind can't
- * reach it), so it is `aria-hidden` and the entity list carries all meaning.
+ * reach it) and is `aria-hidden` — decorative on every surface (the reveal's
+ * accessible browse surface is the WIKI; the audit-v3 cut removed the graph-side
+ * entity list, and the deeper graph-a11y story belongs to Phase E).
  *
  * SELECTION ID-SPACE is `displayId` (BUG 2.1): node render-identity === edge
  * endpoint-space === `displayId` (the synthKey pre-finalize, the real entity UUID
@@ -32,33 +33,46 @@ export type { GraphNode, GraphEdge, GraphNodeState } from '../worldgen/graph-red
  * directly with an entity-keyed surface (e.g. the reveal wiki) with no bridge.
  *
  * TWO PHASES (§3.4). The DEFAULT is the GENERATION graph: a decorative fog layer
- * behind the mono-ink shape glyphs, a top-left status card, and NO entity list / NO
- * selection (that experience belongs to the reveal). The REVEAL opts in with
- * `interactive` — which turns on the accessible entity list + selection (Canvas tap
- * and list activation) and the on-glyph name labels.
+ * behind the mono-ink shape glyphs, a top-left status card, and NO selection
+ * (that experience belongs to the reveal). The REVEAL opts in with `interactive`
+ * — which wires selection (a fine-pointer Canvas tap / a coarse-pointer tap).
  */
 export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
   /** The current node set (the folded entities, in chronological arrival order). */
   nodes: GraphNode[]
   /** The current edge set (the folded, resolved relationships). */
   edges: GraphEdge[]
-  /** The `displayId` of the currently-selected entity, if any — reflected on the
-   *  matching entity-list item (`aria-current`) and emphasised in the Canvas. */
+  /** The `displayId` of the currently-selected entity, if any — emphasised in
+   *  the Canvas (raised glyph, pinned label). */
   selectedKey?: string
-  /** Fired when an entity is chosen (an entity-list item, or a fine-pointer Canvas
-   *  tap). Neutral — carries the entity's `displayId`, never a DOM event. Only fires
-   *  when `interactive` (the reveal); the generation graph is inert. */
+  /** Fired when an entity is chosen (a Canvas tap). Neutral — carries the
+   *  entity's `displayId`, never a DOM event. Only fires when `interactive`
+   *  (the reveal); the generation graph is inert. */
   onSelect: (displayId: string) => void
   /** Honour the user's reduced-motion preference: no requestAnimationFrame churn
    *  loop, no buoy bob — the physics ticks to convergence once per `nodes`/`edges`
    *  change and the graph (and its fog) are drawn static (still accurate). */
   reducedMotion?: boolean
-  /** GATE (§3.4). `false` (default) = the GENERATION graph: no entity list, no
-   *  selection (Canvas taps are inert), no on-glyph labels. `true` = the REVEAL:
-   *  renders the accessible entity list, wires selection (list + fine-pointer Canvas
-   *  tap), and draws the name labels. Preserves the `displayId` selection contract —
-   *  it is only GATED OFF during generation, never changed. */
+  /** GATE (§3.4). `false` (default) = the GENERATION graph: no selection (Canvas
+   *  taps are inert). `true` = the REVEAL: wires selection (a Canvas tap).
+   *  Preserves the `displayId` selection contract — it is only GATED OFF during
+   *  generation, never changed. */
   interactive?: boolean
+  /** Whether the T1b pannable CAMERA may engage when the world outgrows the pane
+   *  (MYT-89 audit v3). Default `true` — the shipped geometric behavior (phones
+   *  at real density pan). The DESKTOP REVEAL passes `false`: its pane is a true
+   *  half of the screen and must FILL, never pan — the seat derivation is zeroed,
+   *  so world === view at every density and labels tier down by budget instead.
+   *  A LAYOUT-CONTEXT gate at the prop seam (the camera math itself is locked):
+   *  the consumer states the regime; the sim never sniffs viewports. */
+  pannable?: boolean
+  /** Fill the HOST-provided height instead of the graph's own viewport-clamp
+   *  height (MYT-89 audit v3). Default `false` — the shipped
+   *  `clamp(18rem,62dvh,46rem)` pane. The DESKTOP REVEAL passes `true`: its
+   *  RevealPanes row owns the vertical space, and the pane flexes to fill the
+   *  half it is given (the same fill mechanics the narrow status-footer layout
+   *  already uses). The host MUST provide a definite height. */
+  fillHost?: boolean
   /** Draw the entity NAME beside each glyph. Default `true` — names show DURING
    *  generation too (MYT-89 audit #3), decoupled from `interactive`: the fog reserves a
    *  label-sized keep-out per node, so drawing the name closes that mismatch. Type stays
@@ -77,14 +91,6 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  `shownEntities ≥ totalEntities` nothing respawns and the field empties;
    *  omitted / `0` disables the drain (the fog holds its base density). */
   totalEntities?: number
-  /** Accessible label for the entity list — an i18n key the consumer resolves.
-   *  Only used when `interactive`; the DS owns no copy (§ components-live-in-the-
-   *  design-system), so the consuming app supplies the i18n'd value. */
-  listLabel?: string
-  /** Empty-state note shown in the list before any entity has streamed in — an
-   *  i18n key the consumer resolves (the DS owns no copy). Only used when
-   *  `interactive`. */
-  emptyLabel?: string
   /** OVERRIDE the force-sim params (the spread knobs — charge, distanceMax, centre,
    *  boundary, collide, seed jitter, margin — plus the link CLUSTERING knobs, MYT-89
    *  untangle: link pull + rest length), merged over the locked `FORCE_PARAMS`

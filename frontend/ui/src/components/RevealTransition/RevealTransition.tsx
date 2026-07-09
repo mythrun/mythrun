@@ -220,9 +220,24 @@ export function RevealTransition({
 // layout). The panel contributes layout height from the first frame, so no
 // phase boundary shifts the page. An `instant` moment renders the end state
 // with no transition (the hard skip landing).
+//
+// THE ROW OWNS THE VERTICAL SPACE (MYT-89 audit v3): the frame carries a
+// viewport-derived height — the reveal composition is landscape-shaped, the
+// graph half FILLS it (the graph's `fillHost` mode) and the wiki half CAPS to
+// it (WorldWiki's own max-h-full stack) and scrolls internally, so a long wiki
+// page can never stretch the row. The height lives HERE, not on the graph
+// pane, because a flex row's auto height is content-circular: a definite row
+// height is the only way one half can cap while the other fills. The chrome
+// allowance (18rem) is the reveal page's fixed dressing — header + title +
+// explore prompt + Continue + the page paddings — eye-tuned at 1280×800; the
+// floor keeps short windows usable (the page scrolls instead of crushing the
+// graph), the ceiling keeps giant monitors landscape-shaped.
 
 /** The panel content's fixed final width: half this frame minus half the gutter. */
 const PANEL_FINAL_WIDTH = 'calc(50cqi - calc(var(--space-4) / 2))'
+
+/** The row's viewport-derived height (see "THE ROW OWNS THE VERTICAL SPACE"). */
+const ROW_HEIGHT_CLASS = 'h-[clamp(20rem,calc(100dvh-18rem),64rem)]'
 
 export function RevealPanes({ moment, stage, panel, 'data-testid': dataTestId }: RevealPanesProps) {
   const arrived = revealPhaseAtLeast(moment.phase, 'resolve')
@@ -239,12 +254,13 @@ export function RevealPanes({ moment, stage, panel, 'data-testid': dataTestId }:
   return (
     <div
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
-      className="flex min-w-0 [container-type:inline-size]"
+      className={cn('flex min-w-0 [container-type:inline-size]', ROW_HEIGHT_CLASS)}
       style={{ columnGap: arrived ? 'var(--space-4)' : '0px' }}
     >
       <div className="min-w-0 grow basis-0">{stage}</div>
       <div className="min-w-0 basis-0 overflow-hidden" style={{ flexGrow: arrived ? 1 : 0 }}>
-        <div style={slideStyle}>{panel}</div>
+        {/* h-full in EVERY phase: the wiki's max-h-full must bind mid-slide too. */}
+        <div className="h-full" style={slideStyle}>{panel}</div>
       </div>
     </div>
   )

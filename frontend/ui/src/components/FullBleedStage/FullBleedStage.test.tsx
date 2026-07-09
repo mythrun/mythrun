@@ -70,9 +70,28 @@ describe('FullBleedStage — narrow viewport (the full-screen stage)', () => {
       </FullBleedStage>,
     )
     const stage = getByTestId('stage')
-    // jsdom measures a 0 top — the shape of the calc is the contract.
-    expect(stage.style.height).toMatch(/^calc\(100dvh - \d+px\)$/)
+    // jsdom measures a 0 top — the SHAPE of the height is the contract: the dvh
+    // calc FLOORED (max()) at the measured real viewport (`innerHeight - top`),
+    // because current Safari (26.x, and its responsive-design-mode presets) can
+    // resolve 100dvh SMALLER than the actual viewport — the floating-footer bug
+    // (MYT-89 audit v3 item 6). Where dvh is honest the two operands agree and
+    // max() is a no-op; where dvh under-reports, the measured floor wins.
+    // (Substring asserts: jsdom's cssstyle mangles max()/calc() serialization.)
+    expect(stage.style.height).toContain('max(')
+    expect(stage.style.height).toContain('100dvh - 0px')
     expect(stage.className).toMatch(/flex-col/)
     expect(stage.className).toMatch(/min-w-0/)
+  })
+
+  it('floors the dvh calc at the measured viewport remainder (innerHeight − top)', () => {
+    stubViewport(true)
+    vi.stubGlobal('innerHeight', 667)
+    const { getByTestId } = render(
+      <FullBleedStage inset={6} data-testid="stage">
+        <p>content</p>
+      </FullBleedStage>,
+    )
+    // top measures 0 under jsdom → the floor is the full innerHeight.
+    expect(getByTestId('stage').style.height).toContain('667px')
   })
 })

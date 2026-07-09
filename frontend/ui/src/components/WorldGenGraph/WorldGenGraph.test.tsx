@@ -3,13 +3,15 @@ import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import { MAX_DENSITY_EDGES, MAX_DENSITY_NODES } from './max-density-fixture.ts'
 import { WorldGenGraph } from './WorldGenGraph.tsx'
 
 // WorldGenGraph has TWO phases (§3.4). The DEFAULT is the GENERATION graph — a fog layer
-// behind mono-ink glyphs, GATED: no entity list, no selection (the fog is the ambient
-// animation; the list/selection belong to the reveal). The REVEAL opts in with
-// `interactive`, which turns on the ACCESSIBLE entity list — the whole testable + a11y +
-// selection surface (jsdom can't paint the canvases; we stub getContext either way).
+// behind mono-ink glyphs, GATED: no selection (the fog is the ambient animation; selection
+// belongs to the reveal). The REVEAL opts in with `interactive`, which wires Canvas
+// tap-to-select. NEITHER phase renders an entity list (MYT-89 audit v3 killed it — the
+// wiki is the browse surface); the canvases are decorative under jsdom (getContext
+// stubbed), so the testable DOM surface is layout classes + the camera's touch-action.
 
 const node = (synthKey: string, kind: string, name: string): GraphNode => ({
   synthKey,
@@ -28,10 +30,6 @@ const FIXTURE: GraphNode[] = [
 const EDGES: GraphEdge[] = [
   { synthKey: 'e1', from: 's2/maeris', to: 's3/guild', relationship: 'leads', arrivalIndex: 0, sourceStage: 'weave' },
 ]
-
-// The chrome labels are consumer-supplied (i18n) props — the DS owns no copy. Every
-// interactive render passes them; tests that assert on them use these exact values.
-const LABELS = { listLabel: 'Entities in your forming world', emptyLabel: 'The world is still taking shape' }
 
 /** A permissive fake 2D context: methods are no-ops, property writes are absorbed, and
  *  `measureText` returns a plausible width — enough for the fog's obstacle build + the
@@ -109,120 +107,120 @@ describe('WorldGenGraph — generation gate (§3.4)', () => {
   })
 })
 
-describe('WorldGenGraph — reveal (interactive) entity list', () => {
-  it('renders one activatable item per node, showing name + kind', () => {
+describe('WorldGenGraph — reveal (interactive): no entity list (MYT-89 audit v3)', () => {
+  // The list was the reveal's browse surface until the wiki replaced it; audit v3
+  // removed it outright. The reveal graph renders NO list and NO buttons on either
+  // breakpoint — the canvases own the whole pane.
+  it('renders no list and no buttons on a wide viewport', () => {
+    stubViewport(false)
     stubGetContext(null)
-    const { getByRole, getByText } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />,
+    const { queryByRole, queryAllByRole } = render(
+      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
     )
-    for (const n of FIXTURE) {
-      const item = getByRole('button', { name: new RegExp(n.name) })
-      expect(item.tagName).toBe('BUTTON')
-      expect(getByText(n.name)).toBeInTheDocument()
-      expect(getByText(n.kind)).toBeInTheDocument()
-    }
+    expect(queryByRole('list')).toBeNull()
+    expect(queryAllByRole('button')).toHaveLength(0)
   })
 
-  it('renders exactly one list item per node', () => {
+  it('renders no list and no buttons on a narrow viewport (nothing stacks below the pane)', () => {
+    stubViewport(true)
     stubGetContext(null)
-    const { getAllByRole } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />,
+    const { queryByRole, queryAllByRole, container } = render(
+      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
     )
-    expect(getAllByRole('button')).toHaveLength(FIXTURE.length)
+    expect(queryByRole('list')).toBeNull()
+    expect(queryAllByRole('button')).toHaveLength(0)
+    // The pane's band is the root's only child — no sibling surface stacked after it.
+    const band = container.querySelector('canvas')?.parentElement?.parentElement
+    expect(band?.parentElement?.childElementCount).toBe(1)
   })
 
-  it('calls onSelect(displayId) when an item is activated (click)', async () => {
-    stubGetContext(null)
-    const onSelect = vi.fn()
-    const user = userEvent.setup()
-    const { getByRole } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={onSelect} {...LABELS} />,
-    )
-    await user.click(getByRole('button', { name: /Maeris Vale/ }))
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('s2/maeris')
-  })
-
-  it('calls onSelect(displayId) on keyboard activation (Enter)', async () => {
-    stubGetContext(null)
-    const onSelect = vi.fn()
-    const user = userEvent.setup()
-    const { getByRole } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={onSelect} {...LABELS} />,
-    )
-    getByRole('button', { name: /Ashfen Reach/ }).focus()
-    await user.keyboard('{Enter}')
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('s1/reach')
-  })
-
-  it('selects by displayId (not synthKey) once a node is finalized (BUG 2.1)', async () => {
-    // A finalized node whose synthKey ≠ displayId: selection is in displayId space
-    // (the entity id), so onSelect emits displayId and aria-current keys on it.
-    stubGetContext(null)
-    const finalized: GraphNode = {
-      synthKey: 'world_and_factions/factions/0',
-      kind: 'faction',
-      name: 'The Tallow Guild',
-      displayId: 'ent-fac-1',
-      state: 'finalized',
-      lastEventIndex: 0,
-    }
-    const onSelect = vi.fn()
-    const user = userEvent.setup()
-    const { getByRole, rerender } = render(
-      <WorldGenGraph interactive nodes={[finalized]} edges={[]} onSelect={onSelect} {...LABELS} />,
-    )
-    await user.click(getByRole('button', { name: /Tallow Guild/ }))
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith('ent-fac-1')
-
-    // selectedKey is the displayId → aria-current; the synthKey must NOT match.
-    rerender(
-      <WorldGenGraph interactive nodes={[finalized]} edges={[]} selectedKey="ent-fac-1" onSelect={onSelect} {...LABELS} />,
-    )
-    expect(getByRole('button', { name: /Tallow Guild/ })).toHaveAttribute('aria-current', 'true')
-    rerender(
-      <WorldGenGraph
-        interactive
-        nodes={[finalized]}
-        edges={[]}
-        selectedKey="world_and_factions/factions/0"
-        onSelect={onSelect}
-        {...LABELS}
-      />,
-    )
-    expect(getByRole('button', { name: /Tallow Guild/ })).not.toHaveAttribute('aria-current')
-  })
-
-  it('marks the selected item via aria-current', () => {
-    stubGetContext(null)
-    const { getByRole } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} selectedKey="s2/maeris" onSelect={vi.fn()} {...LABELS} />,
-    )
-    expect(getByRole('button', { name: /Maeris Vale/ })).toHaveAttribute('aria-current', 'true')
-    expect(getByRole('button', { name: /Ashfen Reach/ })).not.toHaveAttribute('aria-current')
-  })
-
-  it('has no a11y violations', async () => {
+  it('has no a11y violations (decorative aria-hidden layers only)', async () => {
     stubGetContext(null)
     const { container } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} selectedKey="s1/reach" onSelect={vi.fn()} {...LABELS} />,
+      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} selectedKey="s1/reach" onSelect={vi.fn()} />,
     )
     expect(await axe(container)).toHaveNoViolations()
   })
+})
 
-  it('labels the list with the consumer-supplied listLabel (DS owns no copy)', () => {
+describe('WorldGenGraph — fillHost (MYT-89 audit v3: the reveal pane fills its half)', () => {
+  it('fillHost: the root fills the host and the pane flexes instead of the viewport clamp', () => {
+    stubViewport(false)
     stubGetContext(null)
-    const { getByRole } = render(
-      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} {...LABELS} />,
+    const { container } = render(
+      <WorldGenGraph interactive fillHost nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
     )
-    expect(getByRole('list')).toHaveAccessibleName(LABELS.listLabel)
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.className).toMatch(/flex-1/)
+    expect(pane?.className).not.toMatch(/clamp/)
+    const band = pane?.parentElement
+    expect(band?.className).toMatch(/flex-col/)
+    expect(band?.parentElement?.className).toMatch(/h-full/)
+    // The desktop band keeps its breathing-room inset (only NARROW drops it).
+    expect(band?.className).toMatch(/p-\[var\(--space-4\)\]/)
   })
 
-  it('shows the consumer-supplied emptyLabel when no entity has arrived', () => {
+  it('default (no fillHost): the viewport clamp stays (the shipped layout)', () => {
+    stubViewport(false)
     stubGetContext(null)
-    const { getByText } = render(
-      <WorldGenGraph interactive nodes={[]} edges={[]} onSelect={vi.fn()} {...LABELS} />,
+    const { container } = render(
+      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
     )
-    expect(getByText(LABELS.emptyLabel)).toBeInTheDocument()
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.className).toMatch(/clamp/)
+    expect(pane?.parentElement?.parentElement?.className).not.toMatch(/h-full/)
+  })
+})
+
+describe('WorldGenGraph — pannable (MYT-89 audit v3: the camera gate)', () => {
+  // The camera engages GEOMETRICALLY (the seat: the pane can't seat every label);
+  // `pannable={false}` zeroes the seat so the world never outgrows the pane —
+  // the reveal's desktop half must fill, not pan. Observable through the DOM:
+  // `trackWorldDims` stamps `data-camera-engaged` on the canvas exactly with
+  // engagement (jsdom's CSSStyleDeclaration drops the touch-action flip, so the
+  // attribute is the one observable both jsdom and the browser drag-proof share).
+  // A measured pane (mocked rect) + the realistic 46-entity fixture triggers the
+  // seat: 46 × areaPerLabel (15000) far exceeds a 600×600 pane's 1:1 space.
+  function mockPaneRect(width: number, height: number): void {
+    const rect: DOMRect = {
+      x: 0, y: 0, top: 0, left: 0, right: width, bottom: height,
+      width, height,
+      toJSON: () => ({}),
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue(rect)
+  }
+
+  it('default: the camera engages when the world outgrows the pane (touch-action: none)', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    mockPaneRect(600, 600)
+    const { container } = render(
+      <WorldGenGraph
+        interactive
+        nodes={[...MAX_DENSITY_NODES]}
+        edges={[...MAX_DENSITY_EDGES]}
+        onSelect={vi.fn()}
+      />,
+    )
+    const canvas = container.querySelector('canvas[data-camera-engaged]')
+    expect(canvas?.getAttribute('data-camera-engaged')).toBe('true')
+  })
+
+  it('pannable={false}: the camera NEVER engages at the same density (the world fills the pane)', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    mockPaneRect(600, 600)
+    const { container } = render(
+      <WorldGenGraph
+        interactive
+        pannable={false}
+        nodes={[...MAX_DENSITY_NODES]}
+        edges={[...MAX_DENSITY_EDGES]}
+        onSelect={vi.fn()}
+      />,
+    )
+    const canvas = container.querySelector('canvas[data-camera-engaged]')
+    expect(canvas?.getAttribute('data-camera-engaged')).toBe('false')
   })
 })
 

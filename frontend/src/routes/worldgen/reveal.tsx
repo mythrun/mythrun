@@ -31,7 +31,10 @@ import { WikiPanel, useWikiModel, type FetchSnapshot } from './reveal-wiki-panel
 //     (C4) beside the browsable wiki (D4) as two equal min-width-0 halves (the
 //     `Grid columns={2}` track behavior), and is HOW the moment's layout
 //     arrives: full-width graph easing to the left half while the wiki slides
-//     in from the right at `resolve`.
+//     in from the right at `resolve`. The row owns the VERTICAL space (audit
+//     v3): the graph fills its half in both dimensions (`fillHost`), never
+//     pans (`pannable={false}`), and the wiki caps to the row and scrolls
+//     internally. No entity list — the wiki IS the browse surface.
 //   • MOBILE (< 640px): the graph OWNS THE GLASS — the same `FullBleedStage`
 //     mechanism as the generating act (`inset={6}` cancels the AppFrame's
 //     content padding; the stage fills the viewport below the header), with a
@@ -305,6 +308,14 @@ export function WorldReveal({
       edges={edges}
       onSelect={handleGraphSelect}
       reducedMotion={prefersReducedMotion}
+      // The REGIME props (MYT-89 audit v3). Desktop: the pane is a true half of
+      // the screen — it FILLS the RevealPanes row (fillHost) and must never pan
+      // (pannable false zeroes the camera seat; labels tier down by budget
+      // instead). Narrow: the shipped mobile reveal exactly — the pannable
+      // camera over the full-legible world, the graph's own pane height inside
+      // the full-bleed stage.
+      pannable={narrow}
+      fillHost={!narrow}
       // The world is BORN — the fog is gone and STAYS gone, through its one
       // clear mechanism (MYT-89 spawn-drain): the numerator is floored at the
       // drain denominator so the fog mounts drained for EVERY world size (the
@@ -312,8 +323,6 @@ export function WorldReveal({
       // for why a live gust of the residual was cut).
       shownEntities={revealFogShown(nodes.length)}
       totalEntities={MIN_EXPECTED_ENTITIES}
-      listLabel={t('worldReveal.graphLabel')}
-      emptyLabel={t('worldReveal.graphEmpty')}
       {...(selection !== undefined ? { selectedKey: selection } : {})}
     />
   )

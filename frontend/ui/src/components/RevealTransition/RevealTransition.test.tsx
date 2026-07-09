@@ -302,6 +302,18 @@ describe('RevealPanes', () => {
     renderPanes(moment('resolve', true))
     expect(slideOf()?.style.transition).toBe('none')
   })
+
+  it('owns the vertical space: a viewport-derived row height, full-height panel chain (audit v3)', () => {
+    // The row (not the graph pane) carries the height, so BOTH halves get one
+    // definite height: the graph fills it (fillHost) and the wiki caps to it
+    // (max-h-full) and scrolls internally — page length never drives the row.
+    renderPanes(moment('done'))
+    const panes = screen.getByTestId('panes')
+    expect(panes.className).toMatch(/h-\[clamp\(.*100dvh.*\)\]/)
+    // The slide wrapper spans the cell's height in EVERY phase (the wiki's
+    // max-h-full must bind mid-slide and at done alike).
+    expect(slideOf()?.className).toContain('h-full')
+  })
 })
 
 // ── RevealFade — phase-keyed chrome fades ────────────────────────────────────

@@ -28,11 +28,12 @@ import { WorldGenGraph } from './WorldGenGraph.tsx'
 
 // WorldGenGraph — the live streaming graph shown during world generation. The GENERATION
 // graph (default, gated) stacks a decorative fog layer behind mono-ink shape glyphs with
-// a render-only buoy bob, plus a top-left status card; NO entity list, NO selection (the
-// fog IS the ambient animation). The REVEAL variant opts in with `interactive` — the
-// accessible + selectable entity list beside the settled graph. Entities stream in over
-// ~10 minutes; the layout GROWS without ever resetting. These specimens drive a mini
-// generation on a BURSTY schedule (§6 — clustered arrivals, not a metronome).
+// a render-only buoy bob, plus a top-left status card; NO selection (the fog IS the
+// ambient animation). The REVEAL variant opts in with `interactive` — Canvas
+// tap-to-select on the settled graph (no entity list on either surface, MYT-89 audit
+// v3 — the wiki is the reveal's browse surface). Entities stream in over ~10 minutes;
+// the layout GROWS without ever resetting. These specimens drive a mini generation on
+// a BURSTY schedule (§6 — clustered arrivals, not a metronome).
 
 const meta: Meta<typeof WorldGenGraph> = {
   title: 'Patterns/WorldGenGraph',
@@ -185,8 +186,6 @@ function StreamingDemo({
           onSelect={() => undefined}
           status={statusFor(count, arrivals.length)}
           totalEntities={totalNodes}
-          listLabel="Entities in your forming world"
-          emptyLabel="The world is still taking shape"
           {...(reducedMotion !== undefined ? { reducedMotion } : {})}
         />
       </div>
@@ -423,8 +422,6 @@ function MobileFrameDemo({ freezeAt }: { freezeAt?: number }): React.JSX.Element
               countdownLabel: '[ph: ~4:12 left]',
             }}
             totalEntities={MAX_DENSITY_TOTAL}
-            listLabel="Entities in your forming world"
-            emptyLabel="The world is still taking shape"
           />
         </FullBleedStage>
       </div>
@@ -452,9 +449,10 @@ export const MobileFullBleedMid: Story = {
   render: () => <MobileFrameDemo freezeAt={35} />,
 }
 
-/** The REVEAL variant: `interactive` turns on the accessible + selectable entity list
- *  beside the settled graph (with on-glyph name labels). The fog is drained to nothing
- *  (shown === total → spawn scale 0 → the sim mounts empty). */
+/** The REVEAL variant: `interactive` wires Canvas tap-to-select on the settled
+ *  graph (no entity list — MYT-89 audit v3; the wiki is the reveal's browse
+ *  surface). The fog is drained to nothing (shown === total → spawn scale 0 →
+ *  the sim mounts empty). */
 function RevealDemo(): React.JSX.Element {
   const [selectedKey, setSelectedKey] = useState<string>()
   const { nodes, edges } = snapshotAt(ARRIVALS, ARRIVALS.length)
@@ -468,15 +466,13 @@ function RevealDemo(): React.JSX.Element {
         totalEntities={NODE_TOTAL}
         {...(selectedKey !== undefined ? { selectedKey } : {})}
         onSelect={setSelectedKey}
-        listLabel="Entities in your world"
-        emptyLabel="The world is still taking shape"
       />
     </div>
   )
 }
 
-// A fully-populated, INTERACTIVE snapshot — the reveal shape: the settled graph beside
-// the selectable entity list, every glyph in the vocabulary (frame = world, diamond =
+// A fully-populated, INTERACTIVE snapshot — the reveal shape: the settled graph
+// with tap-to-select live, every glyph in the vocabulary (frame = world, diamond =
 // faction, stack = npc/pc, small square = item, square = location).
 export const Populated: Story = {
   render: () => <RevealDemo />,

@@ -50,10 +50,11 @@ import { setupPointerHandlers, type DragState, type PointerDeps } from './pointe
 // one coordinate at every pane size; the RESOLUTION is the pane's full pixels — audit
 // #2), the buoy-bob clock, the rAF render loop, full-res
 // sizing, the cached theme ink, and fine-pointer hover/drag (live during generation too —
-// audit #5; only tap-to-select is reveal-gated). Everything is guarded on a live 2D
-// context, so under jsdom (getContext → null) NOTHING here runs — the a11y entity list is
-// the whole testable + accessible surface. The FOLD never runs here: nodes/edges arrive as
-// props (the parent folds per SSE event); a change re-syncs.
+// audit #5; only tap-to-select is reveal-gated). The draw paths are guarded on a live 2D
+// context, so under jsdom (getContext → null) nothing paints — the jsdom-testable surface
+// is the layout classes plus the `data-camera-engaged` stamp `trackWorldDims` writes.
+// The FOLD never runs here: nodes/edges arrive as props (the parent folds per SSE
+// event); a change re-syncs.
 //
 // It ALSO exposes `getFogEntities()` — the live node positions (+ the render-only bob),
 // mapped into the fog's VIRTUAL space — which WorldGenGraph feeds to the fog layer each
@@ -80,6 +81,11 @@ export interface GraphCanvasParams {
    *  so names show DURING generation too — the fog already reserves a label-sized keep-out
    *  per node, so drawing the name closes that visible mismatch. Type stays shape-only. */
   showLabels: boolean
+  /** Whether the T1b camera may ENGAGE (MYT-89 audit v3 — the desktop reveal passes
+   *  false: its pane fills, never pans). Gates the SEAT derivation to zero — the world
+   *  never outgrows the pane — rather than touching the locked camera math. The
+   *  component gates its fog-side `seatFrom` identically, so both layers agree (C5). */
+  pannable: boolean
   /** OVERRIDE the force-sim params — the spread knobs (MYT-89 audit #4) plus the link
    *  clustering knobs (MYT-89 untangle) — merged over `FORCE_PARAMS`. The Storybook
    *  spread-tuning harness passes live slider values; a change RE-SEEDS the sim (fresh
@@ -202,7 +208,10 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   forceParamsRef.current = params.forceParams ?? {}
   densityRef.current = params.densityParams ?? {}
   growthRef.current = growthFrom(nodes.length, densityRef.current)
-  seatRef.current = seatFrom(nodes.length, densityRef.current)
+  // The pannable gate (audit v3): a zeroed seat never engages `cameraWorldDims`
+  // — world === view, the camera stays identity. Mirrors the component's fog-side
+  // gate exactly (one derivation, both layers — C5).
+  seatRef.current = seatFrom(params.pannable ? nodes.length : 0, densityRef.current)
 
   // The ONE camera over the world (T1b — created once; reads the live refs). Owns
   // where the viewport looks while the world is larger than the pane: manual pans,
@@ -668,6 +677,10 @@ function trackWorldDims(deps: WorldDimsDeps): boolean {
   viewRef.current = next.view
   camera.syncBounds(next)
   canvas.style.touchAction = next.engaged ? 'none' : ''
+  // The engagement's DOM-observable (audit v3): jsdom's CSSStyleDeclaration drops
+  // the touch-action write, so the pannable-gate tests (and the browser no-pan
+  // proof) read this attribute instead.
+  canvas.dataset.cameraEngaged = next.engaged ? 'true' : 'false'
   simRef.current?.setSize(next.world.width, next.world.height)
   settledRef.current = false
   return true
