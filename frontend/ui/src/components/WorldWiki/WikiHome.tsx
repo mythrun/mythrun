@@ -165,8 +165,10 @@ function IntroductionArticle({
         </Heading>
       </header>
       <div className="flex flex-col gap-[var(--space-3)]">
-        {introduction.paragraphs.map((paragraph) => (
-          <Text key={paragraph} role="prose-body" as="p">
+        {introduction.paragraphs.map((paragraph, index) => (
+          // Index keys are safe here (the list is static per render) and, unlike
+          // text keys, two byte-identical paragraphs can't collide and drop one.
+          <Text key={index} role="prose-body" as="p">
             {paragraph}
           </Text>
         ))}
