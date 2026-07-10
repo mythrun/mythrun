@@ -14,6 +14,7 @@
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
 import { PIPELINE_SSE_EVENTS } from '../contract/pipeline-events.js'
+import { makeReconnectStrategy } from '../redis/reconnect-strategy.js'
 import type { SseSink } from './sse-connection.js'
 
 const PIPELINE_EVENT_TYPES = new Set(PIPELINE_SSE_EVENTS)
@@ -66,11 +67,10 @@ export function createPipelineSubscriber(
   const sub = (
     redis as unknown as { duplicate: (opts: Record<string, unknown>) => Redis }
   ).duplicate({
-    /* c8 ignore start — ioredis retryStrategy lambda fires only on a
-     * real-cluster reconnect retry; tests use a fake Redis that never
-     * disconnects. Defense-in-depth backoff. */
-    retryStrategy: (n: number) => Math.min(n * 1000, 30_000),
-    /* c8 ignore stop */
+    // Shared bounded-backoff-with-jitter reconnect strategy (unit-tested; logs
+    // each attempt at warn so an outage is visible). The 'ready'-after-disconnect
+    // handler below drives the resync teardown.
+    retryStrategy: makeReconnectStrategy({ label: `pipeline-subscriber:${channel}`, logger }),
     maxRetriesPerRequest: null,
     enableOfflineQueue: true,
   })

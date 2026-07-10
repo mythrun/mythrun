@@ -73,11 +73,11 @@ export async function main(): Promise<void> {
   // "Stream isn't writeable" on the first ping if the TCP socket isn't
   // writable yet. Boot still fails fast on a real outage; it just
   // tolerates the normal connection-establishment race.
-  const redisBatch = createBullmqRedisClient(env.redisBatchUrl)
+  const redisBatch = createBullmqRedisClient(env.redisBatchUrl, { label: 'worker-redis-batch' })
   await waitFor({ label: 'Redis (batch)', probe: () => redisBatch.ping() })
   // redisRealtime uses the regular client — only used for PUBLISH later
   // (MYT-52); BullMQ constraints don't apply.
-  const redisRealtime = createRedisClient(env.redisRealtimeUrl)
+  const redisRealtime = createRedisClient(env.redisRealtimeUrl, { label: 'worker-redis-realtime' })
   await waitFor({ label: 'Redis (realtime)', probe: () => redisRealtime.ping() })
   const pg = createPgPool(env.databaseUrl, { max: WORKER_PG_POOL_SIZE })
   await waitFor({ label: 'Postgres', probe: () => pg.query('SELECT 1') })

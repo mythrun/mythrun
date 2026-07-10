@@ -1,13 +1,53 @@
 export const RETRY_DELAYS_MS = [200, 500, 1000, 2000] as const
 
+// Per-attempt probe timeout. A BullMQ-profile ioredis client
+// (`maxRetriesPerRequest: null` + offline queue enabled) BUFFERS a probe ping
+// against an unreachable Redis and never rejects it — the command hangs
+// forever, which would make the boot gate hang instead of crash-looping. This
+// timeout bounds each attempt so a genuine misconfig still FAILS LOUD. It is
+// generous enough (3s) that a healthy-but-slow cloud connect (ElastiCache TLS
+// handshake, typically < 1s) still succeeds within a single attempt.
+export const PROBE_ATTEMPT_TIMEOUT_MS = 3000
+
 export interface WaitForOptions {
   readonly label: string
   readonly probe: () => Promise<unknown>
   readonly signal?: AbortSignal
+  /** Override the per-attempt probe timeout (default PROBE_ATTEMPT_TIMEOUT_MS). */
+  readonly attemptTimeoutMs?: number
+}
+
+/**
+ * Race a single probe against a timeout so a buffered/hung command can't wedge
+ * the boot gate. A probe that loses the race can still reject later (ioredis
+ * flushing a buffered command on quit); its rejection is swallowed so it never
+ * surfaces as an unhandled rejection after the timeout has won the attempt.
+ */
+async function probeWithTimeout(
+  probe: () => Promise<unknown>,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`probe exceeded ${String(timeoutMs)}ms`))
+    }, timeoutMs)
+  })
+  const inflight = probe()
+  /* c8 ignore next — swallows a late rejection from the raced-out probe; it
+   * fires only when a buffered command rejects AFTER the timeout won, a
+   * timing-dependent arm not staged in a unit test. */
+  inflight.catch(() => undefined)
+  try {
+    await Promise.race([inflight, timeout])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 export async function waitFor(opts: WaitForOptions): Promise<void> {
   const { label, probe, signal } = opts
+  const attemptTimeoutMs = opts.attemptTimeoutMs ?? PROBE_ATTEMPT_TIMEOUT_MS
   if (signal?.aborted) {
     throw new Error(`waitFor(${label}): aborted before first attempt`)
   }
@@ -26,7 +66,7 @@ export async function waitFor(opts: WaitForOptions): Promise<void> {
     }
     /* c8 ignore stop */
     try {
-      await probe()
+      await probeWithTimeout(probe, attemptTimeoutMs)
       return
     } catch (err) {
       lastError = err

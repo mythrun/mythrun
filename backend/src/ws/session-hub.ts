@@ -23,6 +23,7 @@
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
 import type { ServerFrame } from '../contract/session-events.js'
+import { makeReconnectStrategy } from '../redis/reconnect-strategy.js'
 import {
   campaignIdFromChannel,
   sessionChannel,
@@ -75,10 +76,9 @@ export async function createSessionHub({
   const sub = (
     redis as unknown as { duplicate: (opts: Record<string, unknown>) => Redis }
   ).duplicate({
-    /* c8 ignore start — retryStrategy lambda fires only on a real-cluster
-     * reconnect retry. Defense-in-depth backoff. */
-    retryStrategy: (n: number) => Math.min(n * 1000, 30_000),
-    /* c8 ignore stop */
+    // Shared bounded-backoff-with-jitter reconnect strategy (unit-tested; logs
+    // each attempt at warn). The 'ready'-after-disconnect handler drives resync.
+    retryStrategy: makeReconnectStrategy({ label: 'session-hub', logger }),
     maxRetriesPerRequest: null,
     enableOfflineQueue: true,
   })

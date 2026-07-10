@@ -129,7 +129,7 @@ async function buildWorldGenWorker(
   voyageApiKey: string,
   signal: AbortSignal,
 ): Promise<Worker> {
-  const connection = createBullmqRedisClient(redisBatchUrl)
+  const connection = createBullmqRedisClient(redisBatchUrl, { label: 'api-worker-bullmq-world-gen' })
   await waitFor({
     label: 'Redis (worker bullmq)',
     probe: () => connection.ping(),
@@ -164,7 +164,9 @@ async function buildCharacterCreationWorker(
   voyageApiKey: string,
   signal: AbortSignal,
 ): Promise<Worker> {
-  const connection = createBullmqRedisClient(redisBatchUrl)
+  const connection = createBullmqRedisClient(redisBatchUrl, {
+    label: 'api-worker-bullmq-campaign-setup',
+  })
   await waitFor({
     label: 'Redis (worker bullmq cc)',
     probe: () => connection.ping(),
@@ -217,7 +219,9 @@ async function buildSessionPrepWorker(
   redisKeyPrefix: string,
   signal: AbortSignal,
 ): Promise<Worker> {
-  const connection = createBullmqRedisClient(redisBatchUrl)
+  const connection = createBullmqRedisClient(redisBatchUrl, {
+    label: 'api-worker-bullmq-session-prep',
+  })
   await waitFor({
     label: 'Redis (worker bullmq session-prep)',
     probe: () => connection.ping(),
@@ -251,7 +255,9 @@ async function buildSessionSuspendWorker(
   redisKeyPrefix: string,
   signal: AbortSignal,
 ): Promise<Worker> {
-  const connection = createBullmqRedisClient(redisBatchUrl)
+  const connection = createBullmqRedisClient(redisBatchUrl, {
+    label: 'api-worker-bullmq-session-suspend',
+  })
   await waitFor({
     label: 'Redis (worker bullmq session-suspend)',
     probe: () => connection.ping(),
@@ -401,8 +407,8 @@ export async function main(): Promise<void> {
   try {
     const env = loadEnv()
     pg = createPgPool(env.databaseUrl)
-    rTR = createRedisClient(env.redisRealtimeUrl)
-    rTB = createRedisClient(env.redisBatchUrl)
+    rTR = createRedisClient(env.redisRealtimeUrl, { label: 'api-redis-realtime' })
+    rTB = createRedisClient(env.redisBatchUrl, { label: 'api-redis-batch' })
 
     // Capture local consts so the probe closures don't need non-null
     // assertions to satisfy strict TS narrowing.

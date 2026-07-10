@@ -90,6 +90,30 @@ describe('waitFor', () => {
     await expect(promise).rejects.toThrow(/abort/i)
   })
 
+  it('times out a hung probe per attempt (bounded fail-loud) and eventually exhausts', async () => {
+    // A BullMQ-profile client (maxRetriesPerRequest:null + offline queue on)
+    // BUFFERS a probe ping against an unreachable Redis and never rejects it —
+    // the command hangs forever. The per-attempt timeout converts that hang
+    // into a bounded loud failure so a genuine misconfig still crash-loops.
+    const probe = vi.fn(() => new Promise<never>(() => undefined)) // never settles
+    const promise = waitFor({ label: 'hung', probe, attemptTimeoutMs: 1000 })
+    promise.catch(() => undefined)
+    const total = 5 * 1000 + RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)
+    await vi.advanceTimersByTimeAsync(total)
+    await expect(promise).rejects.toThrow(/hung/)
+    await expect(promise).rejects.toThrow(/exceeded 1000ms/)
+    expect(probe).toHaveBeenCalledTimes(RETRY_DELAYS_MS.length + 1)
+  })
+
+  it('a probe that resolves before the attempt timeout succeeds (happy path, timer cleared)', async () => {
+    const probe = vi.fn().mockResolvedValue('ok')
+    const promise = waitFor({ label: 'fast', probe, attemptTimeoutMs: 1000 })
+    await expect(promise).resolves.toBeUndefined()
+    expect(probe).toHaveBeenCalledTimes(1)
+    // No pending timers should remain (the timeout timer was cleared).
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('rejects with "aborted during backoff sleep" when the signal aborts during probe rejection (before sleepWithAbort attaches its abort listener)', async () => {
     // Covers the if (signal.aborted) early-return inside sleepWithAbort
     // (lines 44-48). When the probe aborts the controller AS PART OF its
