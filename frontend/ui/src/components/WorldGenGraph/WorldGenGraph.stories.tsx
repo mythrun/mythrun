@@ -796,6 +796,9 @@ function RevealSettleTuner(): React.JSX.Element {
 export const RevealSettleTuning: Story = {
   name: 'Reveal settle tuning (forceful + snap-back)',
   render: () => <RevealSettleTuner />,
+  // The 12-slider tuning harness — a wide-by-design dev specimen like
+  // SpreadTuning/the fog tuner, exempt from the 375px overflow gate.
+  parameters: { overflowGate: false },
 }
 
 // ──────────────────────────────────────────────────────────────────────────
