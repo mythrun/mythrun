@@ -81,6 +81,7 @@ route(s) each panel id covers (the route-exhaustion invariant unions those). The
 | GET /api/users/me | users | users |
 | POST /api/campaigns | campaign-create | campaigns |
 | POST /api/campaigns/synthesize-preview | campaign-create | campaigns |
+| POST /api/campaigns/synthesize-preview/stream | (exempt — one-shot SSE brief for the web guided flow; the JSON synthesize-preview sibling is panel-covered by campaign-create; a hijacked SSE response has no JSDOM-mountable page panel, mirrors the prep-status exemption) | — |
 | POST /api/campaigns/preview/:previewId/rework | campaign-create | campaigns |
 | GET /api/campaigns/mine | my-campaigns | campaigns |
 | GET /api/campaigns/:campaignId | campaign-details | campaigns |
