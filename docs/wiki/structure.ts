@@ -23,6 +23,7 @@ export const structure: Section[] = [
       { slug: 'llm', title: 'LLM client' },
       { slug: 'dev-tool', title: 'Dev tool' },
       { slug: 'worker', title: 'Worker' },
+      { slug: 'redis-reconnect', title: 'Redis reconnection' },
       { slug: 'world-gen', title: 'World gen' },
       { slug: 'character-creation', title: 'Character creation' },
       { slug: 'character-integration', title: 'Character integration' },

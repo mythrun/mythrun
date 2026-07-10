@@ -1,0 +1,307 @@
+<!-- source: backend/src/redis/reconnect-strategy.ts -->
+<!-- source: backend/src/redis/client.ts -->
+<!-- source: backend/src/redis/bullmq-client.ts -->
+<!-- source: backend/src/boot/wait-for.ts -->
+<!-- source-hash: sha256:86e2eb31d81e7a73bdd343cec9eb84a9bc78eb8d1a7c4453736eb8ddfebf1284 -->
+<!-- last-ticket: myth-jc0x0 -->
+
+<h1>Redis reconnection</h1>
+
+<p class="lead">
+  The one reconnection strategy every long-lived Redis client shares, and the split that keeps it
+  honest: at runtime a client reconnects forever after an ElastiCache blip so a single failover no
+  longer severs BullMQ and realtime for the task's lifetime; at boot the same client still fails
+  loud so a genuine misconfiguration crash-loops instead of retrying into the void.
+</p>
+
+<!-- @diagram: runtime/redis-reconnect -->
+
+<h2>How it fits together</h2>
+
+<p>
+  Every long-lived ioredis client in the backend — the API's request-path client, the worker's
+  BullMQ connection, and the dedicated subscriber duplicates the
+  <a href="./pipeline-status.html">SSE pipeline subscriber</a> and the
+  <a href="./session-transport.html">WS session hub</a> mint — is constructed with a
+  <code>retryStrategy</code>: the closure ioredis calls to decide how long to wait before the next
+  reconnect attempt, and whether to attempt one at all. Returning <code>null</code> from that
+  closure means "give up." A single shared factory,
+  <code>makeReconnectStrategy(label, logger)</code> in
+  <code>backend/src/redis/reconnect-strategy.ts</code>, now backs all of them.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The bug this page exists to prevent</strong> — the runtime clients used to be built with
+  <code>retryStrategy: () =&gt; null</code>: no reconnection, ever. One ElastiCache blip or failover
+  permanently severed BullMQ and realtime for every ECS task until a manual rollover — a real
+  stalled generation in dev traced back to exactly this. The shared strategy reconnects with bounded
+  exponential backoff and jitter and <em>never</em> gives up, so transient loss self-heals.
+</aside>
+
+<p>
+  The strategy caps the <em>delay</em>, not the attempt count. The backoff is
+  <code>min(200ms · 2<sup>attempt−1</sup>, 10s)</code> — doubling from a 200&nbsp;ms base up to a
+  10&nbsp;second ceiling — with AWS "equal jitter" applied on top: half the delay is kept as a floor
+  and the other half randomized, so the result lands in <code>[cap/2, cap]</code>. A worker keeps
+  trying indefinitely; only the wait between tries is bounded. Every attempt logs a warn line (<code
+    >event: 'redis.reconnecting'</code
+  >) carrying the client's label and the attempt number, so an outage is visible in CloudWatch
+  rather than silent.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Equal jitter, not raw exponential backoff</strong> — a fleet of tasks that all lost the
+  same ElastiCache node would otherwise reconnect in lockstep and thundering-herd the recovering
+  node. Keeping half the delay as a floor avoids a herd at zero; randomizing the other half spreads
+  the retries. Capping the delay (not the attempts) is the deliberate choice for a background
+  system: a worker that can't reach Redis is useless anyway, so retrying forever at a 10&nbsp;second
+  ceiling costs almost nothing and means recovery is automatic the instant the node returns.
+</aside>
+
+<h2>The config-vs-transient split</h2>
+
+<p>
+  A never-null retry strategy raises an obvious question: if a client reconnects forever, how does a
+  genuine misconfiguration — a wrong host, wrong port, or bad auth — ever surface? It would just
+  reconnect forever too. The answer is that reconnection is the <em>runtime</em> policy; the
+  <em>boot</em> gate is separate and still fails loud. The two client profiles reach that fail-loud
+  guarantee by different routes.
+</p>
+
+<p>
+  The API / realtime client (<code>createRedisClient</code>) sets
+  <code>enableOfflineQueue: false</code> — a command issued while disconnected rejects promptly
+  rather than buffering. That is deliberate for the request path (a realtime PUBLISH during an
+  outage should drop fast, not queue a stale write), and it doubles as the boot guarantee: the
+  boot-probe <code>ping()</code> rejects promptly while disconnected, so a wrong host surfaces at
+  startup even though the strategy would otherwise reconnect forever.
+</p>
+
+<p>
+  The BullMQ client (<code>createBullmqRedisClient</code>) can't do that — BullMQ requires
+  <code>maxRetriesPerRequest: null</code> and an enabled offline queue, so a probe
+  <code>ping()</code> against an unreachable Redis <em>buffers</em> and never rejects. It would hang
+  the boot gate forever. So its fail-loud guarantee comes from
+  <code>backend/src/boot/wait-for.ts</code> instead: <code>waitFor</code> races each probe against a
+  per-attempt timeout (<code>PROBE_ATTEMPT_TIMEOUT_MS</code>, 3&nbsp;seconds) over a bounded retry
+  schedule (<code>[200, 500, 1000, 2000]</code>&nbsp;ms, five attempts total). A hung probe loses
+  the race, the attempts exhaust, and the process exits 1 — a genuine misconfig crash-loops.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the timeout is 3 seconds and swallows the late rejection</strong> — the per-attempt
+  timeout has to be generous enough that a healthy-but-slow cloud connect (an ElastiCache TLS
+  handshake, typically under a second) clears in a single attempt, yet short enough that a wrong
+  port fails the whole gate quickly. A probe that loses the race can still reject later — ioredis
+  flushing its buffered command on quit — so <code>waitFor</code> pre-attaches a no-op catch to that
+  inflight promise; otherwise the late rejection would surface as an unhandled rejection after the
+  timeout already won. Every boot probe against a BullMQ-profile client MUST go through
+  <code>waitFor</code>
+  for this reason (the ioredis/BullMQ ping-race).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Verified empirically, not just reasoned</strong> — the "never-null strategy still fails
+  loud at boot" claim was drilled, not assumed: a <code>docker compose restart</code> of both Redis
+  instances had every client go reconnecting → ready with the four workers resuming and a stalled
+  job reclaimed, while a wrong-port boot exited 1 loud. The split holds only because the two
+  profiles reach fail-loud by two different mechanisms; a single assumption covering both would have
+  been wrong.
+</aside>
+
+<h2>Lifecycle logging</h2>
+
+<p>
+  Each client also carries lifecycle listeners (<code>attachRedisLifecycleLogging</code>) so an
+  outage and its recovery read cleanly in the logs. The signal budget is deliberate:
+</p>
+
+<ul>
+  <li>
+    <code>redis.reconnecting</code> (warn, from the strategy) — one per attempt, with the client
+    label and attempt number. This is the loud, visible outage signal.
+  </li>
+  <li>
+    <code>redis.ready</code> (info) — the connection came up, initially or after a reconnect. This
+    is the recovery signal.
+  </li>
+  <li>
+    <code>redis.end</code> (info, not error) — the connection closed. With a never-null strategy
+    this fires only on an intentional <code>quit()</code>/<code>disconnect()</code> (graceful
+    shutdown), never a give-up, so logging it at error would false-alarm on every deploy.
+  </li>
+  <li>
+    <code>redis.error</code> (debug, not warn) — ioredis emits one <code>error</code> per failed
+    connect attempt during an outage. Logging those at warn would double the noise the strategy's
+    per-attempt line already carries, so the raw errors drop to debug; the <code>error</code>
+    listener's real job is to stop a transient connection error from surfacing as an unhandled
+    "Unhandled error event."
+  </li>
+</ul>
+
+<p>
+  Every client passes its own <code>label</code> — <code>api-redis-realtime</code>,
+  <code>worker-redis-batch</code>, <code>session-hub</code>,
+  <code>pipeline-subscriber:pipeline</code>, <code>session-turn-queue-events</code>, and so on — so
+  a reconnect line names exactly which connection blipped. The subscriber duplicates and the
+  QueueEvents connection each get their own label rather than inheriting the parent's, so an
+  inherited duplicate can't muddy the outage forensics.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3 id="an-elasticache-blip-what-self-heals-and-what-pages">
+  An ElastiCache blip — what self-heals and what pages
+</h3>
+<ol>
+  <li>
+    The outage announces itself as a burst of warn lines. In CloudWatch Logs Insights:
+    <code
+      >fields @timestamp, label, attempt, delayMs | filter event = 'redis.reconnecting' | sort
+      @timestamp</code
+    >. A climbing <code>attempt</code> on a stable set of labels is a transient blip in progress —
+    the expected, self-healing shape.
+  </li>
+  <li>
+    Recovery is the matching <code>redis.ready</code> line per label:
+    <code>filter event = 'redis.ready'</code>. Once every blipped label has a
+    <code>redis.ready</code> after its last <code>redis.reconnecting</code>, the fleet has healed —
+    no rollover needed. The BullMQ workers resume and any job that stalled during the gap is
+    reclaimed by BullMQ's stall recovery.
+  </li>
+  <li>
+    On the realtime side, a blip is not fully transparent to attached clients: the
+    <a href="./pipeline-status.html#the-dedicated-subscriber-client">SSE subscriber</a> and the
+    <a href="./session-transport.html">WS hub</a> evict their attached sinks/sockets with
+    <code>redis-resync-required</code> on the post-blip <code>ready</code>, because messages
+    published during the gap may have been missed. Clients reconnect and re-fetch a fresh snapshot
+    or replay — that eviction is expected during a blip, not a bug.
+  </li>
+  <li>
+    What SHOULD page: a label that logs <code>redis.reconnecting</code> and <em>never</em> reaches
+    <code>redis.ready</code> — a sustained inability to reconnect (a security-group change, a
+    decommissioned node, an auth rotation gone wrong), not a transient failover. That is the case
+    the self-healing loop can't fix on its own.
+  </li>
+</ol>
+
+<h3 id="a-boot-that-should-crash-loop-but-doesnt">
+  Diagnose a boot that hangs instead of crashing
+</h3>
+<ol>
+  <li>
+    A misconfigured Redis URL should crash-loop the task, not hang it. If a task is stuck
+    "starting," check the boot logs for a <code>waitFor(...): exhausted</code> error — that is the
+    fail-loud path firing correctly (the process exits 1 and ECS restarts it, surfacing the
+    misconfig as a crash loop the deploy notices).
+  </li>
+  <li>
+    If instead the task hangs with no <code>waitFor</code> error, the suspect is a boot probe that
+    bypassed <code>waitFor</code> and called <code>ping()</code> directly on a BullMQ-profile client
+    — that command buffers forever against an unreachable Redis. Every boot probe against a
+    BullMQ-profile connection must go through <code>waitFor</code> so the per-attempt timeout can
+    bound it.
+  </li>
+  <li>
+    To rehearse the whole loop locally, <code>docker compose restart</code> the Redis containers
+    while <code>pnpm dev</code> and the worker are running, and watch every client go
+    <code>redis.reconnecting</code> → <code>redis.ready</code>. To rehearse the fail-loud path,
+    point a Redis URL at a wrong port and confirm the process exits 1.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The BullMQ client is the connection every <a href="./worker.html">worker</a> queue and the
+  <code>QueueEvents('session-turn')</code> subscriber ride; its boot ping goes through
+  <code>waitFor</code>. The API / realtime client is what the
+  <a href="./pipeline-status.html">SSE pipeline subscriber</a> and the
+  <a href="./session-transport.html">WS session hub</a> <code>duplicate()</code> for their dedicated
+  PSUBSCRIBE connections — each duplicate overrides the retry options but threads this same shared
+  strategy under its own label, and each drives a <code>redis-resync-required</code> teardown on the
+  post-blip <code>ready</code>. The <code>redisKeyPrefix</code> envelope those channels use is
+  covered on
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>; the
+  ElastiCache cluster itself is provisioned by the <a href="../infra/data.html">data plane</a>.
+</p>
+
+<h2>Appendix: the reconnect surface</h2>
+
+<h3>Strategy constants</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>REDIS_RECONNECT_BASE_MS</code></td>
+      <td>200</td>
+      <td>First-attempt backoff before jitter.</td>
+    </tr>
+    <tr>
+      <td><code>REDIS_RECONNECT_CAP_MS</code></td>
+      <td>10&nbsp;000</td>
+      <td>Maximum backoff delay. The DELAY is capped; the attempt count never is.</td>
+    </tr>
+    <tr>
+      <td><code>PROBE_ATTEMPT_TIMEOUT_MS</code></td>
+      <td>3&nbsp;000</td>
+      <td>
+        Per-attempt boot-probe timeout in <code>wait-for.ts</code>; bounds a buffered/hung ping.
+      </td>
+    </tr>
+    <tr>
+      <td><code>RETRY_DELAYS_MS</code></td>
+      <td>[200, 500, 1000, 2000]</td>
+      <td>Boot-gate backoff schedule — five probe attempts total, then exit 1.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Client profiles</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Factory</th>
+      <th>Profile</th>
+      <th>Boot fail-loud via</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>createRedisClient</code></td>
+      <td>
+        <code>maxRetriesPerRequest: 1</code>, <code>enableOfflineQueue: false</code> (fast-fail
+        commands) + shared strategy
+      </td>
+      <td>
+        The probe <code>ping()</code> rejects promptly while disconnected (offline queue off).
+      </td>
+    </tr>
+    <tr>
+      <td><code>createBullmqRedisClient</code></td>
+      <td>
+        <code>maxRetriesPerRequest: null</code>, offline queue on (BullMQ requirement) + shared
+        strategy
+      </td>
+      <td>
+        <code>waitFor</code>'s per-attempt probe timeout — the buffered ping never rejects on its
+        own.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/redis/reconnect-strategy.ts</code> (the shared strategy),
+  <code>backend/src/redis/client.ts</code> (the API / realtime factory + lifecycle logging),
+  <code>backend/src/redis/bullmq-client.ts</code> (the BullMQ factory),
+  <code>backend/src/boot/wait-for.ts</code> (the boot gate).
+</p>

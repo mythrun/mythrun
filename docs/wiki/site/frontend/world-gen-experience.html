@@ -401,9 +401,23 @@
   The instant entities begin arriving — a first node, or an entity stage reported underway,
   whichever lands first — the loading screen grows a "watch your world be born" button. Generation
   keeps streaming underneath regardless; the button only <em>reveals</em> the graph. The transition
-  to act two is a deliberate press, never automatic, and re-entering a mid-generation world restarts
-  at the loading screen with the button already offered.
+  to act two is a deliberate press, never automatic — but only on a <em>genuine first visit</em>. A
+  refresh or reconnect that lands mid-generation with committed entities already present
+  (<code>resumedMidGen</code>: a non-empty connect-time seed on the stream's first frame) skips
+  straight to the graph act with its nodes already rehydrated, because the deliberate loading beat
+  is a one-time thing to mark, not a wall to re-cross on every reload.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The graph survives a refresh</strong> — the folded nodes and edges live only in the
+  client's in-memory SSE accumulation, so a reload during generation would otherwise return the
+  player to an empty loading screen and lose everything committed so far. The stream's connect-time
+  snapshot now carries a known-tier graph <a href="../runtime/pipeline-status.html">seed</a> — the
+  same entities and edges the live stream had already delivered to this member — and
+  <code>useWorldGenStream</code> folds it exactly like a live frame, so a mid-gen reconnect
+  rehydrates a populated graph and keeps folding toward the reveal. The seed is known-tier by the
+  same invariant the live stream is, so a reconnecting client is caught up with zero new exposure.
+</aside>
 
 <h3 id="act-two-the-fog-and-the-graph">Act two — the fog and the graph</h3>
 
@@ -578,15 +592,31 @@
 <h3 id="waiting-feedback">Waiting feedback</h3>
 
 <p>
-  Both acts carry a per-second countdown so the player always holds an expectation of the wait. The
-  route fetches the
+  Both acts carry a per-second countdown so the player always holds an expectation of the wait, but
+  they count to <em>different milestones</em> off one shared derivation. The route fetches the
   <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>
-  once at the start; <code>remainingWaitMs</code> intersects those historical per-stage averages
-  with the live stage statuses and subtracts the time already spent in the running stage, and a real
-  one-second interval re-derives it. When a stage overruns, the countdown holds at its floor ("any
-  moment now") and jumps at the next stage event — an honest walk rather than a smooth lie. With no
-  timing history yet (cold start), the surfaces simply show no estimate.
+  once at the start; a slice-summing core sums the historical per-stage averages over a canonical
+  stage slice, intersected with the live stage statuses and minus the time already spent in the
+  running stage, and a real one-second interval re-derives it. The two public entry points differ
+  only in which slice they pass: the act-two status card's <code>remainingWaitMs</code> sums
+  <code>WATCHED_STAGES</code> and counts to the wiki <em>reveal</em>; the act-one loading screen's
+  <code>remainingPrepWaitMs</code> sums <code>PREP_STAGES</code> only and counts to
+  <em>arriving on the graph</em> — it reaches zero exactly as the first entity-emitting stage begins
+  (the watch-button beat), not at the reveal ten minutes later. Both slices derive from the same
+  canonical <code>WORLD_GEN_STAGES</code> taxonomy, so a stage reorder can't drift either target.
+  When a stage overruns, the countdown holds at its floor ("any moment now") and jumps at the next
+  stage event — an honest walk rather than a smooth lie. With no timing history yet (cold start),
+  the surfaces simply show no estimate.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The loading countdown targets the graph, not the reveal</strong> — act one is the wait
+  before there is anything to watch, so its honest promise is "when does the world start appearing,"
+  not "when is everything done." Counting the loading screen down to the full reveal would show a
+  player a two-minute number that is really the ten-minute number's tail — a smooth lie. Summing
+  only the prep slice makes the loading countdown answer the question the loading screen actually
+  raises, and the status card picks the reveal target back up once the graph is on screen.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The status card counts only the watched stages</strong> — its fixed bars are seeded from
@@ -745,7 +775,9 @@
     <td><code>use-worldgen-stream.ts</code></td>
     <td>
       Folds the status SSE into <code>nodes</code>/<code>edges</code>/<code>stages</code> +
-      lifecycle; exposes <code>connectionsDone</code> and <code>completedTailStageCount</code>.
+      lifecycle; seeds the fold from the connect-time known-tier graph seed so a mid-gen refresh
+      rehydrates (<code>resumedMidGen</code>); exposes <code>connectionsDone</code> and
+      <code>completedTailStageCount</code>.
     </td>
   </tr>
   <tr>
@@ -771,7 +803,13 @@
   </tr>
   <tr>
     <td><code>stage-eta.ts</code> · <code>reveal-timing.ts</code></td>
-    <td>The remaining-wait countdown math; the connections-done / tail-stage boundaries.</td>
+    <td>
+      The remaining-wait countdown math — one slice-summing core with two targets (<code
+        >remainingWaitMs</code
+      >
+      → reveal, <code>remainingPrepWaitMs</code> → graph arrival); the connections-done / tail-stage
+      boundaries.
+    </td>
   </tr>
   <tr>
     <td>

@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redis reconnection · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="redis-reconnect">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html" class="active">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Redis reconnection</div>
+        <article>
+<h1>Redis reconnection</h1>
+
+<p class="lead">
+  The one reconnection strategy every long-lived Redis client shares, and the split that keeps it
+  honest: at runtime a client reconnects forever after an ElastiCache blip so a single failover no
+  longer severs BullMQ and realtime for the task's lifetime; at boot the same client still fails
+  loud so a genuine misconfiguration crash-loops instead of retrying into the void.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1161pt" height="347pt"
+ viewBox="14.00 14.00 1146.00 333.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 328.94)">
+<title>redis_reconnect</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-314.54 1127.78,-314.54 1127.78,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_clients</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-13.54 8,-302.54 224.51,-302.54 224.51,-13.54 8,-13.54"/>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-288.64" font-family="Courier,monospace" font-size="11.00">long&#45;lived runtime clients</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_boot</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="424.33,-31.54 424.33,-109.54 654.04,-109.54 654.04,-31.54 424.33,-31.54"/>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-95.64" font-family="Courier,monospace" font-size="11.00">boot gate &#160;(fail&#45;loud)</text>
+</g>
+<!-- strategy -->
+<g id="node1" class="node">
+<title>strategy</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="673.85,-228.58 404.53,-228.58 404.53,-158.5 673.85,-158.5 673.85,-228.58"/>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-210.04" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reconnect&#45;strategy.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-196.84" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">makeReconnectStrategy(label, logger)</text>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-183.64" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">bounded backoff + equal jitter</text>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-170.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">NEVER returns null</text>
+</g>
+<!-- runtime -->
+<g id="node6" class="node">
+<title>runtime</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1123.78,-228.58 847.86,-228.58 847.86,-158.5 1123.78,-158.5 1123.78,-228.58"/>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-210.04" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">RUNTIME</text>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-196.84" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reconnects forever</text>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-183.64" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">warns redis.reconnecting per attempt,</text>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-170.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">info redis.ready on recovery</text>
+</g>
+<!-- strategy&#45;&gt;runtime -->
+<g id="edge4" class="edge">
+<title>strategy&#45;&gt;runtime</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M674.5,-193.54C726.32,-193.54 785.76,-193.54 838.65,-193.54"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="838.6,-195.99 845.6,-193.54 838.6,-191.09 838.6,-195.99"/>
+<text xml:space="preserve" text-anchor="middle" x="760.86" y="-208.54" font-family="Courier,monospace" font-size="10.00">transient loss →</text>
+<text xml:space="preserve" text-anchor="middle" x="760.86" y="-196.54" font-family="Courier,monospace" font-size="10.00">self&#45;heal</text>
+</g>
+<!-- api -->
+<g id="node2" class="node">
+<title>api</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="221.21,-168.58 11.3,-168.58 11.3,-98.5 221.21,-98.5 221.21,-168.58"/>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-150.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createRedisClient</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-136.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">API / realtime</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-123.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fast&#45;fail commands</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-110.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(enableOfflineQueue: false)</text>
+</g>
+<!-- api&#45;&gt;strategy -->
+<g id="edge1" class="edge">
+<title>api&#45;&gt;strategy</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M221.65,-154.51C233.72,-156.68 245.87,-158.74 257.51,-160.54 302.26,-167.47 351.23,-173.69 395.56,-178.82"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="395.03,-181.22 402.27,-179.59 395.59,-176.35 395.03,-181.22"/>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-178.22" font-family="Courier,monospace" font-size="10.00">retryStrategy</text>
+</g>
+<!-- waitfor -->
+<g id="node5" class="node">
+<title>waitfor</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="654.04,-87.98 424.33,-87.98 424.33,-31.1 654.04,-31.1 654.04,-87.98"/>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-69.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">boot/wait&#45;for.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-56.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">bounded attempts +</text>
+<text xml:space="preserve" text-anchor="middle" x="539.19" y="-43.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;attempt probe timeout (3s)</text>
+</g>
+<!-- api&#45;&gt;waitfor -->
+<g id="edge5" class="edge">
+<title>api&#45;&gt;waitfor</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M190.71,-97.76C211.8,-88.98 235.16,-80.64 257.51,-75.54 308.34,-63.93 365.62,-59.23 415.12,-57.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="414.88,-60.14 421.81,-57.5 414.74,-55.24 414.88,-60.14"/>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-102.54" font-family="Courier,monospace" font-size="10.00">boot ping</text>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-90.54" font-family="Courier,monospace" font-size="10.00">rejects fast</text>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-78.54" font-family="Courier,monospace" font-size="10.00">(offline queue off)</text>
+</g>
+<!-- bull -->
+<g id="node3" class="node">
+<title>bull</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="224.51,-69.98 8,-69.98 8,-13.1 224.51,-13.1 224.51,-69.98"/>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-51.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createBullmqRedisClient</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-38.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Worker / Queue / QueueEvents</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-25.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(maxRetriesPerRequest: null)</text>
+</g>
+<!-- bull&#45;&gt;strategy -->
+<g id="edge2" class="edge">
+<title>bull&#45;&gt;strategy</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M201.07,-70.71C209.21,-74.61 217.16,-78.89 224.51,-83.54 241.52,-94.29 239.95,-104.72 257.51,-114.54 303.35,-140.17 320.96,-131.38 371.53,-145.54 382.95,-148.74 394.81,-152.09 406.7,-155.47"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="405.77,-157.76 413.18,-157.32 407.12,-153.04 405.77,-157.76"/>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-148.54" font-family="Courier,monospace" font-size="10.00">retryStrategy</text>
+</g>
+<!-- bull&#45;&gt;waitfor -->
+<g id="edge6" class="edge">
+<title>bull&#45;&gt;waitfor</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M218.18,-12.43C231.31,-9.59 244.67,-7.16 257.51,-5.54 307.79,0.81 321.47,2.37 371.53,-5.54 399.98,-10.03 430.19,-18.59 456.96,-27.6"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="456.02,-29.86 463.43,-29.81 457.6,-25.23 456.02,-29.86"/>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-32.54" font-family="Courier,monospace" font-size="10.00">boot ping</text>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-20.54" font-family="Courier,monospace" font-size="10.00">buffers → timeout</text>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-8.54" font-family="Courier,monospace" font-size="10.00">bounds it</text>
+</g>
+<!-- subs -->
+<g id="node4" class="node">
+<title>subs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="211.31,-281.18 21.2,-281.18 21.2,-197.9 211.31,-197.9 211.31,-281.18"/>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-262.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">subscriber duplicates</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-249.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE pipeline&#45;subscriber</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-236.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WS session&#45;hub</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-223.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session&#45;turn QueueEvents</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-209.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(own label each)</text>
+</g>
+<!-- subs&#45;&gt;strategy -->
+<g id="edge3" class="edge">
+<title>subs&#45;&gt;strategy</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M211.98,-229.19C266.05,-223.28 334.9,-215.76 395.41,-209.14"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="395.39,-211.61 402.08,-208.41 394.86,-206.74 395.39,-211.61"/>
+<text xml:space="preserve" text-anchor="middle" x="314.52" y="-226.35" font-family="Courier,monospace" font-size="10.00">retryStrategy</text>
+</g>
+<!-- bootfail -->
+<g id="node7" class="node">
+<title>bootfail</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1067.68,-87.98 903.97,-87.98 903.97,-31.1 1067.68,-31.1 1067.68,-87.98"/>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-69.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BOOT</text>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-56.24" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">wrong host/auth</text>
+<text xml:space="preserve" text-anchor="middle" x="985.82" y="-43.04" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">crash&#45;loops (exit 1)</text>
+</g>
+<!-- waitfor&#45;&gt;bootfail -->
+<g id="edge7" class="edge">
+<title>waitfor&#45;&gt;bootfail</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M654.69,-59.54C729.34,-59.54 825.38,-59.54 894.6,-59.54"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="894.52,-61.99 901.52,-59.54 894.52,-57.09 894.52,-61.99"/>
+<text xml:space="preserve" text-anchor="middle" x="760.86" y="-62.54" font-family="Courier,monospace" font-size="10.00">exhausts attempts</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Every long-lived ioredis client in the backend — the API's request-path client, the worker's
+  BullMQ connection, and the dedicated subscriber duplicates the
+  <a href="./pipeline-status.html">SSE pipeline subscriber</a> and the
+  <a href="./session-transport.html">WS session hub</a> mint — is constructed with a
+  <code>retryStrategy</code>: the closure ioredis calls to decide how long to wait before the next
+  reconnect attempt, and whether to attempt one at all. Returning <code>null</code> from that
+  closure means "give up." A single shared factory,
+  <code>makeReconnectStrategy(label, logger)</code> in
+  <code>backend/src/redis/reconnect-strategy.ts</code>, now backs all of them.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The bug this page exists to prevent</strong> — the runtime clients used to be built with
+  <code>retryStrategy: () =&gt; null</code>: no reconnection, ever. One ElastiCache blip or failover
+  permanently severed BullMQ and realtime for every ECS task until a manual rollover — a real
+  stalled generation in dev traced back to exactly this. The shared strategy reconnects with bounded
+  exponential backoff and jitter and <em>never</em> gives up, so transient loss self-heals.
+</aside>
+
+<p>
+  The strategy caps the <em>delay</em>, not the attempt count. The backoff is
+  <code>min(200ms · 2<sup>attempt−1</sup>, 10s)</code> — doubling from a 200&nbsp;ms base up to a
+  10&nbsp;second ceiling — with AWS "equal jitter" applied on top: half the delay is kept as a floor
+  and the other half randomized, so the result lands in <code>[cap/2, cap]</code>. A worker keeps
+  trying indefinitely; only the wait between tries is bounded. Every attempt logs a warn line (<code
+    >event: 'redis.reconnecting'</code
+  >) carrying the client's label and the attempt number, so an outage is visible in CloudWatch
+  rather than silent.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Equal jitter, not raw exponential backoff</strong> — a fleet of tasks that all lost the
+  same ElastiCache node would otherwise reconnect in lockstep and thundering-herd the recovering
+  node. Keeping half the delay as a floor avoids a herd at zero; randomizing the other half spreads
+  the retries. Capping the delay (not the attempts) is the deliberate choice for a background
+  system: a worker that can't reach Redis is useless anyway, so retrying forever at a 10&nbsp;second
+  ceiling costs almost nothing and means recovery is automatic the instant the node returns.
+</aside>
+
+<h2 id="the-config-vs-transient-split">The config-vs-transient split</h2>
+
+<p>
+  A never-null retry strategy raises an obvious question: if a client reconnects forever, how does a
+  genuine misconfiguration — a wrong host, wrong port, or bad auth — ever surface? It would just
+  reconnect forever too. The answer is that reconnection is the <em>runtime</em> policy; the
+  <em>boot</em> gate is separate and still fails loud. The two client profiles reach that fail-loud
+  guarantee by different routes.
+</p>
+
+<p>
+  The API / realtime client (<code>createRedisClient</code>) sets
+  <code>enableOfflineQueue: false</code> — a command issued while disconnected rejects promptly
+  rather than buffering. That is deliberate for the request path (a realtime PUBLISH during an
+  outage should drop fast, not queue a stale write), and it doubles as the boot guarantee: the
+  boot-probe <code>ping()</code> rejects promptly while disconnected, so a wrong host surfaces at
+  startup even though the strategy would otherwise reconnect forever.
+</p>
+
+<p>
+  The BullMQ client (<code>createBullmqRedisClient</code>) can't do that — BullMQ requires
+  <code>maxRetriesPerRequest: null</code> and an enabled offline queue, so a probe
+  <code>ping()</code> against an unreachable Redis <em>buffers</em> and never rejects. It would hang
+  the boot gate forever. So its fail-loud guarantee comes from
+  <code>backend/src/boot/wait-for.ts</code> instead: <code>waitFor</code> races each probe against a
+  per-attempt timeout (<code>PROBE_ATTEMPT_TIMEOUT_MS</code>, 3&nbsp;seconds) over a bounded retry
+  schedule (<code>[200, 500, 1000, 2000]</code>&nbsp;ms, five attempts total). A hung probe loses
+  the race, the attempts exhaust, and the process exits 1 — a genuine misconfig crash-loops.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why the timeout is 3 seconds and swallows the late rejection</strong> — the per-attempt
+  timeout has to be generous enough that a healthy-but-slow cloud connect (an ElastiCache TLS
+  handshake, typically under a second) clears in a single attempt, yet short enough that a wrong
+  port fails the whole gate quickly. A probe that loses the race can still reject later — ioredis
+  flushing its buffered command on quit — so <code>waitFor</code> pre-attaches a no-op catch to that
+  inflight promise; otherwise the late rejection would surface as an unhandled rejection after the
+  timeout already won. Every boot probe against a BullMQ-profile client MUST go through
+  <code>waitFor</code>
+  for this reason (the ioredis/BullMQ ping-race).
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Verified empirically, not just reasoned</strong> — the "never-null strategy still fails
+  loud at boot" claim was drilled, not assumed: a <code>docker compose restart</code> of both Redis
+  instances had every client go reconnecting → ready with the four workers resuming and a stalled
+  job reclaimed, while a wrong-port boot exited 1 loud. The split holds only because the two
+  profiles reach fail-loud by two different mechanisms; a single assumption covering both would have
+  been wrong.
+</aside>
+
+<h2 id="lifecycle-logging">Lifecycle logging</h2>
+
+<p>
+  Each client also carries lifecycle listeners (<code>attachRedisLifecycleLogging</code>) so an
+  outage and its recovery read cleanly in the logs. The signal budget is deliberate:
+</p>
+
+<ul>
+  <li>
+    <code>redis.reconnecting</code> (warn, from the strategy) — one per attempt, with the client
+    label and attempt number. This is the loud, visible outage signal.
+  </li>
+  <li>
+    <code>redis.ready</code> (info) — the connection came up, initially or after a reconnect. This
+    is the recovery signal.
+  </li>
+  <li>
+    <code>redis.end</code> (info, not error) — the connection closed. With a never-null strategy
+    this fires only on an intentional <code>quit()</code>/<code>disconnect()</code> (graceful
+    shutdown), never a give-up, so logging it at error would false-alarm on every deploy.
+  </li>
+  <li>
+    <code>redis.error</code> (debug, not warn) — ioredis emits one <code>error</code> per failed
+    connect attempt during an outage. Logging those at warn would double the noise the strategy's
+    per-attempt line already carries, so the raw errors drop to debug; the <code>error</code>
+    listener's real job is to stop a transient connection error from surfacing as an unhandled
+    "Unhandled error event."
+  </li>
+</ul>
+
+<p>
+  Every client passes its own <code>label</code> — <code>api-redis-realtime</code>,
+  <code>worker-redis-batch</code>, <code>session-hub</code>,
+  <code>pipeline-subscriber:pipeline</code>, <code>session-turn-queue-events</code>, and so on — so
+  a reconnect line names exactly which connection blipped. The subscriber duplicates and the
+  QueueEvents connection each get their own label rather than inheriting the parent's, so an
+  inherited duplicate can't muddy the outage forensics.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="an-elasticache-blip-what-self-heals-and-what-pages">
+  An ElastiCache blip — what self-heals and what pages
+</h3>
+<ol>
+  <li>
+    The outage announces itself as a burst of warn lines. In CloudWatch Logs Insights:
+    <code
+      >fields @timestamp, label, attempt, delayMs | filter event = 'redis.reconnecting' | sort
+      @timestamp</code
+    >. A climbing <code>attempt</code> on a stable set of labels is a transient blip in progress —
+    the expected, self-healing shape.
+  </li>
+  <li>
+    Recovery is the matching <code>redis.ready</code> line per label:
+    <code>filter event = 'redis.ready'</code>. Once every blipped label has a
+    <code>redis.ready</code> after its last <code>redis.reconnecting</code>, the fleet has healed —
+    no rollover needed. The BullMQ workers resume and any job that stalled during the gap is
+    reclaimed by BullMQ's stall recovery.
+  </li>
+  <li>
+    On the realtime side, a blip is not fully transparent to attached clients: the
+    <a href="./pipeline-status.html#the-dedicated-subscriber-client">SSE subscriber</a> and the
+    <a href="./session-transport.html">WS hub</a> evict their attached sinks/sockets with
+    <code>redis-resync-required</code> on the post-blip <code>ready</code>, because messages
+    published during the gap may have been missed. Clients reconnect and re-fetch a fresh snapshot
+    or replay — that eviction is expected during a blip, not a bug.
+  </li>
+  <li>
+    What SHOULD page: a label that logs <code>redis.reconnecting</code> and <em>never</em> reaches
+    <code>redis.ready</code> — a sustained inability to reconnect (a security-group change, a
+    decommissioned node, an auth rotation gone wrong), not a transient failover. That is the case
+    the self-healing loop can't fix on its own.
+  </li>
+</ol>
+
+<h3 id="a-boot-that-should-crash-loop-but-doesnt">
+  Diagnose a boot that hangs instead of crashing
+</h3>
+<ol>
+  <li>
+    A misconfigured Redis URL should crash-loop the task, not hang it. If a task is stuck
+    "starting," check the boot logs for a <code>waitFor(...): exhausted</code> error — that is the
+    fail-loud path firing correctly (the process exits 1 and ECS restarts it, surfacing the
+    misconfig as a crash loop the deploy notices).
+  </li>
+  <li>
+    If instead the task hangs with no <code>waitFor</code> error, the suspect is a boot probe that
+    bypassed <code>waitFor</code> and called <code>ping()</code> directly on a BullMQ-profile client
+    — that command buffers forever against an unreachable Redis. Every boot probe against a
+    BullMQ-profile connection must go through <code>waitFor</code> so the per-attempt timeout can
+    bound it.
+  </li>
+  <li>
+    To rehearse the whole loop locally, <code>docker compose restart</code> the Redis containers
+    while <code>pnpm dev</code> and the worker are running, and watch every client go
+    <code>redis.reconnecting</code> → <code>redis.ready</code>. To rehearse the fail-loud path,
+    point a Redis URL at a wrong port and confirm the process exits 1.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The BullMQ client is the connection every <a href="./worker.html">worker</a> queue and the
+  <code>QueueEvents('session-turn')</code> subscriber ride; its boot ping goes through
+  <code>waitFor</code>. The API / realtime client is what the
+  <a href="./pipeline-status.html">SSE pipeline subscriber</a> and the
+  <a href="./session-transport.html">WS session hub</a> <code>duplicate()</code> for their dedicated
+  PSUBSCRIBE connections — each duplicate overrides the retry options but threads this same shared
+  strategy under its own label, and each drives a <code>redis-resync-required</code> teardown on the
+  post-blip <code>ready</code>. The <code>redisKeyPrefix</code> envelope those channels use is
+  covered on
+  <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>; the
+  ElastiCache cluster itself is provisioned by the <a href="../infra/data.html">data plane</a>.
+</p>
+
+<h2 id="appendix-the-reconnect-surface">Appendix: the reconnect surface</h2>
+
+<h3 id="strategy-constants">Strategy constants</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>REDIS_RECONNECT_BASE_MS</code></td>
+      <td>200</td>
+      <td>First-attempt backoff before jitter.</td>
+    </tr>
+    <tr>
+      <td><code>REDIS_RECONNECT_CAP_MS</code></td>
+      <td>10&nbsp;000</td>
+      <td>Maximum backoff delay. The DELAY is capped; the attempt count never is.</td>
+    </tr>
+    <tr>
+      <td><code>PROBE_ATTEMPT_TIMEOUT_MS</code></td>
+      <td>3&nbsp;000</td>
+      <td>
+        Per-attempt boot-probe timeout in <code>wait-for.ts</code>; bounds a buffered/hung ping.
+      </td>
+    </tr>
+    <tr>
+      <td><code>RETRY_DELAYS_MS</code></td>
+      <td>[200, 500, 1000, 2000]</td>
+      <td>Boot-gate backoff schedule — five probe attempts total, then exit 1.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="client-profiles">Client profiles</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Factory</th>
+      <th>Profile</th>
+      <th>Boot fail-loud via</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>createRedisClient</code></td>
+      <td>
+        <code>maxRetriesPerRequest: 1</code>, <code>enableOfflineQueue: false</code> (fast-fail
+        commands) + shared strategy
+      </td>
+      <td>
+        The probe <code>ping()</code> rejects promptly while disconnected (offline queue off).
+      </td>
+    </tr>
+    <tr>
+      <td><code>createBullmqRedisClient</code></td>
+      <td>
+        <code>maxRetriesPerRequest: null</code>, offline queue on (BullMQ requirement) + shared
+        strategy
+      </td>
+      <td>
+        <code>waitFor</code>'s per-attempt probe timeout — the buffered ping never rejects on its
+        own.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/redis/reconnect-strategy.ts</code> (the shared strategy),
+  <code>backend/src/redis/client.ts</code> (the API / realtime factory + lifecycle logging),
+  <code>backend/src/redis/bullmq-client.ts</code> (the BullMQ factory),
+  <code>backend/src/boot/wait-for.ts</code> (the boot gate).
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-config-vs-transient-split">The config-vs-transient split</a></li><li style="padding-left:0"><a href="#lifecycle-logging">Lifecycle logging</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#an-elasticache-blip-what-self-heals-and-what-pages">An ElastiCache blip — what self-heals and what pages</a></li><li style="padding-left:12px"><a href="#a-boot-that-should-crash-loop-but-doesnt">Diagnose a boot that hangs instead of crashing</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-reconnect-surface">Appendix: the reconnect surface</a></li><li style="padding-left:12px"><a href="#strategy-constants">Strategy constants</a></li><li style="padding-left:12px"><a href="#client-profiles">Client profiles</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

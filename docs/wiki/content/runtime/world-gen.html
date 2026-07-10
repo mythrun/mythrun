@@ -53,7 +53,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:367550d3467f35cabb170b7ead6fa9a87295217a1f3a316966fa635df7e639ba -->
+<!-- source-hash: sha256:df986618d61afab8f7d439ea2a6222b4b9787c0a0bfde4712c250aa5b0ba75a8 -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>World gen</h1>
@@ -724,8 +724,10 @@
         <code>edge-added</code> per relationship as the LLM-emitted <code>from_name</code>,
         <code>to_name</code>, and <code>relationship</code> (free-text verb-phrase predicate) close
         together. The server resolves names to UUIDs at publish time; phantom-declared endpoints get
-        server-minted <code>new-NNN</code> synthetic IDs. No <code>finalized</code> for edges (edges
-        have no client-visible synth-to-real-id mapping).
+        server-minted <code>new-NNN</code> synthetic IDs. Both the mid-stream
+        <code>edge-added</code> and the post-commit <code>finalized</code> events for edges are
+        <a href="#relationship-tiering">tier-gated</a> — suppressed unless the edge's own tier AND
+        both endpoints are <code>known</code> (or bypass is on); the DB row persists regardless.
       </td>
     </tr>
     <tr>
@@ -759,9 +761,11 @@
         phantoms.
       </td>
       <td>
-        post-COMMIT: <code>entity-added</code> per ghost carrying <code>placeholderId</code> so
-        client buffers reconcile, plus <code>edge-added</code> per resolved relationship (endpoints
-        are real UUIDs by the time these publish)
+        post-COMMIT, <a href="#relationship-tiering">tier-gated</a>: <code>entity-added</code> per
+        <em>known</em> ghost carrying <code>placeholderId</code> so client buffers reconcile, plus
+        <code>edge-added</code> per resolved relationship whose own tier and both endpoints are
+        <code>known</code> (endpoints are real UUIDs by the time these publish). Secret ghosts and
+        secret-touching edges persist to the DB but never publish; bypass widens to all.
       </td>
     </tr>
     <tr>
@@ -1053,6 +1057,36 @@
   row to the safest tier (<code>secret</code>), so nothing surfaces until a stage re-tiers it.
 </p>
 
+<p>
+  The snapshot is not the only consumer — the <strong>live wire</strong> honors the tier too. During
+  generation the player-facing graph streams <code>edge-added</code> (and, at stage 4b,
+  <code>entity-added</code> for ghosts) as the world assembles, and all four publish paths now
+  <em>fail closed</em> on the emitted thing's OWN <code>access_level</code> in addition to both
+  endpoints' tiers: the streaming extractor's <code>shouldEmitEdge</code> (stage 4 mid-stream), the
+  stage-4 post-commit <code>finalized</code> events, stage 4b's ghost <code>entity-added</code> +
+  resolved-edge <code>edge-added</code>, and stage 7's <code>coherence_pass</code> re-emits (<code
+    >fix</code
+  >
+  / <code>add</code> / <code>delete</code> relationship). An edge surfaces only when its own tier
+  AND both endpoints are <code>known</code>; a ghost only when its own tier is <code>known</code>.
+  The DB write is unaffected in every case — the world still knows the secret; only the wire is
+  filtered — and the dev/author <code>bypassAccessFilter</code> flag still widens to everything.
+  Suppressing a row never shifts the surviving rows' <code>synthKey</code> indices, which are minted
+  from insert order, not publish order.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The generation-time wire was a second leak, distinct from the snapshot one</strong> —
+  tiering the <code>relationships</code> column (above) closed the <em>snapshot</em> leak: the
+  happy-path reveal filtered edges by their endpoints alone, so a secret connection between two
+  public entities would have surfaced. But the live emit paths kept gating on endpoint tiers only,
+  so the very same secret edge streamed onto the player-facing graph <em>during</em> generation — a
+  known↔known deterministic leak on the wire, even though the final snapshot filtered it out. The
+  fix makes the four publishers gate on the edge's own tier as well, fail-closed (a missing or
+  non-known tier suppresses), so the secret connection is invisible from first byte to final
+  snapshot. This is enforced ignorance on the wire, not just at rest.
+</aside>
+
 <h3>Per-item drop-on-fail validation</h3>
 
 <p>
@@ -1176,9 +1210,14 @@
     <code>relationships.insertMany</code>. Both endpoints are real UUIDs by the time the rows land.
   </li>
   <li>
-    Clears <code>worlds.entity_consolidation_pending</code> back to the empty default. Publishes one
-    post-COMMIT <code>entity-added</code> per ghost (carrying the <code>placeholderId</code> field)
-    and one <code>edge-added</code> per resolved relationship.
+    Clears <code>worlds.entity_consolidation_pending</code> back to the empty default. Publishes the
+    post-COMMIT wire events, <a href="#relationship-tiering">tier-gated</a>: an
+    <code>entity-added</code> (carrying the <code>placeholderId</code> field) only per
+    <em>known</em> ghost, and an <code>edge-added</code> only per resolved relationship whose own
+    tier and both endpoints are <code>known</code> (an <code>endpointTierById</code> map seeded from
+    the inventory plus the freshly-minted ghosts supplies the endpoint tiers). Secret ghosts and
+    secret-touching edges are written to the DB but suppressed from the wire; the dev
+    <code>bypassAccessFilter</code> flag widens to everything.
   </li>
 </ol>
 

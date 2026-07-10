@@ -1,0 +1,44 @@
+digraph redis_reconnect {
+  // Redis reconnection. One shared bounded-backoff-with-jitter strategy
+  // (reconnect-strategy.ts, never returns null) backs every long-lived runtime
+  // ioredis client, so an ElastiCache blip self-heals instead of permanently
+  // severing BullMQ + realtime the way the old `retryStrategy: () => null` did.
+  // Boot stays fail-loud via boot/wait-for.ts's per-attempt probe timeout, so a
+  // genuine misconfig (wrong host/auth) crash-loops rather than reconnecting
+  // forever. The config-vs-transient split is the whole story.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.4;
+  ranksep=0.9;
+
+  strategy [label="reconnect-strategy.ts\nmakeReconnectStrategy(label, logger)\nbounded backoff + equal jitter\nNEVER returns null", color="ember", fontcolor="ember"];
+
+  subgraph cluster_clients {
+    label="long-lived runtime clients";
+    style="dashed";
+
+    api  [label="createRedisClient\nAPI / realtime\nfast-fail commands\n(enableOfflineQueue: false)"];
+    bull [label="createBullmqRedisClient\nWorker / Queue / QueueEvents\n(maxRetriesPerRequest: null)"];
+    subs [label="subscriber duplicates\nSSE pipeline-subscriber\nWS session-hub\nsession-turn QueueEvents\n(own label each)"];
+  }
+
+  subgraph cluster_boot {
+    label="boot gate  (fail-loud)";
+    style="dotted";
+
+    waitfor [label="boot/wait-for.ts\nbounded attempts +\nper-attempt probe timeout (3s)"];
+  }
+
+  runtime  [label="RUNTIME\nreconnects forever\nwarns redis.reconnecting per attempt,\ninfo redis.ready on recovery", color="ember", fontcolor="ember"];
+  bootfail [label="BOOT\nwrong host/auth\ncrash-loops (exit 1)", color="ember", fontcolor="ember"];
+
+  api  -> strategy [label="retryStrategy"];
+  bull -> strategy [label="retryStrategy"];
+  subs -> strategy [label="retryStrategy"];
+
+  strategy -> runtime [label="transient loss →\nself-heal"];
+
+  api  -> waitfor [label="boot ping\nrejects fast\n(offline queue off)", style=dashed];
+  bull -> waitfor [label="boot ping\nbuffers → timeout\nbounds it", style=dashed];
+  waitfor -> bootfail [label="exhausts attempts"];
+}

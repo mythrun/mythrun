@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html" class="active">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html" class="active">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Pipeline status</div>
         <article>
@@ -324,6 +324,32 @@
   snapshot inside the SSE handler (after subscriber attachment but before live forwarding) closes
   that race. The standalone <code>GET /status</code> remains for callers that want a point-in-time
   read without holding a connection open.
+</aside>
+
+<p>
+  For a campaign that is still <em>generating</em>, the stream's connect-time snapshot frame carries
+  one thing more: a known-tier graph <strong>seed</strong>. <code>loadGraphSeed</code> composes it
+  through <code>backend/src/repo/gen-seed-view.ts</code> — the world's known-tier entities and the
+  known-tier relationships among them, two lean reads keyed on the entity's id / kind / name and the
+  relationship's endpoints / type — and merges it into the first frame. Only the two phases where a
+  graph is on screen and committed entities can exist (<code>world_gen</code>,
+  <code>world_snapshot_ready</code>) load a seed; every other phase merges <code>{}</code>. The
+  <a href="../frontend/world-gen-experience.html">generation experience</a> folds the seed the same
+  way it folds a live <code>entity-added</code> / <code>edge-added</code> frame, so a refresh or
+  reconnect mid-generation rehydrates a populated graph instead of an empty one.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The seed is known-tier by the same invariant the live stream is</strong> — the live
+  <code>entity-added</code> / <code>edge-added</code> stream is already tier-gated to known entities
+  and both-endpoints-known, edge-own-tier-known edges (see
+  <a href="./world-gen.html#relationship-tiering">relationship tiering</a>). Composing the seed at
+  that same <code>['known']</code> filter reproduces exactly what a continuously-connected member
+  had already accumulated from the stream — a reconnecting client is caught up with zero new
+  exposure. This is a separate, gen-scoped surface: it does not touch the 409-gated owner
+  <a href="./world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a>
+  (the reveal boundary that is enforced-ignorance load-bearing for the wiki), which keeps composing
+  its full known-tier reveal only once <code>world_introduction</code> commits.
 </aside>
 
 <p>
@@ -692,15 +718,25 @@
     <code>false</code> and the <code>'drain'</code> event didn't fire within 5&nbsp;seconds. Slow
     client; drop-and-let-them-reconnect is the recoverable path.
   </li>
+  <li>
+    <code>complete</code> — a <em>one-shot</em> stream delivered its terminal event and the server
+    is done: the normal end, not a drop. The pipeline status stream never emits this (it is
+    long-lived); it belongs to a single-shot SSE surface built on the same <code>SseSink</code> —
+    the guided-create world-brief stream (<code>POST /api/campaigns/synthesize-preview/stream</code
+    >), whose <code>delta</code>* → terminal → <code>close('complete')</code> shape reuses this
+    plumbing.
+  </li>
   <li><code>unknown</code> — the upstream socket closed or a write threw. Catch-all.</li>
 </ul>
 
 <aside class="wiki-rationale">
   <strong>Close-reason enum, not a free-form message</strong> — ops needs to distinguish "campaign
-  is quiet" from "task scaled-in" from "Redis blipped" from "slow client dropped." A small typed
-  enum gives the dev tool and (eventually) the SPA a structured signal to drive auto-reconnect
-  decisions and gives operators a discriminator for log queries. Six values cover the lifecycle
-  comprehensively.
+  is quiet" from "task scaled-in" from "Redis blipped" from "slow client dropped" from "one-shot
+  delivered and closed." A small typed enum gives the dev tool and (eventually) the SPA a structured
+  signal to drive auto-reconnect decisions and gives operators a discriminator for log queries. The
+  <code>CloseReason</code> union in <code>sse-connection.ts</code> is shared infrastructure — the
+  seven values cover every SSE surface's lifecycle, whether long-lived (the status stream) or
+  one-shot (the synthesize-preview brief).
 </aside>
 
 <p>
@@ -727,7 +763,8 @@
   <code
     >redis.duplicate({ retryStrategy, maxRetriesPerRequest: null, enableOfflineQueue: true })</code
   >
-  to create a sibling ioredis client with the same URL/AUTH/TLS but a different retry policy.
+  to create a sibling ioredis client with the same URL/AUTH/TLS but a subscriber-shaped set of
+  connection options.
 </p>
 
 <aside class="wiki-rationale">
@@ -742,14 +779,16 @@
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Override the retry policy on the dedicated client</strong> — the base factory at
-  <code>redis/client.ts</code> disables retries (<code>retryStrategy: () =&gt; null</code>) because
-  the boot probe wants fail-loud semantics. The subscriber is long-lived and needs the opposite: an
-  exponential backoff up to 30&nbsp;s with no per-request retry cap (<code
-    >maxRetriesPerRequest: null</code
-  >
-  is required for pub/sub clients in ioredis). The <code>.duplicate(...)</code> call threads the
-  override-specific options through.
+  <strong>The duplicate carries pub/sub-shaped options, not a bespoke retry policy</strong> — the
+  base factory at <code>redis/client.ts</code> already reconnects: it shares the bounded
+  backoff-with-jitter strategy every runtime client uses (see
+  <a href="./redis-reconnect.html">Redis reconnection</a>), so there is no per-client retry lambda
+  to hand-roll here anymore. What the duplicate DOES override is what a subscriber needs and the
+  fast-fail request client can't have: <code>maxRetriesPerRequest: null</code> and
+  <code>enableOfflineQueue: true</code> (both required for a pub/sub client in ioredis). It passes
+  the shared strategy through under its own label (<code>pipeline-subscriber:&lt;channel&gt;</code>)
+  so an outage on this connection is named distinctly in the logs. Boot fail-loud lives in the boot
+  gate, not in this retry policy.
 </aside>
 
 <p>
@@ -845,9 +884,14 @@
 </h3>
 <ol>
   <li>
-    A Redis blip emits the warn-level <code>'pipeline-subscriber reconnecting'</code> log line. In
-    Logs Insights:
-    <code>fields @timestamp, msg | filter msg like /pipeline-subscriber reconnecting/</code>.
+    A Redis blip emits the shared reconnect strategy's warn line, one per attempt, tagged with this
+    subscriber's label. In Logs Insights:
+    <code
+      >fields @timestamp, label, attempt, delayMs | filter event = 'redis.reconnecting' and label
+      like /pipeline-subscriber/</code
+    >. (There is no longer a separate <code>'pipeline-subscriber reconnecting'</code> handler — the
+    shared strategy in <a href="./redis-reconnect.html">Redis reconnection</a> owns the per-attempt
+    line, so a second one here was pure noise.)
   </li>
   <li>
     The subsequent recovery is the warn-level
@@ -1083,6 +1127,14 @@
       <td><code>back-pressure</code></td>
       <td>5&nbsp;s drain window expired after a <code>raw.write() === false</code>.</td>
       <td>Investigate slow client; reconnect once recovered.</td>
+    </tr>
+    <tr>
+      <td><code>complete</code></td>
+      <td>
+        A one-shot stream delivered its terminal event (not the status stream — the
+        synthesize-preview brief).
+      </td>
+      <td>None; the exchange is done.</td>
     </tr>
     <tr>
       <td><code>unknown</code></td>

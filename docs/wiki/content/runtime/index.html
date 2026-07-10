@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:69aa37a0069f2eaf595570a0959558310a5775d8b2081f5a6e5b035360cc03b5 -->
+<!-- source-hash: sha256:df29f18bafa52ef6bfd27747ee1d69b1194d416c117e3d910a43923fc892c7ba -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>Backend</h1>
@@ -227,7 +227,8 @@
   <code>app.log.warn({ probe, err }, 'health-ready probe failed')</code> per failed probe so
   CloudWatch can be filtered. The <a href="../infra/serving.html">ALB target group</a> uses this
   endpoint. If it flaps, the ALB stops routing while the container keeps running and may self-heal —
-  Redis reconnects, pg pool recovers — without an ECS task replacement.
+  <a href="./redis-reconnect.html">Redis reconnects</a>, pg pool recovers — without an ECS task
+  replacement.
 </p>
 
 <aside class="wiki-rationale">

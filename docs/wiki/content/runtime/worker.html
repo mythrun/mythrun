@@ -15,7 +15,7 @@
 <!-- source: backend/src/session/session-reconcile.ts -->
 <!-- source: backend/src/session/post-session-analysis.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
-<!-- source-hash: sha256:ef385aa6ab50e8089bb1cb86af9fefbe8ebc22a6f75f95a8428c1ab1b9e5e80b -->
+<!-- source-hash: sha256:46cd8d30dd2a3c3ff24c40a6215a7351e6a161211f98f9935de8246d30f538e4 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Worker</h1>
@@ -233,10 +233,16 @@
 <p>
   Boot is sequential and fail-fast.
   <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis client configured for
-  BullMQ; immediately <code>ping()</code>'d so a misconfigured URL surfaces at startup rather than
-  first-job time. <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the
-  realtime side, used by MYT-52's streaming entity / edge <code>PUBLISH</code> path, myth-imxg's
-  per-fact events, and MYT-62's session-prep phase + prose deltas &mdash; all feeding the
+  BullMQ; immediately <code>ping()</code>'d (through <code>waitFor</code>) so a misconfigured URL
+  surfaces at startup rather than first-job time. Boot is where the client fails <em>loud</em>; at
+  runtime it does the opposite — both clients now share the bounded backoff-with-jitter reconnect
+  strategy, so a mid-run ElastiCache blip self-heals (the workers reconnect and BullMQ reclaims any
+  job stalled during the gap) instead of severing the process until a rollover. That config-vs-
+  transient split, and what an operator sees in the logs during a blip, live on
+  <a href="./redis-reconnect.html">Redis reconnection</a>.
+  <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the realtime side,
+  used by MYT-52's streaming entity / edge <code>PUBLISH</code> path, myth-imxg's per-fact events,
+  and MYT-62's session-prep phase + prose deltas &mdash; all feeding the
   <a href="./pipeline-status.html">pipeline status</a> SSE bridge, the prep deltas over the separate
   dev-only <a href="./session-prep.html#two-channels-one-stream">prep channel</a>).
   <code>createPgPool(env.databaseUrl, { max: 4 })</code> with <code>SELECT 1</code> follows. Only
@@ -590,7 +596,9 @@
     <tr>
       <td><code>backend/src/redis/bullmq-client.ts</code></td>
       <td>
-        ioredis factory with <code>maxRetriesPerRequest: null</code> for BullMQ compatibility.
+        ioredis factory with <code>maxRetriesPerRequest: null</code> for BullMQ compatibility;
+        shares the bounded backoff-with-jitter reconnect strategy (see
+        <a href="./redis-reconnect.html">Redis reconnection</a>).
       </td>
     </tr>
     <tr>

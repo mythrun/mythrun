@@ -359,13 +359,33 @@
   stream their pipeline progress as Server-Sent Events. <code>open(path)</code> starts the cycle;
   subscribers attach via <code>onEvent</code> (decoded <code>PipelineEvent</code>s) and
   <code>onSnapshot</code> (the raw first-frame snapshot, which is <em>not</em> a
-  <code>PipelineEvent</code>). All the framing, decoding, and reconnection lives in the brain: it
-  reassembles blank-line-delimited SSE frames across chunk boundaries, strips the
-  leading-space-after-colon, joins multi-line <code>data:</code> fields, and skips comment
-  keepalives. The transport never auto-closes on a data frame — a <code>finalized</code> event is
-  per-entity, not terminal — so the consuming flow calls <code>close()</code> on its own terminal
-  event.
+  <code>PipelineEvent</code>). All the framing, decoding, and reconnection lives in the brain. The
+  framing itself is a pair of pure primitives in <code>sse-frames.ts</code>:
+  <code>parseSseFrame</code> (parse one blank-line-delimited frame into its
+  <code>event:</code>/<code>data:</code> fields — strip the leading space after the colon, join
+  multi-line <code>data:</code>, drop comment keepalives) and <code>readStream</code> (reassemble
+  those frames across chunk boundaries and route each through a caller-supplied <code>emit</code>).
+  The status client wraps them with its own frame-routing and the reconnect state machine; it never
+  auto-closes on a data frame — a <code>finalized</code> event is per-entity, not terminal — so the
+  consuming flow calls <code>close()</code> on its own terminal event.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The frame primitives are extracted so a one-shot consumer can share them</strong> — the
+  parser and the read loop used to live inside the status client. The guided-create world brief
+  streams over SSE too (<code>POST /api/campaigns/synthesize-preview/stream</code>), but it is a
+  <em>one-shot</em> stream, not a reconnecting one: the brief writes itself once, ends, and is done
+  — a drop is a failure to surface, not a thing to silently retry. So its client-core reader
+  (<code>api/synthesize-stream.ts</code>) shares <code>parseSseFrame</code> +
+  <code>readStream</code>
+  verbatim but skips the whole connection state machine, treating its terminal
+  <code>complete</code>/<code>rejected</code>/<code>error</code> data event the same way the status
+  client treats an <code>event: close</code>. Extracting the framing keeps one copy of the fiddly
+  chunk-boundary reassembly rather than forking it per consumer. The brief's prose renders through
+  the <a href="./design-system.html">@mythrun/ui</a> <code>StreamingProse</code> component; the
+  abort on a closed tab is threaded server-side into the Sonnet call
+  (<code>StreamObjectOpts.abortSignal</code>).
+</aside>
 
 <aside class="wiki-rationale">
   <strong
