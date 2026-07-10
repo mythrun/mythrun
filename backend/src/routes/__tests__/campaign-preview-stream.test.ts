@@ -293,9 +293,11 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
     )
     expect(Number(balance.rows[0]?.balance)).toBe(1)
 
-    // The gate judged the FINAL (validated) concept.
+    // The gate judged the FINAL (validated) concept — with the disconnect
+    // signal threaded, so a client gone during the gate beat cancels it too.
     expect(runInputGateMock).toHaveBeenCalledTimes(1)
     expect(runInputGateMock.mock.calls[0]?.[0]?.concept).toBe(CONCEPT)
+    expect(runInputGateMock.mock.calls[0]?.[0]?.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
   it('the terminal complete carries the VALIDATED concept when it diverges from the streamed text (repair)', async () => {

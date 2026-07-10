@@ -53,6 +53,9 @@ export interface InputGateVerdict {
 export interface InputGateArgs {
   readonly concept: string
   readonly intentSummary: SynthesizerOutput['intentSummary'] | null
+  /** External cancellation (e.g. the SSE client disconnected) — combined with
+   *  the call timeout inside generateObject. Absent = timeout-only, unchanged. */
+  readonly abortSignal?: AbortSignal
 }
 
 const PRIMARY_THRESHOLD = 0.85
@@ -75,6 +78,8 @@ export async function runInputGate(args: InputGateArgs): Promise<InputGateVerdic
     maxRetries: 3,
     callSite: 'input-gate',
     schemaName: 'InputGateSchema',
+    // exactOptionalPropertyTypes: only pass the key when a signal exists.
+    ...(args.abortSignal !== undefined ? { abortSignal: args.abortSignal } : {}),
   })
   return computeVerdict(result.output, result.usage)
 }

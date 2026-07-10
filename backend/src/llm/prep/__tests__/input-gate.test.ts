@@ -133,4 +133,18 @@ describe('runInputGate', () => {
     >
     expect(callArgs.prompt).toContain('UNIQUE_SOURCE_Z')
   })
+
+  it('threads an external abortSignal through to the LLM call (SSE disconnect cancels the gate)', async () => {
+    mockGateReturn({})
+    const external = new AbortController()
+    await runInputGate({ concept: 'a concept', intentSummary: null, abortSignal: external.signal })
+    // The wrapper combines external + timeout via AbortSignal.any, so the
+    // SDK-received signal must FOLLOW the external one.
+    const sdkSignal = (
+      vi.mocked(ai.generateText).mock.calls.at(-1)?.[0] as unknown as { abortSignal: AbortSignal }
+    ).abortSignal
+    expect(sdkSignal.aborted).toBe(false)
+    external.abort()
+    expect(sdkSignal.aborted).toBe(true)
+  })
 })

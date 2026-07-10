@@ -41,7 +41,7 @@ import type { SynthesizeStreamEvent, SynthesizeStreamErrorCode } from '@mythrun/
 
 import { createRepo } from '../repo/index.js'
 import { requireDbUser } from '../auth/require-db-user.js'
-import { streamSynthesizeConcept } from '../llm/prep/synthesize-concept.js'
+import { streamSynthesizeConcept, type SynthesizerPick } from '../llm/prep/synthesize-concept.js'
 import { runInputGate } from '../llm/prep/input-gate.js'
 import { LlmContentFilteredError } from '../llm/errors.js'
 import { createRejectionStormCounter } from '../auth/rejection-storm.js'
@@ -82,6 +82,80 @@ function streamErrorCode(err: unknown): SynthesizeStreamErrorCode {
 /** Serialize one typed event as a `data:` SSE frame. */
 function emit(sink: SseSink, event: SynthesizeStreamEvent): void {
   sink.write(`data: ${JSON.stringify(event)}\n\n`)
+}
+
+interface StreamedSynthesisArgs {
+  readonly sink: SseSink
+  readonly signal: AbortSignal
+  readonly picks: readonly SynthesizerPick[]
+  readonly userId: string
+  readonly redis: Redis
+  readonly redisKeyPrefix: string
+  readonly incrementStorm: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
+  readonly logger: PinoLogger
+}
+
+/** The post-hijack half of the route: stream deltas, gate the validated
+ *  output, then terminal-frame (complete | rejected | error) and close.
+ *  Every failure is caught here — the sink always gets a terminal. */
+async function runStreamedSynthesis(args: StreamedSynthesisArgs): Promise<void> {
+  const { sink, signal, logger } = args
+  const stream = streamSynthesizeConcept(args.picks, { abortSignal: signal })
+  // Guard the output promise: if the delta loop throws, `output` may also
+  // reject; pre-attaching a no-op handler keeps that from surfacing as an
+  // unhandled rejection. The `await stream.output` below still observes it.
+  stream.output.catch(() => undefined)
+
+  try {
+    for await (const delta of stream.deltas) {
+      emit(sink, { type: 'delta', text: delta })
+    }
+    const synth = await stream.output
+
+    const gate = await runInputGate({
+      concept: synth.concept,
+      intentSummary: synth.intentSummary,
+      // A disconnect during the gate beat cancels this call too.
+      abortSignal: signal,
+    })
+    if (gate.verdict === 'reject') {
+      // Same side-effects as the JSON route's 422 (storm increment +
+      // server-only reasoning log), same payload — as a terminal frame.
+      const payload = await recordGateRejection({
+        gate,
+        mode: 'guided',
+        synthesizedConcept: synth.concept,
+        stormIncrementer: args.incrementStorm,
+        logger,
+      })
+      emit(sink, {
+        type: 'rejected',
+        code: 'concept_rejected',
+        // A reject verdict always carries a reason; the fallback mirrors
+        // the FE's own defensive default and satisfies the non-null wire type.
+        /* c8 ignore next */
+        reason: payload.reason ?? 'inappropriate',
+        rejectionMessage: payload.rejectionMessage,
+        synthesizedConcept: synth.concept,
+      })
+    } else {
+      // Gate pass: park EXACTLY as the JSON route parks (same store, same
+      // record shape, reworkCount:0, IDOR-safe user-keyed, non-charging).
+      const previewId = await putPreview(args.redis, args.redisKeyPrefix, args.userId, {
+        concept: synth.concept,
+        intentSummary: synth.intentSummary,
+        reworkCount: 0,
+      })
+      emit(sink, { type: 'complete', previewId, concept: synth.concept })
+    }
+  } catch (err) {
+    logger.error({ err }, 'synthesize-preview stream failed')
+    // Failure honesty: a clear terminal frame, never a hung half-brief.
+    // (A write after a client disconnect is a no-op on the closed sink.)
+    emit(sink, { type: 'error', code: streamErrorCode(err) })
+  } finally {
+    sink.close('complete')
+  }
 }
 
 // FastifyPluginAsync requires an async function shape; the body has no
@@ -128,60 +202,16 @@ export const campaignPreviewStreamRoutes: FastifyPluginAsync<CampaignPreviewStre
         },
       })
 
-      const stream = streamSynthesizeConcept(parsed.data.picks, { abortSignal: abort.signal })
-      // Guard the output promise: if the delta loop throws, `output` may also
-      // reject; pre-attaching a no-op handler keeps that from surfacing as an
-      // unhandled rejection. The `await stream.output` below still observes it.
-      stream.output.catch(() => undefined)
-
-      try {
-        for await (const delta of stream.deltas) {
-          emit(sink, { type: 'delta', text: delta })
-        }
-        const synth = await stream.output
-
-        const gate = await runInputGate({
-          concept: synth.concept,
-          intentSummary: synth.intentSummary,
-        })
-        if (gate.verdict === 'reject') {
-          // Same side-effects as the JSON route's 422 (storm increment +
-          // server-only reasoning log), same payload — as a terminal frame.
-          const payload = await recordGateRejection({
-            gate,
-            mode: 'guided',
-            synthesizedConcept: synth.concept,
-            stormIncrementer: () => stormCounter.incrementAndCheck(dbUser.id),
-            logger: request.log as PinoLogger,
-          })
-          emit(sink, {
-            type: 'rejected',
-            code: 'concept_rejected',
-            // A reject verdict always carries a reason; the fallback mirrors
-            // the FE's own defensive default and satisfies the non-null wire type.
-            /* c8 ignore next */
-            reason: payload.reason ?? 'inappropriate',
-            rejectionMessage: payload.rejectionMessage,
-            synthesizedConcept: synth.concept,
-          })
-        } else {
-          // Gate pass: park EXACTLY as the JSON route parks (same store, same
-          // record shape, reworkCount:0, IDOR-safe user-keyed, non-charging).
-          const previewId = await putPreview(opts.redis, opts.redisKeyPrefix, dbUser.id, {
-            concept: synth.concept,
-            intentSummary: synth.intentSummary,
-            reworkCount: 0,
-          })
-          emit(sink, { type: 'complete', previewId, concept: synth.concept })
-        }
-      } catch (err) {
-        request.log.error({ err }, 'synthesize-preview stream failed')
-        // Failure honesty: a clear terminal frame, never a hung half-brief.
-        // (A write after a client disconnect is a no-op on the closed sink.)
-        emit(sink, { type: 'error', code: streamErrorCode(err) })
-      } finally {
-        sink.close('complete')
-      }
+      await runStreamedSynthesis({
+        sink,
+        signal: abort.signal,
+        picks: parsed.data.picks,
+        userId: dbUser.id,
+        redis: opts.redis,
+        redisKeyPrefix: opts.redisKeyPrefix,
+        incrementStorm: () => stormCounter.incrementAndCheck(dbUser.id),
+        logger: request.log as PinoLogger,
+      })
       return reply
     },
   )
