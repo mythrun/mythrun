@@ -249,6 +249,36 @@ describe('WorldReveal — settled graph beside the wiki', () => {
     expect(within(wiki).getByRole('heading', { name: '[ph: people]' })).toBeDefined()
   })
 
+  it('opens the wiki on the world INTRODUCTION when the snapshot carries one — no extra fetch', async () => {
+    // The intro arrives WITH the first snapshot (the reveal boundary
+    // guarantees it for every post-migration world): the wiki's home is the
+    // front door — title, prose, dig-deeper references — from one fetch.
+    // The bare SNAPSHOT elsewhere in this file pins the OLD-world fallback:
+    // the same panel opens on the browse home when `introduction` is absent.
+    const withIntro: WorldGenSnapshot = {
+      ...SNAPSHOT,
+      introduction: {
+        title: 'The Ashfen Reaches',
+        prose: 'A tidewater world of salt and tallow.\n\nIts powers keep uneasy ledgers.',
+        references: [{ entityId: 'ent-npc-1', name: 'Maeris Vale' }],
+      },
+    }
+    const fetchSnapshot = vi.fn().mockResolvedValue(withIntro)
+    renderReveal({ fetchSnapshot })
+    const wiki = await screen.findByTestId('reveal-wiki')
+    expect(within(wiki).getByRole('heading', { name: 'The Ashfen Reaches' })).toBeDefined()
+    expect(within(wiki).getByText('A tidewater world of salt and tallow.')).toBeDefined()
+    expect(within(wiki).getByText(i18n.t('worldReveal.wikiDigDeeper'))).toBeDefined()
+    // The reference row: the wire name annotated with its kind label.
+    expect(
+      within(wiki).getByRole('button', { name: 'Maeris Vale [ph: people]' }),
+    ).toBeDefined()
+    // The browse index rides the same surface (search + groups reachable).
+    expect(within(wiki).getByText(i18n.t('worldReveal.wikiIndex'))).toBeDefined()
+    expect(within(wiki).getByRole('heading', { name: '[ph: places]' })).toBeDefined()
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1)
+  })
+
   it('shows a calm loading placeholder before the snapshot resolves', () => {
     // A never-resolving fetch keeps the wiki panel in its loading state.
     const pending = new Promise<WorldGenSnapshot>(() => {

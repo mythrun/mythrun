@@ -140,6 +140,8 @@ export type {
   WikiEntity,
   WikiFact,
   WikiRelatedLink,
+  WikiIntroduction,
+  WikiIntroReference,
 } from './world-wiki.ts'
 
 // RevealTransition (MYT-89 Phase D, §3.8) — the gen→reveal reward moment: the

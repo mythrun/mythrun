@@ -2,14 +2,16 @@ import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, within } from 'storybook/test'
 import { WorldWiki } from './WorldWiki.tsx'
-import { WIKI_FIXTURE_MODEL } from './wiki-fixture.ts'
+import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
 
 // WorldWiki — the browsable wiki the owner explores their newly-generated
-// world through, as a real PLACE: a home landing (search over browse-by-kind
-// groups) opening onto per-entity pages (mono kind tag over serif name, the
-// composed fact body, RELATED cross-links, a quiet back button with per-page
-// scroll memory). Flat 1-bit paper register — hairline rules, surface-swap
-// hover, no boxes/cards/chips.
+// world through, as a real PLACE: home is the world's INTRODUCTION (the serif
+// world-name title, the grounding prose, dig-deeper references, then the
+// search + browse index one scroll below — or the browse landing alone for a
+// pre-migration world), opening onto per-entity pages (mono kind tag over
+// serif name, the composed fact body, RELATED cross-links, a quiet back
+// button with per-page scroll memory). Flat 1-bit paper register — hairline
+// rules, surface-swap hover, no boxes/cards/chips.
 
 const meta: Meta<typeof WorldWiki> = {
   title: 'Patterns/WorldWiki/WorldWiki',
@@ -30,6 +32,8 @@ const LABELS = {
   backLabel: '[placeholder for back]',
   relatedLabel: '[placeholder for related]',
   emptyBodyLabel: '[placeholder for the empty-page note]',
+  referencesLabel: '[placeholder for dig deeper]',
+  indexLabel: '[placeholder for index]',
   groupLabels: {
     faction: '[placeholder for Factions]',
     location: '[placeholder for Locations]',
@@ -38,14 +42,19 @@ const LABELS = {
   },
 } as const
 
-function WikiDemo({ paneClass = 'h-[70vh]' }: { paneClass?: string }): React.JSX.Element {
+interface WikiDemoProps {
+  paneClass?: string
+  model?: typeof WIKI_FIXTURE_MODEL
+}
+
+function WikiDemo({ paneClass = 'h-[70vh]', model = WIKI_FIXTURE_MODEL }: WikiDemoProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>()
   const [query, setQuery] = useState('')
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
       <div className={`mx-auto max-w-sm ${paneClass}`}>
         <WorldWiki
-          model={WIKI_FIXTURE_MODEL}
+          model={model}
           {...(selectedId !== undefined ? { selectedId } : {})}
           onSelect={setSelectedId}
           query={query}
@@ -57,22 +66,43 @@ function WikiDemo({ paneClass = 'h-[70vh]' }: { paneClass?: string }): React.JSX
   )
 }
 
-// The resting landing: search over the kind groups, every row a page opening.
+// The resting landing: the world's introduction — the title moment, the
+// prose, the dig-deeper references — with the search + browse index below.
 export const Home: Story = {
   render: () => <WikiDemo />,
 }
 
-// The reader's journey, driven for real in the browser sweep: home → open The
-// Tallow Guild → scroll the page → hop its RELATED link to Maeris Vale → back
-// to the guild, where the SCROLL POSITION survives (the D3 stack's memory,
-// proven in real Chromium — the pane is a fixed 16rem so the guild page
-// genuinely overflows at every sweep viewport). The play() ends ON the
-// populated guild page, so the 375/1280 overflow gate measures the page view.
+// A pre-migration world (no introduction): home is the browse landing alone.
+export const HomeBrowseOnly: Story = {
+  render: () => <WikiDemo model={WIKI_FIXTURE_MODEL_BARE} />,
+}
+
+// The reader's journey, driven for real in the browser sweep: the wiki OPENS
+// on the intro → read down to the dig-deeper references → open The Tallow
+// Guild → scroll the page → hop its RELATED link to Maeris Vale → back to the
+// guild (page scroll survives — the D3 stack's memory) → back to the INTRO,
+// re-seated at the references (the shell's home scroll memory), all proven in
+// real Chromium — the pane is a fixed 16rem so both the intro home and the
+// guild page genuinely overflow at every sweep viewport. The play() ends on
+// the intro home, so the 375/1280 overflow gate measures the front door.
 export const Journey: Story = {
   render: () => <WikiDemo paneClass="h-64" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(canvas.getByRole('button', { name: 'The Tallow Guild' }))
+    // The wiki opens on the world's front door.
+    await expect(canvas.getByRole('heading', { name: 'The Ashfen Reaches' })).toBeInTheDocument()
+    // Read down the intro (the references live at the bottom), remembering the
+    // browser-clamped real offset.
+    const intro = canvasElement.querySelector('article')
+    const home = intro?.parentElement
+    if (home === null || home === undefined) throw new Error('the intro rendered no scroll container')
+    home.scrollTop = 200
+    const homeScrolled = home.scrollTop
+    await expect(homeScrolled).toBeGreaterThan(0)
+    // A dig-deeper reference opens the entity's page.
+    await userEvent.click(
+      canvas.getByRole('button', { name: 'The Tallow Guild [placeholder for Factions]' }),
+    )
     await expect(canvas.getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
     // Scroll the page, remembering the browser-clamped real offset.
     const article = canvasElement.querySelector('article')
@@ -88,5 +118,10 @@ export const Journey: Story = {
     await userEvent.click(canvas.getByRole('button', { name: '[placeholder for back]' }))
     await expect(canvas.getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
     await expect(article.scrollTop).toBe(scrolled)
+    // Back again lands on the INTRO, re-seated where the reader left it.
+    await userEvent.click(canvas.getByRole('button', { name: '[placeholder for back]' }))
+    await expect(canvas.getByRole('heading', { name: 'The Ashfen Reaches' })).toBeInTheDocument()
+    const homeAgain = canvasElement.querySelector('article')?.parentElement
+    await expect(homeAgain?.scrollTop).toBe(homeScrolled)
   },
 }

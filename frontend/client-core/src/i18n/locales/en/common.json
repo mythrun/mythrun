@@ -170,8 +170,6 @@
     "settings": "[ph_settings_screen]"
   },
   "worldGen": {
-    "listLabel": "[ph: entities in your forming world]",
-    "emptyLabel": "[ph: the world is still taking shape]",
     "failedTitle": "[ph: the world stalled]",
     "failedBody": "[ph: the making was interrupted — you can pick it back up]",
     "retry": "[ph: try again]",
@@ -225,8 +223,6 @@
     "loading": "[ph: settling your world]",
     "empty": "[ph: nothing to explore yet]",
     "unavailable": "[ph: the world wiki isn't available right now]",
-    "graphLabel": "[ph: the entities of your world]",
-    "graphEmpty": "[ph: your world has no entities]",
     "wikiSearchLabel": "[ph: search your world]",
     "wikiSearchPlaceholder": "[ph: search]",
     "wikiEmpty": "[ph: nothing matches]",
@@ -235,6 +231,8 @@
     "wikiBack": "[ph: go back]",
     "wikiRelated": "[ph: connected across your world]",
     "wikiEmptyBody": "[ph: the world holds nothing on this yet]",
+    "wikiDigDeeper": "[ph: dig deeper]",
+    "wikiIndex": "[ph: index]",
     "group": {
       "faction": "[ph: factions]",
       "location": "[ph: places]",

@@ -8,10 +8,23 @@ import type { WikiEntity, WikiViewModel } from '@mythrun/client-core/contract'
 // exercise nothing (the D2 fixture-honesty rule), so the relationships below
 // are load-bearing: every page in the fixture has related reading, and
 // Sunspire is the deliberate empty-body specimen (no facts, one relationship).
+// The `introduction` (myth-b9bap) mirrors what every post-migration world
+// carries — its two-paragraph prose is load-bearing too (it proves the
+// paragraph split renders paragraphs, not a wall).
 
 type WikiSnapshotInput = Parameters<typeof toWikiViewModel>[0]
 
 const SNAPSHOT: WikiSnapshotInput = {
+  introduction: {
+    title: 'The Ashfen Reaches',
+    prose:
+      '[placeholder for the first introduction paragraph — how the world functions at rest, long enough to wrap at phone width and show the prose measure]\n\n[placeholder for the second introduction paragraph — the tensions a newcomer would feel first]',
+    references: [
+      { entityId: 'f-guild', name: 'The Tallow Guild' },
+      { entityId: 'l-reach', name: 'Ashfen Reach' },
+      { entityId: 'n-vale', name: 'Maeris Vale' },
+    ],
+  },
   entities: [
     { id: 'f-guild', entityType: 'faction', name: 'The Tallow Guild' },
     { id: 'l-reach', entityType: 'location', name: 'Ashfen Reach' },
@@ -69,6 +82,10 @@ const SNAPSHOT: WikiSnapshotInput = {
 }
 
 export const WIKI_FIXTURE_MODEL: WikiViewModel = toWikiViewModel(SNAPSHOT)
+
+/** The same world WITHOUT an introduction — a pre-migration snapshot. The
+ *  old-world specimen: the wiki must open on the browse home, gracefully. */
+export const WIKI_FIXTURE_MODEL_BARE: WikiViewModel = { groups: WIKI_FIXTURE_MODEL.groups }
 
 /** Look a fixture entity up by id (nested children included). Throws on a miss
  *  so a typo'd id fails the test loudly instead of feeding it `undefined`. */

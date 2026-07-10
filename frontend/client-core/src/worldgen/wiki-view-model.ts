@@ -59,8 +59,31 @@ export interface WikiGroup {
   readonly entities: readonly WikiEntity[]
 }
 
+/** One dig-deeper link on the introduction page: the WIRE name (the authored
+ *  reference label, not the entity's current name) plus the target's kind so
+ *  the UI can annotate the link in the wiki's mono kind-tag idiom. Only
+ *  references that resolve to a real wiki page survive normalization. */
+export interface WikiIntroReference {
+  readonly entityId: string
+  readonly name: string
+  readonly kind: EntityKind
+}
+
+/** The world-introduction page (myth-zaqxh) — the wiki's front door. `title`
+ *  is the world's name; `paragraphs` is the intro prose split on newline runs
+ *  (render one <p> each — never a wall); `references` are the dig-deeper
+ *  links, wire order preserved. */
+export interface WikiIntroduction {
+  readonly title: string
+  readonly paragraphs: readonly string[]
+  readonly references: readonly WikiIntroReference[]
+}
+
 export interface WikiViewModel {
   readonly groups: readonly WikiGroup[]
+  /** Absent for a pre-migration world (no `introduction` on the snapshot) —
+   *  the wiki then opens on the browse home instead. */
+  readonly introduction?: WikiIntroduction
 }
 
 /**
@@ -221,10 +244,39 @@ function toEntityNode(
 }
 
 /**
+ * Normalize the snapshot's introduction: split the prose into paragraphs on
+ * newline runs (blank segments dropped), and resolve each reference against
+ * the entity set for its kind — keeping the WIRE name (the authored label) and
+ * the wire order. A reference whose entity is absent (consolidated away since
+ * authoring) or is a 'pc' (not world lore — no wiki page exists) is dropped
+ * silently, the same defensive posture as RELATED links.
+ */
+function toIntroduction(
+  intro: NonNullable<WikiSnapshot['introduction']>,
+  kindById: ReadonlyMap<string, EntityKind>,
+): WikiIntroduction {
+  const references: WikiIntroReference[] = []
+  for (const ref of intro.references) {
+    const kind = kindById.get(ref.entityId)
+    if (kind === undefined || !KIND_ORDER.includes(kind)) continue
+    references.push({ entityId: ref.entityId, name: ref.name, kind })
+  }
+  return {
+    title: intro.title,
+    paragraphs: intro.prose
+      .split(/\n+/)
+      .map((p) => p.trim())
+      .filter((p) => p !== ''),
+    references,
+  }
+}
+
+/**
  * Normalize a world-snapshot into the wiki view model: group entities by kind
  * (canonical order), nest child locations under their parents, attach each
- * entity's facts. Deterministic throughout. Does NO tier filtering — see the
- * enforced-ignorance note at the top of this module.
+ * entity's facts, and carry the introduction (the front-door page) through
+ * when the snapshot has one. Deterministic throughout. Does NO tier filtering
+ * — see the enforced-ignorance note at the top of this module.
  */
 export function toWikiViewModel(snapshot: WikiSnapshot): WikiViewModel {
   const factsByEntity = indexFactsByEntity(snapshot)
@@ -240,5 +292,7 @@ export function toWikiViewModel(snapshot: WikiSnapshot): WikiViewModel {
       entities: roots.map((e) => toEntityNode(e, layout, factsByEntity, relatedByEntity)),
     })
   }
-  return { groups }
+  if (snapshot.introduction === undefined) return { groups }
+  const kindById = new Map(snapshot.entities.map((e) => [e.id, e.entityType]))
+  return { groups, introduction: toIntroduction(snapshot.introduction, kindById) }
 }

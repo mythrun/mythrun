@@ -111,6 +111,8 @@ export function WikiPanel({ state, externalSelection, onSelect, query, onQuery }
       backLabel={t('worldReveal.wikiBack')}
       relatedLabel={t('worldReveal.wikiRelated')}
       emptyBodyLabel={t('worldReveal.wikiEmptyBody')}
+      referencesLabel={t('worldReveal.wikiDigDeeper')}
+      indexLabel={t('worldReveal.wikiIndex')}
       groupLabels={{
         faction: t('worldReveal.group.faction'),
         location: t('worldReveal.group.location'),

@@ -4,14 +4,16 @@ import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import type { WikiViewModel } from '@mythrun/client-core/contract'
 import { WorldWiki } from './WorldWiki.tsx'
-import { WIKI_FIXTURE_MODEL } from './wiki-fixture.ts'
+import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
 
 // The composed WorldWiki: WikiHome ⇄ WikiPage driven by the REAL
 // `useWikiNavigation` (D3) — these tests walk the wiki as a reader would.
-// Navigation (home row → page, related hop, back), the scroll round-trip
-// (the D3 contract's consumer side), the external graph-selection push
-// (`selectedId` — the reveal's graph↔wiki bridge), and the defensive
-// home-fallback when a silent refetch drops the current entity.
+// Home IS the world's introduction (myth-b9bap) when the model carries one;
+// navigation (home row → page, related hop, back), the scroll round-trip on
+// pages AND home (the D3 contract's consumer side + the shell's home scroll
+// memory), the external graph-selection push (`selectedId` — the reveal's
+// graph↔wiki bridge), and the defensive home-fallback when a silent refetch
+// drops the current entity.
 
 const LABELS = {
   searchLabel: 'Search the world',
@@ -20,6 +22,8 @@ const LABELS = {
   backLabel: 'Back',
   relatedLabel: 'Related',
   emptyBodyLabel: 'Nothing recorded here yet',
+  referencesLabel: 'Dig deeper',
+  indexLabel: 'Index',
   groupLabels: { faction: 'Factions', location: 'Locations', npc: 'People', item: 'Items' },
 } as const
 
@@ -122,6 +126,73 @@ describe('WorldWiki — external selection (the graph↔wiki bridge)', () => {
     // …so one Back lands home, not on a second copy of the page.
     await user.click(getByRole('button', { name: 'Back' }))
     expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+  })
+})
+
+describe('WorldWiki — the introduction as home (myth-b9bap)', () => {
+  it('opens on the introduction; a dig-deeper reference navigates; back returns to the intro', async () => {
+    const user = userEvent.setup()
+    const { getByRole, queryByRole } = renderWiki()
+
+    // The wiki OPENS on the world's front door: the title moment.
+    expect(getByRole('heading', { name: 'The Ashfen Reaches' })).toBeInTheDocument()
+
+    // A dig-deeper reference opens the entity's page (the intro is gone).
+    await user.click(getByRole('button', { name: 'Maeris Vale People' }))
+    expect(getByRole('heading', { name: 'Maeris Vale' })).toBeInTheDocument()
+    expect(queryByRole('heading', { name: 'The Ashfen Reaches' })).toBeNull()
+
+    // Back lands on the intro again — home IS the introduction.
+    await user.click(getByRole('button', { name: 'Back' }))
+    expect(getByRole('heading', { name: 'The Ashfen Reaches' })).toBeInTheDocument()
+  })
+
+  it('reports a dig-deeper navigation outward through onSelect', async () => {
+    const onSelect = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = renderWiki({ onSelect })
+    await user.click(getByRole('button', { name: 'The Tallow Guild Factions' }))
+    expect(onSelect).toHaveBeenLastCalledWith('f-guild')
+  })
+
+  it('retains the home scroll offset across a page round-trip (home scroll memory)', async () => {
+    const user = userEvent.setup()
+    const { getByRole } = renderWiki()
+
+    // Read down the intro (the references live at the bottom), then hop away.
+    const home = getByRole('article').parentElement
+    if (home === null) throw new Error('the intro rendered outside a scroll container')
+    home.scrollTop = 180
+    await user.click(getByRole('button', { name: 'Maeris Vale People' }))
+    expect(getByRole('heading', { name: 'Maeris Vale' })).toBeInTheDocument()
+
+    // Back re-seats the reader at the references, not the title.
+    await user.click(getByRole('button', { name: 'Back' }))
+    expect(getByRole('article').parentElement?.scrollTop).toBe(180)
+  })
+
+  it('falls back to the browse home when the model has no introduction (old world)', () => {
+    const { getByRole, queryByRole } = renderWiki({ model: WIKI_FIXTURE_MODEL_BARE })
+    expect(queryByRole('article')).toBeNull()
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+    expect(getByRole('heading', { name: 'Factions' })).toBeInTheDocument()
+  })
+
+  it('keeps the reader seated through a silent model refetch (no remount, no scroll reset)', () => {
+    const { rerender, getByRole } = renderWiki()
+    const home = getByRole('article').parentElement
+    if (home === null) throw new Error('the intro rendered outside a scroll container')
+    home.scrollTop = 90
+
+    // A tail-stage refetch hands down a FRESH model object (same content).
+    const refetched: WikiViewModel = { ...WIKI_FIXTURE_MODEL }
+    rerender(
+      <WorldWiki model={refetched} onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,
+    )
+
+    // Same DOM node (no remount), same offset (no reset).
+    expect(getByRole('article').parentElement).toBe(home)
+    expect(home.scrollTop).toBe(90)
   })
 })
 

@@ -29,7 +29,8 @@ const BACK_CLASS = cn(
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
 )
 
-// The mono small-caps tag idiom (entity-list vocabulary) for the kind line.
+// The mono small-caps tag idiom (the wiki's shared label vocabulary) for the
+// kind line.
 const KIND_CLASS = 'font-ui text-[0.65rem] uppercase tracking-wide text-ink-tertiary'
 
 export interface WikiPageProps {

@@ -3,16 +3,17 @@ import { cn } from '../../lib/cn.ts'
 import { Divider } from '../Divider/Divider.tsx'
 
 // RelatedFooter (MYT-89 D4) — a page's "see also": the entity's `related`
-// links (D2's UUID-resolved, both-directions field). Field-guide register, not
-// a chip tray: a hairline rule, a quiet mono section label, then plain rows —
-// the target NAME painted as the link (accent ink, underline on hover), the
-// de-snaked relationship label as a quiet mono annotation at the row's right
-// edge (the entity-list kind-tag idiom). Whole row is one native <button>
-// (native keyboard activation, a full-width target); only the name carries the
-// accent, so nothing reads as a pill.
+// links (D2's UUID-resolved, both-directions field), and the same idiom the
+// intro home renders its dig-deeper references through. Field-guide register,
+// not a chip tray: a hairline rule, a quiet mono section label, then plain
+// rows — the target NAME painted as the link (accent ink, underline on
+// hover), the relationship (or kind) label as a quiet mono annotation at the
+// row's right edge. Whole row is one native <button> (native keyboard
+// activation, a full-width target); only the name carries the accent, so
+// nothing reads as a pill.
 
-// The mono small-caps annotation idiom — shared vocabulary with the
-// entity-list kind tag and WikiPage's kind/section labels.
+// The mono small-caps annotation idiom — shared vocabulary with WikiPage's
+// kind/section labels.
 const LABEL_CLASS = 'shrink-0 font-ui text-[0.65rem] uppercase tracking-wide text-ink-tertiary'
 
 const ROW_CLASS = cn(

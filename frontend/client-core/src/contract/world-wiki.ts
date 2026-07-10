@@ -11,17 +11,22 @@ export type {
   WikiEntity,
   WikiFact,
   WikiRelatedLink,
+  WikiIntroduction,
+  WikiIntroReference,
 } from '../worldgen/wiki-view-model.ts'
 
 /**
- * WorldWiki (MYT-89 Phase D, D4) — the browsable wiki the owner explores their
- * newly-generated world through, rebuilt as real PAGES: a home landing (search
- * + browse-by-kind groups, nested locations) and per-entity pages (kind tag +
- * serif name, the composed fact body or a calm empty state, a RELATED footer
- * carrying cross-navigation, and a back button with per-page scroll memory).
- * Navigation state is the D3 `useWikiNavigation` stack, owned INTERNALLY — the
- * component's outer surface stays the same plain-data props the reveal already
- * passes.
+ * WorldWiki (MYT-89 Phase D, D4; intro-as-home myth-b9bap) — the browsable
+ * wiki the owner explores their newly-generated world through, rebuilt as real
+ * PAGES: a home landing and per-entity pages (kind tag + serif name, the
+ * composed fact body or a calm empty state, a RELATED footer carrying
+ * cross-navigation, and a back button with per-page scroll memory). When the
+ * model carries an `introduction`, home IS the world's introduction — the
+ * world-name title, the grounding prose, the dig-deeper references — with the
+ * search + browse-by-kind index one scroll below; without one (a pre-migration
+ * world) home is the browse landing alone. Navigation state is the D3
+ * `useWikiNavigation` stack, owned INTERNALLY — the component's outer surface
+ * stays the same plain-data props the reveal already passes.
  *
  * Platform-neutral (§9): `model` is plain data (the D2 `WikiViewModel`),
  * `onSelect`/`onQuery` are neutral value callbacks (never DOM events),
@@ -71,4 +76,10 @@ export interface WorldWikiProps extends Omit<BaseProps, 'children'> {
   /** Note shown on an entity page whose known-tier body is empty — an i18n key.
    *  Defaults to `[ph: …]`. */
   emptyBodyLabel?: string
+  /** Section label over the introduction's dig-deeper reference links — an
+   *  i18n key. Defaults to `[ph: …]`. Rendered only on the intro home. */
+  referencesLabel?: string
+  /** Quiet section label over the search + browse index below the introduction
+   *  — an i18n key. Defaults to `[ph: …]`. Rendered only on the intro home. */
+  indexLabel?: string
 }

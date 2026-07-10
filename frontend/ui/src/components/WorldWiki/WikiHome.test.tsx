@@ -3,25 +3,30 @@ import { render, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import { WikiHome } from './WikiHome.tsx'
-import { WIKI_FIXTURE_MODEL } from './wiki-fixture.ts'
+import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
 
-// WikiHome is the wiki's landing: the search field over the browse-by-kind
-// groups, every entity row a navigation affordance (it OPENS the entity's page
-// — no inline fact dropdown anymore). These tests pin the plan's first named
-// behavior: search + kind groups with clickable entities, plus the filter
-// behavior the old tree already had (ancestor path kept, empty state).
+// WikiHome is the wiki's landing. With an `introduction` on the model
+// (myth-b9bap) it IS the world's front door — the world-name title, the
+// grounding prose as paragraphs, the dig-deeper references — with the search +
+// browse-by-kind index one scroll below; without one (a pre-migration world)
+// it is the browse landing alone. Every entity row and reference is a
+// navigation affordance (it OPENS the entity's page). These tests pin both
+// variants plus the filter behavior the old tree already had (ancestor path
+// kept, empty state).
 
 const LABELS = {
   searchLabel: 'Search the world',
   searchPlaceholder: 'Search',
   emptyLabel: 'Nothing here',
+  referencesLabel: 'Dig deeper',
+  indexLabel: 'Index',
   groupLabels: { faction: 'Factions', location: 'Locations', npc: 'People', item: 'Items' },
 } as const
 
 function renderHome(overrides: Partial<React.ComponentProps<typeof WikiHome>> = {}) {
   return render(
     <WikiHome
-      model={WIKI_FIXTURE_MODEL}
+      model={WIKI_FIXTURE_MODEL_BARE}
       selectedId={undefined}
       onOpen={vi.fn()}
       query=""
@@ -103,6 +108,63 @@ describe('WikiHome — search + browse-by-kind', () => {
   it('shows the empty-state note when the query matches nothing', () => {
     const { getByText } = renderHome({ query: 'zzzznomatch' })
     expect(getByText('Nothing here')).toBeInTheDocument()
+  })
+})
+
+describe('WikiHome — the introduction (the world\'s front door)', () => {
+  const renderIntro = (overrides: Partial<React.ComponentProps<typeof WikiHome>> = {}) =>
+    renderHome({ model: WIKI_FIXTURE_MODEL, ...overrides })
+
+  it('opens on the world-name title, the prose as PARAGRAPHS, and the references', () => {
+    const { getByRole, container } = renderIntro()
+    // The title moment: the world's name as the intro heading.
+    expect(getByRole('heading', { name: 'The Ashfen Reaches' })).toBeInTheDocument()
+    // The two prose paragraphs render as separate <p>s — never a wall.
+    const article = getByRole('article')
+    const paragraphs = Array.from(article.querySelectorAll('p')).filter((p) =>
+      p.textContent.includes('introduction paragraph'),
+    )
+    expect(paragraphs).toHaveLength(2)
+    // The dig-deeper references under their section label, each a kind-labeled
+    // link row (the RelatedFooter idiom).
+    expect(within(article).getByText('Dig deeper')).toBeInTheDocument()
+    expect(within(article).getByRole('button', { name: 'The Tallow Guild Factions' })).toBeInTheDocument()
+    expect(within(article).getByRole('button', { name: 'Maeris Vale People' })).toBeInTheDocument()
+    // The index (search + browse) is on the same surface, one scroll below.
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+    expect(within(container).getByText('Index')).toBeInTheDocument()
+    expect(getByRole('heading', { name: 'Factions' })).toBeInTheDocument()
+  })
+
+  it('navigates from a dig-deeper reference — onOpen(id)', async () => {
+    const onOpen = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = renderIntro({ onOpen })
+    await user.click(getByRole('button', { name: 'Maeris Vale People' }))
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith('n-vale')
+  })
+
+  it('renders the browse home alone when the model has no introduction', () => {
+    const { queryByRole, queryByText, getByRole } = renderHome()
+    expect(queryByRole('heading', { name: 'The Ashfen Reaches' })).toBeNull()
+    expect(queryByRole('article')).toBeNull()
+    expect(queryByText('Index')).toBeNull()
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+    expect(getByRole('heading', { name: 'Factions' })).toBeInTheDocument()
+  })
+
+  it('seats the retained scroll offset on mount (the shell\'s home scroll memory)', () => {
+    const scrollRef = { current: null }
+    const { container } = renderIntro({ scroll: 120, scrollRef })
+    const scroller = scrollRef.current as HTMLElement | null
+    expect(scroller).not.toBeNull()
+    expect(container).toContainElement(scroller)
+    expect(scroller?.scrollTop).toBe(120)
+  })
+
+  it('has no a11y violations on the introduction home', async () => {
+    const { container } = renderIntro({ selectedId: 'f-guild' })
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
 

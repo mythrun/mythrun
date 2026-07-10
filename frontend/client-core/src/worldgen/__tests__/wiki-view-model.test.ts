@@ -172,6 +172,87 @@ describe('toWikiViewModel', () => {
     expect(doran?.related).toEqual([{ entityId: 'n1', name: 'Mira', label: 'allied with' }])
   })
 
+  it('normalizes the introduction: title, paragraph-split prose, kind-resolved references', () => {
+    // The snapshot's `introduction` (myth-zaqxh) becomes the wiki's front door:
+    // the title carries through, the prose splits into paragraphs on newline
+    // runs, and each reference keeps its WIRE name (the authored dig-deeper
+    // label) plus the target entity's kind so the UI can annotate the link.
+    const withIntro: WikiSnapshot = {
+      introduction: {
+        title: 'The Ashfen Reaches',
+        prose: 'First paragraph.\n\nSecond paragraph.\nThird paragraph.',
+        references: [
+          { entityId: 'n1', name: 'Mira of the Marsh' },
+          { entityId: 'l1', name: 'Saltmarsh' },
+        ],
+      },
+      entities: [
+        { id: 'l1', entityType: 'location', name: 'Saltmarsh' },
+        { id: 'n1', entityType: 'npc', name: 'Mira' },
+      ],
+      facts: [],
+      entityHierarchy: [],
+    }
+    const vm = toWikiViewModel(withIntro)
+    expect(vm.introduction).toEqual({
+      title: 'The Ashfen Reaches',
+      paragraphs: ['First paragraph.', 'Second paragraph.', 'Third paragraph.'],
+      // Wire order preserved (the intro points at them in its own order), the
+      // wire NAME preserved, the kind resolved from the snapshot entity.
+      references: [
+        { entityId: 'n1', name: 'Mira of the Marsh', kind: 'npc' },
+        { entityId: 'l1', name: 'Saltmarsh', kind: 'location' },
+      ],
+    })
+  })
+
+  it('drops an introduction reference that resolves to no wiki page', () => {
+    // A dangling entityId (consolidated away since the intro was authored) and
+    // a 'pc' target (not world lore — the wiki renders no page for it) both
+    // drop silently; the resolvable reference survives.
+    const withIntro: WikiSnapshot = {
+      introduction: {
+        title: 'The Ashfen Reaches',
+        prose: 'One paragraph.',
+        references: [
+          { entityId: 'ghost', name: 'A Vanished Place' },
+          { entityId: 'p1', name: 'The Player' },
+          { entityId: 'l1', name: 'Saltmarsh' },
+        ],
+      },
+      entities: [
+        { id: 'l1', entityType: 'location', name: 'Saltmarsh' },
+        { id: 'p1', entityType: 'pc', name: 'The Player' },
+      ],
+      facts: [],
+      entityHierarchy: [],
+    }
+    const vm = toWikiViewModel(withIntro)
+    expect(vm.introduction?.references).toEqual([
+      { entityId: 'l1', name: 'Saltmarsh', kind: 'location' },
+    ])
+  })
+
+  it('drops blank prose segments when splitting paragraphs', () => {
+    const withIntro: WikiSnapshot = {
+      introduction: {
+        title: 'The Ashfen Reaches',
+        prose: '  \n\nOnly paragraph.\n\n   ',
+        references: [],
+      },
+      entities: [],
+      facts: [],
+      entityHierarchy: [],
+    }
+    expect(toWikiViewModel(withIntro).introduction?.paragraphs).toEqual(['Only paragraph.'])
+  })
+
+  it('carries no introduction for a pre-migration snapshot (the graceful absence)', () => {
+    const vm = toWikiViewModel(world)
+    expect(vm.introduction).toBeUndefined()
+    expect('introduction' in vm).toBe(false)
+  })
+
   it('orders RELATED links deterministically by name, then id, then label', () => {
     // a1 links to three targets; two share the name "Anvil" (b2/b3 → id
     // tiebreak) and b2 is linked twice with different types (label tiebreak).

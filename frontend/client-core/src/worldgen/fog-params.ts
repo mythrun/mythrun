@@ -329,7 +329,7 @@ export const LABEL_TEXT_Y_OFFSET = 5
  *
  *  The label FONT is deliberately NOT a constant here anymore: it is resolved at RUNTIME from
  *  the design-system tokens (`--font-body` at `--text-sm`) so the on-canvas label uses the
- *  site's typography — the same serif the entity-list renders names in — instead of the
+ *  site's typography — the same serif the wiki renders names in — instead of the
  *  bespoke prototype font (MYT-89 follow-up). Both the fog and the graph resolve the identical
  *  string via `resolveLabelFont`, so they still measure one width and reserve one box. */
 export const LABEL_TEXT_OFFSET_X = 18

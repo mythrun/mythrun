@@ -63,7 +63,7 @@ const LABEL_FONT_FALLBACK_REM = 0.875
 const ROOT_FONT_PX_FALLBACK = 16
 
 /** The entity-name label font as a Canvas `font` string (`"${px}px ${family}"`), resolved
- *  from the DESIGN-SYSTEM tokens — `--font-body` (the narrative serif the entity-list renders
+ *  from the DESIGN-SYSTEM tokens — `--font-body` (the narrative serif the wiki renders
  *  names in) at `--text-sm` (0.875rem). The Canvas is the one surface Tailwind can't reach, so
  *  we read the tokens ourselves (the same `getComputedStyle` technique as `resolveInk`) and
  *  resolve the rem to px against the root font-size — the DS token, not a bespoke literal,
