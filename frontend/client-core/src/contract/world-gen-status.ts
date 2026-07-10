@@ -23,7 +23,7 @@ export type { StageProgress } from '@mythrun/contract/events'
  * a FIXED bar indicator seeded from the canonical `WATCHED_ENTITY_STAGES` slice of
  * the `WORLD_GEN_STAGES` taxonomy (MYT-89 audit ③ + reveal timing — all bars known
  * from frame one, not grown one per stage). The card renders ONLY the visible wait:
- * the graph-act stages through the wiki-reveal boundary (entity_relationships), so
+ * the graph-act stages through the wiki-reveal boundary (world_introduction, myth-zaqxh), so
  * the bars hit 100% exactly at the moment the reveal fires. Prep-stage entries match
  * no bar (the two-act loading screen owns that stretch) and SILENT TAIL entries
  * (entity_consolidation → embed_world) match no bar either — they run behind the

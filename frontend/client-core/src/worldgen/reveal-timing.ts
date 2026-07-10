@@ -8,11 +8,12 @@ import {
 // predicates over the stream's folded `stages[]` (see `useWorldGenStream`).
 //
 // Miklos's spec: "the reveal moment happens immediately after the connections
-// are made" — the reveal fires when connection-weaving (`entity_relationships`,
-// the REVEAL_BOUNDARY_STAGE) completes, NOT when the whole pipeline finishes.
-// The remaining stages (`TAIL_STAGES`: consolidation → embed) run silently
-// while the player explores the wiki; their completions surface as quiet data
-// refreshes, never as a wait.
+// are made" — the reveal fires when the world's introduction page is written
+// (`world_introduction`, the REVEAL_BOUNDARY_STAGE, myth-zaqxh moved it here from
+// `entity_relationships`), NOT when the whole pipeline finishes. The remaining
+// stages (`TAIL_STAGES`: consolidation → embed) run silently while the player
+// explores the wiki; their completions surface as quiet data refreshes, never as
+// a wait.
 
 /** TRUE once connection-weaving (the reveal-boundary stage) has COMPLETED —
  *  the generating → wiki-reveal transition signal. Keys on the folded stage
