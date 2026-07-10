@@ -42,6 +42,15 @@ export type {
   ChooseStartingSituationResult,
 } from './api/campaigns.ts'
 export { synthesizePreview, reworkPreview, createCampaign } from './api/campaign-create.ts'
+// myth-umggn: the STREAMED guided synthesis — the world brief writing itself.
+// `startSynthesisStream` opens the one-shot SSE POST; `useSynthesisState` is
+// the React read seam over its per-stream store (flows never import zustand).
+export { startSynthesisStream, useSynthesisState } from './api/synthesize-stream.ts'
+export type {
+  SynthesisStream,
+  SynthesisStreamState,
+  SynthesisFailureCode,
+} from './api/synthesize-stream.ts'
 
 // Guided-create draft persistence seam (MYT-89 §11) — the DOM-free brain reaches
 // sessionStorage through the injected SessionDraftStore port (web impl in

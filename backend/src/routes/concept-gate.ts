@@ -55,25 +55,34 @@ export async function checkRejectionStorm(
   return { cooldownActive: true, retryAfterSeconds }
 }
 
+/** The `concept_rejected` payload shape — the 422 body AND (myth-umggn) the
+ *  streamed route's terminal `rejected` frame carry exactly these fields. */
+export interface GateRejectionPayload {
+  code: 'concept_rejected'
+  reason: InputGateVerdict['reason']
+  rejectionMessage: string | null
+  synthesizedConcept?: string
+}
+
 /**
- * Gate rejection branch: increments the rejection-storm counter, logs the
- * server-side reasoning (Roc-Imp6 — never returned in the HTTP response),
- * and shapes the 422 response. `synthesizedConcept` is included only on
- * guided-mode rejections (Kraken-C2 — lets the user see what was judged).
+ * The transport-independent half of a gate rejection (myth-umggn split):
+ * increments the rejection-storm counter, logs the server-side reasoning
+ * (Roc-Imp6 — never in the payload), and shapes the `concept_rejected`
+ * payload. `synthesizedConcept` is included only on guided-mode rejections
+ * (Kraken-C2 — lets the user see what was judged). Shared by the HTTP 422
+ * arm (`handleGateRejection`) and the SSE stream's terminal `rejected` frame.
  */
-export async function handleGateRejection(args: {
-  reply: FastifyReply
+export async function recordGateRejection(args: {
   gate: InputGateVerdict
-  userId: string
   mode: 'freeform' | 'guided'
   synthesizedConcept: string
   stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
   logger: PinoLogger
-}): Promise<FastifyReply> {
+}): Promise<GateRejectionPayload> {
   // Increment regardless of whether the increment trips the cooldown —
   // the cooldown is checked at the START of the NEXT request, not on
-  // this one. (The current request still returns 422; the next one will
-  // return 429 if this increment pushed the count past the threshold.)
+  // this one. (The current request still gets its rejection; the next one
+  // will 429 if this increment pushed the count past the threshold.)
   await args.stormIncrementer()
 
   args.logger.info(
@@ -85,18 +94,30 @@ export async function handleGateRejection(args: {
     'concept rejected by input gate',
   )
 
-  const responsePayload: {
-    code: 'concept_rejected'
-    reason: InputGateVerdict['reason']
-    rejectionMessage: string | null
-    synthesizedConcept?: string
-  } = {
+  const payload: GateRejectionPayload = {
     code: 'concept_rejected',
     reason: args.gate.reason,
     rejectionMessage: args.gate.rejectionMessage,
   }
   if (args.mode === 'guided') {
-    responsePayload.synthesizedConcept = args.synthesizedConcept
+    payload.synthesizedConcept = args.synthesizedConcept
   }
-  return args.reply.code(422).send(responsePayload)
+  return payload
+}
+
+/**
+ * Gate rejection branch (HTTP arm): the shared `recordGateRejection`
+ * side-effects + payload, sent as the 422 response.
+ */
+export async function handleGateRejection(args: {
+  reply: FastifyReply
+  gate: InputGateVerdict
+  userId: string
+  mode: 'freeform' | 'guided'
+  synthesizedConcept: string
+  stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
+  logger: PinoLogger
+}): Promise<FastifyReply> {
+  const payload = await recordGateRejection(args)
+  return args.reply.code(422).send(payload)
 }

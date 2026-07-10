@@ -25,6 +25,8 @@ export type { FullBleedStageProps } from './full-bleed-stage.ts'
 
 // Typography-primitive contracts (MYT-82 Wave 1b).
 export type { TextProps, TextRole } from './text.ts'
+// Streamed prose (myth-umggn) — LLM text arriving live, with the writing caret.
+export type { StreamingProseProps } from './streaming-prose.ts'
 export type { HeadingProps, HeadingLevel, HeadingRole } from './heading.ts'
 export type { LinkProps } from './link.ts'
 export type { VisuallyHiddenProps } from './visually-hidden.ts'

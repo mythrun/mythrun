@@ -8,6 +8,7 @@ import { ThemeProvider } from '@mythrun/ui'
 import {
   ApiClientProvider,
   configureGuidedDraft,
+  configureStreamingFetch,
   readGuidedDraft,
   type ApiContext,
   type SessionDraftStore,
@@ -97,6 +98,84 @@ afterAll(() => { server.close() })
 
 const ideaTitle = (): string => i18n.t('campaignNew.fork.idea.title')
 const loveTitle = (): string => i18n.t('campaignNew.fork.love.title')
+
+// ---------------------------------------------------------------------------
+// The guided SYNTHESIS wire (myth-umggn): a streamed SSE POST through the
+// client-core StreamingFetch seam, not a fetch MSW can script. Each guided
+// test installs its own scripted fake — either a canned script (status +
+// frames, ended) or a hand-driven push stream for progressive-render
+// assertions. `opens` records the request (url/init) for wire-body asserts.
+// ---------------------------------------------------------------------------
+
+interface StreamOpen {
+  url: string
+  init: { headers: Record<string, string>; signal: AbortSignal; method?: 'POST'; body?: string }
+}
+
+const sseFrame = (payload: unknown): string => `data: ${JSON.stringify(payload)}\n\n`
+
+/** Canned stream: non-200 yields `errorBody` as JSON; 200 yields `frames` then ends. */
+function installSynthStream(script: {
+  status?: number
+  errorBody?: unknown
+  frames?: readonly unknown[]
+}): { opens: StreamOpen[] } {
+  const opens: StreamOpen[] = []
+  configureStreamingFetch((url, init) => {
+    opens.push({ url, init })
+    const chunks = (async function* (): AsyncGenerator<string> {
+      if ((script.status ?? 200) !== 200) {
+        yield JSON.stringify(script.errorBody ?? {})
+        return
+      }
+      for (const f of script.frames ?? []) yield await Promise.resolve(sseFrame(f))
+    })()
+    return Promise.resolve({ status: script.status ?? 200, chunks })
+  })
+  return { opens }
+}
+
+/** Hand-driven stream: the test pushes frames one by one (progressive render). */
+function installPushSynthStream(): {
+  opens: StreamOpen[]
+  push: (payload: unknown) => void
+  end: () => void
+} {
+  const opens: StreamOpen[] = []
+  const queue: string[] = []
+  let done = false
+  let wake: (() => void) | null = null
+  const notify = (): void => {
+    wake?.()
+    wake = null
+  }
+  const chunks: AsyncIterable<string> = {
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        for (let next = queue.shift(); next !== undefined; next = queue.shift()) yield next
+        if (done) return
+        await new Promise<void>((resolve) => {
+          wake = resolve
+        })
+      }
+    },
+  }
+  configureStreamingFetch((url, init) => {
+    opens.push({ url, init })
+    return Promise.resolve({ status: 200, chunks })
+  })
+  return {
+    opens,
+    push: (payload) => {
+      queue.push(sseFrame(payload))
+      notify()
+    },
+    end: () => {
+      done = true
+      notify()
+    },
+  }
+}
 
 /** Walk fork → freeform (the screen every freeform case starts from). */
 function gotoFreeform(): void {
@@ -209,7 +288,6 @@ describe('CampaignNewRoute freeform screen', () => {
 })
 
 describe('CampaignNewRoute guided screen', () => {
-  const SYNTH_URL = `${BASE_URL}/api/campaigns/synthesize-preview`
   const stepMarker = (n: 'one' | 'two' | 'three'): string => i18n.t(`campaignNew.guided.step.${n}`)
   const findLabel = (): string => i18n.t('campaignNew.guided.find')
 
@@ -286,41 +364,66 @@ describe('CampaignNewRoute guided screen', () => {
     expect(whyInput().value).toBe(PICKS[0].whyILikeIt)
   })
 
-  it('posts exactly the 3-pick body and, on 201, moves to preview carrying the payload', async () => {
-    let capturedBody: unknown
-    server.use(
-      http.post(SYNTH_URL, async ({ request }) => {
-        capturedBody = await request.json()
-        return HttpResponse.json({ previewId: 'p-1', concept: 'A synthesized concept.' }, { status: 201 })
-      }),
-    )
+  it('streams the brief live: text arrives progressively, then the completed brief lands on preview', async () => {
+    const { opens, push } = installPushSynthStream()
     gotoGuided()
     fillAllPicks()
     act(() => { advanceBtn().click() })
 
+    // The 200 head advances the flow to the SYNTHESIZING screen (no dump-wait).
+    await waitFor(() => {
+      expect(screen.getByTestId('screen-synthesizing')).toBeDefined()
+    })
+    // The wire request is a streamed POST of exactly the three picks.
+    expect(opens[0]?.url).toBe(`${BASE_URL}/api/campaigns/synthesize-preview/stream`)
+    expect(opens[0]?.init.method).toBe('POST')
+    expect(JSON.parse(opens[0]?.init.body ?? '')).toEqual({ picks: PICKS })
+
+    // First delta: the prose renders MID-STREAM, caret up, no preview yet.
+    push({ type: 'delta', text: 'A drowned cathedral ' })
+    await waitFor(() => {
+      expect(screen.getByTestId('synthesizing-prose').textContent).toContain(
+        'A drowned cathedral ',
+      )
+    })
+    expect(document.querySelector('[data-streaming-caret]')).not.toBeNull()
+    expect(screen.queryByTestId('screen-preview')).toBeNull()
+
+    // Second delta grows the same paragraph.
+    push({ type: 'delta', text: 'city.' })
+    await waitFor(() => {
+      expect(screen.getByTestId('synthesizing-prose').textContent).toContain(
+        'A drowned cathedral city.',
+      )
+    })
+
+    // The terminal complete lands the flow on preview with the SAME contract
+    // payload the synchronous route produced (previewId + concept).
+    push({ type: 'complete', previewId: 'p-1', concept: 'A drowned cathedral city.' })
     await waitFor(() => {
       expect(screen.getByTestId('screen-preview')).toBeDefined()
     })
-    // The carried concept reached (and renders on) the preview screen.
-    expect(screen.getByTestId('preview-concept').textContent).toBe('A synthesized concept.')
-    // The wire body is exactly the three picks — nothing more.
-    expect(capturedBody).toEqual({ picks: PICKS })
+    expect(screen.getByTestId('preview-concept').textContent).toBe('A drowned cathedral city.')
+
+    // The synthesizing beat is a transition, not history: back → the guided picks.
+    act(() => { screen.getByTestId('campaign-new-back').click() })
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(screen.queryByTestId('screen-synthesizing')).toBeNull()
   })
 
-  it('routes to the rejection state on a 422 concept_rejected', async () => {
-    server.use(
-      http.post(SYNTH_URL, () =>
-        HttpResponse.json(
-          {
-            code: 'concept_rejected',
-            reason: 'clone_intent',
-            rejectionMessage: 'Too close to an existing world.',
-            synthesizedConcept: 'A near-clone concept.',
-          },
-          { status: 422 },
-        ),
-      ),
-    )
+  it('routes a streamed gate rejection to the rejection state (the streamed text resolves there)', async () => {
+    installSynthStream({
+      frames: [
+        { type: 'delta', text: 'A near-clone concept.' },
+        {
+          type: 'rejected',
+          code: 'concept_rejected',
+          reason: 'clone_intent',
+          rejectionMessage: 'Too close to an existing world.',
+          synthesizedConcept: 'A near-clone concept.',
+        },
+      ],
+    })
     gotoGuided()
     fillAllPicks()
     act(() => { advanceBtn().click() })
@@ -328,15 +431,14 @@ describe('CampaignNewRoute guided screen', () => {
     await waitFor(() => {
       expect(screen.getByTestId('screen-rejection')).toBeDefined()
     })
+    // The text the player watched arrive is the judged concept on this screen.
+    expect(screen.getByTestId('rejection-concept').textContent).toBe('A near-clone concept.')
     expect(screen.queryByTestId('screen-guided')).toBeNull()
+    expect(screen.queryByTestId('screen-synthesizing')).toBeNull()
   })
 
-  it('shows a calm inline retry notice on a 503, without leaving the guided screen', async () => {
-    server.use(
-      http.post(SYNTH_URL, () =>
-        HttpResponse.json({ code: 'llm_upstream_unavailable' }, { status: 503 }),
-      ),
-    )
+  it('shows a calm inline retry notice on a 503 OPEN, without leaving the guided screen', async () => {
+    installSynthStream({ status: 503, errorBody: { code: 'llm_upstream_unavailable' } })
     gotoGuided()
     fillAllPicks()
     act(() => { advanceBtn().click() })
@@ -346,16 +448,17 @@ describe('CampaignNewRoute guided screen', () => {
     })
     // Stayed on guided; the action re-enables so the player can retry.
     expect(screen.getByTestId('screen-guided')).toBeDefined()
-    expect(screen.queryByTestId('screen-preview')).toBeNull()
+    expect(screen.queryByTestId('screen-synthesizing')).toBeNull()
     expect(advanceBtn().disabled).toBe(false)
   })
 
-  it('routes a content_filtered synthesize to the TERMINAL rejection, not a retry notice', async () => {
-    server.use(
-      http.post(SYNTH_URL, () =>
-        HttpResponse.json({ code: 'content_filtered' }, { status: 422 }),
-      ),
-    )
+  it('routes a mid-stream content_filtered to the TERMINAL rejection, not a retry notice', async () => {
+    installSynthStream({
+      frames: [
+        { type: 'delta', text: 'Half a br' },
+        { type: 'error', code: 'content_filtered' },
+      ],
+    })
     gotoGuided()
     fillAllPicks()
     act(() => { advanceBtn().click() })
@@ -374,6 +477,48 @@ describe('CampaignNewRoute guided screen', () => {
     expect(screen.queryByTestId('screen-guided')).toBeNull()
   })
 
+  it('an interrupted stream keeps the halted text with a calm notice; try again returns to guided', async () => {
+    // Deltas then a bare stream end — no terminal frame (wifi drop / crash).
+    installSynthStream({ frames: [{ type: 'delta', text: 'Half a brief that stopp' }] })
+    gotoGuided()
+    fillAllPicks()
+    act(() => { advanceBtn().click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('synthesizing-failed')).toBeDefined()
+    })
+    // Failure honesty: the halted partial STAYS on the page, caret down.
+    expect(screen.getByTestId('synthesizing-prose').textContent).toContain(
+      'Half a brief that stopp',
+    )
+    expect(document.querySelector('[data-streaming-caret]')).toBeNull()
+
+    // The quiet try-again returns to the guided picks. (Pick re-prefill rides
+    // the §11 draft seam, exercised in the draft-persistence describe below —
+    // unconfigured here, so only the screen transition is asserted.)
+    act(() => { screen.getByTestId('synthesizing-retry').click() })
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(screen.queryByTestId('screen-synthesizing')).toBeNull()
+  })
+
+  it('backing out mid-stream aborts the request (the Sonnet burn stops)', async () => {
+    const { opens, push } = installPushSynthStream()
+    gotoGuided()
+    fillAllPicks()
+    act(() => { advanceBtn().click() })
+    await waitFor(() => {
+      expect(screen.getByTestId('screen-synthesizing')).toBeDefined()
+    })
+    push({ type: 'delta', text: 'A half-written ' })
+    await waitFor(() => {
+      expect(screen.getByTestId('synthesizing-prose').textContent).toContain('A half-written ')
+    })
+
+    act(() => { screen.getByTestId('campaign-new-back').click() })
+    expect(screen.getByTestId('screen-guided')).toBeDefined()
+    expect(opens[0]?.init.signal.aborted).toBe(true)
+  })
+
   it('switches to the freeform path from the step-one quiet switch line', () => {
     gotoGuided()
     act(() => { screen.getByTestId('guided-switch').click() })
@@ -381,18 +526,18 @@ describe('CampaignNewRoute guided screen', () => {
   })
 })
 
-// Shared guided-walk for the preview + rejection blocks: register the terminal
-// synthesize handler, then fork → guided → fill the three picks → fire the final
-// synthesize. The caller waits for whichever screen the handler's status lands on.
-const GUIDED_SYNTH_URL = `${BASE_URL}/api/campaigns/synthesize-preview`
+// Shared guided-walk for the preview + rejection blocks: install the scripted
+// synthesis STREAM (myth-umggn), then fork → guided → fill the three picks →
+// fire the final synthesize. The caller waits for whichever screen the
+// script's terminal frame lands on.
 const GUIDED_PICKS = [
   { title: 'Dark Souls', whyILikeIt: 'the oppressive melancholy' },
   { title: 'Dune', whyILikeIt: 'ecology as destiny' },
   { title: 'Annihilation', whyILikeIt: 'the shimmer' },
 ] as const
 
-function synthesizeGuided(handler: ReturnType<typeof http.post>): void {
-  server.use(handler)
+function synthesizeGuided(frames: readonly unknown[]): void {
+  installSynthStream({ frames })
   renderRoute()
   act(() => { screen.getByText(loveTitle()).click() })
   GUIDED_PICKS.forEach((p, i) => {
@@ -406,11 +551,12 @@ function synthesizeGuided(handler: ReturnType<typeof http.post>): void {
 describe('CampaignNewRoute preview screen', () => {
   const CONCEPT = 'A drowned cathedral city the tide never fully leaves.'
 
-  /** Walk fork → guided → synthesize (201) → preview, carrying `concept`/`previewId`. */
+  /** Walk fork → guided → streamed synthesize (complete) → preview, carrying `concept`/`previewId`. */
   async function gotoPreview(concept = CONCEPT, previewId = 'p-1'): Promise<void> {
-    synthesizeGuided(
-      http.post(GUIDED_SYNTH_URL, () => HttpResponse.json({ previewId, concept }, { status: 201 })),
-    )
+    synthesizeGuided([
+      { type: 'delta', text: concept },
+      { type: 'complete', previewId, concept },
+    ])
     await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
   }
 
@@ -513,21 +659,18 @@ describe('CampaignNewRoute preview screen', () => {
 })
 
 describe('CampaignNewRoute rejection screen', () => {
-  /** Walk fork → guided → synthesize (422 guided rejection) → the rejection screen. */
+  /** Walk fork → guided → streamed synthesize (gate rejection) → the rejection screen. */
   async function gotoRejection(): Promise<void> {
-    synthesizeGuided(
-      http.post(GUIDED_SYNTH_URL, () =>
-        HttpResponse.json(
-          {
-            code: 'concept_rejected',
-            reason: 'clone_intent',
-            rejectionMessage: 'Too close to an existing world.',
-            synthesizedConcept: 'A near-clone concept.',
-          },
-          { status: 422 },
-        ),
-      ),
-    )
+    synthesizeGuided([
+      { type: 'delta', text: 'A near-clone concept.' },
+      {
+        type: 'rejected',
+        code: 'concept_rejected',
+        reason: 'clone_intent',
+        rejectionMessage: 'Too close to an existing world.',
+        synthesizedConcept: 'A near-clone concept.',
+      },
+    ])
     await waitFor(() => { expect(screen.getByTestId('screen-rejection')).toBeDefined() })
   }
 
@@ -571,11 +714,10 @@ describe('CampaignNewRoute guided draft persistence (§11)', () => {
   afterEach(() => { configureGuidedDraft(null) })
 
   async function gotoPreviewWithDraft(): Promise<void> {
-    synthesizeGuided(
-      http.post(GUIDED_SYNTH_URL, () =>
-        HttpResponse.json({ previewId: 'p-1', concept: 'A synthesized concept.' }, { status: 201 }),
-      ),
-    )
+    synthesizeGuided([
+      { type: 'delta', text: 'A synthesized concept.' },
+      { type: 'complete', previewId: 'p-1', concept: 'A synthesized concept.' },
+    ])
     await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
   }
 
@@ -611,19 +753,15 @@ describe('CampaignNewRoute guided draft persistence (§11)', () => {
     // A guided draft can commit WITHOUT the guided preview's Begin: guided-rejection
     // → "edit as freeform" → freeform commit routes through FreeformScreen.onCommitted.
     // The clear lives in toCampaign, so this path drops the draft too (no leak).
-    synthesizeGuided(
-      http.post(GUIDED_SYNTH_URL, () =>
-        HttpResponse.json(
-          {
-            code: 'concept_rejected',
-            reason: 'clone_intent',
-            rejectionMessage: 'Too close to an existing world.',
-            synthesizedConcept: 'A near-clone concept.',
-          },
-          { status: 422 },
-        ),
-      ),
-    )
+    synthesizeGuided([
+      {
+        type: 'rejected',
+        code: 'concept_rejected',
+        reason: 'clone_intent',
+        rejectionMessage: 'Too close to an existing world.',
+        synthesizedConcept: 'A near-clone concept.',
+      },
+    ])
     await waitFor(() => { expect(screen.getByTestId('screen-rejection')).toBeDefined() })
     // The guided picks were persisted while typing — the draft is present here.
     expect(readGuidedDraft()?.picks).toEqual(GUIDED_PICKS)

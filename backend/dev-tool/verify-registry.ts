@@ -168,6 +168,13 @@ export interface PageRegistration {
  * a panel can't / shouldn't exist — the default is to author a panel.
  */
 export const EXEMPT_ROUTES: readonly BackendRoute[] = [
+  // POST /api/campaigns/synthesize-preview/stream (myth-umggn): the one-shot
+  // SSE variant of synthesize-preview consumed by the WEB guided flow (the
+  // brief streams in live). The campaign-create panel drives the synchronous
+  // JSON variant of the same guard/gate/park chain; a hijacked SSE response
+  // has no JSDOM-mountable page panel — mirrors the prep-status exemption.
+  { method: 'POST', path: '/api/campaigns/synthesize-preview/stream' },
+
   // GET /api/campaigns/:campaignId/wiki (MYT-74c): the PLAYER-facing campaign
   // wiki (member-readable, narrow known-tier). Not a dev-tool inspector surface —
   // the owner-only world-snapshot panel already covers world inspection; this

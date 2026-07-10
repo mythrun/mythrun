@@ -22,6 +22,7 @@ import { webhookRoutes } from './routes/webhook.js'
 import { billingRoutes } from './routes/billing.js'
 import { campaignsRoutes } from './routes/campaigns.js'
 import { campaignPreviewRoutes } from './routes/campaign-preview.js'
+import { campaignPreviewStreamRoutes } from './routes/campaign-preview-stream.js'
 import { authRoutes } from './routes/auth.js'
 import { createCognitoOAuthClient } from './auth/cognito-oauth-client.js'
 import { campaignCharactersPlugin } from './routes/campaign-characters.js'
@@ -458,6 +459,17 @@ export const buildApp = async (
     pool: deps.pg,
     redis: deps.redisRealtime,
     redisKeyPrefix: deps.redisKeyPrefix,
+  })
+
+  // myth-umggn: the STREAMED sibling of synthesize-preview. Same guards, same
+  // gate, same parking — but the world brief arrives as a one-shot SSE stream
+  // so the guided flow renders it writing itself. Needs frontendBaseUrl for
+  // the hijacked SSE response's CORS echo (same as the status stream).
+  await app.register(campaignPreviewStreamRoutes, {
+    pool: deps.pg,
+    redis: deps.redisRealtime,
+    redisKeyPrefix: deps.redisKeyPrefix,
+    frontendBaseUrl: config.env.frontendBaseUrl,
   })
 
   // myth-epo4 T22 / MYT-53: per-player character-creation routes

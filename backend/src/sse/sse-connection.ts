@@ -26,6 +26,9 @@ export type CloseReason =
   | 'redis-resync-required'
   | 'rate-limited'
   | 'back-pressure'
+  // myth-umggn: a ONE-SHOT stream (the synthesize-preview brief) delivered its
+  // terminal event and the server is done — the normal end, not a drop.
+  | 'complete'
   | 'unknown'
 
 export interface SseSink {

@@ -39,6 +39,10 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // MYT-89 A3 — guided world-creation preview (synthesize + gate + park in
   // Redis; NON-charging). Not a pipeline route (no status surface).
   { method: 'POST', path: '/api/campaigns/synthesize-preview' },
+  // myth-umggn — the STREAMED sibling: same guards/gate/parking, one-shot SSE
+  // response (the guided flow watches the brief write itself). Not a pipeline
+  // route (no campaign exists yet; no status surface).
+  { method: 'POST', path: '/api/campaigns/synthesize-preview/stream' },
   // MYT-89 A4 — single-shot rework of a parked preview (revise + re-gate;
   // gate-pass-only overwrite, single-rework budget). NON-charging, not a
   // pipeline route.

@@ -1048,6 +1048,29 @@ describe('maxOutputTokens forwarding', () => {
 
     expect(mockGenerateText.mock.calls[0]?.[0]).not.toHaveProperty('maxOutputTokens')
   })
+
+  // myth-umggn: an external abort (the synthesize stream's SSE client-
+  // disconnect signal) must reach the SDK call — combined with the internal
+  // timeout via AbortSignal.any, so EITHER firing aborts the Anthropic call.
+  it('streamObject combines an external abortSignal with the timeout signal', () => {
+    mockStreamObject.mockReturnValueOnce(fakeStreamResult({ name: 'x' }))
+    const external = new AbortController()
+
+    streamObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'p',
+      callSite: 'test/stream-abort',
+      abortSignal: external.signal,
+    })
+
+    const sdkSignal = (
+      mockStreamObject.mock.calls[0]?.[0] as unknown as { abortSignal: AbortSignal }
+    ).abortSignal
+    expect(sdkSignal.aborted).toBe(false)
+    external.abort()
+    expect(sdkSignal.aborted).toBe(true)
+  })
 })
 
 describe('extractStage', () => {

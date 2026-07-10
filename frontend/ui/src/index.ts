@@ -19,6 +19,8 @@ export { Text } from './components/Text/Text.tsx'
 export { Heading } from './components/Heading/Heading.tsx'
 export { Link } from './components/Link/Link.tsx'
 export { VisuallyHidden } from './components/VisuallyHidden/VisuallyHidden.tsx'
+// Streamed prose (myth-umggn) — LLM text arriving live, with the writing caret.
+export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
 
 // Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
 // IconButton).
@@ -209,6 +211,7 @@ export type {
   SpaceToken,
   TextProps,
   TextRole,
+  StreamingProseProps,
   HeadingProps,
   HeadingLevel,
   HeadingRole,

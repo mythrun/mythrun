@@ -6,3 +6,4 @@
 export * from './session-events.js'
 export * from './pipeline-events.js'
 export * from './worldgen-stages.js'
+export * from './synthesize-stream.js'

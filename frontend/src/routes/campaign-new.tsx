@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Stack, Button, Icon } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
-import { clearGuidedDraft } from '@mythrun/client-core'
+import { clearGuidedDraft, type SynthesisStream } from '@mythrun/client-core'
 import { ForkScreen } from './campaign-new/fork.tsx'
 import { FreeformScreen } from './campaign-new/freeform.tsx'
 import { GuidedScreen } from './campaign-new/guided.tsx'
+import { SynthesizingScreen } from './campaign-new/synthesizing.tsx'
 import { PreviewScreen, type PreviewPayload } from './campaign-new/preview.tsx'
 import { RejectionScreen, type RejectionState } from './campaign-new/rejection.tsx'
 
@@ -13,13 +14,23 @@ import { RejectionScreen, type RejectionState } from './campaign-new/rejection.t
 // machine. The player walks a linear path of SCREENS; the controller holds a
 // per-screen back-history (a stack) so a `← back` affordance pops one step at a
 // time. The FORK is the flow's root (spec §2, `ForkScreen`); `freeform` (B3),
-// `guided` (B4), `preview` + `rejection` (B5) are real screens firing neutral
-// intents. The controller owns the carried payloads (the synthesized preview,
-// the rejection reason, the freeform seed) and maps each screen's intents to a
+// `guided` (B4), `synthesizing` (myth-umggn), `preview` + `rejection` (B5) are
+// real screens firing neutral intents. The controller owns the carried
+// payloads (the live synthesis stream, the synthesized preview, the rejection
+// reason, the freeform seed) and maps each screen's intents to a
 // `screen`/route. Composes @mythrun/ui only (R5 — no ad-hoc UI).
+//
+// myth-umggn: guided synthesis STREAMS. The guided screen opens the stream
+// (its notices keep every pre-stream failure); on the 200 head the controller
+// advances to `synthesizing`, which renders the brief writing itself. Its
+// terminals SWAP the top of the history (never push) so `← back` from
+// preview/rejection lands on the guided picks — the synthesizing beat is a
+// transition, not a place to return to. The controller owns the stream
+// handle's lifecycle: it closes it on back-out (aborting the Sonnet burn), on
+// replacement, and on unmount.
 
 // The screens the flow can be on. `fork` is always the history root.
-type Screen = 'fork' | 'freeform' | 'guided' | 'preview' | 'rejection'
+type Screen = 'fork' | 'freeform' | 'guided' | 'synthesizing' | 'preview' | 'rejection'
 
 export function CampaignNewRoute(): React.JSX.Element {
   const { t } = useTranslation()
@@ -28,18 +39,43 @@ export function CampaignNewRoute(): React.JSX.Element {
   // permanent root (never popped), so `back` is shown iff the stack has depth.
   const [history, setHistory] = useState<Screen[]>(['fork'])
   const current = history[history.length - 1] ?? 'fork'
-  // The carried payloads. `previewPayload` is the guided synthesis result the
-  // preview screen renders + commits; `rejection` is the reason the rejection
-  // screen shows; `freeformPrefill` seeds the freeform field (default blank; the
-  // rejection screen's "edit as freeform" drops the judged concept in here).
+  // The carried payloads. `synthesis` is the live guided stream the
+  // synthesizing screen renders; `previewPayload` is the completed synthesis
+  // the preview screen renders + commits; `rejection` is the reason the
+  // rejection screen shows; `freeformPrefill` seeds the freeform field
+  // (default blank; the rejection screen's "edit as freeform" drops the judged
+  // concept in here).
+  const [synthesis, setSynthesis] = useState<SynthesisStream | null>(null)
   const [previewPayload, setPreviewPayload] = useState<PreviewPayload | null>(null)
   const [rejection, setRejection] = useState<RejectionState | null>(null)
   const [freeformPrefill, setFreeformPrefill] = useState('')
 
+  // Stream lifecycle backstop: whenever the handle is replaced — and when the
+  // route unmounts — close the PRIOR stream. Closing a terminal stream is a
+  // no-op; closing a live one aborts the request (and the server aborts its
+  // Sonnet call), so an abandoned brief never generates into the void.
+  useEffect(() => {
+    if (synthesis === null) return
+    return () => {
+      synthesis.close()
+    }
+  }, [synthesis])
+
   const go = (next: Screen): void => {
     setHistory((h) => [...h, next])
   }
+  // Replace the CURRENT screen (the synthesizing → preview/rejection handoff):
+  // the brief-writing beat must not sit in the back-history.
+  const swap = (next: Screen): void => {
+    setHistory((h) => [...h.slice(0, -1), next])
+  }
   const back = (): void => {
+    // Backing out of a live synthesis is an intentional abandon — stop the
+    // stream (and the server's Sonnet burn) before leaving the screen.
+    if (current === 'synthesizing') {
+      synthesis?.close()
+      setSynthesis(null)
+    }
     setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))
   }
   // A fresh (blank) entry to freeform — clears any stale "edit as freeform" seed.
@@ -85,15 +121,24 @@ export function CampaignNewRoute(): React.JSX.Element {
         />
       ) : current === 'guided' ? (
         <GuidedScreen
+          onStreaming={(stream) => {
+            setSynthesis(stream)
+            go('synthesizing')
+          }}
+          onFreeform={goFreeformBlank}
+        />
+      ) : current === 'synthesizing' && synthesis ? (
+        <SynthesizingScreen
+          stream={synthesis}
           onSynthesized={(payload) => {
             setPreviewPayload(payload)
-            go('preview')
+            swap('preview')
           }}
           onRejected={(r) => {
             setRejection(r)
-            go('rejection')
+            swap('rejection')
           }}
-          onFreeform={goFreeformBlank}
+          onRetry={back}
         />
       ) : current === 'preview' && previewPayload ? (
         <PreviewScreen

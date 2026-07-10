@@ -2,31 +2,35 @@ import { useEffect, useState } from 'react'
 import { Stack, Text, Button, SeamlessInput, Icon, Grid, Divider } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import {
-  synthesizePreview,
+  startSynthesisStream,
   useApiContext,
   isHttpError,
   readGuidedDraft,
   writeGuidedDraft,
-  GATE_REASONS,
   type GuidedDraft,
   type GuidedPickDraft,
-  type ConceptRejection,
-  type GateReason,
+  type SynthesisStream,
 } from '@mythrun/client-core'
-import type { RejectionState } from './rejection.tsx'
 
 // The campaign-create GUIDED screen (spec §1, "Build from what you love") — the
 // player names three things they love, one at a time, and the synthesizer turns
 // them into a concept preview. A quiet eyebrow + a faint 3-tick progress
 // affordance frame each step; the serif question-that-IS-the-label sits over a
 // name field + a multiline "why" field. `Next →` advances (steps 1-2), `Find my
-// world →` synthesizes (step 3), and a `← Back` steps back (steps 2-3) with the
-// picks PERSISTED in component state. The picks also round-trip through
-// sessionStorage (the client-core draft seam) so a mid-flow reload re-prefills.
-// Pure presentation + ONE side effect (synthesize): the screen fires NEUTRAL
-// intents and never navigates itself — the controller maps onSynthesized /
-// onRejected / onFreeform to screens. Composes @mythrun/ui only (no ad-hoc UI);
-// every string is an i18n `[ph:]` key (R5).
+// world →` opens the synthesis STREAM (step 3, myth-umggn), and a `← Back`
+// steps back (steps 2-3) with the picks PERSISTED in component state. The picks
+// also round-trip through sessionStorage (the client-core draft seam) so a
+// mid-flow reload re-prefills.
+//
+// myth-umggn: the synthesis is a one-shot SSE POST (`startSynthesisStream`).
+// This screen owns the OPEN — so every pre-stream failure (400/429/403/
+// network) keeps today's calm inline notices, right here where the player can
+// act on them — and hands the live stream to the controller (onStreaming) the
+// moment the 200 head arrives; the SYNTHESIZING screen renders the arriving
+// brief and owns the post-open terminals (complete / rejected / failed).
+// Pure presentation + that ONE side effect: the screen fires NEUTRAL intents
+// and never navigates itself. Composes @mythrun/ui only (no ad-hoc UI); every
+// string is an i18n `[ph:]` key (R5).
 
 type Step = 1 | 2 | 3
 type Picks = [GuidedPickDraft, GuidedPickDraft, GuidedPickDraft]
@@ -49,11 +53,10 @@ interface Notice {
 }
 
 export interface GuidedScreenProps {
-  /** Synthesized a preview (HTTP 201) → the controller advances to the preview screen. */
-  onSynthesized: (payload: { previewId: string; concept: string }) => void
-  /** The gate rejected the picks (422 concept_rejected) OR the content policy blocked the prompt
-   *  (terminal content_filtered) → the controller advances to the rejection screen. */
-  onRejected: (rejection: RejectionState) => void
+  /** The synthesis stream OPENED (200 head) → the controller advances to the
+   *  synthesizing screen, which renders the arriving brief and routes the
+   *  terminals (complete → preview, rejected/content_filtered → rejection). */
+  onStreaming: (stream: SynthesisStream) => void
   /** Chose the quiet switch line → the controller advances to `freeform`. */
   onFreeform: () => void
 }
@@ -65,37 +68,11 @@ function pickReady(pick: GuidedPickDraft): boolean {
   return title.length >= 1 && title.length <= TITLE_MAX && why.length >= 1 && why.length <= WHY_MAX
 }
 
-/** Build the minimal ConceptRejection the controller carries, defensively read off the error body. */
-function rejectionFrom(body: unknown): ConceptRejection {
-  const b = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
-  const reason =
-    typeof b.reason === 'string' && (GATE_REASONS as readonly string[]).includes(b.reason)
-      ? (b.reason as GateReason)
-      : 'inappropriate'
-  const rejectionMessage = typeof b.rejectionMessage === 'string' ? b.rejectionMessage : null
-  const synthesizedConcept = typeof b.synthesizedConcept === 'string' ? b.synthesizedConcept : undefined
-  return {
-    code: 'concept_rejected',
-    reason,
-    rejectionMessage,
-    ...(synthesizedConcept !== undefined ? { synthesizedConcept } : {}),
-  }
-}
-
-// A synthesize terminally rejects two ways: the gate's `concept_rejected` verdict
-// (422) or the terminal `content_filtered` (Anthropic policy — retrying re-hits
-// the same filter, so it's NOT a try-again). Both route to the rejection screen;
-// everything else falls through to a calm inline notice. Mirrors preview.tsx's
-// rework path, which already sends content_filtered to the terminal rejection.
-function rejectionRouteFor(err: unknown): RejectionState | null {
-  if (isHttpError(err)) {
-    if (err.code === 'content_filtered') return { code: 'content_filtered' }
-    if (err.code === 'concept_rejected') return rejectionFrom(err.body)
-  }
-  return null
-}
-
-/** Map a non-rejection failure to its calm inline notice (rejections route away, handled by the caller). */
+/** Map an OPEN failure to its calm inline notice. The gate verdicts
+ *  (concept_rejected / content_filtered) can no longer arrive here — the gate
+ *  runs AFTER the stream opens, so those are the synthesizing screen's
+ *  terminals (myth-umggn); everything the guard chain rejects pre-stream
+ *  lands in these three notices, exactly as before. */
 function noticeFor(err: unknown): Notice {
   if (isHttpError(err)) {
     if (err.code === 'rejection_storm_cooldown') return { kind: 'cooldown' }
@@ -208,7 +185,7 @@ function StepActions({
   )
 }
 
-export function GuidedScreen({ onSynthesized, onRejected, onFreeform }: GuidedScreenProps): React.JSX.Element {
+export function GuidedScreen({ onStreaming, onFreeform }: GuidedScreenProps): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
   const [draft] = useState<GuidedDraft>(() => readGuidedDraft() ?? INITIAL_DRAFT)
@@ -249,15 +226,17 @@ export function GuidedScreen({ onSynthesized, onRejected, onFreeform }: GuidedSc
     setBusy(true)
     try {
       const body = picks.map((p) => ({ title: p.title.trim(), whyILikeIt: p.whyILikeIt.trim() }))
-      const res = await synthesizePreview(ctx, { picks: body })
+      // myth-umggn: open the synthesis STREAM. The promise resolves on the 200
+      // head (the brief starts arriving); a guard trip (429 cooldown, 403
+      // credits, 400) rejects with the same HttpError taxonomy the synchronous
+      // endpoint threw, so the calm notices below are unchanged.
+      const stream = await startSynthesisStream(ctx, { picks: body })
       // Note: the draft is NOT cleared here — it survives synthesize → preview so a
       // "start over" or a 410 preview-expired restart re-prefills the picks (§11).
       // The controller clears it only once a campaign is actually committed.
-      onSynthesized({ previewId: res.previewId, concept: res.concept })
+      onStreaming(stream)
     } catch (err) {
-      const rejection = rejectionRouteFor(err)
-      if (rejection !== null) onRejected(rejection)
-      else setNotice(noticeFor(err))
+      setNotice(noticeFor(err))
     } finally {
       setBusy(false)
     }

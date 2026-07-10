@@ -190,6 +190,11 @@ export interface StreamObjectOpts<T> {
   readonly timeoutMs?: number
   /** Hard output ceiling; session-prep needs it or the SDK default truncates. */
   readonly maxOutputTokens?: number
+  /** Optional EXTERNAL abort (myth-umggn: the synthesize-preview stream
+   *  threads the SSE client-disconnect signal so a closed tab stops the
+   *  Sonnet burn). Combined with the internal timeout via AbortSignal.any —
+   *  whichever fires first aborts. Mirrors GenerateObjectOpts.abortSignal. */
+  readonly abortSignal?: AbortSignal
 }
 
 export interface GenerateTextOpts {
@@ -658,7 +663,10 @@ export function streamObject<T>(
     model: opts.model,
     schema: opts.schema,
     prompt: opts.prompt,
-    abortSignal: timeout.signal,
+    abortSignal:
+      opts.abortSignal !== undefined
+        ? AbortSignal.any([timeout.signal, opts.abortSignal])
+        : timeout.signal,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),

@@ -140,6 +140,12 @@
       "cooldown": "[ph: a lot of tries just now — give it a moment]",
       "credits": "[ph: you're out of session credits — top up to keep going]"
     },
+    "synthesizing": {
+      "eyebrow": "[ph: finding your world]",
+      "stillWriting": "[ph: still writing]",
+      "failed": "[ph: something interrupted the weave — try again]",
+      "tryAgain": "[ph: try again]"
+    },
     "preview": {
       "eyebrow": "[ph: the world we found]",
       "begin": "[ph: begin]",

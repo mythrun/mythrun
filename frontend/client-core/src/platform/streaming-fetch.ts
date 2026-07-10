@@ -19,10 +19,20 @@
  * NOT once the body completes — so the open `status` routes before the body is
  * consumed. `chunks` yields raw decoded text (the SSE client owns `\n\n`
  * framing); `signal` aborts the in-flight read on `close()`/reconnect.
+ *
+ * `method`/`body` (myth-umggn) carry a streamed POST — the synthesize-preview
+ * brief posts its picks and reads an SSE body back. Both are optional; absent
+ * they must not appear in the platform fetch init (a bare GET, the status
+ * stream's unchanged shape).
  */
 export type StreamingFetch = (
   url: string,
-  init: { headers: Record<string, string>; signal: AbortSignal },
+  init: {
+    headers: Record<string, string>
+    signal: AbortSignal
+    method?: 'POST'
+    body?: string
+  },
 ) => Promise<{ status: number; chunks: AsyncIterable<string> }>
 
 let streamingFetch: StreamingFetch | null = null

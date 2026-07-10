@@ -14,7 +14,15 @@ import type { StreamingFetch } from '@mythrun/client-core'
 // never throws; core routes on the status. `signal` aborts the in-flight read.
 export function createWebStreamingFetch(): StreamingFetch {
   return async (url, init) => {
-    const response = await fetch(url, { headers: init.headers, signal: init.signal })
+    const response = await fetch(url, {
+      headers: init.headers,
+      signal: init.signal,
+      // myth-umggn: a streamed POST (the synthesize-preview brief) carries a
+      // method + JSON body; a bare GET (the status stream) carries neither —
+      // conditional spread keeps the GET init byte-identical to before.
+      ...(init.method !== undefined ? { method: init.method } : {}),
+      ...(init.body !== undefined ? { body: init.body } : {}),
+    })
     return { status: response.status, chunks: decodeBody(response.body) }
   }
 }

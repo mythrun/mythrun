@@ -52,7 +52,9 @@ export interface CampaignPreviewOpts {
 
 // Guided-only body: the preview flow always carries exactly 3 media-picks.
 // Unknown shapes / wrong pick counts produce a standard 400 from Zod.
-const SynthesizePreviewBodySchema = z.object({
+// Exported for the STREAMED sibling route (campaign-preview-stream.ts,
+// myth-umggn) so both transports validate the identical body.
+export const SynthesizePreviewBodySchema = z.object({
   picks: z.array(SynthesizerPick).length(3),
 })
 
@@ -65,10 +67,11 @@ const ReworkBodySchema = z.object({
 
 // Per-USER cap: 5 requests/min (mirrors POST /api/campaigns). Below what the
 // cost controls tolerate, but enough to block adversarial Sonnet-burn loops
-// that try to slip past the storm cooldown. Shared verbatim by BOTH preview
-// routes (synthesize-preview + rework) — each route gets its own @fastify/
-// rate-limit bucket, so the caps are independent but identically shaped.
-const previewRateLimit = {
+// that try to slip past the storm cooldown. Shared verbatim by ALL preview
+// routes (synthesize-preview + rework + the myth-umggn streamed sibling) —
+// each route gets its own @fastify/rate-limit bucket, so the caps are
+// independent but identically shaped.
+export const previewRateLimit = {
   max: 5,
   timeWindow: '1 minute',
   keyGenerator: (req: FastifyRequest): string => {
@@ -80,7 +83,9 @@ const previewRateLimit = {
   },
 }
 
-// Cheap cost-control guards shared by BOTH preview routes, run BEFORE any LLM
+// Cheap cost-control guards shared by ALL preview routes (incl. the myth-umggn
+// streamed sibling — they run BEFORE the response is hijacked into SSE, so a
+// guard trip is a plain JSON status on every transport), run BEFORE any LLM
 // call so a cooling-down or 0-credit user burns ZERO Sonnet tokens:
 //   - rejection-storm cooldown peek (read-only Redis)  → 429
 //   - credit balance peek (NON-charging)               → 403
@@ -91,7 +96,7 @@ const previewRateLimit = {
 // Reports a boolean rather than returning the reply because the bare
 // `FastifyReply` type collapses to `never` under this repo's tsconfig, which
 // would make a `!== null` nullability check on a returned reply always-false.
-async function runPreviewCostGuards(args: {
+export async function runPreviewCostGuards(args: {
   reply: FastifyReply
   redis: Redis
   redisKeyPrefix: string

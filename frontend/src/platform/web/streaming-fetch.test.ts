@@ -89,6 +89,44 @@ describe('createWebStreamingFetch', () => {
     expect(out).toEqual([])
   })
 
+  it('forwards method + body to fetch (the streamed POST, myth-umggn)', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode('data: {"type":"delta","text":"x"}\n\n'))
+        c.close()
+      },
+    })
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(body, { status: 200 })))
+    vi.stubGlobal('fetch', fetchSpy)
+    const signal = new AbortController().signal
+
+    const sf = createWebStreamingFetch()
+    await sf('http://api.test/stream', {
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      method: 'POST',
+      body: '{"picks":[]}',
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith('http://api.test/stream', {
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      method: 'POST',
+      body: '{"picks":[]}',
+    })
+  })
+
+  it('omits method + body from the fetch init when unset (the GET status stream, unchanged)', async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 200 })))
+    vi.stubGlobal('fetch', fetchSpy)
+    const signal = new AbortController().signal
+
+    const sf = createWebStreamingFetch()
+    await sf('http://api.test/stream', { headers: {}, signal })
+
+    expect(fetchSpy).toHaveBeenCalledWith('http://api.test/stream', { headers: {}, signal })
+  })
+
   it('aborts the read when the signal fires', async () => {
     const controller = new AbortController()
     const body = new ReadableStream<Uint8Array>({
