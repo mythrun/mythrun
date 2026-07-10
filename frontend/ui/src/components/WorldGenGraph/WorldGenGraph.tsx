@@ -6,6 +6,8 @@ import { cn } from '../../lib/cn.ts'
 import { useViewportNarrow } from '../../lib/use-viewport-narrow.ts'
 import { WorldGenFogField } from '../WorldGenFog/WorldGenFogField.tsx'
 import { WorldGenStatusCard } from '../WorldGenStatusCard/WorldGenStatusCard.tsx'
+import { GenerationAnnouncer } from './GenerationAnnouncer.tsx'
+import { GraphNodeList } from './GraphNodeList.tsx'
 import { useGraphCanvas } from './use-graph-canvas.ts'
 
 // WorldGenGraph (MYT-89 Phase C, C5) — the live streaming graph shown during world
@@ -97,6 +99,8 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     totalEntities,
     forceParams,
     densityParams,
+    generationA11y,
+    nodeListLabel,
     'data-testid': dataTestId,
   },
   ref,
@@ -167,6 +171,17 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       className={rootClass(statusFooter, fill)}
     >
+      {/* E1 (Phase E): the GENERATION graph's SR model — a VisuallyHidden aria-live
+          announcer + entities-so-far list, so the aria-hidden canvases don't cut a
+          screen-reader user off. Presence of `generationA11y` gates it (the reveal
+          omits it), so it never renders on the interactive reveal surface. */}
+      {generationA11y !== undefined && <GenerationAnnouncer nodes={nodes} a11y={generationA11y} />}
+      {/* E2 (Phase E): the REVEAL graph's roving hidden node list — the keyboard
+          path to select a node when the canvas is aria-hidden. Rendered only on the
+          interactive reveal, and only when the consumer supplies a resolved label. */}
+      {interactive && nodeListLabel !== undefined && (
+        <GraphNodeList nodes={nodes} selectedKey={selectedKey} onSelect={onSelect} label={nodeListLabel} />
+      )}
       <div className={bandClass(narrow, fill)}>
         {/* The graph pane: fog behind + graph canvas on top + the status-card overlay,
             all in one positioned box (both canvases share the box → the fog-holes line

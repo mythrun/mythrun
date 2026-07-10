@@ -201,6 +201,15 @@ export function GeneratingView({
     [stageTimings, stages, nowMs, t],
   )
 
+  // E1 (MYT-89 Phase E) — the SR announcer's PHASE signal: the running watched-entity
+  // stage's friendly label (a change flushes the live region at once); before or between
+  // those stages it falls back to the generic status title. A structural pick over the
+  // same stream data the card reads — the graph owns the announce pacing.
+  const generationPhaseLabel = useMemo(() => {
+    const running = stages.find((s) => s.status === 'running' && stageLabels[s.stage] !== undefined)
+    return running !== undefined ? (stageLabels[running.stage] ?? t('worldGen.statusTitle')) : t('worldGen.statusTitle')
+  }, [stages, stageLabels, t])
+
   // ACT ONE — the generic loading screen, with the watch button once entities
   // start. The gen keeps streaming underneath (the route's hook stays mounted);
   // watching only swaps what this view renders.
@@ -257,6 +266,14 @@ export function GeneratingView({
         // nodes (just revealed) the scale is 1 — full fog at the birth of the world.
         shownEntities={nodes.length}
         totalEntities={MIN_EXPECTED_ENTITIES}
+        // E1 (Phase E): the SR model for the aria-hidden generation canvas — a
+        // polite live region (phase flushes at once; the entity tally is coalesced)
+        // + a hidden entities-so-far list. All strings resolved here (DS owns no copy).
+        generationA11y={{
+          entityListLabel: t('worldGen.a11y.entityList'),
+          phaseLabel: generationPhaseLabel,
+          entitiesLabel: t('worldGen.a11y.entities', { count: nodes.length }),
+        }}
       />
     </FullBleedStage>
   )

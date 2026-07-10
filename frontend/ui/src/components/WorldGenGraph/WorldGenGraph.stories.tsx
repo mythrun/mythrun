@@ -187,6 +187,14 @@ function StreamingDemo({
           onSelect={() => undefined}
           status={statusFor(count, arrivals.length)}
           totalEntities={totalNodes}
+          // E1 (Phase E): the SR-only generation model — a polite live region + a
+          // hidden entities-so-far list (VisuallyHidden; nothing paints). Wired in the
+          // story so the real-browser ARIA pass can inspect it.
+          generationA11y={{
+            entityListLabel: 'What has taken shape so far',
+            phaseLabel: 'Raising the powers',
+            entitiesLabel: `${String(nodes.length)} have taken shape`,
+          }}
           {...(reducedMotion !== undefined ? { reducedMotion } : {})}
         />
       </div>
@@ -465,6 +473,11 @@ function RevealDemo(): React.JSX.Element {
         edges={edges}
         shownEntities={NODE_TOTAL}
         totalEntities={NODE_TOTAL}
+        // E2 (Phase E): the SR/keyboard path into the aria-hidden reveal graph — a
+        // roving hidden listbox (VisuallyHidden; nothing paints) whose selection drives
+        // the same onSelect a canvas tap does. Wired so the browser ARIA pass can
+        // inspect it.
+        nodeListLabel="Pick a place or figure from your world"
         {...(selectedKey !== undefined ? { selectedKey } : {})}
         onSelect={setSelectedKey}
       />

@@ -119,4 +119,39 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  tuning harness passes live slider values (the SpreadTuning pattern); production
    *  omits this — the locked defaults keep a real ~46-entity generation readable. */
   densityParams?: Partial<DensityParams>
+  /** SR-ONLY accessible model for the GENERATION graph (MYT-89 Phase E, E1). The
+   *  node/edge canvases are `aria-hidden` decoration, so a screen-reader user is
+   *  otherwise cut off from the whole generation act. When provided (the
+   *  generation route passes it; the reveal omits it), the graph renders a
+   *  `VisuallyHidden` `aria-live="polite"` region announcing progress plus a
+   *  hidden list of the entities discovered so far. All strings arrive RESOLVED
+   *  (the DS owns no copy). Presence — not `interactive` — gates the announcer,
+   *  so it never renders on the reveal. */
+  generationA11y?: GenerationA11y
+  /** SR-ONLY aria-label for the REVEAL graph's roving hidden node list (E2) — the
+   *  keyboard path that selects a graph node when the canvas itself is
+   *  `aria-hidden`. Provided (resolved) on the interactive reveal; omitted during
+   *  generation. The list is rendered only when `interactive` AND this label is
+   *  supplied. */
+  nodeListLabel?: string
+}
+
+/**
+ * The GENERATION graph's screen-reader model (MYT-89 Phase E, E1). Every field is
+ * a RESOLVED string (the DS owns no copy). The consumer composes `phaseLabel` from
+ * the running stage and `entitiesLabel` from the arrived count; the graph decides
+ * WHEN each is announced (a stage change flushes immediately; an entity burst is
+ * coalesced) so a 20-entity flurry never machine-guns the reader.
+ */
+export interface GenerationA11y {
+  /** aria-label for the SR-only list of entities discovered so far. */
+  entityListLabel: string
+  /** The current generation-phase label — a CHANGE flushes the live region at
+   *  once, so a stage transition is never delayed behind the entity-count
+   *  coalescer. */
+  phaseLabel: string
+  /** The running entity tally (count interpolated) — CHANGES here are coalesced
+   *  (trailing-debounced) so an entity burst announces once, not once per
+   *  arrival. */
+  entitiesLabel: string
 }

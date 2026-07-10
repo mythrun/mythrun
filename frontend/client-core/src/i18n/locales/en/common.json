@@ -181,6 +181,10 @@
     "countdown": "[ph: ~{{time}} left]",
     "loadingLabel": "[ph: making your world]",
     "watch": "[ph: watch your world be born]",
+    "a11y": {
+      "entityList": "[ph: what has taken shape so far]",
+      "entities": "[ph: {{count}} have taken shape]"
+    },
     "flavor1": "[ph: worldgen flavor 1]",
     "flavor2": "[ph: worldgen flavor 2]",
     "flavor3": "[ph: worldgen flavor 3]",
@@ -233,6 +237,7 @@
     "wikiEmptyBody": "[ph: the world holds nothing on this yet]",
     "wikiDigDeeper": "[ph: dig deeper]",
     "wikiIndex": "[ph: index]",
+    "graphNodeList": "[ph: pick a place or figure from your world]",
     "group": {
       "faction": "[ph: factions]",
       "location": "[ph: places]",

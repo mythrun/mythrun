@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, act, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
-import type { GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import type { StageProgress } from '@mythrun/contract/events'
+import type { GenerationA11y, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
 import { MAX_DENSITY_EDGES, MAX_DENSITY_NODES } from './max-density-fixture.ts'
 import { WorldGenGraph } from './WorldGenGraph.tsx'
 
@@ -22,11 +23,12 @@ const node = (synthKey: string, kind: string, name: string): GraphNode => ({
   lastEventIndex: 0,
 })
 
-const FIXTURE: GraphNode[] = [
-  node('s1/reach', 'location', 'Ashfen Reach'),
-  node('s2/maeris', 'npc', 'Maeris Vale'),
-  node('s3/guild', 'faction', 'The Tallow Guild'),
-]
+// Named so E2's selection tests can pass a DEFINITE displayId (exactOptionalPropertyTypes
+// rejects `FIXTURE[n]?.displayId`, a `string | undefined`, for the optional selectedKey).
+const REACH = node('s1/reach', 'location', 'Ashfen Reach')
+const MAERIS = node('s2/maeris', 'npc', 'Maeris Vale')
+const GUILD = node('s3/guild', 'faction', 'The Tallow Guild')
+const FIXTURE: GraphNode[] = [REACH, MAERIS, GUILD]
 const EDGES: GraphEdge[] = [
   { synthKey: 'e1', from: 's2/maeris', to: 's3/guild', relationship: 'leads', arrivalIndex: 0, sourceStage: 'weave' },
 ]
@@ -384,5 +386,251 @@ describe('WorldGenGraph — generation labels + drag (MYT-89 audit #3 / #5)', ()
     render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />) // gen (interactive false)
     const attachedDrag = addSpy.mock.calls.some(([type]) => type === 'pointerdown')
     expect(attachedDrag).toBe(true) // the pre-fix effect gated this off during generation
+  })
+})
+
+// E1 (MYT-89 Phase E) — the GENERATION graph's screen-reader model. The canvases are
+// aria-hidden decoration, so a SR user is otherwise cut off from the entire generation
+// act. When the consumer passes `generationA11y` (the generation route does; the reveal
+// omits it), the graph renders a VisuallyHidden aria-live region announcing progress +
+// a hidden list of the entities discovered so far. COALESCING: a stage/phase change
+// flushes the live region immediately; an entity burst is trailing-debounced so a
+// flurry of arrivals announces once, not once per node (no SR machine-gunning).
+const A11Y: GenerationA11y = {
+  entityListLabel: 'Entities discovered so far',
+  phaseLabel: 'Raising the powers',
+  entitiesLabel: '3 entities have taken shape',
+}
+
+describe('WorldGenGraph — E1 generation screen-reader model', () => {
+  it('renders an aria-live region AND a visually-hidden list of entity names during generation', () => {
+    stubGetContext(null)
+    const { container, getByRole } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} generationA11y={A11Y} />,
+    )
+    // The polite live region carries the coalesced announcement.
+    const live = container.querySelector('[aria-live="polite"]')
+    expect(live).not.toBeNull()
+    // The SR-only entity list: every arrived entity is reachable by name.
+    const list = getByRole('list', { name: A11Y.entityListLabel })
+    for (const n of FIXTURE) expect(within(list).getByText(n.name)).toBeDefined()
+  })
+
+  it('the SR list + live region are genuinely INVISIBLE (VisuallyHidden clip, not rendered visibly)', () => {
+    stubGetContext(null)
+    const { getByRole } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} generationA11y={A11Y} />,
+    )
+    // Radix VisuallyHidden applies the canonical clip/inset SR-only style — the
+    // list lives inside it, so it is in the a11y tree but paints nothing.
+    const list = getByRole('list', { name: A11Y.entityListLabel })
+    const clip = list.closest('[style*="clip"], [style*="position: absolute"]')
+    expect(clip).not.toBeNull()
+  })
+
+  it('does NOT render the announcer on the reveal (interactive, no generationA11y)', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph interactive nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
+    )
+    expect(container.querySelector('[aria-live="polite"]')).toBeNull()
+  })
+
+  it('has no a11y violations with the SR model present', async () => {
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} generationA11y={A11Y} />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('COALESCES an entity burst: rapid tally changes settle to ONE announcement, not one per node', () => {
+    vi.useFakeTimers()
+    try {
+      stubGetContext(null)
+      const { container, rerender } = render(
+        <WorldGenGraph
+          nodes={FIXTURE}
+          edges={EDGES}
+          onSelect={vi.fn()}
+          generationA11y={{ ...A11Y, entitiesLabel: '3 entities have taken shape' }}
+        />,
+      )
+      const live = container.querySelector('[aria-live="polite"]')
+      expect(live?.textContent).toContain('3 entities')
+      // A burst: the tally jumps 4→5→6 within the coalescing window — the SAME phase.
+      for (const count of [4, 5, 6]) {
+        act(() => {
+          rerender(
+            <WorldGenGraph
+              nodes={FIXTURE}
+              edges={EDGES}
+              onSelect={vi.fn()}
+              generationA11y={{ ...A11Y, entitiesLabel: `${String(count)} entities have taken shape` }}
+            />,
+          )
+        })
+      }
+      // Mid-burst the region has NOT machine-gunned — it still shows the pre-burst value.
+      expect(live?.textContent).toContain('3 entities')
+      // After the quiet gap the region settles to the LATEST tally, in one update.
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(live?.textContent).toContain('6 entities')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('FLUSHES a phase/stage change immediately (never delayed behind the count debounce)', () => {
+    vi.useFakeTimers()
+    try {
+      stubGetContext(null)
+      const { container, rerender } = render(
+        <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} generationA11y={A11Y} />,
+      )
+      const live = container.querySelector('[aria-live="polite"]')
+      act(() => {
+        rerender(
+          <WorldGenGraph
+            nodes={FIXTURE}
+            edges={EDGES}
+            onSelect={vi.fn()}
+            generationA11y={{ ...A11Y, phaseLabel: 'Drawing the ties' }}
+          />,
+        )
+      })
+      // No timer advance — the stage transition is announced at once.
+      expect(live?.textContent).toContain('Drawing the ties')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// E2 (MYT-89 Phase E) — the REVEAL graph's roving hidden node list. The canvas is
+// aria-hidden, so a keyboard user has no way to reach/select a graph node. When the
+// consumer passes `nodeListLabel` on the interactive reveal, the graph renders a
+// VisuallyHidden `role="listbox"` of the nodes with roving tabindex: arrow keys move
+// the active option, Enter/Space selects → the SAME `onSelect(displayId)` the canvas
+// tap fires (so the wiki navigates identically). It mirrors selection BOTH ways — a
+// `selectedKey` change (a canvas tap / a wiki pick) moves the roving position to that
+// node — and it never enters the visual layer.
+const NODE_LIST_LABEL = 'Pick a place or figure'
+
+describe('WorldGenGraph — E2 reveal roving node list', () => {
+  it('renders a VisuallyHidden listbox with an option per node (reveal only)', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const { getByRole, getAllByRole } = render(
+      <WorldGenGraph interactive nodeListLabel={NODE_LIST_LABEL} nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
+    )
+    const listbox = getByRole('listbox', { name: NODE_LIST_LABEL })
+    const options = getAllByRole('option')
+    expect(options).toHaveLength(FIXTURE.length)
+    for (const n of FIXTURE) expect(within(listbox).getByText(n.name)).toBeDefined()
+    // Genuinely invisible: it lives inside the VisuallyHidden clip.
+    expect(listbox.closest('[style*="clip"], [style*="position: absolute"]')).not.toBeNull()
+  })
+
+  it('keyboard selects a node via the roving list → onSelect fires the node displayId (the wikiPush path)', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const onSelect = vi.fn()
+    const { getByRole } = render(
+      <WorldGenGraph interactive nodeListLabel={NODE_LIST_LABEL} nodes={FIXTURE} edges={EDGES} onSelect={onSelect} />,
+    )
+    const listbox = getByRole('listbox', { name: NODE_LIST_LABEL })
+    // Move the roving active option to the 2nd node, then activate it.
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' })
+    fireEvent.keyDown(listbox, { key: 'Enter' })
+    expect(onSelect).toHaveBeenCalledWith(MAERIS.displayId)
+  })
+
+  it('mirrors selectedKey into the roving position: the selected option is aria-selected + tabindex 0', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const { getByRole, getAllByRole } = render(
+      <WorldGenGraph
+        interactive
+        nodeListLabel={NODE_LIST_LABEL}
+        selectedKey={GUILD.displayId}
+        nodes={FIXTURE}
+        edges={EDGES}
+        onSelect={vi.fn()}
+      />,
+    )
+    const selected = getByRole('option', { name: GUILD.name })
+    expect(selected.getAttribute('aria-selected')).toBe('true')
+    expect(selected.getAttribute('tabindex')).toBe('0')
+    // Exactly ONE option is in the tab order (roving tabindex).
+    const inTabOrder = getAllByRole('option').filter((o) => o.getAttribute('tabindex') === '0')
+    expect(inTabOrder).toHaveLength(1)
+  })
+
+  it('does NOT render the node list during generation (interactive false / no label)', () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const { queryByRole } = render(
+      <WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} generationA11y={A11Y} />,
+    )
+    expect(queryByRole('listbox')).toBeNull()
+  })
+
+  it('has no a11y violations with the roving list present', async () => {
+    stubViewport(false)
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph
+        interactive
+        nodeListLabel={NODE_LIST_LABEL}
+        selectedKey={REACH.displayId}
+        nodes={FIXTURE}
+        edges={EDGES}
+        onSelect={vi.fn()}
+      />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// E3 (MYT-89 Phase E) — the reduced-motion consolidation, at the WorldGenGraph seam.
+// Every motion source has its own unit-level reduced-motion branch (fog: no rAF +
+// drain-preserved static re-settle — WorldGenFogField.test; buoy bob: null clock →
+// zero offset — canvas-draw.test; Act-2 edges + arrival traces: progress forced to 1
+// — canvas-draw.test / arrival-draw.test; RevealTransition: ~300ms cross-fade to the
+// same end state — RevealTransition.test). This block pins the GRAPH-level contract
+// they compose to: under reduced motion NO rAF churns (graph or fog), while the
+// determinate PROGRESS signal — the status card's `%` progressbar — still reports.
+const stageAt = (stage: string, status: StageProgress['status']): StageProgress => ({
+  stage,
+  status,
+  userId: null,
+  costUsd: 0,
+  startedAt: null,
+  completedAt: null,
+})
+
+describe('WorldGenGraph — E3 reduced-motion consolidation', () => {
+  it('under reducedMotion: no rAF loop, yet the status % progressbar still reports progress', () => {
+    stubViewport(false)
+    stubGetContext(fakeCtx())
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
+    const { getByRole } = render(
+      <WorldGenGraph
+        nodes={FIXTURE}
+        edges={EDGES}
+        onSelect={vi.fn()}
+        reducedMotion
+        // One of four watched-entity stages completed → the % is the primary,
+        // motion-free progress signal (the ember pulse is CSS, quelled by base.css).
+        status={{ stages: [stageAt('world_and_factions', 'completed')] }}
+      />,
+    )
+    expect(raf).not.toHaveBeenCalled()
+    const bar = getByRole('progressbar')
+    expect(bar.getAttribute('aria-valuenow')).toBe('25')
   })
 })

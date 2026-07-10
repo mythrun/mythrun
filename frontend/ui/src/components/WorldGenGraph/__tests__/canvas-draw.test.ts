@@ -514,4 +514,18 @@ describe('bobOffset / fogEntitiesFrom — buoy bob is a RENDER offset only (C5 d
     // …while the source positions map is untouched — bob never writes back to physics.
     expect(positions.get('a')).toEqual({ x: 40, y: -10 })
   })
+
+  // E3 (Phase E) — the buoy-bob source's reduced-motion branch, pinned explicitly: a
+  // NULL clock (what the graph passes once its rAF loop is suppressed under reduced
+  // motion) yields a TRUE ZERO offset, so the glyph and its fog-hole rest at the
+  // static settled position — no residual sway.
+  it('is QUIET under reduced motion: a null clock yields the settled position, zero bob', () => {
+    const nodes = [cnode('a', 'location', 'Ashfen Reach')]
+    const positions = new Map<string, Point>([['a', { x: 40, y: -10 }]])
+    const [still] = fogEntitiesFrom(nodes, positions, null, REF_DIMS)
+    if (still === undefined) throw new Error('expected a fog entity')
+    const v = centredToVirtual({ x: 40, y: -10 }, REF_DIMS)
+    expect(still.x).toBeCloseTo(v.x, 6)
+    expect(still.y).toBeCloseTo(v.y, 6)
+  })
 })

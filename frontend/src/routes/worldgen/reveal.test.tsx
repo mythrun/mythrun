@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
 import {
@@ -238,6 +238,49 @@ function renderReveal(overrides: RevealOverrides = {}): RevealHandle {
   }
 }
 
+// The MOBILE reveal mounts `DrawerBackClose` (Phase E, E2 — the Back-closes-the-drawer
+// precedence), which calls react-router's `useBlocker`; that requires a DATA router
+// (the app ships `createBrowserRouter`). The `<MemoryRouter>` component above is not
+// one, so the narrow tests drive the reveal through `createMemoryRouter` +
+// `RouterProvider` instead. The Back precedence's own behavior (POP → close vs leave)
+// lives in reveal-back.test.tsx; these tests only need a data router to render.
+function renderRevealMobile(overrides: RevealOverrides = {}): RevealHandle {
+  const fetchSnapshot = overrides.fetchSnapshot ?? vi.fn().mockResolvedValue(SNAPSHOT)
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/',
+        element: (
+          <ThemeProvider>
+            <ApiClientProvider value={testCtx}>
+              <I18nextProvider i18n={i18n}>
+                <WorldReveal
+                  campaignId={CAMPAIGN_ID}
+                  nodes={NODES}
+                  edges={[]}
+                  fetchSnapshot={fetchSnapshot}
+                  {...(overrides.stages ? { stages: overrides.stages } : {})}
+                  {...(overrides.continueReady !== undefined ? { continueReady: overrides.continueReady } : {})}
+                  {...(overrides.onContinue ? { onContinue: overrides.onContinue } : {})}
+                />
+              </I18nextProvider>
+            </ApiClientProvider>
+          </ThemeProvider>
+        ),
+      },
+    ],
+    { initialEntries: ['/'] },
+  )
+  render(<RouterProvider router={router} />)
+  // A data router bakes its element — these tests don't re-render with new props.
+  return {
+    fetchSnapshot,
+    update: () => {
+      throw new Error('renderRevealMobile does not support update()')
+    },
+  }
+}
+
 describe('WorldReveal — settled graph beside the wiki', () => {
   it('renders the graph pane (fed the folded nodes) and the wiki groups', async () => {
     renderReveal()
@@ -300,6 +343,25 @@ describe('WorldReveal — settled graph beside the wiki', () => {
   })
 })
 
+describe('WorldReveal — wiki home is the guaranteed keyboard path to every entity (Phase E, E2)', () => {
+  // The graph canvas is aria-hidden; the roving hidden node list (WorldGenGraph E2)
+  // is one keyboard path, and the wiki HOME browse is the guaranteed one — every
+  // entity of every kind is a NATIVE button (Enter/Space-activatable, in the tab
+  // order by construction), reachable against the CURRENT intro-as-home surface.
+  it('renders every snapshot entity as a keyboard-activatable button that opens its page', async () => {
+    renderReveal()
+    const wiki = await screen.findByTestId('reveal-wiki')
+    // Both kinds present in the browse index: a location and an npc.
+    for (const name of ['Ashfen Reach', 'Maeris Vale']) {
+      const row = within(wiki).getByRole('button', { name })
+      expect(row.tagName).toBe('BUTTON') // native — keyboard activation is inherent
+    }
+    // Activating a home row opens that entity's page (the keyboard path lands).
+    fireEvent.click(within(wiki).getByRole('button', { name: 'Maeris Vale' }))
+    expect(within(wiki).getByRole('heading', { name: 'Maeris Vale' })).toBeDefined()
+  })
+})
+
 describe('WorldReveal — desktop layout (true 50/50)', () => {
   it('lays graph and wiki as a FIXED two-pane 50/50 (no auto-fill empty tracks)', async () => {
     renderReveal()
@@ -339,7 +401,7 @@ describe('WorldReveal — desktop layout (true 50/50)', () => {
 describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () => {
   it('renders the graph in a full-bleed stage and the wiki in a CLOSED drawer', async () => {
     mockViewport({ narrow: true })
-    renderReveal()
+    renderRevealMobile()
     // The graph owns the glass: the FullBleedStage mechanism (the generating
     // act's), not the desktop grid.
     expect(within(screen.getByTestId('reveal-stage')).getByTestId('reveal-graph')).toBeDefined()
@@ -354,7 +416,7 @@ describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () =>
 
   it('opens the drawer onto the entity page when a graph node is chosen', async () => {
     mockViewport({ narrow: true })
-    renderReveal()
+    renderRevealMobile()
     const sheet = screen.getByTestId('reveal-drawer')
     await within(sheet).findByTestId('reveal-wiki')
     fireEvent.click(
@@ -377,7 +439,7 @@ describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () =>
     // The pannable camera stays (the exploration surface), and the forceful
     // settle regime is on here too (both breakpoints).
     mockViewport({ narrow: true })
-    renderReveal()
+    renderRevealMobile()
     const graph = screen.getByTestId('reveal-graph')
     expect(graph.getAttribute('data-pannable')).toBe('true')
     expect(graph.getAttribute('data-fill-host')).toBe('true')

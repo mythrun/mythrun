@@ -102,7 +102,7 @@ export type { GhostHookListProps, GhostHookItem } from './ghost-hook-list.ts'
 // generation: a force-directed Canvas (aria-hidden decorative) + an ACCESSIBLE
 // entity list (the a11y/keyboard/touch surface). The `GraphNode`/`GraphEdge` model
 // is re-exported here so consumers read the node shape off the contract surface.
-export type { WorldGenGraphProps, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
+export type { WorldGenGraphProps, GenerationA11y, GraphNode, GraphEdge, GraphNodeState } from './world-gen-graph.ts'
 
 // WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut + reveal
 // timing) — the generation status/loading OVERLAY pinned top-left of the graph pane:

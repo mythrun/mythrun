@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { useState } from 'react'
+import { render, screen, cleanup, act } from '@testing-library/react'
+import { MemoryRouter, createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
 import {
@@ -132,6 +133,38 @@ function renderAt(moment: RevealMoment): { update: (next: RevealMoment) => void 
   }
 }
 
+// The MOBILE reveal mounts `DrawerBackClose` (Phase E, E2), which calls react-router's
+// `useBlocker` — that needs a DATA router (the app ships `createBrowserRouter`), which
+// `<MemoryRouter>` above is not. So the NARROW moment tests drive the reveal through
+// `createMemoryRouter` + `RouterProvider`, updating the moment via a stateful harness
+// (a data router bakes its element, so `.update()` flows through local state).
+function renderAtMobile(moment: RevealMoment): { update: (next: RevealMoment) => void } {
+  const fetchSnapshot = vi.fn().mockResolvedValue(SNAPSHOT)
+  let setMoment: ((m: RevealMoment) => void) | undefined
+  function Harness(): React.JSX.Element {
+    const [m, set] = useState(moment)
+    setMoment = set
+    return (
+      <ThemeProvider>
+        <ApiClientProvider value={testCtx}>
+          <I18nextProvider i18n={i18n}>
+            <WorldReveal campaignId={CAMPAIGN_ID} nodes={NODES} edges={[]} fetchSnapshot={fetchSnapshot} moment={m} />
+          </I18nextProvider>
+        </ApiClientProvider>
+      </ThemeProvider>
+    )
+  }
+  const router = createMemoryRouter([{ path: '/', element: <Harness /> }], { initialEntries: ['/'] })
+  render(<RouterProvider router={router} />)
+  return {
+    update: (next) => {
+      act(() => {
+        setMoment?.(next)
+      })
+    },
+  }
+}
+
 describe('WorldReveal — the reveal moment stages the layout (MYT-89 D6)', () => {
   it('desktop: title is transparent before settle, visible from it (space reserved throughout)', () => {
     const handle = renderAt(at('gust'))
@@ -163,7 +196,7 @@ describe('WorldReveal — the reveal moment stages the layout (MYT-89 D6)', () =
 
   it('mobile: the drawer (its edge handle) is ABSENT before resolve and arrives at it', () => {
     mockViewport({ narrow: true })
-    const handle = renderAt(at('settle'))
+    const handle = renderAtMobile(at('settle'))
     // Nothing occludes the just-revealed world: no sheet, no handle.
     expect(screen.queryByTestId('reveal-drawer')).toBeNull()
     handle.update(at('resolve'))
@@ -172,7 +205,7 @@ describe('WorldReveal — the reveal moment stages the layout (MYT-89 D6)', () =
 
   it('mobile: the stage geometry is identical in every phase (the gen→reveal continuity)', () => {
     mockViewport({ narrow: true })
-    const handle = renderAt(at('hold'))
+    const handle = renderAtMobile(at('hold'))
     expect(screen.getByTestId('reveal-stage')).toBeDefined()
     handle.update(at('done'))
     expect(screen.getByTestId('reveal-stage')).toBeDefined()

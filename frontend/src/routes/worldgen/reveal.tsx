@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
 import { WikiPanel, useWikiModel, type FetchSnapshot } from './reveal-wiki-panel.tsx'
+import { DrawerBackClose } from './drawer-back-close.tsx'
 
 // The WORLD REVEAL (MYT-89 Phase D, D5 layout + reveal timing) — where the
 // `/campaigns/:id` route lands the moment the CONNECTIONS ARE WOVEN
@@ -165,20 +166,32 @@ function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenCh
         {graph}
       </FullBleedStage>
       {revealPhaseAtLeast(moment.phase, 'resolve') && (
-        <Drawer
-          data-testid="reveal-drawer"
-          title={t('worldReveal.title')}
-          description={t('worldReveal.explorePrompt')}
-          openLabel={t('worldReveal.wikiOpen')}
-          closeLabel={t('worldReveal.wikiClose')}
-          open={open}
-          onOpenChange={onOpenChange}
-        >
-          <Stack gap={4}>
-            {continueAction}
-            {wikiPanel}
-          </Stack>
-        </Drawer>
+        <>
+          {/* E2 (Phase E): mobile Back precedence — while the drawer is open, a
+              browser/hardware Back closes it before leaving the route (the
+              close-drawer → leave-route layer, via the router's history
+              integration). Mounted with the drawer; inert while closed. */}
+          <DrawerBackClose
+            open={open}
+            onClose={() => {
+              onOpenChange(false)
+            }}
+          />
+          <Drawer
+            data-testid="reveal-drawer"
+            title={t('worldReveal.title')}
+            description={t('worldReveal.explorePrompt')}
+            openLabel={t('worldReveal.wikiOpen')}
+            closeLabel={t('worldReveal.wikiClose')}
+            open={open}
+            onOpenChange={onOpenChange}
+          >
+            <Stack gap={4}>
+              {continueAction}
+              {wikiPanel}
+            </Stack>
+          </Drawer>
+        </>
       )}
     </Stack>
   )
@@ -308,6 +321,10 @@ export function WorldReveal({
       edges={edges}
       onSelect={handleGraphSelect}
       reducedMotion={prefersReducedMotion}
+      // E2 (Phase E): the SR/keyboard path into the aria-hidden reveal graph — a
+      // roving hidden listbox whose selection drives the same onSelect (and thus
+      // the same wiki push) a canvas tap does. Resolved label; DS owns no copy.
+      nodeListLabel={t('worldReveal.graphNodeList')}
       // The REGIME props (MYT-89 audit v3 + v4). Desktop: the pane is a true
       // half of the screen — it FILLS the RevealPanes row (fillHost) and must
       // never pan (pannable false zeroes the camera seat; labels tier down by
