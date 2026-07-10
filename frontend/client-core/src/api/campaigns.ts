@@ -70,7 +70,7 @@ const getWorldSnapshotEndpoint = defineEndpoint<WorldGenSnapshot, { campaignId: 
   response: WorldGenSnapshotSchema,
 })
 
-/** Owner-only. 409 `snapshot_not_ready` until stage 4 (entity_relationships)
+/** Owner-only. 409 `snapshot_not_ready` until the reveal-boundary stage (world_introduction)
  *  commits → the caller (`useWorldGenStream`) gates the fetch on
  *  `phase >= world_snapshot_ready` and swallows a race-window 409. */
 export function getWorldSnapshot(ctx: ApiContext, campaignId: string): Promise<WorldGenSnapshot> {

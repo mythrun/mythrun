@@ -67,7 +67,7 @@ interface GraphSeed {
 const streamPath = (campaignId: string): string =>
   `/api/campaigns/${encodeURIComponent(campaignId)}/status/stream`
 
-/** Phases where stage 4 (entity_relationships) has committed, so the
+/** Phases where the reveal-boundary stage (world_introduction) has committed, so the
  *  world-snapshot is fetchable — the rehydration gate. Failure phases are
  *  excluded: their UI is the retry surface, not a graph, and a pre-stage-4
  *  failure would 409 `snapshot_not_ready` anyway. */
