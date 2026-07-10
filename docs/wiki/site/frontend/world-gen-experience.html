@@ -596,19 +596,79 @@
   not a player-facing number.
 </aside>
 
-<h3 id="reduced-motion-and-accessibility">Reduced motion and accessibility</h3>
+<h3 id="reduced-motion">Reduced motion</h3>
 
 <p>
   Every motion source honours <code>prefers-reduced-motion</code>, read once in the web layer and
-  handed to the brain as a boolean: the fog recomputes a static settled density on each entity-count
-  change (preserving the clearing-as-progress cue rather than freezing blank), the node bob stops,
-  and edges and arrivals appear instantly instead of stroking in. The reveal moment collapses to a
-  single ~300ms fade. The countdown is <em>not</em> gated — it's content, not decoration, and
-  freezing it would show a wrong number. The Canvas graph is paired with an accessible model: an
-  <code>aria-live</code> announcement of entities as they arrive during generation, and in the
-  reveal the wiki's browse-by-kind is the guaranteed keyboard-and-screen-reader path to every entity
-  alongside a hidden roving-tabindex mirror of the graph's selection.
+  handed to the brain as a boolean, and there are five of them: the fog's settle, the node bob, the
+  edge draw-ins, the per-node arrival traces, and the reveal-moment choreography. Under the
+  preference the fog recomputes a static settled density on each entity-count change (preserving the
+  clearing-as-progress cue rather than freezing blank), the bob stops, and edges and arrivals appear
+  finished instead of stroking in; the reveal moment collapses to a single ~300ms fade. What does
+  <em>not</em> stop is progress: the countdown keeps ticking and the screen-reader live region keeps
+  announcing. Those are content, not decoration — freezing the countdown would show a wrong number,
+  and freezing the announcer would strand a non-sighted reader mid-generation.
 </p>
+
+<h3 id="the-accessible-model">The accessible model</h3>
+
+<p>
+  Both canvases — the fog and the graph — are <code>aria-hidden</code> decoration: a screen reader
+  cannot perceive a pixel of them, and a keyboard cannot land on a node drawn to a canvas. Left at
+  that, the whole ten-minute generation act and the reveal's graph would be silent and unreachable.
+  So each act pairs its canvas with a <code>VisuallyHidden</code> model that carries the same
+  information into the accessibility tree — nothing paints, but everything is announced and
+  navigable.
+</p>
+
+<p>
+  During generation, <code>GenerationAnnouncer</code> renders two things: an
+  <code>aria-live="polite"</code> region announcing the running phase and a rough entity tally, and
+  a hidden list of the entities that have taken shape so far — a snapshot the reader can step
+  through at will. The <em>visible</em> entity list was cut from the design; this SR-only list is
+  its accessibility-tree counterpart, not a mirror of anything on screen.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The live region coalesces, so a burst announces once</strong> — entities stream in
+  flurries, and a live region bound naively to the count would machine-gun the reader with twenty
+  announcements in a second. So a phase change flushes the region immediately (a stage transition is
+  news to hear at once), while an entity-tally change is trailing-debounced over a ~1.5s quiet
+  window — a burst collapses to a single "…24 entities…". The determinate percentage stays the
+  status card's <code>progressbar</code>; this region carries only what the canvas hides — that
+  entities are appearing, the phase, and roughly how many.
+</aside>
+
+<p>
+  In the reveal, the guaranteed keyboard-and-screen-reader path to every entity is the wiki's
+  browse-by-kind index — a real list of links, no canvas involved. Beside it,
+  <code>GraphNodeList</code> makes the graph itself reachable: a hidden <code>role="listbox"</code>
+  with roving tabindex, where arrow keys walk the nodes and Enter selects one through the
+  <em>same</em> <code>onSelect</code> a canvas tap fires — so a keyboard user drives the identical
+  graph-highlight-plus-wiki-push a mouse user does. Selection mirrors both ways: a tap or a wiki
+  pick moves the roving position onto that node, so the keyboard entry point always tracks whatever
+  the world last selected.
+</p>
+
+<p>
+  On a phone the wiki lives in the edge-handle <a href="./design-system.html">Drawer</a>, and Back
+  has to mean the right thing there. <code>DrawerBackClose</code> gives the open drawer Back
+  precedence: while it is open, a browser or hardware Back closes the drawer and stays on the reveal
+  route; a second Back leaves as normal — the sheet-dismisses-first behavior a phone user expects.
+  The drawer's own focus contract carries the rest: opening moves focus into the sheet, and closing
+  returns it to the edge handle, so the keyboard never strands on an invisible control.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Back precedence rides the router's history, not <code>window.history</code></strong> —
+  <code>DrawerBackClose</code> intercepts the POP through react-router's <code>useBlocker</code>; a
+  manual <code>pushState</code> would corrupt the data router's history bookkeeping. Only a POP
+  while the drawer is open is blocked, so a PUSH (Continue → the starting-situation route) flows
+  through untouched. The wiki's own in-surface Back button still pops the wiki <em>page</em> stack;
+  wiring browser Back to that as well would mean lifting WorldWiki's encapsulated navigation out of
+  the component, so page-back stays the wiki's affordance while browser Back manages the
+  drawer→route layers.
+</aside>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
 
@@ -626,7 +686,8 @@
   <li>
     When the "watch your world be born" button appears, press it to enter act two and watch the fog
     clear as entities and edges stream in. The world reveals the moment
-    <code>entity_relationships</code> completes; the wiki quietly reconciles as the tail finishes.
+    <code>world_introduction</code> completes (right after the connections weave); the wiki quietly
+    reconciles as the tail finishes.
   </li>
   <li>
     To inspect the underlying events, open the same campaign in the
@@ -742,10 +803,15 @@
     </td>
   </tr>
   <tr>
-    <td><code>WorldGenGraph</code></td>
+    <td>
+      <code>WorldGenGraph</code> · <code>GenerationAnnouncer</code> · <code>GraphNodeList</code>
+    </td>
     <td>
       The graph canvas (front) — node/edge draw, penstroke edges, trace-then-stamp arrival, drag,
-      the gated generation vs interactive reveal modes, and the fog layer it composes.
+      the gated generation vs interactive reveal modes, and the fog layer it composes. Its two
+      <code>VisuallyHidden</code> helpers carry the accessibility model for the
+      <code>aria-hidden</code> canvas: the generation announcer (coalesced live region +
+      entities-so-far list) and the reveal's roving-tabindex node listbox.
     </td>
   </tr>
   <tr>
@@ -812,6 +878,13 @@
     <td><code>routes/worldgen/reveal-wiki-panel.tsx</code></td>
     <td>The snapshot fetch / silent-refetch model and the wiki panel the reveal composes.</td>
   </tr>
+  <tr>
+    <td><code>routes/worldgen/drawer-back-close.tsx</code></td>
+    <td>
+      Mobile Back precedence for the reveal drawer — a <code>useBlocker</code> shim that closes an
+      open wiki drawer before a Back leaves the route.
+    </td>
+  </tr>
 </table>
 
 <h2 id="source">Source</h2>
@@ -830,7 +903,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-the-graph-beside-the-introduction">The reveal — the graph beside the introduction</a></li><li style="padding-left:12px"><a href="#the-reveal-moment">The reveal moment</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#reduced-motion-and-accessibility">Reduced motion and accessibility</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-the-graph-beside-the-introduction">The reveal — the graph beside the introduction</a></li><li style="padding-left:12px"><a href="#the-reveal-moment">The reveal moment</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#reduced-motion">Reduced motion</a></li><li style="padding-left:12px"><a href="#the-accessible-model">The accessible model</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
