@@ -144,6 +144,14 @@ function shouldEmitEdge(
   if (typeof rel !== 'string' || rel.length === 0) return false
   /* c8 ignore stop */
   if (bypass) return true
+  // myth-pq0ug (P1 enforced-ignorance): gate on the edge's OWN tier, not
+  // just its endpoints. A SECRET relationship between two KNOWN entities is
+  // the deterministic known↔known leak class relationship-tiering exists to
+  // kill — fail-closed (missing/discoverable/secret all suppress the live
+  // wire). The edge tier reaches this site via the LLM-streamed entry
+  // (`relationshipItemSchema.access_level`, validated by the stage-4
+  // sub_schema before this gate runs); the DB persist is unaffected.
+  if (entry.access_level !== 'known') return false
   const fromTier = endpointTierMap.get(resolvedFrom)
   const toTier = endpointTierMap.get(resolvedTo)
   return fromTier === 'known' && toTier === 'known'

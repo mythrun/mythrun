@@ -231,10 +231,18 @@ export async function runEntityConsolidationStage(
     readonly entityType: string
     readonly name: string
     readonly placeholderId: string
+    // myth-09jy8: the ghost's own tier, gating its entity-added publish.
+    readonly accessLevel: AccessLevel
   }
   const placeholderToUuid = new Map<string, string>()
   const ghostPublishes: GhostPublish[] = []
   const persistedRels: ResolvedRel[] = []
+  // myth-09jy8: endpoint-tier map for the post-COMMIT edge-added gate. Real
+  // entities come from the inventory read above (Entity carries accessLevel);
+  // ghost entities are added as they're minted in the transaction below.
+  const endpointTierById = new Map<string, AccessLevel>(
+    inventory.map((e) => [e.id, e.accessLevel]),
+  )
   // Writes only (LLM done — MYT-55); SQL byte-identical, relocated into the
   // entities/proseKernels/facts/entityHierarchy/relationships/worlds binders,
   // composed over the tx client.
@@ -268,11 +276,13 @@ export async function runEntityConsolidationStage(
           childEntityId: ghostId,
         })
       }
+      endpointTierById.set(ghostId, ghost.access_level)
       ghostPublishes.push({
         index: i,
         entityType: ghost.entity_type,
         name: ghost.name,
         placeholderId: ghost.placeholder_id,
+        accessLevel: ghost.access_level,
       })
     }
     // (c) placeholder-touching relationships
@@ -312,8 +322,19 @@ export async function runEntityConsolidationStage(
   // via the streaming extractor) can now resolve against the real ghost
   // UUID. Each persisted relationship gets an `edge-added`. Endpoints are
   // REAL UUIDs at this point.
+  //
+  // myth-09jy8 (P1 enforced-ignorance, discovered-from myth-pq0ug): both
+  // loops are tier-gated. The channel is player-facing, so a non-known ghost
+  // never emits entity-added, and an edge emits only when its OWN tier AND
+  // both endpoint tiers are `known` — the same triple gate as stage 4's
+  // shouldEmitEdge / finalized loop and stage 7's shouldEmitEdgeEvent.
+  // Fail-closed (a missing endpoint tier suppresses). bypassAccessFilter
+  // (dev-tool / author mode) widens to everything, mirroring the other
+  // stages. DB persistence above is unaffected. Suppression never shifts
+  // synthKey indices — they're minted from insert order, not publish order.
   const channel = `${args.keyPrefix}pipeline:campaign:${args.campaignId}`
   for (const g of ghostPublishes) {
+    if (!args.bypassAccessFilter && g.accessLevel !== 'known') continue
     await args.redisRealtime.publish(
       channel,
       JSON.stringify({
@@ -326,6 +347,12 @@ export async function runEntityConsolidationStage(
     )
   }
   for (const [i, rel] of persistedRels.entries()) {
+    const edgeVisible =
+      args.bypassAccessFilter ||
+      (rel.accessLevel === 'known' &&
+        endpointTierById.get(rel.sourceEntityId) === 'known' &&
+        endpointTierById.get(rel.targetEntityId) === 'known')
+    if (!edgeVisible) continue
     await args.redisRealtime.publish(
       channel,
       JSON.stringify({

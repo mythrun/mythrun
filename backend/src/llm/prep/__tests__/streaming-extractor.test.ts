@@ -123,8 +123,8 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
     const stream = partials([
       {
         relationships: [
-          { from: e1, to: e2, relationship: 'controls' },
-          { from: e1, to: e3, relationship: 'fears' },
+          { from: e1, to: e2, relationship: 'controls', access_level: 'known' },
+          { from: e1, to: e3, relationship: 'fears', access_level: 'known' },
         ],
       },
     ])
@@ -143,6 +143,43 @@ describe('runStreamingStage — myth-exac closed-entry gate', () => {
     expect(edges).toHaveLength(1)
     expect(edges[0]).toMatchObject({ from: e1, to: e2, relationship: 'controls' })
     expect(edges[0]?.description).toBeUndefined()
+  })
+
+  // myth-pq0ug (P1 enforced-ignorance): the live wire must filter the EDGE's
+  // OWN access_level, not just its endpoint tiers. A SECRET relationship
+  // between two KNOWN entities is the deterministic known↔known leak class
+  // the relationship-tiering work exists to kill — it must NOT stream live.
+  it('does NOT emit a secret-tier edge even when both endpoints are known-tier', async () => {
+    const redis = makeRedis()
+    const e1 = 'aaaaaaaa-0000-7000-8000-000000000001'
+    const e2 = 'aaaaaaaa-0000-7000-8000-000000000002'
+    const endpointTierMap = new Map<string, 'known' | 'discoverable' | 'secret'>([
+      [e1, 'known'],
+      [e2, 'known'],
+    ])
+    const stream = partials([
+      {
+        relationships: [
+          // known↔known but the edge itself is SECRET — must be suppressed.
+          { from: e1, to: e2, relationship: 'secretly_betrays', access_level: 'secret' },
+          // known↔known and the edge is known — must still emit.
+          { from: e1, to: e2, relationship: 'openly_allies', access_level: 'known' },
+        ],
+      },
+    ])
+    await runStreamingStage(stream, {
+      stage: 'entity_relationships',
+      campaignId: 'c1',
+      job: fakeJob,
+      redisRealtime: redis,
+      keyPrefix: 'test:',
+      arrays: [{ path: 'relationships', kind: 'edge', role: 'edge' }],
+      bypassAccessFilter: false,
+      endpointTierMap,
+    })
+    const events = redis.publish.mock.calls.map((c) => JSON.parse(c[1] as string) as SsePayload)
+    const edges = events.filter((e) => e.type === 'edge-added')
+    expect(edges.map((e) => e.relationship)).toEqual(['openly_allies'])
   })
 
   it('skips emission and logs when closed entry lacks access_level', async () => {

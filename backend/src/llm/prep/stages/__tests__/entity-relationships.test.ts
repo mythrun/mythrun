@@ -269,20 +269,26 @@ describe('runEntityRelationshipsStage', () => {
     expect(result.outputTokens).toBe(1200)
 
     // Stage 4 dispatch-contract fields: edges are also surfaced as post-commit
-    // `finalized` events (myth-exac T15) for rows whose endpoints both pass
-    // the tier filter. With all-known inventory + bypassAccessFilter=false
-    // every accepted relationship surfaces. Stage 4 doesn't cap-fire.
-    expect(result.finalizedEvents).toHaveLength(5)
+    // `finalized` events (myth-exac T15) for rows whose endpoints AND own tier
+    // pass the filter. makeValidTree's index-4 edge (Stormhaven→Magister Vance)
+    // is itself access_level:'secret' — with all-known inventory the four known
+    // edges surface but the secret one is suppressed (myth-pq0ug: the edge's own
+    // tier gates the wire even between known endpoints). Stage 4 doesn't cap-fire.
+    expect(result.finalizedEvents).toHaveLength(4)
     for (const ev of result.finalizedEvents) {
       expect(ev.type).toBe('finalized')
     }
+    const finalizedKeys = result.finalizedEvents.map((ev) =>
+      ev.type === 'finalized' ? ev.synthKey : '',
+    )
+    expect(finalizedKeys).not.toContain('entity_relationships/relationships/4')
     expect(result.capExhausted).toBe(false)
 
-    // Five edge-added events emitted
+    // Four edge-added events emitted (the secret edge is filtered from the wire).
     const edgeEvents = redis.publishes.filter(
       (p) => (p.payload as { type: string }).type === 'edge-added',
     )
-    expect(edgeEvents).toHaveLength(5)
+    expect(edgeEvents).toHaveLength(4)
   })
 
   it('drops hallucinated names (not in inventory) without throwing — WARN, INSERT continues with valid rows', async () => {
@@ -591,8 +597,10 @@ describe('runEntityRelationshipsStage', () => {
     const padded = {
       relationships: [
         // known → known (the only edge that should surface as finalized).
-        // The relationship's own access_level is independent of endpoint
-        // tiers — the finalized gate keys off endpoint tiers, not this field.
+        // Every edge here is access_level:'known', so the finalized gate is
+        // exercised purely on endpoint tiers. myth-pq0ug adds a dedicated
+        // test below proving the edge's OWN tier ALSO gates the finalized
+        // event (a secret edge between known endpoints must NOT finalize).
         { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule', access_level: 'known' },
         // known → secret
         { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'opposed_to', description: 'Coast threatened by hidden cabal', access_level: 'known' },
@@ -631,6 +639,53 @@ describe('runEntityRelationshipsStage', () => {
     // synthKey is keyed off the LLM-stream index (0 = the known→known edge).
     expect(finalized[0].synthKey).toBe('entity_relationships/relationships/0')
     expect(finalized[0].entityId).toBe('rel-0')
+  })
+
+  it('myth-pq0ug: tier filter on the EDGE itself — a secret edge between two KNOWN endpoints is inserted but NOT finalized', async () => {
+    // All three entities are KNOWN, so endpoint-tier gating alone would emit
+    // every edge. One relationship is itself access_level:'secret' — the
+    // deterministic known↔known leak class. It must persist to the DB (the
+    // world still knows it) but must NOT surface as a `finalized` wire event.
+    const allKnownInventory = inventoryFromEntities([
+      { id: E1, entityType: 'location', name: 'Iron Coast', accessLevel: 'known' },
+      { id: E2, entityType: 'faction', name: 'Brotherhood', accessLevel: 'known' },
+      { id: E3, entityType: 'npc', name: 'Hidden Cabal', accessLevel: 'known' },
+    ])
+    const padded = {
+      relationships: [
+        { from_name: 'Iron Coast', to_name: 'Brotherhood', relationship: 'controls', description: 'Coast under brotherhood rule', access_level: 'known' },
+        // known↔known but the EDGE is SECRET — must be suppressed from the wire.
+        { from_name: 'Iron Coast', to_name: 'Hidden Cabal', relationship: 'secretly_funds', description: 'Coast quietly bankrolls the cabal', access_level: 'secret' },
+        { from_name: 'Brotherhood', to_name: 'Hidden Cabal', relationship: 'allied_with', description: 'Brotherhood and cabal cooperate openly', access_level: 'known' },
+        { from_name: 'Hidden Cabal', to_name: 'Iron Coast', relationship: 'watches', description: 'Cabal watches the coast', access_level: 'known' },
+        { from_name: 'Brotherhood', to_name: 'Iron Coast', relationship: 'defends', description: 'Brotherhood defends the coast', access_level: 'known' },
+      ],
+      hierarchy_stragglers: [],
+      new_entity_declarations: [],
+    }
+    vi.mocked(ai.streamObject).mockReturnValueOnce({
+      partialObjectStream: makeStream(padded),
+      object: Promise.resolve(padded),
+      usage: Promise.resolve({ inputTokens: 4000, outputTokens: 1200, totalTokens: 5200 }),
+    } as never)
+
+    const repo = makeRepo()
+    repo.worldInventory.load.mockResolvedValue(allKnownInventory)
+    const result = await runEntityRelationshipsStage(repo as unknown as Repo, {
+      ...baseArgs,
+      job: fakeJob(),
+      redisRealtime: fakeRedis(),
+      keyPrefix: 'test:',
+    })
+
+    // DB: every accepted row is inserted, regardless of the edge's tier.
+    const insertedRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly unknown[]
+    expect(insertedRows).toHaveLength(5)
+    // SSE: the four known edges finalize; the secret edge (index 1) does NOT.
+    const finalized = result.finalizedEvents.filter((e) => e.type === 'finalized')
+    const finalizedKeys = finalized.map((e) => e.synthKey)
+    expect(finalizedKeys).not.toContain('entity_relationships/relationships/1')
+    expect(finalizedKeys).toHaveLength(4)
   })
 
   // myth-pfke task 9c: vocabulary registry placeholder substitution.

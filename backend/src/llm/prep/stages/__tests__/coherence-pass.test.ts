@@ -429,6 +429,26 @@ describe('runCoherencePassStage', () => {
     expect(eventsOfType(result.finalizedEvents, 'edge-removed')).toHaveLength(1)
   })
 
+  // myth-pq0ug (P1 enforced-ignorance): re-tiering a known edge to SECRET
+  // between two KNOWN endpoints must not surface on the wire. The DB write
+  // still happens (the world knows it); the edge-added is suppressed. The
+  // paired edge-removed is suppressed too, matching the existing asymmetric-
+  // visibility policy (a removal is never sent without its matching addition).
+  it('fix_relationship re-tiering a known edge to SECRET (known endpoints) suppresses edge events', async () => {
+    const seed = await seedWorld()
+    mockPatches([
+      { kind: 'fix_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', current_type: 'rivalry', newAccessLevel: 'secret', rationale: 'This grudge is actually hidden; re-tier to secret.' },
+    ], { inputTokens: 1000, outputTokens: 100 })
+    const { result } = await run(seed)
+    expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(0)
+    expect(eventsOfType(result.finalizedEvents, 'edge-removed')).toHaveLength(0)
+    // DB still mutated: the old row is replaced by a new secret-tier row.
+    const retiered = await pool.query<{ access_level: string }>(
+      `SELECT access_level FROM relationships WHERE synth_key LIKE 'coherence_pass/edges/%'`,
+    )
+    expect(retiered.rows[0]?.access_level).toBe('secret')
+  })
+
   it('with bypassAccessFilter=true, ALL coherence patches fire SSE deltas regardless of tier', async () => {
     const seed = await seedWorld({ A: 'known', B: 'discoverable', C: 'secret' })
     mockPatches([
@@ -601,6 +621,19 @@ describe('runCoherencePassStage', () => {
     const seed = await seedWorld({ A: 'known', B: 'discoverable', C: 'known' })
     mockPatches([
       { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'home_of', description: 'Mara was born and raised in Old Eredil.', access_level: 'known', rationale: 'Prose says she grew up here; relation missed at stage 4.' },
+    ], { inputTokens: 100, outputTokens: 100 })
+    const { result } = await run(seed)
+    expect(await countRelationships(seed.worldId)).toBe(3) // INSERT still lands
+    expect(eventsOfType(result.finalizedEvents, 'edge-added')).toHaveLength(0)
+  })
+
+  // myth-pq0ug (P1 enforced-ignorance): a SECRET relationship added between
+  // two KNOWN endpoints is the deterministic known↔known leak class. The row
+  // persists (the world knows it) but the edge-added must be suppressed.
+  it('add_relationship_by_name persists the row but suppresses edge-added when the edge itself is SECRET (known endpoints)', async () => {
+    const seed = await seedWorld({ A: 'known', B: 'known', C: 'known' })
+    mockPatches([
+      { kind: 'add_relationship_by_name', source_name: 'Old Eredil', target_name: 'Mara', relationship: 'secretly_funds', description: 'Old Eredil quietly bankrolls Mara.', access_level: 'secret', rationale: 'Prose hints at a hidden patronage between them.' },
     ], { inputTokens: 100, outputTokens: 100 })
     const { result } = await run(seed)
     expect(await countRelationships(seed.worldId)).toBe(3) // INSERT still lands

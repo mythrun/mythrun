@@ -335,6 +335,135 @@ describe('runEntityConsolidationStage', () => {
     expect(edgeAddedPayload.to.startsWith('new-')).toBe(false)
   })
 
+  // ── myth-09jy8: stage 4b wire emits are tier-gated ─────────────────────────
+  //
+  // P1 enforced-ignorance (discovered-from myth-pq0ug): stage 4b's post-COMMIT
+  // publishes were unconditional. Adversarial fixture covering all three
+  // suppression classes:
+  //   - a SECRET ghost entity must not emit entity-added,
+  //   - a SECRET edge between two KNOWN endpoints must not emit edge-added
+  //     (the deterministic known↔known leak class),
+  //   - a known edge touching a secret ghost endpoint must not emit edge-added.
+  // DB persistence is unaffected in every case (the world still knows).
+
+  const TIER_R1 = '01923456-789a-7bcd-8ef0-000000000001'
+  function makeTierGatePending(): unknown {
+    return {
+      declarations: [
+        { placeholderId: 'new-001', name: 'The Ironjaw', entityType: 'faction' as const },
+        { placeholderId: 'new-002', name: 'The Veiled Hand', entityType: 'faction' as const },
+      ],
+      relationships: [
+        // 0: known edge, known real → known ghost — the only wire-visible edge.
+        { from: TIER_R1, to: 'new-001', relationship: 'rival_of', description: 'Long Vigil rivals the Ironjaw over Bone Reach territory.', accessLevel: 'known' },
+        // 1: SECRET edge between two KNOWN endpoints — the leak class.
+        { from: TIER_R1, to: 'new-001', relationship: 'secretly_funds', description: 'Long Vigil quietly bankrolls the Ironjaw raids.', accessLevel: 'secret' },
+        // 2: known edge but the ghost endpoint is SECRET.
+        { from: TIER_R1, to: 'new-002', relationship: 'allied_with', description: 'Long Vigil answers to the Veiled Hand.', accessLevel: 'known' },
+      ],
+    }
+  }
+  function mockTierGateLlm(): void {
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        ghost_entities: [
+          {
+            placeholder_id: 'new-001',
+            name: 'The Ironjaw',
+            entity_type: 'faction',
+            access_level: 'known',
+            parent_location_id: null,
+            prose: 'The Ironjaw is one of the four hunting bands of the Bone Reach canyons.',
+            facts: [
+              { topic: 'territory', content: 'Ranges the eastern Bone Reach canyons.', access_level: 'known' },
+              { topic: 'rivalry', content: 'Long Vigil disputes their Boneright claims.', access_level: 'known' },
+            ],
+          },
+          {
+            placeholder_id: 'new-002',
+            name: 'The Veiled Hand',
+            entity_type: 'faction',
+            access_level: 'secret',
+            parent_location_id: null,
+            prose: 'The Veiled Hand pulls the strings of half the Reach from behind curtained doors.',
+            facts: [
+              { topic: 'reach', content: 'Its agents sit inside every hunting band council.', access_level: 'secret' },
+              { topic: 'origin', content: 'Founded by exiles of the old canyon monarchy.', access_level: 'secret' },
+            ],
+          },
+        ],
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 500, outputTokens: 800, totalTokens: 1300 },
+    } as never)
+  }
+  function tierGateInventory(repo: FakeRepo): void {
+    repo.entities.listByWorld.mockResolvedValue([
+      { id: TIER_R1, worldId: 'wld-1', entityType: 'faction', name: 'Long Vigil', accessLevel: 'known' },
+    ])
+  }
+
+  it('myth-09jy8: secret ghost + secret known↔known edge + secret-endpoint edge persist to DB but do NOT publish', async () => {
+    const redis = makeRedisStub()
+    const args = makeArgs(redis)
+    const repo = makeRepoWithPending(makeTierGatePending())
+    tierGateInventory(repo)
+    mockTierGateLlm()
+
+    await runEntityConsolidationStage(repo as unknown as Repo, args)
+
+    // DB: BOTH ghosts persist (including the secret one) and ALL THREE
+    // relationships persist with stable, unshifted synthKey indices.
+    expect(repo.entities.insert).toHaveBeenCalledTimes(2)
+    const relRows = repo.relationships.insertMany.mock.calls[0]?.[0] as readonly {
+      readonly synthKey: string
+    }[]
+    expect(relRows.map((r) => r.synthKey)).toEqual([
+      'entity_consolidation/relationships/0',
+      'entity_consolidation/relationships/1',
+      'entity_consolidation/relationships/2',
+    ])
+
+    // Wire: exactly ONE entity-added (the known ghost) + ONE edge-added
+    // (the known edge between known endpoints). Everything secret-touching
+    // is suppressed.
+    const payloads = redis.publish.mock.calls.map(
+      (c) => JSON.parse(c[1] as string) as { type: string; name?: string; synthKey: string; relationship?: string },
+    )
+    const entityAdds = payloads.filter((p) => p.type === 'entity-added')
+    expect(entityAdds.map((p) => p.name)).toEqual(['The Ironjaw'])
+    const edgeAdds = payloads.filter((p) => p.type === 'edge-added')
+    expect(edgeAdds.map((p) => p.relationship)).toEqual(['rival_of'])
+    // The wire-visible edge keeps its INSERT-order synthKey (index 0) —
+    // suppression must not compact later indices.
+    expect(edgeAdds[0]?.synthKey).toBe('entity_consolidation/relationships/0')
+    expect(redis.publish).toHaveBeenCalledTimes(2)
+  })
+
+  it('myth-09jy8: bypassAccessFilter=true publishes every ghost and every edge regardless of tier (dev affordance)', async () => {
+    const redis = makeRedisStub()
+    const args = { ...makeArgs(redis), bypassAccessFilter: true }
+    const repo = makeRepoWithPending(makeTierGatePending())
+    tierGateInventory(repo)
+    mockTierGateLlm()
+
+    await runEntityConsolidationStage(repo as unknown as Repo, args)
+
+    const payloads = redis.publish.mock.calls.map(
+      (c) => JSON.parse(c[1] as string) as { type: string; name?: string; relationship?: string },
+    )
+    expect(payloads.filter((p) => p.type === 'entity-added').map((p) => p.name)).toEqual([
+      'The Ironjaw',
+      'The Veiled Hand',
+    ])
+    expect(payloads.filter((p) => p.type === 'edge-added').map((p) => p.relationship)).toEqual([
+      'rival_of',
+      'secretly_funds',
+      'allied_with',
+    ])
+    expect(redis.publish).toHaveBeenCalledTimes(5)
+  })
+
   // Reconciliation arm: LLM emits a ghost whose placeholder_id is NOT in
   // the declarations map → drop it silently, persist only the survivors.
   // Also covers the inverse: a declared placeholder the LLM forgot → no

@@ -52,6 +52,7 @@ import {
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import { parseCostCapValue } from '../cost-cap.js'
 import type { PipelineEvent } from '../../../contract/pipeline-events.js'
+import type { AccessLevel } from '../../../repo/facts.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
@@ -130,8 +131,18 @@ function shouldEmitEntityEvent(ctx: ApplyContext, entityId: string): boolean {
   return ctx.inv.entitiesById.get(entityId)?.accessLevel === 'known'
 }
 
-function shouldEmitEdgeEvent(ctx: ApplyContext, fromId: string, toId: string): boolean {
+function shouldEmitEdgeEvent(
+  ctx: ApplyContext,
+  fromId: string,
+  toId: string,
+  edgeAccessLevel: AccessLevel,
+): boolean {
   if (ctx.bypassAccessFilter) return true
+  // myth-pq0ug (P1 enforced-ignorance): gate on the edge's OWN tier, not just
+  // its endpoints. A SECRET relationship between two KNOWN entities is the
+  // deterministic known↔known leak class relationship-tiering exists to kill —
+  // fail-closed so a non-known edge never surfaces on the player wire.
+  if (edgeAccessLevel !== 'known') return false
   const fromTier = ctx.inv.entitiesById.get(fromId)?.accessLevel
   const toTier = ctx.inv.entitiesById.get(toId)?.accessLevel
   return fromTier === 'known' && toTier === 'known'
@@ -314,8 +325,13 @@ async function applyFixRelationship(
   // edge-added — the FE can't render an edge whose endpoint isn't in
   // its snapshot, and we don't want the consumer to see a removal
   // without the matching addition (or vice versa).
-  const oldVisible = shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)
-  const newVisible = shouldEmitEdgeEvent(ctx, finalSourceId, finalTargetId)
+  const oldVisible = shouldEmitEdgeEvent(
+    ctx,
+    existing.sourceEntityId,
+    existing.targetEntityId,
+    existing.accessLevel,
+  )
+  const newVisible = shouldEmitEdgeEvent(ctx, finalSourceId, finalTargetId, newAccessLevel)
   if (!oldVisible || !newVisible) return { events: [] }
 
   const oldSynthKey = ctx.synthKeyByRelationshipId[relationshipId]
@@ -357,8 +373,9 @@ async function applyDeleteRelationship(
   // DB write happens unconditionally — coherence repairs every tier.
   await tx.relationships.deleteById(relationshipId)
   // myth-exac T16: SSE event only when BOTH endpoints are known-tier
-  // (or bypass on).
-  if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId)) {
+  // (or bypass on). myth-pq0ug: the deleted edge's own tier gates too — a
+  // secret edge was never on the wire, so no edge-removed should be sent.
+  if (!shouldEmitEdgeEvent(ctx, existing.sourceEntityId, existing.targetEntityId, existing.accessLevel)) {
     return { events: [] }
   }
   const synthKey = ctx.synthKeyByRelationshipId[relationshipId]
@@ -424,7 +441,9 @@ async function applyAddRelationship(
     accessLevel: patch.access_level,
     synthKey: newSynthKey,
   })
-  if (!shouldEmitEdgeEvent(ctx, sourceEntityId, targetEntityId)) return { events: [] }
+  if (!shouldEmitEdgeEvent(ctx, sourceEntityId, targetEntityId, patch.access_level)) {
+    return { events: [] }
+  }
   return {
     events: [{
       type: 'edge-added',

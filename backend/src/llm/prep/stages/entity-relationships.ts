@@ -485,15 +485,22 @@ export async function runEntityRelationshipsStage(
   // myth-exac T15: tier-gate `finalized` events for relationships. The DB
   // insert above is unaffected — every accepted (non-hallucinated) row
   // persists. Only the wire surfacing is filtered: an edge surfaces post-
-  // commit only when BOTH endpoints are `known` (or bypass is on). This
-  // mirrors the streaming-extractor's mid-flight `edge-added` gating so
-  // the wire feed stays internally consistent.
+  // commit only when the edge's OWN tier is `known` AND BOTH endpoints are
+  // `known` (or bypass is on). This mirrors the streaming-extractor's
+  // mid-flight `edge-added` gating so the wire feed stays internally
+  // consistent.
+  //
+  // myth-pq0ug (P1 enforced-ignorance): the edge's own `accessLevel` gates
+  // the wire too, not just its endpoints. A SECRET relationship between two
+  // KNOWN entities is the deterministic known↔known leak class — it persists
+  // (the world still knows it) but must never surface on the player feed.
   const finalizedEvents: PipelineEvent[] = []
   for (const [i, row] of accepted.entries()) {
     const fromTier = endpointTierMap.get(row.sourceEntityId)
     const toTier = endpointTierMap.get(row.targetEntityId)
     const shouldFinalize =
-      args.bypassAccessFilter || (fromTier === 'known' && toTier === 'known')
+      args.bypassAccessFilter ||
+      (row.accessLevel === 'known' && fromTier === 'known' && toTier === 'known')
     if (!shouldFinalize) continue
     const relationshipId = relationshipIds[i]
     /* c8 ignore next 3 — defensive: insertMany returns one id per input row.
