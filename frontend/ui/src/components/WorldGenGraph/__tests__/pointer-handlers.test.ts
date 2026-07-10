@@ -78,7 +78,12 @@ function deps(
   onSelect: (id: string) => void,
   interactive: boolean,
   setFocus: (id: string | null) => void = vi.fn(),
-  options?: { engaged?: boolean; panBy?: (dx: number, dy: number) => void; deferFollow?: () => void },
+  options?: {
+    engaged?: boolean
+    panBy?: (dx: number, dy: number) => void
+    deferFollow?: () => void
+    forceful?: boolean
+  },
 ): PointerDeps {
   return {
     getSim: () => sim,
@@ -93,6 +98,7 @@ function deps(
     dragRef: { current: null },
     onSelectRef: { current: onSelect },
     interactiveRef: { current: interactive },
+    forcefulRef: { current: options?.forceful ?? false },
     setFocus,
   }
 }
@@ -229,6 +235,39 @@ describe('attachPointerHandlers — drag lives during generation (MYT-89 audit #
     fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
     fire('pointermove', ptr(CENTRE.x + 15, CENTRE.y))
     expect(deferFollow).toHaveBeenCalled()
+  })
+
+  // ── The FORCEFUL settle regime (MYT-89 audit v4): drag releases, never parks ──
+  // The generating act's drop PARKS the pin (drag-to-pin, the toy — the tests
+  // above pin that). The reveal regime flips the drop to a RELEASE: `unpin` on
+  // pointerup after a moved drag, handing the node back to the sim whose
+  // release reheat snaps it home. Taps are untouched (they already release).
+
+  it('forceful regime: a moved drag RELEASES on drop (unpin) instead of parking the pin', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim, pin, unpin } = stubSim(NODE_POSITIONS)
+    const onSelect = vi.fn()
+    attachPointerHandlers(canvas, deps(sim, onSelect, true, vi.fn(), { forceful: true }))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 20, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x + 20, CENTRE.y))
+
+    expect(pin).toHaveBeenCalledWith('n1', 20, 0) // the drag itself still pins (follows the hand)
+    expect(unpin).toHaveBeenCalledExactlyOnceWith('n1') // …but the drop hands it back
+    expect(onSelect).not.toHaveBeenCalled() // a drag still never selects
+  })
+
+  it('default regime: a moved drag still PARKS the pin (the generating toy, unchanged)', () => {
+    const { canvas, fire } = stubCanvas()
+    const { sim, unpin } = stubSim(NODE_POSITIONS)
+    attachPointerHandlers(canvas, deps(sim, vi.fn(), true, vi.fn(), { forceful: false }))
+
+    fire('pointerdown', ptr(CENTRE.x, CENTRE.y))
+    fire('pointermove', ptr(CENTRE.x + 20, CENTRE.y))
+    fire('pointerup', ptr(CENTRE.x + 20, CENTRE.y))
+
+    expect(unpin).not.toHaveBeenCalled()
   })
 })
 

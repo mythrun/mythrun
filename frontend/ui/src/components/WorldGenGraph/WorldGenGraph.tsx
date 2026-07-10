@@ -1,5 +1,6 @@
 import { forwardRef, useRef } from 'react'
-import { growthFrom, seatFrom } from '@mythrun/client-core/worldgen'
+import { growthFrom, REVEAL_FORCE_PARAMS, seatFrom } from '@mythrun/client-core/worldgen'
+import type { ForceParams } from '@mythrun/client-core/worldgen'
 import type { WorldGenGraphProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { useViewportNarrow } from '../../lib/use-viewport-narrow.ts'
@@ -90,6 +91,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     showLabels = true,
     pannable = true,
     fillHost = false,
+    forcefulSettle = false,
     status,
     shownEntities,
     totalEntities,
@@ -104,6 +106,14 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
   // redesign): nodes are shoved out from under the card, so no entity name spends the
   // generation occluded (on a phone the card spans ~70% of the pane width).
   const cardRef = useRef<HTMLDivElement>(null)
+  // The FORCEFUL settle regime (MYT-89 audit v4): the reveal's force profile rides
+  // the existing forceParams seam — the preset under any explicit overrides (so the
+  // tuning harness dials the regime live). Value-stable across renders (the hook's
+  // re-seed keys on the serialised params, not the object identity); regime off
+  // passes the caller's params through untouched — the generating path unchanged.
+  const effectiveForceParams: Partial<ForceParams> | undefined = forcefulSettle
+    ? { ...REVEAL_FORCE_PARAMS, ...forceParams }
+    : forceParams
   const { getFogEntities, camera } = useGraphCanvas({
     canvasRef,
     nodes,
@@ -114,7 +124,8 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     interactive,
     showLabels,
     pannable,
-    forceParams,
+    forcefulSettle,
+    forceParams: effectiveForceParams,
     densityParams,
     keepOutRef: cardRef,
   })

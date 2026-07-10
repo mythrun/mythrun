@@ -11,6 +11,7 @@ import {
   DENSITY_PARAMS,
   FORCE_PARAM_RANGES,
   FORCE_PARAMS,
+  REVEAL_FORCE_PARAMS,
   type DensityParams,
   type ForceParams,
 } from '@mythrun/client-core/worldgen'
@@ -548,6 +549,9 @@ const FORCE_LABELS: Record<keyof ForceParams, string> = {
   collisionPadding: '[ph: box gap]',
   seedJitter: '[ph: seed jitter]',
   margin: '[ph: margin]',
+  releaseAlpha: '[ph: release kick]',
+  alphaDecay: '[ph: cool-down]',
+  velocityDecay: '[ph: friction]',
 }
 // Plain-English help text under each knob so the tuning is legible WHILE sliding (this
 // harness is dev-only — not user-facing product copy, so real prose, not `[ph:]` labels).
@@ -566,6 +570,12 @@ const FORCE_DESCRIPTIONS: Record<keyof ForceParams, string> = {
     'The gap between label boxes — bigger = more air between entities. Each entity already reserves its full icon + text box; this just adds breathing room around it (icons + text never overlap regardless).',
   seedJitter: 'How scattered a node starts when it appears. Higher = emerges more spread out.',
   margin: 'How far nodes stay clear of the frame edge (the breathing-room band). Higher = bigger margin.',
+  releaseAlpha:
+    'How hard the world re-asserts when a dragged entity is let go. 0 = the drop parks the node where you left it (the generating act); high = the release re-energises the field and the node snaps back into its group.',
+  alphaDecay:
+    'How fast injected energy cools. Low = long anneal (better untangling, longer after-drift); high = decisive but can freeze a re-settle mid-untangle.',
+  velocityDecay:
+    'Per-tick friction on every node. Higher = the world stays seated through a release (less bystander drift); lower = livelier, floatier motion.',
 }
 
 // A realistic synthetic world (~24 named entities across the whole glyph vocabulary +
@@ -676,6 +686,116 @@ function GraphSpreadTuner(): React.JSX.Element {
 // re-seed + re-spread live; copy the settled values back into `FORCE_PARAMS` to lock them.
 export const SpreadTuning: Story = {
   render: () => <GraphSpreadTuner />,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Reveal-settle tuning harness (MYT-89 audit v4) — the FORCEFUL regime's
+// dial-in surface. The realistic 46-entity world lands AT ONCE (the reveal's
+// cold mount path), settles under the reveal profile, and is INTERACTIVE with
+// the regime ON: drag any entity far across the world and LET GO — the release
+// must snap it back into its group while the rest of the world holds its seat.
+// All twelve force knobs are live, seeded from the merged reveal profile; the
+// copy block emits ONLY the delta vs the locked FORCE_PARAMS — the exact
+// Partial to lock into `REVEAL_FORCE_PARAMS`.
+// ──────────────────────────────────────────────────────────────────────────
+
+// The twelve knobs in dial-in order: the regime's own four first (the snap
+// dials), then the shared spread/clustering seven the profile inherits.
+const REVEAL_KEYS: readonly (keyof ForceParams)[] = [
+  'releaseAlpha',
+  'velocityDecay',
+  'alphaDecay',
+  'linkStrength',
+  'linkDistance',
+  'chargeStrength',
+  'chargeDistanceMax',
+  'centerStrength',
+  'boundaryStrength',
+  'collisionPadding',
+  'seedJitter',
+  'margin',
+]
+
+/** The reveal-regime harness: twelve sliders over the MERGED reveal profile, the
+ *  dense world interactive with `forcefulSettle` on (drag → release → watch the
+ *  snap), and a copy block of the CURRENT DELTA vs `FORCE_PARAMS` (drop straight
+ *  into `REVEAL_FORCE_PARAMS`). A slider change re-seeds (fresh cold settle —
+ *  exactly the reveal's mount path, so the settle quality is auditable too). */
+function RevealSettleTuner(): React.JSX.Element {
+  const [params, setParams] = useState<ForceParams>({ ...FORCE_PARAMS, ...REVEAL_FORCE_PARAMS })
+  const [selectedKey, setSelectedKey] = useState<string>()
+  const delta = REVEAL_KEYS.filter((k) => params[k] !== FORCE_PARAMS[k])
+  const snippet = delta.map((k) => `  ${k}: ${String(params[k])},`).join('\n')
+  return (
+    <div className="min-h-dvh bg-bg p-[var(--space-6)]">
+      <div className="mx-auto flex max-w-[1200px] flex-col gap-[var(--space-3)]">
+        <div className="flex flex-col gap-[var(--space-2)]">
+          {REVEAL_KEYS.map((k) => (
+            <Slider
+              key={k}
+              label={FORCE_LABELS[k]}
+              help={FORCE_DESCRIPTIONS[k]}
+              min={FORCE_PARAM_RANGES[k].min}
+              max={FORCE_PARAM_RANGES[k].max}
+              step={FORCE_PARAM_RANGES[k].step}
+              value={params[k]}
+              onChange={(v) => {
+                setParams((p) => ({ ...p, [k]: v }))
+              }}
+              readout={String(params[k])}
+            />
+          ))}
+        </div>
+        <div className="flex items-start gap-[var(--space-3)]">
+          <pre className="flex-1 overflow-auto bg-surface p-[var(--space-3)] font-mono text-[12px] text-ink">{`{\n${snippet}\n}`}</pre>
+          <button
+            type="button"
+            className="border border-border-strong px-[var(--space-3)] py-[var(--space-2)] font-mono text-[12px] text-ink"
+            onClick={() => {
+              void navigator.clipboard.writeText(`{\n${snippet}\n}`)
+            }}
+          >
+            [ph: copy]
+          </button>
+          <button
+            type="button"
+            className="border border-border-strong px-[var(--space-3)] py-[var(--space-2)] font-mono text-[12px] text-ink"
+            onClick={() => {
+              setParams({ ...FORCE_PARAMS, ...REVEAL_FORCE_PARAMS })
+            }}
+          >
+            [ph: reset]
+          </button>
+        </div>
+        <div className="w-full">
+          {/* The DESKTOP reveal's regime shape: pannable={false} → the seat is
+              zeroed, world === pane, the WHOLE settled world is visible (judging
+              the snap through an engaged camera window reads as churn that isn't
+              there — and the desktop reveal never pans). */}
+          <WorldGenGraph
+            interactive
+            forcefulSettle
+            pannable={false}
+            nodes={[...MAX_DENSITY_NODES]}
+            edges={[...MAX_DENSITY_EDGES]}
+            forceParams={params}
+            shownEntities={MAX_DENSITY_NODES.length}
+            totalEntities={MAX_DENSITY_NODES.length}
+            {...(selectedKey !== undefined ? { selectedKey } : {})}
+            onSelect={setSelectedKey}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// THE reveal-settle surface — the forceful regime live on the dense settled
+// world: drag an entity, release, judge the snap; copy the delta back into
+// `REVEAL_FORCE_PARAMS` to lock it.
+export const RevealSettleTuning: Story = {
+  name: 'Reveal settle tuning (forceful + snap-back)',
+  render: () => <RevealSettleTuner />,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

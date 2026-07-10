@@ -56,6 +56,7 @@ vi.mock('@mythrun/ui', async (importOriginal) => {
         'data-selected-key': props.selectedKey ?? '',
         'data-pannable': String(props.pannable ?? true),
         'data-fill-host': String(props.fillHost ?? false),
+        'data-forceful-settle': String(props.forcefulSettle ?? false),
       },
       props.nodes.map((n) =>
         h(
@@ -322,13 +323,16 @@ describe('WorldReveal — desktop layout (true 50/50)', () => {
     expect(screen.queryByTestId('reveal-drawer')).toBeNull()
   })
 
-  it('desktop graph: camera gated OFF, pane fills its half (audit v3 regime props)', () => {
+  it('desktop graph: camera gated OFF, pane fills its half, forceful settle ON (regime props)', () => {
     // The desktop reveal must FILL, never pan: pannable={false} zeroes the
     // camera's seat; fillHost lets the pane take the RevealPanes row height.
+    // The settled world INSISTS on its shape (audit v4): forcefulSettle runs
+    // the reveal force profile + drag releases snap back.
     renderReveal()
     const graph = screen.getByTestId('reveal-graph')
     expect(graph.getAttribute('data-pannable')).toBe('false')
     expect(graph.getAttribute('data-fill-host')).toBe('true')
+    expect(graph.getAttribute('data-forceful-settle')).toBe('true')
   })
 })
 
@@ -365,12 +369,19 @@ describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () =>
     })
   })
 
-  it('mobile graph: the pannable camera stays, no host-fill (audit v3 regime props)', () => {
+  it('mobile graph: the pannable camera stays, host-fill + forceful settle ON (regime props)', () => {
+    // Audit v4: the mobile reveal pane must reach the FOLD. The stage already
+    // fills the viewport below the header (the generating act's geometry); the
+    // graph must FILL it — v3's `!narrow` gate left the pane on its own 62dvh
+    // clamp, stopping two-thirds down the screen (the height-gap screenshot).
+    // The pannable camera stays (the exploration surface), and the forceful
+    // settle regime is on here too (both breakpoints).
     mockViewport({ narrow: true })
     renderReveal()
     const graph = screen.getByTestId('reveal-graph')
     expect(graph.getAttribute('data-pannable')).toBe('true')
-    expect(graph.getAttribute('data-fill-host')).toBe('false')
+    expect(graph.getAttribute('data-fill-host')).toBe('true')
+    expect(graph.getAttribute('data-forceful-settle')).toBe('true')
   })
 })
 

@@ -308,14 +308,18 @@ export function WorldReveal({
       edges={edges}
       onSelect={handleGraphSelect}
       reducedMotion={prefersReducedMotion}
-      // The REGIME props (MYT-89 audit v3). Desktop: the pane is a true half of
-      // the screen — it FILLS the RevealPanes row (fillHost) and must never pan
-      // (pannable false zeroes the camera seat; labels tier down by budget
-      // instead). Narrow: the shipped mobile reveal exactly — the pannable
-      // camera over the full-legible world, the graph's own pane height inside
-      // the full-bleed stage.
+      // The REGIME props (MYT-89 audit v3 + v4). Desktop: the pane is a true
+      // half of the screen — it FILLS the RevealPanes row (fillHost) and must
+      // never pan (pannable false zeroes the camera seat; labels tier down by
+      // budget instead). Narrow: the pannable camera over the full-legible
+      // world, and the pane FILLS the full-bleed stage to the fold (audit v4 —
+      // the v3 `!narrow` gate left it on the graph's own 62dvh clamp, stopping
+      // two-thirds down the screen). Both breakpoints: the settled world
+      // INSISTS on its shape (forcefulSettle, audit v4) — the reveal force
+      // profile + drag releases snapping back.
       pannable={narrow}
-      fillHost={!narrow}
+      fillHost
+      forcefulSettle
       // The world is BORN — the fog is gone and STAYS gone, through its one
       // clear mechanism (MYT-89 spawn-drain): the numerator is floored at the
       // drain denominator so the fog mounts drained for EVERY world size (the

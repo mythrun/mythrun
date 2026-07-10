@@ -67,6 +67,11 @@ export interface PointerDeps {
   /** Gates ONLY tap-to-select (MYT-89 audit #5): a click fires `onSelect` in the reveal
    *  (`true`), but is inert during generation (`false`). Drag-to-pin is live either way. */
   interactiveRef: React.RefObject<boolean>
+  /** The FORCEFUL settle regime (MYT-89 audit v4 — the reveal's snap-back). `false`
+   *  (generation): a moved drag PARKS its pin on drop — drag-to-pin, the toy. `true`
+   *  (the reveal): the drop RELEASES the node back to the sim (`unpin`), whose
+   *  release reheat snaps it home. Taps are identical in both regimes. */
+  forcefulRef: React.RefObject<boolean>
   /** Sticky focus (the density redesign): promotes the node's name into the label tier
    *  + raises the glyph. `null` clears. The hook re-tiers, re-boxes, and re-flows. */
   setFocus: (displayId: string | null) => void
@@ -106,7 +111,7 @@ function localOf(event: PointerEvent, canvas: HTMLCanvasElement, deps: PointerDe
  *  the hook so the effect body stays small and this stays independently readable.
  *  Exported for unit test (jsdom can't drive real pointer capture through the effect). */
 export function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDeps): () => void {
-  const { getSim, hoverRef, dragRef, onSelectRef, interactiveRef, setFocus } = deps
+  const { getSim, hoverRef, dragRef, onSelectRef, interactiveRef, forcefulRef, setFocus } = deps
   // A camera drag in flight (T1b): the last client point panned from. Armed by a
   // press on EMPTY fog while the camera is engaged; a glyph hit always wins (node
   // drag keeps priority — the toy is untouched).
@@ -156,6 +161,11 @@ export function attachPointerHandlers(canvas: HTMLCanvasElement, deps: PointerDe
       getSim().unpin(drag.key) // a tap (not a drag) releases any prior pin, always
       setFocus(drag.key) // …and focuses: the name joins the label tier (density redesign)
       if (interactiveRef.current) onSelectRef.current(drag.key) // …but only selects in the reveal
+    } else if (forcefulRef.current) {
+      // The forceful settle regime (MYT-89 audit v4): the drop RELEASES the node
+      // back to the sim — never parks the pin — and the sim's release reheat
+      // snaps it home. The generating act (regime off) keeps drag-to-pin.
+      getSim().unpin(drag.key)
     }
     dragRef.current = null
   }

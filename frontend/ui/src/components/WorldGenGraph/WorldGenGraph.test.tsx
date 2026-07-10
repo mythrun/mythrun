@@ -270,13 +270,34 @@ describe('WorldGenGraph — narrow-viewport layout (MYT-89 audit v2: full-bleed 
     expect(pane?.className).not.toMatch(/clamp/)
   })
 
-  it('narrow WITHOUT status (the reveal): no footer, and the clamp height stays', () => {
+  it('narrow WITHOUT status or fillHost: no footer, and the clamp height stays', () => {
+    // No host-provided height from EITHER regime (no status footer, no fillHost
+    // — the mobile reveal passes fillHost since audit v4, so this is the bare
+    // default): the graph keeps its own viewport-clamp pane.
     stubViewport(true)
     stubGetContext(null)
     const { container } = render(<WorldGenGraph nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />)
     expect(container.querySelector('[data-variant="footer"]')).toBeNull()
     const pane = container.querySelector('canvas')?.parentElement
     expect(pane?.className).toMatch(/clamp/)
+  })
+
+  it('narrow + fillHost (the mobile reveal, audit v4): the pane flexes to the stage, no clamp', () => {
+    // The height-gap fix: inside the viewport-filling FullBleedStage the graph
+    // must FILL to the fold — fill mode from `fillHost` alone (no status card on
+    // the reveal), pane flexing instead of the 62dvh clamp, root chaining h-full.
+    stubViewport(true)
+    stubGetContext(null)
+    const { container } = render(
+      <WorldGenGraph interactive fillHost nodes={FIXTURE} edges={EDGES} onSelect={vi.fn()} />,
+    )
+    const pane = container.querySelector('canvas')?.parentElement
+    expect(pane?.className).toMatch(/flex-1/)
+    expect(pane?.className).not.toMatch(/clamp/)
+    const band = pane?.parentElement
+    expect(band?.parentElement?.className).toMatch(/h-full/)
+    // Still the narrow register: the band keeps edge-to-edge (no desktop pad).
+    expect(band?.className).not.toMatch(/p-\[var\(--space-4\)\]/)
   })
 
   it('desktop + status: the shipped layout exactly — overlay in the pane, band on, no footer', () => {

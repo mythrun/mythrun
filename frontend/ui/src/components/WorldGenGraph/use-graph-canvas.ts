@@ -86,6 +86,13 @@ export interface GraphCanvasParams {
    *  never outgrows the pane — rather than touching the locked camera math. The
    *  component gates its fog-side `seatFrom` identically, so both layers agree (C5). */
   pannable: boolean
+  /** The FORCEFUL settle regime (MYT-89 audit v4 — the reveal). Flips the pointer
+   *  layer's drag-DROP from park-the-pin (the generating toy) to RELEASE (`unpin`),
+   *  handing the node back to the sim whose release reheat snaps it home. The force
+   *  profile itself arrives through `forceParams` (WorldGenGraph merges
+   *  `REVEAL_FORCE_PARAMS` before this hook); this flag only drives the drop
+   *  semantics — one regime, two seams, both stated by the consumer. */
+  forcefulSettle: boolean
   /** OVERRIDE the force-sim params — the spread knobs (MYT-89 audit #4) plus the link
    *  clustering knobs (MYT-89 untangle) — merged over `FORCE_PARAMS`. The Storybook
    *  spread-tuning harness passes live slider values; a change RE-SEEDS the sim (fresh
@@ -141,6 +148,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   const onSelectRef = useRef(onSelect)
   const reducedRef = useRef(reducedMotion)
   const interactiveRef = useRef(interactive)
+  const forcefulRef = useRef(params.forcefulSettle)
   const showLabelsRef = useRef(showLabels)
   const hoverRef = useRef<string | null>(null)
   // The sticky tap/click focus (MYT-89 density redesign): the focused node is drawn
@@ -204,6 +212,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   onSelectRef.current = onSelect
   reducedRef.current = reducedMotion
   interactiveRef.current = interactive
+  forcefulRef.current = params.forcefulSettle
   showLabelsRef.current = showLabels
   forceParamsRef.current = params.forceParams ?? {}
   densityRef.current = params.densityParams ?? {}
@@ -564,6 +573,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       dragRef,
       onSelectRef,
       interactiveRef,
+      forcefulRef,
       setFocus,
     }
     return setupPointerHandlers(canvasRef.current, reducedMotion, deps)

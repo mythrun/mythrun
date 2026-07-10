@@ -6,7 +6,12 @@
 // brain (react-query, stores, api clients) into the UI bundle — the main
 // `@mythrun/client-core` barrel drags all of that in; this slice is pure data.
 
-export { create as createForceSim, FORCE_PARAMS, FORCE_PARAM_RANGES } from './force-sim.ts'
+export {
+  create as createForceSim,
+  FORCE_PARAMS,
+  FORCE_PARAM_RANGES,
+  REVEAL_FORCE_PARAMS,
+} from './force-sim.ts'
 export type { ForceSim, ForceParams, NodeBox, StaticKeepOut } from './force-sim.ts'
 export { createFogSim } from './fog-sim.ts'
 export type { FogSim, FogObstacle } from './fog-sim.ts'

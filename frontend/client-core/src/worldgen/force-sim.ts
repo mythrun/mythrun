@@ -141,6 +141,26 @@ export interface ForceParams {
    *  edges pulled hardest. Sized to the box footprint instead, so connected nodes
    *  settle adjacent and readable rather than grinding into collision contact. */
   linkDistance: number
+  /** Reheat energy injected when a PINNED node is released (`unpin` after a drag
+   *  — MYT-89 audit v4, the forceful settle regime). `0` (the locked default) is
+   *  the shipped behaviour: a release injects nothing, so a dragged node stays
+   *  where it was dropped (drag-to-pin, the generating act's toy). The reveal
+   *  profile sets it HOT: the release re-energises the whole field, the forces
+   *  re-assert, and the dragged node snaps back toward its equilibrium. Never
+   *  fires for a release of a node that was not actually pinned (the pointer
+   *  layer's blanket tap-release must not jolt the settled world). */
+  releaseAlpha: number
+  /** `simulation.alphaDecay` — how fast injected energy cools (MYT-89 audit v4).
+   *  The locked default is EXACTLY d3's own (`1 − 0.001^(1/300)` ≈ 0.0228 —
+   *  bit-identical to the never-configured simulation, parity-pinned). The
+   *  reveal profile raises it so the release reheat re-converges in a couple of
+   *  seconds — the snap reads decisive, not a long float back. */
+  alphaDecay: number
+  /** `simulation.velocityDecay` — the per-tick friction (MYT-89 audit v4). The
+   *  locked default is d3's own 0.4 (bit-identical, parity-pinned). The reveal
+   *  profile runs heavier friction so the stiffer springs land settled instead
+   *  of rubber-banding through their rest length. */
+  velocityDecay: number
 }
 
 /** The LOCKED force defaults — the MYT-89 audit #4 re-tune that FILLS 900×470
@@ -157,6 +177,36 @@ export const FORCE_PARAMS: ForceParams = {
   margin: 15,
   linkStrength: 0.3,
   linkDistance: 90,
+  // The audit-v4 regime knobs at their DO-NOTHING defaults (parity-pinned):
+  // release inert, both decays exactly d3's never-configured values.
+  releaseAlpha: 0,
+  alphaDecay: 1 - Math.pow(0.001, 1 / 300),
+  velocityDecay: 0.4,
+}
+
+/** The FORCEFUL settle profile (MYT-89 audit v4) — the reveal surface's preset,
+ *  merged over `FORCE_PARAMS` at `create`. The settled reveal graph must INSIST
+ *  on its untangled shape: stiffer springs (double the locked `linkStrength`,
+ *  still degree-normalised) make the reveal's cold one-shot settle converge to
+ *  fewer crossings and hold the community structure against a user-made tangle;
+ *  a HOT `releaseAlpha` makes a drag release re-assert the whole field so the
+ *  dragged node snaps back into its community; the heavier `velocityDecay`
+ *  keeps the rest of the world seated through that re-assertion (measured: max
+ *  bystander displacement ~100px vs ~145px at d3's 0.4). `alphaDecay` is
+ *  deliberately NOT overridden — the sweep showed faster cooling starves the
+ *  cold settle of annealing time (crossings 24 vs 14 avg) AND lets a release
+ *  re-freeze mid-untangle; at the default the release delta is reliably ≤ 0.
+ *  `releaseAlpha` was picked by WATCHING the dense 46-entity story: 0.9
+ *  re-anneals the whole map (a reshuffle — the layout's identity is lost),
+ *  0.3 lets the vagrant stall mid-fabric; 0.5 flies it home within ~0.5s and
+ *  the map re-settles as ITSELF by ~1.5s, one calm breath, no oscillation.
+ *  A PARTIAL — every locked value it doesn't own keeps tracking `FORCE_PARAMS`.
+ *  The generating act never receives this profile (its path is parity-pinned
+ *  bit-identical); Miklos dials these in the reveal-settle Storybook tuner. */
+export const REVEAL_FORCE_PARAMS: Partial<ForceParams> = {
+  linkStrength: 0.6,
+  releaseAlpha: 0.5,
+  velocityDecay: 0.5,
 }
 
 /** The slider envelopes (`min`/`max`/`step`) the spread-tuning harness exposes for
@@ -172,6 +222,9 @@ export const FORCE_PARAM_RANGES = {
   margin: { min: 0, max: 150, step: 5 },
   linkStrength: { min: 0, max: 1, step: 0.05 },
   linkDistance: { min: 30, max: 400, step: 10 },
+  releaseAlpha: { min: 0, max: 1, step: 0.05 },
+  alphaDecay: { min: 0.005, max: 0.2, step: 0.005 },
+  velocityDecay: { min: 0.1, max: 0.9, step: 0.05 },
 } as const
 
 // VIEWPORT CONTAINMENT (MYT-89 Phase B, BUG 2.2). The repulsion cloud has no
@@ -462,6 +515,11 @@ function buildSimulation(
   keepOuts: StaticKeepOut[],
 ): Simulation<SimNode, SimLink> {
   return forceSimulation<SimNode, SimLink>(nodes)
+    // The regime decays (MYT-89 audit v4). At the locked defaults these set the
+    // exact values d3 initialises with (parity-pinned bit-identical); the reveal
+    // profile runs them hotter/heavier so the release reheat lands decisively.
+    .alphaDecay(params.alphaDecay)
+    .velocityDecay(params.velocityDecay)
     .force(
       'charge',
       forceManyBody<SimNode>()
@@ -770,8 +828,19 @@ export function create(opts: {
   function unpin(displayId: string): void {
     const simNode = nodeByDisplayId(displayId)
     if (simNode === undefined) return
+    // The release reheat (MYT-89 audit v4, the forceful settle regime): freeing
+    // a node that was ACTUALLY pinned re-energises the field so the forces
+    // re-assert and the dragged node snaps back toward its equilibrium. Gated on
+    // the pin (`fx != null` — `pin` always sets both) because the pointer layer
+    // also unpins on a bare TAP; a tap on the settled world must stay inert.
+    // At the locked default (releaseAlpha 0) this injects nothing — the shipped
+    // drag-to-pin behaviour, parity-pinned.
+    const wasPinned = simNode.fx != null
     simNode.fx = null
     simNode.fy = null
+    if (wasPinned && params.releaseAlpha > 0) {
+      simulation.alpha(Math.max(simulation.alpha(), params.releaseAlpha))
+    }
   }
 
   return {

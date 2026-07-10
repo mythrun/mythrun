@@ -68,11 +68,26 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
   pannable?: boolean
   /** Fill the HOST-provided height instead of the graph's own viewport-clamp
    *  height (MYT-89 audit v3). Default `false` — the shipped
-   *  `clamp(18rem,62dvh,46rem)` pane. The DESKTOP REVEAL passes `true`: its
-   *  RevealPanes row owns the vertical space, and the pane flexes to fill the
-   *  half it is given (the same fill mechanics the narrow status-footer layout
-   *  already uses). The host MUST provide a definite height. */
+   *  `clamp(18rem,62dvh,46rem)` pane. The REVEAL passes `true` on BOTH
+   *  breakpoints (audit v4): desktop, the RevealPanes row owns the vertical
+   *  space and the pane flexes to fill its half; narrow, the FullBleedStage
+   *  owns the viewport below the header and the pane must reach the fold (the
+   *  v3 `!narrow` gate left the mobile reveal on the 62dvh clamp — the pane
+   *  stopped two-thirds down the screen). The host MUST provide a definite
+   *  height. */
   fillHost?: boolean
+  /** The FORCEFUL settle regime (MYT-89 audit v4 — the reveal's detangle).
+   *  Default `false`: the generating act's ambient physics, byte-identical
+   *  (parity-pinned). `true` (the REVEAL, both breakpoints): the sim runs the
+   *  `REVEAL_FORCE_PARAMS` profile — a stiffer link equilibrium that converges
+   *  the cold one-shot settle to fewer crossings and visibly holds its shape —
+   *  and a node DRAG releases back to the simulation on drop (never left
+   *  pinned): the release injects a hot reheat so the layout re-asserts and the
+   *  dragged node snaps back into its community. A LAYOUT-CONTEXT gate at the
+   *  prop seam (the locked params and the camera/drag math are untouched): the
+   *  consumer states the regime. Explicit `forceParams` still win over the
+   *  profile (the tuning harness dials the regime live). */
+  forcefulSettle?: boolean
   /** Draw the entity NAME beside each glyph. Default `true` — names show DURING
    *  generation too (MYT-89 audit #3), decoupled from `interactive`: the fog reserves a
    *  label-sized keep-out per node, so drawing the name closes that mismatch. Type stays
