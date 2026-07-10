@@ -191,9 +191,9 @@ function StreamingDemo({
           // hidden entities-so-far list (VisuallyHidden; nothing paints). Wired in the
           // story so the real-browser ARIA pass can inspect it.
           generationA11y={{
-            entityListLabel: 'What has taken shape so far',
-            phaseLabel: 'Raising the powers',
-            entitiesLabel: `${String(nodes.length)} have taken shape`,
+            entityListLabel: '[ph: what has taken shape so far]',
+            phaseLabel: '[ph: raising the powers]',
+            entitiesLabel: `[ph: ${String(nodes.length)} have taken shape]`,
           }}
           {...(reducedMotion !== undefined ? { reducedMotion } : {})}
         />
@@ -477,7 +477,7 @@ function RevealDemo(): React.JSX.Element {
         // roving hidden listbox (VisuallyHidden; nothing paints) whose selection drives
         // the same onSelect a canvas tap does. Wired so the browser ARIA pass can
         // inspect it.
-        nodeListLabel="Pick a place or figure from your world"
+        nodeListLabel="[ph: pick a place or figure from your world]"
         {...(selectedKey !== undefined ? { selectedKey } : {})}
         onSelect={setSelectedKey}
       />
