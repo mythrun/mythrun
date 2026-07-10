@@ -53,7 +53,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:fd62b15ad013c24f54de7b471f718f57d96e6cbabf0d3fa0dc16685f457fafc0 -->
+<!-- source-hash: sha256:367550d3467f35cabb170b7ead6fa9a87295217a1f3a316966fa635df7e639ba -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>World gen</h1>
@@ -62,24 +62,29 @@
   The campaign-scoped world-generation pipeline. <code>POST /api/campaigns</code> validates a
   concept (two creation modes — freeform prose or three guided picks synthesized by Sonnet), runs a
   3-axis Sonnet input gate, debits one <code>world_gen</code> credit inside an advisory-locked
-  transaction, and enqueues a BullMQ job. The worker walks eight prose-bearing stages plus a
+  transaction, and enqueues a BullMQ job. The worker walks the prose-bearing stages plus a
   vocabulary pre-pass: three non-streaming Sonnet calls (<code>concept_intake</code>,
   <code>starting_situation</code>, <code>random_tables</code>), three streaming stages with live
   entity emission (<code>world_and_factions</code> Opus, <code>locations_and_npcs</code> Opus,
-  <code>entity_relationships</code> Sonnet), a <code>entity_consolidation</code> stage (Sonnet) that
-  materializes any phantom entities stage 4 declared as placeholders, and a final non-streaming
-  Sonnet <code>coherence_pass</code>. Two non-prose structured stages ride alongside these: a
-  <code>world_color</code> stage runs immediately after <code>concept_intake</code> and picks the
-  world's two-colour cover identity (a Sonnet pick, contrast-guarded in code — see
+  <code>entity_relationships</code> Sonnet), an Opus <code>world_introduction</code> stage that
+  writes the world's opening page (the reveal's front door), a
+  <code>entity_consolidation</code> stage (Sonnet) that materializes any phantom entities stage 4
+  declared as placeholders, and a final non-streaming Sonnet <code>coherence_pass</code>. Two
+  non-prose structured stages ride alongside these: a <code>world_color</code> stage runs
+  immediately after <code>concept_intake</code> and picks the world's two-colour cover identity (a
+  Sonnet pick, contrast-guarded in code — see
   <a href="../world-campaign/world-color.html">World colour identity</a>), and a non-streaming
   Sonnet <code>vocabulary_intake</code> stage runs between <code>concept_intake</code> and
   <code>world_and_factions</code> — it generates the world's distinctive lexicon (the
   <a href="#vocabulary-registry">vocabulary registry</a>) and every downstream stage injects the
-  rendered registry into its system prompt. After <code>entity_consolidation</code> commits the
-  worker fires a <code>world_snapshot_ready</code> phase; the persisted world becomes fetchable
-  through <code>GET /api/campaigns/:campaignId/world-snapshot</code> while stages 5–7 are still
-  running, and stage 7's edits flow on the same SSE channel as post-snapshot deltas. Each stage
-  handler returns a unified
+  rendered registry into its system prompt. When <code>world_introduction</code> commits (the reveal
+  boundary) the worker fires a <code>world_snapshot_ready</code> phase; the persisted world —
+  including its introduction page — becomes fetchable through
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> while the tail stages (<code
+    >entity_consolidation</code
+  >
+  through <code>coherence_pass</code>) are still running, and their edits flow on the same SSE
+  channel as post-snapshot deltas. Each stage handler returns a unified
   <code>StageDispatchResult { costUsd, tokens, finalizedEvents, capExhausted }</code>; the handler
   commits its writes inside a <code>repo.transaction</code> and <code>runStage</code> publishes the
   finalized events only after that COMMIT. A cost-cap circuit breaker reads
@@ -108,16 +113,16 @@
   for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
   name, and this is how the owner overrides that default.
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the owner-only known-tier view of
-  the persisted world, fetchable once stage 4 (<code>entity_relationships</code>) commits — the
-  endpoint's pre-readiness gate keys on that stage's <code>completed</code> row, and the SSE phase
-  derivation surfaces <code>world_snapshot_ready</code> from the same condition. The worker's
-  publish of the <code>world_snapshot_ready</code> phase event itself fires one stage later, after
-  <code>entity_consolidation</code> commits, so a reconnecting subscriber sees the signal once the
-  phantom-reference reconciliation has fully landed; in either case the snapshot is safe to fetch
-  from stage 4 onward. <code>GET /api/campaigns/:campaignId/wiki</code> (MYT-74c) is the
-  <em>member-readable</em> counterpart to the owner-only snapshot — same stage-4 readiness gate, but
-  a deliberately narrower known-tier projection for players (no owner <code>concept</code>, no prose
-  kernels, no stat blocks); see
+  the persisted world — the reveal's data source, carrying the introduction page — fetchable once
+  <code>world_introduction</code> commits (the reveal boundary, myth-zaqxh). The endpoint's
+  pre-readiness gate, the SSE phase derivation, and the worker's
+  <code>world_snapshot_ready</code> publish now all key on that one stage's
+  <code>completed</code> row. <code>GET /api/campaigns/:campaignId/wiki</code> (MYT-74c) is the
+  <em>member-readable</em> counterpart to the owner-only snapshot — a deliberately narrower
+  known-tier projection for players (no owner <code>concept</code>, no prose kernels, no stat
+  blocks, no introduction). It keeps the earlier <code>entity_relationships</code> readiness gate
+  (there is no intro on the member wiki to wait for), so it becomes fetchable one stage before the
+  owner snapshot does; see
   <a href="./session-reconcile.html#the-player-campaign-wiki">the player campaign wiki</a>.
 </p>
 
@@ -250,13 +255,14 @@
       <td><strong>30 / min per IP</strong></td>
       <td>
         <code
-          >200 { world, entities, facts, relationships, proseKernels, entityHierarchy, statBlocks
-          }</code
+          >200 { world, introduction, entities, facts, relationships, proseKernels, entityHierarchy,
+          statBlocks }</code
         >
         on success — the known-tier slice through the <code>worldSnapshotView</code> projection.
-        <code>409 snapshot_not_ready</code> when stage 4 (<code>entity_relationships</code>) hasn't
-        yet committed; <code>404</code> if the campaign or its world is gone underneath. Dev-mode
-        bypass widens the tier filter to all three tiers — see the bypass section below.
+        <code>409 snapshot_not_ready</code> when <code>world_introduction</code> (the reveal
+        boundary) hasn't yet committed; <code>404</code> if the campaign or its world is gone
+        underneath. Dev-mode bypass widens the tier filter to all three tiers — see the bypass
+        section below.
       </td>
     </tr>
   </tbody>
@@ -465,18 +471,22 @@
   <a href="./worker.html">worker service</a> at concurrency 3. <code>WORLD_GEN_STAGES</code> is the
   ordered tuple <code>concept_intake</code>, <code>world_color</code>,
   <code>vocabulary_intake</code>, <code>world_and_factions</code>, <code>locations_and_npcs</code>,
-  <code>entity_relationships</code>, <code>entity_consolidation</code>,
-  <code>starting_situation</code>, <code>random_tables</code>, <code>coherence_pass</code>, and the
-  terminal <code>embed_world</code> stage (the semantic-index write, covered on
-  <a href="../data/world-store-retrieval.html">world-store retrieval</a>). The list carries three
-  structured stages plus one resolution stage on top of the original seven prose-bearing passes:
+  <code>entity_relationships</code>, <code>world_introduction</code>,
+  <code>entity_consolidation</code>, <code>starting_situation</code>, <code>random_tables</code>,
+  <code>coherence_pass</code>, and the terminal <code>embed_world</code> stage (the semantic-index
+  write, covered on <a href="../data/world-store-retrieval.html">world-store retrieval</a>). On top
+  of the original seven prose-bearing passes the list carries three structured setup / resolution
+  stages plus the <a href="#the-world-introduction-stage">world-introduction</a> stage:
   <code>world_color</code> is stage 1.25 — a Sonnet pick of the world's
   <a href="../world-campaign/world-color.html">two-colour cover identity</a>, persisted to
   <code>worlds.color_from</code>/<code>color_to</code> — <code>vocabulary_intake</code> is stage 1.5
   — it generates the per-world <a href="#vocabulary-registry">vocabulary registry</a> before any
-  downstream prose-bearing stage runs — and <code>entity_consolidation</code> is stage 4b, sitting
-  between <code>entity_relationships</code> and <code>starting_situation</code>. Stage 4b
-  materializes any phantom entities stage 4 declared as placeholders (see
+  downstream prose-bearing stage runs — <code>world_introduction</code> is stage 4.5, an Opus pass
+  that writes the world's opening page right after the connections weave and IS the
+  <a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">reveal boundary</a> — and
+  <code>entity_consolidation</code> is stage 4b, sitting between <code>world_introduction</code> and
+  <code>starting_situation</code>. Stage 4b materializes any phantom entities stage 4 declared as
+  placeholders (see
   <a href="#stage-4b-phantom-reference-reconciliation">phantom-reference reconciliation</a>); it
   short-circuits to a zero-cost skip when stage 4 didn't declare any. Section headings and the
   cost-cap discussion treat <code>world_color</code>, <code>vocabulary_intake</code>, and
@@ -538,7 +548,7 @@
 </ol>
 
 <aside class="wiki-rationale">
-  <strong>One taxonomy, homed in the contract (MYT-89)</strong> — the eleven-stage tuple is no
+  <strong>One taxonomy, homed in the contract (MYT-89)</strong> — the twelve-stage tuple is no
   longer hand-maintained here. It lives once in <code>@mythrun/contract/events</code>
   (<code>WORLD_GEN_STAGES</code>); this processor re-exports it, the SSE
   <a href="./pipeline-status.html#phase-derivation">phase-derivation</a> aliases it for its stage
@@ -716,6 +726,24 @@
         together. The server resolves names to UUIDs at publish time; phantom-declared endpoints get
         server-minted <code>new-NNN</code> synthetic IDs. No <code>finalized</code> for edges (edges
         have no client-visible synth-to-real-id mapping).
+      </td>
+    </tr>
+    <tr>
+      <td><code>world_introduction</code></td>
+      <td>Opus (non-streaming, generateObject) + Haiku/Sonnet repair</td>
+      <td>non-streaming</td>
+      <td>
+        <code>worlds.introduction</code> jsonb (<code
+          >{ prose, references: [{ entityId, name }] }</code
+        >, migration 032). The title is not stored — it is the world's name, composed at read time.
+        Reads the <code>known</code>-tier slice only (structural enforced ignorance); resolves the
+        LLM's reference names to real entity ids and drops dangling picks.
+      </td>
+      <td>
+        none — but this is the reveal boundary: on commit the worker publishes
+        <code>phase = world_snapshot_ready</code>, and the owner
+        <a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a> becomes
+        fetchable.
       </td>
     </tr>
     <tr>
@@ -1050,6 +1078,36 @@
   <code>factionItemSchema</code>, <code>locationItemSchema</code>, <code>npcItemSchema</code>,
   <code>relationshipItemSchema</code>, <code>hierarchyStragglerItemSchema</code>) that the handler
   passes into the array config.
+</aside>
+
+<h3 id="the-world-introduction-stage">The world-introduction stage</h3>
+
+<p>
+  <code>world_introduction</code> (stage 4.5) writes the opening page every generated world reveals
+  on — the world's name as the title, a few paragraphs of grounding prose, and an ordered list of
+  dig-deeper entity references. It runs right after <code>entity_relationships</code> (so it reads
+  the fully-woven graph) and before <code>entity_consolidation</code>, and it is the
+  <a href="#the-snapshot-phase-and-the-world-snapshot-endpoint">reveal boundary</a>: the visible
+  wait ends when it commits. One Opus <code>generateObject</code> call writes the prose and picks
+  the reference names; the worker owns the mechanical parts — the title is the persisted world name
+  (the LLM never re-invents it), and the picked names are resolved to real entity ids here, with
+  dangling picks dropped and duplicates removed. The result persists to
+  <code>worlds.introduction</code> jsonb (<code>{ prose, references }</code>, migration 032 — a
+  set-once, NULL-tolerant column mirroring the <code>world_overview</code> /
+  <code>starting_situations</code> shape).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Enforced ignorance from birth — the read is the filter, not the prompt</strong> — this
+  page eventually faces players, so the generator is fed the <code>known</code>-tier slice ONLY: the
+  stage loads entities, facts, relationships, and the vocabulary registry with a
+  <code>['known']</code>
+  filter in the repo reads themselves (structural, the same projection the world-snapshot serves),
+  not as an instruction the prompt could ignore. The generator never sees a discoverable or secret
+  fact, so it cannot leak one into the prose. The prompt's register requirement is a separate axis:
+  it demands grounded copy that names the actors, mechanics, and stakes ("dominated by the thieves
+  guild, where secrets are as much a currency as gold") over mood-setting that could be pasted onto
+  any world — flowery is fine, but every sentence has to carry information.
 </aside>
 
 <h3 id="stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</h3>
@@ -1416,8 +1474,10 @@
     <tr>
       <td><code>phase</code></td>
       <td>
-        Entry to <code>world_gen</code>; on stage-4 commit (<code>world_snapshot_ready</code> —
-        snapshot endpoint becomes fetchable, stages 5–7 continue); on terminal
+        Entry to <code>world_gen</code>; on <code>world_introduction</code> commit (<code
+          >world_snapshot_ready</code
+        >
+        — snapshot endpoint becomes fetchable, the tail continues); on terminal
         <code>world_ready</code> / <code>world_gen_failed</code> / <code>complete</code>.
       </td>
       <td>Processor</td>
@@ -1548,30 +1608,37 @@
 <h2>The snapshot phase and the world-snapshot endpoint</h2>
 
 <p>
-  The pipeline ends with three non-streaming stages (5–7) that, in the old shape, finished before
-  any consumer could read the world. Two facts changed with myth-exac: stage 7
-  (<code>coherence_pass</code>) edits prose and renames entities, so the persisted state isn't fully
-  settled until it finishes; and the dev tool's wiki-style inspector wants the persisted world the
-  moment it's coherent — well before stages 5/6/7 add their finishing touches. Both pull in the same
-  direction: the snapshot endpoint is fetchable the moment stage 4
-  (<code>entity_relationships</code>) commits, and the SSE stream surfaces the
-  <code>world_snapshot_ready</code> phase from that condition.
+  The pipeline's headline content is fully written well before it finishes. By the time
+  <code>entity_relationships</code> weaves the connections and the new
+  <code>world_introduction</code> stage writes the world's opening page, every player-visible
+  known-tier entity, fact, and relationship is on disk and the introduction exists — but the tail
+  stages (<code>entity_consolidation</code> through <code>embed_world</code>) keep running for
+  minutes more. So the snapshot is made fetchable at that boundary rather than at the end: the
+  endpoint serves the persisted world the moment <code>world_introduction</code> commits, and the
+  SSE stream surfaces the <code>world_snapshot_ready</code> phase from the same condition. This is
+  the <a href="../frontend/world-gen-experience.html">reveal boundary</a> the frontend swaps on
+  (myth-zaqxh moved it here from <code>entity_relationships</code>, so the reveal lands on prose
+  rather than a bare graph).
 </p>
 
 <p>
   <code>derivePhase</code> in <code>backend/src/sse/derive-phase.ts</code> returns
-  <code>world_snapshot_ready</code> when the world is still <code>generating</code> but a stage-4
-  <code>completed</code> row exists; the route handler's initial-frame SSE snapshot uses this
-  function, so a connecting subscriber sees the right phase even mid-flight. The worker's published
-  <code>phase</code> event for <code>world_snapshot_ready</code> fires one stage later, after
-  <code>entity_consolidation</code> (stage 4b) commits — that's the boundary where any deferred
-  phantom relationships have been resolved into real rows, so the snapshot is the fully-coherent
-  entity graph rather than a stage-4 view that's still carrying placeholder-endpoint edges in
-  worlds.entity_consolidation_pending. The worker also re-publishes the phase event on idempotent
-  re-entry past a completed stage-4b row, so a reconnecting subscriber catches up. Stages 5 + 6 + 7
-  then continue under this phase. When stage 7 commits and <code>worlds.status</code> flips to
-  <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires the
-  world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
+  <code>world_snapshot_ready</code> when the world is still <code>generating</code> but a
+  <code>world_introduction</code> <code>completed</code> row exists; the route handler's
+  initial-frame SSE snapshot uses this function, so a connecting subscriber sees the right phase
+  even mid-flight. The worker publishes the same <code>phase</code> event when
+  <code>world_introduction</code> commits, and re-publishes it on idempotent re-entry past a
+  completed <code>world_introduction</code>
+  row so a reconnecting subscriber catches up — gate, phase derivation, and publish now key on one
+  stage. Everything after the boundary runs under this phase:
+  <code>entity_consolidation</code> resolving stage-4's phantom declarations into real rows, the
+  starting situations, the coherence pass, and the embed write. The
+  <a href="../frontend/world-gen-experience.html">reveal</a> absorbs those additions through quiet
+  snapshot refetches while the player explores — so the boundary sitting one stage
+  <em>before</em> consolidation is fine: the consolidation ghosts arrive in the tail, never removing
+  anything the intro already references. When stage 7 commits and <code>worlds.status</code> flips
+  to <code>complete</code>, the phase advances to <code>world_ready</code>; if the cost cap fires
+  the world ends at <code>complete</code> (stage 7's cap-fire exception) or <code>failed</code> (any
   earlier stage).
 </p>
 
@@ -1590,15 +1657,17 @@
 <p>
   <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
   rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
-  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'entity_relationships')</code>) passes —
-  stage 4 commit is the gate, not stage 4b, because the entity / relationship tables are coherent at
-  that point even when phantom reconciliation hasn't run yet (the snapshot read simply doesn't
-  surface phantom rows that don't exist). The response is a <code>WorldSnapshot</code>: a
-  <code>WorldSummary</code> projection of the worlds row, the entities, their prose kernels and
-  facts, the relationships among them, the entity hierarchy rows for resolved parents, and stat
-  blocks for entities that have them. Seven read queries — most run in parallel — make up the
-  composition; <code>world-snapshot-view.ts</code>
-  owns it.
+  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'world_introduction')</code>) passes —
+  <code>world_introduction</code> is the earliest stage at which the world is both coherent
+  (entities and relationships all committed at <code>entity_relationships</code>)
+  <em>and</em> carries the introduction page a served snapshot always includes. The response is a
+  <code>WorldSnapshot</code>: a <code>WorldSummary</code> projection of the worlds row, the composed
+  <code>introduction</code> (the world-name title, the prose, and its dig-deeper references
+  re-filtered against the served known-tier entity set — a reference to a non-served entity is
+  dropped at compose time), the entities, their prose kernels and facts, the relationships among
+  them, the entity hierarchy rows for resolved parents, and stat blocks for entities that have them.
+  Eight read queries — most run in parallel — make up the composition;
+  <code>world-snapshot-view.ts</code> owns it.
 </p>
 
 <aside class="wiki-rationale">
@@ -1793,10 +1862,10 @@
     <tr>
       <td><code>world_snapshot_ready</code></td>
       <td>
-        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>. Stage 4 has committed
-        (the snapshot is fetchable) but later stages — including stage 4b
-        <code>entity_consolidation</code> and stages 5–7 — are still running; from the resume-policy
-        perspective the job is still in flight.
+        <code>409 world_gen_in_progress</code> + <code>Retry-After: 30</code>.
+        <code>world_introduction</code> has committed (the snapshot is fetchable) but the tail —
+        <code>entity_consolidation</code> through <code>embed_world</code> — is still running; from
+        the resume-policy perspective the job is still in flight.
       </td>
     </tr>
     <tr>

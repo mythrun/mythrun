@@ -558,16 +558,20 @@
     <tr>
       <td><code>world_snapshot_ready</code></td>
       <td>
-        <code>worlds.status = 'generating'</code> AND stage 4 (<code>entity_relationships</code>)
-        has a <code>completed</code> latest attempt. Stage 4b (<code>entity_consolidation</code>)
-        and stages 5–7 may still be running. The myth-exac snapshot endpoint becomes fetchable in
-        this phase; the SSE client uses the signal to fire its initial
-        <code>GET /world-snapshot</code>. <code>derivePhase</code> surfaces this state from the
-        stage-4 commit, so the route handler's initial-frame snapshot reports it immediately. The
-        worker's published <code>phase</code> event for <code>world_snapshot_ready</code> fires one
-        stage later — after stage 4b commits — so reconnecting subscribers see the signal once the
-        phantom-reference reconciliation has fully landed (see
-        <a href="./world-gen.html#stage-4b-phantom-reference-reconciliation">world-gen / stage 4b</a
+        <code>worlds.status = 'generating'</code> AND <code>world_introduction</code> (the reveal
+        boundary, stage 4.5) has a <code>completed</code> latest attempt. The tail (<code
+          >entity_consolidation</code
+        >
+        through <code>embed_world</code>) may still be running. The snapshot endpoint — now carrying
+        the world's introduction page — becomes fetchable in this phase; the SSE client uses the
+        signal to fire its initial <code>GET /world-snapshot</code>.
+        <code>derivePhase</code> surfaces this state from the
+        <code>world_introduction</code> commit, the route handler's initial-frame snapshot reports
+        it immediately, and the worker's published <code>phase</code> event fires on the same
+        stage's commit (myth-zaqxh unified the gate, the phase derivation, and the publish onto one
+        stage — see
+        <a href="./world-gen.html#the-world-introduction-stage"
+          >world-gen / the world-introduction stage</a
         >).
       </td>
     </tr>

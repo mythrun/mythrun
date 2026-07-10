@@ -9,8 +9,9 @@
 <!-- source: frontend/ui/src/components/WorldGenLoading/ -->
 <!-- source: frontend/ui/src/components/WorldWiki/ -->
 <!-- source: frontend/ui/src/components/FullBleedStage/ -->
-<!-- source-hash: sha256:290efe1bdf8b696d19b83278e570e306cd03ed15a9b8319e329bd25fedae2834 -->
-<!-- source-hash: sha256:pending -->
+<!-- source: frontend/ui/src/components/Drawer/ -->
+<!-- source: frontend/ui/src/components/RevealTransition/ -->
+<!-- source-hash: sha256:4488890ba0293f73d5d71c91c604c1da8ccff951e3da94c3bc69a10d1336bb68 -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>World-gen experience</h1>
@@ -19,10 +20,12 @@
   What a player watches while their world is built, and the world they land in when it's done. The
   phase-aware <code>/campaigns/:id</code> route runs a two-act generation — a quiet loading screen
   while the early prep stages run, then a live graph of the world assembling itself out of drifting
-  fog — and flips to the browsable reveal the moment the connections are woven, ~10 minutes before
-  the pipeline actually finishes. The fog is a real fluid simulation, the graph a contained
-  force-directed layout, and both run in a DOM-free <code>client-core</code> brain that
-  <a href="./design-system.html">@mythrun/ui</a> paints onto layered canvases.
+  fog — and flips to the browsable reveal the moment the world's introduction page is written (right
+  after the connections weave), ~10 minutes before the pipeline actually finishes. The reveal opens
+  the settled graph beside a <code>WorldWiki</code> whose front door is that introduction. The fog
+  is a real fluid simulation, the graph a contained force-directed layout, and both run in a
+  DOM-free <code>client-core</code> brain that <a href="./design-system.html">@mythrun/ui</a> paints
+  onto layered canvases.
 </p>
 
 <!-- @diagram: frontend/world-gen-experience -->
@@ -162,39 +165,115 @@
   hit targets key on.
 </aside>
 
-<h3>The reveal — at connections-done, not at the end</h3>
+<h3>The reveal — the graph beside the introduction</h3>
 
 <p>
-  The visible wait ends the moment the connections are woven. When
-  <code>entity_relationships</code> completes (<code>connectionsDone</code> over the folded stages),
-  the route swaps the generating view for <code>WorldReveal</code> — even though the pipeline's tail
-  stages (<code>entity_consolidation</code> through <code>embed_world</code>) are still running. The
-  reveal is the settled graph beside a browsable <code>WorldWiki</code>: the world's entities
-  grouped by kind (places, factions, people, things) with search, each showing its known facts.
-  Selecting a node highlights its wiki entry and vice-versa — one shared selection, because after
-  generation every node's identity <em>is</em> its real entity id, so no id translation is needed.
+  The visible wait ends the moment the world's introduction page is written. When
+  <code>world_introduction</code> completes (<code>connectionsDone</code> over the folded stages —
+  the predicate keeps its name, but its boundary stage moved here from
+  <code>entity_relationships</code>), the route swaps the generating view for
+  <code>WorldReveal</code> — even though the pipeline's tail stages (<code
+    >entity_consolidation</code
+  >
+  through <code>embed_world</code>) are still running. The reveal fetches the owner world-snapshot
+  and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door is the
+  introduction: the world's name as the title, a few paragraphs of grounding prose, and an ordered
+  list of dig-deeper references, with the search field and the browse-by-kind index one scroll
+  below. There is no separate entity list — the wiki is the browse surface.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Reveal early, let the tail run silent</strong> — a player who watched a ten-minute build
-  shouldn't wait on <code>coherence_pass</code> and the embed write to see their world. Those tail
-  stages produce quiet refinements (consolidated ghost entities, a coherence tidy-up), not the
-  headline content, so the reveal fires at the connection-weaving boundary and the tail runs behind
-  it. Each tail completion quietly refetches the wiki snapshot — the reconciled world just appears,
-  no spinner takeover, the old model held on screen until the fresh one resolves — and the graph
-  absorbs the same patches through the still-open stream. The "Continue" affordance stays hidden
-  until the pipeline actually finishes, because the starting-situation step it leads to needs a
-  complete world.
+  <strong>The reveal waits for the introduction, not the raw graph</strong> — the boundary used to
+  be <code>entity_relationships</code>: the reveal fired the instant the connections were woven and
+  the player landed on a bare graph. A
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world_introduction stage</a
+  >
+  now runs inside the boundary — right after the connections weave, before the silent tail — so the
+  wait ends on a page of prose that tells the player what world they are in. By the time they have
+  watched the graph assemble for the better part of ten minutes, the last thing they need is another
+  graph; they need the elevator pitch. Consolidation (which only <em>adds</em> phantom-resolution
+  ghosts, never removes the entities the intro references) stays in the tail, so nothing the
+  introduction points at can vanish behind the reveal.
 </aside>
+
+<p>
+  The layout has two regimes, flipped structurally on the design system's one narrow breakpoint
+  (<code>useViewportNarrow</code>). On desktop the reveal is a true 50/50: <code>RevealPanes</code>
+  holds the interactive graph in the left half and the wiki in the right — two equal min-width-0
+  halves — with the graph filling its pane in both dimensions (it never pans there) and the wiki
+  capping to the row and scrolling internally. On a phone the graph owns the glass, on the same
+  <code>FullBleedStage</code> full-bleed mechanism as the generating act, and the wiki lives in an
+  edge-handle <a href="./design-system.html">Drawer</a>: a sheet summoned from a handle pinned to
+  the right edge, also opened by tapping a node. The drawer's children stay mounted across
+  close→open, so the reader's page and scroll survive a dismiss; the reveal's title, explore prompt,
+  and Continue ride the sheet, keeping the base screen pure world.
+</p>
+
+<p>
+  Each entity opens to its own wiki page — the kind, the name, its known facts, and a RELATED footer
+  of relationship cross-links — with a back button that restores the previous page and its scroll
+  position. Selecting a node highlights its wiki page and vice-versa: one shared selection, because
+  after generation every node's identity <em>is</em> its real entity id, the same id the wiki keys
+  on, so no translation is needed.
+</p>
 
 <aside class="wiki-rationale">
   <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
-  the owner world-snapshot at the same stage-4 boundary the endpoint's readiness gate keys on, so it
-  never races the 409. The known-tier filter is entirely
+  the owner world-snapshot at the same <code>world_introduction</code> boundary the endpoint's
+  readiness gate keys on, so it never races the 409. The known-tier filter is entirely
   <a href="../runtime/world-gen.html#relationship-tiering">server-side</a>: the snapshot returns
-  only <code>known</code> entities, facts, <em>and relationships</em>, so fetching it while the tail
-  is still running serves exactly the same player-safe projection as fetching it after completion.
-  The client renders what it's given; it holds no secret it must remember to hide.
+  only <code>known</code> entities, facts, relationships, <em>and</em> the introduction (its
+  dig-deeper references re-filtered against the served entity set), so fetching it while the tail is
+  still running serves exactly the same player-safe projection as fetching it after completion. The
+  client renders what it's given; it holds no secret it must remember to hide.
+</aside>
+
+<p>
+  While the player explores, the tail runs silently. Each tail completion quietly refetches the wiki
+  snapshot — the reconciled world just appears, no spinner takeover, the old model held on screen
+  until the fresh one resolves — and the graph absorbs the same patches through the still-open
+  stream. The "Continue" affordance stays hidden until the pipeline actually finishes, because the
+  starting-situation step it leads to needs a complete world; it appears quietly when the tail
+  lands.
+</p>
+
+<h3>The reveal moment</h3>
+
+<p>
+  The swap from the generating graph to the reveal is choreographed, and it plays exactly once — for
+  the player who watched their world build. <code>RevealTransition</code> wraps the reveal and walks
+  a short timeline: a <em>hold</em> breath on the cleared paper, a <em>gust</em> beat, the world
+  <em>settles</em> as the title fades in, and the layout <em>resolves</em> — on desktop the
+  full-width graph re-seats to the left half while the wiki pane slides in from the right; on mobile
+  the drawer's edge handle arrives. Then it is <em>done</em>: the steady state, identical to a
+  reveal that never played. The walk latches on its first frame, so the later world-ready flip
+  neither restarts nor reverses it, and any tap or keypress mid-moment lands the player in the final
+  state at once (the interaction still does what it would have done).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The moment is for the watcher, never the late arriver</strong> — a player returning to an
+  already-settled world mounts the reveal in its final state with no choreography. The beat marks
+  the turn from watching to exploring; there is nothing to mark for someone who didn't watch. Under
+  <code>prefers-reduced-motion</code> the whole walk collapses to a single ~300ms surface fade — the
+  completion is still acknowledged, just not animated.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The settled world insists on its shape</strong> — the reveal runs the graph under a
+  "forceful settle" force profile distinct from the generating act's: the layout pulls itself into a
+  legible arrangement, and a node the player drags and releases snaps back rather than staying where
+  it was dropped — the world erases your mess. The regime is additive: reveal-only parameters
+  layered over the same locked simulation, so the generating act's behavior is untouched.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The fog is born gone</strong> — on the reveal the clearing is not re-run; the sim mounts
+  with its spawn fully drained, so the world arrives with no atmosphere left whatever its size. A
+  small world's residual haze was tried as a final live gust and cut: a freshly-mounted sim's cold
+  low-pass fades the haze back <em>in</em> before the wind can carry it off, an inverted arc. The
+  invariant is simply "the fog is gone," enforced from the swap.
 </aside>
 
 <h3>Waiting feedback</h3>
@@ -224,8 +303,8 @@
   Every motion source honours <code>prefers-reduced-motion</code>, read once in the web layer and
   handed to the brain as a boolean: the fog recomputes a static settled density on each entity-count
   change (preserving the clearing-as-progress cue rather than freezing blank), the node bob stops,
-  and edges and arrivals appear instantly instead of stroking in. The reveal degrades its transition
-  to a short cross-fade. The countdown is <em>not</em> gated — it's content, not decoration, and
+  and edges and arrivals appear instantly instead of stroking in. The reveal moment collapses to a
+  single ~300ms fade. The countdown is <em>not</em> gated — it's content, not decoration, and
   freezing it would show a wrong number. The Canvas graph is paired with an accessible model: an
   <code>aria-live</code> announcement of entities as they arrive during generation, and in the
   reveal the wiki's browse-by-kind is the guaranteed keyboard-and-screen-reader path to every entity
@@ -335,8 +414,14 @@
     <td>The remaining-wait countdown math; the connections-done / tail-stage boundaries.</td>
   </tr>
   <tr>
-    <td><code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code></td>
-    <td>SSE-event → node/edge reducers; snapshot → browsable wiki model.</td>
+    <td>
+      <code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code> ·
+      <code>use-wiki-navigation.ts</code>
+    </td>
+    <td>
+      SSE-event → node/edge reducers; snapshot → browsable wiki model (the introduction front door,
+      grouped entities, RELATED cross-links); the wiki page-history stack.
+    </td>
   </tr>
   <tr>
     <td><code>api/worldgen.ts</code></td>
@@ -375,7 +460,22 @@
   <tr>
     <td><code>WorldWiki</code></td>
     <td>
-      The reveal's browsable world — entities grouped by kind, with search and shared selection.
+      The reveal's browsable world — the introduction home, per-entity pages (facts + RELATED
+      links), search, back-navigation, and shared selection.
+    </td>
+  </tr>
+  <tr>
+    <td><code>RevealTransition</code></td>
+    <td>
+      The reveal moment's orchestrator (with <code>RevealPanes</code> and <code>RevealFade</code>) —
+      plays the one-time gen→reveal choreography and stages the layout off its phase.
+    </td>
+  </tr>
+  <tr>
+    <td><code>Drawer</code></td>
+    <td>
+      The mobile edge-handle sheet the wiki rides on a phone — mount-persistent children (a general
+      layout primitive).
     </td>
   </tr>
   <tr>
@@ -404,7 +504,14 @@
   </tr>
   <tr>
     <td><code>routes/worldgen/reveal.tsx</code></td>
-    <td>The reveal — settled graph beside the browsable wiki, silent tail refetch.</td>
+    <td>
+      The reveal — desktop 50/50 and mobile graph-plus-drawer, staged off the reveal moment, with
+      shared selection.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/worldgen/reveal-wiki-panel.tsx</code></td>
+    <td>The snapshot fetch / silent-refetch model and the wiki panel the reveal composes.</td>
   </tr>
 </table>
 
@@ -416,6 +523,6 @@
   <code>frontend/client-core/src/api/worldgen.ts</code>,
   <code>frontend/contract/src/events/worldgen-stages.ts</code>, and the <code>WorldGenFog</code> /
   <code>WorldGenGraph</code> / <code>WorldGenStatusCard</code> / <code>WorldGenLoading</code> /
-  <code>WorldWiki</code> / <code>FullBleedStage</code> components under
-  <code>frontend/ui/src/components/</code>.
+  <code>WorldWiki</code> / <code>RevealTransition</code> / <code>Drawer</code> /
+  <code>FullBleedStage</code> components under <code>frontend/ui/src/components/</code>.
 </p>

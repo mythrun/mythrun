@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:bedd29c04053843d9bb2b705c939cb4b53c9effae7f0088f1ee162d8c19a4f78 -->
+<!-- source-hash: sha256:fb6283b946b85d7ac86486f1902274afa8e9ec1087b2ab0d61a948dfc5ef021b -->
 <!-- last-ticket: MYT-74c -->
 
 <h1>Repository layer</h1>
@@ -1256,8 +1256,11 @@
         <code>repo.transaction</code> (<code>markComplete</code> / <code>markFailed</code> /
         <code>resetFailedToGenerating</code>, <code>applyConcept</code>,
         <code>setVocabularyRegistry</code>, <code>setWorldOverview</code>, the
-        <code>entity_consolidation_pending</code> get/set/clear trio, and the starting-situation
-        setters), <code>getWikiSummary</code> (player-wiki allowlist, no <code>concept</code>);
+        <code>entity_consolidation_pending</code> get/set/clear trio, the starting-situation
+        setters, and the <code>introduction</code> set/get pair —
+        <code>setWorldIntroduction</code> written by the <code>world_introduction</code> stage,
+        <code>getWorldIntroduction</code> read by the snapshot view),
+        <code>getWikiSummary</code> (player-wiki allowlist, no <code>concept</code>);
         <code>WorldSummary</code> + <code>WikiWorldSummary</code> types;
         <code>createWorldsRepo(pool)</code> back-compat factory.
       </td>

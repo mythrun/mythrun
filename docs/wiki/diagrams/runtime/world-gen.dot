@@ -9,7 +9,9 @@ digraph world_gen {
   // exponential backoff). The worker walks seven stages: 1 +
   // 4 + 5 are non-streaming Sonnet; 2 + 3 are streaming Opus with the
   // partialObjectStream entity emitter; 4 (entity_relationships) is
-  // streaming Sonnet; 7 (coherence_pass) is non-streaming Sonnet. Each
+  // streaming Sonnet; 7 (coherence_pass) is non-streaming Sonnet. Stage
+  // 4.5 (world_introduction, Opus) writes the world's opening page from
+  // the known-tier slice and is the reveal / snapshot-ready boundary. Each
   // stage handler returns a StageDispatchResult { costUsd, tokens,
   // finalizedEvents, capExhausted }; the outer runStage owns
   // BEGIN/COMMIT and publishes finalizedEvents only AFTER COMMIT. The
@@ -57,6 +59,7 @@ digraph world_gen {
     s2     [label="stage 2\nworld_and_factions\nOpus streaming\nregions + factions\n→ entities + prose_kernels + facts\n→ worlds.world_overview"];
     s3     [label="stage 3\nlocations_and_npcs\nOpus streaming\n3-pass parent resolver\n→ entities + prose + facts\n+ entity_hierarchy"];
     s4     [label="stage 4\nentity_relationships\nSonnet streaming\ndeleteByWorld on retry\nUUID pre-filter +\nplaceholder partition\n→ relationships\n+ pending phantoms"];
+    sint   [label="stage 4.5\nworld_introduction\nOpus generateObject\nreads KNOWN-tier slice ·\nprose + dig-deeper refs\n→ worlds.introduction\n(reveal / snapshot boundary)"];
     s4b    [label="stage 4b\nentity_consolidation\nSonnet generateObject\nskip path on empty pending\nelse: ghosts + facts +\n  resolved relationships\ncreated_in='stage:\n  entity_consolidation'"];
     s5     [label="stage 5\nstarting_situation\nSonnet (non-stream)\n→ worlds.starting_situation"];
     s6     [label="stage 6\nrandom_tables\nSonnet (non-stream)\n→ worlds.random_tables"];
@@ -99,7 +102,8 @@ digraph world_gen {
   s1     -> s2;
   s2     -> s3;
   s3     -> s4;
-  s4     -> s4b;
+  s4     -> sint;
+  sint   -> s4b;
   s4b    -> s5;
   s5     -> s6;
   s6     -> s7;
@@ -114,6 +118,7 @@ digraph world_gen {
   s2     -> capchk [style=dotted];
   s3     -> capchk [style=dotted];
   s4     -> capchk [style=dotted];
+  sint   -> capchk [style=dotted];
   s4b    -> capchk [style=dotted];
   s5     -> capchk [style=dotted];
   s6     -> capchk [style=dotted];
@@ -126,6 +131,7 @@ digraph world_gen {
   s2     -> entities_t [label="regions + factions", style=dotted];
   s3     -> entities_t [label="locations + NPCs\n+ parents", style=dotted];
   s4     -> entities_t [label="relationships +\npending phantoms\n(worlds.entity_\n consolidation_pending)", style=dotted];
+  sint   -> worlds [label="introduction", style=dotted];
   s4b    -> entities_t [label="ghost entities +\nresolved relationships", style=dotted];
   s5     -> worlds [label="starting_situation", style=dotted];
   s6     -> worlds [label="random_tables", style=dotted];

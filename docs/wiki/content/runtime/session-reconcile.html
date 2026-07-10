@@ -21,7 +21,7 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:8b35ed527f166bc797ed5fb5500a219f1d62bb445a8635b81c5e82a89dec42dd -->
+<!-- source-hash: sha256:bcb919c79d0b5faad9afb1e55273966dd008f1bc396fbbcf8ba2b1bc2fc78f3a -->
 <!-- last-ticket: MYT-74c -->
 
 <h1>End-of-session reconciliation</h1>
@@ -676,15 +676,14 @@
   <code>requireCampaignMember(repo)</code> — any party member. Its dev-mode tier bypass is
   <em>hardcoded off</em>: there is no knob to widen it past <code>known</code>, so the structural
   guarantee is the narrow projection itself, not a flag a future caller could flip. Readiness gates
-  on the same stage-4 (<code>entity_relationships</code>) check the snapshot uses (<code
-    >409 wiki_not_ready</code
-  >
-  before it, <code>404 campaign_not_found</code> on a null world id). It is rate-limited per-<em
-    >user</em
-  >
-  (60/min, the member-poll precedent), not per-IP like the owner snapshot — a whole party fanning
-  the same read shouldn't share one IP bucket. Because it is a player route with no dev-tool panel,
-  it sits in the dev-tool contract's <code>EXEMPT_ROUTES</code>.
+  on stage 4 (<code>entity_relationships</code>) — <code>409 wiki_not_ready</code> before it,
+  <code>404 campaign_not_found</code> on a null world id. The owner snapshot's own gate moved one
+  stage later to <code>world_introduction</code> (myth-zaqxh — its reveal now waits for the intro
+  page), so the member wiki, which has no intro to wait for, becomes readable a stage
+  <em>before</em> the owner snapshot. It is rate-limited per-<em>user</em> (60/min, the member-poll
+  precedent), not per-IP like the owner snapshot — a whole party fanning the same read shouldn't
+  share one IP bucket. Because it is a player route with no dev-tool panel, it sits in the dev-tool
+  contract's <code>EXEMPT_ROUTES</code>.
 </aside>
 
 <h2>Enforced ignorance</h2>

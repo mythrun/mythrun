@@ -20,7 +20,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:d053f1ddf7d6f7d7f03dbc2c717fd830cfb38ee44ed3d121d7c23b4db1ac4213 -->
+<!-- source-hash: sha256:5d05e886522fc637a41762ca1617d00b69623948da608ed48bb810c196412445 -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>Design system</h1>
@@ -421,11 +421,13 @@
   shape; "a campaign's card" is not. The
   <a href="./world-gen-experience.html">world-generation experience</a> drew the same line: it
   contributed the general <code>FullBleedStage</code> layout primitive (a stage that cancels the
-  app-frame's content insets to run a canvas edge-to-edge on phones) and the
-  <code>useViewportNarrow</code> breakpoint hook to the system, while its fog-, graph-, status-card,
-  and loading composites (<code>WorldGenFog</code>, <code>WorldGenGraph</code>,
-  <code>WorldGenStatusCard</code>, <code>WorldGenLoading</code>) stay feature components documented
-  on that page.
+  app-frame's content insets to run a canvas edge-to-edge on phones), the
+  <code>Drawer</code> edge-handle sheet (a mount-persistent mobile sheet summoned from a pinned
+  handle, its children surviving close→open), and the <code>useViewportNarrow</code> breakpoint hook
+  to the system, while its fog-, graph-, status-card, loading, and reveal-transition composites
+  (<code>WorldGenFog</code>, <code>WorldGenGraph</code>, <code>WorldGenStatusCard</code>,
+  <code>WorldGenLoading</code>, <code>RevealTransition</code>) stay feature components documented on
+  that page.
 </p>
 
 <h2>Responsive by construction</h2>

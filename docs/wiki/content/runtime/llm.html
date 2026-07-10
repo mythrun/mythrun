@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:af53073058336fba9ddc38efe1de7a5e316c487a83e0d474720cfc88962ceaa0 -->
+<!-- source-hash: sha256:b70a160c76e1c95038cb016f8934e624e8a48adb7130e4ccd0ddc3238acb852f -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>LLM client</h1>
@@ -20,9 +20,9 @@
   only) for a call whose raw output reasons over secrets. Consumers include the onboarding profanity
   classifier, the world-gen input gate, the paint-job validator, the world-gen stage handlers
   (concept_intake, world_color, vocabulary_intake, world_and_factions, locations_and_npcs,
-  entity_relationships, entity_consolidation, starting_situation, random_tables, coherence_pass),
-  the structured-output repair chain plus its companion per-item drop-on-fail gate on the streaming
-  stages, the
+  entity_relationships, world_introduction, entity_consolidation, starting_situation, random_tables,
+  coherence_pass), the structured-output repair chain plus its companion per-item drop-on-fail gate
+  on the streaming stages, the
   <a href="#the-session-prep-generation-stage">session-prep generation stage</a>, the
   <a href="./dm-trigger.html">DM-trigger classifier</a> (a cheap Haiku <code>generateObject</code>
   deciding whether the AI DM should take a turn), the

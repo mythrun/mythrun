@@ -32,251 +32,294 @@
   What a player watches while their world is built, and the world they land in when it's done. The
   phase-aware <code>/campaigns/:id</code> route runs a two-act generation — a quiet loading screen
   while the early prep stages run, then a live graph of the world assembling itself out of drifting
-  fog — and flips to the browsable reveal the moment the connections are woven, ~10 minutes before
-  the pipeline actually finishes. The fog is a real fluid simulation, the graph a contained
-  force-directed layout, and both run in a DOM-free <code>client-core</code> brain that
-  <a href="./design-system.html">@mythrun/ui</a> paints onto layered canvases.
+  fog — and flips to the browsable reveal the moment the world's introduction page is written (right
+  after the connections weave), ~10 minutes before the pipeline actually finishes. The reveal opens
+  the settled graph beside a <code>WorldWiki</code> whose front door is that introduction. The fog
+  is a real fluid simulation, the graph a contained force-directed layout, and both run in a
+  DOM-free <code>client-core</code> brain that <a href="./design-system.html">@mythrun/ui</a> paints
+  onto layered canvases.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="2171pt" height="504pt"
- viewBox="14.00 14.00 2156.00 489.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 485.44)">
+<svg width="2646pt" height="510pt"
+ viewBox="14.00 14.00 2632.00 496.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 492.04)">
 <title>frontend_world_gen_experience</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-471.04 2138.09,-471.04 2138.09,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-477.64 2613.43,-477.64 2613.43,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_web</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-164.04 8,-404.04 691.26,-404.04 691.26,-164.04 8,-164.04"/>
-<text xml:space="preserve" text-anchor="middle" x="349.63" y="-390.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(the route)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-132.64 8,-372.64 1072.19,-372.64 1072.19,-132.64 8,-132.64"/>
+<text xml:space="preserve" text-anchor="middle" x="540.09" y="-358.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(the route)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_cc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1375.3,-47.04 1375.3,-459.04 1787.36,-459.04 1787.36,-47.04 1375.3,-47.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1581.33" y="-445.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core/worldgen &#160;(the brain · DOM&#45;free · R1)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1784.63,-53.64 1784.63,-465.64 2196.7,-465.64 2196.7,-53.64 1784.63,-53.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.67" y="-451.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core/worldgen &#160;(the brain · DOM&#45;free · R1)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_ui</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="728.26,-173.04 728.26,-374.04 1338.3,-374.04 1338.3,-173.04 728.26,-173.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1033.28" y="-360.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/ui &#160;(the render · Canvas + DOM)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1144.19,-146.64 1144.19,-360.64 1747.63,-360.64 1747.63,-146.64 1144.19,-146.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1445.91" y="-346.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/ui &#160;(the render · Canvas + DOM)</text>
 </g>
 <!-- route -->
 <g id="node1" class="node">
 <title>route</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="277.32,-234.08 8,-234.08 8,-164 277.32,-164 277.32,-234.08"/>
-<text xml:space="preserve" text-anchor="middle" x="142.66" y="-215.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CampaignDetailRoute</text>
-<text xml:space="preserve" text-anchor="middle" x="142.66" y="-202.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/campaigns/:id · phase&#45;aware</text>
-<text xml:space="preserve" text-anchor="middle" x="142.66" y="-189.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fold stream · fetch timings once ·</text>
-<text xml:space="preserve" text-anchor="middle" x="142.66" y="-175.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reveal&#45;at&#45;connectionsDone</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="277.32,-202.68 8,-202.68 8,-132.6 277.32,-132.6 277.32,-202.68"/>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-184.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CampaignDetailRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-170.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/campaigns/:id · phase&#45;aware</text>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-157.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fold stream · fetch timings once ·</text>
+<text xml:space="preserve" text-anchor="middle" x="142.66" y="-144.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reveal at world_introduction</text>
 </g>
 <!-- act1 -->
 <g id="node2" class="node">
 <title>act1</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="687.95,-383.08 418.64,-383.08 418.64,-313 687.95,-313 687.95,-383.08"/>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-364.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GeneratingView · act one</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-351.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenLoading (spinner +</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-338.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">20 cycling flavor lines + countdown)</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-324.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ watch beat</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="690.35,-351.68 421.04,-351.68 421.04,-281.6 690.35,-281.6 690.35,-351.68"/>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-333.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GeneratingView · act one</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-319.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenLoading (spinner +</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-306.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">20 cycling flavor lines + countdown)</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-293.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ watch beat</text>
 </g>
 <!-- route&#45;&gt;act1 -->
 <g id="edge2" class="edge">
 <title>route&#45;&gt;act1</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M232.19,-234.75C285.07,-255.7 353.72,-282.26 415.34,-304.04 420.43,-305.84 425.65,-307.66 430.93,-309.46"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="430.13,-311.78 437.54,-311.71 431.71,-307.14 430.13,-311.78"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M220.4,-203.41C268.78,-225.15 332.94,-252.51 391.33,-272.64 398.12,-274.98 405.1,-277.27 412.17,-279.51"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="411.36,-281.82 418.78,-281.57 412.82,-277.15 411.36,-281.82"/>
 </g>
 <!-- act2 -->
 <g id="node3" class="node">
 <title>act2</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="691.26,-295.48 415.34,-295.48 415.34,-238.6 691.26,-238.6 691.26,-295.48"/>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-276.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GeneratingView · act two</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-263.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FullBleedStage → WorldGenGraph</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-250.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">gated (inert) · status card / footer</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="693.66,-264.08 417.74,-264.08 417.74,-207.2 693.66,-207.2 693.66,-264.08"/>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-245.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GeneratingView · act two</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-232.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FullBleedStage → WorldGenGraph</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-219.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">gated (inert) · status card / footer</text>
 </g>
 <!-- route&#45;&gt;act2 -->
 <g id="edge3" class="edge">
 <title>route&#45;&gt;act2</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M278.03,-221.4C319.05,-228.23 364.35,-235.76 406.12,-242.71"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="405.6,-245.11 412.91,-243.84 406.4,-240.28 405.6,-245.11"/>
-<text xml:space="preserve" text-anchor="middle" x="346.33" y="-244.13" font-family="Courier,monospace" font-size="10.00">watch</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M277.96,-189.86C319.79,-196.78 366.11,-204.44 408.7,-211.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="408.06,-213.86 415.37,-212.59 408.86,-209.03 408.06,-213.86"/>
+<text xml:space="preserve" text-anchor="middle" x="334.33" y="-206.68" font-family="Courier,monospace" font-size="10.00">watch</text>
 </g>
-<!-- rev -->
+<!-- moment -->
 <g id="node4" class="node">
-<title>rev</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="691.26,-220.48 415.34,-220.48 415.34,-163.6 691.26,-163.6 691.26,-220.48"/>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-201.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldReveal</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-188.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">settled graph BESIDE WorldWiki</text>
-<text xml:space="preserve" text-anchor="middle" x="553.3" y="-175.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">· shared selection · silent refetch</text>
+<title>moment</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="720.06,-189.08 391.33,-189.08 391.33,-132.2 720.06,-132.2 720.06,-189.08"/>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-170.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">RevealTransition</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-157.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the one&#45;time moment</text>
+<text xml:space="preserve" text-anchor="middle" x="555.7" y="-144.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hold → gust → settle → resolve → done</text>
 </g>
-<!-- route&#45;&gt;rev -->
+<!-- route&#45;&gt;moment -->
 <g id="edge4" class="edge">
-<title>route&#45;&gt;rev</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M278.03,-196.74C319.05,-196.04 364.35,-195.26 406.12,-194.54"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="405.92,-197 412.88,-194.43 405.84,-192.1 405.92,-197"/>
-<text xml:space="preserve" text-anchor="middle" x="346.33" y="-199.37" font-family="Courier,monospace" font-size="10.00">connections woven</text>
+<title>route&#45;&gt;moment</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M277.96,-165.35C311.35,-164.78 347.61,-164.17 382.54,-163.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="382.14,-166.03 389.09,-163.46 382.05,-161.13 382.14,-166.03"/>
+<text xml:space="preserve" text-anchor="middle" x="334.33" y="-167.97" font-family="Courier,monospace" font-size="10.00">intro written</text>
 </g>
 <!-- stream -->
-<g id="node5" class="node">
+<g id="node6" class="node">
 <title>stream</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1735.29,-103.48 1426.37,-103.48 1426.37,-46.6 1735.29,-46.6 1735.29,-103.48"/>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-84.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useWorldGenStream</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-71.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE fold → nodes/edges + stages ·</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-58.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connectionsDone · completedTailStageCount</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2144.63,-110.08 1835.7,-110.08 1835.7,-53.2 2144.63,-53.2 2144.63,-110.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-91.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useWorldGenStream</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-78.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE fold → nodes/edges + stages ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-65.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connectionsDone · completedTailStageCount</text>
 </g>
 <!-- route&#45;&gt;stream -->
 <g id="edge1" class="edge">
 <title>route&#45;&gt;stream</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M226.46,-163.35C307.82,-131.56 436.28,-90.04 552.3,-90.04 552.3,-90.04 552.3,-90.04 1260.75,-90.04 1311.6,-90.04 1366.96,-88.12 1417.07,-85.65"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1417.04,-88.1 1423.9,-85.3 1416.79,-83.21 1417.04,-88.1"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M251.82,-131.88C333.95,-107.88 450.21,-80.64 554.7,-80.64 554.7,-80.64 554.7,-80.64 1640.38,-80.64 1701.12,-80.64 1767.82,-80.79 1826.48,-80.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1826.24,-83.43 1833.25,-81 1826.26,-78.53 1826.24,-83.43"/>
 </g>
 <!-- api -->
-<g id="node15" class="node">
+<g id="node17" class="node">
 <title>api</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2134.09,-70.08 1871.37,-70.08 1871.37,0 2134.09,0 2134.09,-70.08"/>
-<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-51.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API &#160;(other pages)</text>
-<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SSE status stream ·</text>
-<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET /api/worldgen/stage&#45;timings ·</text>
-<text xml:space="preserve" text-anchor="middle" x="2002.73" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET .../world&#45;snapshot (known&#45;tier)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2609.43,-83.28 2280.71,-83.28 2280.71,0 2609.43,0 2609.43,-83.28"/>
+<text xml:space="preserve" text-anchor="middle" x="2445.07" y="-64.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API &#160;(other pages)</text>
+<text xml:space="preserve" text-anchor="middle" x="2445.07" y="-51.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SSE status stream ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2445.07" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET /api/worldgen/stage&#45;timings ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2445.07" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET .../world&#45;snapshot (known&#45;tier +</text>
+<text xml:space="preserve" text-anchor="middle" x="2445.07" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">introduction · 409 until world_introduction)</text>
 </g>
 <!-- route&#45;&gt;api -->
-<g id="edge16" class="edge">
+<g id="edge19" class="edge">
 <title>route&#45;&gt;api</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M190.08,-163.26C262.98,-110.77 410.62,-19.04 552.3,-19.04 552.3,-19.04 552.3,-19.04 1581.83,-19.04 1675.46,-19.04 1780.75,-23.06 1862.47,-27.07"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1861.88,-29.5 1868.99,-27.4 1862.12,-24.6 1861.88,-29.5"/>
-<text xml:space="preserve" text-anchor="middle" x="1109.19" y="-22.04" font-family="Courier,monospace" font-size="10.00">timings + snapshot</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M205.1,-131.99C283.52,-89.93 424.65,-25.64 554.7,-25.64 554.7,-25.64 554.7,-25.64 1991.17,-25.64 2083.78,-25.64 2186.97,-29.02 2271.44,-32.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2271.16,-35.12 2278.26,-32.98 2271.37,-30.22 2271.16,-35.12"/>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-28.64" font-family="Courier,monospace" font-size="10.00">timings + snapshot</text>
 </g>
 <!-- gcanvas -->
-<g id="node12" class="node">
+<g id="node13" class="node">
 <title>gcanvas</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1037.18,-291.48 728.26,-291.48 728.26,-234.6 1037.18,-234.6 1037.18,-291.48"/>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-272.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenGraph</text>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-259.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">graph canvas (front) · penstroke edges ·</text>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-246.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">trace&#45;then&#45;stamp arrival · drag</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1453.12,-278.08 1144.19,-278.08 1144.19,-221.2 1453.12,-221.2 1453.12,-278.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-259.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenGraph</text>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-246.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">graph canvas (front) · penstroke edges ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-233.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">trace&#45;then&#45;stamp arrival · drag</text>
 </g>
 <!-- act2&#45;&gt;gcanvas -->
-<g id="edge5" class="edge">
+<g id="edge6" class="edge">
 <title>act2&#45;&gt;gcanvas</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M691.73,-265.36C700.75,-265.25 709.87,-265.14 719,-265.03"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="718.95,-267.48 725.92,-264.94 718.89,-262.58 718.95,-267.48"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M694.33,-238.24C819.03,-240.6 1002.92,-244.07 1134.87,-246.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1134.62,-249.01 1141.67,-246.69 1134.72,-244.11 1134.62,-249.01"/>
 </g>
 <!-- card -->
-<g id="node13" class="node">
+<g id="node14" class="node">
 <title>card</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1037.18,-352.88 728.26,-352.88 728.26,-309.2 1037.18,-309.2 1037.18,-352.88"/>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-334.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenStatusCard</text>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-321.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">overlay | footer · fixed bars + countdown</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1453.12,-339.48 1144.19,-339.48 1144.19,-295.8 1453.12,-295.8 1453.12,-339.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-320.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenStatusCard</text>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-307.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">overlay | footer · fixed bars + countdown</text>
 </g>
 <!-- act2&#45;&gt;card -->
-<g id="edge6" class="edge">
+<g id="edge7" class="edge">
 <title>act2&#45;&gt;card</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M691.73,-293.9C713.67,-298.19 736.25,-302.61 757.85,-306.83"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="757.28,-309.21 764.62,-308.15 758.22,-304.4 757.28,-309.21"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M694.33,-250.87C819.03,-264.67 1002.92,-285.02 1134.87,-299.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1134.45,-302.04 1141.68,-300.38 1134.99,-297.17 1134.45,-302.04"/>
+</g>
+<!-- rev -->
+<g id="node5" class="node">
+<title>rev</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1072.19,-216.28 816.07,-216.28 816.07,-133 1072.19,-133 1072.19,-216.28"/>
+<text xml:space="preserve" text-anchor="middle" x="944.13" y="-197.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldReveal</text>
+<text xml:space="preserve" text-anchor="middle" x="944.13" y="-184.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">desktop 50/50 graph|wiki ·</text>
+<text xml:space="preserve" text-anchor="middle" x="944.13" y="-171.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mobile graph + Drawer sheet</text>
+<text xml:space="preserve" text-anchor="middle" x="944.13" y="-158.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">opens on the introduction ·</text>
+<text xml:space="preserve" text-anchor="middle" x="944.13" y="-144.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">shared selection · silent refetch</text>
+</g>
+<!-- moment&#45;&gt;rev -->
+<g id="edge5" class="edge">
+<title>moment&#45;&gt;rev</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M720.58,-166.58C749.29,-167.62 778.88,-168.69 806.74,-169.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="806.43,-172.14 813.52,-169.94 806.61,-167.24 806.43,-172.14"/>
+<text xml:space="preserve" text-anchor="middle" x="768.06" y="-172.31" font-family="Courier,monospace" font-size="10.00">the moment</text>
 </g>
 <!-- rev&#45;&gt;gcanvas -->
-<g id="edge7" class="edge">
+<g id="edge8" class="edge">
 <title>rev&#45;&gt;gcanvas</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M688.89,-221.23C705.26,-224.78 722.03,-228.41 738.52,-231.99"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="737.98,-234.38 745.34,-233.47 739.02,-229.59 737.98,-234.38"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1072.9,-201.82C1098.59,-207.29 1125.77,-213.07 1152.02,-218.66"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1151.37,-221.02 1158.73,-220.08 1152.39,-216.23 1151.37,-221.02"/>
 </g>
 <!-- wiki -->
-<g id="node14" class="node">
+<g id="node15" class="node">
 <title>wiki</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="994.27,-216.88 771.16,-216.88 771.16,-173.2 994.27,-173.2 994.27,-216.88"/>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-198.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldWiki</text>
-<text xml:space="preserve" text-anchor="middle" x="882.72" y="-185.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">grouped&#45;by&#45;kind tree + search</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1747.63,-203.08 1531.12,-203.08 1531.12,-146.2 1747.63,-146.2 1747.63,-203.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1639.38" y="-184.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldWiki</text>
+<text xml:space="preserve" text-anchor="middle" x="1639.38" y="-171.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">intro home + entity pages ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1639.38" y="-158.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">RELATED + search + back&#45;nav</text>
 </g>
 <!-- rev&#45;&gt;wiki -->
-<g id="edge8" class="edge">
+<g id="edge9" class="edge">
 <title>rev&#45;&gt;wiki</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M691.73,-193.3C715.01,-193.51 739.01,-193.73 761.79,-193.94"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="761.62,-196.39 768.65,-194 761.67,-191.49 761.62,-196.39"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1072.88,-147.31C1096.48,-143.29 1121,-139.78 1144.19,-137.64 1280.91,-125.04 1316.48,-124.13 1453.12,-137.64 1475.55,-139.86 1499.28,-143.55 1522.01,-147.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1521.55,-150.17 1528.88,-149.07 1522.46,-145.36 1521.55,-150.17"/>
+</g>
+<!-- drawer -->
+<g id="node16" class="node">
+<title>drawer</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1420.11,-203.08 1177.2,-203.08 1177.2,-146.2 1420.11,-146.2 1420.11,-203.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-184.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Drawer</text>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-171.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mobile edge&#45;handle wiki sheet ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1298.65" y="-158.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mount&#45;persistent</text>
+</g>
+<!-- rev&#45;&gt;drawer -->
+<g id="edge10" class="edge">
+<title>rev&#45;&gt;drawer</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1072.9,-174.64C1103.79,-174.64 1136.83,-174.64 1167.81,-174.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1167.68,-177.09 1174.68,-174.64 1167.68,-172.19 1167.68,-177.09"/>
+<text xml:space="preserve" text-anchor="middle" x="1108.19" y="-177.64" font-family="Courier,monospace" font-size="10.00">mobile</text>
 </g>
 <!-- stream&#45;&gt;api -->
-<g id="edge15" class="edge">
+<g id="edge18" class="edge">
 <title>stream&#45;&gt;api</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1735.8,-60.37C1777.21,-56.43 1821.75,-52.18 1862.32,-48.32"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1862.37,-50.78 1869.11,-47.67 1861.91,-45.9 1862.37,-50.78"/>
-<text xml:space="preserve" text-anchor="middle" x="1829.37" y="-55.65" font-family="Courier,monospace" font-size="10.00">SSE fold</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2145.13,-68.04C2185.8,-64.45 2229.95,-60.55 2271.52,-56.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2271.51,-59.34 2278.27,-56.28 2271.08,-54.46 2271.51,-59.34"/>
+<text xml:space="preserve" text-anchor="middle" x="2238.7" y="-64.64" font-family="Courier,monospace" font-size="10.00">SSE fold</text>
 </g>
 <!-- fogsim -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>fogsim</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1725.39,-437.48 1436.27,-437.48 1436.27,-380.6 1725.39,-380.6 1725.39,-437.48"/>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-418.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FogSim</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-405.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fluid sim: wind + doublets +</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-392.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Bayer density · fixed&#45;timestep · pure</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2134.73,-246.08 1845.61,-246.08 1845.61,-189.2 2134.73,-189.2 2134.73,-246.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-227.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">FogSim</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-214.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fluid sim: wind + doublets +</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-201.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Bayer density · fixed&#45;timestep · pure</text>
 </g>
 <!-- force -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>force</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1738.59,-301.48 1423.07,-301.48 1423.07,-244.6 1738.59,-244.6 1738.59,-301.48"/>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-282.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ForceSim (d3&#45;force)</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-269.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">contained · box&#45;collision · clustering ·</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-256.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">displayId identity</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2147.93,-321.08 1832.4,-321.08 1832.4,-264.2 2147.93,-264.2 2147.93,-321.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-302.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ForceSim (d3&#45;force)</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-289.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">contained · box&#45;collision · clustering ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-276.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">displayId identity</text>
 </g>
 <!-- space -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>space</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1725.39,-226.88 1436.27,-226.88 1436.27,-183.2 1725.39,-183.2 1725.39,-226.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-208.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">virtual&#45;space + camera</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-195.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">virtual coords · pannable mobile world</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2134.73,-382.48 1845.61,-382.48 1845.61,-338.8 2134.73,-338.8 2134.73,-382.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-363.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">virtual&#45;space + camera</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-350.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">virtual coords · pannable mobile world</text>
 </g>
 <!-- wikivm -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>wikivm</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1692.39,-164.88 1469.27,-164.88 1469.27,-121.2 1692.39,-121.2 1692.39,-164.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-146.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">toWikiViewModel</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-133.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">snapshot → browsable groups</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2128.13,-171.48 1852.21,-171.48 1852.21,-127.8 2128.13,-127.8 2128.13,-171.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-152.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">toWikiViewModel</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-139.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">snapshot → intro + groups + RELATED</text>
 </g>
 <!-- eta -->
-<g id="node10" class="node">
+<g id="node11" class="node">
 <title>eta</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1718.79,-362.88 1442.87,-362.88 1442.87,-319.2 1718.79,-319.2 1718.79,-362.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-344.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">remainingWaitMs</text>
-<text xml:space="preserve" text-anchor="middle" x="1580.83" y="-331.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">timings ∩ live stages → countdown</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2128.13,-444.48 1852.21,-444.48 1852.21,-400.8 2128.13,-400.8 2128.13,-444.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-425.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">remainingWaitMs</text>
+<text xml:space="preserve" text-anchor="middle" x="1990.17" y="-412.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">timings ∩ live stages → countdown</text>
 </g>
 <!-- fogfield -->
-<g id="node11" class="node">
+<g id="node12" class="node">
 <title>fogfield</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1338.3,-352.88 1181.2,-352.88 1181.2,-309.2 1338.3,-309.2 1338.3,-352.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1259.75" y="-334.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenFogField</text>
-<text xml:space="preserve" text-anchor="middle" x="1259.75" y="-321.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fog canvas (behind)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1717.93,-264.48 1560.83,-264.48 1560.83,-220.8 1717.93,-220.8 1717.93,-264.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1639.38" y="-245.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WorldGenFogField</text>
+<text xml:space="preserve" text-anchor="middle" x="1639.38" y="-232.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fog canvas (behind)</text>
 </g>
 <!-- fogfield&#45;&gt;fogsim -->
-<g id="edge12" class="edge">
+<g id="edge15" class="edge">
 <title>fogfield&#45;&gt;fogsim</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1317.85,-353.57C1336.01,-360.17 1356.32,-366.96 1375.3,-372.04 1391.92,-376.49 1409.46,-380.56 1426.98,-384.25"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1426.44,-386.64 1433.79,-385.66 1427.44,-381.84 1426.44,-386.64"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1718.65,-237.03C1753.44,-234.54 1795.64,-231.51 1836.26,-228.6"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1836.28,-231.05 1843.09,-228.11 1835.93,-226.17 1836.28,-231.05"/>
 </g>
 <!-- gcanvas&#45;&gt;force -->
-<g id="edge10" class="edge">
+<g id="edge13" class="edge">
 <title>gcanvas&#45;&gt;force</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1037.83,-263.62C1130.44,-264.15 1250.63,-265.15 1357.3,-267.04 1375.56,-267.36 1394.67,-267.77 1413.68,-268.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1413.53,-270.67 1420.59,-268.39 1413.65,-265.77 1413.53,-270.67"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1453.62,-266.95C1479.47,-269.47 1506.04,-271.82 1531.12,-273.64 1627.82,-280.65 1736.21,-285.29 1823.27,-288.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1823,-290.67 1830.08,-288.46 1823.16,-285.78 1823,-290.67"/>
 </g>
 <!-- gcanvas&#45;&gt;space -->
-<g id="edge11" class="edge">
+<g id="edge14" class="edge">
 <title>gcanvas&#45;&gt;space</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1037.78,-250.2C1153.62,-240.55 1311.58,-227.39 1427.1,-217.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1427.11,-220.22 1433.88,-217.2 1426.7,-215.34 1427.11,-220.22"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1439.43,-278.8C1450.14,-280.84 1460.8,-282.81 1471.12,-284.64 1593.55,-306.3 1733.04,-326.51 1836.41,-340.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1835.98,-343.05 1843.24,-341.57 1836.64,-338.2 1835.98,-343.05"/>
 </g>
 <!-- gcanvas&#45;&gt;fogfield -->
-<g id="edge9" class="edge">
+<g id="edge12" class="edge">
 <title>gcanvas&#45;&gt;fogfield</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1037.88,-290.99C1083.62,-299.29 1132.09,-308.07 1171.94,-315.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1171.45,-317.7 1178.78,-316.54 1172.33,-312.88 1171.45,-317.7"/>
-<text xml:space="preserve" text-anchor="middle" x="1109.19" y="-315.8" font-family="Courier,monospace" font-size="10.00">layered</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1453.65,-246.46C1487.22,-245.76 1521.59,-245.05 1551.44,-244.44"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1551.38,-246.89 1558.33,-244.29 1551.28,-241.99 1551.38,-246.89"/>
+<text xml:space="preserve" text-anchor="middle" x="1492.12" y="-248.93" font-family="Courier,monospace" font-size="10.00">layered</text>
 </g>
 <!-- card&#45;&gt;eta -->
-<g id="edge13" class="edge">
+<g id="edge16" class="edge">
 <title>card&#45;&gt;eta</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M999.96,-308.47C1012.55,-305.76 1025.15,-302.92 1037.18,-300.04 1045.25,-298.11 1046.95,-296.16 1055.18,-295.04 1097.75,-289.24 1328.97,-298.67 1338.3,-300.04 1355.15,-302.52 1358.63,-306.54 1375.3,-310.04 1394.05,-313.98 1413.87,-317.63 1433.5,-320.93"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1433.1,-323.35 1440.4,-322.07 1433.9,-318.51 1433.1,-323.35"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1382.95,-340.16C1410.83,-347.13 1442.17,-354.35 1471.12,-359.64 1595.73,-382.4 1738.76,-399.09 1842.92,-409.55"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1842.59,-411.98 1849.8,-410.24 1843.08,-407.11 1842.59,-411.98"/>
 </g>
 <!-- wiki&#45;&gt;wikivm -->
-<g id="edge14" class="edge">
+<g id="edge17" class="edge">
 <title>wiki&#45;&gt;wikivm</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M994.79,-186.74C1121.93,-177.25 1329.42,-161.75 1460.09,-151.99"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1459.97,-154.45 1466.77,-151.49 1459.61,-149.56 1459.97,-154.45"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1748.35,-166.9C1778.28,-164.76 1811.29,-162.39 1843.02,-160.12"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1842.87,-162.58 1849.68,-159.64 1842.52,-157.7 1842.87,-162.58"/>
+</g>
+<!-- drawer&#45;&gt;wiki -->
+<g id="edge11" class="edge">
+<title>drawer&#45;&gt;wiki</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1420.51,-174.64C1453.47,-174.64 1489.11,-174.64 1521.83,-174.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1521.71,-177.09 1528.71,-174.64 1521.71,-172.19 1521.71,-177.09"/>
+<text xml:space="preserve" text-anchor="middle" x="1492.12" y="-177.64" font-family="Courier,monospace" font-size="10.00">hosts</text>
 </g>
 </g>
 </svg>
@@ -421,39 +464,115 @@
   hit targets key on.
 </aside>
 
-<h3 id="the-reveal-at-connections-done-not-at-the-end">The reveal — at connections-done, not at the end</h3>
+<h3 id="the-reveal-the-graph-beside-the-introduction">The reveal — the graph beside the introduction</h3>
 
 <p>
-  The visible wait ends the moment the connections are woven. When
-  <code>entity_relationships</code> completes (<code>connectionsDone</code> over the folded stages),
-  the route swaps the generating view for <code>WorldReveal</code> — even though the pipeline's tail
-  stages (<code>entity_consolidation</code> through <code>embed_world</code>) are still running. The
-  reveal is the settled graph beside a browsable <code>WorldWiki</code>: the world's entities
-  grouped by kind (places, factions, people, things) with search, each showing its known facts.
-  Selecting a node highlights its wiki entry and vice-versa — one shared selection, because after
-  generation every node's identity <em>is</em> its real entity id, so no id translation is needed.
+  The visible wait ends the moment the world's introduction page is written. When
+  <code>world_introduction</code> completes (<code>connectionsDone</code> over the folded stages —
+  the predicate keeps its name, but its boundary stage moved here from
+  <code>entity_relationships</code>), the route swaps the generating view for
+  <code>WorldReveal</code> — even though the pipeline's tail stages (<code
+    >entity_consolidation</code
+  >
+  through <code>embed_world</code>) are still running. The reveal fetches the owner world-snapshot
+  and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door is the
+  introduction: the world's name as the title, a few paragraphs of grounding prose, and an ordered
+  list of dig-deeper references, with the search field and the browse-by-kind index one scroll
+  below. There is no separate entity list — the wiki is the browse surface.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Reveal early, let the tail run silent</strong> — a player who watched a ten-minute build
-  shouldn't wait on <code>coherence_pass</code> and the embed write to see their world. Those tail
-  stages produce quiet refinements (consolidated ghost entities, a coherence tidy-up), not the
-  headline content, so the reveal fires at the connection-weaving boundary and the tail runs behind
-  it. Each tail completion quietly refetches the wiki snapshot — the reconciled world just appears,
-  no spinner takeover, the old model held on screen until the fresh one resolves — and the graph
-  absorbs the same patches through the still-open stream. The "Continue" affordance stays hidden
-  until the pipeline actually finishes, because the starting-situation step it leads to needs a
-  complete world.
+  <strong>The reveal waits for the introduction, not the raw graph</strong> — the boundary used to
+  be <code>entity_relationships</code>: the reveal fired the instant the connections were woven and
+  the player landed on a bare graph. A
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world_introduction stage</a
+  >
+  now runs inside the boundary — right after the connections weave, before the silent tail — so the
+  wait ends on a page of prose that tells the player what world they are in. By the time they have
+  watched the graph assemble for the better part of ten minutes, the last thing they need is another
+  graph; they need the elevator pitch. Consolidation (which only <em>adds</em> phantom-resolution
+  ghosts, never removes the entities the intro references) stays in the tail, so nothing the
+  introduction points at can vanish behind the reveal.
 </aside>
+
+<p>
+  The layout has two regimes, flipped structurally on the design system's one narrow breakpoint
+  (<code>useViewportNarrow</code>). On desktop the reveal is a true 50/50: <code>RevealPanes</code>
+  holds the interactive graph in the left half and the wiki in the right — two equal min-width-0
+  halves — with the graph filling its pane in both dimensions (it never pans there) and the wiki
+  capping to the row and scrolling internally. On a phone the graph owns the glass, on the same
+  <code>FullBleedStage</code> full-bleed mechanism as the generating act, and the wiki lives in an
+  edge-handle <a href="./design-system.html">Drawer</a>: a sheet summoned from a handle pinned to
+  the right edge, also opened by tapping a node. The drawer's children stay mounted across
+  close→open, so the reader's page and scroll survive a dismiss; the reveal's title, explore prompt,
+  and Continue ride the sheet, keeping the base screen pure world.
+</p>
+
+<p>
+  Each entity opens to its own wiki page — the kind, the name, its known facts, and a RELATED footer
+  of relationship cross-links — with a back button that restores the previous page and its scroll
+  position. Selecting a node highlights its wiki page and vice-versa: one shared selection, because
+  after generation every node's identity <em>is</em> its real entity id, the same id the wiki keys
+  on, so no translation is needed.
+</p>
 
 <aside class="wiki-rationale">
   <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
-  the owner world-snapshot at the same stage-4 boundary the endpoint's readiness gate keys on, so it
-  never races the 409. The known-tier filter is entirely
+  the owner world-snapshot at the same <code>world_introduction</code> boundary the endpoint's
+  readiness gate keys on, so it never races the 409. The known-tier filter is entirely
   <a href="../runtime/world-gen.html#relationship-tiering">server-side</a>: the snapshot returns
-  only <code>known</code> entities, facts, <em>and relationships</em>, so fetching it while the tail
-  is still running serves exactly the same player-safe projection as fetching it after completion.
-  The client renders what it's given; it holds no secret it must remember to hide.
+  only <code>known</code> entities, facts, relationships, <em>and</em> the introduction (its
+  dig-deeper references re-filtered against the served entity set), so fetching it while the tail is
+  still running serves exactly the same player-safe projection as fetching it after completion. The
+  client renders what it's given; it holds no secret it must remember to hide.
+</aside>
+
+<p>
+  While the player explores, the tail runs silently. Each tail completion quietly refetches the wiki
+  snapshot — the reconciled world just appears, no spinner takeover, the old model held on screen
+  until the fresh one resolves — and the graph absorbs the same patches through the still-open
+  stream. The "Continue" affordance stays hidden until the pipeline actually finishes, because the
+  starting-situation step it leads to needs a complete world; it appears quietly when the tail
+  lands.
+</p>
+
+<h3 id="the-reveal-moment">The reveal moment</h3>
+
+<p>
+  The swap from the generating graph to the reveal is choreographed, and it plays exactly once — for
+  the player who watched their world build. <code>RevealTransition</code> wraps the reveal and walks
+  a short timeline: a <em>hold</em> breath on the cleared paper, a <em>gust</em> beat, the world
+  <em>settles</em> as the title fades in, and the layout <em>resolves</em> — on desktop the
+  full-width graph re-seats to the left half while the wiki pane slides in from the right; on mobile
+  the drawer's edge handle arrives. Then it is <em>done</em>: the steady state, identical to a
+  reveal that never played. The walk latches on its first frame, so the later world-ready flip
+  neither restarts nor reverses it, and any tap or keypress mid-moment lands the player in the final
+  state at once (the interaction still does what it would have done).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The moment is for the watcher, never the late arriver</strong> — a player returning to an
+  already-settled world mounts the reveal in its final state with no choreography. The beat marks
+  the turn from watching to exploring; there is nothing to mark for someone who didn't watch. Under
+  <code>prefers-reduced-motion</code> the whole walk collapses to a single ~300ms surface fade — the
+  completion is still acknowledged, just not animated.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The settled world insists on its shape</strong> — the reveal runs the graph under a
+  "forceful settle" force profile distinct from the generating act's: the layout pulls itself into a
+  legible arrangement, and a node the player drags and releases snaps back rather than staying where
+  it was dropped — the world erases your mess. The regime is additive: reveal-only parameters
+  layered over the same locked simulation, so the generating act's behavior is untouched.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The fog is born gone</strong> — on the reveal the clearing is not re-run; the sim mounts
+  with its spawn fully drained, so the world arrives with no atmosphere left whatever its size. A
+  small world's residual haze was tried as a final live gust and cut: a freshly-mounted sim's cold
+  low-pass fades the haze back <em>in</em> before the wind can carry it off, an inverted arc. The
+  invariant is simply "the fog is gone," enforced from the swap.
 </aside>
 
 <h3 id="waiting-feedback">Waiting feedback</h3>
@@ -483,8 +602,8 @@
   Every motion source honours <code>prefers-reduced-motion</code>, read once in the web layer and
   handed to the brain as a boolean: the fog recomputes a static settled density on each entity-count
   change (preserving the clearing-as-progress cue rather than freezing blank), the node bob stops,
-  and edges and arrivals appear instantly instead of stroking in. The reveal degrades its transition
-  to a short cross-fade. The countdown is <em>not</em> gated — it's content, not decoration, and
+  and edges and arrivals appear instantly instead of stroking in. The reveal moment collapses to a
+  single ~300ms fade. The countdown is <em>not</em> gated — it's content, not decoration, and
   freezing it would show a wrong number. The Canvas graph is paired with an accessible model: an
   <code>aria-live</code> announcement of entities as they arrive during generation, and in the
   reveal the wiki's browse-by-kind is the guaranteed keyboard-and-screen-reader path to every entity
@@ -594,8 +713,14 @@
     <td>The remaining-wait countdown math; the connections-done / tail-stage boundaries.</td>
   </tr>
   <tr>
-    <td><code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code></td>
-    <td>SSE-event → node/edge reducers; snapshot → browsable wiki model.</td>
+    <td>
+      <code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code> ·
+      <code>use-wiki-navigation.ts</code>
+    </td>
+    <td>
+      SSE-event → node/edge reducers; snapshot → browsable wiki model (the introduction front door,
+      grouped entities, RELATED cross-links); the wiki page-history stack.
+    </td>
   </tr>
   <tr>
     <td><code>api/worldgen.ts</code></td>
@@ -634,7 +759,22 @@
   <tr>
     <td><code>WorldWiki</code></td>
     <td>
-      The reveal's browsable world — entities grouped by kind, with search and shared selection.
+      The reveal's browsable world — the introduction home, per-entity pages (facts + RELATED
+      links), search, back-navigation, and shared selection.
+    </td>
+  </tr>
+  <tr>
+    <td><code>RevealTransition</code></td>
+    <td>
+      The reveal moment's orchestrator (with <code>RevealPanes</code> and <code>RevealFade</code>) —
+      plays the one-time gen→reveal choreography and stages the layout off its phase.
+    </td>
+  </tr>
+  <tr>
+    <td><code>Drawer</code></td>
+    <td>
+      The mobile edge-handle sheet the wiki rides on a phone — mount-persistent children (a general
+      layout primitive).
     </td>
   </tr>
   <tr>
@@ -663,7 +803,14 @@
   </tr>
   <tr>
     <td><code>routes/worldgen/reveal.tsx</code></td>
-    <td>The reveal — settled graph beside the browsable wiki, silent tail refetch.</td>
+    <td>
+      The reveal — desktop 50/50 and mobile graph-plus-drawer, staged off the reveal moment, with
+      shared selection.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/worldgen/reveal-wiki-panel.tsx</code></td>
+    <td>The snapshot fetch / silent-refetch model and the wiki panel the reveal composes.</td>
   </tr>
 </table>
 
@@ -675,15 +822,15 @@
   <code>frontend/client-core/src/api/worldgen.ts</code>,
   <code>frontend/contract/src/events/worldgen-stages.ts</code>, and the <code>WorldGenFog</code> /
   <code>WorldGenGraph</code> / <code>WorldGenStatusCard</code> / <code>WorldGenLoading</code> /
-  <code>WorldWiki</code> / <code>FullBleedStage</code> components under
-  <code>frontend/ui/src/components/</code>.
+  <code>WorldWiki</code> / <code>RevealTransition</code> / <code>Drawer</code> /
+  <code>FullBleedStage</code> components under <code>frontend/ui/src/components/</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-at-connections-done-not-at-the-end">The reveal — at connections-done, not at the end</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#reduced-motion-and-accessibility">Reduced motion and accessibility</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-the-graph-beside-the-introduction">The reveal — the graph beside the introduction</a></li><li style="padding-left:12px"><a href="#the-reveal-moment">The reveal moment</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#reduced-motion-and-accessibility">Reduced motion and accessibility</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
