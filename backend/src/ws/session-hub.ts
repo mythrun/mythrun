@@ -98,12 +98,8 @@ export async function createSessionHub({
     logger.error({ err, pattern }, 'session-hub redis subscriber error')
   })
 
-  /* c8 ignore start — reconnecting is an ioredis lifecycle signal with no
-   * action of its own; the resync logic lives in the 'ready' handler. */
-  sub.on('reconnecting', () => {
-    logger.warn({ pattern }, 'session-hub redis subscriber reconnecting')
-  })
-  /* c8 ignore stop */
+  // (No 'reconnecting' handler: the shared reconnect strategy already warns
+  // per attempt with the client label — a second line here was pure noise.)
 
   sub.on('ready', () => {
     if (closed) return

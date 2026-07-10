@@ -36,6 +36,7 @@
 
 import { Job, Queue, QueueEvents } from 'bullmq'
 import type { Redis } from 'ioredis'
+import { makeReconnectStrategy } from '../redis/reconnect-strategy.js'
 
 import { makeTriggerState } from './trigger-state.js'
 import { createTurnPublisher } from './turn-publisher.js'
@@ -80,8 +81,11 @@ export function buildSessionTurnQueueEvents(
   finalize: (args: { campaignId: string; sessionId: string; worldId: string }) => Promise<void>,
 ): SessionTurnQueueEvents {
   // Dedicated blocking connection: QueueEvents BRPOPs, so it never shares the
-  // Worker's connection (blocking-command contention).
-  const connection = redisBatch.duplicate()
+  // Worker's connection (blocking-command contention). Its own reconnect label —
+  // an inherited duplicate would log under the parent's, muddying outage forensics.
+  const connection = redisBatch.duplicate({
+    retryStrategy: makeReconnectStrategy({ label: 'session-turn-queue-events', logger }),
+  })
   const queueEvents = new QueueEvents(QUEUE_SESSION_TURN, { connection })
 
   // Job-fetch handle on the shared BullMQ connection (non-blocking GETs only).

@@ -89,9 +89,8 @@ export function createPipelineSubscriber(
     logger.warn({ err }, 'pipeline-subscriber redis error')
   })
 
-  sub.on('reconnecting', () => {
-    logger.warn({ pattern }, 'pipeline-subscriber reconnecting')
-  })
+  // (No 'reconnecting' handler: the shared reconnect strategy already warns
+  // per attempt with the client label — a second line here was pure noise.)
 
   sub.on('ready', () => {
     if (closed) return
