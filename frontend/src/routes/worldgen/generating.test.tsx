@@ -98,12 +98,24 @@ interface RenderOpts {
   readonly nodes?: WorldGenGraphProps['nodes']
   readonly stages?: readonly StageProgress[]
   readonly stageTimings?: readonly StageTiming[] | null
+  readonly resumedMidGen?: boolean
 }
 
-function renderGenerating({ nodes = [], stages = [], stageTimings = null }: RenderOpts = {}): void {
+function renderGenerating({
+  nodes = [],
+  stages = [],
+  stageTimings = null,
+  resumedMidGen = false,
+}: RenderOpts = {}): void {
   render(
     <I18nextProvider i18n={i18n}>
-      <GeneratingView nodes={nodes} edges={[]} stages={stages} stageTimings={stageTimings} />
+      <GeneratingView
+        nodes={nodes}
+        edges={[]}
+        stages={stages}
+        stageTimings={stageTimings}
+        resumedMidGen={resumedMidGen}
+      />
     </I18nextProvider>,
   )
 }
@@ -410,6 +422,7 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
           edges={[]}
           stages={overrunning}
           stageTimings={stageTimings}
+          resumedMidGen={false}
         />
       </I18nextProvider>,
     )
@@ -434,7 +447,13 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
     ]
     view.rerender(
       <I18nextProvider i18n={i18n}>
-        <GeneratingView nodes={[]} edges={[]} stages={resumed} stageTimings={stageTimings} />
+        <GeneratingView
+          nodes={[]}
+          edges={[]}
+          stages={resumed}
+          stageTimings={stageTimings}
+          resumedMidGen={false}
+        />
       </I18nextProvider>,
     )
     expect(lastGraphProps().status?.countdownLabel).toBe(
@@ -461,6 +480,77 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
     mockMatchMedia(false)
     renderWatching({ stageTimings: null })
     expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
+  })
+
+  it('act ONE counts down to ARRIVING ON THE GRAPH — the prep slice, NOT the reveal (myth-tudy1)', () => {
+    // The loading countdown must sum ONLY the prep stages (arrive-on-the-graph),
+    // never the entity stages (arrive-at-the-reveal). concept_intake 0s into its
+    // 60s avg + world_color 40s + vocabulary_intake 20s = 120s = "2:00". The huge
+    // world_and_factions timing is an ENTITY stage — it must be ignored here (the
+    // old reveal-target math would have swept it in and read ~10 min).
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    const stages = [stage('concept_intake', 'running', T0.toISOString())]
+    const stageTimings: StageTiming[] = [
+      { stage: 'concept_intake', avgMs: 60_000 },
+      { stage: 'world_color', avgMs: 40_000 },
+      { stage: 'vocabulary_intake', avgMs: 20_000 },
+      { stage: 'world_and_factions', avgMs: 600_000 }, // entity stage — excluded on act one
+    ]
+    renderGenerating({ stages, stageTimings })
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(
+      i18n.t('worldGen.countdown', { time: '2:00' }),
+    )
+  })
+
+  it('act TWO still counts down to the REVEAL — the watched slice is unchanged', () => {
+    // The status card keeps its reveal-target countdown: entity_relationships is a
+    // WATCHED stage, so its 30s ahead counts. (Distinct from act one's prep slice.)
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    const stages = [
+      ...ENTITY_UNDERWAY.slice(0, 3),
+      stage('world_and_factions', 'completed'),
+      stage('locations_and_npcs', 'completed'),
+      stage('entity_relationships', 'running', T0.toISOString()),
+    ]
+    const stageTimings: StageTiming[] = [{ stage: 'entity_relationships', avgMs: 30_000 }]
+    renderWatching({ stages, stageTimings })
+    expect(lastGraphProps().status?.countdownLabel).toBe(
+      i18n.t('worldGen.countdown', { time: '0:30' }),
+    )
+  })
+})
+
+describe('GeneratingView — re-entry act gate (mid-gen refresh lands on the graph)', () => {
+  it('lands directly on the GRAPH act when resumedMidGen is true (no forced loading screen)', () => {
+    // myth-gcsp1: a rejoin/refresh of an already-populated generating world seeds
+    // the graph from the connect frame; the view must land on act two WITHOUT the
+    // player pressing watch — the deliberate beat already happened on their first
+    // visit. The graph renders; the loading screen never shows.
+    mockMatchMedia(false)
+    renderGenerating({
+      resumedMidGen: true,
+      nodes: [node('The Salt Baron'), node('The Drowned Ward')],
+      stages: ENTITY_UNDERWAY,
+    })
+    expect(graphSpy).toHaveBeenCalled()
+    expect(screen.queryByTestId('worldgen-loading')).toBeNull()
+    // No watch button — the graph is already shown.
+    expect(screen.queryByRole('button', { name: i18n.t('worldGen.watch') })).toBeNull()
+  })
+
+  it('keeps the deliberate loading beat on a FIRST visit (resumedMidGen false)', () => {
+    // A genuine first visit connects during prep (resumedMidGen false): the loading
+    // screen shows and the watch button is the ONLY path to the graph.
+    mockMatchMedia(false)
+    renderGenerating({ resumedMidGen: false, stages: ENTITY_UNDERWAY })
+    expect(screen.getByTestId('worldgen-loading')).toBeDefined()
+    expect(graphSpy).not.toHaveBeenCalled()
+    // The watch button is offered (entities underway) — but the beat is deliberate.
+    expect(screen.getByRole('button', { name: i18n.t('worldGen.watch') })).toBeDefined()
   })
 })
 

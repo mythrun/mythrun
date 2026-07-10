@@ -25,6 +25,7 @@ import { buildApp } from '../../app.js'
 import { createRedisClient } from '../../redis/client.js'
 import { guardTestDatabase } from '../../db/__tests__/guard-db.js'
 import { createRepo } from '../../repo/index.js'
+import { entities } from '../../repo/entities.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
 import type { AppDeps } from '../../app-deps.js'
 import { makeStubEnv } from '../../__tests__/helpers/stub-env.js'
@@ -268,6 +269,138 @@ describe('campaigns status routes', () => {
     expect(collected).toContain('event: snapshot')
     expect(collected).toContain('"phase":"not_started"')
     stream.destroy()
+  })
+
+  it('SSE snapshot frame carries the KNOWN-TIER gen-seed for a generating world (myth-gcsp1)', async () => {
+    // A mid-gen refresh must return to a populated graph. The connect frame widens
+    // with the known-tier entities/relationships so far; a secret entity + a secret
+    // connection between two known entities must NOT appear (tier discipline —
+    // exactly what the live stream already withheld).
+    const { campaignId, devSub } = await seedCampaignWithMember()
+    const worldRow = await pool.query<{ world_id: string }>(
+      `SELECT world_id FROM campaigns WHERE id = $1`,
+      [campaignId],
+    )
+    const worldId = worldRow.rows[0]?.world_id
+    if (typeof worldId !== 'string') throw new Error('expected world row')
+    // A running worldgen stage → phase computes to `world_gen` (a gen-seed phase).
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, cost_usd, user_id)
+       VALUES ($1, $2, 'world_and_factions', 'running', now(), 0, NULL)`,
+      [uuidv7(), worldId],
+    )
+    const known1 = uuidv7()
+    const known2 = uuidv7()
+    const secret = uuidv7()
+    await entities.insert(pool, {
+      id: known1, worldId, entityType: 'faction',
+      name: `${scope.id}-KnownCourt`, accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await entities.insert(pool, {
+      id: known2, worldId, entityType: 'location',
+      name: `${scope.id}-KnownKeep`, accessLevel: 'known', createdIn: 'stage:test',
+    })
+    await entities.insert(pool, {
+      id: secret, worldId, entityType: 'npc',
+      name: `${scope.id}-SecretMole`, accessLevel: 'secret', createdIn: 'stage:test',
+    })
+    await pool.query(
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'allies_with', 'd', 'known'),
+              ($4, $2, $3, 'secretly_controls', 'd', 'secret')`,
+      [uuidv7(), known1, known2, uuidv7()],
+    )
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaignId}/status/stream`,
+      headers: { 'x-mythrun-dev-sub': devSub },
+      payloadAsStream: true,
+    })
+    expect(res.statusCode).toBe(200)
+    const stream = res.stream()
+    const collected = await new Promise<string>((resolveCollected) => {
+      let buf = ''
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString('utf8')
+        if (buf.includes('event: snapshot')) {
+          stream.off('data', onData)
+          resolveCollected(buf)
+        }
+      }
+      stream.on('data', onData)
+      setTimeout(() => {
+        stream.off('data', onData)
+        resolveCollected(buf)
+      }, 2000)
+    })
+    stream.destroy()
+
+    const dataLine = collected.split('\n').find((l) => l.startsWith('data:'))
+    if (dataLine === undefined) throw new Error('no snapshot data line')
+    const parsed: unknown = JSON.parse(dataLine.slice('data:'.length).trim())
+    const frame = parsed as {
+      phase: string
+      entities?: readonly { id: string; entityType: string; name: string }[]
+      relationships?: readonly {
+        sourceEntityId: string
+        targetEntityId: string
+        relationshipType: string
+      }[]
+    }
+
+    expect(frame.phase).toBe('world_gen')
+    // Known-tier entities present; the secret one withheld.
+    const names = (frame.entities ?? []).map((e) => e.name)
+    expect(names).toContain(`${scope.id}-KnownCourt`)
+    expect(names).toContain(`${scope.id}-KnownKeep`)
+    expect(names).not.toContain(`${scope.id}-SecretMole`)
+    // Exactly the known→known @ known edge — the secret connection is withheld.
+    expect(frame.relationships).toHaveLength(1)
+    expect(frame.relationships?.[0]).toMatchObject({
+      sourceEntityId: known1,
+      targetEntityId: known2,
+      relationshipType: 'allies_with',
+    })
+  })
+
+  it('SSE snapshot frame OMITS the gen-seed for a not-yet-started world (no wasted composition)', async () => {
+    // not_started → outside the gen-seed window: the connect frame stays lean
+    // (no entities/relationships keys), so the FE's resumedMidGen stays false and
+    // the deliberate loading beat is preserved.
+    const { campaignId, devSub } = await seedCampaignWithMember()
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaignId}/status/stream`,
+      headers: { 'x-mythrun-dev-sub': devSub },
+      payloadAsStream: true,
+    })
+    expect(res.statusCode).toBe(200)
+    const stream = res.stream()
+    const collected = await new Promise<string>((resolveCollected) => {
+      let buf = ''
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString('utf8')
+        if (buf.includes('event: snapshot')) {
+          stream.off('data', onData)
+          resolveCollected(buf)
+        }
+      }
+      stream.on('data', onData)
+      setTimeout(() => {
+        stream.off('data', onData)
+        resolveCollected(buf)
+      }, 2000)
+    })
+    stream.destroy()
+
+    const dataLine = collected.split('\n').find((l) => l.startsWith('data:'))
+    if (dataLine === undefined) throw new Error('no snapshot data line')
+    const parsed: unknown = JSON.parse(dataLine.slice('data:'.length).trim())
+    const frame = parsed as Record<string, unknown>
+    expect(frame.phase).toBe('not_started')
+    expect('entities' in frame).toBe(false)
+    expect('relationships' in frame).toBe(false)
   })
 
   it('SSE stream forwards a published phase event', async () => {

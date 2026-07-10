@@ -1,4 +1,4 @@
-import { WATCHED_STAGES, type StageProgress } from '@mythrun/contract/events'
+import { PREP_STAGES, WATCHED_STAGES, type StageProgress } from '@mythrun/contract/events'
 import type { StageTiming } from '@mythrun/contract/rest'
 
 // The data-driven world-gen COUNTDOWN (MYT-89 audit ③ + the waiting-feedback
@@ -6,6 +6,14 @@ import type { StageTiming } from '@mythrun/contract/rest'
 // per-stage averages (`getStageTimings`) intersected with the live stage
 // statuses. Pure + DOM-free (the brain owns the math; the web view owns the
 // 1-second tick and formats the ms into an i18n'd `~M:SS` label).
+//
+// TWO targets, ONE math (myth-tudy1): the SAME slice-summing derivation over two
+// canonical stage slices. `remainingWaitMs` sums the WATCHED_STAGES → counts to
+// the wiki REVEAL (the act-two status card). `remainingPrepWaitMs` sums the
+// PREP_STAGES → counts to ARRIVING ON THE GRAPH (the act-one loading screen: the
+// first entity-emitting stage's start, the watch-button beat). Both slices are
+// derived from the canonical WORLD_GEN_STAGES taxonomy, so a reorder can't drift
+// either target.
 
 /**
  * The remaining VISIBLE wait (ms) at `nowMs`: the sum of historical average
@@ -37,11 +45,46 @@ export function remainingWaitMs(
   stages: readonly StageProgress[],
   nowMs: number,
 ): number | null {
+  return remainingOverSlice(timings, stages, nowMs, WATCHED_STAGES)
+}
+
+/**
+ * The remaining wait (ms) until ARRIVING ON THE GRAPH — the act-one loading
+ * screen's countdown (myth-tudy1). Identical math to `remainingWaitMs`, summed
+ * over the PREP_STAGES slice ONLY (concept_intake / world_color /
+ * vocabulary_intake), so it counts down to the first entity-emitting stage's
+ * start (the watch-button beat) rather than to the wiki reveal. It reaches 0
+ * exactly as the first entity stage begins (all prep complete). Same honest
+ * clamp/degrade semantics (a null on no history; an overrunning prep stage HOLDS
+ * at the remaining-prep floor rather than sinking negative).
+ */
+export function remainingPrepWaitMs(
+  timings: readonly StageTiming[] | null,
+  stages: readonly StageProgress[],
+  nowMs: number,
+): number | null {
+  return remainingOverSlice(timings, stages, nowMs, PREP_STAGES)
+}
+
+/**
+ * The shared slice-summing core: the sum of `slice`'s un-completed stage
+ * averages, minus the elapsed time inside any currently-RUNNING stage (that
+ * stage's contribution clamps at 0). `null` when there is no usable history.
+ * The two public entry points differ ONLY in which canonical stage slice they
+ * pass — the reveal target (WATCHED_STAGES) vs the graph-arrival target
+ * (PREP_STAGES).
+ */
+function remainingOverSlice(
+  timings: readonly StageTiming[] | null,
+  stages: readonly StageProgress[],
+  nowMs: number,
+  slice: readonly string[],
+): number | null {
   if (timings === null || timings.length === 0) return null
   const avgByStage = new Map(timings.map((tm) => [tm.stage, Math.max(0, tm.avgMs)]))
   const liveByStage = new Map(stages.map((s) => [s.stage, s]))
   let remaining = 0
-  for (const stage of WATCHED_STAGES) {
+  for (const stage of slice) {
     const live = liveByStage.get(stage)
     if (live?.status === 'completed') continue
     const avg = avgByStage.get(stage) ?? 0

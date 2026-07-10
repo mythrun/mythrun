@@ -712,6 +712,109 @@ describe('useWorldGenStream', () => {
     expect(matching[0]?.synthKey).toBe('locations_and_npcs/npcs/0')
   })
 
+  it('rehydrates the graph from the connect-frame gen-seed BEFORE the reveal (mid-gen refresh)', () => {
+    // myth-gcsp1: a mid-gen refresh/reconnect comes back to the SSE's connect
+    // snapshot, which now carries the known-tier entities/relationships committed
+    // so far. The hook SEEDS the graph from them immediately — no world-snapshot
+    // fetch (that route still 409s pre-reveal), so the graph is populated the
+    // instant the frame lands rather than empty until the reveal.
+    const mock = makeMockClient()
+    const fetchSnapshot = vi.fn()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, { createClient: () => mock.client, fetchSnapshot, resume: vi.fn() }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({
+        phase: 'world_gen', // pre-reveal: the world-snapshot route would 409
+        stages: [],
+        cumulativeCostUsd: 0,
+        entities: [
+          { id: 'ent-1', entityType: 'faction', name: 'The Ashen Court' },
+          { id: 'ent-2', entityType: 'location', name: 'Rivergaard' },
+        ],
+        relationships: [
+          { sourceEntityId: 'ent-1', targetEntityId: 'ent-2', relationshipType: 'holds' },
+        ],
+      })
+    })
+
+    // The graph is populated from the connect frame alone — no fetch fired.
+    expect(fetchSnapshot).not.toHaveBeenCalled()
+    expect(result.current.nodes.map((n) => n.name)).toEqual(['The Ashen Court', 'Rivergaard'])
+    expect(result.current.nodes.every((n) => n.state === 'finalized')).toBe(true)
+    expect(result.current.edges).toHaveLength(1)
+    // The rejoin signal: the connect frame carried a populated graph.
+    expect(result.current.resumedMidGen).toBe(true)
+    expect(result.current.status).toBe('generating')
+  })
+
+  it('keeps resumedMidGen false + the graph sparse when the connect frame carries no entities (fresh gen)', () => {
+    // A genuine first visit connects during the prep act (no entities committed),
+    // so the connect frame carries none → the graph stays honestly sparse and
+    // resumedMidGen is false (the act gate keeps the deliberate loading beat).
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({ phase: 'world_gen', stages: [], cumulativeCostUsd: 0 })
+    })
+
+    expect(result.current.resumedMidGen).toBe(false)
+    expect(result.current.nodes).toEqual([])
+  })
+
+  it('folds live events on top of the connect-frame gen-seed, deduping a re-emitted entity', () => {
+    // After a mid-gen rehydrate the stream keeps flowing: new live entities append,
+    // and an entity the seed already carried that the stream re-emits + finalizes
+    // to the SAME UUID renders ONCE (the seam guard, same as the post-boundary seed).
+    const SHARED_ID = '0192f0aa-2222-7abc-8def-000000000099'
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.emitSnapshot({
+        phase: 'world_gen',
+        stages: [],
+        cumulativeCostUsd: 0,
+        entities: [{ id: SHARED_ID, entityType: 'faction', name: 'Seeded Court' }],
+        relationships: [],
+      })
+      // A brand-new live entity appends…
+      mock.emit({
+        type: 'entity-added',
+        synthKey: 'locations_and_npcs/npcs/0',
+        entityKind: 'npc',
+        name: 'The Salt Baron',
+      })
+      // …and the seeded entity re-streams + finalizes to the SAME UUID → one node.
+      mock.emit({
+        type: 'entity-added',
+        synthKey: 'locations_and_npcs/npcs/1',
+        entityKind: 'faction',
+        name: 'Court (live)',
+      })
+      mock.emit({ type: 'finalized', synthKey: 'locations_and_npcs/npcs/1', entityId: SHARED_ID })
+    })
+
+    const shared = result.current.nodes.filter((n) => n.displayId === SHARED_ID)
+    expect(shared).toHaveLength(1)
+    expect(shared[0]?.name).toBe('Court (live)') // the live copy supersedes the seed
+    expect(result.current.nodes.map((n) => n.name)).toContain('The Salt Baron')
+  })
+
   it('leaves the graph honestly sparse when the snapshot rehydrate fetch rejects', async () => {
     const mock = makeMockClient()
     const fetchSnapshot = vi

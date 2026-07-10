@@ -165,7 +165,7 @@ export type {
 // `StageTimingsResponse` re-export the wire shape off the same barrel so a
 // consumer reads the endpoint + its type from one place.
 export { getStageTimings } from './api/worldgen.ts'
-export { remainingWaitMs } from './worldgen/stage-eta.ts'
+export { remainingPrepWaitMs, remainingWaitMs } from './worldgen/stage-eta.ts'
 export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
 
 // Wiki-reveal timing (MYT-89 reveal timing): the pure predicates the

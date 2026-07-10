@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FullBleedStage, Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
 import { ENTITY_STAGES } from '@mythrun/contract/events'
-import { remainingWaitMs, type StageTiming, type WorldGenStream } from '@mythrun/client-core'
+import {
+  remainingPrepWaitMs,
+  remainingWaitMs,
+  type StageTiming,
+  type WorldGenStream,
+} from '@mythrun/client-core'
 import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -53,7 +58,8 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 /** The generation graph model + the status/fade inputs (folded by the route's
  *  `useWorldGenStream`) plus the route's historical stage timings (the input to
  *  the per-second countdown). */
-interface GeneratingViewProps extends Pick<WorldGenStream, 'nodes' | 'edges' | 'stages'> {
+interface GeneratingViewProps
+  extends Pick<WorldGenStream, 'nodes' | 'edges' | 'stages' | 'resumedMidGen'> {
   /** Historical per-stage average durations (the route's `getStageTimings` fetch),
    *  or `null` before it resolves / on cold-start → the card shows no estimate. */
   readonly stageTimings?: readonly StageTiming[] | null
@@ -130,13 +136,19 @@ export function GeneratingView({
   edges,
   stages,
   stageTimings = null,
+  resumedMidGen,
 }: GeneratingViewProps): React.JSX.Element {
   const { t } = useTranslation()
   // The act state: 'loading' (act one — the generic loading screen) until the
   // player presses the watch button, then 'graph' (act two) until the wiki
-  // reveal. A DELIBERATE transition — never automatic; re-entering mid-gen
-  // restarts at the loading screen with the button already offered.
+  // reveal. A DELIBERATE transition on a FIRST visit — never automatic. But a
+  // mid-gen REJOIN/REFRESH of an already-populated world (`resumedMidGen`) lands
+  // straight on the graph: the "watch your world be born" beat already happened,
+  // so forcing the loading screen would be a step backward (myth-gcsp1).
   const [act, setAct] = useState<'loading' | 'graph'>('loading')
+  useEffect(() => {
+    if (resumedMidGen) setAct('graph')
+  }, [resumedMidGen])
   // The graph's Canvas rAF loop + fog sim run for the whole ~10-min generation; the
   // global CSS reduce-block can't stop a JS rAF loop, so we read the OS/browser
   // preference here (web layer — DOM `matchMedia`) and hand the graph the boolean.
@@ -196,7 +208,14 @@ export function GeneratingView({
   // deliberate: an honest walk beats a smooth lie.
   const hasTimings = stageTimings !== null && stageTimings.length > 0
   const nowMs = useNowMs(hasTimings)
-  const countdownLabel = useMemo(
+  // TWO targets (myth-tudy1): act one counts down to ARRIVING ON THE GRAPH (the
+  // PREP slice — the watch-button beat); act two's status card keeps counting to
+  // the wiki REVEAL (the WATCHED slice). Same tick, same `~M:SS` formatting.
+  const prepCountdownLabel = useMemo(
+    () => countdownLabelFrom(remainingPrepWaitMs(stageTimings, stages, nowMs), t),
+    [stageTimings, stages, nowMs, t],
+  )
+  const revealCountdownLabel = useMemo(
     () => countdownLabelFrom(remainingWaitMs(stageTimings, stages, nowMs), t),
     [stageTimings, stages, nowMs, t],
   )
@@ -220,9 +239,10 @@ export function GeneratingView({
           data-testid="worldgen-loading"
           flavorLabels={flavorLabels}
           spinnerLabel={t('worldGen.loadingLabel')}
-          // The countdown line (omit the key when there's no estimate —
-          // exactOptionalPropertyTypes forbids an explicit `undefined`).
-          {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+          // The countdown to ARRIVING ON THE GRAPH (the prep slice). Omit the key
+          // when there's no estimate — exactOptionalPropertyTypes forbids an
+          // explicit `undefined`.
+          {...(prepCountdownLabel !== undefined ? { countdownLabel: prepCountdownLabel } : {})}
           watchReady={entitiesStarted(stages, nodes)}
           watchLabel={t('worldGen.watch')}
           onWatch={() => {
@@ -253,10 +273,11 @@ export function GeneratingView({
           titleLabel: t('worldGen.statusTitle'),
           doneLabel: t('worldGen.statusDone'),
           progressLabel: t('worldGen.statusProgress'),
-          // Omit the key entirely when there's no estimate (exactOptionalPropertyTypes
-          // forbids an explicit `undefined` on an optional prop) → the card shows no
+          // The status card keeps its countdown to the wiki REVEAL. Omit the key
+          // entirely when there's no estimate (exactOptionalPropertyTypes forbids
+          // an explicit `undefined` on an optional prop) → the card shows no
           // countdown.
-          ...(countdownLabel !== undefined ? { countdownLabel } : {}),
+          ...(revealCountdownLabel !== undefined ? { countdownLabel: revealCountdownLabel } : {}),
         }}
         // Fog DRAIN keyed off the ENTITY COUNT (MYT-89 spawn-drain): every arrived
         // node ramps the fog's respawn flux down by 1/MIN_EXPECTED_ENTITIES — the

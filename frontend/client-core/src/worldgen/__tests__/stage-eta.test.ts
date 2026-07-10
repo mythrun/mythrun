@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { WATCHED_STAGES, WORLD_GEN_STAGES, type StageProgress } from '@mythrun/contract/events'
+import {
+  PREP_STAGES,
+  WATCHED_STAGES,
+  WORLD_GEN_STAGES,
+  type StageProgress,
+} from '@mythrun/contract/events'
 import type { StageTiming } from '@mythrun/contract/rest'
-import { remainingWaitMs } from '../stage-eta.ts'
+import { remainingPrepWaitMs, remainingWaitMs } from '../stage-eta.ts'
 
 // remainingWaitMs is the pure COUNTDOWN math (MYT-89 audit ③ + reveal timing +
 // the waiting-feedback upgrade): the remaining visible wait at `nowMs`, derived
@@ -187,5 +192,71 @@ describe('remainingWaitMs — defensive against odd data', () => {
     ]
     // The negative clamps to 0, so only world_color's 40_000 counts.
     expect(remainingWaitMs(timings, [], NOW)).toBe(40_000)
+  })
+})
+
+// remainingPrepWaitMs is the ACT-ONE countdown (myth-tudy1): the same math as
+// remainingWaitMs, but summed over the PREP_STAGES slice ONLY — so the loading
+// screen counts down to ARRIVING ON THE GRAPH (the first entity-emitting stage's
+// start, the watch-button beat), NOT to the wiki reveal. The prep slice is
+// concept_intake / world_color / vocabulary_intake — derived from the canonical
+// taxonomy at the first-entity-emitter boundary, so a reorder can't drift it.
+describe('remainingPrepWaitMs — the prep-slice countdown (arrive on the graph)', () => {
+  it('sums avgMs for the prep stages NOT yet completed (none done → the whole prep wait)', () => {
+    // 3 prep stages × 10_000, nothing completed → the whole prep wait remains.
+    // Entity/tail stages carry timings too but never count toward the prep slice.
+    expect(remainingPrepWaitMs(uniformTimings(10_000), [], NOW)).toBe(PREP_STAGES.length * 10_000)
+  })
+
+  it('counts ONLY the prep stages — the first entity stage and beyond never count', () => {
+    // world_and_factions (the first entity emitter) is OUTSIDE the prep slice, so
+    // its (huge) timing is ignored — the loading wait ends when entities START.
+    const timings: StageTiming[] = [
+      { stage: 'concept_intake', avgMs: 20_000 },
+      { stage: 'world_color', avgMs: 15_000 },
+      { stage: 'vocabulary_intake', avgMs: 25_000 },
+      { stage: 'world_and_factions', avgMs: 600_000 }, // first entity stage — excluded
+      { stage: 'world_introduction', avgMs: 999_999 }, // watched but not prep — excluded
+    ]
+    expect(remainingPrepWaitMs(timings, [], NOW)).toBe(60_000)
+  })
+
+  it('excludes completed prep stages from the total', () => {
+    const stages = [stage('concept_intake', 'completed'), stage('world_color', 'running')]
+    // 3 prep × 10_000, minus the one completed → 2 × 10_000 (the running stage has
+    // no startedAt → treated as just-started, full avg).
+    expect(remainingPrepWaitMs(uniformTimings(10_000), stages, NOW)).toBe(
+      (PREP_STAGES.length - 1) * 10_000,
+    )
+  })
+
+  it('hits 0 exactly when the first entity stage starts (all prep complete)', () => {
+    // Every prep stage completed, world_and_factions running: arriving on the
+    // graph — the loading countdown reads 0:00 as the watch button appears.
+    const stages = [
+      ...PREP_STAGES.map((s) => stage(s, 'completed')),
+      stage('world_and_factions', 'running', startedAgo(5_000)),
+    ]
+    expect(remainingPrepWaitMs(uniformTimings(30_000), stages, NOW)).toBe(0)
+  })
+
+  it('subtracts elapsed-in-the-running prep stage, and CLAMPS an overrun at the floor', () => {
+    const timings: StageTiming[] = [
+      { stage: 'concept_intake', avgMs: 60_000 },
+      { stage: 'vocabulary_intake', avgMs: 20_000 },
+    ]
+    // concept_intake 30s into its 60s avg → 30s left; world_color has no timing
+    // → 0; vocabulary_intake whole 20s ahead → 50s total.
+    const running = [stage('concept_intake', 'running', startedAgo(30_000))]
+    expect(remainingPrepWaitMs(timings, running, NOW)).toBe(50_000)
+    // Overrun: concept_intake 90s into its 60s avg → clamps to 0, holding at the
+    // future floor (vocabulary_intake's 20s), never negative.
+    const overrun = [stage('concept_intake', 'running', startedAgo(90_000))]
+    expect(remainingPrepWaitMs(timings, overrun, NOW)).toBe(20_000)
+  })
+
+  it('returns null for cold-start / failed-fetch (no estimate, same as the reveal countdown)', () => {
+    expect(remainingPrepWaitMs([], [stage('concept_intake', 'running')], NOW)).toBeNull()
+    expect(remainingPrepWaitMs(null, [stage('concept_intake', 'running')], NOW)).toBeNull()
   })
 })

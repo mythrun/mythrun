@@ -177,7 +177,7 @@ export function CampaignDetailRoute({
   // The route only matches with an `:id`; `?? ''` keeps the hook calls
   // unconditional (hooks can't branch) without a non-null assertion.
   const { id = '' } = useParams<{ id: string }>()
-  const { nodes, edges, status, phase, stages, retry } = useWorldGenStream(ctx, id)
+  const { nodes, edges, status, phase, stages, resumedMidGen, retry } = useWorldGenStream(ctx, id)
   // The reveal moment collapses to its ~300ms fade under reduced motion (§3.8).
   const prefersReducedMotion = usePrefersReducedMotion()
   // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
@@ -232,7 +232,13 @@ export function CampaignDetailRoute({
   if (generating) {
     if (revealDuringGen) return reveal
     return (
-      <GeneratingView nodes={nodes} edges={edges} stages={stages} stageTimings={stageTimings} />
+      <GeneratingView
+        nodes={nodes}
+        edges={edges}
+        stages={stages}
+        stageTimings={stageTimings}
+        resumedMidGen={resumedMidGen}
+      />
     )
   }
   if (status === 'failed') return <FailedView onRetry={() => void retry()} />

@@ -34,6 +34,7 @@ import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 import { requireUser } from '../auth/require-user.js'
 import { worldSnapshotView } from '../repo/world-snapshot-view.js'
+import { genSeedView, type GenSeed } from '../repo/gen-seed-view.js'
 import { campaignWikiView } from '../repo/campaign-wiki-view.js'
 import { resolveSpeaker } from '../session/attribution.js'
 import {
@@ -261,6 +262,34 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     })
   }
 
+  // myth-gcsp1: the phases where the generating GRAPH renders AND committed
+  // entities can exist — the window where a mid-gen refresh needs the connect
+  // frame widened with a rehydration seed. `not_started` (no entities yet) and
+  // the failure phase (retry surface, not a graph) are excluded, so no wasted
+  // reads outside the window.
+  const GEN_SEED_PHASES: ReadonlySet<PipelinePhase> = new Set<PipelinePhase>([
+    'world_gen',
+    'world_snapshot_ready',
+  ])
+
+  // The gen-time graph seed for the SSE connect frame (myth-gcsp1). Empty ({}) for
+  // any non-generating phase; otherwise the known-tier entities/relationships so
+  // far (genSeedView) so a refresh rehydrates the graph. Known-tier only — exactly
+  // what the live stream already delivered to this member. The 409-gated
+  // world-snapshot route is untouched.
+  async function loadGraphSeed(
+    campaignId: string,
+    phase: PipelinePhase,
+  ): Promise<GenSeed | Record<string, never>> {
+    if (!GEN_SEED_PHASES.has(phase)) return {}
+    const campaign = await repo.campaigns.getById(campaignId)
+    /* c8 ignore start — `!campaign` arm: requireCampaignMember has already
+     * verified the row; deletion-mid-flight is the race this guards. */
+    if (!campaign) return {}
+    /* c8 ignore stop */
+    return genSeedView.fetch(opts.pool, campaign.worldId)
+  }
+
   // -------------------------------------------------------------------------
   // GET /api/campaigns/:campaignId/status (MYT-50)
   // -------------------------------------------------------------------------
@@ -339,7 +368,13 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         return reply
       }
       /* c8 ignore stop */
-      sink.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`)
+      // myth-gcsp1: widen the connect frame with the gen-time graph seed so a
+      // mid-gen refresh/reconnect rehydrates a populated graph. Known-tier only
+      // (genSeedView) = exactly what the live entity/edge stream already gave this
+      // member — no new exposure. {} for a non-generating phase. Footprint here is
+      // deliberately minimal (a follow-up task owns this file).
+      const seed = await loadGraphSeed(campaignId, snapshot.phase)
+      sink.write(`event: snapshot\ndata: ${JSON.stringify({ ...snapshot, ...seed })}\n\n`)
       return reply
     },
   )

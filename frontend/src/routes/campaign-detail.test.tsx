@@ -156,6 +156,7 @@ function streamValue(overrides: Partial<WorldGenStream>): WorldGenStream {
     status: 'generating',
     stages: [],
     costUsd: null,
+    resumedMidGen: false,
     retry: vi.fn(),
     ...overrides,
   }

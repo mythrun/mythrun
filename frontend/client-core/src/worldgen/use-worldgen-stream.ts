@@ -48,6 +48,12 @@ export interface WorldGenStream {
   /** Cumulative generation spend from the snapshot's `cumulativeCostUsd`, or
    *  `null` when the payload omits it. */
   readonly costUsd: number | null
+  /** True once a connect-time snapshot arrives carrying a NON-EMPTY gen-seed —
+   *  i.e. this is a rejoin/refresh of an already-populated generating world
+   *  (myth-gcsp1). The view uses it to LAND on the graph act instead of forcing
+   *  the loading screen; a genuine first visit (connects during prep, no entities
+   *  yet) leaves it false, preserving the deliberate watch-button beat. */
+  readonly resumedMidGen: boolean
   readonly retry: () => Promise<void>
 }
 
@@ -100,23 +106,45 @@ function statusForPhase(phase: PipelinePhase | null): WorldGenStatus {
   }
 }
 
+/** The graph-seed slice a snapshot payload can carry: the known-tier entities +
+ *  relationships committed so far. Both the mid-gen connect frame (myth-gcsp1)
+ *  and the post-boundary world-snapshot fetch produce this shape; `snapshotToSeed`
+ *  turns either into finalized seed nodes/edges. */
+interface GraphSeedSource {
+  readonly entities: readonly {
+    readonly id: string
+    readonly entityType: string
+    readonly name: string
+  }[]
+  readonly relationships: readonly {
+    readonly sourceEntityId: string
+    readonly targetEntityId: string
+    readonly relationshipType: string
+  }[]
+}
+
 /** The progress the first-frame `snapshot` payload (a PhaseAndStages) carries:
- *  its `phase`, per-stage `stages[]`, and `cumulativeCostUsd` (as `costUsd`). */
-interface SnapshotProgress {
+ *  its `phase`, per-stage `stages[]`, `cumulativeCostUsd` (as `costUsd`), and —
+ *  for a generating world (myth-gcsp1) — the `entities`/`relationships` gen-seed
+ *  that rehydrates the graph on a mid-gen refresh. */
+interface SnapshotProgress extends GraphSeedSource {
   readonly phase: PipelinePhase | null
   readonly stages: readonly StageProgress[]
   readonly costUsd: number | null
 }
 
 /** Parse the first-frame snapshot payload into its phase + per-stage progress +
- *  cumulative cost. Guards the raw shape the same way the old `phaseFromSnapshot`
- *  did — a non-object, or a payload missing a field, yields the empty/null
- *  default — and trusts the wire-union shape of the present fields (the same
- *  `as`-narrowing this code already applies to `phase`, since the snapshot is
- *  our own backend's serialized `PhaseAndStages`). */
+ *  cumulative cost + the gen-seed. Guards the raw shape the same way the old
+ *  `phaseFromSnapshot` did — a non-object, or a payload missing a field, yields
+ *  the empty/null default — and trusts the wire-union shape of the present fields
+ *  (the same `as`-narrowing this code already applies to `phase`, since the
+ *  snapshot is our own backend's serialized frame). The `entities`/
+ *  `relationships` arrays are absent for a non-generating world (or a pre-seed
+ *  backend) → they default to empty, so the graph stays sparse and
+ *  `resumedMidGen` stays false. */
 function parseSnapshotProgress(raw: unknown): SnapshotProgress {
   if (typeof raw !== 'object' || raw === null) {
-    return { phase: null, stages: [], costUsd: null }
+    return { phase: null, stages: [], costUsd: null, entities: [], relationships: [] }
   }
   const phase =
     'phase' in raw && typeof raw.phase === 'string' ? (raw.phase as PipelinePhase) : null
@@ -126,7 +154,15 @@ function parseSnapshotProgress(raw: unknown): SnapshotProgress {
     'cumulativeCostUsd' in raw && typeof raw.cumulativeCostUsd === 'number'
       ? raw.cumulativeCostUsd
       : null
-  return { phase, stages, costUsd }
+  const entities =
+    'entities' in raw && Array.isArray(raw.entities)
+      ? (raw.entities as GraphSeedSource['entities'])
+      : []
+  const relationships =
+    'relationships' in raw && Array.isArray(raw.relationships)
+      ? (raw.relationships as GraphSeedSource['relationships'])
+      : []
+  return { phase, stages, costUsd, entities, relationships }
 }
 
 /** Stage-progress identity: the `(stage, userId)` pair — worldgen stages are
@@ -206,10 +242,12 @@ function foldStages(
   return [...map.values()]
 }
 
-/** Convert a persisted world-snapshot into finalized seed nodes/edges. Persisted
- *  rows carry the real entity UUID, so a seed node is `finalized` with
- *  `displayId === synthKey === id`; `lastEventIndex` is -1 (pre-stream). */
-function snapshotToSeed(snap: WorldGenSnapshot): GraphSeed {
+/** Convert a persisted world-snapshot (or the mid-gen connect-frame gen-seed)
+ *  into finalized seed nodes/edges. Persisted rows carry the real entity UUID, so
+ *  a seed node is `finalized` with `displayId === synthKey === id`;
+ *  `lastEventIndex` is -1 (pre-stream). Takes the structural `GraphSeedSource`
+ *  slice so both the world-snapshot fetch and the connect frame feed it. */
+function snapshotToSeed(snap: GraphSeedSource): GraphSeed {
   const nodes = snap.entities.map(
     (e): GraphNode => ({
       synthKey: e.id,
@@ -313,6 +351,7 @@ export function useWorldGenStream(
   const [snapshotStages, setSnapshotStages] = useState<readonly StageProgress[]>([])
   const [costUsd, setCostUsd] = useState<number | null>(null)
   const [seed, setSeed] = useState<GraphSeed | null>(null)
+  const [resumedMidGen, setResumedMidGen] = useState(false)
   const [override, setOverride] = useState<WorldGenStatus | null>(null)
 
   const mountedRef = useMountedRef()
@@ -339,6 +378,16 @@ export function useWorldGenStream(
       if (snapshot.phase !== null) setPhase(snapshot.phase)
       setSnapshotStages(snapshot.stages)
       setCostUsd(snapshot.costUsd)
+      // myth-gcsp1: a connect frame carrying a non-empty gen-seed is a mid-gen
+      // rejoin/refresh — SEED the graph from it at once (the world-snapshot route
+      // still 409s pre-reveal, so this is the only pre-reveal rehydration path)
+      // and flag the resume so the view lands on the graph act. The live events
+      // fold on top; the post-boundary world-snapshot seed still refines at the
+      // reveal. An empty seed (fresh gen in prep) leaves both untouched.
+      if (snapshot.entities.length > 0) {
+        setSeed(snapshotToSeed(snapshot))
+        setResumedMidGen(true)
+      }
     })
     client.open(streamPath(campaignId))
     return () => {
@@ -374,5 +423,5 @@ export function useWorldGenStream(
   const stages = useMemo(() => foldStages(snapshotStages, events), [snapshotStages, events])
   const status = override ?? statusForPhase(phase)
 
-  return { phase, nodes, edges, status, stages, costUsd, retry }
+  return { phase, nodes, edges, status, stages, costUsd, resumedMidGen, retry }
 }
