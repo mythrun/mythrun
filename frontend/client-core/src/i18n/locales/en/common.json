@@ -260,6 +260,21 @@
     "holdTitle": "[ph: the table is being set]",
     "hold": "[ph: your host is choosing where it begins]"
   },
+  "startingLevel": {
+    "eyebrow": "[ph: starting level]",
+    "prompt": "[ph: what level does your party begin at?]",
+    "lede": "[ph: everyone starts here — higher levels bring more features and staying power]",
+    "grant1": "[ph: core class features — a true beginning]",
+    "grant2": "[ph: a second class feature; casters gain more slots]",
+    "grant3": "[ph: your subclass, and 2nd-level spells for full casters]",
+    "grant4": "[ph: an ability score improvement or a first feat]",
+    "grant5": "[ph: Extra Attack or 3rd-level spells — a real power spike]",
+    "cta": "[ph: begin at level {{level}}]",
+    "loading": "[ph: setting the table]",
+    "error": "[ph: something went wrong — try again]",
+    "holdTitle": "[ph: the table is being set]",
+    "hold": "[ph: your host is choosing where you begin]"
+  },
   "campaign": {
     "settling": "[ph: settling your campaign]",
     "notFound": "[ph: we couldn't find this campaign]",

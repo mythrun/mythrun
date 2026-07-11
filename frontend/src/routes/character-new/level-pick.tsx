@@ -1,0 +1,211 @@
+import { useEffect, useState } from 'react'
+import { Stack, Heading, Text, Grid, Button, LevelCard } from '@mythrun/ui'
+import {
+  setStartingLevel as setStartingLevelApi,
+  getMyCampaigns,
+  isHttpError,
+  useApiContext,
+  type ApiContext,
+  type CampaignSummary,
+} from '@mythrun/client-core'
+import type { CharacterLevel } from '@mythrun/client-core/contract'
+import { useTranslation } from 'react-i18next'
+import { useNavigate, useParams } from 'react-router-dom'
+
+// The STARTING-LEVEL PICK (MYT-90 character creation, D2) — the party-wide beat
+// between the situation pick (D1) and character creation (D3), and OWNER-ONLY. The
+// owner (`CampaignSummary.creator === null` — the viewer made this world) sets the
+// party's SHARED starting level (1–5); every character the table makes is built at
+// that level. A member (a joined world, a non-null creator) — or an unresolved /
+// failed role probe — sees a calm WAITING HOLD instead of the picker; the level is
+// the owner's to set. The five levels are STATIC (not fetched) — each level's
+// `grantGloss` is a plain-D&D one-line `[ph:]` gloss of what it grants, caster-
+// specifics hedged. Single-select with a default of 3 (the mockup's pre-selection,
+// the canonical spec); confirming POSTs the level via `setStartingLevel` and hands
+// off to the CREATE beat (`/campaigns/:id/character/new`). A 409 `level_locked`
+// (already set) is idempotent-success — hand off anyway; any OTHER failure surfaces
+// a calm retryable note and keeps the picker up. All UI composes @mythrun/ui.
+
+/** The set sink — defaults to the real endpoint; tests substitute it. */
+type SetStartingLevel = (ctx: ApiContext, campaignId: string, level: number) => Promise<void>
+/** The campaigns source (the role probe) — defaults to `/api/campaigns/mine`; tests
+ *  substitute it. Same shape + wiring the situation pick uses to read a world's role. */
+type FetchCampaigns = (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
+
+const defaultFetchCampaigns: FetchCampaigns = (ctx) =>
+  getMyCampaigns(undefined, ctx).then((r) => r.campaigns)
+
+/** The viewer's role for this campaign. `owner` sees the picker; `member` (and the
+ *  unresolved `loading` state) sees the calm hold — the gate fails CLOSED so the
+ *  owner-only picker never flashes for a non-owner. */
+type RoleState = 'loading' | 'owner' | 'member'
+
+/** Resolve the viewer's role from the hub payload: `creator === null` means the
+ *  viewer made this world (owner); any other case — a non-null creator, a campaign
+ *  we can't see, or a failed probe — resolves to `member` (the safe, gated default). */
+function useOwnerRole(
+  campaignId: string,
+  ctx: ApiContext,
+  fetchCampaigns: FetchCampaigns,
+): RoleState {
+  const [role, setRole] = useState<RoleState>('loading')
+  useEffect(() => {
+    let active = true
+    setRole('loading')
+    void fetchCampaigns(ctx)
+      .then((list) => {
+        if (!active) return
+        const campaign = list.find((c) => c.id === campaignId) ?? null
+        setRole(campaign !== null && campaign.creator === null ? 'owner' : 'member')
+      })
+      .catch(() => {
+        // A failed role probe fails CLOSED — the member hold, never the owner picker.
+        if (active) setRole('member')
+      })
+    return () => {
+      active = false
+    }
+  }, [campaignId, ctx, fetchCampaigns])
+  return role
+}
+
+/** The party's default starting level — the mockup's pre-selection (a common
+ *  "begin at 3" table convention); the canonical mockup IS the spec. */
+const DEFAULT_LEVEL: CharacterLevel = 3
+
+interface LevelChoice {
+  readonly level: CharacterLevel
+  readonly grantGloss: string
+}
+
+/** The five level choices, each with its plain-D&D `[ph:]` grant gloss. Literal
+ *  i18n keys (not dynamically constructed) so the typed-key rail stays satisfied. */
+function useLevelChoices(): readonly LevelChoice[] {
+  const { t } = useTranslation()
+  return [
+    { level: 1, grantGloss: t('startingLevel.grant1') },
+    { level: 2, grantGloss: t('startingLevel.grant2') },
+    { level: 3, grantGloss: t('startingLevel.grant3') },
+    { level: 4, grantGloss: t('startingLevel.grant4') },
+    { level: 5, grantGloss: t('startingLevel.grant5') },
+  ]
+}
+
+/** The member (non-owner) WAITING HOLD — a calm eyebrow + heading + line; the owner
+ *  sets the party level, so a member just holds until the table is set. Never
+ *  renders the owner-only picker (no level cards). */
+function MemberHold(): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <Stack gap={4} data-testid="level-pick-hold">
+      <Stack gap={1}>
+        <Text role="ui-caption" as="p">
+          {t('startingLevel.eyebrow')}
+        </Text>
+        <Heading level={1} role="title">
+          {t('startingLevel.holdTitle')}
+        </Heading>
+      </Stack>
+      <Text role="ui-caption" as="p">
+        {t('startingLevel.hold')}
+      </Text>
+    </Stack>
+  )
+}
+
+export interface LevelPickRouteProps {
+  /** The set sink — defaults to the real endpoint; tests substitute it. */
+  setStartingLevel?: SetStartingLevel
+  /** The role probe — defaults to the real `/api/campaigns/mine` endpoint; tests
+   *  substitute it to render the owner picker vs. the member hold. */
+  fetchCampaigns?: FetchCampaigns
+}
+
+export function LevelPickRoute({
+  setStartingLevel = setStartingLevelApi,
+  fetchCampaigns = defaultFetchCampaigns,
+}: LevelPickRouteProps = {}): React.JSX.Element {
+  const { t } = useTranslation()
+  const ctx = useApiContext()
+  const navigate = useNavigate()
+  // The route only matches with an `:id`; `?? ''` keeps the hook calls unconditional.
+  const { id = '' } = useParams<{ id: string }>()
+  const role = useOwnerRole(id, ctx, fetchCampaigns)
+  const choices = useLevelChoices()
+  const [selected, setSelected] = useState<CharacterLevel>(DEFAULT_LEVEL)
+  const [submitFailed, setSubmitFailed] = useState(false)
+
+  const handleConfirm = (): void => {
+    setSubmitFailed(false)
+    void setStartingLevel(ctx, id, selected)
+      .then(() => void navigate(`/campaigns/${id}/character/new`))
+      .catch((err: unknown) => {
+        // A locked level is already set — hand off to the create beat idempotently.
+        // Any OTHER failure surfaces a calm retryable note; the picker stays.
+        if (isHttpError(err) && err.status === 409 && err.code === 'level_locked') {
+          void navigate(`/campaigns/${id}/character/new`)
+          return
+        }
+        setSubmitFailed(true)
+      })
+  }
+
+  // Non-owners never see the owner-only picker. While the role probe is in flight we
+  // hold on a neutral loading line (no owner framing leaks); a member gets the hold.
+  if (role === 'loading') {
+    return (
+      <Stack gap={4} data-testid="level-pick-loading">
+        <Text role="ui-caption" as="p">
+          {t('startingLevel.loading')}
+        </Text>
+      </Stack>
+    )
+  }
+  if (role === 'member') {
+    return <MemberHold />
+  }
+
+  return (
+    <Stack gap={5} data-testid="level-pick">
+      <Stack gap={1}>
+        <Text role="ui-caption" as="p">
+          {t('startingLevel.eyebrow')}
+        </Text>
+        <Heading level={1} role="title">
+          {t('startingLevel.prompt')}
+        </Heading>
+        <Text role="prose-body" as="p">
+          {t('startingLevel.lede')}
+        </Text>
+      </Stack>
+      {/* 5-across on a normal desktop, collapsing to a single stacked column at 375px.
+          auto-fill sizes cells at a card-scale min (176px) and grows them to fill via
+          1fr: at ~311px mobile content only one 176px track fits (stacked); at desktop
+          widths all five sit on one row. (The DS auto-FIT track tops out at a 64px min
+          — too small for cards — so the px auto-FILL fallback is the card-grid idiom.) */}
+      <Grid columns="auto-fill" minColumnPx={176} gap={3}>
+        {choices.map((choice) => (
+          <LevelCard
+            key={choice.level}
+            level={choice.level}
+            grantGloss={choice.grantGloss}
+            selected={choice.level === selected}
+            onSelect={() => {
+              setSelected(choice.level)
+            }}
+          />
+        ))}
+      </Grid>
+      <Stack gap={2}>
+        <Button variant="primary" onPress={handleConfirm} data-testid="level-pick-confirm">
+          {t('startingLevel.cta', { level: selected })}
+        </Button>
+        {submitFailed && (
+          <Text role="ui-caption" as="p">
+            {t('startingLevel.error')}
+          </Text>
+        )}
+      </Stack>
+    </Stack>
+  )
+}
