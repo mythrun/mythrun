@@ -29,6 +29,9 @@ export const PIPELINE_SSE_EVENTS: readonly string[] = [
   'stage-failed',
   'cost-update',
   'job-failed',
+  // Character-creation completion (MYT-90) — per-user terminal signal the FE
+  // loading beat filters on to swap to the character reveal:
+  'character_creation_complete',
   // Entity events (MYT-51+ publishes; MYT-52 renders in dev tool):
   'stage-reset',
   'entity-added',
@@ -134,6 +137,12 @@ export type PipelineEvent =
       jobType: 'world-gen' | 'character-creation' | 'post-creation'
       errorCode: string
     }
+  // Character-creation completion (MYT-90) — per-user terminal signal emitted
+  // by character-creation-processor once all per-player stages complete. Rides
+  // the campaign-scoped pipeline channel; `userId` lets the FE
+  // `useCharacterCreationStream` hook filter it to the current player so the
+  // loading beat swaps to the character reveal for the right user only.
+  | { type: 'character_creation_complete'; userId: string }
   // Entity-event arms — MYT-51+ publishes; MYT-52 renders.
   //
   // The `stage` discriminator is NOT carried on entity/edge events

@@ -129,13 +129,19 @@ export async function runCharacterCreationJob(
     throw new Error(`campaign ${campaignId} not found — preHandler invariant violated`)
   }
   const worldId = campaign.world_id
-  // MYT-90 A4: the party-wide starting level (1–5, migration 033) is a KNOWN
+  // MYT-90 A4/A8: the party-wide starting level (1–5, migration 033) is a KNOWN
   // input, not an LLM judgment (ZFC). The owner picks it between the situation
-  // pick and character creation, so it is set by the time this worker fans out.
-  // Fall back to level 1 — D&D's default starting level and the historical pin —
-  // only for the degraded path where the owner never chose; that still yields a
-  // valid, playable build rather than a null level reaching the schema.
-  const startingLevel = campaign.starting_level ?? 1
+  // pick and character creation, and the A3 submit gate REQUIRES it non-null
+  // before any character job is enqueued. A null here is therefore a broken
+  // invariant, not a degraded-but-playable path: silently substituting level 1
+  // would violate `persisted character.level == campaign.starting_level` and
+  // ship a wrong-level character. Fail loud so the bug surfaces instead.
+  if (campaign.starting_level == null) {
+    throw new Error(
+      `character-creation: campaign ${campaignId} has no starting_level (submit gate should guarantee it)`,
+    )
+  }
+  const startingLevel = campaign.starting_level
 
   // 3. Reuse stage outputs across stages where the next stage needs them.
   //    On re-entry (idempotent), conceptOutput / characterId start null
@@ -255,13 +261,16 @@ export async function runCharacterCreationJob(
   }
 
   // 4. All per-player stages completed — flip the concept row to
-  //    'completed' and emit the terminal phase event. The campaign-scoped
-  //    character_integration stage (MYT-54) runs separately, owner-
-  //    triggered, after all members reach this state.
+  //    'completed' and emit the typed, per-user completion event. The FE
+  //    loading beat filters this by `userId` to swap to the character reveal
+  //    (MYT-90 A8; replaces the old untyped `phase:'character_creation_complete'`
+  //    emit, which the PipelineEvent contract never modelled and which carried
+  //    no per-user discriminator). The campaign-scoped character_integration
+  //    stage (MYT-54) runs separately, owner-triggered, after all members
+  //    reach this state.
   await repo.characterConcepts.markCompleted(campaignId, userId)
   await deps.publishEvent(campaignId, {
-    type: 'phase',
-    phase: 'character_creation_complete',
+    type: 'character_creation_complete',
     userId,
   })
 }

@@ -46,9 +46,13 @@
   "jobs": ["world-gen", "character-creation", "character-integration", "session-prep"],
   "exempt": {
     "routes": {
-      "GET /api/campaigns/:campaignId/wiki": "MYT-74c — player-facing member-readable campaign wiki (narrow known-tier). Not a dev-tool inspector surface: the owner-only world-snapshot panel already covers world inspection. This route exists for the player UI (a Frontend ticket), so it has no dev-tool panel; mirrors EXEMPT_ROUTES in verify-registry.ts."
+      "GET /api/campaigns/:campaignId/wiki": "MYT-74c — player-facing member-readable campaign wiki (narrow known-tier). Not a dev-tool inspector surface: the owner-only world-snapshot panel already covers world inspection. This route exists for the player UI (a Frontend ticket), so it has no dev-tool panel; mirrors EXEMPT_ROUTES in verify-registry.ts.",
+      "POST /api/campaigns/:campaignId/characters/reset": "MYT-90 A7 — player-facing 'Start over' on the character reveal (self-scoped concept reset → resubmittable + cleared sheet). Consumed by the frontend web app (client-core resetCharacterConcept + the D6 reveal wiring), not a dev-tool inspector panel; the submit-character-concept panel already drives the create half. Mirrors EXEMPT_ROUTES in verify-registry.ts.",
+      "POST /api/campaigns/:campaignId/characters/confirm": "MYT-90 A7 — player-facing 'This is me' on the character reveal (self-scoped confirm → confirmed_at, reload-stable party staging). Consumed by the frontend web app (client-core confirmCharacter + the D6 reveal wiring), not a dev-tool inspector panel. Mirrors EXEMPT_ROUTES in verify-registry.ts."
     },
-    "events": {},
+    "events": {
+      "character_creation_complete": "MYT-90 A8 — per-user character-creation completion signal. The rendering surface is the FE loading beat (useCharacterCreationStream swaps loading -> character reveal), which lands in a later MYT-90 task, not a dev-tool inspector panel; exempt until that FE hook ships."
+    },
     "jobs": {}
   }
 }

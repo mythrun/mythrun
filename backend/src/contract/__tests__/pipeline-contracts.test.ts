@@ -48,6 +48,7 @@ describe('PIPELINE_SSE_EVENTS', () => {
       'stage-failed',
       'cost-update',
       'job-failed',
+      'character_creation_complete',
       'stage-reset',
       'entity-added',
       'entity-updated',

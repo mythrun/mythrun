@@ -100,8 +100,8 @@ const VALID_SHEET = {
   int: 13,
   wis: 16,
   cha: 11,
-  hit_points: 9,
-  max_hit_points: 9,
+  hit_points: 10,
+  max_hit_points: 10,
   armor_class: 14,
   proficiency_bonus: 2,
   starting_gold: 15,
@@ -204,9 +204,12 @@ describe('character-creation-processor — stage 2 persists concept_output', () 
         ]),
       ],
     )
+    // starting_level is set (not left NULL) to model the A3 submit gate: the
+    // character-creation processor now fails loud on a null level, so any test
+    // that drives the full job must seed a valid party-wide level.
     await pool.query(
-      `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index)
-       VALUES ($1, $2, $3, $4, 0)`,
+      `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index, starting_level)
+       VALUES ($1, $2, $3, $4, 0, 1)`,
       [campaignId, worldId, userId, scope.campaignName(n)],
     )
     await pool.query(

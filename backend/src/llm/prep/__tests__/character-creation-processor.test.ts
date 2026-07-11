@@ -90,6 +90,9 @@ const VALID_CONCEPT = {
     'Bran was apprenticed at the Bone Sept in his twelfth year, when the priests took him in after a winter on the moors orphaned him. Twenty years later, when the Sept burned, he walked out with a tin ladle and a name he was no longer sure was his. He has been on the road since, doing temple work for coin, telling himself he is still a cleric of the Hollow, listening for the small voice that used to answer him at the altar.',
 }
 
+// A coherent LEVEL-1 sheet under MYT-90 A5's strengthened validateCoherence:
+// con 14 → CON mod +2, hit_die 8 → HP band [10, 11] (hit_die + conMod floor);
+// proficiency_bonus 2 (levels 1–4); a level-1 spell on a full caster (slot cap 1).
 const VALID_SHEET = {
   str: 12,
   dex: 10,
@@ -97,8 +100,8 @@ const VALID_SHEET = {
   int: 13,
   wis: 16,
   cha: 11,
-  hit_points: 9,
-  max_hit_points: 9,
+  hit_points: 10,
+  max_hit_points: 10,
   armor_class: 14,
   proficiency_bonus: 2,
   starting_gold: 15,
@@ -115,6 +118,16 @@ const VALID_SHEET = {
   ],
   equipment: [{ name: 'Mace', quantity: 1, consumable: false }],
   spells: [{ name: 'Cure Wounds', level: 1, prepared: true, ritual: false }],
+}
+
+// A coherent LEVEL-5 sheet for the starting_level=5 case: proficiency_bonus 3
+// (level 5), and max_hit_points 38 inside the L5 band [22, 55] for hit_die 8 /
+// CON mod +2. A level-1 spell stays within the full-caster L5 slot cap (3).
+const VALID_SHEET_L5 = {
+  ...VALID_SHEET,
+  hit_points: 38,
+  max_hit_points: 38,
+  proficiency_bonus: 3,
 }
 
 // VALID_INTEGRATION (the stage-4 fixture) lived here under MYT-53. T3
@@ -244,9 +257,13 @@ describe('runCharacterCreationJob', () => {
         ]),
       ],
     )
+    // starting_level is set here (not left NULL) to model the A3 submit gate,
+    // which REQUIRES a party-wide level before any character job is enqueued.
+    // Level 1 mirrors the historical default; the level-injection test below
+    // overrides it to 5. The fail-loud test nulls it back out on purpose.
     await pool.query(
-      `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index)
-       VALUES ($1, $2, $3, $4, 0)`,
+      `INSERT INTO campaigns (id, world_id, created_by, name, starting_situation_index, starting_level)
+       VALUES ($1, $2, $3, $4, 0, 1)`,
       [campaignId, worldId, userId, scope.campaignName(n)],
     )
     await pool.query(
@@ -384,17 +401,44 @@ describe('runCharacterCreationJob', () => {
       'character_concept',
       'character_sheet',
     ])
+
+    // MYT-90 A8: on completion the processor emits a typed, per-user
+    // `character_creation_complete` event (carrying userId) — the FE loading
+    // beat filters it to swap to the character reveal. This REPLACES the old
+    // untyped `{ type: 'phase', phase: 'character_creation_complete' }` emit,
+    // which the PipelineEvent contract never modelled and which carried the
+    // completion signal in an unfiltered-by-user `phase` field.
+    const completion = events.filter((e) => e.type === 'character_creation_complete')
+    expect(completion).toHaveLength(1)
+    expect(completion[0]).toMatchObject({
+      type: 'character_creation_complete',
+      userId,
+    })
+    // The legacy untyped phase emit is gone: no event carries the completion
+    // signal in a `phase` field anymore.
+    expect(events.some((e) => e.phase === 'character_creation_complete')).toBe(false)
   })
 
   it('injects campaign.starting_level into the persisted character AND the sheet prompt (ZFC: deterministic level, not the LLM echo)', async () => {
     const { userId, campaignId } = await seed()
-    // Owner picked a party-wide starting level of 5 (migration 033). The
-    // fan-out seed above leaves starting_level NULL; set it explicitly here.
+    // Owner picked a party-wide starting level of 5 (migration 033). The seed
+    // above sets starting_level = 1; override it to 5 for this case.
     await pool.query(`UPDATE campaigns SET starting_level = 5 WHERE id = $1`, [campaignId])
     // The concept mock (VALID_CONCEPT) deliberately echoes level 1 — the
     // processor must OVERRIDE it from campaign.starting_level, never trust
-    // the LLM's echoed level.
-    setupHappyPathMocks()
+    // the LLM's echoed level. The sheet mock must be LEVEL-5-coherent
+    // (proficiency_bonus 3, HP in the L5 band) because the sheet stage
+    // validates against the overridden narrative.level (5), not the echo.
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1500, outputTokens: 1200, totalTokens: 2700 },
+    } as never)
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_SHEET_L5,
+      finishReason: 'stop',
+      usage: { inputTokens: 2000, outputTokens: 2000, totalTokens: 4000 },
+    } as never)
 
     await runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId))
 
@@ -422,6 +466,32 @@ describe('runCharacterCreationJob', () => {
     // {{level}} = 5.
     const sheetPrompt = mockGenerateText.mock.calls[1]?.[0]?.prompt as string | undefined
     expect(sheetPrompt).toContain('level-5')
+  })
+
+  it('fails loud when campaign.starting_level is null (A3 submit-gate invariant)', async () => {
+    // The A3 submit gate guarantees starting_level is non-null before any
+    // character job is enqueued, so a null here is a broken invariant — not a
+    // degraded-but-playable path. Silently substituting level 1 would violate
+    // `persisted character.level == campaign.starting_level`, so the processor
+    // must throw instead. Null out the level the seed set to model the bug.
+    const { userId, campaignId } = await seed()
+    await pool.query(`UPDATE campaigns SET starting_level = NULL WHERE id = $1`, [campaignId])
+    // No LLM mocks: the null-check throws before any stage runs.
+    await expect(
+      runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId)),
+    ).rejects.toThrow(/has no starting_level/)
+
+    // The job aborted before stage 3 — no character was persisted (a silent
+    // level-1 character is exactly the failure mode this guard prevents).
+    const characters = await pool.query<{ id: string }>(
+      `SELECT c.id FROM characters c
+       JOIN campaign_characters cc ON cc.character_id = c.id
+       WHERE cc.campaign_id = $1 AND cc.user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(characters.rowCount).toBe(0)
+    // No LLM calls fired — the throw preempts the stage loop.
+    expect(mockGenerateText).not.toHaveBeenCalled()
   })
 
   it('isolates per-player failures: terminal LLM error fails one row without aborting the job', async () => {
