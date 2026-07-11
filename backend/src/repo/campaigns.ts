@@ -196,19 +196,25 @@ export function campaignsNs(c: ClientLike) {
     },
 
     /**
-     * Read a campaign's world_id + starting_situation_index together. Returns
-     * null when the campaign is absent. SQL verbatim from the inline read in
-     * campaign-characters.ts (T15 POST /characters + T16 GET
-     * /starting-situations). The two columns are read as a pair in both sites.
+     * Read a campaign's world_id + starting_situation_index + starting_level
+     * together. Returns null when the campaign is absent. Used by the
+     * character-submit gate + GET /starting-situations (campaign-characters.ts):
+     * both need the party's chosen level (migration 033) alongside the world +
+     * chosen situation. `starting_level` is null until the owner picks one.
      */
     getWorldAndSituationIndex: async (
       id: string,
-    ): Promise<{ world_id: string; starting_situation_index: number | null } | null> => {
+    ): Promise<{
+      world_id: string
+      starting_situation_index: number | null
+      starting_level: number | null
+    } | null> => {
       const result = await c.query<{
         world_id: string
         starting_situation_index: number | null
+        starting_level: number | null
       }>(
-        `SELECT world_id, starting_situation_index FROM campaigns WHERE id = $1`,
+        `SELECT world_id, starting_situation_index, starting_level FROM campaigns WHERE id = $1`,
         [id],
       )
       return result.rows[0] ?? null

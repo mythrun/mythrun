@@ -588,6 +588,7 @@ describe('campaigns repo (integration)', () => {
     async function seedOwnerWorldCampaign(opts?: {
       worldStatus?: string
       situationIndex?: number | null
+      startingLevel?: number | null
     }): Promise<{ ownerId: string; worldId: string; campaignId: string }> {
       await cleanupTestScope(pool, scope)
       const owner = await createUsersRepo(pool).create(pool, baseUserInput)
@@ -599,9 +600,16 @@ describe('campaigns repo (integration)', () => {
       )
       const campaignId = uuidv7()
       await pool.query(
-        `INSERT INTO campaigns (id, world_id, created_by, name, status, starting_situation_index)
-         VALUES ($1, $2, $3, $4, 'setup', $5)`,
-        [campaignId, worldId, owner.id, scope.campaignName(0), opts?.situationIndex ?? null],
+        `INSERT INTO campaigns (id, world_id, created_by, name, status, starting_situation_index, starting_level)
+         VALUES ($1, $2, $3, $4, 'setup', $5, $6)`,
+        [
+          campaignId,
+          worldId,
+          owner.id,
+          scope.campaignName(0),
+          opts?.situationIndex ?? null,
+          opts?.startingLevel ?? null,
+        ],
       )
       return { ownerId: owner.id, worldId, campaignId }
     }
@@ -619,10 +627,34 @@ describe('campaigns repo (integration)', () => {
       expect(await campaigns.getWorldAndSituationIndex(campaignId)).toEqual({
         world_id: worldId,
         starting_situation_index: 2,
+        starting_level: null,
       })
       expect(
         await campaigns.getWorldAndSituationIndex('019dccef-0000-7000-8000-000000000000'),
       ).toBeNull()
+    })
+
+    it('getWorldAndSituationIndex surfaces starting_level (set → number, unset → null)', async () => {
+      const { worldId, campaignId } = await seedOwnerWorldCampaign({
+        situationIndex: 1,
+        startingLevel: 3,
+      })
+      const campaigns = createCampaignsRepo(pool)
+      expect(await campaigns.getWorldAndSituationIndex(campaignId)).toEqual({
+        world_id: worldId,
+        starting_situation_index: 1,
+        starting_level: 3,
+      })
+
+      const { worldId: worldId2, campaignId: noLevel } = await seedOwnerWorldCampaign({
+        situationIndex: null,
+        startingLevel: null,
+      })
+      expect(await campaigns.getWorldAndSituationIndex(noLevel)).toEqual({
+        world_id: worldId2,
+        starting_situation_index: null,
+        starting_level: null,
+      })
     })
 
     it('getStartingSituationIndex returns the index; null when unset or unknown', async () => {
