@@ -21,8 +21,8 @@ import { CharacterNewRoute } from './character-new.tsx'
 // second prompt's whisper is the chosen situation's invitation; a full submit
 // sends BOTH concept + grounding text and lands on the processing seam; a
 // too-short answer is blocked with a calm notice at each step; a failed submit
-// stays on the freeform path with a calm notice; picking guided renders the D4
-// seam.
+// stays on the freeform path with a calm notice; picking guided opens the guided
+// builder (the builder's own flow is covered in guided-path.test.tsx).
 
 // ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; install a functional in-memory one (mirrors the
@@ -156,10 +156,11 @@ describe('CharacterNewRoute — the path chooser', () => {
     expect(screen.getByText(i18n.t('characterCreate.chooser.prompt'))).toBeDefined()
   })
 
-  it('renders the D4 guided seam when the guided path is picked', () => {
+  it('renders the guided builder when the guided path is picked', () => {
     renderRoute()
     fireEvent.click(within(screen.getByTestId('chooser-guided')).getByRole('button'))
-    expect(screen.getByTestId('character-guided-todo')).toBeDefined()
+    // The guided path opens on the option-grid builder, not the freeform prompt.
+    expect(screen.getByTestId('guided-builder')).toBeDefined()
     expect(screen.queryByTestId('freeform-prompt')).toBeNull()
   })
 })

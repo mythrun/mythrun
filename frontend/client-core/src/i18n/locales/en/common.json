@@ -308,7 +308,170 @@
       "tooShort": "[ph: tell us a little more]",
       "error": "[ph: something went wrong — try again]"
     },
-    "guidedTodo": "[ph: the guided builder lands next (MYT-90 D4)]",
+    "guided": {
+      "class": {
+        "question": "[ph: what is your calling?]",
+        "options": {
+          "barbarian": {
+            "name": "[ph: barbarian]"
+          },
+          "bard": {
+            "name": "[ph: bard]"
+          },
+          "cleric": {
+            "name": "[ph: cleric]"
+          },
+          "druid": {
+            "name": "[ph: druid]"
+          },
+          "fighter": {
+            "name": "[ph: fighter]"
+          },
+          "monk": {
+            "name": "[ph: monk]"
+          },
+          "paladin": {
+            "name": "[ph: paladin]"
+          },
+          "ranger": {
+            "name": "[ph: ranger]"
+          },
+          "rogue": {
+            "name": "[ph: rogue]"
+          },
+          "sorcerer": {
+            "name": "[ph: sorcerer]"
+          },
+          "warlock": {
+            "name": "[ph: warlock]"
+          },
+          "wizard": {
+            "name": "[ph: wizard]"
+          }
+        }
+      },
+      "subclass": {
+        "question": "[ph: how do you practice it?]",
+        "options": {
+          "barbarian": {
+            "name": "[ph: berserker]"
+          },
+          "bard": {
+            "name": "[ph: college of lore]"
+          },
+          "cleric": {
+            "name": "[ph: life domain]"
+          },
+          "druid": {
+            "name": "[ph: circle of the land]"
+          },
+          "fighter": {
+            "name": "[ph: champion]"
+          },
+          "monk": {
+            "name": "[ph: way of the open hand]"
+          },
+          "paladin": {
+            "name": "[ph: oath of devotion]"
+          },
+          "ranger": {
+            "name": "[ph: hunter]"
+          },
+          "rogue": {
+            "name": "[ph: thief]"
+          },
+          "sorcerer": {
+            "name": "[ph: draconic bloodline]"
+          },
+          "warlock": {
+            "name": "[ph: the fiend]"
+          },
+          "wizard": {
+            "name": "[ph: school of evocation]"
+          }
+        }
+      },
+      "species": {
+        "question": "[ph: where are you from?]",
+        "options": {
+          "Dwarf": {
+            "name": "[ph: dwarf]"
+          },
+          "Elf": {
+            "name": "[ph: elf]"
+          },
+          "Halfling": {
+            "name": "[ph: halfling]"
+          },
+          "Human": {
+            "name": "[ph: human]"
+          },
+          "Dragonborn": {
+            "name": "[ph: dragonborn]"
+          },
+          "Gnome": {
+            "name": "[ph: gnome]"
+          },
+          "Half-Elf": {
+            "name": "[ph: half-elf]"
+          },
+          "Half-Orc": {
+            "name": "[ph: half-orc]"
+          },
+          "Tiefling": {
+            "name": "[ph: tiefling]"
+          }
+        }
+      },
+      "background": {
+        "question": "[ph: what shaped you before this?]",
+        "options": {
+          "Acolyte": {
+            "name": "[ph: acolyte]"
+          },
+          "Criminal": {
+            "name": "[ph: criminal]"
+          },
+          "Folk Hero": {
+            "name": "[ph: folk hero]"
+          },
+          "Noble": {
+            "name": "[ph: noble]"
+          },
+          "Sage": {
+            "name": "[ph: sage]"
+          },
+          "Soldier": {
+            "name": "[ph: soldier]"
+          },
+          "Charlatan": {
+            "name": "[ph: charlatan]"
+          },
+          "Entertainer": {
+            "name": "[ph: entertainer]"
+          },
+          "Guild Artisan": {
+            "name": "[ph: guild artisan]"
+          },
+          "Hermit": {
+            "name": "[ph: hermit]"
+          },
+          "Outlander": {
+            "name": "[ph: outlander]"
+          },
+          "Sailor": {
+            "name": "[ph: sailor]"
+          },
+          "Urchin": {
+            "name": "[ph: urchin]"
+          }
+        }
+      },
+      "notes": {
+        "prompt": "[ph: anything else we should know?]",
+        "whisper": "[ph: a detail, a quirk, a scar — leave it blank to skip]"
+      }
+    },
     "processing": "[ph: bringing your character to life…]"
   }
 }
