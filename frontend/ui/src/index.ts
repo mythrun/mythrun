@@ -24,6 +24,7 @@ export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
 
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
+export { FreeformPrompt } from './components/FreeformPrompt/FreeformPrompt.tsx'
 
 // Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
 // IconButton).
