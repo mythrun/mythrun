@@ -80,6 +80,8 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'character-view': [{ method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' }],
   'starting-situations': [{ method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' }],
   'situation-pick': [{ method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' }],
+  // MYT-90 A3 — owner sets the party's starting level (1–5).
+  'level-pick': [{ method: 'POST', path: '/api/campaigns/:campaignId/starting-level' }],
   members: [{ method: 'GET', path: '/api/campaigns/:campaignId/members' }],
   'character-creation-progress': [
     { method: 'GET', path: '/api/campaigns/:campaignId/character-creation-progress' },
@@ -289,6 +291,7 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
     panels: [
       'starting-situations',
       'situation-pick',
+      'level-pick',
       'submit-character-concept',
       'character-creation-progress',
       'characters-roster',

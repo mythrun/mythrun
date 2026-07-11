@@ -33,6 +33,9 @@ export const PIPELINE_ROUTES: readonly string[] = [
   // marker. It is still surfaced in `backend-routes.ts` as a registered
   // route, just not as a pipeline-status surface.
   'POST /api/campaigns/:campaignId/starting-situation',
+  // MYT-90 A3 — owner sets the party's starting level (1–5) between the
+  // situation pick and character creation.
+  'POST /api/campaigns/:campaignId/starting-level',
   'POST /api/campaigns/:campaignId/characters',
   'GET /api/campaigns/:campaignId/starting-situations',
   'GET /api/campaigns/:campaignId/characters',

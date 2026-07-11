@@ -49,6 +49,8 @@ vi.mock('../contract/pipeline-routes.js', () => ({
     'GET /api/campaigns/:campaignId/wiki',
     // MYT-53 per-player character creation (campaign-characters plugin):
     'POST /api/campaigns/:campaignId/starting-situation',
+    // MYT-90 A3 — owner sets the party's starting level (campaign-characters plugin):
+    'POST /api/campaigns/:campaignId/starting-level',
     'POST /api/campaigns/:campaignId/characters',
     'GET /api/campaigns/:campaignId/starting-situations',
     'GET /api/campaigns/:campaignId/characters',

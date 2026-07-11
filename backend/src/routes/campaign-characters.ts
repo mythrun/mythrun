@@ -66,6 +66,14 @@ const StartingSituationBodySchema = z.object({
   index: z.number().int().min(0).max(2),
 })
 
+// A3 body (POST /starting-level). `level` is the party-wide starting level
+// 1..5 — bounds mirror the campaigns.starting_level DB CHECK (migration 033)
+// so an out-of-range value fails at the route boundary (400 bad_body) rather
+// than as a 500 from Postgres rejecting the row.
+const StartingLevelBodySchema = z.object({
+  level: z.number().int().min(1).max(5),
+})
+
 // T15 body. `conceptText` and `guidedChoices` are individually optional;
 // v1 is freeform-only — both texts required. The guided-mode follow-on
 // bead reshapes this schema when it ships (adds guidedChoices). Bounded
@@ -129,6 +137,48 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
     },
   )
 
+  // --------------------------------------------------------------------
+  // A3: POST /starting-level — owner sets the party's starting level (1–5).
+  //
+  // Sits between the situation pick and character creation. Same guard chain
+  // as T12 POST /starting-situation: owner-only (preHandler), world must be
+  // 'complete', and locked once any concept is processing/completed. On
+  // success the column is written and the route replies 204 (no body — the
+  // persisted campaigns.starting_level column is the whole payload).
+  // --------------------------------------------------------------------
+  app.post<{
+    Params: { campaignId: string }
+    Body: z.infer<typeof StartingLevelBodySchema>
+  }>(
+    '/api/campaigns/:campaignId/starting-level',
+    {
+      preHandler: requireCampaignMember(repo, 'owner'),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const parsed = StartingLevelBodySchema.safeParse(req.body)
+      if (!parsed.success) return reply.code(400).send({ code: 'bad_body' })
+
+      // requireCampaignMember has already proven the campaign exists +
+      // current user is its owner. Trust that and reach for world_id
+      // unconditionally.
+      /* c8 ignore next — invariant per requireCampaignMember preHandler */
+      const worldId = (await repo.campaigns.getWorldId(req.params.campaignId)) ?? ''
+
+      const worldStatus = await repo.worlds.getStatus(worldId)
+      if (worldStatus !== 'complete') {
+        return reply.code(409).send({ code: 'world_not_complete' })
+      }
+
+      if ((await repo.characterConcepts.countLocked(req.params.campaignId)) > 0) {
+        return reply.code(409).send({ code: 'level_locked' })
+      }
+
+      await repo.campaigns.setStartingLevel(req.params.campaignId, parsed.data.level)
+      return reply.code(204).send()
+    },
+  )
+
   // myth-nmg9: POST /start-character-creation is RETIRED. Per-player
   // pipeline now auto-triggers from inside POST /characters' own
   // transaction (the upsert→flip→enqueue sequence below). Removing
@@ -181,7 +231,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       // requireCampaignMember already proved this campaign exists.
       const campRow = await repo.campaigns.getWorldAndSituationIndex(req.params.campaignId)
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const camp = campRow ?? { world_id: '', starting_situation_index: null }
+      const camp = campRow ?? { world_id: '', starting_situation_index: null, starting_level: null }
 
       const worldStatus = await repo.worlds.getStatus(camp.world_id)
       if (worldStatus !== 'complete') {
@@ -189,6 +239,11 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       }
       if (camp.starting_situation_index === null) {
         return reply.code(409).send({ code: 'starting_situation_not_chosen' })
+      }
+      // A3: the party's starting level is picked after the situation and before
+      // any concept is submitted — gate character creation on it being chosen.
+      if (camp.starting_level === null) {
+        return reply.code(409).send({ code: 'starting_level_not_chosen' })
       }
 
       const existing = await repo.characterConcepts.getByCampaignAndUser(
@@ -286,7 +341,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       // requireCampaignMember already proved this campaign exists.
       const campRow = await repo.campaigns.getWorldAndSituationIndex(req.params.campaignId)
       /* c8 ignore next — invariant per requireCampaignMember preHandler */
-      const camp = campRow ?? { world_id: '', starting_situation_index: null }
+      const camp = campRow ?? { world_id: '', starting_situation_index: null, starting_level: null }
 
       // myth-k1ee added `title` + `locationName` to each entry; older
       // pre-myth-k1ee worlds may still have entries without these fields.
@@ -303,6 +358,7 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       return reply.code(200).send({
         situations: entries,
         chosenIndex: camp.starting_situation_index,
+        startingLevel: camp.starting_level,
       })
     },
   )

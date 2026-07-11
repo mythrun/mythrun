@@ -247,6 +247,17 @@ export function campaignsNs(c: ClientLike) {
     },
 
     /**
+     * Set a campaign's starting_level (MYT-90 A3 POST /starting-level). The
+     * party-wide level (1–5, migration 033) is picked by the owner between the
+     * situation pick and character creation. Mirrors setStartingSituationIndex —
+     * a focused single-column write. The 1–5 range is enforced at the route
+     * boundary (Zod) and by the DB CHECK; this writer trusts the caller.
+     */
+    setStartingLevel: async (id: string, level: number): Promise<void> => {
+      await c.query(`UPDATE campaigns SET starting_level = $2 WHERE id = $1`, [id, level])
+    },
+
+    /**
      * Archive a campaign (T14 POST /archive) — only when it is still 'setup' or
      * 'active'. Returns true when a row was archived, false when no eligible row
      * matched (already archived / unknown). SQL verbatim from the former inline

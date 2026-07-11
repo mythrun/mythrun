@@ -12,6 +12,7 @@
     "PATCH /api/campaigns/:campaignId/name",
     "GET /api/campaigns/:campaignId/world-snapshot",
     "POST /api/campaigns/:campaignId/starting-situation",
+    "POST /api/campaigns/:campaignId/starting-level",
     "POST /api/campaigns/:campaignId/characters",
     "GET /api/campaigns/:campaignId/starting-situations",
     "GET /api/campaigns/:campaignId/characters",

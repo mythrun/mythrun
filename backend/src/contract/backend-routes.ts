@@ -62,6 +62,8 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'GET', path: '/api/campaigns/:campaignId/transcript/search' }, // MYT-74d
   // MYT-53 — per-player parallel character creation
   { method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' },
+  // MYT-90 A3 — owner sets the party's starting level (1–5)
+  { method: 'POST', path: '/api/campaigns/:campaignId/starting-level' },
   { method: 'POST', path: '/api/campaigns/:campaignId/archive' },
   { method: 'POST', path: '/api/campaigns/:campaignId/characters' },
   { method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' },

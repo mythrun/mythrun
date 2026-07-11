@@ -336,6 +336,129 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
   })
 
   // ======================================================================
+  // A3: POST /api/campaigns/:campaignId/starting-level
+  //
+  // Owner sets the party's starting level (1–5) between the situation pick
+  // and character creation. Same guard chain as T12 POST /starting-situation:
+  // owner-only (403), world must be 'complete' (409 world_not_complete),
+  // locked once any concept is processing/completed (409 level_locked). On
+  // success the column is written and the route replies 204 (no body — the
+  // persisted column is the whole payload).
+  // ======================================================================
+  describe('POST /starting-level (A3)', () => {
+    it('204 — owner sets level 3; campaigns.starting_level is written', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { level: 3 },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const row = await pool.query<{ starting_level: number | null }>(
+        `SELECT starting_level FROM campaigns WHERE id = $1`,
+        [seed.campaignId],
+      )
+      expect(row.rows[0]?.starting_level).toBe(3)
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': stranger.devSub },
+        payload: { level: 2 },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+
+    it('403 not_campaign_owner — non-owner member (player role)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const player = await seedUser(pool, scope, 1)
+      await addMember(pool, seed.campaignId, player, 'player')
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': player.devSub },
+        payload: { level: 2 },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_owner')
+    })
+
+    it("409 world_not_complete when worlds.status != 'complete'", async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0, 'generating')
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { level: 1 },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('world_not_complete')
+    })
+
+    it('409 level_locked — at least one concept is processing/completed', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'processing')
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { level: 4 },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('level_locked')
+    })
+
+    it('400 bad_body — level=6 (out of range)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { level: 6 },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('bad_body')
+    })
+
+    it('400 bad_body — level=0 (below range)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { level: 0 },
+      })
+      expect(res.statusCode).toBe(400)
+    })
+
+    it('400 bad_body — missing level', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/starting-level`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {},
+      })
+      expect(res.statusCode).toBe(400)
+    })
+  })
+
+  // ======================================================================
   // myth-nmg9: POST /start-character-creation is RETIRED. Per-player
   // pipeline now auto-triggers from inside POST /characters' own
   // transaction (upsert + flip + enqueue). Tests for the per-player flow
@@ -421,17 +544,21 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
   //   200 { conceptId, status, jobId }   — upsert + flip + enqueue
   // ======================================================================
   describe('POST /characters (T15)', () => {
-    // Seed a campaign with the starting situation already chosen so happy-path
-    // tests don't have to do it inline. Returns the standard SeededCampaign.
+    // Seed a campaign with the starting situation AND starting level already
+    // chosen so happy-path tests don't have to do it inline. Both gates
+    // (starting_situation_not_chosen, starting_level_not_chosen) must be
+    // satisfied for POST /characters to proceed, so the fixture sets both.
+    // Returns the standard SeededCampaign.
     async function seedCampaignWithSituation(
       owner: SeededUser,
       index = 0,
       situationIndex = 1,
+      startingLevel = 1,
     ): Promise<SeededCampaign> {
       const seed = await seedCampaignOwnedBy(pool, scope, owner, index)
       await pool.query(
-        `UPDATE campaigns SET starting_situation_index = $2 WHERE id = $1`,
-        [seed.campaignId, situationIndex],
+        `UPDATE campaigns SET starting_situation_index = $2, starting_level = $3 WHERE id = $1`,
+        [seed.campaignId, situationIndex, startingLevel],
       )
       return seed
     }
@@ -592,6 +719,25 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect(res.json<{ code: string }>().code).toBe('starting_situation_not_chosen')
     })
 
+    it('409 starting_level_not_chosen when starting_level is NULL (situation chosen)', async () => {
+      // A3: the level gate sits AFTER the situation gate — a campaign with a
+      // chosen situation but no chosen level rejects with starting_level_not_chosen.
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await pool.query(
+        `UPDATE campaigns SET starting_situation_index = 1 WHERE id = $1`,
+        [seed.campaignId],
+      )
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('starting_level_not_chosen')
+    })
+
     it("409 world_not_complete when worlds.status != 'complete'", async () => {
       const owner = await seedUser(pool, scope, 0)
       const seed = await seedCampaignOwnedBy(pool, scope, owner, 0, 'generating')
@@ -744,7 +890,7 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
         headers: { 'x-mythrun-dev-sub': owner.devSub },
       })
       expect(res.statusCode).toBe(200)
-      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: 2 })
+      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: 2, startingLevel: null })
     })
 
     it('200 — 3 entries + chosenIndex=null when not yet picked', async () => {
@@ -761,7 +907,25 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
         headers: { 'x-mythrun-dev-sub': owner.devSub },
       })
       expect(res.statusCode).toBe(200)
-      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: null })
+      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: null, startingLevel: null })
+    })
+
+    it('200 — includes startingLevel when the owner has set it', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await pool.query(
+        `UPDATE worlds SET starting_situation_entries = $2::jsonb WHERE id = $1`,
+        [seed.worldId, JSON.stringify(sampleEntries)],
+      )
+      await pool.query(`UPDATE campaigns SET starting_level = 4 WHERE id = $1`, [seed.campaignId])
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/starting-situations`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ situations: sampleEntries, chosenIndex: null, startingLevel: 4 })
     })
 
     it('404 world_not_ready when entries array is empty', async () => {
@@ -836,7 +1000,7 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
         headers: { 'x-mythrun-dev-sub': owner.devSub },
       })
       expect(res.statusCode).toBe(200)
-      expect(res.json()).toEqual({ situations: richEntries, chosenIndex: null })
+      expect(res.json()).toEqual({ situations: richEntries, chosenIndex: null, startingLevel: null })
     })
   })
 
