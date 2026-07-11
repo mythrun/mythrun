@@ -657,6 +657,60 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       return reply.code(202).send({ campaignId: req.params.campaignId, jobId })
     },
   )
+
+  // --------------------------------------------------------------------
+  // MYT-90 A7: POST /characters/reset — "Start over" on the reveal.
+  //
+  // Self-scoped: any member acts on their OWN concept (NOT owner-only). The
+  // reveal offers "Start over", but a 'completed' concept is locked (POST
+  // /characters 409s concept_locked). This flips the caller's own
+  // completed/failed concept back to a resubmittable 'submitted' and clears
+  // the generated sheet, so Start over → create re-runs the per-player
+  // pipeline. resetConcept guards the flip transactionally (completed/failed
+  // only, campaign not 'active'); a non-match → 409 not_resettable (can't
+  // unwind an integrated character or an active game). The status flip + the
+  // sheet DELETE run in one repo.transaction so they commit atomically.
+  // --------------------------------------------------------------------
+  app.post<{ Params: { campaignId: string } }>(
+    '/api/campaigns/:campaignId/characters/reset',
+    {
+      preHandler: requireCampaignMember(repo),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const dbUser = requireDbUser(req)
+      const didReset = await repo.transaction((tx) =>
+        tx.characterConcepts.resetConcept(req.params.campaignId, dbUser.id),
+      )
+      if (didReset !== true) return reply.code(409).send({ code: 'not_resettable' })
+      return reply.code(204).send()
+    },
+  )
+
+  // --------------------------------------------------------------------
+  // MYT-90 A7: POST /characters/confirm — "This is me" on the reveal.
+  //
+  // Self-scoped. Persists confirmed_at on the caller's own 'completed' concept
+  // so a reload doesn't bounce the player out of party staging. Idempotent (a
+  // repeated click keeps the first confirmation timestamp → 204). 409
+  // not_confirmable when the concept isn't 'completed' (nothing to confirm).
+  // --------------------------------------------------------------------
+  app.post<{ Params: { campaignId: string } }>(
+    '/api/campaigns/:campaignId/characters/confirm',
+    {
+      preHandler: requireCampaignMember(repo),
+      config: { pipelineRoute: true },
+    },
+    async (req, reply) => {
+      const dbUser = requireDbUser(req)
+      const confirmed = await repo.characterConcepts.confirmConcept(
+        req.params.campaignId,
+        dbUser.id,
+      )
+      if (!confirmed) return reply.code(409).send({ code: 'not_confirmable' })
+      return reply.code(204).send()
+    },
+  )
 }
 
 // Internal sentinel carrying the 409 code from inside the finalize tx callback.

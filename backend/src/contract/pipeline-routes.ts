@@ -47,6 +47,12 @@ export const PIPELINE_ROUTES: readonly string[] = [
   // MYT-54 T13 — owner fan-in trigger for the campaign-scoped
   // character_integration stage (singleton job, BullMQ-deduped on jobId).
   'POST /api/campaigns/:campaignId/finalize-character-creation',
+  // MYT-90 A7 — self-scoped reveal actions (any member acts on their OWN
+  // concept). Reset ("Start over") flips a completed/failed concept back to
+  // resubmittable + clears the sheet; confirm ("This is me") persists
+  // confirmed_at so a reload stays in party staging.
+  'POST /api/campaigns/:campaignId/characters/reset',
+  'POST /api/campaigns/:campaignId/characters/confirm',
 ] as const
 
 export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

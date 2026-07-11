@@ -364,6 +364,71 @@ export function characterConceptsNs(c: ClientLike) {
       if (row === undefined) return null
       return { conceptId: row.id, userId: row.user_id }
     },
+
+    /**
+     * MYT-90 A7: "Start over" on the character reveal. Flip the caller's OWN
+     * concept from a terminal PRE-play state ('completed' or 'failed') back to
+     * a resubmittable 'submitted' and clear the generated character sheet, so
+     * POST /characters — which 409s concept_locked on a 'completed' row — can
+     * re-run the per-player pipeline. `confirmed_at` + `error` are cleared so
+     * the reset row is indistinguishable from a fresh submission.
+     *
+     * The flip is guarded so an INTEGRATED character or an ACTIVE campaign
+     * cannot be unwound: the conditional UPDATE matches only 'completed'/'failed'
+     * concepts whose campaign is not yet 'active' (once play starts,
+     * session_participants — the one non-cascading FK to characters — references
+     * the sheet and the run is live). Returns false when nothing matched → the
+     * route replies 409 not_resettable.
+     *
+     * Composes inside `repo.transaction` (the route wraps it) so the status flip
+     * + the sheet DELETE commit atomically. Deleting the `characters` row
+     * cascades the campaign_characters join + the four sub-tables + the MYT-70
+     * ledger rows (all FK ON DELETE CASCADE); the not-active guard guarantees no
+     * session_participants row points at it.
+     */
+    resetConcept: async (campaignId: string, userId: string): Promise<boolean> => {
+      const flip = await c.query<{ id: string }>(
+        `UPDATE character_concepts
+            SET status = 'submitted', confirmed_at = NULL, error = NULL, updated_at = now()
+          WHERE campaign_id = $1 AND user_id = $2
+            AND status IN ('completed', 'failed')
+            AND campaign_id IN (SELECT id FROM campaigns WHERE id = $1 AND status <> 'active')
+          RETURNING id`,
+        [campaignId, userId],
+      )
+      if (flip.rows.length === 0) return false
+      // Clear the generated sheet so "Start over" regenerates from scratch. The
+      // character-sheet stage keys its lookup-or-INSERT on campaign_characters;
+      // with the join gone it INSERTs a fresh characters row on resubmission.
+      await c.query(
+        `DELETE FROM characters
+          WHERE id IN (
+            SELECT character_id FROM campaign_characters
+             WHERE campaign_id = $1 AND user_id = $2
+          )`,
+        [campaignId, userId],
+      )
+      return true
+    },
+
+    /**
+     * MYT-90 A7: "This is me" — persist the player's confirmation so a reload
+     * doesn't bounce them out of party staging. Sets confirmed_at on the
+     * caller's OWN 'completed' concept. COALESCE keeps the FIRST confirmation
+     * timestamp, so a repeated click is a genuine no-op (idempotent). Returns
+     * false when the concept isn't 'completed' (nothing to confirm) → the route
+     * replies 409 not_confirmable.
+     */
+    confirmConcept: async (campaignId: string, userId: string): Promise<boolean> => {
+      const result = await c.query<{ id: string }>(
+        `UPDATE character_concepts
+            SET confirmed_at = COALESCE(confirmed_at, now()), updated_at = now()
+          WHERE campaign_id = $1 AND user_id = $2 AND status = 'completed'
+          RETURNING id`,
+        [campaignId, userId],
+      )
+      return result.rows.length > 0
+    },
   }
 }
 

@@ -183,6 +183,16 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // route exists for the player UI (a Frontend ticket), so it has no dev-tool panel.
   { method: 'GET', path: '/api/campaigns/:campaignId/wiki' },
 
+  // POST /api/campaigns/:campaignId/characters/reset + /confirm (MYT-90 A7):
+  // player-facing character-reveal actions — "Start over" (self-scoped concept
+  // reset → resubmittable + cleared sheet) and "This is me" (confirmed_at →
+  // reload-stable party staging). Consumed by the frontend web app (client-core
+  // resetCharacterConcept / confirmCharacter + the D6 reveal wiring), not a
+  // dev-tool inspector panel — the submit-character-concept + finalize panels
+  // already cover the dev-tool character-creation surface.
+  { method: 'POST', path: '/api/campaigns/:campaignId/characters/reset' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/characters/confirm' },
+
   // GET /api/campaigns/:campaignId/transcript/search (MYT-74d): player-facing
   // FTS lookback over the transcript. Member-readable; no dev-tool inspector
   // surface (the player UI owns the search box, a Frontend ticket).

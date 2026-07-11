@@ -60,6 +60,9 @@ vi.mock('../contract/pipeline-routes.js', () => ({
     // MYT-54 cross-PC integration (campaign-characters plugin):
     'GET /api/campaigns/:campaignId/character-creation-progress',
     'POST /api/campaigns/:campaignId/finalize-character-creation',
+    // MYT-90 A7 self-scoped concept reset + confirm (campaign-characters plugin):
+    'POST /api/campaigns/:campaignId/characters/reset',
+    'POST /api/campaigns/:campaignId/characters/confirm',
     // MYT-62 player-facing prep-status SSE (campaigns plugin, pipelineRoute):
     'GET /api/campaigns/:campaignId/prep-status',
     // Phantom entry — no plugin registers this route. The onReady hook

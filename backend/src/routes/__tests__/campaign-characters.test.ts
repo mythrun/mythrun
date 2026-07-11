@@ -116,7 +116,7 @@ async function insertConcept(
   pool: Pool,
   campaignId: string,
   userId: string,
-  status: 'submitted' | 'processing' | 'completed' | 'failed' = 'submitted',
+  status: 'submitted' | 'processing' | 'completed' | 'failed' | 'integrated' = 'submitted',
 ): Promise<string> {
   const id = uuidv7()
   await pool.query(
@@ -1429,6 +1429,278 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/api/campaigns/${seed.campaignId}/random-tables`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+  })
+
+  // ======================================================================
+  // MYT-90 A7: POST /api/campaigns/:campaignId/characters/reset
+  //
+  // Self-scoped "Start over" on the character reveal. Any member acts on
+  // their OWN concept: a completed/failed concept flips back to a
+  // resubmittable 'submitted' state and its generated character sheet is
+  // cleared, so POST /characters (which 409s concept_locked on completed)
+  // can re-run the per-player pipeline. 409 not_resettable when the concept
+  // is integrated (or absent) — can't unwind an integrated character.
+  // ======================================================================
+  describe('POST /characters/reset (MYT-90 A7)', () => {
+    // Insert a generated `characters` row + campaign_characters join for a
+    // (campaign, user) — mirrors what the character-sheet stage writes once a
+    // concept completes. Columns match the T17 attachCharacter fixture (the
+    // MYT-70 ledger columns on `characters` are nullable / defaulted).
+    async function attachSheet(
+      campaignId: string,
+      userId: string,
+      name: string,
+    ): Promise<string> {
+      const characterId = uuidv7()
+      await pool.query(
+        `INSERT INTO characters (
+           id, user_id, name, level, class, species, background,
+           str, dex, con, int, wis, cha,
+           hit_points, max_hit_points, armor_class, proficiency_bonus
+         ) VALUES ($1, $2, $3, 1, 'Cleric', 'Human', 'Sage',
+                   10, 10, 10, 10, 10, 10, 10, 10, 10, 2)`,
+        [characterId, userId, name],
+      )
+      await pool.query(
+        `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+         VALUES ($1, $2, $3, $4)`,
+        [uuidv7(), campaignId, characterId, userId],
+      )
+      return characterId
+    }
+
+    it('204 — resets a completed concept: status → submitted, confirmed_at cleared, sheet gone', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+      // A prior confirmation must be cleared by the reset.
+      await pool.query(
+        `UPDATE character_concepts SET confirmed_at = now()
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      const charId = await attachSheet(seed.campaignId, owner.userId, 'Brother Anselm')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/reset`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const concept = await pool.query<{ status: string; confirmed_at: Date | null }>(
+        `SELECT status, confirmed_at FROM character_concepts
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(concept.rows[0]?.status).toBe('submitted')
+      expect(concept.rows[0]?.confirmed_at).toBeNull()
+
+      // Both the join AND the characters row are gone (DELETE cascades the join).
+      const join = await pool.query(
+        `SELECT id FROM campaign_characters WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(join.rows).toHaveLength(0)
+      const chars = await pool.query(`SELECT id FROM characters WHERE id = $1`, [charId])
+      expect(chars.rows).toHaveLength(0)
+    })
+
+    it('204 — resets a failed concept (no character sheet to clear)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'failed')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/reset`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const concept = await pool.query<{ status: string }>(
+        `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(concept.rows[0]?.status).toBe('submitted')
+    })
+
+    it('409 not_resettable — concept is integrated (left untouched)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'integrated')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/reset`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('not_resettable')
+
+      const concept = await pool.query<{ status: string }>(
+        `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(concept.rows[0]?.status).toBe('integrated')
+    })
+
+    it('409 not_resettable — no concept row to reset', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/reset`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('not_resettable')
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/reset`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
+    })
+
+    it('self-scoped — a player resets ONLY their own concept, not a peer’s', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const player = await seedUser(pool, scope, 1)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await addMember(pool, seed.campaignId, player, 'player')
+      await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+      await insertConcept(pool, seed.campaignId, player.userId, 'completed')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/reset`,
+        headers: { 'x-mythrun-dev-sub': player.devSub },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const ownerRow = await pool.query<{ status: string }>(
+        `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      const playerRow = await pool.query<{ status: string }>(
+        `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, player.userId],
+      )
+      expect(ownerRow.rows[0]?.status).toBe('completed') // peer untouched
+      expect(playerRow.rows[0]?.status).toBe('submitted') // caller reset
+    })
+  })
+
+  // ======================================================================
+  // MYT-90 A7: POST /api/campaigns/:campaignId/characters/confirm
+  //
+  // Self-scoped "This is me" on the character reveal. Persists confirmed_at
+  // on the caller's own completed concept so a reload doesn't bounce them out
+  // of party staging. Idempotent (a repeated click keeps the first timestamp
+  // → 204). 409 not_confirmable when the concept isn't completed.
+  // ======================================================================
+  describe('POST /characters/confirm (MYT-90 A7)', () => {
+    it('204 — sets confirmed_at on a completed concept', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/confirm`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const row = await pool.query<{ confirmed_at: Date | null }>(
+        `SELECT confirmed_at FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(row.rows[0]?.confirmed_at).not.toBeNull()
+    })
+
+    it('204 — idempotent: a second confirm keeps the first timestamp', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+
+      const first = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/confirm`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(first.statusCode).toBe(204)
+      const firstRow = await pool.query<{ confirmed_at: Date }>(
+        `SELECT confirmed_at FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      const firstTs = firstRow.rows[0]?.confirmed_at
+
+      const second = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/confirm`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(second.statusCode).toBe(204)
+      const secondRow = await pool.query<{ confirmed_at: Date }>(
+        `SELECT confirmed_at FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      // COALESCE keeps the first confirmation timestamp exactly.
+      expect(secondRow.rows[0]?.confirmed_at).toEqual(firstTs)
+    })
+
+    it('409 not_confirmable — concept is not completed (submitted)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      await insertConcept(pool, seed.campaignId, owner.userId, 'submitted')
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/confirm`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('not_confirmable')
+
+      const row = await pool.query<{ confirmed_at: Date | null }>(
+        `SELECT confirmed_at FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(row.rows[0]?.confirmed_at).toBeNull()
+    })
+
+    it('409 not_confirmable — no concept row', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/confirm`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('not_confirmable')
+    })
+
+    it('403 not_campaign_member — stranger', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const stranger = await seedUser(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters/confirm`,
         headers: { 'x-mythrun-dev-sub': stranger.devSub },
       })
       expect(res.statusCode).toBe(403)

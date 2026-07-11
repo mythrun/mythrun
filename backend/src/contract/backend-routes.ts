@@ -76,6 +76,11 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // MYT-54 T13 — owner fan-in trigger that flips campaigns.pre_integration_notes
   // and enqueues the singleton `ci-${campaignId}` character-integration job.
   { method: 'POST', path: '/api/campaigns/:campaignId/finalize-character-creation' },
+  // MYT-90 A7 — self-scoped concept reset ("Start over") + confirm ("This is
+  // me") on the character reveal. Both pipelineRoute; player-facing (no
+  // dev-tool panel — see verify-registry.ts EXEMPT_ROUTES + coverage.json).
+  { method: 'POST', path: '/api/campaigns/:campaignId/characters/reset' },
+  { method: 'POST', path: '/api/campaigns/:campaignId/characters/confirm' },
   // MYT-63 — session-prep trigger / list / read / reset
   { method: 'POST', path: '/api/campaigns/:campaignId/session-prep' },
   { method: 'GET', path: '/api/campaigns/:campaignId/session-preps' },
