@@ -39,7 +39,7 @@ vi.mock('@mythrun/client-core', async (importOriginal) => {
     // starting-situation flag (see campaign-detail.tsx). Default `chosenIndex: null`
     // → the reveal (pre-situation). `getMyCampaigns` feeds the campaign page's world
     // identity (worldName + worldColors), found by id.
-    getStartingSituations: vi.fn().mockResolvedValue({ situations: [], chosenIndex: null }),
+    getStartingSituations: vi.fn().mockResolvedValue({ situations: [], chosenIndex: null, startingLevel: null }),
     getMyCampaigns: vi.fn().mockResolvedValue({ campaigns: [] }),
     // The ETA history (audit ③): the route fetches it once while generating.
     // Cold-start `[]` → the status card shows the bars with no estimate.
@@ -299,7 +299,7 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
         stages: CONNECTIONS_DONE_STAGES,
       }),
     )
-    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null })
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null, startingLevel: null })
     const { rerender } = renderDetail()
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
     // The tail finishes: the stream advances to world_ready. The owner is
@@ -338,7 +338,7 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     mockStream.mockReturnValue(
       streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
     )
-    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null })
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null, startingLevel: null })
     renderDetail()
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
     // The final state, instantly — no walk for someone who didn't watch.
@@ -384,7 +384,7 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
       streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
     )
     // No situation chosen yet → the one-time reveal.
-    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null })
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: null, startingLevel: null })
     renderDetail()
     // The reveal mounts after the settling gate resolves; findBy flushes that.
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
@@ -403,7 +403,7 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     // chosen-flag resolve window keeps today's settling gate, so an owner who
     // already picked never sees a reveal flash.
     mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'world_ready' }))
-    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1 })
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1, startingLevel: null })
     renderDetail()
     expect(screen.getByTestId('campaign-settling')).toBeDefined()
     expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
@@ -414,7 +414,7 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
       streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
     )
     // A chosen situation → the reveal is done; the campaign page (D5) lands.
-    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1 })
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1, startingLevel: null })
     mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
     renderDetail()
     // The campaign page: world identity + both MYT-89 boundary seams. The world

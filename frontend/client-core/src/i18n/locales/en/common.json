@@ -256,7 +256,9 @@
     "prompt": "[ph: where does it begin?]",
     "loading": "[ph: finding your openings]",
     "empty": "[ph: no openings yet]",
-    "error": "[ph: something went wrong — try again]"
+    "error": "[ph: something went wrong — try again]",
+    "holdTitle": "[ph: the table is being set]",
+    "hold": "[ph: your host is choosing where it begins]"
   },
   "campaign": {
     "settling": "[ph: settling your campaign]",
@@ -270,5 +272,28 @@
       "title": "[ph: everyone makes a character]",
       "body": "[ph: each player builds who they are — character creation lands next (MYT-90)]"
     }
+  },
+  "characterCreate": {
+    "chooser": {
+      "prompt": "[ph: how do you want to make your character?]",
+      "freeform": {
+        "body": "[ph: describe them in your own words]",
+        "cta": "[ph: tell us who you are]"
+      },
+      "guided": {
+        "body": "[ph: answer a few questions and we'll build the sheet]",
+        "cta": "[ph: build your character]"
+      }
+    },
+    "freeform": {
+      "conceptPrompt": "[ph: who are you?]",
+      "conceptWhisper": "[ph: a name, a calling, a wound — whatever matters most]",
+      "groundingPrompt": "[ph: and how do you come to be here?]",
+      "groundingWhisperFallback": "[ph: what brought your character to this place?]",
+      "tooShort": "[ph: tell us a little more]",
+      "error": "[ph: something went wrong — try again]"
+    },
+    "guidedTodo": "[ph: the guided builder lands next (MYT-90 D4)]",
+    "processing": "[ph: bringing your character to life…]"
   }
 }
