@@ -22,6 +22,9 @@ export { VisuallyHidden } from './components/VisuallyHidden/VisuallyHidden.tsx'
 // Streamed prose (myth-umggn) — LLM text arriving live, with the writing caret.
 export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
 
+// Character creation (MYT-90).
+export { LevelCard } from './components/LevelCard/LevelCard.tsx'
+
 // Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
 // IconButton).
 export { Icon } from './components/Icon/Icon.tsx'
