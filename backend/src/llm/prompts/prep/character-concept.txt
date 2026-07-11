@@ -24,7 +24,6 @@ Key tensions: {{keyTensions}}
 - race, class, background: SRD-compliant. Use the canonical SRD vocabulary
   (cleric/wizard/rogue/etc., elf/dwarf/halfling/etc.) — these are platform
   terms, not franchise borrowings.
-- level: 1.
 - alignment, age, gender: as fits the concept.
 - physical_description: 1-3 sentences.
 - personality_traits / ideals / bonds / flaws: 1-3 each, specific to this

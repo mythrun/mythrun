@@ -320,6 +320,32 @@ describe('runCharacterSheetStage', () => {
     })
   })
 
+  it('threads narrative.level into the rendered {{level}} placeholder', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    mockGenerateText.mockResolvedValueOnce({
+      output: SHEET,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      // A level-5 party: the rendered prompt must carry level 5, not the old
+      // hardcoded level-1 framing.
+      narrative: { ...NARRATIVE, level: 5 },
+      worldTone: 't',
+      worldEra: 'e',
+    })
+
+    const prompt = mockGenerateText.mock.calls[0]?.[0]?.prompt as string | undefined
+    expect(prompt).toContain('level-5')
+    // No unrendered placeholder leaks through.
+    expect(prompt).not.toContain('{{level}}')
+  })
+
   it('idempotent re-run: existing characters row is UPDATEd, sub-tables DELETEd and re-INSERTed', async () => {
     const { userId, worldId, campaignId } = await seedMember()
 

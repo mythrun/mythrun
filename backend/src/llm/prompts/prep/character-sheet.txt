@@ -1,5 +1,5 @@
 You are a D&D 5e character-sheet assistant. Given a narrative character concept,
-generate SRD-compliant mechanical stats and equipment for a level-1 character.
+generate SRD-compliant mechanical stats and equipment for a level-{{level}} character.
 
 # Narrative concept (from stage 2)
 Name: {{name}}
@@ -14,38 +14,69 @@ Backstory: {{backstory}}
 World tone: {{tone}}
 World era: {{era}}
 
+# Target level (build EXACTLY to this level)
+This character is level {{level}} — the party's fixed starting level (1–5). Every
+rule below is level-parametric: apply it for level {{level}} and nothing higher.
+The character has all base-class (and, where the class has one by this level,
+subclass) progression a level-{{level}} character of this class has earned, and
+none of the features, slots, or spells that arrive at higher levels.
+
 # Output requirements
 - Ability scores (str, dex, con, int, wis, cha): integers 8-18 typical, 3-20
   allowed. Use the 27-point-buy distribution as a guide; class-priority
-  abilities should be highest.
-- hit_points + max_hit_points: level-1 class HP per SRD (cleric/fighter/etc.).
+  abilities should be highest. If the character has reached an Ability Score
+  Improvement by level {{level}} (see features below), bake that improvement
+  INTO these scores — do not report the pre-ASI array.
+- hit_points + max_hit_points: SRD hit points for a level-{{level}} character of
+  this class. Level 1 is the class hit die maximum + CON modifier; every level
+  after 1 adds the class's fixed per-level amount (the SRD "average" value for
+  the hit die) + CON modifier. Sum across all {{level}} levels.
 - armor_class: derived from starting equipment + dex.
-- proficiency_bonus: 2 (level 1).
+- proficiency_bonus: by total level on the SRD proficiency track — 2 at levels
+  1-4, 3 at level 5. Use the value for level {{level}}.
 - starting_gold: class/background-appropriate starting wealth in gold pieces,
-  0-500. A typical level-1 adventurer carries a modest purse after buying their
-  starting kit.
+  0-500. A starting adventurer carries a modest purse after buying their kit; a
+  slightly more seasoned (higher-level) character may hold a little more, but
+  keep it grounded — this is pocket money, not a hoard.
 - hit_die: the class hit die — one of 6, 8, 10, 12 (e.g. wizard d6, rogue d8,
   fighter d10, barbarian d12).
 - spellcasting_progression: decide what KIND of caster THIS character is — your
   judgment, made once, from the concept and class. One of:
-  - "full"  — full caster (wizard, cleric, druid, bard, sorcerer-style).
-  - "half"  — half caster, slots from level 2 (paladin, ranger-style).
-  - "third" — third caster, slots from level 3 (eldritch knight, arcane
-    trickster-style).
+  - "full"  — full caster (wizard, cleric, druid, bard, sorcerer-style):
+    leveled spell slots from level 1.
+  - "half"  — half caster (paladin, ranger-style): NO spell slots at level 1;
+    leveled slots begin at level 2.
+  - "third" — third caster (eldritch knight, arcane trickster-style): NO spell
+    slots below level 3.
   - "pact"  — pact magic (warlock-style: few slots, all at one level, restore
-    on a short rest).
+    on a short rest): pact slots from level 1.
   - "none"  — no leveled spell slots (most martials; also cantrip-only dabblers).
   Flavored class names ("Storm-Touched Sorcerer", "Hollow Knight") still map to
   one of these by their mechanical nature — pick the closest fit.
 - skills: every proficient skill (background + class grants), as
   {name, proficient:true, expertise:false}.
-- features: class features + background features for level 1. Each feature
-  carries max_uses + recharge:
+- features: every class feature the character has gained THROUGH level {{level}},
+  plus background features. Concretely:
+  - Base class features earned at each level from 1 up to and including
+    {{level}} (e.g. a fighter's Second Wind at 1 and Action Surge at 2).
+  - Subclass features: once the class selects its subclass at or before level
+    {{level}}, include the subclass features granted through level {{level}}.
+    Subclass level by class: cleric / sorcerer / warlock at level 1; druid /
+    wizard at level 2; barbarian / bard / fighter / monk / paladin / ranger /
+    rogue at level 3. If the class has NO subclass yet by level {{level}}, emit
+    none.
+  - Ability Score Improvement: most classes gain an ASI at level 4. Represent it
+    by raising the ability scores above (one score by 2, or two by 1) — NOT as a
+    feature row. Default to an ability-score bump, not an arbitrary feat.
+  - Extra Attack: martial classes (fighter, paladin, ranger, barbarian, monk,
+    etc.) gain Extra Attack at level 5 — include it as a feature only when
+    level {{level}} is 5.
+  Each feature carries max_uses + recharge:
   - Limited features carry BOTH: e.g. Second Wind = {max_uses: 1, recharge:
     "short_rest"}; Channel Divinity = {max_uses: 1, recharge: "short_rest"};
     a 1/long-rest feature = {max_uses: 1, recharge: "long_rest"}.
-  - Always-on / passive features (Darkvision, Fighting Style, a domain's static
-    bonus) are unlimited: {max_uses: null, recharge: "none"}.
+  - Always-on / passive features (Darkvision, Fighting Style, Extra Attack, a
+    domain's static bonus) are unlimited: {max_uses: null, recharge: "none"}.
   - Do NOT emit slot-RESTORATION features (Arcane Recovery, Font of Magic /
     sorcery-point slot conversion, or any feature whose effect is "regain a
     spell slot") as TRACKED features (max_uses set). No tool credits a spell
@@ -57,8 +88,20 @@ World era: {{era}}
     rations, ammunition, oil, etc.
   - consumable: false for durable gear — weapons, armor, tools, a holy symbol,
     rope.
-- spells: if the character knows any spells, list cantrips (level 0) and level-1
-  spells as appropriate; otherwise []. Each spell carries:
+- spells: the character's known/prepared cantrips (level 0) and leveled spells
+  appropriate to a level-{{level}} character of this class; otherwise []. Respect
+  CASTER ONSET — a class has no leveled spell slots until its progression turns
+  on, so a character below its onset level MUST NOT be given any leveled spell
+  (level ≥ 1):
+  - full / pact: leveled spells allowed from level 1.
+  - half (paladin, ranger): NO leveled spells at level 1 (and most half-casters
+    grant no cantrips at level 1 either — a level-1 paladin's spell list is
+    typically empty). Leveled spells begin at level 2.
+  - third (eldritch knight, arcane trickster): NO leveled spells below level 3.
+  The HIGHEST spell level you may emit is the top slot level on the SRD table for
+  (this progression, level {{level}}) — e.g. a level-5 full caster reaches
+  level-3 spells; a level-1 full caster only level-1 spells. Never emit a spell
+  above that ceiling. Each spell carries:
   - ritual: true if and only if the spell can be cast as a ritual; false
     otherwise.
   - prepared: see the rule below — this is load-bearing.

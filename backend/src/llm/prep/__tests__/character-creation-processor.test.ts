@@ -386,6 +386,44 @@ describe('runCharacterCreationJob', () => {
     ])
   })
 
+  it('injects campaign.starting_level into the persisted character AND the sheet prompt (ZFC: deterministic level, not the LLM echo)', async () => {
+    const { userId, campaignId } = await seed()
+    // Owner picked a party-wide starting level of 5 (migration 033). The
+    // fan-out seed above leaves starting_level NULL; set it explicitly here.
+    await pool.query(`UPDATE campaigns SET starting_level = 5 WHERE id = $1`, [campaignId])
+    // The concept mock (VALID_CONCEPT) deliberately echoes level 1 — the
+    // processor must OVERRIDE it from campaign.starting_level, never trust
+    // the LLM's echoed level.
+    setupHappyPathMocks()
+
+    await runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId))
+
+    // Invariant: persisted character.level == campaign.starting_level.
+    const character = await pool.query<{ level: number }>(
+      `SELECT c.level FROM characters c
+         JOIN campaign_characters cc ON cc.character_id = c.id
+        WHERE cc.campaign_id = $1 AND cc.user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(character.rows[0]?.level).toBe(5)
+
+    // The override happens BEFORE setConceptOutput, so the persisted concept
+    // narrative (read by MYT-54's campaign-scoped integration) carries the
+    // overridden level 5, not the echoed 1.
+    const concept = await pool.query<{ concept_output: { level: number } | null }>(
+      `SELECT concept_output FROM character_concepts
+        WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.concept_output?.level).toBe(5)
+
+    // The sheet-stage prompt (the 2nd generateText call — location_selection
+    // makes no LLM call, concept is call[0], sheet is call[1]) rendered
+    // {{level}} = 5.
+    const sheetPrompt = mockGenerateText.mock.calls[1]?.[0]?.prompt as string | undefined
+    expect(sheetPrompt).toContain('level-5')
+  })
+
   it('isolates per-player failures: terminal LLM error fails one row without aborting the job', async () => {
     const { userId, campaignId } = await seed()
     // Stage 2 (character_concept) throws a TERMINAL error.

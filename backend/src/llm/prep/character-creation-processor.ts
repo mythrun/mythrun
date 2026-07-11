@@ -118,15 +118,24 @@ export async function runCharacterCreationJob(
     return
   }
 
-  // 2. Resolve worldId once — every stage needs it.
-  // campaigns.world_id is NOT NULL + FK ON DELETE CASCADE, so a row from
-  // campaigns table is guaranteed to have world_id set. The fan-out
-  // route's preHandler proves the campaign exists.
-  const worldId = await repo.campaigns.getWorldId(campaignId)
+  // 2. Resolve worldId + the party's starting level once. Every stage needs
+  //    worldId; the concept override (step 3) needs starting_level.
+  //    campaigns.world_id is NOT NULL + FK ON DELETE CASCADE, so a row from
+  //    campaigns is guaranteed to have world_id set. The fan-out route's
+  //    preHandler proves the campaign exists.
+  const campaign = await repo.campaigns.getWorldAndSituationIndex(campaignId)
   /* c8 ignore next 3 — invariant per preHandler + FK NOT NULL */
-  if (worldId === null) {
+  if (campaign === null) {
     throw new Error(`campaign ${campaignId} not found — preHandler invariant violated`)
   }
+  const worldId = campaign.world_id
+  // MYT-90 A4: the party-wide starting level (1–5, migration 033) is a KNOWN
+  // input, not an LLM judgment (ZFC). The owner picks it between the situation
+  // pick and character creation, so it is set by the time this worker fans out.
+  // Fall back to level 1 — D&D's default starting level and the historical pin —
+  // only for the degraded path where the owner never chose; that still yields a
+  // valid, playable build rather than a null level reaching the schema.
+  const startingLevel = campaign.starting_level ?? 1
 
   // 3. Reuse stage outputs across stages where the next stage needs them.
   //    On re-entry (idempotent), conceptOutput / characterId start null
@@ -171,7 +180,13 @@ export async function runCharacterCreationJob(
       // dispatcher reloads from persisted state if these are null on
       // re-entry, so it's safe to only set them on a fresh claim path.
       if (stage === 'character_concept' && result.concept !== undefined) {
-        conceptOutput = result.concept
+        // MYT-90 A4: OVERRIDE the LLM's echoed level with the campaign's
+        // deterministic starting_level BEFORE persisting (ZFC — the level is a
+        // known input, never the model's call; do NOT trust the echo). Every
+        // downstream consumer reads narrative.level (characters.level, hit dice,
+        // spellSlotsFor, validateCoherence), so this single override carries them
+        // all. Spread (not mutate) so the stage result stays untouched.
+        conceptOutput = { ...result.concept, level: startingLevel }
         // myth-y7xt T2: persist the structured narrative so MYT-54's campaign-
         // scoped character_integration worker can read it.
         await repo.characterConcepts.setConceptOutput(

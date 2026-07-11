@@ -253,6 +253,11 @@ function renderPrompt(args: CharacterSheetArgs): string {
     .replace('{{backstory}}', args.narrative.backstory)
     .replace('{{tone}}', args.worldTone)
     .replace('{{era}}', args.worldEra)
+    // MYT-90 A4: level is deterministic (campaign.starting_level, injected by
+    // the processor). It appears in multiple places in the template, so
+    // replaceAll — the single-shot `.replace` above suffices only for the
+    // once-each narrative/world placeholders.
+    .replaceAll('{{level}}', String(args.narrative.level))
 }
 
 function proficiencyLevel(s: {
