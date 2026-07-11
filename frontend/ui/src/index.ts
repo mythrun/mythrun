@@ -26,6 +26,7 @@ export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
 export { FreeformPrompt } from './components/FreeformPrompt/FreeformPrompt.tsx'
 export { GuidedBuilder } from './components/GuidedBuilder/GuidedBuilder.tsx'
+export { CharacterLoadingBeat } from './components/CharacterLoadingBeat/CharacterLoadingBeat.tsx'
 
 // Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
 // IconButton).
