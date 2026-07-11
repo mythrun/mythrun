@@ -46,6 +46,12 @@ export default defineConfig({
         // use-worldgen-stream) that opens the status SSE, rehydrates from the
         // world-snapshot, and branches the failure→resume path. 100%-gated.
         'src/worldgen/**/*.ts',
+        // MYT-90 character creation: the SRD catalog + subclass-at-level table (B1)
+        // and the client-core brain — flatten-to-conceptText, the guided reducer,
+        // the create-flow machine, and the sheet/roster view-models (B4). All
+        // runtime logic; 100%-gated.
+        'src/srd/**/*.ts',
+        'src/character/**/*.ts',
         'eslint-rules/**/*.js',
       ],
       exclude: [

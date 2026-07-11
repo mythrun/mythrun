@@ -8,6 +8,7 @@
     "./contract": "./src/contract/index.ts",
     "./worldgen": "./src/worldgen/index.ts",
     "./srd": "./src/srd/index.ts",
+    "./character": "./src/character/index.ts",
     "./i18n": "./src/i18n/resources.ts",
     "./tokens": "./src/tokens/generate-palette.mjs",
     "./tokens/scales": "./src/tokens/scales.ts"
