@@ -223,3 +223,35 @@ export type {
   ThemeToggleProps,
   ThemeTogglePlacement,
 } from './theme.ts'
+
+// Character-creation contracts (MYT-90) — the DOM-free prop + shared view-model
+// vocabulary for the whole character-creation frontend. The six @mythrun/ui character
+// components import their props from here; the B4 view-model produces objects of the
+// shared shapes (`CuratedSheet`/`FullSheet`/`LoadingBeat`/`RosterMember`/`GuidedChoice`
+// …). The SRD `ClassName` is re-exported through the same surface so the guided
+// builder reads its class identity off the contract, not a second import. All
+// type-only (§9): pure data + neutral callbacks, no React/DOM types.
+export type {
+  ClassName,
+  GuidedStep,
+  GuidedChoice,
+  GuidedOption,
+  RailStep,
+  LoadingBeat,
+  AbilityAbbrev,
+  AbilityTile,
+  SheetStat,
+  SheetEntry,
+  SheetSkill,
+  CuratedSheet,
+  FullSheet,
+  RosterStatus,
+  RosterMember,
+  CharacterLevel,
+  LevelCardProps,
+  FreeformPromptProps,
+  GuidedBuilderProps,
+  CharacterLoadingBeatProps,
+  CharacterSheetRevealProps,
+  PartyRosterProps,
+} from './character/index.ts'
