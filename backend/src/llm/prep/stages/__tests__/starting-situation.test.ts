@@ -180,6 +180,62 @@ describe('runStartingSituationStage', () => {
     ])
   })
 
+  // MYT-90 A6: each hook carries a generated 2nd-person `invitation` whisper
+  // (the character-creation grounding prompt). The stage must thread it into
+  // the persisted situation entries (starting_situation_entries JSONB) and the
+  // raw output blob (worlds.starting_situations), grounded in that hook.
+  it('threads each hook invitation into the persisted situation entries (MYT-90 A6)', async () => {
+    const repo = makeRepo()
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: {
+        location_hooks: [
+          {
+            title: 'Fog on the Wharf',
+            location_name: 'The Salt-Eaten Wharf',
+            why_interesting:
+              'A waterfront where the fog never lifts and the dock-hands speak in code.',
+            invitation:
+              "The dock-hands' code changed the night you arrived, and one nodded at you like an accomplice. What are they mistaking you for?",
+          },
+          {
+            title: 'The Silent House Above',
+            location_name: 'Lantern Hill',
+            why_interesting: 'The silent house looms; everyone has a theory, no one says theirs.',
+            invitation:
+              'You already have a theory about the silent house on Lantern Hill. Who told it to you, and why did you believe them?',
+          },
+          {
+            title: 'A Road Older Than Light',
+            location_name: 'The Drowned Causeway',
+            why_interesting: 'A road exposed only at low tide, said to lead somewhere older.',
+            invitation:
+              'You have walked the Drowned Causeway at low tide before. What did you go looking for, and did you find it?',
+          },
+        ],
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 1000, outputTokens: 600, totalTokens: 1600 },
+    } as never)
+
+    await runStartingSituationStage(repo as unknown as Repo, baseArgs)
+
+    // Structured entries JSONB carries the invitation per hook (this is the
+    // column GET /starting-situations serves verbatim to the client).
+    expect(repo.worlds.setStartingSituationEntries).toHaveBeenCalledTimes(1)
+    const entriesCall = repo.worlds.setStartingSituationEntries.mock.calls[0] as [string, string]
+    const payload = JSON.parse(entriesCall[1]) as { invitation: string }[]
+    expect(payload.map((p) => p.invitation)).toEqual([
+      expect.stringContaining("dock-hands' code"),
+      expect.stringContaining('silent house'),
+      expect.stringContaining('Drowned Causeway'),
+    ])
+
+    // The raw output blob persisted to worlds.starting_situations also carries it.
+    const proseCall = repo.worlds.setStartingSituations.mock.calls[0] as [string, string]
+    const rawHooks = JSON.parse(proseCall[1]) as { location_hooks: { invitation: string }[] }
+    expect(rawHooks.location_hooks.every((h) => typeof h.invitation === 'string')).toBe(true)
+  })
+
   it('throws LlmStructuredOutputError after one retry when a location_name does not match', async () => {
     const repo = makeRepo()
     repo.entities.listLocationsByWorld.mockResolvedValue([{ id: 'loc-1', name: 'The Real Place' }])

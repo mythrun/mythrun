@@ -32,6 +32,12 @@ const locationHookSchema = z.object({
   title: z.string().min(5).max(60),
   location_name: z.string().min(1).max(200),
   why_interesting: z.string().min(10).max(600),
+  // MYT-90 A6: a short 2nd-person "invitation" whisper generated in THIS same
+  // call so it is grounded in the hook above. Character creation surfaces it as
+  // the prompt whose typed answer becomes the required situationGroundingText
+  // submit field — load-bearing, not decorative. Floor-only (no `.max()` on LLM
+  // prose; the sibling `why_interesting`'s max is not a pattern to copy here).
+  invitation: z.string().min(12),
 })
 
 export const StartingSituationsSchema = z.object({
@@ -125,6 +131,7 @@ export async function runStartingSituationStage(
     locationEntityId: r.locationEntityId,
     locationName: r.locationName,
     prose: r.prose,
+    invitation: r.invitation,
   }))
   // Persist (writes only; LLM done — MYT-55). SQL byte-identical, relocated
   // into the worlds binder. The two single-column UPDATEs stay distinct
@@ -158,6 +165,7 @@ interface ResolvedEntry {
   readonly locationEntityId: string
   readonly locationName: string
   readonly prose: string
+  readonly invitation: string
 }
 
 async function resolveLocationEntries(
@@ -181,6 +189,7 @@ async function resolveLocationEntries(
       locationEntityId: match.id,
       locationName: match.name,
       prose: hook.why_interesting,
+      invitation: hook.invitation,
     })
   }
   return out

@@ -230,14 +230,15 @@ describe('resumeGeneration', () => {
 })
 
 describe('getStartingSituations', () => {
-  it('parses the three hooks + chosenIndex and strips the extra keys', async () => {
+  it('parses the three hooks + chosenIndex, passes invitation through, and strips the extra keys', async () => {
     server.use(
       http.get(`${BASE_URL}/api/campaigns/c-9/starting-situations`, () =>
         HttpResponse.json({
           situations: [
-            // `locationEntityId` (+ any richer keys) strip away under z.object().
-            { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.', locationEntityId: 'ent-1' },
-            { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.', locationEntityId: 'ent-2' },
+            // `locationEntityId` (+ any richer keys) strip away under z.object();
+            // the MYT-90 `invitation` whisper passes through verbatim.
+            { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.', invitation: 'A skiff came in wrong and you were on the dock. What did you see?', locationEntityId: 'ent-1' },
+            { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.', invitation: 'The Salt Ledger says you owe. Do you?', locationEntityId: 'ent-2' },
           ],
           chosenIndex: null,
         }),
@@ -245,11 +246,30 @@ describe('getStartingSituations', () => {
     )
     await expect(getStartingSituations(testCtx, 'c-9')).resolves.toEqual({
       situations: [
-        { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.' },
-        { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.' },
+        { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.', invitation: 'A skiff came in wrong and you were on the dock. What did you see?' },
+        { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.', invitation: 'The Salt Ledger says you owe. Do you?' },
       ],
       chosenIndex: null,
     })
+  })
+
+  // MYT-90 A6 backward-compat: a pre-MYT-90 world's JSONB lacks `invitation`. The
+  // optional field must NOT fail the Zod parse, and the transform fills a generic
+  // fallback so the character-creation screen always has a grounding prompt.
+  it('fills a generic fallback invitation for a pre-MYT-90 world (no invitation)', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/c-9/starting-situations`, () =>
+        HttpResponse.json({
+          situations: [
+            { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.' },
+          ],
+          chosenIndex: null,
+        }),
+      ),
+    )
+    const res = await getStartingSituations(testCtx, 'c-9')
+    expect(typeof res.situations[0]?.invitation).toBe('string')
+    expect((res.situations[0]?.invitation ?? '').length).toBeGreaterThan(0)
   })
 
   it('throws a typed HttpError 404 when the situations stage has not run', async () => {

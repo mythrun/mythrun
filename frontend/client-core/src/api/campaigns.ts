@@ -112,15 +112,28 @@ export function resumeGeneration(ctx: ApiContext, campaignId: string): Promise<R
 // idempotent-success and proceeds to the campaign page anyway.
 // -----------------------------------------------------------------------------
 
-/** One opening hook from GET …/starting-situations. `title`/`locationName`/`prose`
- *  are LLM-authored DATA (not i18n) the screen renders verbatim; the backend's
- *  `locationEntityId` (+ any richer keys) strip away under `z.object()`. */
-const StartingSituationSchema = z.object({
-  index: z.number().int(),
-  title: z.string(),
-  locationName: z.string(),
-  prose: z.string(),
-})
+/** Fallback grounding prompt for pre-MYT-90 worlds whose starting-situation
+ *  JSONB predates the generated `invitation` whisper. Every new world carries a
+ *  situation-specific invitation; this generic prompt only surfaces for a legacy
+ *  world so the character-creation screen always has a grounding prompt to show. */
+const GENERIC_INVITATION = 'What brought your character to this place?'
+
+/** One opening hook from GET …/starting-situations. `title`/`locationName`/`prose`/
+ *  `invitation` are LLM-authored DATA (not i18n) the screen renders verbatim; the
+ *  backend's `locationEntityId` (+ any richer keys) strip away under `z.object()`.
+ *
+ *  `invitation` (MYT-90) is OPTIONAL on the wire — a pre-MYT-90 world's JSONB lacks
+ *  it, so a required field would fail the Zod parse for every legacy world. The
+ *  transform fills a generic fallback so consumers always receive a string. */
+const StartingSituationSchema = z
+  .object({
+    index: z.number().int(),
+    title: z.string(),
+    locationName: z.string(),
+    prose: z.string(),
+    invitation: z.string().optional(),
+  })
+  .transform((s) => ({ ...s, invitation: s.invitation ?? GENERIC_INVITATION }))
 
 export type StartingSituation = z.infer<typeof StartingSituationSchema>
 
