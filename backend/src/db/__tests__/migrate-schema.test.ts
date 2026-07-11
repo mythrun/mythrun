@@ -135,6 +135,13 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
     check_clause: `CHECK (((pre_integration_notes IS NULL) OR (length(pre_integration_notes) <= 4000)))`,
   },
   {
+    // MYT-90 migration 033: party-wide starting level (1–5), NULL-tolerant.
+    // Ordered before starting_situation_index — pg sorts CHECKs by conname and
+    // campaigns_starting_level_check < campaigns_starting_situation_index_check.
+    table_name: 'campaigns',
+    check_clause: `CHECK (((starting_level IS NULL) OR ((starting_level >= 1) AND (starting_level <= 5))))`,
+  },
+  {
     table_name: 'campaigns',
     check_clause: `CHECK (((starting_situation_index IS NULL) OR ((starting_situation_index >= 0) AND (starting_situation_index <= 2))))`,
   },
@@ -828,6 +835,7 @@ describe('schema-parity (integration)', () => {
       '030_world_color_identity.sql',
       '031_relationship_access_level.sql',
       '032_world_introduction.sql',
+      '033_starting_level.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
