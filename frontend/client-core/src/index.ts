@@ -41,6 +41,26 @@ export type {
   StartingSituationsResponse,
   ChooseStartingSituationResult,
 } from './api/campaigns.ts'
+// MYT-90 character-creation API layer (B2): the per-player character routes as
+// imperative client-core slices. `setStartingLevel` lives in its own module.
+export {
+  submitCharacter,
+  getCharacters,
+  getCharacter,
+  getCharacterCreationProgress,
+  finalizeCharacterCreation,
+  resetCharacterConcept,
+  confirmCharacter,
+} from './api/characters.ts'
+export type {
+  SubmitCharacterBody,
+  SubmitCharacterResponse,
+  PartyRoster,
+  CharacterFull,
+  CharacterCreationProgress,
+  FinalizeResult,
+} from './api/characters.ts'
+export { setStartingLevel } from './api/starting-level.ts'
 export { synthesizePreview, reworkPreview, createCampaign } from './api/campaign-create.ts'
 // myth-umggn: the STREAMED guided synthesis — the world brief writing itself.
 // `startSynthesisStream` opens the one-shot SSE POST; `useSynthesisState` is

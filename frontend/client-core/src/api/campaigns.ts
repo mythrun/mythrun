@@ -138,10 +138,13 @@ const StartingSituationSchema = z
 export type StartingSituation = z.infer<typeof StartingSituationSchema>
 
 /** GET …/starting-situations response: the three hooks + the owner's prior pick
- *  (`chosenIndex` is null until the owner POSTs). */
+ *  (`chosenIndex` is null until the owner POSTs) + the party's starting level
+ *  (`startingLevel`, MYT-90 A3/A6 — null until the owner sets it via
+ *  POST …/starting-level; the backend GET now always emits the column). */
 const StartingSituationsResponseSchema = z.object({
   situations: z.array(StartingSituationSchema),
   chosenIndex: z.number().int().nullable(),
+  startingLevel: z.number().int().nullable(),
 })
 
 export type StartingSituationsResponse = z.infer<typeof StartingSituationsResponseSchema>

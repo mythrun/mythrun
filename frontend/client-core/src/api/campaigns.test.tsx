@@ -241,6 +241,8 @@ describe('getStartingSituations', () => {
             { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.', invitation: 'The Salt Ledger says you owe. Do you?', locationEntityId: 'ent-2' },
           ],
           chosenIndex: null,
+          // MYT-90 A3/A6: the GET now always carries the party starting level.
+          startingLevel: 3,
         }),
       ),
     )
@@ -250,6 +252,7 @@ describe('getStartingSituations', () => {
         { index: 1, title: 'A debt due', locationName: 'The Salt Ledger', prose: 'The house wants paying.', invitation: 'The Salt Ledger says you owe. Do you?' },
       ],
       chosenIndex: null,
+      startingLevel: 3,
     })
   })
 
@@ -264,6 +267,8 @@ describe('getStartingSituations', () => {
             { index: 0, title: 'Low tide', locationName: 'Ashfen Reach', prose: 'A skiff came in wrong.' },
           ],
           chosenIndex: null,
+          // MYT-90 A3/A6: null until the owner sets the party level.
+          startingLevel: null,
         }),
       ),
     )
