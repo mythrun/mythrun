@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Situation Pick</title>
+<style>
+  :root{
+    --bg:#EFE9DC; --surface:#F8F4EA; --ink:#231B12; --ink2:#3D3528; --ink3:#66604F;
+    --line:#C9BFA8; --ember:#8A5A3C; --ember-wash:#f0e4d8;
+    --serif:"Source Serif 4",Georgia,serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);line-height:1.55;padding:28px 22px 60px}
+  .wrap{max-width:1120px;margin:0 auto}
+  .crumb{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:18px}
+  .crumb b{color:var(--ember)}
+  .device-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);margin:6px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h1{font-family:var(--serif);font-size:1.9rem;font-weight:600;margin:0 0 5px;letter-spacing:-.01em}
+  .lede{color:var(--ink2);font-size:1.02rem;margin:0 0 4px;max-width:60ch}
+  .owner-note{font-family:var(--mono);font-size:.66rem;color:var(--ink3);letter-spacing:.03em;margin:8px 0 22px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{border:1.5px solid var(--ink);background:var(--surface);padding:0;display:flex;flex-direction:column;cursor:pointer;transition:box-shadow .12s}
+  .card:hover{box-shadow:0 3px 0 var(--ember)}
+  .card.sel{box-shadow:inset 0 0 0 2px var(--ember);border-color:var(--ember)}
+  .card .loc{font-family:var(--mono);font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);padding:12px 14px 0}
+  .card h3{font-size:1.15rem;margin:5px 14px 8px;line-height:1.2}
+  .card .prose{color:var(--ink2);font-size:.9rem;padding:0 14px 14px;flex:1}
+  .card .foot{border-top:1px solid var(--line);padding:9px 14px;font-family:var(--mono);font-size:.62rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center}
+  .card.sel .foot{color:var(--ember)}
+  .cta{margin-top:26px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .btn{font-family:var(--mono);font-size:.74rem;letter-spacing:.05em;text-transform:uppercase;padding:12px 22px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer}
+  .btn.ghost{background:transparent;color:var(--ink2);border-color:var(--line)}
+  .hint{font-family:var(--mono);font-size:.64rem;color:var(--ink3);letter-spacing:.03em}
+  /* phone frame */
+  .phone{max-width:390px;margin:0 auto;border:1.5px solid var(--line);background:var(--bg);padding:20px 16px 26px}
+  .phone .cards{grid-template-columns:1fr;gap:12px}
+  .phone h1{font-size:1.5rem}
+  .sample{font-family:var(--mono);font-size:.6rem;color:var(--ink3);opacity:.8;margin-top:34px;letter-spacing:.03em;text-align:center}
+  hr.div{border:0;border-top:2px solid var(--ink);margin:44px 0 30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb">Reveal ✓ &nbsp;›&nbsp; <b>Where does your story begin?</b> &nbsp;›&nbsp; Create your character</div>
+
+  <div class="device-label">Desktop — owner picks 1 of 3 (party-wide)</div>
+  <h1>Where does your story begin?</h1>
+  <p class="lede">Your world offered three ways in. Choose one — it sets the opening scene for the whole party.</p>
+  <p class="owner-note">◆ Owner decides · the whole table starts here · you can still shape who you are next</p>
+
+  <div class="cards">
+    <div class="card" data-choice="sit-0" onclick="toggleSelect(this)">
+      <div class="loc">Saltmarket Steps · Bransgate</div>
+      <h3>The debt that isn’t yours</h3>
+      <p class="prose">A collector’s ledger names your party for a stranger’s loan. The wharf remembers the stranger. You have until the tide turns to decide whether you pay, run, or ask who wrote your names in the book.</p>
+      <div class="foot"><span>Opening scene</span><span>select ›</span></div>
+    </div>
+    <div class="card" data-choice="sit-1" onclick="toggleSelect(this)">
+      <div class="loc">The Ashfair · Underkeep</div>
+      <h3>A door that was walled up</h3>
+      <p class="prose">The night market sells everything but answers. Behind the spice stalls, fresh mortar seals a doorway that was open last week — and the mason who did it hasn’t been seen since. Someone paid for silence.</p>
+      <div class="foot"><span>Opening scene</span><span>select ›</span></div>
+    </div>
+    <div class="card sel" data-choice="sit-2" onclick="toggleSelect(this)">
+      <div class="loc">Greenward Toll · The Verge</div>
+      <h3>The caravan that arrived empty</h3>
+      <p class="prose">Six wagons rolled through the toll gate on schedule, drivers at the reins, cargo manifests stamped. Every wagon was empty. The drivers don’t remember the road. You’re the first to notice.</p>
+      <div class="foot"><span>Chosen</span><span>◆ this is where we begin</span></div>
+    </div>
+  </div>
+
+  <div class="cta">
+    <button class="btn">This is where we begin →</button>
+    <span class="hint">Locks the situation for every player · members joining see this scene, then make their own character</span>
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Mobile — same choice, stacked, one card at a time as you scroll</div>
+  <div class="phone">
+    <div class="crumb"><b>Where does your story begin?</b></div>
+    <h1>Where does your story begin?</h1>
+    <p class="lede" style="font-size:.95rem">Your world offered three ways in. Choose one — it sets the opening scene for the whole party.</p>
+    <div class="cards">
+      <div class="card" data-choice="m-sit-0" onclick="toggleSelect(this)">
+        <div class="loc">Saltmarket Steps · Bransgate</div>
+        <h3>The debt that isn’t yours</h3>
+        <p class="prose">A collector’s ledger names your party for a stranger’s loan. You have until the tide turns to decide whether you pay, run, or ask who wrote your names in the book.</p>
+        <div class="foot"><span>Opening scene</span><span>select ›</span></div>
+      </div>
+      <div class="card sel" data-choice="m-sit-2" onclick="toggleSelect(this)">
+        <div class="loc">Greenward Toll · The Verge</div>
+        <h3>The caravan that arrived empty</h3>
+        <p class="prose">Six wagons rolled through the toll gate on schedule. Every wagon was empty. The drivers don’t remember the road. You’re the first to notice.</p>
+        <div class="foot"><span>Chosen</span><span>◆ begin here</span></div>
+      </div>
+    </div>
+    <div class="cta"><button class="btn" style="width:100%">This is where we begin →</button></div>
+  </div>
+
+  <p class="sample">Situation title · location · prose are real backend fields (getStartingSituations). Sample copy shown; ships as generated situation text.</p>
+</div>
+</body>
+</html>

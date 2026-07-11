@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Creation — Flow</title>
+<style>
+  :root{
+    --bg:#EFE9DC; --surface:#F8F4EA; --ink:#231B12; --ink2:#3D3528; --ink3:#66604F;
+    --line:#C9BFA8; --ember:#8A5A3C; --ember-wash:#f0e4d8;
+    --serif:"Source Serif 4",Georgia,serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);
+    line-height:1.5;padding:32px 24px 64px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:1.75rem;font-weight:600;margin:0 0 4px}
+  .sub{font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--ink3);margin:0 0 28px}
+  .lane-label{font-family:var(--mono);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ember);margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .lane{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
+  .step{position:relative;background:var(--surface);border:1.5px solid var(--ink);
+    padding:12px 14px;min-width:132px;flex:1 1 132px;max-width:200px}
+  .step .k{font-family:var(--mono);font-size:.62rem;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--ink3);display:block;margin-bottom:5px}
+  .step .t{font-size:.92rem;font-weight:600;line-height:1.25}
+  .step.shipped{border-color:var(--line);background:var(--bg);color:var(--ink3)}
+  .step.shipped .t{color:var(--ink2);font-weight:400}
+  .step.ext{border-style:dashed;border-color:var(--ink3);background:var(--bg)}
+  .step .tag{position:absolute;top:-9px;right:8px;font-family:var(--mono);font-size:.56rem;
+    letter-spacing:.05em;text-transform:uppercase;padding:1px 6px;background:var(--ember);color:#fff}
+  .step .tag.gray{background:var(--ink3)}
+  .step .tag.line{background:transparent;color:var(--ink3);border:1px solid var(--ink3)}
+  .arrow{display:flex;align-items:center;color:var(--ink3);font-size:1.1rem;padding:0 1px}
+  .legend{display:flex;gap:20px;flex-wrap:wrap;margin:22px 0 4px;font-family:var(--mono);
+    font-size:.66rem;color:var(--ink3);letter-spacing:.03em}
+  .legend span{display:flex;align-items:center;gap:7px}
+  .sw{width:22px;height:13px;border:1.5px solid var(--ink);background:var(--surface);display:inline-block}
+  .sw.shipped{border-color:var(--line);background:var(--bg)}
+  .sw.ext{border-style:dashed;border-color:var(--ink3);background:var(--bg)}
+  .q{margin-top:40px;border-top:2px solid var(--ink);padding-top:22px}
+  .q h2{font-size:1.15rem;margin:0 0 3px}
+  .q .sub2{color:var(--ink3);font-size:.92rem;margin:0 0 16px}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .opt{border:1.5px solid var(--ink);background:var(--surface);padding:16px 16px 14px;cursor:pointer;
+    transition:background .12s,box-shadow .12s}
+  .opt:hover{background:var(--ember-wash)}
+  .opt.selected{box-shadow:inset 0 0 0 2px var(--ember);border-color:var(--ember)}
+  .opt .ol{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ember);margin-bottom:7px}
+  .opt h3{font-size:1rem;margin:0 0 7px}
+  .opt p{margin:0;font-size:.9rem;color:var(--ink2);line-height:1.45}
+  .mini{display:flex;gap:5px;margin-top:12px}
+  .mini .b{border:1.2px solid var(--line);background:var(--bg);font-family:var(--mono);
+    font-size:.56rem;color:var(--ink3);padding:4px 6px;text-align:center;flex:1}
+  .mini .b.hot{border-color:var(--ember);color:var(--ember);background:var(--ember-wash)}
+  @media(max-width:720px){.opts{grid-template-columns:1fr}.step{max-width:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Character creation — the full phase-4 arc</h1>
+  <p class="sub">MYT-90 · world reveal → playable campaign · owner + join variants</p>
+
+  <div class="lane-label">Owner journey</div>
+  <div class="lane">
+    <div class="step shipped"><span class="k">Shipped</span><span class="t">World reveal</span><span class="tag gray">done</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">Owner only</span><span class="t">Pick starting situation</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">Path A / B</span><span class="t">Create your character</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">Loading → sheet</span><span class="t">Meet your character</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">+ invite (MYT-91)</span><span class="t">Party assembly</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step ext"><span class="k">Owner finalizes</span><span class="t">Begin play</span><span class="tag line">later</span></div>
+  </div>
+
+  <div class="lane-label">Member journey (accepts an invite)</div>
+  <div class="lane">
+    <div class="step ext"><span class="k">MYT-91</span><span class="t">Accept invite</span><span class="tag line">that issue</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">Briefer</span><span class="t">World intro summary</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">Situation already set</span><span class="t">Create your character</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="k">Loading → sheet</span><span class="t">Meet your character</span><span class="tag">new</span></div>
+    <div class="arrow">→</div>
+    <div class="step ext"><span class="k">Waits</span><span class="t">Owner finalizes → play</span><span class="tag line">later</span></div>
+  </div>
+
+  <div class="legend">
+    <span><i class="sw"></i> This issue (MYT-90)</span>
+    <span><i class="sw shipped"></i> Already shipped</span>
+    <span><i class="sw ext"></i> Adjacent issue / boundary</span>
+  </div>
+
+  <div class="q">
+    <h2>Where does the owner's starting-situation pick live?</h2>
+    <p class="sub2">The backend 409s any character submit until the owner picks 1 of 3 starting situations — party-wide. It's the one bit of connective tissue between the shipped reveal and character creation. Click the one that feels right.</p>
+    <div class="opts">
+      <div class="opt" data-choice="distinct" onclick="toggleSelect(this)">
+        <div class="ol">Option A</div>
+        <h3>A distinct owner-only screen after the reveal</h3>
+        <p>Exploring the world reveal ends with a clear “Begin your story” CTA → a dedicated “Where does your story begin?” screen (3 situation cards) → then character creation. Clean separation; leaves the shipped reveal untouched.</p>
+        <div class="mini">
+          <div class="b">Reveal ✓</div><div class="b hot">Situation pick</div><div class="b">Create</div>
+        </div>
+      </div>
+      <div class="opt" data-choice="folded" onclick="toggleSelect(this)">
+        <div class="ol">Option B</div>
+        <h3>Folded into the reveal’s closing moment</h3>
+        <p>The reveal’s “Continue” becomes the situation choice — the 3 beginnings surface as the culmination of exploring the world, then straight into creation. More cinematic, but reopens the just-shipped reveal composition.</p>
+        <div class="mini">
+          <div class="b hot">Reveal → choose beginning</div><div class="b">Create</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

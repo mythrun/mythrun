@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Party + Finalize</title>
+<style>
+  :root{
+    --bg:#EFE9DC; --surface:#F8F4EA; --ink:#231B12; --ink2:#3D3528; --ink3:#66604F;
+    --line:#C9BFA8; --ember:#8A5A3C; --ember-wash:#f0e4d8;
+    --serif:"Source Serif 4",Georgia,serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);line-height:1.55;padding:28px 22px 64px}
+  .wrap{max-width:1120px;margin:0 auto}
+  .crumb{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:18px}
+  .crumb b{color:var(--ember)}
+  .device-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);margin:8px 0 14px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h1{font-family:var(--serif);font-size:1.75rem;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+  .lede{color:var(--ink2);font-size:1rem;margin:0 0 20px;max-width:60ch}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:start}
+  .panelhdr{font-family:var(--mono);font-size:.64rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);margin:0 0 10px}
+  /* member rows */
+  .roster{display:flex;flex-direction:column;gap:10px}
+  .m{display:flex;align-items:center;gap:14px;border:1.5px solid var(--ink);background:var(--surface);padding:12px 14px}
+  .m.empty{border-style:dashed;border-color:var(--line);background:var(--bg)}
+  .tile{width:42px;height:42px;flex:0 0 42px;border:1.5px solid var(--ink);background:var(--bg);
+    background-image:repeating-linear-gradient(45deg,var(--ink3) 0 1px,transparent 1px 5px)}
+  .m.empty .tile{background-image:none;border-style:dashed}
+  .m .who{flex:1;min-width:0}
+  .m .who b{font-size:1.02rem}
+  .m .who span{display:block;font-family:var(--mono);font-size:.68rem;color:var(--ink3);letter-spacing:.02em;margin-top:2px}
+  .status{font-family:var(--mono);font-size:.64rem;letter-spacing:.05em;text-transform:uppercase;padding:4px 9px;border:1px solid var(--line);color:var(--ink3);white-space:nowrap}
+  .status.you{border-color:var(--ember);color:var(--ember)}
+  .status.ready{border-color:var(--ink);color:var(--ink2)}
+  .status.wip{border-color:var(--ember);color:var(--ember);background:var(--ember-wash)}
+  .actions{margin-top:22px;display:flex;flex-direction:column;gap:10px}
+  .btn{font-family:var(--mono);font-size:.74rem;letter-spacing:.05em;text-transform:uppercase;padding:14px 24px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer;text-align:center}
+  .btn.ghost{background:transparent;color:var(--ink2);border-color:var(--line)}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .hint{font-family:var(--mono);font-size:.62rem;color:var(--ink3);letter-spacing:.02em;text-align:center}
+  .card{border:1.5px solid var(--ink);background:var(--surface);padding:14px 16px}
+  .card .nm{font-size:1.15rem;font-weight:600}
+  .card .id{font-family:var(--mono);font-size:.68rem;color:var(--ember);text-transform:uppercase;letter-spacing:.03em;margin-top:2px}
+  .weave{background:var(--ember-wash);border-left:3px solid var(--ember);padding:12px 15px;font-size:.9rem;color:var(--ink2);margin-top:22px;max-width:74ch}
+  .weave b{font-family:var(--mono);font-size:.64rem;letter-spacing:.04em;text-transform:uppercase;color:var(--ember);display:block;margin-bottom:4px}
+  .boundary{font-family:var(--mono);font-size:.62rem;color:var(--ink3);letter-spacing:.02em;margin-top:8px}
+  hr.div{border:0;border-top:2px solid var(--ink);margin:44px 0 30px}
+  .phone{max-width:390px;margin:0 auto;border:1.5px solid var(--line);background:var(--bg);padding:20px 16px 26px}
+  .sample{font-family:var(--mono);font-size:.6rem;color:var(--ink3);opacity:.8;margin-top:34px;letter-spacing:.03em;text-align:center}
+  @media(max-width:860px){.two{grid-template-columns:1fr;gap:26px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb">Meet your character ✓ &nbsp;›&nbsp; <b>Your party</b> &nbsp;›&nbsp; Begin play</div>
+  <h1>Ready to begin?</h1>
+  <p class="lede">Your character is made. Play solo now, or invite others and start once the table's together.</p>
+
+  <div class="two">
+    <div>
+      <div class="device-label">Solo — the common launch case</div>
+      <p class="panelhdr">Your party (1)</p>
+      <div class="roster">
+        <div class="m">
+          <div class="tile"></div>
+          <div class="who"><b>Kessa Vurm</b><span>Lv 3 · Human Fighter · you</span></div>
+          <div class="status you">◆ You · ready</div>
+        </div>
+        <div class="m empty">
+          <div class="tile"></div>
+          <div class="who"><b>Invite a friend</b><span>share a link · they join here</span></div>
+          <div class="status">+ invite</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn">Begin the adventure →</button>
+        <button class="btn ghost">Invite others first</button>
+        <span class="hint">Weaves your character into the world, then drops you into the opening scene</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="device-label">With a party — owner waits, then finalizes</div>
+      <p class="panelhdr">Your party (3)</p>
+      <div class="roster">
+        <div class="m">
+          <div class="tile"></div>
+          <div class="who"><b>Kessa Vurm</b><span>Lv 3 · Human Fighter · you</span></div>
+          <div class="status you">◆ You · ready</div>
+        </div>
+        <div class="m">
+          <div class="tile"></div>
+          <div class="who"><b>Ordric Vane</b><span>Lv 3 · Elf Wizard</span></div>
+          <div class="status ready">ready</div>
+        </div>
+        <div class="m">
+          <div class="tile"></div>
+          <div class="who"><b>Pell</b><span>choosing who they are…</span></div>
+          <div class="status wip">creating…</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn">Everyone's ready — begin →</button>
+        <span class="hint">Owner only · you can begin now or wait for Pell to finish</span>
+      </div>
+      <p class="boundary">↳ live join + invite links = MYT-91 · this roster shell + the finalize control = MYT-90</p>
+    </div>
+  </div>
+
+  <div class="weave">
+    <b>What “begin” does</b>
+    Fires the character-integration pass (MYT-54, already shipped): one Opus weave that writes each PC into the world, then flips the campaign to <b style="display:inline;text-transform:none;letter-spacing:0;font-family:var(--serif);color:var(--ink)">active</b>. On screen: a brief atmospheric “weaving your party into the world…” beat (the session-prep loading register), then straight into the opening scene.
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Mobile — solo, stacked</div>
+  <div class="phone">
+    <div class="crumb"><b>Your party</b></div>
+    <h1 style="font-size:1.4rem">Ready to begin?</h1>
+    <p class="panelhdr">Your party (1)</p>
+    <div class="roster">
+      <div class="m">
+        <div class="tile"></div>
+        <div class="who"><b>Kessa Vurm</b><span>Lv 3 · Human Fighter · you</span></div>
+        <div class="status you">ready</div>
+      </div>
+      <div class="m empty">
+        <div class="tile"></div>
+        <div class="who"><b>Invite a friend</b><span>share a link</span></div>
+        <div class="status">+ invite</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn">Begin the adventure →</button>
+      <button class="btn ghost">Invite others first</button>
+    </div>
+  </div>
+
+  <p class="sample">Finalize → POST /finalize-character-creation (owner-only, shipped) → integration → status active · roster reads campaign_characters progress</p>
+</div>
+</body>
+</html>

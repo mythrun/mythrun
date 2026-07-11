@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guided Builder</title>
+<style>
+  :root{
+    --bg:#EFE9DC; --surface:#F8F4EA; --ink:#231B12; --ink2:#3D3528; --ink3:#66604F;
+    --line:#C9BFA8; --ember:#8A5A3C; --ember-wash:#f0e4d8;
+    --serif:"Source Serif 4",Georgia,serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);line-height:1.55;padding:28px 22px 64px}
+  .wrap{max-width:1120px;margin:0 auto}
+  .crumb{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:20px}
+  .crumb b{color:var(--ember)}
+  .device-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);margin:8px 0 14px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  /* progress rail */
+  .rail{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:26px;font-family:var(--mono);font-size:.66rem;letter-spacing:.03em}
+  .rail .node{display:flex;align-items:center;gap:7px;border:1.2px solid var(--line);background:var(--bg);padding:6px 10px;color:var(--ink3)}
+  .rail .node.done{border-color:var(--ink);color:var(--ink2);background:var(--surface)}
+  .rail .node.now{border-color:var(--ember);color:var(--ember);background:var(--ember-wash)}
+  .rail .node b{color:var(--ink);font-weight:600;text-transform:none;font-family:var(--serif);font-size:.8rem}
+  .rail .node.now b{color:var(--ember)}
+  .rail .sep{color:var(--line)}
+  .q{font-family:var(--serif);font-size:1.7rem;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+  .qsub{color:var(--ink3);font-size:.96rem;font-style:italic;margin:0 0 20px}
+  /* class grid */
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .cc{border:1.5px solid var(--ink);background:var(--surface);padding:14px;cursor:pointer;transition:box-shadow .12s,background .12s}
+  .cc:hover{box-shadow:0 3px 0 var(--ember)}
+  .cc.sel{box-shadow:inset 0 0 0 2px var(--ember);border-color:var(--ember)}
+  .cc h4{font-size:1.05rem;margin:0 0 5px}
+  .cc p{margin:0;color:var(--ink2);font-size:.82rem;line-height:1.4}
+  .cc .ph{color:var(--ink3);opacity:.75}
+  /* origin split */
+  .split2{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:6px}
+  .subhead{font-family:var(--mono);font-size:.66rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ember);margin:0 0 10px}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .li{border:1.5px solid var(--ink);background:var(--surface);padding:11px 13px;cursor:pointer;transition:box-shadow .12s}
+  .li:hover{box-shadow:0 2px 0 var(--ember)}
+  .li.sel{box-shadow:inset 0 0 0 2px var(--ember);border-color:var(--ember)}
+  .li b{font-size:.98rem}
+  .li span{display:block;color:var(--ink3);font-size:.8rem;margin-top:2px}
+  .navrow{display:flex;justify-content:space-between;align-items:center;margin-top:26px;flex-wrap:wrap;gap:10px}
+  .btn{font-family:var(--mono);font-size:.74rem;letter-spacing:.05em;text-transform:uppercase;padding:12px 24px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer}
+  .btn.ghost{background:transparent;color:var(--ink2);border-color:var(--line)}
+  .skip{font-family:var(--mono);font-size:.66rem;color:var(--ink3);letter-spacing:.02em;text-decoration:underline;cursor:pointer}
+  hr.div{border:0;border-top:2px solid var(--ink);margin:46px 0 30px}
+  .note{background:var(--ember-wash);border-left:3px solid var(--ember);padding:12px 15px;font-size:.9rem;color:var(--ink2);margin:22px 0 0;max-width:70ch}
+  .note b{font-family:var(--mono);font-size:.66rem;letter-spacing:.04em;text-transform:uppercase;color:var(--ember);display:block;margin-bottom:4px}
+  /* phone */
+  .phone{max-width:390px;margin:0 auto;border:1.5px solid var(--line);background:var(--bg);padding:20px 16px 26px}
+  .phone .grid{grid-template-columns:1fr 1fr;gap:9px}
+  .phone .cc{padding:11px}.phone .cc h4{font-size:.92rem}.phone .cc p{font-size:.74rem}
+  .phone .q{font-size:1.35rem}
+  .sample{font-family:var(--mono);font-size:.6rem;color:var(--ink3);opacity:.8;margin-top:36px;letter-spacing:.03em;text-align:center}
+  @media(max-width:860px){.grid{grid-template-columns:repeat(2,1fr)}.split2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb">Situation ✓ &nbsp;›&nbsp; <b>Build your character</b> &nbsp;›&nbsp; Meet your character</div>
+
+  <div class="device-label">Desktop · Step 1 of the sequence — “What is your calling?” (all 12 SRD classes)</div>
+  <div class="rail">
+    <span class="node now"><span>1</span> <b>Calling</b></span>
+    <span class="sep">→</span>
+    <span class="node"><span>2</span> <b>Practice</b></span>
+    <span class="sep">→</span>
+    <span class="node"><span>3</span> <b>Origin</b></span>
+    <span class="sep">→</span>
+    <span class="node"><span>4</span> <b>Anything else</b></span>
+  </div>
+  <p class="q">What is your calling?</p>
+  <p class="qsub">Every path through the empty caravan starts somewhere. Pick the one that feels like you.</p>
+  <div class="grid">
+    <div class="cc" data-choice="barbarian" onclick="toggleSelect(this)"><h4>Barbarian</h4><p class="ph">[ph: evocative one-liner — the fury that answers when reason won’t]</p></div>
+    <div class="cc" data-choice="bard" onclick="toggleSelect(this)"><h4>Bard</h4><p class="ph">[ph: the story that bends the room]</p></div>
+    <div class="cc" data-choice="cleric" onclick="toggleSelect(this)"><h4>Cleric</h4><p class="ph">[ph: a borrowed power with a price]</p></div>
+    <div class="cc" data-choice="druid" onclick="toggleSelect(this)"><h4>Druid</h4><p class="ph">[ph: the wild speaks; you answer]</p></div>
+    <div class="cc sel" data-choice="fighter" onclick="toggleSelect(this)"><h4>Fighter</h4><p>The discipline of the blade — and knowing exactly when to use it. <span class="ph">[ph]</span></p></div>
+    <div class="cc" data-choice="monk" onclick="toggleSelect(this)"><h4>Monk</h4><p class="ph">[ph: stillness sharpened into a weapon]</p></div>
+    <div class="cc" data-choice="paladin" onclick="toggleSelect(this)"><h4>Paladin</h4><p class="ph">[ph: an oath heavier than any armor]</p></div>
+    <div class="cc" data-choice="ranger" onclick="toggleSelect(this)"><h4>Ranger</h4><p class="ph">[ph: the border between wild and settled]</p></div>
+    <div class="cc" data-choice="rogue" onclick="toggleSelect(this)"><h4>Rogue</h4><p class="ph">[ph: the door that was never locked to you]</p></div>
+    <div class="cc" data-choice="sorcerer" onclick="toggleSelect(this)"><h4>Sorcerer</h4><p class="ph">[ph: power that was always in the blood]</p></div>
+    <div class="cc" data-choice="warlock" onclick="toggleSelect(this)"><h4>Warlock</h4><p class="ph">[ph: a bargain, and what it wants back]</p></div>
+    <div class="cc" data-choice="wizard" onclick="toggleSelect(this)"><h4>Wizard</h4><p class="ph">[ph: the world, written down and rewritten]</p></div>
+  </div>
+  <div class="navrow">
+    <span class="skip">◇ actually, let me just describe them instead</span>
+    <button class="btn">Next: how you practice it →</button>
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Desktop · A later step — prior choices carried in the rail, question 3 “Where do you come from?”</div>
+  <div class="rail">
+    <span class="node done">✓ Calling <b>Fighter</b></span>
+    <span class="sep">→</span>
+    <span class="node done">✓ Practice <b>Champion</b></span>
+    <span class="sep">→</span>
+    <span class="node now"><span>3</span> <b>Origin</b></span>
+    <span class="sep">→</span>
+    <span class="node"><span>4</span> <b>Anything else</b></span>
+  </div>
+  <p class="q">Where do you come from?</p>
+  <p class="qsub">Two small choices — a people, and a life before this one.</p>
+  <div class="split2">
+    <div>
+      <p class="subhead">Species</p>
+      <div class="list">
+        <div class="li sel" data-choice="human" onclick="toggleSelect(this)"><b>Human</b><span>[ph: adaptable, everywhere, unremarkable until they’re not]</span></div>
+        <div class="li" data-choice="elf" onclick="toggleSelect(this)"><b>Elf</b><span>[ph: a longer memory than the streets that raised them]</span></div>
+        <div class="li" data-choice="dwarf" onclick="toggleSelect(this)"><b>Dwarf</b><span>[ph: stone-patient, ledger-exact]</span></div>
+        <div class="li" data-choice="more-sp" onclick="toggleSelect(this)"><b>+ more</b><span>halfling, gnome, orc, tiefling…</span></div>
+      </div>
+    </div>
+    <div>
+      <p class="subhead">Background</p>
+      <div class="list">
+        <div class="li sel" data-choice="clerk" onclick="toggleSelect(this)"><b>Toll-clerk</b><span>[ph: you read manifests like other people read faces]</span></div>
+        <div class="li" data-choice="soldier" onclick="toggleSelect(this)"><b>Soldier</b><span>[ph: you kept a line that no longer exists]</span></div>
+        <div class="li" data-choice="outlander" onclick="toggleSelect(this)"><b>Outlander</b><span>[ph: the roads knew you before the towns did]</span></div>
+        <div class="li" data-choice="more-bg" onclick="toggleSelect(this)"><b>+ more</b><span>acolyte, criminal, sage, guild artisan…</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="navrow">
+    <span class="skip">‹ back</span>
+    <button class="btn">Next: anything else →</button>
+  </div>
+
+  <div class="note">
+    <b>The one design question on this screen</b>
+    How deep should the sequence go? My proposal: <b style="display:inline;color:var(--ink);font-family:var(--serif);text-transform:none;letter-spacing:0">Calling → Practice → Origin → Anything&nbsp;else</b>, where <em>Practice (subclass)</em> only appears for classes that actually choose it at level 1 (Cleric, Sorcerer, Warlock in the SRD) and is skipped automatically for the rest — no fake choices. Origin bundles species + background into one step. Notes are optional/skippable. Lighter (drop Practice entirely) or deeper (species and background as separate steps) are both on the table.
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Mobile · the calling step, one question filling the screen</div>
+  <div class="phone">
+    <div class="crumb"><b>Build your character</b></div>
+    <div class="rail" style="font-size:.6rem">
+      <span class="node now"><b>Calling</b></span><span class="sep">→</span>
+      <span class="node"><b>Practice</b></span><span class="sep">→</span>
+      <span class="node"><b>Origin</b></span><span class="sep">→</span>
+      <span class="node"><b>Else</b></span>
+    </div>
+    <p class="q">What is your calling?</p>
+    <div class="grid">
+      <div class="cc sel" data-choice="m-fighter" onclick="toggleSelect(this)"><h4>Fighter</h4><p>The discipline of the blade.</p></div>
+      <div class="cc" data-choice="m-rogue" onclick="toggleSelect(this)"><h4>Rogue</h4><p class="ph">[ph]</p></div>
+      <div class="cc" data-choice="m-wizard" onclick="toggleSelect(this)"><h4>Wizard</h4><p class="ph">[ph]</p></div>
+      <div class="cc" data-choice="m-cleric" onclick="toggleSelect(this)"><h4>Cleric</h4><p class="ph">[ph]</p></div>
+    </div>
+    <div class="navrow"><button class="btn" style="width:100%">Next →</button></div>
+  </div>
+
+  <p class="sample">Class / species / background lists port from the prototype SRD data · card copy = [ph:] until the copy pass · choices flatten into conceptText</p>
+</div>
+</body>
+</html>

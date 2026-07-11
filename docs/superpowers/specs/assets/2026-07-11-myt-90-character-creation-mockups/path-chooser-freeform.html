@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create — Chooser + Freeform</title>
+<style>
+  :root{
+    --bg:#EFE9DC; --surface:#F8F4EA; --ink:#231B12; --ink2:#3D3528; --ink3:#66604F;
+    --line:#C9BFA8; --ember:#8A5A3C; --ember-wash:#f0e4d8;
+    --serif:"Source Serif 4",Georgia,serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);line-height:1.55;padding:28px 22px 64px}
+  .wrap{max-width:1120px;margin:0 auto}
+  .crumb{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:22px}
+  .crumb b{color:var(--ember)}
+  .device-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);margin:8px 0 14px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h1{font-family:var(--serif);font-size:1.85rem;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+  .lede{color:var(--ink2);font-size:1rem;margin:0 0 24px;max-width:58ch}
+  /* chooser */
+  .chooser{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:760px}
+  .pc{border:1.5px solid var(--ink);background:var(--surface);padding:22px 20px;cursor:pointer;transition:box-shadow .12s,background .12s}
+  .pc:hover{box-shadow:0 3px 0 var(--ember)}
+  .pc.sel{box-shadow:inset 0 0 0 2px var(--ember);border-color:var(--ember)}
+  .pc .lbl{font-family:var(--mono);font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);margin-bottom:9px}
+  .pc h3{font-size:1.28rem;margin:0 0 8px}
+  .pc p{margin:0;color:var(--ink2);font-size:.92rem}
+  .pc .who{margin-top:14px;font-family:var(--mono);font-size:.62rem;color:var(--ink3);letter-spacing:.02em}
+  hr.div{border:0;border-top:2px solid var(--ink);margin:46px 0 30px}
+  /* freeform */
+  .ff{max-width:720px}
+  .ff .prompt{font-size:1.5rem;font-weight:600;margin:0 0 6px}
+  .ff .whisper{color:var(--ink3);font-size:.98rem;font-style:italic;margin:0 0 18px}
+  .ta{width:100%;min-height:190px;border:1.5px solid var(--ink);background:var(--surface);
+    font-family:var(--serif);font-size:1.05rem;line-height:1.6;color:var(--ink);padding:16px 18px;resize:none}
+  .ta::placeholder{color:var(--ink3)}
+  .fffoot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:10px}
+  .btn{font-family:var(--mono);font-size:.74rem;letter-spacing:.05em;text-transform:uppercase;padding:12px 24px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer}
+  .switch{font-family:var(--mono);font-size:.66rem;color:var(--ink3);letter-spacing:.02em;text-decoration:underline;cursor:pointer}
+  /* phone */
+  .phone{max-width:390px;margin:0 auto;border:1.5px solid var(--line);background:var(--bg);padding:20px 16px 26px}
+  .phone .chooser{grid-template-columns:1fr;gap:12px;max-width:none}
+  .phone h1{font-size:1.45rem}
+  .phone .ff .prompt{font-size:1.28rem}
+  .phone .ta{min-height:150px;font-size:1rem}
+  .sample{font-family:var(--mono);font-size:.6rem;color:var(--ink3);opacity:.8;margin-top:36px;letter-spacing:.03em;text-align:center}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  @media(max-width:860px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb">Situation ✓ &nbsp;›&nbsp; <b>Create your character</b> &nbsp;›&nbsp; Meet your character</div>
+
+  <div class="device-label">Desktop · Step 1 — how do you want to make your character?</div>
+  <h1>Who joins the story?</h1>
+  <p class="lede">Two ways in. Same calm, one-thing-at-a-time pacing — both end at the same character.</p>
+
+  <div class="chooser">
+    <div class="pc sel" data-choice="freeform" onclick="toggleSelect(this)">
+      <div class="lbl">Path A</div>
+      <h3>Tell us who you are</h3>
+      <p>Describe your character in your own words — a sentence or three paragraphs. We handle the rules.</p>
+      <div class="who">◆ for a vivid concept already in your head</div>
+    </div>
+    <div class="pc" data-choice="guided" onclick="toggleSelect(this)">
+      <div class="lbl">Path B</div>
+      <h3>Build your character</h3>
+      <p>Choose your calling, how you practice it, and where you come from — one question at a time.</p>
+      <div class="who">◆ for choosing class, subclass, origin yourself</div>
+    </div>
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Desktop · Path A (freeform) — a single calm prompt</div>
+  <div class="ff">
+    <p class="prompt">Who are you?</p>
+    <p class="whisper">Tell us about your character. Who are they? What brought them to the empty caravan at Greenward Toll?</p>
+    <textarea class="ta" placeholder="A retired toll-clerk who never stopped counting. She reads ledgers like other people read faces, and the manifests on those six wagons don't add up — which is exactly why she can't walk away…"></textarea>
+    <div class="fffoot">
+      <span class="switch">◇ or build step by step instead</span>
+      <button class="btn">Bring them to life →</button>
+    </div>
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Mobile — chooser then freeform, same flow stacked</div>
+  <div class="two">
+    <div class="phone">
+      <div class="crumb"><b>Create your character</b></div>
+      <h1>Who joins the story?</h1>
+      <div class="chooser">
+        <div class="pc sel" data-choice="m-freeform" onclick="toggleSelect(this)">
+          <div class="lbl">Path A</div><h3>Tell us who you are</h3>
+          <p>Describe your character in your own words. We handle the rules.</p>
+        </div>
+        <div class="pc" data-choice="m-guided" onclick="toggleSelect(this)">
+          <div class="lbl">Path B</div><h3>Build your character</h3>
+          <p>Choose calling, practice, and origin — one question at a time.</p>
+        </div>
+      </div>
+    </div>
+    <div class="phone">
+      <div class="crumb"><b>Who are you?</b></div>
+      <p class="prompt" style="font-size:1.28rem;font-weight:600;margin:0 0 6px">Who are you?</p>
+      <p class="whisper" style="color:#66604F;font-style:italic;font-size:.92rem;margin:0 0 14px">What brought them to the empty caravan?</p>
+      <textarea class="ta" style="min-height:150px;font-size:1rem" placeholder="A retired toll-clerk who never stopped counting…"></textarea>
+      <div class="fffoot"><button class="btn" style="width:100%">Bring them to life →</button></div>
+      <div style="text-align:center;margin-top:12px"><span class="switch">◇ or build step by step</span></div>
+    </div>
+  </div>
+
+  <p class="sample">Both paths POST { conceptText } · guided path flattens its choices into the same field · sample copy shown</p>
+</div>
+</body>
+</html>

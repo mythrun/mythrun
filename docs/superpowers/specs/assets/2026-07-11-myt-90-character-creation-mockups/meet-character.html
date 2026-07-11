@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meet Your Character</title>
+<style>
+  :root{
+    --bg:#EFE9DC; --surface:#F8F4EA; --ink:#231B12; --ink2:#3D3528; --ink3:#66604F;
+    --line:#C9BFA8; --ember:#8A5A3C; --ember-wash:#f0e4d8;
+    --serif:"Source Serif 4",Georgia,serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--serif);line-height:1.55;padding:28px 22px 64px}
+  .wrap{max-width:1120px;margin:0 auto}
+  .crumb{font-family:var(--mono);font-size:.66rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:18px}
+  .crumb b{color:var(--ember)}
+  .device-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);margin:8px 0 14px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  hr.div{border:0;border-top:2px solid var(--ink);margin:40px 0 28px}
+
+  /* loading beat */
+  .loadwrap{display:flex;gap:22px;align-items:center;background:var(--surface);border:1.5px solid var(--line);padding:18px 20px}
+  .fig{width:80px;height:120px;flex:0 0 80px;position:relative;background:
+     linear-gradient(var(--bg),var(--bg));border:1.5px solid var(--ink);overflow:hidden}
+  .fig .fill{position:absolute;left:0;right:0;bottom:0;height:64%;
+     background-image:repeating-linear-gradient(45deg,var(--ink) 0 1.5px,transparent 1.5px 5px);
+     border-top:1.5px solid var(--ink)}
+  .fig .head{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:26px;height:26px;background:var(--ink)}
+  .fig .torso{position:absolute;top:42px;left:50%;transform:translateX(-50%);width:44px;height:52px;border:1.5px solid var(--ink)}
+  .loadtext .l{font-family:var(--mono);font-size:.66rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ember);margin-bottom:8px}
+  .loadtext .rows span{display:block;font-family:var(--mono);font-size:.82rem;color:var(--ink2);margin:3px 0}
+  .loadtext .rows span.pending{color:var(--ink3);opacity:.55}
+  .loadtext .rows b{color:var(--ink)}
+
+  /* sheet reveal */
+  .name{font-size:2.5rem;font-weight:600;letter-spacing:-.02em;margin:0 0 4px;line-height:1.05}
+  .ident{font-family:var(--mono);font-size:.78rem;letter-spacing:.04em;color:var(--ember);text-transform:uppercase;margin-bottom:14px}
+  .stripe{display:flex;gap:0;border:1.5px solid var(--ink);background:var(--surface);margin-bottom:22px;flex-wrap:wrap}
+  .stripe .s{flex:1;min-width:88px;padding:10px 12px;border-right:1px solid var(--line)}
+  .stripe .s:last-child{border-right:0}
+  .stripe .s .k{font-family:var(--mono);font-size:.58rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+  .stripe .s .v{font-size:1.25rem;font-weight:600}
+  .cols{display:grid;grid-template-columns:1.1fr 1fr;gap:30px;align-items:start}
+  .abilities{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:22px}
+  .ab{border:1.5px solid var(--ink);background:var(--surface);text-align:center;padding:12px 6px}
+  .ab .name3{font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;color:var(--ink3)}
+  .ab .score{font-size:1.7rem;font-weight:600;line-height:1.1}
+  .ab .mod{font-family:var(--mono);font-size:.82rem;color:var(--ember)}
+  .prose{font-size:1.05rem;color:var(--ink);line-height:1.65;margin:0 0 8px}
+  .prose + .prose{margin-top:12px}
+  .panel{border:1.5px solid var(--line);background:var(--surface);padding:0}
+  .panel h4{font-family:var(--mono);font-size:.64rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);margin:0;padding:12px 14px 8px;border-bottom:1px solid var(--line)}
+  .panel ul{list-style:none;margin:0;padding:6px 14px 12px}
+  .panel li{padding:6px 0;border-bottom:1px solid var(--line);font-size:.92rem}
+  .panel li:last-child{border-bottom:0}
+  .panel li b{font-weight:600}
+  .panel li span{color:var(--ink3);font-size:.82rem;display:block;margin-top:1px}
+  .panel + .panel{margin-top:16px}
+  .actions{display:flex;gap:12px;align-items:center;margin-top:30px;flex-wrap:wrap}
+  .btn{font-family:var(--mono);font-size:.74rem;letter-spacing:.05em;text-transform:uppercase;padding:13px 26px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer}
+  .btn.ghost{background:transparent;color:var(--ink2)}
+  .btn.warn{background:transparent;color:var(--ink3);border-color:var(--line)}
+  /* phone */
+  .phone{max-width:390px;margin:0 auto;border:1.5px solid var(--line);background:var(--bg);padding:20px 16px 26px}
+  .phone .cols{grid-template-columns:1fr;gap:20px}
+  .phone .name{font-size:1.9rem}
+  .phone .abilities{gap:8px}
+  .phone .actions{flex-direction:column;align-items:stretch}
+  .phone .btn{width:100%}
+  .sample{font-family:var(--mono);font-size:.6rem;color:var(--ink3);opacity:.8;margin-top:34px;letter-spacing:.03em;text-align:center}
+  @media(max-width:860px){.cols{grid-template-columns:1fr;gap:22px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb">Create ✓ &nbsp;›&nbsp; <b>Meet your character</b> &nbsp;›&nbsp; Party</div>
+
+  <div class="device-label">The beat before — 1-bit “coming into being” (no voxel; the shipped world-gen register)</div>
+  <div class="loadwrap">
+    <div class="fig"><div class="torso"></div><div class="head"></div><div class="fill"></div></div>
+    <div class="loadtext">
+      <div class="l">Bringing them to life…</div>
+      <div class="rows">
+        <span><b>Kessa Vurm</b> — a name surfaces</span>
+        <span>Human · Fighter — <b>Champion</b></span>
+        <span class="pending">rolling ability scores…</span>
+        <span class="pending">gathering equipment…</span>
+      </div>
+    </div>
+  </div>
+
+  <hr class="div">
+  <div class="device-label">Desktop — “Meet your character” · a field-guide entry, not a stat block</div>
+
+  <div class="name">Kessa Vurm</div>
+  <div class="ident">Level 3 · Human Fighter · Champion · Toll-clerk of Greenward</div>
+  <div class="stripe">
+    <div class="s"><div class="k">Armor Class</div><div class="v">16</div></div>
+    <div class="s"><div class="k">Hit Points</div><div class="v">28</div></div>
+    <div class="s"><div class="k">Proficiency</div><div class="v">+2</div></div>
+    <div class="s"><div class="k">Hit Die</div><div class="v">d10</div></div>
+    <div class="s"><div class="k">Speed</div><div class="v">30 ft</div></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <div class="abilities">
+        <div class="ab"><div class="name3">STR</div><div class="score">16</div><div class="mod">+3</div></div>
+        <div class="ab"><div class="name3">DEX</div><div class="score">13</div><div class="mod">+1</div></div>
+        <div class="ab"><div class="name3">CON</div><div class="score">15</div><div class="mod">+2</div></div>
+        <div class="ab"><div class="name3">INT</div><div class="score">12</div><div class="mod">+1</div></div>
+        <div class="ab"><div class="name3">WIS</div><div class="score">11</div><div class="mod">+0</div></div>
+        <div class="ab"><div class="name3">CHA</div><div class="score">9</div><div class="mod">−1</div></div>
+      </div>
+      <p class="prose">Kessa spent eleven years stamping manifests at the Greenward Toll, and she never once miscounted a wagon. She keeps her old ledger-stylus sharpened to a point that could open a letter — or a throat. Broad through the shoulders, careful with her hands, slow to anger and unnerving once she gets there.</p>
+      <p class="prose">When six wagons rolled through empty and the drivers couldn't say why, the numbers wouldn't leave her alone. She's the only one who noticed. That's usually how it starts.</p>
+    </div>
+    <div>
+      <div class="panel">
+        <h4>What she can do</h4>
+        <ul>
+          <li><b>Second Wind</b><span>Catch her breath: recover a burst of HP once per rest.</span></li>
+          <li><b>Action Surge</b><span>One extra action when it counts. Once per rest.</span></li>
+          <li><b>Improved Critical</b><span>Champion: her blade bites on a 19 or 20.</span></li>
+          <li><b>Fighting Style: Defense</b><span>+1 AC while she's wearing armor.</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4>What she carries</h4>
+        <ul>
+          <li><b>Longsword</b><span>Versatile · her father's, re-hilted.</span></li>
+          <li><b>Chain mail &amp; shield</b></li>
+          <li><b>Ledger-stylus</b><span>Sharpened. Sentimental. Occasionally lethal.</span></li>
+          <li><b>Belt pouch · 9 gp</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn">This is me →</button>
+    <button class="btn ghost" data-choice="more" onclick="toggleSelect(this)">Tell me more</button>
+    <button class="btn warn" data-choice="over" onclick="toggleSelect(this)">Start over</button>
+  </div>
+  <div class="sample" style="text-align:left;margin-top:14px">“Tell me more” expands full skills / all equipment / spells (if a caster) inline · spells panel appears only for casters</div>
+
+  <hr class="div">
+  <div class="device-label">Mobile — same entry, single column</div>
+  <div class="phone">
+    <div class="name">Kessa Vurm</div>
+    <div class="ident">Lv 3 · Human Fighter · Champion</div>
+    <div class="stripe">
+      <div class="s"><div class="k">AC</div><div class="v">16</div></div>
+      <div class="s"><div class="k">HP</div><div class="v">28</div></div>
+      <div class="s"><div class="k">Prof</div><div class="v">+2</div></div>
+      <div class="s"><div class="k">Speed</div><div class="v">30</div></div>
+    </div>
+    <div class="cols">
+      <div>
+        <div class="abilities">
+          <div class="ab"><div class="name3">STR</div><div class="score">16</div><div class="mod">+3</div></div>
+          <div class="ab"><div class="name3">DEX</div><div class="score">13</div><div class="mod">+1</div></div>
+          <div class="ab"><div class="name3">CON</div><div class="score">15</div><div class="mod">+2</div></div>
+          <div class="ab"><div class="name3">INT</div><div class="score">12</div><div class="mod">+1</div></div>
+          <div class="ab"><div class="name3">WIS</div><div class="score">11</div><div class="mod">+0</div></div>
+          <div class="ab"><div class="name3">CHA</div><div class="score">9</div><div class="mod">−1</div></div>
+        </div>
+        <p class="prose" style="font-size:.98rem">Eleven years stamping manifests at the Greenward Toll, and she never once miscounted a wagon. Then six rolled through empty, and the numbers wouldn't leave her alone.</p>
+      </div>
+      <div>
+        <div class="panel"><h4>What she can do</h4><ul>
+          <li><b>Second Wind</b></li><li><b>Action Surge</b></li><li><b>Improved Critical</b></li></ul></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn">This is me →</button>
+      <button class="btn ghost">Tell me more</button>
+      <button class="btn warn">Start over</button>
+    </div>
+  </div>
+
+  <p class="sample">All fields are real backend output (name/level/class/species/background · 6 abilities · HP/AC/prof/hit-die · features/equipment/spells · concept prose) · sample content shown</p>
+</div>
+</body>
+</html>
