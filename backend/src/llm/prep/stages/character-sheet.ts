@@ -211,35 +211,73 @@ function keepFirstByName<T extends { readonly name: string }>(items: readonly T[
 
 // ── Coherence validation (ZFC exception: structural validation) ─────────────
 //
-// Two structural invariants over (progression, level, spell levels) — no CON
-// mod, no class-name string-matching, pure math against the §9.1 slot tables:
+// Deterministic level-scaled invariants — no CON-mod guesswork on the caller's
+// side, no class-name string-matching, pure math against the §9.1 slot tables
+// and the SRD level curves:
 //   1. every leveled spell's level ≤ maxSlotLevel(progression, level);
-//   2. leveled spells present ⟹ progression ≠ 'none'.
+//   2. leveled spells present ⟹ progression ≠ 'none';
+//   3. (MYT-90 A5) proficiency_bonus matches the level (1–4 → +2, 5 → +3);
+//   4. (MYT-90 A5) max_hit_points sits inside a hit_die/CON/level HP band.
 // Cantrip-only lists (every spell level 0) with progression 'none' are LEGAL.
+//
+// NOT gated here: ASI/feat and subclass-feature presence at level N. There is
+// no pre-ASI baseline to diff the final ability scores against, and detecting a
+// feat would mean string-matching free prose — a ZFC violation. Those ride on
+// prompt quality + the guided builder, not on this deterministic shell.
+
+// Per-level HP slack for racial bonuses (e.g. Hill Dwarf +1/level) so a legal
+// sheet never false terminal-fails on the ceiling. See `validateCoherence`.
+const HP_SLACK_PER_LEVEL = 1
 
 /**
- * MYT-70 §3.2 — throws `CharacterSheetCoherenceError` when the sheet's spell
- * list is mechanically impossible for its (progression, level). Pure; exported
- * for unit tests. Cantrips (level 0) never need a slot, so a cantrip-only list
- * with 'none' progression passes.
+ * MYT-70 §3.2 / MYT-90 A5 — throws `CharacterSheetCoherenceError` when the
+ * sheet is mechanically impossible for its (progression, level): a spell above
+ * the slot cap, a proficiency bonus that doesn't match the level, or
+ * max_hit_points outside the level's HP band. Pure; exported for unit tests.
+ * Cantrips (level 0) never need a slot, so a cantrip-only list with 'none'
+ * progression passes the spell checks.
  */
 export function validateCoherence(sheet: CharacterSheetOutput, level: number): void {
   const leveledSpells = sheet.spells.filter((s) => s.level > 0)
-  if (leveledSpells.length === 0) return
+  if (leveledSpells.length > 0) {
+    if (sheet.spellcasting_progression === 'none') {
+      throw new CharacterSheetCoherenceError(
+        `character-sheet: ${String(leveledSpells.length)} leveled spell(s) present but spellcasting_progression is 'none'`,
+      )
+    }
 
-  if (sheet.spellcasting_progression === 'none') {
+    // maxSlotLevel throws a plain Error on an out-of-range level — the loop in
+    // runCharacterSheetStage rethrows that (not a coherence retry). Keep this
+    // BEFORE the pb/HP checks so that behavior is preserved.
+    const cap = maxSlotLevel(sheet.spellcasting_progression, level)
+    for (const spell of leveledSpells) {
+      if (spell.level > cap) {
+        throw new CharacterSheetCoherenceError(
+          `character-sheet: spell '${spell.name}' is level ${String(spell.level)} but the highest castable slot level for ${sheet.spellcasting_progression}/L${String(level)} is ${String(cap)}`,
+        )
+      }
+    }
+  }
+
+  // Proficiency bonus by level — runs for EVERY sheet (casters and not). Only
+  // L1–5 parties ship (migration 033 caps starting_level at 5): 1–4 → +2, 5 → +3.
+  const expectedPb = level <= 4 ? 2 : 3
+  if (sheet.proficiency_bonus !== expectedPb) {
     throw new CharacterSheetCoherenceError(
-      `character-sheet: ${String(leveledSpells.length)} leveled spell(s) present but spellcasting_progression is 'none'`,
+      `character-sheet: proficiency_bonus ${String(sheet.proficiency_bonus)} != ${String(expectedPb)} for level ${String(level)}`,
     )
   }
 
-  const cap = maxSlotLevel(sheet.spellcasting_progression, level)
-  for (const spell of leveledSpells) {
-    if (spell.level > cap) {
-      throw new CharacterSheetCoherenceError(
-        `character-sheet: spell '${spell.name}' is level ${String(spell.level)} but the highest castable slot level for ${sheet.spellcasting_progression}/L${String(level)} is ${String(cap)}`,
-      )
-    }
+  // HP band from structured fields (hit_die, CON mod, level). Floor = L1 max +
+  // the SRD per-level minimum (≥1 HP/level); ceil = max-roll every level plus
+  // HP_SLACK_PER_LEVEL for racial HP. max_hit_points outside the band terminal-fails.
+  const conMod = Math.floor((sheet.con - 10) / 2)
+  const hpFloor = sheet.hit_die + conMod + (level - 1) * Math.max(1, 1 + conMod)
+  const hpCeil = level * (sheet.hit_die + conMod) + level * HP_SLACK_PER_LEVEL
+  if (sheet.max_hit_points < hpFloor || sheet.max_hit_points > hpCeil) {
+    throw new CharacterSheetCoherenceError(
+      `character-sheet: max_hit_points ${String(sheet.max_hit_points)} outside [${String(hpFloor)}, ${String(hpCeil)}] for L${String(level)}`,
+    )
   }
 }
 

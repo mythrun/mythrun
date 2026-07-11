@@ -92,8 +92,10 @@ const SHEET: CharacterSheetOutput = {
   int: 13,
   wis: 16,
   cha: 11,
-  hit_points: 9,
-  max_hit_points: 9,
+  // L1, con 14 (+2), hit_die 8 → the only coherent max HP is 10 (band [10,11]).
+  // A5's HP-band check now rejects the prior 9; a fresh sheet is at full health.
+  hit_points: 10,
+  max_hit_points: 10,
   armor_class: 14,
   proficiency_bonus: 2,
   // MYT-70 §3.2 ledger-init source fields.
@@ -229,8 +231,8 @@ describe('runCharacterSheetStage', () => {
       int: 13,
       wis: 16,
       cha: 11,
-      hit_points: 9,
-      max_hit_points: 9,
+      hit_points: 10,
+      max_hit_points: 10,
       armor_class: 14,
       proficiency_bonus: 2,
       level: 1,
@@ -324,7 +326,9 @@ describe('runCharacterSheetStage', () => {
     const { userId, worldId, campaignId } = await seedMember()
 
     mockGenerateText.mockResolvedValueOnce({
-      output: SHEET,
+      // A5 coherence: at level 5 the sheet needs proficiency_bonus +3 and HP in
+      // the L5 band (con-14 hit_die-8 → [22,55]); the base SHEET is L1-shaped.
+      output: { ...SHEET, proficiency_bonus: 3, hit_points: 40, max_hit_points: 40 },
       finishReason: 'stop',
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
@@ -368,8 +372,10 @@ describe('runCharacterSheetStage', () => {
     const SHEET2 = {
       ...SHEET,
       str: 18,
-      hit_points: 12,
-      max_hit_points: 12,
+      // L1 con-14 band ceiling is 11 (10 + 1 racial slack); the prior 12 now
+      // trips A5's HP-band check. 11 still differs from SHEET's 10 (tests UPDATE).
+      hit_points: 11,
+      max_hit_points: 11,
       skills: [
         { name: 'Religion', proficient: true, expertise: true },
         { name: 'Insight', proficient: true, expertise: false },
@@ -400,8 +406,8 @@ describe('runCharacterSheetStage', () => {
     )
     expect(c.rows[0]).toMatchObject({
       str: 18,
-      hit_points: 12,
-      max_hit_points: 12,
+      hit_points: 11,
+      max_hit_points: 11,
     })
 
     // Exactly one row in campaign_characters (UNIQUE invariant + idempotent
@@ -747,14 +753,81 @@ describe('character-sheet pure helpers', () => {
     })
 
     it('passes a leveled spell at exactly the max slot level', () => {
-      // L5 full caster has level-3 slots (FULL_TABLE L5 = [4,3,2]).
+      // L5 full caster has level-3 slots (FULL_TABLE L5 = [4,3,2]). A L5 sheet
+      // also needs proficiency_bonus +3 and HP in the L5 band, else the new
+      // level-scaled checks fire before we reach the slot-cap assertion.
       expect(() =>
         { validateCoherence(
           sheetWith({
             spellcasting_progression: 'full',
             spells: [{ name: 'Fireball', level: 3, prepared: true, ritual: false }],
+            proficiency_bonus: 3,
+            max_hit_points: 40,
           }),
           5,
+        ); },
+      ).not.toThrow()
+    })
+
+    // MYT-90 A5: level-scaled coherence — proficiency bonus + HP band.
+    it('throws when proficiency_bonus is wrong for the level (L5 needs +3)', () => {
+      // HP set in-band for L5 so the ONLY failing invariant is the pb.
+      expect(() =>
+        { validateCoherence(sheetWith({ proficiency_bonus: 2, max_hit_points: 40 }), 5); },
+      ).toThrow(/proficiency_bonus/)
+    })
+
+    it('throws when max_hit_points is above the level band (L1 over-HP)', () => {
+      expect(() =>
+        { validateCoherence(sheetWith({ max_hit_points: 40 }), 1); },
+      ).toThrow(/max_hit_points/)
+    })
+
+    it('throws when max_hit_points is below the level band (L5 fighter under-HP)', () => {
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            hit_die: 10,
+            max_hit_points: 9,
+            proficiency_bonus: 3,
+            spellcasting_progression: 'none',
+            spells: [],
+          }),
+          5,
+        ); },
+      ).toThrow(/max_hit_points/)
+    })
+
+    it('passes a coherent level-5 fighter (pb +3, HP in band)', () => {
+      // hit_die 10, con 14 (+2), L5: floor 10+2+4*3=24, ceil 5*12+5=65.
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            hit_die: 10,
+            max_hit_points: 44,
+            proficiency_bonus: 3,
+            spellcasting_progression: 'none',
+            spells: [],
+          }),
+          5,
+        ); },
+      ).not.toThrow()
+    })
+
+    it('passes a level-3 Hill-Dwarf sheet at the band ceiling (+1/level slack)', () => {
+      // con 14 (+2), hit_die 8, L3: plain max = 3*(8+2) = 30; a Hill Dwarf adds
+      // +1/level = +3 → 33 real max HP. SLACK_PER_LEVEL=1 lifts the ceiling to
+      // 3*10 + 3 = 33, so 33 sits exactly at the edge and must NOT terminal-fail.
+      expect(() =>
+        { validateCoherence(
+          sheetWith({
+            hit_die: 8,
+            proficiency_bonus: 2,
+            max_hit_points: 33,
+            spellcasting_progression: 'none',
+            spells: [],
+          }),
+          3,
         ); },
       ).not.toThrow()
     })
