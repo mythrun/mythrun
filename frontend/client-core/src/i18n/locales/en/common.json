@@ -472,6 +472,9 @@
         "whisper": "[ph: a detail, a quirk, a scar — leave it blank to skip]"
       }
     },
+    "loading": {
+      "title": "[ph: making your character]"
+    },
     "processing": "[ph: bringing your character to life…]"
   }
 }
