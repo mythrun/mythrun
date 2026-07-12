@@ -489,6 +489,13 @@
       "loadError": "[ph: we couldn't load your party — try again]",
       "retry": "[ph: try again]",
       "beginError": "[ph: something went wrong — try again]"
+    },
+    "joinSummary": {
+      "eyebrow": "[ph: you're joining]",
+      "loading": "[ph: opening the world…]",
+      "loadError": "[ph: we couldn't open this world — try again]",
+      "retry": "[ph: try again]",
+      "cta": "[ph: create your character]"
     }
   }
 }

@@ -302,4 +302,9 @@ export const descriptions: Record<string, string> = {
   'characterCreate.staging.loadError': 'Calm inline notice on the party-staging surface when fetching the roster fails — a quiet, retryable note (paired with the retry affordance), not an apology. Terse, ~5-8 words.',
   'characterCreate.staging.retry': 'Retry affordance label on the party-staging surface\'s load-error state — re-fetches the roster. ~1-2 words, e.g. "Try again".',
   'characterCreate.staging.beginError': 'Calm inline notice on the party-staging surface when the owner\'s Begin (finalize) fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
+  'characterCreate.joinSummary.eyebrow': 'Quiet eyebrow/kicker above the world name on the MEMBER-JOIN world-intro summary (MYT-90 D9) — the brief screen a member lands on after accepting an invite, before character creation. Frames that they are joining an existing world. Terse, ~1-3 words, e.g. "You\'re joining".',
+  'characterCreate.joinSummary.loading': 'Calm loading line on the member-join summary while the world snapshot (name + intro) is fetched, before the summary renders. Warm, unhurried, ~2-4 words.',
+  'characterCreate.joinSummary.loadError': 'Calm inline notice on the member-join summary when the world snapshot cannot be fetched — a quiet, retryable note paired with the retry affordance (the snapshot endpoint is owner-only today, so a joined member lands here; transient failures look the same), never an apology or an error code. Terse, ~5-8 words.',
+  'characterCreate.joinSummary.retry': 'Retry affordance label on the member-join summary\'s load-error state — re-fetches the world snapshot. ~1-2 words, e.g. "Try again".',
+  'characterCreate.joinSummary.cta': 'Primary CTA on the member-join summary that hands off to character creation (the owner already set the situation + level, so the member skips those). Brand-voiced verb phrase, ~2-4 words, e.g. "Create your character".',
 }

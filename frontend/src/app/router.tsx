@@ -18,6 +18,7 @@ import { CampaignDetailRoute } from '../routes/campaign-detail.tsx'
 import { CharacterNewRoute } from '../routes/character-new.tsx'
 import { SituationPickRoute } from '../routes/worldgen/situation-pick.tsx'
 import { LevelPickRoute } from '../routes/character-new/level-pick.tsx'
+import { JoinSummaryRoute } from '../routes/character-new/join-summary.tsx'
 import { PlayRoute } from '../routes/play.tsx'
 import { SettingsRoute } from '../routes/settings.tsx'
 
@@ -108,6 +109,7 @@ export function buildRoutes(dev: boolean): RouteObject[] {
                 // static tail sits under the same `:id` space.
                 { path: 'campaigns/:id/situation', element: <SituationPickRoute /> },
                 { path: 'campaigns/:id/level', element: <LevelPickRoute /> },
+                { path: 'campaigns/:id/join', element: <JoinSummaryRoute /> },
                 { path: 'campaigns/:id/character/new', element: <CharacterNewRoute /> },
                 { path: 'campaigns/:id/play', element: <PlayRoute /> },
                 { path: 'settings', element: <SettingsRoute /> },
