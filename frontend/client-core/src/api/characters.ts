@@ -212,6 +212,13 @@ export function getCharacter(
 // verbatim); those without land in `missing[]`. `error` (JSONB) is forwarded
 // as-is and present ONLY when a concept is `failed`, so it is an optional
 // unknown blob the client owns the display shape of.
+//
+// MYT-90 D8: each concept also carries `confirmedAt` (the "This is me"
+// timestamp, null until confirmed) and `characterId` (the generated PC id, null
+// until the sheet exists). The character-creation routing surface keys the
+// reveal→party-staging split on `confirmedAt` (so a reload in the
+// completed→active window is stable) and hands `characterId` to the reveal so it
+// can fetch the sheet. Both are `.nullable()` additive fields.
 // -----------------------------------------------------------------------------
 
 const ConceptProgressSchema = z.object({
@@ -219,6 +226,13 @@ const ConceptProgressSchema = z.object({
   displayName: z.string(),
   status: z.string(),
   submittedAt: z.string(),
+  // `.nullable().optional()` (not a bare `.nullable()`) so this stays a purely
+  // additive change: existing typed `CharacterCreationProgress` fixtures across
+  // the committed surfaces (party-staging) keep type-checking without edits. The
+  // backend always emits both (null or a value), so the routing surface still
+  // receives them; a legacy/absent field is read as null.
+  confirmedAt: z.string().nullable().optional(),
+  characterId: z.string().nullable().optional(),
   error: z.unknown().optional(),
 })
 

@@ -7,25 +7,25 @@ import {
   type CampaignSummary,
 } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
+import { CharacterSurface, type CharacterSurfaceDeps } from './character-new/character-surface.tsx'
 
-// The CAMPAIGN PAGE (MYT-89 Phase D, D5) — where the owner lands at `/campaigns/:id`
-// once world-gen is settled AND a starting situation is chosen (the state the
-// situation-pick's POST navigates back to; see campaign-detail.tsx for the routing
-// + the seam note). This is the EXPLICIT MYT-89 BOUNDARY: it shows the world
-// IDENTITY (the per-world dither cover + world name, reusing the home-hub card's
-// treatment) plus TWO clearly-marked STUB SEAMS wired to the shape of the real
-// next tickets but NOT built out — invite players (MYT-91) and everyone makes a
-// character (MYT-90). Each seam is a dashed "not-yet-written" Card (Card's own
-// empty-state frame) carrying a `[ph: …]` note, so it is VISIBLY the next ticket,
-// never a fake-working control. Flat 1-bit paper register; all UI composes
-// @mythrun/ui; the identity comes from the same `getMyCampaigns` payload the hub
-// renders (worldName + worldColors), found by id.
+// The CAMPAIGN PAGE (MYT-89 Phase D, D5 → MYT-90 D8) — where a player lands at
+// `/campaigns/:id` once world-gen is settled AND a starting situation is chosen
+// (see campaign-detail.tsx for the routing). It shows the world IDENTITY (the
+// per-world dither cover + world name, reusing the home-hub card's treatment) plus
+// two setup regions: the INVITE seam (still a dashed MYT-91 stub) and — since
+// MYT-90 D8 — the real CHARACTER SURFACE, which reads the viewer's creation state
+// and mounts the right beat (situation/level redirect, member hold, loading beat,
+// reveal, party staging, character-context failure+retry, or a play entry) per the
+// spec §3.3 routing table. Flat 1-bit paper register; all UI composes @mythrun/ui;
+// the identity comes from the same `getMyCampaigns` payload the hub renders
+// (worldName + worldColors + status + creator), found by id — and that same
+// `campaign` is handed to the surface so it doesn't re-fetch the role/status.
 
-/** The two MYT-89 boundary seam testids, hoisted to module consts so they ride as
- *  JSX EXPRESSIONS (not attribute string literals — the i18next no-literal rail
- *  excludes `data-testid` but flags a bare `testId="…"` on a custom component). */
+/** The invite boundary seam testid (still a MYT-91 stub), hoisted to a module const
+ *  so it rides as a JSX EXPRESSION (the i18next no-literal rail excludes
+ *  `data-testid` but flags a bare `testId="…"` on a custom component). */
 const INVITE_SEAM_TESTID = 'seam-invite'
-const CHARACTER_SEAM_TESTID = 'seam-character'
 
 /** The campaigns source — defaults to the real `/api/campaigns/mine` endpoint (the
  *  hub's payload, carrying each world's identity); tests substitute it. */
@@ -113,11 +113,16 @@ export interface CampaignPageProps {
   campaignId: string
   /** The campaigns source — defaults to the real endpoint; tests substitute it. */
   fetchCampaigns?: FetchCampaigns
+  /** Injected character-surface seams (endpoints + child-surface deps) — defaults to
+   *  the real endpoints; tests + stories substitute them so the mounted surface
+   *  routes without a live SSE/endpoint. */
+  characterDeps?: CharacterSurfaceDeps
 }
 
 export function CampaignPage({
   campaignId,
   fetchCampaigns = defaultFetchCampaigns,
+  characterDeps,
 }: CampaignPageProps): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
@@ -151,10 +156,10 @@ export function CampaignPage({
         title={t('campaign.invite.title')}
         body={t('campaign.invite.body')}
       />
-      <StubSeam
-        testId={CHARACTER_SEAM_TESTID}
-        title={t('campaign.character.title')}
-        body={t('campaign.character.body')}
+      <CharacterSurface
+        campaign={campaign}
+        campaignId={campaignId}
+        {...(characterDeps !== undefined && { deps: characterDeps })}
       />
     </Stack>
   )

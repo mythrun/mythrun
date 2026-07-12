@@ -198,6 +198,42 @@ describe('getCharacterCreationProgress', () => {
     )
     await expect(getCharacterCreationProgress(testCtx, 'c-1')).resolves.toEqual(progress)
   })
+
+  it('parses the MYT-90 D8 confirmedAt + characterId fields (string or null)', async () => {
+    const progress = {
+      campaignId: 'c-1',
+      totalMembers: 2,
+      concepts: [
+        {
+          userId: 'u-1',
+          displayName: 'Ada',
+          status: 'completed',
+          submittedAt: '2026-07-01T10:00:00.000Z',
+          confirmedAt: '2026-07-01T10:10:00.000Z',
+          characterId: 'char-1',
+        },
+        {
+          userId: 'u-2',
+          displayName: 'Ben',
+          status: 'processing',
+          submittedAt: '2026-07-01T10:05:00.000Z',
+          confirmedAt: null,
+          characterId: null,
+        },
+      ],
+      missing: [],
+    }
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/c-1/character-creation-progress`, () =>
+        HttpResponse.json(progress),
+      ),
+    )
+    const res = await getCharacterCreationProgress(testCtx, 'c-1')
+    expect(res.concepts[0]?.confirmedAt).toBe('2026-07-01T10:10:00.000Z')
+    expect(res.concepts[0]?.characterId).toBe('char-1')
+    expect(res.concepts[1]?.confirmedAt).toBeNull()
+    expect(res.concepts[1]?.characterId).toBeNull()
+  })
 })
 
 describe('finalizeCharacterCreation', () => {

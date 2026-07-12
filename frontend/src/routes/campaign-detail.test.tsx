@@ -10,6 +10,7 @@ import {
   useWorldGenStream,
   getStartingSituations,
   getMyCampaigns,
+  getCharacterCreationProgress,
   type ApiContext,
   type CampaignSummary,
   type WorldGenStream,
@@ -44,12 +45,35 @@ vi.mock('@mythrun/client-core', async (importOriginal) => {
     // The ETA history (audit ③): the route fetches it once while generating.
     // Cold-start `[]` → the status card shows the bars with no estimate.
     getStageTimings: vi.fn().mockResolvedValue([]),
+    // MYT-90 D8: once campaign-detail delegates to CampaignPage, the mounted
+    // character surface reads the viewer (getMe) + their concept row
+    // (getCharacterCreationProgress). A default `integrated` concept lands the
+    // surface on the non-navigating play entry so route-campaign-detail stays
+    // mounted; per-test overrides drive the other branches (e.g. the failure
+    // interception below).
+    getMe: vi.fn().mockResolvedValue({ user: { id: 'u1', username: 'u1', displayName: 'You' } }),
+    getCharacterCreationProgress: vi.fn().mockResolvedValue({
+      campaignId: 'c1',
+      totalMembers: 1,
+      concepts: [
+        {
+          userId: 'u1',
+          displayName: 'You',
+          status: 'integrated',
+          submittedAt: '2026-01-01T00:00:00.000Z',
+          confirmedAt: null,
+          characterId: null,
+        },
+      ],
+      missing: [],
+    }),
   }
 })
 
 const mockStream = vi.mocked(useWorldGenStream)
 const mockSituations = vi.mocked(getStartingSituations)
 const mockCampaigns = vi.mocked(getMyCampaigns)
+const mockProgress = vi.mocked(getCharacterCreationProgress)
 
 // One hub-shaped campaign carrying a world identity (name + dither pair) — the
 // campaign page finds it by id off `getMyCampaigns` and renders its world name.
@@ -68,6 +92,39 @@ const CAMPAIGN: CampaignSummary = {
   sessionCount: 0,
   lastPlayedAt: null,
   cardPhase: 'needs-character',
+}
+
+// A one-member progress board for the viewer (u1) at a given concept status — used
+// by the CampaignPage-reaching tests to land the mounted surface on a stable,
+// non-navigating beat (integrated → play; failed → the character-context failure).
+function soloProgress(status: string): {
+  campaignId: string
+  totalMembers: number
+  concepts: {
+    userId: string
+    displayName: string
+    status: string
+    submittedAt: string
+    confirmedAt: string | null
+    characterId: string | null
+  }[]
+  missing: never[]
+} {
+  return {
+    campaignId: 'c1',
+    totalMembers: 1,
+    concepts: [
+      {
+        userId: 'u1',
+        displayName: 'You',
+        status,
+        submittedAt: '2026-01-01T00:00:00.000Z',
+        confirmedAt: null,
+        characterId: null,
+      },
+    ],
+    missing: [],
+  }
 }
 
 // ENVIRONMENT shim (Node 25 vs jsdom): @mythrun/ui's <ThemeProvider> reads
@@ -372,11 +429,48 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(retry).toHaveBeenCalledOnce()
   })
 
-  it('renders the terminal state with NO retry affordance', () => {
-    mockStream.mockReturnValue(streamValue({ status: 'terminal', phase: 'failed' }))
+  it('renders the terminal state with NO retry affordance (a genuine world-gen terminal)', () => {
+    // The world-gen dead end: a resume-capped failure — override 'terminal' while
+    // the phase stays 'world_gen_failed' (NOT the character-context 'failed', which
+    // routes past this to the campaign page — see the interception test below).
+    mockStream.mockReturnValue(streamValue({ status: 'terminal', phase: 'world_gen_failed' }))
     renderDetail()
     expect(screen.getByTestId('worldgen-terminal')).toBeDefined()
     expect(screen.queryByTestId('worldgen-retry')).toBeNull()
+  })
+
+  it('routes a character-creation failure (phase failed) to the campaign page, NOT the world-gen terminal', async () => {
+    // MYT-90 D8 interception: a per-player concept failed → derivePhase returns a
+    // party-wide 'failed' that the stream collapses to a coarse 'terminal'. That
+    // failure happened after the world completed, so it must reach CampaignPage's
+    // character surface (a character-context retry), never the world-gen terminal.
+    mockStream.mockReturnValue(streamValue({ status: 'terminal', phase: 'failed' }))
+    mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
+    // Situation + level already set (the concept failed AFTER setup), so the surface
+    // routes on the concept, not the owner setup redirects.
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 0, startingLevel: 1 })
+    mockProgress.mockResolvedValue({
+      campaignId: 'c1',
+      totalMembers: 1,
+      concepts: [
+        {
+          userId: 'u1',
+          displayName: 'You',
+          status: 'failed',
+          submittedAt: '2026-01-01T00:00:00.000Z',
+          confirmedAt: null,
+          characterId: null,
+        },
+      ],
+      missing: [],
+    })
+    renderDetail()
+    // The campaign page mounts (its outer testid) — NOT the world-gen terminal.
+    expect(await screen.findByTestId('route-campaign-detail')).toBeDefined()
+    expect(screen.queryByTestId('worldgen-terminal')).toBeNull()
+    expect(screen.queryByTestId('worldgen-failed')).toBeNull()
+    // The surface routes the failed concept to the character-context failure+retry.
+    expect(await screen.findByTestId('character-failure')).toBeDefined()
   })
 
   it('renders the Phase D world reveal at world_ready before a situation is chosen', async () => {
@@ -414,8 +508,10 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
       streamValue({ status: 'complete', phase: 'world_ready', nodes: NODES }),
     )
     // A chosen situation → the reveal is done; the campaign page (D5) lands.
-    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1, startingLevel: null })
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 1, startingLevel: 1 })
     mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
+    // An integrated concept lands the surface on the (non-navigating) play entry.
+    mockProgress.mockResolvedValue(soloProgress('integrated'))
     renderDetail()
     // The campaign page: world identity + both MYT-89 boundary seams. The world
     // name renders only after the async campaigns fetch resolves, so await it
@@ -424,7 +520,10 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(await screen.findByTestId('route-campaign-detail')).toBeDefined()
     expect((await screen.findByTestId('campaign-world-name')).textContent).toBe('Emberdeep Hollow')
     expect(screen.getByTestId('seam-invite')).toBeDefined()
-    expect(screen.getByTestId('seam-character')).toBeDefined()
+    // The character region is now the real surface (the integrated-concept default
+    // lands it on the play entry); the old character stub seam is gone.
+    expect(await screen.findByTestId('character-play')).toBeDefined()
+    expect(screen.queryByTestId('seam-character')).toBeNull()
     // The reveal must NOT show once the situation is chosen.
     expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
   })
@@ -439,11 +538,17 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
 
   it('renders the campaign page for an already-active campaign (phase complete)', async () => {
     mockStream.mockReturnValue(streamValue({ status: 'complete', phase: 'complete' }))
-    mockCampaigns.mockResolvedValue({ campaigns: [CAMPAIGN] })
+    mockCampaigns.mockResolvedValue({ campaigns: [{ ...CAMPAIGN, status: 'active' }] })
+    // Reset the situations mock (a prior test leaves it rejecting; clearAllMocks
+    // keeps implementations) so the surface's parallel fetch resolves → play entry.
+    mockSituations.mockResolvedValue({ situations: [], chosenIndex: 0, startingLevel: 1 })
+    mockProgress.mockResolvedValue(soloProgress('integrated'))
     renderDetail()
     // A later phase already has a situation → straight to the campaign page (D5).
     expect(await screen.findByTestId('route-campaign-detail')).toBeDefined()
     expect(screen.getByTestId('seam-invite')).toBeDefined()
-    expect(screen.getByTestId('seam-character')).toBeDefined()
+    // The character surface (integrated concept → play entry) supersedes the stub seam.
+    expect(await screen.findByTestId('character-play')).toBeDefined()
+    expect(screen.queryByTestId('seam-character')).toBeNull()
   })
 })

@@ -241,8 +241,20 @@ export function CampaignDetailRoute({
       />
     )
   }
-  if (status === 'failed') return <FailedView onRetry={() => void retry()} />
-  if (status === 'terminal') return <TerminalView />
+  // THE CHARACTER-CONTEXT FAILURE INTERCEPTION (MYT-90 D8): `derivePhase` returns a
+  // party-wide `failed` when a per-player concept fails OR when the terminal
+  // integration failure flips campaigns.status to 'failed' — and the stream
+  // collapses that phase to a coarse `terminal` (see statusForPhase in
+  // use-worldgen-stream). That failure happened AFTER the world completed, so it
+  // must reach CampaignPage's character surface (which shows a character-context
+  // retry, and never terminal-screens the whole party for one member's failure) —
+  // NOT the world-gen FailedView/TerminalView. Only a genuine world-gen failure
+  // (phase 'world_gen_failed' — retryable 'failed', or resume-capped 'terminal')
+  // shows the world-gen screens, so gate the short-circuit on that phase.
+  if (phase !== 'failed') {
+    if (status === 'failed') return <FailedView onRetry={() => void retry()} />
+    if (status === 'terminal') return <TerminalView />
+  }
 
   // status === 'complete'. The `world_ready` phase splits on the chosen-situation
   // flag: the one-time reveal (D3) until a situation is picked, then the campaign

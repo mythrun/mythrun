@@ -1,14 +1,58 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
-import { ApiClientProvider, type ApiContext, type CampaignSummary } from '@mythrun/client-core'
+import {
+  ApiClientProvider,
+  createSseStatusClient,
+  type ApiContext,
+  type CampaignSummary,
+  type SseStatusClient,
+} from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
 import { CampaignPage } from './campaign-page.tsx'
+import type { CharacterSurfaceDeps } from './character-new/character-surface.tsx'
 
-// The campaign page (D5) is the MYT-89 boundary: world identity + two clearly-marked
-// STUB seams (invite = MYT-91, character = MYT-90). `fetchCampaigns` is injected so
-// these render against a resolved fixture without a live endpoint.
+// The campaign page (MYT-89 D5 → MYT-90 D8): world identity + the invite stub seam
+// (MYT-91) + the real character surface (MYT-90). `fetchCampaigns` is injected for
+// the identity; `characterDeps` drives the mounted surface to a stable, non-network
+// beat (a processing concept → the loading beat) so the page renders without a live
+// SSE/endpoint. The surface's own routing is covered in character-surface.test.tsx.
+
+// A never-opened SSE client so the mounted loading beat never touches the network.
+const characterDeps: CharacterSurfaceDeps = {
+  fetchMe: () => Promise.resolve({ user: { id: 'viewer-1' } }),
+  fetchSituations: () => Promise.resolve({ situations: [], chosenIndex: 0, startingLevel: 1 }),
+  fetchProgress: () =>
+    Promise.resolve({
+      campaignId: 'c1',
+      totalMembers: 1,
+      concepts: [
+        {
+          userId: 'viewer-1',
+          displayName: 'You',
+          status: 'processing',
+          submittedAt: '2026-01-01T00:00:00.000Z',
+          confirmedAt: null,
+          characterId: null,
+        },
+      ],
+      missing: [],
+    }),
+  loading: {
+    createClient: (ctx: ApiContext): SseStatusClient => {
+      const { connectionState } = createSseStatusClient(ctx)
+      return {
+        open: () => undefined,
+        onEvent: () => () => undefined,
+        onSnapshot: () => () => undefined,
+        connectionState,
+        close: () => undefined,
+      }
+    },
+  },
+}
 
 // ENVIRONMENT shim (Node 25 vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; install a functional in-memory one (mirrors the sibling
@@ -78,7 +122,13 @@ function renderPage(
     <ThemeProvider>
       <ApiClientProvider value={testCtx}>
         <I18nextProvider i18n={i18n}>
-          <CampaignPage campaignId={campaignId} fetchCampaigns={fetchCampaigns} />
+          <MemoryRouter initialEntries={[`/campaigns/${campaignId}`]}>
+            <CampaignPage
+              campaignId={campaignId}
+              fetchCampaigns={fetchCampaigns}
+              characterDeps={characterDeps}
+            />
+          </MemoryRouter>
         </I18nextProvider>
       </ApiClientProvider>
     </ThemeProvider>,
@@ -95,16 +145,17 @@ describe('CampaignPage — world identity + MYT-90/91 seams', () => {
     expect(screen.queryByTestId('campaign-cover-ghost')).toBeNull()
   })
 
-  it('renders both clearly-marked stub seams (invite MYT-91, character MYT-90)', async () => {
+  it('renders the invite stub seam (MYT-91) and mounts the real character surface (MYT-90)', async () => {
     renderPage(() => Promise.resolve([CAMPAIGN]))
     await screen.findByTestId('campaign-world-name')
     const invite = screen.getByTestId('seam-invite')
-    const character = screen.getByTestId('seam-character')
     expect(invite).toBeDefined()
-    expect(character).toBeDefined()
-    // Placeholder copy → visibly a stub, not a fake-working control.
+    // The invite region is still a clearly-marked stub, never a fake-working control.
     expect(invite.textContent).toContain('[ph:')
-    expect(character.textContent).toContain('[ph:')
+    // The character region is no longer a stub — the surface routes the injected
+    // processing concept to the live loading beat.
+    expect(await screen.findByTestId('character-loading')).toBeDefined()
+    expect(screen.queryByTestId('seam-character')).toBeNull()
   })
 
   it('renders a ghost cover when the world has no colour pick yet', async () => {
@@ -117,8 +168,10 @@ describe('CampaignPage — world identity + MYT-90/91 seams', () => {
 
   it('settles to a calm ghost identity when the campaign is not found', async () => {
     renderPage(() => Promise.resolve([]), 'missing')
-    // The page (seams) still renders; the identity falls to the ghost swatch.
-    expect(await screen.findByTestId('seam-character')).toBeDefined()
+    // The page still renders (the invite seam + the surface); the identity falls to
+    // the ghost swatch, and the surface holds on its calm loading line (campaign null).
+    expect(await screen.findByTestId('seam-invite')).toBeDefined()
+    expect(screen.getByTestId('character-surface-loading')).toBeDefined()
     expect(screen.getByTestId('campaign-cover-ghost')).toBeDefined()
     expect(screen.queryByTestId('campaign-world-name')).toBeNull()
   })

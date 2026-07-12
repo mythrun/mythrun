@@ -403,6 +403,13 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
   // `missing[]`. `error` (JSONB) is included only when the row's status
   // is 'failed' — the JSONB is forwarded as-is so the client owns the
   // display shape.
+  //
+  // MYT-90 D8: each concept also carries `confirmedAt` (the "This is me"
+  // timestamp, null until confirmed) and `characterId` (the generated PC id,
+  // null until the sheet exists). The FE character-creation routing table keys
+  // the reveal→party-staging split on `confirmedAt` (reload-stable) and hands
+  // `characterId` to the reveal so it can fetch the sheet. Both are
+  // response-body-only additions — no pipelineRoute contract ripple.
   // --------------------------------------------------------------------
   app.get<{ Params: { campaignId: string } }>(
     '/api/campaigns/:campaignId/character-creation-progress',
@@ -421,6 +428,8 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
         displayName: string
         status: string
         submittedAt: string
+        confirmedAt: string | null
+        characterId: string | null
         error?: unknown
       }[] = []
       const missing: { userId: string; displayName: string }[] = []
@@ -432,6 +441,10 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
             displayName: m.display_name,
             status: c.status,
             submittedAt: c.submitted_at.toISOString(),
+            // MYT-90 D8: null until the player confirms ("This is me") /
+            // until the sheet stage persists the character row.
+            confirmedAt: c.confirmed_at === null ? null : c.confirmed_at.toISOString(),
+            characterId: c.character_id,
             // `error` is only emitted when the row is in 'failed'.
             // Other terminal states (completed/integrated) never set it
             // and shouldn't surface it even if the column is non-null

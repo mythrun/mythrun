@@ -284,8 +284,33 @@
       "body": "[ph: send a link so your table can join — invites land next (MYT-91)]"
     },
     "character": {
-      "title": "[ph: everyone makes a character]",
-      "body": "[ph: each player builds who they are — character creation lands next (MYT-90)]"
+      "loading": "[ph: getting your character ready]",
+      "error": {
+        "body": "[ph: we couldn't load your character creation just now]",
+        "retry": "[ph: try again]"
+      },
+      "hold": {
+        "title": "[ph: setting up the table]",
+        "body": "[ph: your host is choosing where the story begins — hang tight]"
+      },
+      "failure": {
+        "concept": {
+          "title": "[ph: that character didn't come together]",
+          "body": "[ph: something went wrong building your character — start over and try again]",
+          "retry": "[ph: start over]"
+        },
+        "integration": {
+          "title": "[ph: we couldn't bring the party into the world]",
+          "body": "[ph: weaving your characters into the world didn't finish — try again]",
+          "retry": "[ph: try again]"
+        },
+        "retryError": "[ph: that didn't work either — give it another moment]"
+      },
+      "play": {
+        "title": "[ph: your character is ready]",
+        "body": "[ph: the world is waiting]",
+        "enter": "[ph: enter the world]"
+      }
     }
   },
   "characterCreate": {

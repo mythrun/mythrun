@@ -163,24 +163,42 @@ export function characterConceptsNs(c: ClientLike) {
     /**
      * MYT-54 T12 progress board: every character_concepts row for a campaign
      * (user_id, status, submitted_at, error). The route nests these under the
-     * member roster. SQL verbatim from the former inline read in
-     * campaign-characters.ts (GET /character-creation-progress). `error` is
-     * JSONB; the caller decides when to surface it.
+     * member roster. `error` is JSONB; the caller decides when to surface it.
+     *
+     * MYT-90 D8: additively surfaces `confirmed_at` (the "This is me"
+     * confirmation timestamp — the FE routing table keys the reveal→party-staging
+     * split on it so a reload in the completed→active window is stable) and
+     * `character_id` (the member's generated PC id — the reveal needs it to fetch
+     * the sheet). `character_id` LEFT JOINs `campaign_characters` (its
+     * `(campaign_id, user_id)` is UNIQUE), so it is null until the sheet stage
+     * persists the character.
      */
     listForCampaign: async (
       campaignId: string,
     ): Promise<
-      readonly { user_id: string; status: string; submitted_at: Date; error: unknown }[]
+      readonly {
+        user_id: string
+        status: string
+        submitted_at: Date
+        error: unknown
+        confirmed_at: Date | null
+        character_id: string | null
+      }[]
     > => {
       const result = await c.query<{
         user_id: string
         status: string
         submitted_at: Date
         error: unknown
+        confirmed_at: Date | null
+        character_id: string | null
       }>(
-        `SELECT user_id, status, submitted_at, error
-           FROM character_concepts
-          WHERE campaign_id = $1`,
+        `SELECT cc.user_id, cc.status, cc.submitted_at, cc.error, cc.confirmed_at,
+                ccx.character_id
+           FROM character_concepts cc
+           LEFT JOIN campaign_characters ccx
+             ON ccx.campaign_id = cc.campaign_id AND ccx.user_id = cc.user_id
+          WHERE cc.campaign_id = $1`,
         [campaignId],
       )
       return result.rows
