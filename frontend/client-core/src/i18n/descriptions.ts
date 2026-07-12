@@ -296,4 +296,10 @@ export const descriptions: Record<string, string> = {
   'characterCreate.reveal.loadError': 'Calm inline notice on the reveal surface when fetching the character fails — a quiet, retryable note (paired with the retry affordance), not an apology. Terse, ~5-8 words.',
   'characterCreate.reveal.retry': 'Retry affordance label on the reveal surface\'s load-error state — re-fetches the character. ~1-2 words, e.g. "Try again".',
   'characterCreate.reveal.actionError': 'Calm inline notice on the reveal surface when confirming ("This is me") or starting over fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
+  'characterCreate.staging.title': 'Headline over the PARTY-STAGING surface (MYT-90 D7) — the "ready to begin?" screen the viewer reaches once their own character is confirmed, above the party roster + the owner-only Begin control. Calm, inviting, ~2-4 words.',
+  'characterCreate.staging.lede': "Sub-headline under the party-staging title — reassures the character is made and frames the choice: play solo now or invite others and start once the table's together. Warm, ~1 sentence.",
+  'characterCreate.staging.loading': 'Calm loading line on the party-staging surface while the roster + the viewer\'s owner role are fetched, before the party list renders. Warm, unhurried, ~2-4 words.',
+  'characterCreate.staging.loadError': 'Calm inline notice on the party-staging surface when fetching the roster fails — a quiet, retryable note (paired with the retry affordance), not an apology. Terse, ~5-8 words.',
+  'characterCreate.staging.retry': 'Retry affordance label on the party-staging surface\'s load-error state — re-fetches the roster. ~1-2 words, e.g. "Try again".',
+  'characterCreate.staging.beginError': 'Calm inline notice on the party-staging surface when the owner\'s Begin (finalize) fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
 }

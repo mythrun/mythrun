@@ -1,0 +1,239 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { I18nextProvider } from 'react-i18next'
+import {
+  ApiClientProvider,
+  HttpError,
+  type ApiContext,
+  type CampaignSummary,
+  type CharacterCreationProgress,
+} from '@mythrun/client-core'
+import { i18n } from '../../i18n/config.ts'
+import { PartyStagingSurface, type PartyStagingDeps } from './party-staging.tsx'
+
+// The PARTY-STAGING SURFACE (MYT-90 D7) — the "ready to begin?" screen D8 mounts
+// once the viewer's own character is confirmed. It composes the DS <PartyRoster>
+// over the committed client-core view-model: it FETCHES the roster progress +
+// the viewer's owner role (the `getMyCampaigns → creator === null` mechanism the
+// other routes use), maps progress → roster rows, and wires the owner-only Begin
+// (finalize → onFinalized). Invite is the MYT-91 boundary — a no-op seam here.
+//
+// These inject the three endpoint seams through the `deps` object (defaults are
+// the real endpoints) and assert each path: owner sees the roster + an enabled
+// Begin; a non-owner sees the waiting line; Begin finalizes then re-routes; the
+// solo case carries the invite row. ApiClientProvider carries the ctx; i18n
+// serves the [ph:] catalog.
+
+const testCtx: ApiContext = {
+  baseUrl: 'http://api.test',
+  getAuthHeaders: () => Promise.resolve({}),
+}
+
+const CID = 'camp-1'
+const OWNER = 'user-owner'
+const MEMBER = 'user-member'
+
+/** A full, valid CampaignSummary with the fields the surface reads (creator +
+ *  party) overridable; the rest are inert defaults. */
+function campaign(over: Partial<CampaignSummary> = {}): CampaignSummary {
+  return {
+    id: CID,
+    worldId: 'world-1',
+    name: 'The Hollow Road',
+    status: 'setup',
+    language: 'en',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    worldName: 'Aldermoor',
+    worldColors: null,
+    creator: null,
+    party: [{ userId: OWNER, displayName: 'Kessa', hasCharacter: true }],
+    sessionCount: 0,
+    lastPlayedAt: null,
+    cardPhase: 'needs-character',
+    ...over,
+  }
+}
+
+function progress(over: Partial<CharacterCreationProgress> = {}): CharacterCreationProgress {
+  return {
+    campaignId: CID,
+    totalMembers: 1,
+    concepts: [{ userId: OWNER, displayName: 'Kessa', status: 'completed', submittedAt: 't1' }],
+    missing: [],
+    ...over,
+  }
+}
+
+interface Opts {
+  readonly viewerUserId?: string
+  readonly deps?: PartyStagingDeps
+  readonly onFinalized?: () => void
+}
+
+/** Resolve a full deps object from partial overrides — every seam defaults to a
+ *  happy-path mock so a test only names the seam it cares about. */
+function resolveDeps(deps: PartyStagingDeps = {}): Required<PartyStagingDeps> {
+  return {
+    getProgress: deps.getProgress ?? vi.fn().mockResolvedValue(progress()),
+    finalize: deps.finalize ?? vi.fn().mockResolvedValue({ campaignId: CID, jobId: 'job-1' }),
+    getCampaigns: deps.getCampaigns ?? vi.fn().mockResolvedValue([campaign()]),
+    // A large default cadence so the background poll never fires mid-test.
+    pollMs: deps.pollMs ?? 100_000,
+  }
+}
+
+function renderSurface({ viewerUserId = OWNER, deps, onFinalized = vi.fn() }: Opts = {}): {
+  deps: Required<PartyStagingDeps>
+  onFinalized: () => void
+} {
+  const resolved = resolveDeps(deps)
+  render(
+    <ApiClientProvider value={testCtx}>
+      <I18nextProvider i18n={i18n}>
+        <PartyStagingSurface
+          campaignId={CID}
+          viewerUserId={viewerUserId}
+          onFinalized={onFinalized}
+          deps={resolved}
+        />
+      </I18nextProvider>
+    </ApiClientProvider>,
+  )
+  return { deps: resolved, onFinalized }
+}
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
+
+describe('PartyStagingSurface — owner', () => {
+  it('shows the roster and an ENABLED Begin when the owner concept is ready', async () => {
+    renderSurface({ viewerUserId: OWNER })
+    await screen.findByTestId('party-staging')
+    const begin = await screen.findByRole('button', { name: /begin/i })
+    expect((begin as HTMLButtonElement).disabled).toBe(false)
+    // Owner view — the finalize control, never the member waiting line.
+    expect(screen.queryByTestId('party-roster-waiting')).toBeNull()
+  })
+
+  it('Begin finalizes then calls onFinalized', async () => {
+    const finalize = vi.fn().mockResolvedValue({ campaignId: CID, jobId: 'job-1' })
+    const { onFinalized } = renderSurface({ viewerUserId: OWNER, deps: { finalize } })
+    fireEvent.click(await screen.findByRole('button', { name: /begin/i }))
+    await waitFor(() => {
+      expect(onFinalized).toHaveBeenCalledTimes(1)
+    })
+    expect(finalize).toHaveBeenCalledWith(expect.anything(), CID)
+  })
+
+  it('keeps the roster up with a calm note when Begin fails (no onFinalized)', async () => {
+    const finalize = vi.fn().mockRejectedValue(new HttpError(409, 'Conflict', 'not_in_setup'))
+    const { onFinalized } = renderSurface({ viewerUserId: OWNER, deps: { finalize } })
+    fireEvent.click(await screen.findByRole('button', { name: /begin/i }))
+    await screen.findByTestId('party-staging-begin-error')
+    expect(onFinalized).not.toHaveBeenCalled()
+    expect(screen.getByTestId('party-staging')).toBeDefined()
+  })
+})
+
+describe('PartyStagingSurface — solo + party shape', () => {
+  it('solo owner carries one member row + the invite row', async () => {
+    renderSurface({ viewerUserId: OWNER })
+    await screen.findByTestId('party-staging')
+    expect(screen.getAllByTestId('party-roster-member')).toHaveLength(1)
+    expect(screen.getByTestId('party-roster-invite')).toBeDefined()
+  })
+
+  it('a full party (2 real members) shows no invite row', async () => {
+    const getCampaigns = vi.fn().mockResolvedValue([
+      campaign({
+        party: [
+          { userId: OWNER, displayName: 'Kessa', hasCharacter: true },
+          { userId: MEMBER, displayName: 'Pell', hasCharacter: true },
+        ],
+      }),
+    ])
+    const getProgress = vi.fn().mockResolvedValue(
+      progress({
+        totalMembers: 2,
+        concepts: [
+          { userId: OWNER, displayName: 'Kessa', status: 'completed', submittedAt: 't1' },
+          { userId: MEMBER, displayName: 'Pell', status: 'completed', submittedAt: 't2' },
+        ],
+      }),
+    )
+    renderSurface({ viewerUserId: OWNER, deps: { getCampaigns, getProgress } })
+    await screen.findByTestId('party-staging')
+    expect(screen.getAllByTestId('party-roster-member')).toHaveLength(2)
+    expect(screen.queryByTestId('party-roster-invite')).toBeNull()
+  })
+})
+
+describe('PartyStagingSurface — non-owner', () => {
+  it('a member sees the waiting line and NO Begin', async () => {
+    // creator is a NAME (not null) → the viewer did not create this world.
+    const getCampaigns = vi.fn().mockResolvedValue([
+      campaign({
+        creator: 'Kessa',
+        party: [
+          { userId: OWNER, displayName: 'Kessa', hasCharacter: true },
+          { userId: MEMBER, displayName: 'Pell', hasCharacter: true },
+        ],
+      }),
+    ])
+    const getProgress = vi.fn().mockResolvedValue(
+      progress({
+        totalMembers: 2,
+        concepts: [
+          { userId: OWNER, displayName: 'Kessa', status: 'completed', submittedAt: 't1' },
+          { userId: MEMBER, displayName: 'Pell', status: 'completed', submittedAt: 't2' },
+        ],
+      }),
+    )
+    renderSurface({ viewerUserId: MEMBER, deps: { getCampaigns, getProgress } })
+    await screen.findByTestId('party-roster-waiting')
+    expect(screen.queryByRole('button', { name: /begin/i })).toBeNull()
+  })
+
+  it('fails CLOSED to the member view when the owner probe rejects', async () => {
+    const getCampaigns = vi.fn().mockRejectedValue(new Error('boom'))
+    renderSurface({ viewerUserId: MEMBER, deps: { getCampaigns } })
+    await screen.findByTestId('party-roster-waiting')
+    expect(screen.queryByRole('button', { name: /begin/i })).toBeNull()
+  })
+})
+
+describe('PartyStagingSurface — load lifecycle', () => {
+  it('holds on a calm loading line while the fetches are in flight', () => {
+    const pending = new Promise<CharacterCreationProgress>(() => {
+      /* never resolves */
+    })
+    renderSurface({ viewerUserId: OWNER, deps: { getProgress: vi.fn(() => pending) } })
+    expect(screen.getByTestId('party-staging-loading')).toBeDefined()
+    expect(screen.queryByTestId('party-staging')).toBeNull()
+  })
+
+  it('surfaces a retryable error and re-fetches the roster on retry', async () => {
+    const getProgress = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(progress())
+    renderSurface({ viewerUserId: OWNER, deps: { getProgress } })
+    await screen.findByTestId('party-staging-error')
+    fireEvent.click(screen.getByText('[ph: try again]'))
+    await screen.findByTestId('party-staging')
+    expect(getProgress).toHaveBeenCalledTimes(2)
+  })
+
+  it('polls the roster on the modest interval so late finishers surface', async () => {
+    const getProgress = vi.fn().mockResolvedValue(progress())
+    renderSurface({ viewerUserId: OWNER, deps: { getProgress, pollMs: 20 } })
+    await screen.findByTestId('party-staging')
+    // The interval refetches without any user action.
+    await waitFor(() => {
+      expect(getProgress.mock.calls.length).toBeGreaterThan(1)
+    })
+  })
+})
