@@ -80,8 +80,12 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'character-view': [{ method: 'GET', path: '/api/campaigns/:campaignId/characters/:charId' }],
   'starting-situations': [{ method: 'GET', path: '/api/campaigns/:campaignId/starting-situations' }],
   'situation-pick': [{ method: 'POST', path: '/api/campaigns/:campaignId/starting-situation' }],
-  // MYT-90 A3 — owner sets the party's starting level (1–5).
-  'level-pick': [{ method: 'POST', path: '/api/campaigns/:campaignId/starting-level' }],
+  // NOTE: POST /api/campaigns/:campaignId/starting-level (MYT-90 A3) has NO
+  // panel — it's an owner config action driven by the WEB guided builder, so
+  // it lives in EXEMPT_ROUTES (sibling to the A7 reset/confirm reveal actions),
+  // not here. It was formerly a phantom `level-pick` entry that claimed panel
+  // coverage without a real component; consolidated to exempt so a route is
+  // only "covered" when a real panel drives it.
   members: [{ method: 'GET', path: '/api/campaigns/:campaignId/members' }],
   'character-creation-progress': [
     { method: 'GET', path: '/api/campaigns/:campaignId/character-creation-progress' },
@@ -182,6 +186,17 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // the owner-only world-snapshot panel already covers world inspection; this
   // route exists for the player UI (a Frontend ticket), so it has no dev-tool panel.
   { method: 'GET', path: '/api/campaigns/:campaignId/wiki' },
+
+  // POST /api/campaigns/:campaignId/starting-level (MYT-90 A3): owner sets the
+  // party's starting level (1–5) between the situation pick and character
+  // creation. Driven by the WEB guided character-creation flow (LevelCard /
+  // GuidedBuilder), not a dev-tool inspector panel — no `level-pick` component
+  // exists. Sibling to the A7 reset/confirm reveal actions below. The
+  // situation-pick panel already covers the analogous owner-picks-an-index
+  // dev-tool surface; representing this as exempt (rather than a phantom panel
+  // entry) keeps coverage.json + PANEL_EXERCISES honest — a route counts as
+  // "covered" only when a real panel drives it.
+  { method: 'POST', path: '/api/campaigns/:campaignId/starting-level' },
 
   // POST /api/campaigns/:campaignId/characters/reset + /confirm (MYT-90 A7):
   // player-facing character-reveal actions — "Start over" (self-scoped concept
@@ -301,7 +316,6 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
     panels: [
       'starting-situations',
       'situation-pick',
-      'level-pick',
       'submit-character-concept',
       'character-creation-progress',
       'characters-roster',

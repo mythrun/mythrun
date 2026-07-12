@@ -105,8 +105,11 @@ route(s) each panel id covers (the route-exhaustion invariant unions those). The
 | POST /api/campaigns/:campaignId/characters | submit-character-concept | characters |
 | GET /api/campaigns/:campaignId/characters | characters-roster | characters |
 | GET /api/campaigns/:campaignId/characters/:charId | character-view | characters |
+| POST /api/campaigns/:campaignId/characters/reset | (exempt — MYT-90 A7 player-facing "Start over" reveal action; self-scoped concept reset driven by the web app's D6 reveal wiring, no dev-tool panel — submit-character-concept covers the create half) | — |
+| POST /api/campaigns/:campaignId/characters/confirm | (exempt — MYT-90 A7 player-facing "This is me" reveal action; self-scoped confirm → confirmed_at driven by the web app's D6 reveal wiring, no dev-tool panel) | — |
 | GET /api/campaigns/:campaignId/starting-situations | starting-situations | characters |
 | POST /api/campaigns/:campaignId/starting-situation | situation-pick | characters |
+| POST /api/campaigns/:campaignId/starting-level | (exempt — MYT-90 A3 owner sets party level 1–5 via the web guided builder LevelCard/GuidedBuilder; no dev-tool panel — situation-pick already covers the analogous owner-picks-an-index surface) | — |
 | GET /api/campaigns/:campaignId/character-creation-progress | character-creation-progress | characters |
 | POST /api/campaigns/:campaignId/finalize-character-creation | finalize-character-creation | characters |
 | GET /api/campaigns/:campaignId/members | members | characters |

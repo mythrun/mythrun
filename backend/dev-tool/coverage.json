@@ -12,7 +12,6 @@
     "PATCH /api/campaigns/:campaignId/name",
     "GET /api/campaigns/:campaignId/world-snapshot",
     "POST /api/campaigns/:campaignId/starting-situation",
-    "POST /api/campaigns/:campaignId/starting-level",
     "POST /api/campaigns/:campaignId/characters",
     "GET /api/campaigns/:campaignId/starting-situations",
     "GET /api/campaigns/:campaignId/characters",
@@ -47,6 +46,7 @@
   "exempt": {
     "routes": {
       "GET /api/campaigns/:campaignId/wiki": "MYT-74c — player-facing member-readable campaign wiki (narrow known-tier). Not a dev-tool inspector surface: the owner-only world-snapshot panel already covers world inspection. This route exists for the player UI (a Frontend ticket), so it has no dev-tool panel; mirrors EXEMPT_ROUTES in verify-registry.ts.",
+      "POST /api/campaigns/:campaignId/starting-level": "MYT-90 A3 — owner sets the party's starting level (1–5) between the situation pick and character creation. Driven by the WEB guided character-creation flow (LevelCard / GuidedBuilder), not a dev-tool inspector panel: no level-pick component exists, and the situation-pick panel already covers the analogous owner-picks-an-index dev-tool surface. Sibling to the A7 reset/confirm reveal actions; consolidated here (was a phantom 'covered' entry) so a route counts as covered only when a real panel drives it. Mirrors EXEMPT_ROUTES in verify-registry.ts.",
       "POST /api/campaigns/:campaignId/characters/reset": "MYT-90 A7 — player-facing 'Start over' on the character reveal (self-scoped concept reset → resubmittable + cleared sheet). Consumed by the frontend web app (client-core resetCharacterConcept + the D6 reveal wiring), not a dev-tool inspector panel; the submit-character-concept panel already drives the create half. Mirrors EXEMPT_ROUTES in verify-registry.ts.",
       "POST /api/campaigns/:campaignId/characters/confirm": "MYT-90 A7 — player-facing 'This is me' on the character reveal (self-scoped confirm → confirmed_at, reload-stable party staging). Consumed by the frontend web app (client-core confirmCharacter + the D6 reveal wiring), not a dev-tool inspector panel. Mirrors EXEMPT_ROUTES in verify-registry.ts."
     },
