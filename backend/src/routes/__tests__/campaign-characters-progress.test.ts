@@ -140,9 +140,47 @@ interface ProgressBody {
     displayName: string
     status: string
     submittedAt: string
+    // MYT-90 D8 additive fields.
+    confirmedAt: string | null
+    characterId: string | null
     error?: unknown
   }[]
   missing: { userId: string; displayName: string }[]
+}
+
+// MYT-90 D8: mark a member's concept confirmed ("This is me").
+async function confirmConcept(pool: Pool, campaignId: string, userId: string): Promise<void> {
+  await pool.query(
+    `UPDATE character_concepts SET confirmed_at = now()
+      WHERE campaign_id = $1 AND user_id = $2`,
+    [campaignId, userId],
+  )
+}
+
+// MYT-90 D8: persist a `characters` row + `campaign_characters` join for a member,
+// so the progress row's `characterId` resolves (mirrors campaign-characters.test.ts).
+async function attachCharacter(
+  pool: Pool,
+  campaignId: string,
+  userId: string,
+  name: string,
+): Promise<string> {
+  const characterId = uuidv7()
+  await pool.query(
+    `INSERT INTO characters (
+       id, user_id, name, level, class, species, background,
+       str, dex, con, int, wis, cha,
+       hit_points, max_hit_points, armor_class, proficiency_bonus
+     ) VALUES ($1, $2, $3, 1, 'Cleric', 'Human', 'Sage',
+               10, 10, 10, 10, 10, 10, 10, 10, 10, 2)`,
+    [characterId, userId, name],
+  )
+  await pool.query(
+    `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+     VALUES ($1, $2, $3, $4)`,
+    [uuidv7(), campaignId, characterId, userId],
+  )
+  return characterId
 }
 
 describe('GET /api/campaigns/:campaignId/character-creation-progress (MYT-54 T12)', () => {
@@ -156,7 +194,20 @@ describe('GET /api/campaigns/:campaignId/character-creation-progress (MYT-54 T12
     scope = makeTestScope('cc-prog')
   })
 
+  // The D8 test attaches `characters` rows (owned by scope users). Those survive
+  // the campaign CASCADE (characters decoupled from campaigns in migration 009),
+  // so cleanupTestScope's users-delete pass would hit characters_user_id_fkey.
+  // Wipe the scope's characters first (mirrors campaign-characters.test.ts).
+  async function wipeScopeCharacters(): Promise<void> {
+    await pool.query(
+      `DELETE FROM characters
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [`${scope.id}%`],
+    )
+  }
+
   afterAll(async () => {
+    await wipeScopeCharacters()
     await cleanupTestScope(pool, scope)
     await pool.end()
   })
@@ -164,6 +215,7 @@ describe('GET /api/campaigns/:campaignId/character-creation-progress (MYT-54 T12
   beforeEach(async () => {
     vi.stubEnv('AUTH_MODE', 'bypass')
     vi.stubEnv('NODE_ENV', 'test')
+    await wipeScopeCharacters()
     await cleanupTestScope(pool, scope)
     app = await buildTestApp(pool)
   })
@@ -254,6 +306,41 @@ describe('GET /api/campaigns/:campaignId/character-creation-progress (MYT-54 T12
     const body = res.json<ProgressBody>()
     expect(body.concepts).toHaveLength(1)
     expect(body.concepts[0]?.status).toBe('integrated')
+  })
+
+  it('200 — MYT-90 D8: surfaces confirmedAt + characterId per concept', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const p1 = await seedUser(pool, scope, 1)
+    const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    await addMember(pool, seed.campaignId, p1, 'player')
+
+    // owner: completed + confirmed + a persisted character (→ both fields set).
+    await insertConcept(pool, seed.campaignId, owner.userId, 'completed')
+    const ownerCharId = await attachCharacter(pool, seed.campaignId, owner.userId, 'Brother Anselm')
+    await confirmConcept(pool, seed.campaignId, owner.userId)
+    // p1: processing, unconfirmed, no character yet (→ both fields null).
+    await insertConcept(pool, seed.campaignId, p1.userId, 'processing')
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${seed.campaignId}/character-creation-progress`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<ProgressBody>()
+    const byUserId = Object.fromEntries(body.concepts.map((c) => [c.userId, c]))
+
+    // Confirmed owner with a sheet: ISO confirmedAt + the real characterId.
+    expect(byUserId[owner.userId]?.confirmedAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*Z$/,
+    )
+    expect(byUserId[owner.userId]?.characterId).toBe(ownerCharId)
+
+    // Unconfirmed, pre-sheet player: both null (present as keys, not omitted).
+    expect(byUserId[p1.userId]?.confirmedAt).toBeNull()
+    expect(byUserId[p1.userId]?.characterId).toBeNull()
+    expect('confirmedAt' in (byUserId[p1.userId] ?? {})).toBe(true)
+    expect('characterId' in (byUserId[p1.userId] ?? {})).toBe(true)
   })
 
   it("200 — `error` is OMITTED (not null) when status != 'failed'", async () => {
