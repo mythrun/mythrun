@@ -292,4 +292,8 @@ export const descriptions: Record<string, string> = {
   'characterCreate.guided.notes.whisper': 'Quiet sub-line under the guided NOTES prompt — signals the field is optional (a detail, a quirk, a scar) and can be left blank. Calm, ~1 short line.',
   'characterCreate.loading.title': 'Headline over the character-creation LOADING screen (MYT-90 D5) — the "coming into being" beat shown while the sheet is generated, above the filling-in figure + surfacing beat rows. Calm, unhurried, ~2-4 words.',
   'characterCreate.processing': 'Calm placeholder shown after a successful concept submit while the character is being generated (MYT-90 D5 replaces it with the real loading beat). Warm, unhurried, ~3-5 words.',
+  'characterCreate.reveal.loading': 'Calm loading line on the character REVEAL surface (MYT-90 D6) while the finished character sheet is fetched, before the "Meet your character" screen renders. Warm, unhurried, ~2-4 words.',
+  'characterCreate.reveal.loadError': 'Calm inline notice on the reveal surface when fetching the character fails — a quiet, retryable note (paired with the retry affordance), not an apology. Terse, ~5-8 words.',
+  'characterCreate.reveal.retry': 'Retry affordance label on the reveal surface\'s load-error state — re-fetches the character. ~1-2 words, e.g. "Try again".',
+  'characterCreate.reveal.actionError': 'Calm inline notice on the reveal surface when confirming ("This is me") or starting over fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
 }

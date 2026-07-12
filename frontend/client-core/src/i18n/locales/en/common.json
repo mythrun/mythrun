@@ -475,6 +475,12 @@
     "loading": {
       "title": "[ph: making your character]"
     },
-    "processing": "[ph: bringing your character to life…]"
+    "processing": "[ph: bringing your character to life…]",
+    "reveal": {
+      "loading": "[ph: meeting your character…]",
+      "loadError": "[ph: we couldn't bring up your character — try again]",
+      "retry": "[ph: try again]",
+      "actionError": "[ph: something went wrong — try again]"
+    }
   }
 }
