@@ -479,12 +479,16 @@ export const campaignCharactersPlugin: FastifyPluginAsync<Opts> = async (app, op
       }
 
       const full = await repo.characters.getFullCharacter(req.params.charId)
+      // MYT-90: `concept` carries the character-concept narrative prose the
+      // reveal's prose panel renders. Omitted (not serialized as null) when the
+      // character has no concept row, mirroring the roster's characterId omit.
       return reply.code(200).send({
         character: full.character,
         skills: full.skills,
         features: full.features,
         equipment: full.equipment,
         spells: full.spells,
+        ...(full.concept !== undefined ? { concept: full.concept } : {}),
       })
     },
   )

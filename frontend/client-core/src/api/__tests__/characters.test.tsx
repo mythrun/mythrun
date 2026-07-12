@@ -128,15 +128,37 @@ describe('getCharacter', () => {
     ],
     equipment: [{ item_name: 'Quarterstaff', quantity: 1, equipped: true }],
     spells: [{ spell_name: 'Entangle', spell_level: 1, prepared: true }],
+    // MYT-90: the character-concept narrative prose the reveal's prose panel is
+    // built from (physical description + personality sentences + the player's
+    // connection-to-the-opening grounding text).
+    concept: {
+      physical_description: 'A wind-burned halfling with river-stone eyes.',
+      personality_traits: ['I speak to birds more easily than to people.'],
+      ideals: ['The wild keeps its own counsel, and so do I.'],
+      bonds: ['The old grove raised me; I will not see it burn.'],
+      flaws: ['I trust a heron before I trust a stranger.'],
+      situation_grounding_text: 'I followed the smoke downriver to the tavern.',
+    },
   }
 
-  it('parses the RAW backend character row + its four sub-tables verbatim', async () => {
+  it('parses the RAW backend character row + its four sub-tables + concept prose verbatim', async () => {
     server.use(
       http.get(`${BASE_URL}/api/campaigns/c-1/characters/char-1`, () =>
         HttpResponse.json(fullCharacter),
       ),
     )
     await expect(getCharacter(testCtx, 'c-1', 'char-1')).resolves.toEqual(fullCharacter)
+  })
+
+  it('parses a response with no concept (optional-tolerant for older rows)', async () => {
+    const { character, skills, features, equipment, spells } = fullCharacter
+    const noConcept = { character, skills, features, equipment, spells }
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/c-1/characters/char-1`, () =>
+        HttpResponse.json(noConcept),
+      ),
+    )
+    await expect(getCharacter(testCtx, 'c-1', 'char-1')).resolves.toEqual(noConcept)
   })
 
   it('throws a typed HttpError 404 when the character is not in the campaign', async () => {

@@ -56,12 +56,22 @@ const CASTER_SPELLS: CharacterFull['spells'] = [
   { spell_name: 'Magic Missile', spell_level: 1, prepared: true },
 ]
 
+const DEFAULT_CONCEPT: NonNullable<CharacterFull['concept']> = {
+  physical_description: 'A broad-shouldered woman with a toll-clerk’s ledger scars on her knuckles.',
+  personality_traits: ['I count coins the way others count breaths.'],
+  ideals: ['A debt is a debt, whoever owes it.'],
+  bonds: ['Greenward fed me when no one else would.'],
+  flaws: ['I cannot walk past an unbalanced tally.'],
+  situation_grounding_text: 'I came to the tavern to collect a toll I was never paid.',
+}
+
 function makeRaw(over: {
   character?: Partial<CharacterFull['character']>
   skills?: CharacterFull['skills']
   features?: CharacterFull['features']
   equipment?: CharacterFull['equipment']
   spells?: CharacterFull['spells']
+  concept?: CharacterFull['concept']
 } = {}): CharacterFull {
   return {
     character: { ...BASE_CHARACTER, ...over.character },
@@ -69,6 +79,7 @@ function makeRaw(over: {
     features: over.features ?? DEFAULT_FEATURES,
     equipment: over.equipment ?? DEFAULT_EQUIPMENT,
     spells: over.spells ?? [],
+    concept: over.concept,
   }
 }
 
@@ -180,10 +191,64 @@ describe('toRevealViewModel — the expanded mechanical view', () => {
 })
 
 describe('toCharacterSheetSource', () => {
-  it('omits connection prose (the characters row carries none) and the subclass', () => {
+  it('emits empty prose when the character has no concept narrative (and omits the subclass)', () => {
     const source = toCharacterSheetSource(makeRaw())
     expect(source.prose).toEqual([])
     expect(source.subclass).toBeUndefined()
     expect(source.speed).toBe(30)
+  })
+
+  it('composes the concept prose: physical description + a connection paragraph (personality + grounding)', () => {
+    const source = toCharacterSheetSource(makeRaw({ concept: DEFAULT_CONCEPT }))
+    expect(source.prose).toEqual([
+      'A broad-shouldered woman with a toll-clerk’s ledger scars on her knuckles.',
+      'I count coins the way others count breaths. A debt is a debt, whoever owes it. ' +
+        'Greenward fed me when no one else would. I cannot walk past an unbalanced tally. ' +
+        'I came to the tavern to collect a toll I was never paid.',
+    ])
+  })
+
+  it('drops an empty physical description but still emits the connection paragraph', () => {
+    const source = toCharacterSheetSource(
+      makeRaw({ concept: { ...DEFAULT_CONCEPT, physical_description: '  ' } }),
+    )
+    expect(source.prose).toEqual([
+      'I count coins the way others count breaths. A debt is a debt, whoever owes it. ' +
+        'Greenward fed me when no one else would. I cannot walk past an unbalanced tally. ' +
+        'I came to the tavern to collect a toll I was never paid.',
+    ])
+  })
+
+  it('tolerates a null physical description (concept_output not yet populated)', () => {
+    const source = toCharacterSheetSource(
+      makeRaw({ concept: { ...DEFAULT_CONCEPT, physical_description: null } }),
+    )
+    expect(source.prose).toEqual([
+      'I count coins the way others count breaths. A debt is a debt, whoever owes it. ' +
+        'Greenward fed me when no one else would. I cannot walk past an unbalanced tally. ' +
+        'I came to the tavern to collect a toll I was never paid.',
+    ])
+  })
+
+  it('emits only the physical description when the concept has no personality or grounding', () => {
+    const source = toCharacterSheetSource(
+      makeRaw({
+        concept: {
+          physical_description: 'A slight figure in a rain-dark cloak.',
+          personality_traits: [],
+          ideals: [],
+          bonds: [],
+          flaws: [],
+          situation_grounding_text: '   ',
+        },
+      }),
+    )
+    expect(source.prose).toEqual(['A slight figure in a rain-dark cloak.'])
+  })
+
+  it('surfaces the composed prose on the curated view the reveal renders', () => {
+    const { curated } = toRevealViewModel(makeRaw({ concept: DEFAULT_CONCEPT }))
+    expect(curated.prose.length).toBeGreaterThan(0)
+    expect(curated.prose[0]).toContain('toll-clerk')
   })
 })

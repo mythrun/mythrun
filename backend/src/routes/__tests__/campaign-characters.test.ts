@@ -1199,6 +1199,84 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect('id' in (body.spells[0] ?? {})).toBe(false)
     })
 
+    it('200 — includes the concept prose (physical_description + personality + situation_grounding_text)', async () => {
+      // MYT-90: the reveal's prose panel is fed by the character CONCEPT
+      // narrative, not the persisted characters row. Seed a completed concept
+      // (with concept_output) for the owner — the composite FK to
+      // campaign_members is already satisfied by seedCampaignOwnedBy's owner
+      // membership — and assert the GET projects it.
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const charId = await attachFullCharacter(seed.campaignId, owner.userId, 'Eladrin Sage')
+      const conceptOutput = {
+        name: 'Eladrin Sage',
+        race: 'Half-Elf',
+        class: 'Wizard',
+        background: 'Sage',
+        level: 3,
+        alignment: 'neutral good',
+        age: 40,
+        gender: 'nonbinary',
+        physical_description: 'Silver-haired, ink-stained fingers, a traveller’s squint.',
+        personality_traits: ['I quote forgotten texts at the worst moments.'],
+        ideals: ['Knowledge is the path to power and self-improvement.'],
+        bonds: ['I owe a debt to the archivist who raised me.'],
+        flaws: ['I speak without thinking, especially about my research.'],
+        backstory: 'y'.repeat(320),
+      }
+      await pool.query(
+        `INSERT INTO character_concepts
+           (id, campaign_id, user_id, situation_grounding_text, status, concept_output)
+         VALUES ($1, $2, $3, $4, 'completed', $5::jsonb)`,
+        [
+          uuidv7(),
+          seed.campaignId,
+          owner.userId,
+          'I came to the reach chasing a rumour of my missing sister.',
+          JSON.stringify(conceptOutput),
+        ],
+      )
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters/${charId}`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{
+        concept?: {
+          physical_description: string | null
+          personality_traits: string[]
+          ideals: string[]
+          bonds: string[]
+          flaws: string[]
+          situation_grounding_text: string
+        }
+      }>()
+      expect(body.concept).toEqual({
+        physical_description: 'Silver-haired, ink-stained fingers, a traveller’s squint.',
+        personality_traits: ['I quote forgotten texts at the worst moments.'],
+        ideals: ['Knowledge is the path to power and self-improvement.'],
+        bonds: ['I owe a debt to the archivist who raised me.'],
+        flaws: ['I speak without thinking, especially about my research.'],
+        situation_grounding_text: 'I came to the reach chasing a rumour of my missing sister.',
+      })
+    })
+
+    it('200 — omits concept when the character has no concept row', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      const charId = await attachFullCharacter(seed.campaignId, owner.userId, 'Eladrin Sage')
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/campaigns/${seed.campaignId}/characters/${charId}`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      expect('concept' in res.json()).toBe(false)
+    })
+
     it('404 character_not_in_campaign — charId is unknown (or not joined to this campaign)', async () => {
       const owner = await seedUser(pool, scope, 0)
       const seed = await seedCampaignOwnedBy(pool, scope, owner, 0)

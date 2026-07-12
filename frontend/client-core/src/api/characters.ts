@@ -161,12 +161,28 @@ const CharacterSpellSchema = z.object({
   prepared: z.boolean(),
 })
 
+// MYT-90: the character-concept narrative prose the reveal's prose panel is built
+// from — the physical description, the personality sentences
+// (trait/ideal/bond/flaw), and the player-authored situation-grounding text
+// ("connection to the opening"). Optional on the full read (older character rows
+// predate the concept projection, and a character can exist without a concept
+// row), so the D6 adapter degrades to an empty prose panel when it is absent.
+const CharacterConceptProseSchema = z.object({
+  physical_description: z.string().nullable(),
+  personality_traits: z.array(z.string()),
+  ideals: z.array(z.string()),
+  bonds: z.array(z.string()),
+  flaws: z.array(z.string()),
+  situation_grounding_text: z.string(),
+})
+
 const CharacterFullSchema = z.object({
   character: CharacterRowSchema,
   skills: z.array(CharacterSkillSchema),
   features: z.array(CharacterFeatureSchema),
   equipment: z.array(CharacterEquipmentSchema),
   spells: z.array(CharacterSpellSchema),
+  concept: CharacterConceptProseSchema.optional(),
 })
 export type CharacterFull = z.infer<typeof CharacterFullSchema>
 

@@ -14,15 +14,17 @@ import type { CuratedSheet, FullSheet, SheetEntry, SheetSkill } from '@mythrun/c
 //
 // Every derivation is deterministic math over STRUCTURED fields + SRD maps — never a
 // parse of LLM prose (ZFC): ability modifiers by formula, saving throws via
-// CLASS_SAVES, a default speed, and a graceful subclass-omit. Two fields the raw
-// shape simply does not carry are omitted (documented in the D6 report):
+// CLASS_SAVES, a default speed, and a graceful subclass-omit.
 //   • subclass — the `characters` row has no structured subclass column, and
 //     splitting it out of the free `class` string / feature names is exactly the
 //     pattern-match ZFC forbids, so it is always omitted (the identity line degrades
 //     gracefully).
-//   • connection prose — the backstory / physical description live on the character
-//     CONCEPT narrative, not the persisted `characters` row this endpoint returns, so
-//     the prose panel is empty from this source.
+//   • prose — MYT-90: the reveal's prose panel is fed by the character CONCEPT
+//     narrative (`raw.concept`), NOT the persisted `characters` row. The adapter
+//     ASSEMBLES the concept's own already-authored prose fields (physical
+//     description + the personality sentences + the player's situation-grounding
+//     text) into 1–2 paragraphs — it never generates or parses prose (ZFC). The
+//     panel degrades to empty when the character has no concept narrative.
 
 /** The reveal defaults Speed to 30 ft: the backend does not return a speed, and a
  *  species-specific speed is a documented later refinement (30 is the common case). */
@@ -95,6 +97,35 @@ function toSheetSpell(row: CharacterFull['spells'][number]): SheetSpell {
   return { name: row.spell_name, level: row.spell_level }
 }
 
+/** Compose the reveal's prose panel from the character-concept narrative
+ *  (MYT-90). ASSEMBLY, not generation (ZFC): every string is a prose field the
+ *  concept stage already authored — the physical description as one paragraph,
+ *  and a connection paragraph woven from the personality sentences
+ *  (trait/ideal/bond/flaw, in canonical order) followed by the player's
+ *  situation-grounding text ("connection to the opening"). Blank fields are
+ *  dropped so an unpopulated concept degrades to a shorter panel (or none). */
+function buildConceptProse(concept: CharacterFull['concept']): string[] {
+  if (concept === undefined) return []
+  const paragraphs: string[] = []
+
+  const physical = concept.physical_description?.trim() ?? ''
+  if (physical.length > 0) paragraphs.push(physical)
+
+  const connection = [
+    ...concept.personality_traits,
+    ...concept.ideals,
+    ...concept.bonds,
+    ...concept.flaws,
+    concept.situation_grounding_text,
+  ]
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0)
+    .join(' ')
+  if (connection.length > 0) paragraphs.push(connection)
+
+  return paragraphs
+}
+
 /** All six saving throws as "<Ability> <signed total>" — the total adds the
  *  proficiency bonus on exactly the class's two proficient saves (CLASS_SAVES). */
 function buildSavingThrows(character: RawCharacter, className: ClassName | undefined): string[] {
@@ -124,7 +155,7 @@ export function toCharacterSheetSource(raw: CharacterFull): CharacterSheetSource
     proficiencyBonus: c.proficiency_bonus,
     hitDie: c.hit_die,
     speed: DEFAULT_SPEED,
-    prose: [],
+    prose: buildConceptProse(raw.concept),
     features: raw.features.map(toSheetFeature),
     equipment: raw.equipment.map(toSheetEquipment),
     spells: raw.spells.map(toSheetSpell),

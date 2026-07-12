@@ -579,7 +579,44 @@ describe('repo.characters', () => {
   })
 
   describe('getFullCharacter', () => {
-    it('returns the character row + all four sub-tables', async () => {
+    // MYT-90: seed the character's concept row so getFullCharacter can project
+    // its narrative prose. character_concepts has a composite FK
+    // (campaign_id, user_id) → campaign_members, so the membership row must
+    // exist first. `conceptOutput` null → the row exists but the stage hasn't
+    // persisted the structured narrative yet.
+    const conceptGrounding = 'grounding text long enough to satisfy the check'
+    const conceptOutput = {
+      name: 'Roster PC',
+      race: 'elf',
+      class: 'wizard',
+      background: 'sage',
+      level: 3,
+      alignment: 'neutral good',
+      age: 120,
+      gender: 'nonbinary',
+      physical_description: 'A slight elf with ink-stained fingers and a scholar’s stoop.',
+      personality_traits: ['I always have my nose in a book.'],
+      ideals: ['Knowledge is the path to power.'],
+      bonds: ['I owe everything to my old mentor.'],
+      flaws: ['I speak my mind, even when I shouldn’t.'],
+      backstory: 'x'.repeat(320),
+    }
+    async function seedConcept(conceptOutputJson: string | null): Promise<void> {
+      const { uuidv7 } = await import('../uuidv7.js')
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'owner', true)`,
+        [uuidv7(), campaignId, userId],
+      )
+      await pool.query(
+        `INSERT INTO character_concepts
+           (id, campaign_id, user_id, situation_grounding_text, status, concept_output)
+         VALUES ($1, $2, $3, $4, 'completed', $5::jsonb)`,
+        [uuidv7(), campaignId, userId, conceptGrounding, conceptOutputJson],
+      )
+    }
+
+    it('returns the character row + all four sub-tables (concept undefined when none)', async () => {
       const characters = createCharactersRepo(pool)
       const characterId = await characters.replaceSubTables({ campaignId, userId, ...sheetInput })
 
@@ -592,6 +629,8 @@ describe('repo.characters', () => {
       ])
       expect(full.equipment).toEqual([{ item_name: 'Spellbook', quantity: 1, equipped: false }])
       expect(full.spells).toEqual([{ spell_name: 'Magic Missile', spell_level: 1, prepared: true }])
+      // No concept row for this (campaign, user) → concept is undefined.
+      expect(full.concept).toBeUndefined()
     })
 
     it('returns undefined character + empty sub-tables for an unknown id', async () => {
@@ -602,6 +641,39 @@ describe('repo.characters', () => {
       expect(full.features).toEqual([])
       expect(full.equipment).toEqual([])
       expect(full.spells).toEqual([])
+      expect(full.concept).toBeUndefined()
+    })
+
+    it('projects the concept prose (physical_description + personality + grounding)', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables({ campaignId, userId, ...sheetInput })
+      await seedConcept(JSON.stringify(conceptOutput))
+
+      const full = await characters.getFullCharacter(characterId)
+      expect(full.concept).toEqual({
+        physical_description: 'A slight elf with ink-stained fingers and a scholar’s stoop.',
+        personality_traits: ['I always have my nose in a book.'],
+        ideals: ['Knowledge is the path to power.'],
+        bonds: ['I owe everything to my old mentor.'],
+        flaws: ['I speak my mind, even when I shouldn’t.'],
+        situation_grounding_text: conceptGrounding,
+      })
+    })
+
+    it('defaults personality arrays to empty + physical_description null when concept_output is NULL', async () => {
+      const characters = createCharactersRepo(pool)
+      const characterId = await characters.replaceSubTables({ campaignId, userId, ...sheetInput })
+      await seedConcept(null)
+
+      const full = await characters.getFullCharacter(characterId)
+      expect(full.concept).toEqual({
+        physical_description: null,
+        personality_traits: [],
+        ideals: [],
+        bonds: [],
+        flaws: [],
+        situation_grounding_text: conceptGrounding,
+      })
     })
   })
 

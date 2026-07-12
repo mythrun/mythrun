@@ -73,6 +73,48 @@ export interface ReplaceSubTablesInput {
   }[]
 }
 
+/** MYT-90: the character-concept narrative prose the reveal's prose panel is
+ *  built from — the physical description, the personality sentences
+ *  (trait/ideal/bond/flaw), and the player-authored situation-grounding text
+ *  ("connection to the opening"). Snake_case to match the raw getFullCharacter
+ *  wire shape (the api layer validates + the D6 adapter composes these into the
+ *  curated sheet's prose). */
+export interface CharacterConceptProse {
+  readonly physical_description: string | null
+  readonly personality_traits: readonly string[]
+  readonly ideals: readonly string[]
+  readonly bonds: readonly string[]
+  readonly flaws: readonly string[]
+  readonly situation_grounding_text: string
+}
+
+/** Raw row of the concept-prose read. The `-> '<key>'` projections come back as
+ *  parsed JS arrays (jsonb), or null when concept_output — or the key — is
+ *  absent; `->> 'physical_description'` comes back as text-or-null. */
+interface ConceptProseRow {
+  situation_grounding_text: string
+  physical_description: string | null
+  personality_traits: readonly string[] | null
+  ideals: readonly string[] | null
+  bonds: readonly string[] | null
+  flaws: readonly string[] | null
+}
+
+/** Map the concept-prose row to the wire shape. A missing row → undefined (the
+ *  character has no concept); null personality sets → [] (concept_output not yet
+ *  persisted). */
+function toConceptProse(row: ConceptProseRow | undefined): CharacterConceptProse | undefined {
+  if (row === undefined) return undefined
+  return {
+    physical_description: row.physical_description,
+    personality_traits: row.personality_traits ?? [],
+    ideals: row.ideals ?? [],
+    bonds: row.bonds ?? [],
+    flaws: row.flaws ?? [],
+    situation_grounding_text: row.situation_grounding_text,
+  }
+}
+
 // Composable binder — each method captures the ClientLike `c` so the body
 // serves `repo.characters.X` and `tx.characters.X`. SQL unchanged.
 //
@@ -142,10 +184,18 @@ export function charactersNs(c: ClientLike) {
     /**
      * T18 GET /characters/:charId full read: the characters row + its four
      * sub-tables (skills / features / equipment / spells), each projected to the
-     * meaningful columns only. Runs the four sub-table reads in parallel exactly
-     * as the route did. SQL byte-identical to the former inline reads in
-     * campaign-characters.ts. Homed on `repo.characters.getFullCharacter` per the
-     * design's `characters` namespace table.
+     * meaningful columns only, PLUS (MYT-90) the character-concept narrative
+     * prose that feeds the reveal's prose panel. Runs the reads in parallel.
+     *
+     * MYT-90: the persisted `characters` row carries no descriptive prose — the
+     * physical description + personality sentences + the player-authored
+     * situation-grounding text live on the character CONCEPT. `characters` has
+     * no campaign_id (dropped in migration 009); the (campaign, user) → concept
+     * mapping is reached via `campaign_characters`. `concept` is undefined when
+     * the character has no concept row; the personality arrays default to []
+     * (and physical_description to null) when the concept exists but its
+     * `concept_output` hasn't been persisted yet. Reading the concept's OWN
+     * named prose fields — never parsing prose out of the mechanical sheet (ZFC).
      */
     getFullCharacter: async (
       characterId: string,
@@ -155,8 +205,9 @@ export function charactersNs(c: ClientLike) {
       features: readonly { feature_name: string; feature_source: string; description: string }[]
       equipment: readonly { item_name: string; quantity: number; equipped: boolean }[]
       spells: readonly { spell_name: string; spell_level: number; prepared: boolean }[]
+      concept: CharacterConceptProse | undefined
     }> => {
-      const [character, skills, features, equipment, spells] = await Promise.all([
+      const [character, skills, features, equipment, spells, concept] = await Promise.all([
         c.query<CharacterDbRow>(`SELECT * FROM characters WHERE id = $1`, [characterId]),
         c.query<{ skill_name: string; proficiency_level: string }>(
           `SELECT skill_name, proficiency_level FROM character_skills WHERE character_id = $1`,
@@ -174,6 +225,23 @@ export function charactersNs(c: ClientLike) {
           `SELECT spell_name, spell_level, prepared FROM character_spells WHERE character_id = $1`,
           [characterId],
         ),
+        // The concept prose, reached through campaign_characters. The scalar
+        // physical_description is pulled via ->> (text); each personality set
+        // via -> (a jsonb array node-postgres parses to a JS array).
+        c.query<ConceptProseRow>(
+          `SELECT
+             cc.situation_grounding_text,
+             cc.concept_output ->> 'physical_description' AS physical_description,
+             cc.concept_output ->  'personality_traits'   AS personality_traits,
+             cc.concept_output ->  'ideals'               AS ideals,
+             cc.concept_output ->  'bonds'                AS bonds,
+             cc.concept_output ->  'flaws'                AS flaws
+           FROM campaign_characters cch
+           JOIN character_concepts cc
+             ON cc.campaign_id = cch.campaign_id AND cc.user_id = cch.user_id
+          WHERE cch.character_id = $1`,
+          [characterId],
+        ),
       ])
       return {
         character: character.rows[0],
@@ -181,6 +249,7 @@ export function charactersNs(c: ClientLike) {
         features: features.rows,
         equipment: equipment.rows,
         spells: spells.rows,
+        concept: toConceptProse(concept.rows[0]),
       }
     },
 
