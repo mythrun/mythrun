@@ -69,11 +69,13 @@ const EXPERTISE_TAG = 'expertise'
 const IDENT_CLASS = 'font-ui text-sm font-medium uppercase tracking-wide text-accent-fg'
 
 // The stat stripe — a bordered row of AC / HP / Proficiency / Hit Die / Speed cells
-// that WRAPS at narrow widths (each cell floors at ~5.5rem). Strong edge; hairline
-// inter-cell rules.
+// that WRAPS at narrow widths. Each cell floors at its own content width (min-w-fit)
+// rather than a fixed 5.5rem, so a long single-word label (e.g. "PROFICIENCY", wider
+// than 5.5rem once uppercased + letter-spaced) never spills its box at ~375px — the
+// row wraps to fewer cells instead. Strong edge; hairline inter-cell rules.
 const STRIPE_CLASS = 'flex flex-wrap rounded-none border border-border-strong bg-surface'
 const STRIPE_CELL =
-  'min-w-[5.5rem] flex-1 border-r border-border px-[var(--space-3)] py-[var(--space-2)] last:border-r-0'
+  'min-w-fit flex-1 border-r border-border px-[var(--space-3)] py-[var(--space-2)] last:border-r-0'
 const STRIPE_KEY = 'font-ui text-xs uppercase tracking-wide text-ink-tertiary'
 const STRIPE_VALUE = 'font-body text-lg font-semibold text-ink'
 

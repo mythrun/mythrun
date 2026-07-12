@@ -77,11 +77,14 @@ const ROWS_CLASS = 'flex flex-col gap-[var(--space-1)]'
 const ROW_CLASS = 'font-ui text-sm leading-[1.4]'
 const ROW_ANIM_CLASS = 'transition-opacity duration-[var(--duration-fast)]'
 // Per-state row treatment: done = solid ink, active = emphasised ember, pending =
-// dimmed secondary ink.
+// the muted tertiary ink token. `--ink-tertiary` (paper-600) is a SOLID AA color on
+// paper (~5.7:1); the state stays distinct via token + weight, NOT a sub-AA opacity
+// dim (an `opacity-60` here rendered the row at #a09b8d = 2.52:1, below the 4.5:1
+// contrast floor — the real progress rows carry information, so they meet contrast).
 const ROW_STATE_CLASS: Record<CharacterLoadingBeatProps['beats'][number]['state'], string> = {
   done: 'text-ink',
   active: 'font-medium text-accent-fg',
-  pending: 'text-ink-tertiary opacity-60',
+  pending: 'text-ink-tertiary',
 }
 
 export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingBeatProps>(

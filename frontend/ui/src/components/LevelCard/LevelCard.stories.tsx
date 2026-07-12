@@ -63,9 +63,14 @@ function LevelPicker({ columns }: { columns: string }): React.JSX.Element {
 }
 
 // Desktop — the five levels in a row, level 3 pre-selected (the ember edge + ring).
+// A wide-by-design harness specimen: five fixed columns don't fit the gate's 375px
+// probe (the real route stacks at that width — see MobileStacked, which IS gated).
+// Opt this one out of the overflow gate (the sanctioned wide-specimen escape, same
+// as the fog Tuning / Grid wide stories).
 export const DesktopRow: Story = {
   name: 'Desktop — 5 across (level 3 selected)',
   render: () => <LevelPicker columns="repeat(5, 1fr)" />,
+  parameters: { overflowGate: false },
 }
 
 // Mobile — the same five cards stacked in a single column at ~375px.

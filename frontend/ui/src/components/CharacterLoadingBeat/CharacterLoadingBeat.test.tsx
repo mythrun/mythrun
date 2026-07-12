@@ -33,8 +33,13 @@ describe('CharacterLoadingBeat', () => {
     const classByState = new Map(rows.map((r) => [r.dataset.state, r.className]))
     expect(classByState.get('active')).not.toEqual(classByState.get('pending'))
     expect(classByState.get('done')).not.toEqual(classByState.get('pending'))
-    // Pending reads muted; active reads emphasized (ember).
-    expect(classByState.get('pending')).toMatch(/opacity/)
+    // Pending reads muted via the solid AA tertiary-ink token — NOT a static
+    // `opacity-NN` dim (which rendered it below the 4.5:1 contrast floor). The
+    // `transition-opacity` animation class is fine (it only affects the fade, not
+    // the settled color), so guard against the static dim specifically. Active
+    // reads emphasized (ember).
+    expect(classByState.get('pending')).toMatch(/ink-tertiary/)
+    expect(classByState.get('pending')).not.toMatch(/opacity-\d/)
     expect(classByState.get('active')).toMatch(/accent/)
   })
 
