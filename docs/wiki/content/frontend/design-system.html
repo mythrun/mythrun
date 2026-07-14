@@ -20,7 +20,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:a65ac49117ed0be8f77ae4ecd43852e366585c912416740c36e962b1630f3fce -->
+<!-- source-hash: sha256:4e83facc0a9cec6811254600bb23b158e5db7bafa79b9b5b912af4fa42c198eb -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>Design system</h1>
@@ -340,9 +340,11 @@
     (Button's loading state, IconButton).
   </li>
   <li>
-    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>, plus a native
+    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>, a native
     leading-<code>icon</code> slot — a platform-neutral icon prop, not an <code>asChild</code> DOM
-    trick, carrying the Google/Discord provider marks on the sign-in buttons),
+    trick, carrying the Google/Discord provider marks on the sign-in buttons, plus MYT-90
+    <code>aria-expanded</code>/<code>aria-controls</code> disclosure props for a button that toggles a
+    revealable region, e.g. the character sheet's "See full sheet"),
     <code>IconButton</code> (requires an accessible name), <code>Input</code>,
     <code>TextArea</code> (autosizing), <code>Select</code>, <code>Checkbox</code>,
     <code>Radio</code>/<code>RadioGroup</code>, <code>Switch</code>, and
@@ -427,7 +429,13 @@
   to the system, while its fog-, graph-, status-card, loading, and reveal-transition composites
   (<code>WorldGenFog</code>, <code>WorldGenGraph</code>, <code>WorldGenStatusCard</code>,
   <code>WorldGenLoading</code>, <code>RevealTransition</code>) stay feature components documented on
-  that page.
+  that page. The <a href="./character-creation.html">character-creation experience</a> (MYT-90) drew
+  the line the same way: its screen composites — <code>LevelCard</code>, <code>FreeformPrompt</code>,
+  <code>GuidedBuilder</code>, <code>CharacterLoadingBeat</code> (a <code>Dither</code> reuse),
+  <code>CharacterSheetReveal</code>, and <code>PartyRoster</code> — are controlled/presentational
+  feature components (their sequencing lives in a client-core reducer, not the component) documented
+  on that page, while the reusable primitive extension it needed landed in the system as the
+  <code>Button</code> disclosure props above.
 </p>
 
 <h2>Responsive by construction</h2>

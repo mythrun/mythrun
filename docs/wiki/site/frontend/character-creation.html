@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Character-creation experience · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="character-creation">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html" class="active">Character-creation experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Character-creation experience</div>
+        <article>
+<h1>Character-creation experience</h1>
+
+<p class="lead">
+  What a player walks through between the finished world and the first scene of play: the owner picks
+  an opening situation and a party-wide starting level, everyone makes a character — either by
+  describing them in a sentence or by answering a few D&amp;D questions — a 1-bit "coming into being"
+  beat holds the screen while the sheet is generated, the player meets their character as a
+  field-guide entry and confirms it, and the owner begins the adventure. The whole arc turns on one
+  idea: the frontend decides which screen to show from <em>viewer-relative</em> signals — the
+  campaign status, the current user's own concept status, and whether they own the world — never from
+  the derived pipeline <code>phase</code>. A DOM-free <code>client-core</code> brain holds the flow
+  logic; <a href="./design-system.html">@mythrun/ui</a> paints it; discrete routes and one campaign-page
+  surface share the work.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="3147pt" height="572pt"
+ viewBox="14.00 14.00 3132.00 558.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 553.74)">
+<title>frontend_character_creation</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-539.34 3113.79,-539.34 3113.79,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_discrete</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1450.97,-331.34 1450.97,-484.34 2294.12,-484.34 2294.12,-331.34 1450.97,-331.34"/>
+<text xml:space="preserve" text-anchor="middle" x="1872.54" y="-470.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;· &#160;discrete routes &#160;(compose + submit, one way)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_surface</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="722.66,-40.34 722.66,-419.34 1312.95,-419.34 1312.95,-40.34 722.66,-40.34"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.8" y="-405.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CampaignPage character surface &#160;(mounted at /campaigns/:id · durable · reload&#45;stable)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_brain</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="2331.12,-126.34 2331.12,-457.34 3093.28,-457.34 3093.28,-126.34 2331.12,-126.34"/>
+<text xml:space="preserve" text-anchor="middle" x="2712.2" y="-443.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;· &#160;brain (DOM&#45;free · R1)</text>
+</g>
+<!-- signals -->
+<g id="node1" class="node">
+<title>signals</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="262.72,-330.38 0,-330.38 0,-260.3 262.72,-260.3 262.72,-330.38"/>
+<text xml:space="preserve" text-anchor="middle" x="131.36" y="-311.84" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">viewer signals</text>
+<text xml:space="preserve" text-anchor="middle" x="131.36" y="-298.64" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">campaign.status (stable &#39;setup&#39;) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="131.36" y="-285.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">MY concept status (progress GET) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="131.36" y="-272.24" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">role (creator===null ⟹ owner)</text>
+</g>
+<!-- route -->
+<g id="node2" class="node">
+<title>route</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="542.63,-323.78 299.72,-323.78 299.72,-266.9 542.63,-266.9 542.63,-323.78"/>
+<text xml:space="preserve" text-anchor="middle" x="421.17" y="-305.24" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">deriveCharacterRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="421.17" y="-292.04" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">§3.3 routing table · pure ·</text>
+<text xml:space="preserve" text-anchor="middle" x="421.17" y="-278.84" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">viewer&#45;relative · NOT the phase</text>
+</g>
+<!-- signals&#45;&gt;route -->
+<g id="edge1" class="edge">
+<title>signals&#45;&gt;route</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M263.21,-295.34C272.33,-295.34 281.51,-295.34 290.62,-295.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="290.51,-297.79 297.51,-295.34 290.51,-292.89 290.51,-297.79"/>
+</g>
+<!-- situation -->
+<g id="node3" class="node">
+<title>situation</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1720.28,-449.78 1450.97,-449.78 1450.97,-392.9 1720.28,-392.9 1720.28,-449.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1585.62" y="-431.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SituationPickRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="1585.62" y="-418.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/…/situation · owner picks a hook</text>
+<text xml:space="preserve" text-anchor="middle" x="1585.62" y="-404.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(GhostHookList) → level</text>
+</g>
+<!-- route&#45;&gt;situation -->
+<g id="edge2" class="edge">
+<title>route&#45;&gt;situation</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M475.27,-324.42C533.81,-354.58 631.76,-399.49 722.66,-415.34 972.75,-458.94 1269.88,-447.39 1441.9,-434.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1441.9,-437.09 1448.69,-434.13 1441.53,-432.21 1441.9,-437.09"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-449.22" font-family="Courier,monospace" font-size="10.00">owner · no situation</text>
+</g>
+<!-- level -->
+<g id="node4" class="node">
+<title>level</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1993.6,-387.78 1757.28,-387.78 1757.28,-330.9 1993.6,-330.9 1993.6,-387.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-369.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">LevelPickRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-356.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/…/level · owner picks 1–5</text>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-342.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(LevelCard ×5) → create</text>
+</g>
+<!-- route&#45;&gt;level -->
+<g id="edge3" class="edge">
+<title>route&#45;&gt;level</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M453.42,-324.39C480.24,-348.13 520.76,-381.25 560.63,-403.34 627.67,-440.47 647.18,-449.02 722.66,-462.34 831.82,-481.59 1623.96,-513.19 1720.28,-458.34 1747.84,-442.64 1732.42,-417.02 1757.28,-397.34 1759.21,-395.81 1761.2,-394.35 1763.24,-392.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1764.27,-395.19 1768.84,-389.36 1761.63,-391.07 1764.27,-395.19"/>
+<text xml:space="preserve" text-anchor="middle" x="1381.96" y="-492.02" font-family="Courier,monospace" font-size="10.00">owner · no level</text>
+</g>
+<!-- create -->
+<g id="node5" class="node">
+<title>create</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2294.12,-422.38 2077.61,-422.38 2077.61,-352.3 2294.12,-352.3 2294.12,-422.38"/>
+<text xml:space="preserve" text-anchor="middle" x="2185.86" y="-403.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CharacterNewRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="2185.86" y="-390.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/…/character/new</text>
+<text xml:space="preserve" text-anchor="middle" x="2185.86" y="-377.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create&#45;machine: chooser →</text>
+<text xml:space="preserve" text-anchor="middle" x="2185.86" y="-364.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">freeform | guided → submit</text>
+</g>
+<!-- route&#45;&gt;create -->
+<g id="edge4" class="edge">
+<title>route&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M441.32,-324.47C465.23,-358.52 509.27,-414.18 560.63,-445.34 736.3,-551.9 810.84,-523.34 1016.3,-523.34 1016.3,-523.34 1016.3,-523.34 1876.44,-523.34 1972.04,-523.34 2071.22,-467.96 2130.48,-427.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2131.62,-430.07 2136.01,-424.09 2128.85,-426.02 2131.62,-430.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1585.62" y="-526.34" font-family="Courier,monospace" font-size="10.00">no concept</text>
+</g>
+<!-- hold -->
+<g id="node8" class="node">
+<title>hold</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1128.86,-282.18 905.75,-282.18 905.75,-238.5 1128.86,-238.5 1128.86,-282.18"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-263.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hold</text>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-250.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">member &#39;setting up the table&#39;</text>
+</g>
+<!-- route&#45;&gt;hold -->
+<g id="edge5" class="edge">
+<title>route&#45;&gt;hold</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M543.36,-286.46C549.2,-286.07 554.98,-285.7 560.63,-285.34 674.57,-278.1 804.62,-271.09 896.54,-266.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="896.63,-268.79 903.5,-265.98 896.38,-263.9 896.63,-268.79"/>
+<text xml:space="preserve" text-anchor="middle" x="632.64" y="-288.34" font-family="Courier,monospace" font-size="10.00">member · pre&#45;setup</text>
+</g>
+<!-- loading -->
+<g id="node9" class="node">
+<title>loading</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1155.26,-146.18 879.34,-146.18 879.34,-102.5 1155.26,-102.5 1155.26,-146.18"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-127.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">loading beat</text>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-114.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CharacterLoadingBeat ← per&#45;user SSE</text>
+</g>
+<!-- route&#45;&gt;loading -->
+<g id="edge6" class="edge">
+<title>route&#45;&gt;loading</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M468.93,-266.19C495.31,-250.38 529.2,-231.11 560.63,-216.34 630.27,-183.61 647.78,-173.07 722.66,-155.34 770.07,-144.1 822.75,-136.94 870.25,-132.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="870.2,-134.84 876.94,-131.74 869.74,-129.96 870.2,-134.84"/>
+<text xml:space="preserve" text-anchor="middle" x="632.64" y="-219.34" font-family="Courier,monospace" font-size="10.00">processing</text>
+</g>
+<!-- meet -->
+<g id="node10" class="node">
+<title>meet</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1151.96,-220.78 882.64,-220.78 882.64,-163.9 1151.96,-163.9 1151.96,-220.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-202.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">meet your character</text>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-189.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CharacterSheetReveal · This is me /</text>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-175.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">full sheet / start over</text>
+</g>
+<!-- route&#45;&gt;meet -->
+<g id="edge7" class="edge">
+<title>route&#45;&gt;meet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M539.17,-266.21C546.43,-264.52 553.62,-262.89 560.63,-261.34 632.3,-245.47 650.19,-241.04 722.66,-229.34 771.58,-221.43 825.33,-214.23 873.32,-208.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="873.44,-210.78 880.09,-207.5 872.85,-205.92 873.44,-210.78"/>
+<text xml:space="preserve" text-anchor="middle" x="632.64" y="-264.34" font-family="Courier,monospace" font-size="10.00">completed · unconfirmed</text>
+</g>
+<!-- staging -->
+<g id="node11" class="node">
+<title>staging</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1161.86,-84.18 872.74,-84.18 872.74,-40.5 1161.86,-40.5 1161.86,-84.18"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-65.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">party staging</text>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-52.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PartyRoster · owner Begin → finalize</text>
+</g>
+<!-- route&#45;&gt;staging -->
+<g id="edge8" class="edge">
+<title>route&#45;&gt;staging</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M441.5,-266.36C465.56,-232.41 509.77,-176.71 560.63,-144.34 650.55,-87.1 769.59,-67.16 863.44,-61.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="863.5,-63.68 870.34,-60.82 863.21,-58.79 863.5,-63.68"/>
+<text xml:space="preserve" text-anchor="middle" x="632.64" y="-147.34" font-family="Courier,monospace" font-size="10.00">completed · confirmed</text>
+</g>
+<!-- failure -->
+<g id="node12" class="node">
+<title>failure</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1155.26,-398.18 879.34,-398.18 879.34,-354.5 1155.26,-354.5 1155.26,-398.18"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-379.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">failure + retry</text>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-366.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">concept reset | integration re&#45;fan&#45;in</text>
+</g>
+<!-- route&#45;&gt;failure -->
+<g id="edge9" class="edge">
+<title>route&#45;&gt;failure</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M543.3,-319.33C549.16,-320.37 554.96,-321.38 560.63,-322.34 663.56,-339.67 780.49,-353.4 870.13,-362.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="869.7,-365.1 876.91,-363.38 870.2,-360.23 869.7,-365.1"/>
+<text xml:space="preserve" text-anchor="middle" x="632.64" y="-345.62" font-family="Courier,monospace" font-size="10.00">concept/campaign failed</text>
+</g>
+<!-- playentry -->
+<g id="node13" class="node">
+<title>playentry</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1066.15,-336.34 968.46,-336.34 968.46,-300.34 1066.15,-300.34 1066.15,-336.34"/>
+<text xml:space="preserve" text-anchor="middle" x="1017.3" y="-315.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">play entry</text>
+</g>
+<!-- route&#45;&gt;playentry -->
+<g id="edge10" class="edge">
+<title>route&#45;&gt;playentry</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M543.12,-300.02C669.96,-304.93 863.83,-312.43 959.23,-316.13"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="958.97,-318.57 966.06,-316.39 959.16,-313.67 958.97,-318.57"/>
+<text xml:space="preserve" text-anchor="middle" x="632.64" y="-309.15" font-family="Courier,monospace" font-size="10.00">integrated / active</text>
+</g>
+<!-- api -->
+<g id="node20" class="node">
+<title>api</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3109.79,-108.98 2787.66,-108.98 2787.66,-25.7 3109.79,-25.7 3109.79,-108.98"/>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-90.44" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API &#160;(other pages)</text>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-77.24" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GET/POST situation · POST starting&#45;level ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-64.04" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">POST characters (2 fields) · progress GET</text>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-50.84" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(confirmedAt/characterId) · status SSE ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-37.64" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">POST finalize · characters/reset · confirm</text>
+</g>
+<!-- route&#45;&gt;api -->
+<g id="edge22" class="edge">
+<title>route&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M433.06,-266.45C451.9,-220.44 494.97,-130.77 560.63,-82.34 725.64,39.37 811.27,-10.34 1016.3,-10.34 1016.3,-10.34 1016.3,-10.34 2506.38,-10.34 2596.76,-10.34 2696.7,-22.24 2778.59,-35.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2777.87,-37.53 2785.16,-36.21 2778.64,-32.69 2777.87,-37.53"/>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-13.34" font-family="Courier,monospace" font-size="10.00">progress + situations</text>
+</g>
+<!-- situation&#45;&gt;level -->
+<g id="edge11" class="edge">
+<title>situation&#45;&gt;level</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1720.84,-392.42C1730.04,-390.44 1739.3,-388.45 1748.45,-386.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1748.73,-388.92 1755.05,-385.05 1747.69,-384.13 1748.73,-388.92"/>
+</g>
+<!-- level&#45;&gt;create -->
+<g id="edge12" class="edge">
+<title>level&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1993.92,-370C2018.36,-372.22 2044.11,-374.56 2068.51,-376.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2068.08,-379.19 2075.27,-377.39 2068.52,-374.31 2068.08,-379.19"/>
+</g>
+<!-- machine -->
+<g id="node14" class="node">
+<title>machine</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2636.74,-360.78 2374.02,-360.78 2374.02,-303.9 2636.74,-303.9 2636.74,-360.78"/>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-342.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">create&#45;machine</text>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-329.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">chooser → path → processing →</text>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-315.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reveal → staging (in&#45;session)</text>
+</g>
+<!-- create&#45;&gt;machine -->
+<g id="edge15" class="edge">
+<title>create&#45;&gt;machine</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2294.8,-368.64C2317.3,-364.74 2341.32,-360.58 2364.77,-356.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2365.11,-358.95 2371.59,-355.34 2364.28,-354.12 2365.11,-358.95"/>
+</g>
+<!-- guided -->
+<g id="node15" class="node">
+<title>guided</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2679.65,-435.78 2331.12,-435.78 2331.12,-378.9 2679.65,-378.9 2679.65,-435.78"/>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-417.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guided&#45;reducer + flatten</text>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-404.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Class→Subclass?→Species→Background→Notes</text>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-390.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ conceptText (canonical English)</text>
+</g>
+<!-- create&#45;&gt;guided -->
+<g id="edge16" class="edge">
+<title>create&#45;&gt;guided</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2294.8,-394.14C2303.59,-394.69 2312.61,-395.26 2321.74,-395.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2321.56,-398.28 2328.7,-396.27 2321.87,-393.39 2321.56,-398.28"/>
+</g>
+<!-- create&#45;&gt;api -->
+<g id="edge24" class="edge">
+<title>create&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2193.72,-351.89C2207.62,-290.72 2245.41,-166.51 2331.12,-110.34 2367.78,-86.31 2608.87,-75.43 2778.47,-70.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2778.51,-73.16 2785.44,-70.52 2778.37,-68.26 2778.51,-73.16"/>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-113.34" font-family="Courier,monospace" font-size="10.00">POST</text>
+</g>
+<!-- join -->
+<g id="node6" class="node">
+<title>join</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1987,-462.78 1763.89,-462.78 1763.89,-405.9 1987,-405.9 1987,-462.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-444.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">JoinSummaryRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-431.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/…/join · member entry</text>
+<text xml:space="preserve" text-anchor="middle" x="1875.44" y="-417.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world name + intro → create</text>
+</g>
+<!-- join&#45;&gt;create -->
+<g id="edge13" class="edge">
+<title>join&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1987.35,-417.43C2013.69,-413.42 2041.86,-409.13 2068.43,-405.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2068.65,-407.52 2075.2,-404.05 2067.91,-402.68 2068.65,-407.52"/>
+</g>
+<!-- play -->
+<g id="node7" class="node">
+<title>play</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1631.17,-375.18 1540.08,-375.18 1540.08,-331.5 1631.17,-331.5 1631.17,-375.18"/>
+<text xml:space="preserve" text-anchor="middle" x="1585.62" y="-356.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PlayRoute</text>
+<text xml:space="preserve" text-anchor="middle" x="1585.62" y="-343.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/…/play</text>
+</g>
+<!-- stream -->
+<g id="node19" class="node">
+<title>stream</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2669.75,-224.18 2341.02,-224.18 2341.02,-180.5 2669.75,-180.5 2669.75,-224.18"/>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-205.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useCharacterCreationStream</text>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-192.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE fold → beats/done · filtered to userId</text>
+</g>
+<!-- loading&#45;&gt;stream -->
+<g id="edge18" class="edge">
+<title>loading&#45;&gt;stream</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1155.91,-125.09C1270.6,-125.66 1438.25,-126.34 1584.62,-126.34 1584.62,-126.34 1584.62,-126.34 2186.86,-126.34 2254.02,-126.34 2265.88,-155.39 2331.12,-171.34 2340.62,-173.66 2350.47,-175.89 2360.41,-178.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2359.65,-180.35 2367,-179.39 2360.65,-175.56 2359.65,-180.35"/>
+</g>
+<!-- sheetvm -->
+<g id="node17" class="node">
+<title>sheetvm</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2574.03,-286.18 2436.73,-286.18 2436.73,-242.5 2574.03,-242.5 2574.03,-286.18"/>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-267.64" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sheet&#45;view&#45;model</text>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-254.44" font-family="Courier,monospace" font-size="11.00" fill="#231b12">curated | full</text>
+</g>
+<!-- meet&#45;&gt;sheetvm -->
+<g id="edge19" class="edge">
+<title>meet&#45;&gt;sheetvm</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1152.63,-204.21C1267.3,-213.31 1436.66,-224.34 1584.62,-224.34 1584.62,-224.34 1584.62,-224.34 2186.86,-224.34 2269.68,-224.34 2363.7,-237.9 2427.8,-249.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2427.14,-251.6 2434.46,-250.42 2428,-246.77 2427.14,-251.6"/>
+</g>
+<!-- staging&#45;&gt;play -->
+<g id="edge14" class="edge">
+<title>staging&#45;&gt;play</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1162.33,-58.82C1211.94,-62.38 1266.63,-71.86 1312.95,-93.34 1371.95,-120.69 1503.67,-262.96 1559.18,-324.69"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1557.23,-326.19 1563.73,-329.76 1560.88,-322.91 1557.23,-326.19"/>
+<text xml:space="preserve" text-anchor="middle" x="1381.96" y="-188.71" font-family="Courier,monospace" font-size="10.00">Begin</text>
+</g>
+<!-- rostervm -->
+<g id="node18" class="node">
+<title>rostervm</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2597.13,-162.34 2413.63,-162.34 2413.63,-126.34 2597.13,-126.34 2597.13,-162.34"/>
+<text xml:space="preserve" text-anchor="middle" x="2505.38" y="-141.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">party&#45;roster&#45;view&#45;model</text>
+</g>
+<!-- staging&#45;&gt;rostervm -->
+<g id="edge21" class="edge">
+<title>staging&#45;&gt;rostervm</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1162.53,-72.61C1276.93,-79.88 1440.93,-88.34 1584.62,-88.34 1584.62,-88.34 1584.62,-88.34 2186.86,-88.34 2235.71,-88.34 2246.69,-100.63 2294.12,-112.34 2310.65,-116.42 2314.4,-119.03 2331.12,-122.34 2354.8,-127.02 2380.51,-130.91 2404.69,-134.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2404.12,-136.46 2411.38,-134.91 2404.74,-131.6 2404.12,-136.46"/>
+</g>
+<!-- staging&#45;&gt;api -->
+<g id="edge25" class="edge">
+<title>staging&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1162.6,-57.59C1277.04,-54.24 1441.05,-50.34 1584.62,-50.34 1584.62,-50.34 1584.62,-50.34 2506.38,-50.34 2596.36,-50.34 2696.58,-53.91 2778.75,-57.78"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2778.23,-60.21 2785.33,-58.09 2778.46,-55.31 2778.23,-60.21"/>
+<text xml:space="preserve" text-anchor="middle" x="2035.6" y="-53.34" font-family="Courier,monospace" font-size="10.00">finalize</text>
+</g>
+<!-- srd -->
+<g id="node16" class="node">
+<title>srd</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3093.28,-363.78 2804.16,-363.78 2804.16,-306.9 3093.28,-306.9 3093.28,-363.78"/>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-345.24" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/srd catalog</text>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-332.04" font-family="Courier,monospace" font-size="11.00" fill="#231b12">12 classes · species · backgrounds ·</text>
+<text xml:space="preserve" text-anchor="middle" x="2948.72" y="-318.84" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SUBCLASS_LEVEL · CLASS_SAVES</text>
+</g>
+<!-- guided&#45;&gt;srd -->
+<g id="edge17" class="edge">
+<title>guided&#45;&gt;srd</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2680.18,-378.98C2718.19,-372.78 2758.15,-366.26 2795.25,-360.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2795.31,-362.68 2801.83,-359.14 2794.52,-357.85 2795.31,-362.68"/>
+</g>
+<!-- sheetvm&#45;&gt;srd -->
+<g id="edge20" class="edge">
+<title>sheetvm&#45;&gt;srd</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M2574.37,-275.27C2633.04,-284.71 2719.96,-298.7 2795.17,-310.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2794.72,-313.2 2802.02,-311.9 2795.5,-308.37 2794.72,-313.2"/>
+<text xml:space="preserve" text-anchor="middle" x="2733.65" y="-309.2" font-family="Courier,monospace" font-size="10.00">saves + mods</text>
+</g>
+<!-- stream&#45;&gt;api -->
+<g id="edge23" class="edge">
+<title>stream&#45;&gt;api</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2648.91,-179.79C2659.38,-177.23 2669.73,-174.42 2679.65,-171.34 2729.98,-155.68 2738.67,-141.81 2787.66,-122.34 2795.83,-119.09 2804.28,-115.84 2812.83,-112.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2813.64,-114.97 2819.35,-110.24 2811.94,-110.37 2813.64,-114.97"/>
+<text xml:space="preserve" text-anchor="middle" x="2733.65" y="-167.85" font-family="Courier,monospace" font-size="10.00">SSE</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The experience follows the frontend's brain/render split (see
+  <a href="./design-system.html">the design system</a>). The
+  <strong><code>client-core/character</code></strong> subpath is the platform-neutral brain — the
+  create-flow state machine, the guided-builder reducer and its flatten-to-concept-text fold, the
+  sheet and party-roster view-models, and the per-user SSE fold behind the loading beat — none of it
+  touches the DOM. A sibling <strong><code>client-core/srd</code></strong> subpath carries the static
+  SRD-2014 catalog the guided builder shows. <strong>@mythrun/ui</strong> turns the brain into pixels:
+  a level card, a freeform prompt, a guided builder, the loading beat, the sheet reveal, and the party
+  roster. <strong>@mythrun/web</strong> composes them across a handful of discrete routes and one
+  campaign-page surface. The routes consume five backend surfaces — the situations/level reads, the
+  concept submit, the <a href="../runtime/pipeline-status.html">status SSE stream</a>, the
+  character-creation progress board, and the finalize fan-in — and never reach past a
+  <code>client-core</code> function to do it. The
+  <a href="../runtime/character-creation.html">backend pipeline</a> that generates each sheet is a
+  separate page; this one is the flow, the screens, and the routing model.
+</p>
+
+<h3 id="two-state-models-one-flow">Two state models, one flow</h3>
+
+<p>
+  There are two distinct state models in play, and keeping them apart is what makes the flow both
+  smooth and reload-proof. The first is the <strong>create-machine</strong>
+  (<code>client-core/character/create-machine.ts</code>): a tiny in-session machine —
+  <code>chooser → freeform | guided → processing → reveal → staging</code> — that sequences the
+  create route's own screens while the player is actively composing a character. The second is the
+  <strong>routing table</strong> (<code>deriveCharacterRoute</code>): a pure function that maps three
+  durable, server-backed signals onto a screen, re-evaluated every time the campaign page mounts.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why two models instead of one</strong> — the create-machine is ephemeral: it lives in React
+  state, remembers which path you chose and whether you have submitted, and vanishes on reload. That
+  is exactly right for a form you are filling out, and exactly wrong for the question "where is this
+  player in the arc?" — which has to survive a refresh, a second browser tab, and the ten minutes a
+  character sheet takes to generate. So the durable question is answered by re-reading server state
+  (the concept status, the confirmation timestamp) on every mount, not by trusting an in-memory
+  machine. The create route drives the machine; the campaign-page surface drives the table; the two
+  never share state.
+</aside>
+
+<h3 id="the-routing-model-viewer-signals-not-the-pipeline-phase">The routing model — viewer signals, not the pipeline phase</h3>
+
+<p>
+  This is the load-bearing decision. The frontend does <strong>not</strong> route on the derived
+  pipeline <code>phase</code>. That phase is the wrong signal for three concrete reasons:
+  <code>derivePhase</code> returns <code>character_creation</code> only <em>transiently</em> while a
+  concept is <code>processing</code> and falls back to <code>world_ready</code> the moment concepts
+  are <code>completed</code>; it collapses <em>any one</em> member's failed concept into a
+  <strong>party-wide</strong> <code>failed</code> phase; and the status client further coarsens that
+  into a <code>terminal</code> state that short-circuits to the world-gen
+  <a href="./world-gen-experience.html">TerminalView</a> before any per-user branch runs. Routing on
+  it would dead-end a recoverable concept on the wrong screen and let one player's bad roll
+  terminal-screen the whole table.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Three viewer-relative signals instead</strong> — the surface reads
+  <code>campaign.status</code> (which stays a stable <code>setup</code> throughout creation), the
+  <em>current user's own</em> <code>character_concepts.status</code> (from
+  <code>GET /character-creation-progress</code>, found by matching the viewer's id), and the viewer's
+  <em>role</em> (<code>CampaignSummary.creator === null</code> ⟹ owner). All three are relative to the
+  person looking: a member and the owner viewing the same campaign at the same instant can, and
+  should, land on different screens. This is why the failed-concept case shows a calm
+  character-context retry rather than the world-gen terminal, and why a party never all-goes-home for
+  one member's failure.
+</aside>
+
+<p>
+  <code>deriveCharacterRoute</code> reproduces the spec's §3.3 table faithfully, all within
+  <code>campaign.status === 'setup'</code> unless a terminal gate fires first:
+</p>
+
+<table>
+  <tr>
+    <th>Condition (for the viewing user)</th>
+    <th>Screen</th>
+  </tr>
+  <tr>
+    <td>campaign <code>failed</code> (terminal integration failure)</td>
+    <td>character-context <strong>failure + retry</strong> (not the world-gen terminal)</td>
+  </tr>
+  <tr>
+    <td>campaign <code>active</code>, or concept <code>integrated</code></td>
+    <td><strong>play</strong> entry</td>
+  </tr>
+  <tr>
+    <td>no starting situation chosen</td>
+    <td>owner → <strong>situation pick</strong>; member → <strong>hold</strong></td>
+  </tr>
+  <tr>
+    <td>situation set, no starting level</td>
+    <td>owner → <strong>level pick</strong>; member → <strong>hold</strong></td>
+  </tr>
+  <tr>
+    <td>both set, no concept row (or a resubmittable one)</td>
+    <td><strong>create</strong></td>
+  </tr>
+  <tr>
+    <td>concept <code>failed</code></td>
+    <td>character-context <strong>failure + retry</strong> (reset → create)</td>
+  </tr>
+  <tr>
+    <td>concept <code>processing</code></td>
+    <td><strong>loading beat</strong></td>
+  </tr>
+  <tr>
+    <td>concept <code>completed</code>, <code>confirmed_at</code> null</td>
+    <td><strong>meet your character</strong></td>
+  </tr>
+  <tr>
+    <td>concept <code>completed</code>, <code>confirmed_at</code> set</td>
+    <td><strong>party staging</strong> (owner: finalize; member: waiting for the party)</td>
+  </tr>
+</table>
+
+<aside class="wiki-rationale">
+  <strong><code>confirmed_at</code> is what makes the reveal survive a reload</strong> — "meet your
+  character" and "party staging" are both <code>completed</code>; the only thing separating them is
+  whether the player pressed <em>This is me</em>. Keying that split on an in-session flag would bounce
+  a player back to the reveal on every refresh in the completed→active window. So confirmation is
+  persisted (<code>character_concepts.confirmed_at</code>) and the progress board serves it back —
+  a reload re-reads the timestamp and lands on staging, not the reveal, exactly as it should.
+</aside>
+
+<h3 id="discrete-routes-vs-the-campaign-page-surface">Discrete routes vs the campaign-page surface</h3>
+
+<p>
+  The flow is split across two web layers, and which layer owns a beat is deliberate. The
+  <strong>discrete routes</strong> (<code>router.tsx</code>) are the one-way "compose and submit"
+  steps: <code>/campaigns/:id/situation</code>, <code>/…/level</code>,
+  <code>/…/character/new</code>, <code>/…/join</code>, and <code>/…/play</code>. The
+  <strong>campaign-page surface</strong> — <code>CharacterSurface</code>, mounted by
+  <code>CampaignPage</code> at <code>/campaigns/:id</code>, superseding its old stub seam — owns the
+  durable lifecycle beats: the member hold, the loading beat, the reveal, party staging, the
+  character-context failure surface, and the play entry.
+</p>
+
+<p>
+  The two connect through the routing table. When the surface decides the viewer is an owner who still
+  owes a situation, a level, or a first concept, it does not render those inline — it
+  <em>redirects</em> to the matching discrete route (a react-router <code>Navigate</code>). The
+  discrete route does its work and hands off: the situation pick POSTs the chosen index and navigates
+  to the level route; the level pick POSTs 1–5 and navigates to <code>/character/new</code>; the
+  create route runs the create-machine and submits. Once a concept exists, the durable states
+  (<code>processing</code> → <code>completed</code> → <code>confirmed</code> → <code>integrated</code>)
+  are read back at <code>/campaigns/:id</code> and the surface mounts the loading, reveal, and staging
+  beats itself.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The create-machine's tail states are vestigial</strong> — the machine can reach
+  <code>processing</code>, <code>reveal</code>, and <code>staging</code>, but on the discrete
+  <code>/character/new</code> route only <code>chooser → freeform | guided → processing</code> are
+  actually driven; nothing there dispatches <code>ready</code> or <code>confirm</code>. On submit the
+  route shows a brief processing placeholder, and the <em>real</em> loading beat and reveal are the
+  campaign-page surface's beats, keyed on the server concept status. The machine sequences the
+  in-session form; the surface owns everything after submit. This is the same "durable question is
+  answered by server state" split as above, seen from the route's side.
+</aside>
+
+<h3 id="the-owner-s-opening-situation-then-starting-level">The owner's opening — situation, then starting level</h3>
+
+<p>
+  Two owner-only beats precede character creation, because both decisions are party-wide. The
+  <strong>situation pick</strong> (a modification of the shipped
+  <code>worldgen/situation-pick.tsx</code>, now owner-gated) offers the world's three opening hooks —
+  title, place, and a paragraph of prose — as a borderless <code>GhostHookList</code>. Each hook also
+  carries an LLM-authored <code>invitation</code> whisper generated with it; the situation pick keeps
+  it in the response and character creation consumes it later as the grounding prompt. The
+  <strong>level pick</strong> offers five <code>LevelCard</code>s (1–5), each with a plain, hedged
+  one-line gloss of what the level grants, defaulting to level 3; confirming locks the party's shared
+  starting level and hands off to create.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The situation pick reuses <code>GhostHookList</code>, not a new <code>SituationCard</code></strong>
+  — the design called for a dedicated card component, but the shipped pick composes the already-shipped
+  ghost-hook list primitive instead. It reads correctly in the flat 1-bit register with zero new
+  design-system surface. This is the "prefer a composition of shipped primitives" resolution the spec
+  left open (§5.4): only pieces that are genuinely reusable become new DS components. The path chooser
+  is the same call — an in-route composition of <code>Card</code>/<code>Button</code>, not a component.
+</aside>
+
+<p>
+  Both beats fail closed. Role is resolved from the <code>/api/campaigns/mine</code> payload
+  (<code>creator === null</code> ⟹ owner); an unresolved or failed probe resolves to <em>member</em>,
+  so the owner-only picker never flashes for a non-owner. A member reaching either route directly sees
+  a calm "setting up the table" hold. And each pick treats its own already-locked 409
+  (<code>situation_locked</code> / <code>level_locked</code>) as idempotent success — it just hands off
+  — so a double-submit or a stale tab never strands the owner.
+</p>
+
+<h3 id="the-two-paths-into-a-character">The two paths into a character</h3>
+
+<p>
+  The create route opens on a <strong>path chooser</strong>: "tell us who you are" or "build your
+  character." Both paths POST the <em>same</em> two-field body — a <code>conceptText</code> and a
+  <code>situationGroundingText</code> — and both collect the grounding field the same way, through the
+  chosen situation's <code>invitation</code> whisper.
+</p>
+
+<p>
+  The <strong>freeform path</strong> collects the two required fields one at a time: first "Who are
+  you?" → <code>conceptText</code>, then the situation's invitation whisper → the grounding text. Each
+  field mirrors the backend's 20-character floor as a calm inline nudge (never a red error), and a
+  synchronous in-flight guard keeps a double-press from firing a second submit. The
+  <strong>guided path</strong> is a controlled driver around the presentational
+  <code>GuidedBuilder</code>, wired to the client-core guided reducer: one question at a time —
+  <code>Class → Subclass → Species → Background → Notes</code> — with a progress rail carrying the
+  prior picks. The reducer owns the sequence <em>and</em> the conditional skip: the Subclass step
+  appears only when the party's starting level grants the chosen class its subclass
+  (<code>SUBCLASS_LEVEL[class] ≤ level</code>), and stepping back over a skipped step just works. On
+  completion the reducer flattens the picks into an English concept sentence from the catalog's
+  canonical names, and the grounding whisper collects the second field exactly as freeform does.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The flatten emits canonical English, not display copy</strong> — the concept text the
+  backend LLM reads is composed from the SRD catalog's canonical English names
+  (<code>"I am a Fighter, a Champion. I am a Human with a Toll-clerk background."</code>), because LLM
+  input is locale-independent. The <code>[ph:]</code> display copy the cards show is a separate,
+  later web-layer concern. The subclass clause is dropped from the sentence whenever the level does
+  not grant it — the same gate the builder uses to skip the step — so a stale draft subclass can
+  never leak into the concept.
+</aside>
+
+<h3 id="coming-into-being-the-loading-beat">Coming into being — the loading beat</h3>
+
+<p>
+  While the sheet generates, the surface mounts <code>CharacterLoadingSurface</code> over the
+  <code>CharacterLoadingBeat</code>: the shipped 1-bit loading register (paper, not voxel — the
+  April spec's voxel silhouette is post-launch), a squared figure that fills in from the feet up
+  beside a column of surfacing beat rows. Its real-time source is the
+  <a href="./realtime-transport.html">MYT-85 status SSE</a>, folded by
+  <code>useCharacterCreationStream</code> and <strong>filtered to the current user's id</strong> — the
+  stream is campaign-wide, so a party of four all watch the same channel, each seeing only their own
+  stages. The hook maps the per-player pipeline stages onto four fixed beats (a name surfaces, a class
+  takes shape, ability scores settle, equipment is gathered), advancing each pending → active → done;
+  under <code>prefers-reduced-motion</code> the fill snaps and the rows swap without churn.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The beat folds live events only; the routing table is the reload backstop</strong> — the
+  fold accumulates in client memory and does not seed from the connect-time snapshot, so a refresh
+  mid-generation restarts the beats from pending until the next live event, and a refresh <em>after</em>
+  completion won't re-flip <code>done</code> (completion is a live event, not replayed). That is fine
+  because the durable "already completed" case is the routing table's job — a returning player's
+  concept status routes them straight to the reveal without ever mounting the beat. The
+  <code>character_creation_complete</code> event is a properly-typed, <code>userId</code>-carrying arm
+  on the status stream, so the live swap fires for exactly the right player; the progress board's
+  <code>confirmed_at</code>/<code>characterId</code> fields are the refresh-stable snapshot behind it.
+</aside>
+
+<h3 id="meet-your-character">Meet your character</h3>
+
+<p>
+  The reveal is a field-guide entry, not a stat block. <code>CharacterRevealSurface</code> fetches the
+  finished character (the raw snake-case read), adapts it deterministically into a
+  <code>{ curated, full }</code> view-model, and renders <code>CharacterSheetReveal</code>: the name;
+  a mono identity line; an AC / HP / Proficiency / Hit-Die / Speed stripe; six square ability tiles;
+  one or two paragraphs of connection prose; and "what they can do / carry / cast" panels — the spells
+  panel appearing only for casters. Three actions ride it: <em>This is me</em> persists
+  <code>confirmed_at</code> and routes to staging; <em>See full sheet</em> is a pure client expansion
+  of data already in props (skills, saving throws, the full kit — no network, no LLM call); and
+  <em>Start over</em> calls the concept-reset route and returns to create (which does cost a fresh
+  generation).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Every derivation on the reveal is deterministic math, never a prose parse</strong> — the
+  adapter computes ability modifiers by formula, resolves saving throws through the SRD
+  <code>CLASS_SAVES</code> map plus the structured proficiency bonus, and defaults an unreturned speed
+  to 30 ft. Subclass is <em>omitted</em> rather than guessed: the character row has no structured
+  subclass column, and splitting one out of the free class string or feature names is exactly the
+  pattern-match <a href="../runtime/character-creation.html">ZFC</a> forbids. The connection prose is
+  <em>assembled</em>, not generated — the concept stage's own already-authored fields (physical
+  description, personality sentences, the player's grounding text) concatenated in order, degrading to
+  a shorter panel when a field is blank.
+</aside>
+
+<h3 id="party-staging-and-begin">Party staging and Begin</h3>
+
+<p>
+  Once the viewer's own character is confirmed, the surface mounts <code>PartyStagingSurface</code>
+  over the <code>PartyRoster</code>. It fetches the roster from
+  <code>GET /character-creation-progress</code>, maps it through the party-roster view-model (owner
+  first, each row marked ready / creating / you), and polls on a modest interval so late finishers
+  surface — live join and invite links are <a href="./realtime-transport.html">MYT-91</a>, so the poll
+  is enough for this shell and the invite affordance is a no-op seam. In the <strong>solo</strong> case
+  (launch-critical) the roster shows the one-person party plus a dashed invite slot and a "begin the
+  adventure" control. In a <strong>party</strong>, the owner-only Begin is enabled once the owner's own
+  concept is ready; it fans in every currently-<code>completed</code> concept through
+  <code>POST /finalize-character-creation</code>, which triggers
+  <a href="../runtime/character-integration.html">character integration</a>, flips the campaign to
+  <code>active</code>, and leads into the opening scene. Status reads as prose, never a badge or dot —
+  the brand rule holds here.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The laggard boundary is a known limitation, not a bug</strong> — integration loads only the
+  concepts that are <code>completed</code> at fire time, and the campaign then flips <code>active</code>,
+  so a member who finishes <em>after</em> Begin is left out (a later finalize 409s
+  <code>not_in_setup</code>). Re-integrating a late joiner into an already-active campaign is a §7
+  follow-up entangled with MYT-91's live-join work, deliberately not solved here. An integration
+  failure routes to the calm character-context failure surface (retry re-attempts the fan-in), never
+  the world-gen terminal.
+</aside>
+
+<h3 id="the-member-s-briefer-way-in">The member's briefer way in</h3>
+
+<p>
+  A joining member (arriving via an MYT-91 invite) skips the owner beats — the situation and level are
+  already set — and lands on <code>JoinSummaryRoute</code>: a stripped-down reveal that fetches the
+  world snapshot and shows just the world's name and a paragraph of introduction in the same
+  paper/serif register, then a single "create your character" CTA into the same create route. The rest
+  of the arc (loading, meet, staging) is identical; a member simply waits for the owner's Begin instead
+  of pressing it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The member summary reads the world-snapshot, and fails closed on anything else</strong> —
+  the <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot endpoint</a
+  >
+  is readable by any accepted campaign member (myth-0xwos widened it from owner-only for exactly this
+  render), so a joined member fetches the same known-tier intro the owner's reveal uses. A failed or
+  forbidden fetch — a transient error, or a member whose invite isn't accepted yet — resolves to the
+  same calm, retryable notice, never a fake, nameless world, so the surface is honest about a gap
+  rather than papering over it. (The <code>join-summary.tsx</code> header comment still describes the
+  pre-myth-0xwos owner-only state; the route guard is the source of truth, and it is member-scoped.)
+</aside>
+
+<h3 id="the-brain-the-client-core-character-layer">The brain — the client-core character layer</h3>
+
+<p>
+  The character data layer is a real MYT-90 deliverable: none of it existed before. The
+  <code>client-core/character</code> subpath holds the create-machine, the guided reducer and its
+  flatten, the sheet and party-roster view-models, and the per-user stream fold — all DOM-free, all
+  unit-tested against injected inputs. The <code>client-core/api</code> layer adds the character-submit,
+  progress, finalize, starting-level, reset, and confirm endpoint slices (each a
+  <code>defineEndpoint</code> with Zod request/response validation), and the
+  <code>client-core/srd</code> subpath carries the static SRD-2014 catalog the guided builder shows.
+  Every @mythrun/ui character component takes its props from a DOM-free contract file in
+  <code>client-core/contract/character/</code> first — the enforced portability seam — so the
+  components stay controlled and presentational, with all sequencing in the reducer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The subclass table is one SRD fact kept in two places</strong> — the client-core
+  <code>SUBCLASS_LEVEL</code> table (which gates the builder's Subclass step) and the backend's
+  level-scaling prompt/validation are two independent copies of the same SRD-2014 rule, with no shared
+  enforcement. A drift between them yields a concept the sheet stage can't satisfy coherently. Both
+  are pinned explicitly (not derived) and unit-tested against the same 12-classes × 5-levels matrix,
+  and the coupling is noted at both ends. The <code>CLASS_SAVES</code> map the reveal uses to compute
+  saving throws is the same shape of client-side mechanics — the only mechanics in the SRD data, homed
+  here because the reveal derives saves in deterministic code rather than reading them off the wire.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="walk-the-character-creation-flow-locally">Walk the character-creation flow locally</h3>
+<ol>
+  <li>
+    Bring up the stack: <code>pnpm db:up</code>, <code>pnpm dev</code> (backend + worker), and the web
+    app (<code>pnpm --filter @mythrun/web dev</code>). A real generation needs live Anthropic
+    credentials in <code>backend/.env.development</code>.
+  </li>
+  <li>
+    Sign in, create a campaign, and let the world generate. On the settled
+    <a href="./world-gen-experience.html">reveal</a>, press Continue — as the owner you land on the
+    situation pick, then the level pick.
+  </li>
+  <li>
+    Choose a path on <code>/campaigns/:id/character/new</code>. Freeform collects two prompts; the
+    guided builder walks Class → (Subclass) → Species → Background → Notes, then the grounding whisper.
+    Submit.
+  </li>
+  <li>
+    Return to <code>/campaigns/:id</code> to watch the loading beat fill in, then the reveal. Press
+    <em>This is me</em>, then <em>Begin the adventure</em> to finalize and enter play.
+  </li>
+  <li>
+    To inspect the underlying events, open the same campaign in the
+    <a href="../runtime/pipeline-status.html#watch-a-campaign-locally">dev tool's wire-log drawer</a>
+    — it streams the identical SSE frames the loading beat is folding, including the per-user
+    <code>character_creation_complete</code> arm.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The flow reads the <a href="../runtime/character-creation.html">backend character-creation pipeline</a>
+  through the situations/level reads, the two-field concept submit, the character-creation progress
+  board, and the owner finalize — the last of which triggers
+  <a href="../runtime/character-integration.html">character integration</a> and the flip to
+  <code>active</code>. The loading beat rides the same <a href="./realtime-transport.html">status SSE
+  transport</a> as the rest of the app, filtered to the current player. The preceding
+  <a href="./world-gen-experience.html">world-gen reveal</a> hands off here once a starting situation
+  is chosen (<code>campaign-detail.tsx</code> delegates to <code>CampaignPage</code>), and the whole
+  surface is built from <a href="./design-system.html">mythrunUI</a> components over the DOM-free
+  <code>client-core</code> brain. Enforced ignorance and the sheet's mechanical honesty are the
+  pipeline's concern; the frontend renders only the player-safe projection it is served.
+</p>
+
+<h2 id="appendix-the-modules">Appendix: the modules</h2>
+
+<h3 id="the-brain-client-core-character-client-core-srd">The brain — <code>client-core/character</code> + <code>client-core/srd</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>create-machine.ts</code></td>
+    <td>The in-session create flow — chooser → path → processing → reveal → staging (a pure transition table).</td>
+  </tr>
+  <tr>
+    <td><code>guided-reducer.ts</code></td>
+    <td>The guided step sequence + the conditional Subclass skip + the progress-rail selector.</td>
+  </tr>
+  <tr>
+    <td><code>flatten.ts</code></td>
+    <td>Folds the guided picks into an English concept sentence from canonical SRD names.</td>
+  </tr>
+  <tr>
+    <td><code>sheet-view-model.ts</code></td>
+    <td>The normalized sheet → the reveal's curated (field-guide) and full (mechanical) views; caster gating.</td>
+  </tr>
+  <tr>
+    <td><code>party-roster-view-model.ts</code></td>
+    <td>The progress board → roster rows (owner-first, ready/creating/empty, viewer-marked).</td>
+  </tr>
+  <tr>
+    <td><code>use-character-creation-stream.ts</code></td>
+    <td>The status-SSE fold → <code>{ beats, done }</code>, filtered to the current <code>userId</code>.</td>
+  </tr>
+  <tr>
+    <td><code>srd/</code></td>
+    <td>The SRD-2014 catalog — classes, species, backgrounds, <code>SUBCLASS_LEVEL</code>, <code>CLASS_SAVES</code>.</td>
+  </tr>
+  <tr>
+    <td><code>api/characters.ts</code> · <code>api/starting-level.ts</code></td>
+    <td>The typed endpoint slices — submit, roster, full read, progress, finalize, reset, confirm, starting level.</td>
+  </tr>
+</table>
+
+<h3 id="the-render-mythrun-ui">The render — <code>@mythrun/ui</code></h3>
+<table>
+  <tr>
+    <th>Component</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>LevelCard</code></td>
+    <td>One owner starting-level pick (1–5) — a real button, ember-ring selection, no layout shift.</td>
+  </tr>
+  <tr>
+    <td><code>FreeformPrompt</code></td>
+    <td>The "describe who you are" seamless prompt — the question labels the answer.</td>
+  </tr>
+  <tr>
+    <td><code>GuidedBuilder</code></td>
+    <td>The controlled one-question-at-a-time builder — rail + question + option cards, no internal step state.</td>
+  </tr>
+  <tr>
+    <td><code>CharacterLoadingBeat</code></td>
+    <td>The 1-bit "coming into being" figure filling in beside advancing beat rows (reuses <code>Dither</code>).</td>
+  </tr>
+  <tr>
+    <td><code>CharacterSheetReveal</code></td>
+    <td>The field-guide reveal — identity, stat stripe, ability tiles, prose, panels, and the controlled full-sheet expand.</td>
+  </tr>
+  <tr>
+    <td><code>PartyRoster</code></td>
+    <td>The staging roster — member rows as prose (no dots/chips), owner Begin, the invite seam.</td>
+  </tr>
+</table>
+
+<h3 id="the-routes-mythrun-web">The routes — <code>@mythrun/web</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>character-new/character-surface.tsx</code> · <code>character-route.ts</code></td>
+    <td>The campaign-page surface — fetches the viewer signals and runs <code>deriveCharacterRoute</code>.</td>
+  </tr>
+  <tr>
+    <td><code>character-new/character-beat.tsx</code></td>
+    <td>Maps the decided kind to a redirect or a mounted beat (loading / reveal / staging / hold / failure / play).</td>
+  </tr>
+  <tr>
+    <td><code>character-new.tsx</code> · <code>path-chooser.tsx</code> · <code>freeform-path.tsx</code> · <code>guided-path.tsx</code></td>
+    <td>The discrete create route — the chooser and the two paths driving the create-machine + guided reducer.</td>
+  </tr>
+  <tr>
+    <td><code>worldgen/situation-pick.tsx</code> · <code>character-new/level-pick.tsx</code></td>
+    <td>The owner-gated situation and starting-level discrete routes.</td>
+  </tr>
+  <tr>
+    <td><code>character-new/character-loading.tsx</code> · <code>character-reveal.tsx</code> · <code>party-staging.tsx</code></td>
+    <td>The three durable surface beats — the loading fold, the reveal + sheet adapter, and the staging roster.</td>
+  </tr>
+  <tr>
+    <td><code>character-new/sheet-adapter.ts</code></td>
+    <td>The raw character read → the reveal view-model (deterministic math + SRD maps, never a prose parse).</td>
+  </tr>
+  <tr>
+    <td><code>character-new/join-summary.tsx</code></td>
+    <td>The member-join world-intro summary — world name + introduction → create.</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/src/routes/character-new/</code>, <code>frontend/src/routes/character-new.tsx</code>,
+  <code>frontend/src/routes/worldgen/situation-pick.tsx</code>,
+  <code>frontend/src/routes/campaign-page.tsx</code>,
+  <code>frontend/src/routes/campaign-detail.tsx</code>, <code>frontend/src/app/router.tsx</code>,
+  <code>frontend/client-core/src/character/</code>, <code>frontend/client-core/src/srd/</code>,
+  <code>frontend/client-core/src/api/characters.ts</code>,
+  <code>frontend/client-core/src/api/starting-level.ts</code>,
+  <code>frontend/client-core/src/contract/character/</code>,
+  <code>frontend/contract/src/events/pipeline-events.ts</code>, and the <code>LevelCard</code> /
+  <code>FreeformPrompt</code> / <code>GuidedBuilder</code> / <code>CharacterLoadingBeat</code> /
+  <code>CharacterSheetReveal</code> / <code>PartyRoster</code> components under
+  <code>frontend/ui/src/components/</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#two-state-models-one-flow">Two state models, one flow</a></li><li style="padding-left:12px"><a href="#the-routing-model-viewer-signals-not-the-pipeline-phase">The routing model — viewer signals, not the pipeline phase</a></li><li style="padding-left:12px"><a href="#discrete-routes-vs-the-campaign-page-surface">Discrete routes vs the campaign-page surface</a></li><li style="padding-left:12px"><a href="#the-owner-s-opening-situation-then-starting-level">The owner's opening — situation, then starting level</a></li><li style="padding-left:12px"><a href="#the-two-paths-into-a-character">The two paths into a character</a></li><li style="padding-left:12px"><a href="#coming-into-being-the-loading-beat">Coming into being — the loading beat</a></li><li style="padding-left:12px"><a href="#meet-your-character">Meet your character</a></li><li style="padding-left:12px"><a href="#party-staging-and-begin">Party staging and Begin</a></li><li style="padding-left:12px"><a href="#the-member-s-briefer-way-in">The member's briefer way in</a></li><li style="padding-left:12px"><a href="#the-brain-the-client-core-character-layer">The brain — the client-core character layer</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#walk-the-character-creation-flow-locally">Walk the character-creation flow locally</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-character-client-core-srd">The brain — client-core/character + client-core/srd</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

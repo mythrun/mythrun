@@ -11,7 +11,7 @@
 <!-- source: frontend/ui/src/components/FullBleedStage/ -->
 <!-- source: frontend/ui/src/components/Drawer/ -->
 <!-- source: frontend/ui/src/components/RevealTransition/ -->
-<!-- source-hash: sha256:e997ab8f31cddaf82bc1db3b202df0fbdf3ec375a2d3bd214d2f9eb32fed2c95 -->
+<!-- source-hash: sha256:98c7ae3551d30b4b5d89b083803a637650f6d2548c15876cb7d98ae3a324ea5d -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>World-gen experience</h1>
@@ -189,8 +189,13 @@
   <code>WorldReveal</code> — even though the pipeline's tail stages (<code
     >entity_consolidation</code
   >
-  through <code>embed_world</code>) are still running. The reveal fetches the owner world-snapshot
-  and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door is the
+  through <code>embed_world</code>) are still running. The reveal fetches the
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  (readable by any campaign member since myth-0xwos, so a party member's reveal renders too, not just
+  the owner's) and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door
+  is the
   introduction: the world's name as the title, a few paragraphs of grounding prose, and an ordered
   list of dig-deeper references, with the search field and the browse-by-kind index one scroll
   below. There is no separate entity list — the wiki is the browse surface.
@@ -234,7 +239,7 @@
 
 <aside class="wiki-rationale">
   <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
-  the owner world-snapshot at the same <code>world_introduction</code> boundary the endpoint's
+  the world-snapshot at the same <code>world_introduction</code> boundary the endpoint's
   readiness gate keys on, so it never races the 409. The known-tier filter is entirely
   <a href="../runtime/world-gen.html#relationship-tiering">server-side</a>: the snapshot returns
   only <code>known</code> entities, facts, relationships, <em>and</em> the introduction (its

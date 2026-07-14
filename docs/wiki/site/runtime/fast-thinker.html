@@ -733,6 +733,23 @@
 
 <aside class="wiki-rationale">
   <strong
+    >Node over-pull, but the <code>characters_known_to</code> walk crosses known edges only</strong
+  >
+  — over-pull is a <em>node-content</em> policy: the resolver hands the vet secret <em>nodes</em>,
+  tier-annotated, to gate. Relationship <em>edges</em> are different, because the walk's result
+  carries only node tiers — the edges it crossed are invisible downstream, so no vet could gate a
+  secret connection after the fact. The FT lookup therefore calls
+  <a href="../data/world-store-retrieval.html#the-read-path-part-two-graph-walks"
+    ><code>charactersKnownTo</code></a
+  >
+  with <code>edgeAccessLevels: ['known']</code> (myth-got9q): a secret connection's reachability
+  never enters the FT-facing walk. Node over-pull is unchanged — a secret NPC at the end of a known
+  edge still surfaces to the ST-vet. When play reveals a connection, the
+  <a href="./scribe.html">Scribe</a> flips that edge to <code>known</code> and it starts traversing.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
     >A synchronous Opus vet, per lookup, mid-turn — not the async post-turn Slow Thinker</strong
   >
   — the FT needs the answer <em>now</em>, inside the turn, to narrate from it. So unlike the

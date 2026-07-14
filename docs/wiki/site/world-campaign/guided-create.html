@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Guided create · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="world-campaign" data-page="guided-create">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html" class="active">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../world-campaign/index.html">Overview</a></li><li><a href="../world-campaign/guided-create.html" class="active">Guided create</a></li><li><a href="../world-campaign/world-color.html">World colour identity</a></li><li><a href="../world-campaign/campaign-hub-payload.html">Campaign hub payload</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › World & Campaign › Guided create</div>
+        <article>
+<h1>Guided create</h1>
+
+<p class="lead">
+  The path a player takes to turn three things they love into a campaign: name three favourites,
+  watch a world brief write itself, then read it, optionally rework it once, and commit. Every step
+  before the commit is <strong>non-charging</strong> — the concept lives in Redis under an opaque
+  preview id and the credit is charged only when the player presses Begin.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1741pt" height="391pt"
+ viewBox="14.00 14.00 1726.00 376.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 372.24)">
+<title>guided_create</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-357.84 1708.08,-357.84 1708.08,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_spa</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="367.58,-8 367.58,-262 1029.83,-262 1029.83,-8 367.58,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="698.71" y="-248.1" font-family="Courier,monospace" font-size="11.00">campaign&#45;new &#160;(SPA screen state machine)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_routes</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="16.65,-53 16.65,-172 259.57,-172 259.57,-53 16.65,-53"/>
+<text xml:space="preserve" text-anchor="middle" x="138.11" y="-158.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">preview routes &#160;(non&#45;charging)</text>
+</g>
+<!-- fork -->
+<g id="node1" class="node">
+<title>fork</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="623.7,-171.84 367.58,-171.84 367.58,-128.16 623.7,-128.16 623.7,-171.84"/>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-153.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fork</text>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-140.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">an idea | build from what you love</text>
+</g>
+<!-- guided -->
+<g id="node2" class="node">
+<title>guided</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1029.83,-51.84 773.71,-51.84 773.71,-8.16 1029.83,-8.16 1029.83,-51.84"/>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-33.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">guided</text>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-20.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">3 picks · draft in sessionStorage</text>
+</g>
+<!-- fork&#45;&gt;guided -->
+<g id="edge1" class="edge">
+<title>fork&#45;&gt;guided</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M579.23,-127.42C594.08,-123.13 609.39,-118.55 623.7,-114 691.09,-92.57 705.94,-81.18 773.71,-61 780.91,-58.86 788.36,-56.75 795.88,-54.71"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="796.19,-57.17 802.32,-52.99 794.92,-52.43 796.19,-57.17"/>
+</g>
+<!-- freeform -->
+<g id="node6" class="node">
+<title>freeform</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="950.62,-113.84 852.93,-113.84 852.93,-70.16 950.62,-70.16 950.62,-113.84"/>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-95.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">freeform</text>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-82.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">idea prose</text>
+</g>
+<!-- fork&#45;&gt;freeform -->
+<g id="edge2" class="edge">
+<title>fork&#45;&gt;freeform</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M624.44,-144.09C683.07,-140.93 742.53,-136.88 755.71,-133 764.49,-130.42 765.19,-126.34 773.71,-123 796.12,-114.23 821.74,-107.41 844.09,-102.42"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="844.38,-104.87 850.7,-100.99 843.34,-100.08 844.38,-104.87"/>
+</g>
+<!-- rsynth -->
+<g id="node7" class="node">
+<title>rsynth</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="259.57,-89 16.65,-89 16.65,-53 259.57,-53 259.57,-89"/>
+<text xml:space="preserve" text-anchor="middle" x="138.11" y="-67.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST synthesize&#45;preview[/stream]</text>
+</g>
+<!-- guided&#45;&gt;rsynth -->
+<g id="edge3" class="edge">
+<title>guided&#45;&gt;rsynth</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M773.18,-36.87C633.22,-44.4 409.8,-56.43 268.96,-64.01"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="268.89,-61.56 262.03,-64.38 269.15,-66.45 268.89,-61.56"/>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-61.51" font-family="Courier,monospace" font-size="10.00">find my world (SSE open)</text>
+</g>
+<!-- synth -->
+<g id="node3" class="node">
+<title>synth</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="587.39,-233.84 403.89,-233.84 403.89,-190.16 587.39,-190.16 587.39,-233.84"/>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-215.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">synthesizing</text>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-202.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the brief writes itself</text>
+</g>
+<!-- preview -->
+<g id="node4" class="node">
+<title>preview</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1026.53,-175.84 777.02,-175.84 777.02,-132.16 1026.53,-132.16 1026.53,-175.84"/>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-157.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">preview</text>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-144.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Begin · one change · start over</text>
+</g>
+<!-- synth&#45;&gt;preview -->
+<g id="edge9" class="edge">
+<title>synth&#45;&gt;preview</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M584.08,-189.45C602.98,-185.16 622.93,-181.05 641.7,-178 682.49,-171.36 727.21,-166.4 767.85,-162.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="767.89,-165.23 774.65,-162.18 767.46,-160.35 767.89,-165.23"/>
+<text xml:space="preserve" text-anchor="middle" x="698.71" y="-181" font-family="Courier,monospace" font-size="10.00">complete</text>
+</g>
+<!-- reject -->
+<g id="node5" class="node">
+<title>reject</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1019.93,-240.84 783.62,-240.84 783.62,-197.16 1019.93,-197.16 1019.93,-240.84"/>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-222.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rejection</text>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-209.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">message — never raw reasoning</text>
+</g>
+<!-- synth&#45;&gt;reject -->
+<g id="edge11" class="edge">
+<title>synth&#45;&gt;reject</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M588.09,-213.58C643.24,-214.54 714.28,-215.77 774.71,-216.82"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="774.31,-219.26 781.35,-216.93 774.39,-214.36 774.31,-219.26"/>
+<text xml:space="preserve" text-anchor="middle" x="698.71" y="-219.33" font-family="Courier,monospace" font-size="10.00">rejected</text>
+</g>
+<!-- rrework -->
+<g id="node8" class="node">
+<title>rrework</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="229.86,-150.84 46.36,-150.84 46.36,-107.16 229.86,-107.16 229.86,-150.84"/>
+<text xml:space="preserve" text-anchor="middle" x="138.11" y="-132.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST preview/:id/rework</text>
+<text xml:space="preserve" text-anchor="middle" x="138.11" y="-119.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">single&#45;shot</text>
+</g>
+<!-- preview&#45;&gt;rrework -->
+<g id="edge12" class="edge">
+<title>preview&#45;&gt;rrework</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M793.41,-131.47C742.27,-121.84 680.09,-111.75 623.7,-107 510.27,-97.45 481.28,-101.54 367.58,-107 325.4,-109.03 278.99,-113.14 239.08,-117.28"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="238.92,-114.83 232.21,-118 239.43,-119.7 238.92,-114.83"/>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-110" font-family="Courier,monospace" font-size="10.00">ask for one change</text>
+</g>
+<!-- create -->
+<g id="node12" class="node">
+<title>create</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1475.57,-175.84 1245.86,-175.84 1245.86,-132.16 1475.57,-132.16 1475.57,-175.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1360.72" y="-157.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /api/campaigns</text>
+<text xml:space="preserve" text-anchor="middle" x="1360.72" y="-144.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">load preview · debit 1 credit</text>
+</g>
+<!-- preview&#45;&gt;create -->
+<g id="edge15" class="edge">
+<title>preview&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1027.03,-154C1092.16,-154 1171.66,-154 1236.62,-154"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1236.46,-156.45 1243.46,-154 1236.46,-151.55 1236.46,-156.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1137.85" y="-157" font-family="Courier,monospace" font-size="10.00">Begin</text>
+</g>
+<!-- freeform&#45;&gt;create -->
+<g id="edge16" class="edge">
+<title>freeform&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M951.24,-98.58C1018.62,-107.72 1142.87,-124.58 1236.72,-137.31"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1236.35,-139.73 1243.61,-138.25 1237.01,-134.88 1236.35,-139.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1137.85" y="-138.68" font-family="Courier,monospace" font-size="10.00">commit (gated here)</text>
+</g>
+<!-- rsynth&#45;&gt;synth -->
+<g id="edge6" class="edge">
+<title>rsynth&#45;&gt;synth</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M238.87,-89.73C246,-92.17 252.97,-94.91 259.57,-98 314.4,-123.67 312.99,-154.82 367.58,-181 376.21,-185.14 385.44,-188.76 394.84,-191.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="394,-194.21 401.41,-194.01 395.49,-189.54 394,-194.21"/>
+<text xml:space="preserve" text-anchor="middle" x="313.57" y="-172.74" font-family="Courier,monospace" font-size="10.00">prose deltas</text>
+</g>
+<!-- sonnet -->
+<g id="node9" class="node">
+<title>sonnet</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="243.07,-229.84 33.16,-229.84 33.16,-186.16 243.07,-186.16 243.07,-229.84"/>
+<text xml:space="preserve" text-anchor="middle" x="138.11" y="-211.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">synthesize / revise concept</text>
+<text xml:space="preserve" text-anchor="middle" x="138.11" y="-198.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(Sonnet · temp 0.9)</text>
+</g>
+<!-- rsynth&#45;&gt;sonnet -->
+<g id="edge4" class="edge">
+<title>rsynth&#45;&gt;sonnet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M19.87,-89.5C14.73,-94.28 10.53,-100.05 7.65,-107 -2.55,-131.64 -2.55,-142.36 7.65,-167 9.82,-172.23 11.75,-173.18 16.65,-176 20.4,-178.15 24.29,-180.16 28.28,-182.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="27.03,-184.16 34.42,-184.75 29.01,-179.68 27.03,-184.16"/>
+</g>
+<!-- rrework&#45;&gt;sonnet -->
+<g id="edge13" class="edge">
+<title>rrework&#45;&gt;sonnet</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M138.11,-151.53C138.11,-159.93 138.11,-168.34 138.11,-176.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="135.66,-176.68 138.11,-183.68 140.56,-176.68 135.66,-176.68"/>
+</g>
+<!-- store -->
+<g id="node11" class="node">
+<title>store</title>
+<path fill="#efe9dc" stroke="#231b12" stroke-width="1.5" d="M1010.03,-333C1010.03,-336.92 961.51,-340.11 901.77,-340.11 842.04,-340.11 793.52,-336.92 793.52,-333 793.52,-333 793.52,-269 793.52,-269 793.52,-265.08 842.04,-261.89 901.77,-261.89 961.51,-261.89 1010.03,-265.08 1010.03,-269 1010.03,-269 1010.03,-333 1010.03,-333"/>
+<path fill="none" stroke="#231b12" stroke-width="1.5" d="M1010.03,-333C1010.03,-329.07 961.51,-325.88 901.77,-325.88 842.04,-325.88 793.52,-329.07 793.52,-333"/>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-310.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Redis preview store</text>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-297.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">campaign&#45;preview:{user}:{id}</text>
+<text xml:space="preserve" text-anchor="middle" x="901.77" y="-284.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">30&#45;min TTL · reworkCount</text>
+</g>
+<!-- rrework&#45;&gt;store -->
+<g id="edge14" class="edge">
+<title>rrework&#45;&gt;store</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M204.64,-151.48C222.88,-158.7 242.39,-167.36 259.57,-177 311.9,-206.36 311.46,-236.75 367.58,-258 405.45,-272.34 639.18,-287.1 784.33,-295.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="783.96,-297.48 791.09,-295.42 784.23,-292.59 783.96,-297.48"/>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-288.17" font-family="Courier,monospace" font-size="10.00">gate&#45;pass → overwrite (reworkCount:1)</text>
+</g>
+<!-- gate -->
+<g id="node10" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="590.69,-353.84 400.59,-353.84 400.59,-310.16 590.69,-310.16 590.69,-353.84"/>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-335.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">input gate (Sonnet)</text>
+<text xml:space="preserve" text-anchor="middle" x="495.64" y="-322.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">3&#45;axis · allow | reject</text>
+</g>
+<!-- sonnet&#45;&gt;gate -->
+<g id="edge5" class="edge">
+<title>sonnet&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M167.88,-230.49C194.75,-250.32 236.72,-278.41 277.57,-294 313.54,-307.73 354.78,-316.53 391.58,-322.17"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="390.77,-324.53 398.05,-323.13 391.49,-319.68 390.77,-324.53"/>
+</g>
+<!-- gate&#45;&gt;reject -->
+<g id="edge10" class="edge">
+<title>gate&#45;&gt;reject</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M576.29,-309.47C592,-305.02 608.37,-300.37 623.7,-296 690.4,-276.99 706.87,-271.52 773.71,-253 784.61,-249.98 796.03,-246.86 807.38,-243.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="807.75,-246.23 813.87,-242.04 806.48,-241.5 807.75,-246.23"/>
+<text xml:space="preserve" text-anchor="middle" x="698.71" y="-293.68" font-family="Courier,monospace" font-size="10.00">reject (422)</text>
+</g>
+<!-- gate&#45;&gt;store -->
+<g id="edge7" class="edge">
+<title>gate&#45;&gt;store</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M591.28,-333.15C640.44,-332.9 701.42,-331.28 755.71,-326 765.06,-325.09 774.71,-323.93 784.38,-322.6"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="784.5,-325.06 791.09,-321.65 783.81,-320.21 784.5,-325.06"/>
+<text xml:space="preserve" text-anchor="middle" x="698.71" y="-335.4" font-family="Courier,monospace" font-size="10.00">allow → park</text>
+</g>
+<!-- store&#45;&gt;preview -->
+<g id="edge8" class="edge">
+<title>store&#45;&gt;preview</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M792.89,-286.24C716.29,-271.33 634.22,-243.27 675.54,-194 698.44,-166.7 732.91,-153.58 768.08,-148.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="768.16,-150.54 774.75,-147.14 767.48,-145.68 768.16,-150.54"/>
+<text xml:space="preserve" text-anchor="middle" x="698.71" y="-197" font-family="Courier,monospace" font-size="10.00">previewId + concept</text>
+</g>
+<!-- store&#45;&gt;create -->
+<g id="edge17" class="edge">
+<title>store&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1010.77,-266.26C1094.03,-239.47 1207.18,-203.07 1281.77,-179.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1282.12,-181.54 1288.04,-177.06 1280.62,-176.87 1282.12,-181.54"/>
+<text xml:space="preserve" text-anchor="middle" x="1137.85" y="-256.45" font-family="Courier,monospace" font-size="10.00">load (auth, id) · 410 if gone</text>
+</g>
+<!-- worldgen -->
+<g id="node13" class="node">
+<title>worldgen</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1704.08,-172 1553.58,-172 1553.58,-136 1704.08,-136 1704.08,-172"/>
+<text xml:space="preserve" text-anchor="middle" x="1628.83" y="-150.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;gen pipeline</text>
+</g>
+<!-- create&#45;&gt;worldgen -->
+<g id="edge18" class="edge">
+<title>create&#45;&gt;worldgen</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1476.12,-154C1499.02,-154 1522.68,-154 1544.3,-154"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1544.3,-156.45 1551.3,-154 1544.3,-151.55 1544.3,-156.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1514.58" y="-157" font-family="Courier,monospace" font-size="10.00">enqueue</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  Campaign creation forks two ways. <em>Start from an idea</em> is freeform prose the player writes
+  themselves; <em>build from what you love</em> is the guided path, where a Sonnet synthesizer
+  invents an original concept from three media-picks. This page owns the guided path and its preview
+  machinery — the synthesizer, the streamed brief, the rework, and the Redis holding pen the concept
+  waits in. The freeform fork is a passthrough: it carries the player's own prose straight to the
+  commit endpoint, where it is gated for the first and only time (see
+  <a href="../runtime/world-gen.html">World gen</a> for the commit-side flow both forks share).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Preview, then commit — because world-gen is expensive</strong> — committing kicks off
+  roughly ten minutes of multi-stage Sonnet world generation and debits a credit. So the guided path
+  gives the player a concept to read <em>before</em> they spend anything: synthesize, look, change
+  their mind once, and only then commit. The whole preview loop is deliberately cheap enough to
+  abandon.
+</aside>
+
+<h3 id="the-screen-state-machine">The screen state machine</h3>
+
+<p>
+  The SPA flow (<code>campaign-new.tsx</code>) is a thin screen state machine over a back-history
+  stack. <code>fork</code> is the permanent root; <code>guided</code> collects the three picks;
+  <code>synthesizing</code> renders the brief as it streams; <code>preview</code> shows the settled
+  concept and its actions; <code>rejection</code> is the calm dead-end. Each screen is pure
+  presentation firing neutral intents — it never navigates itself. The controller owns the carried
+  payloads (the live stream handle, the parked preview, the rejection reason) and maps each intent
+  to the next screen.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The synthesizing beat swaps, it doesn't push</strong> — when the brief finishes the
+  controller <em>replaces</em> the top of the history with <code>preview</code> (or
+  <code>rejection</code>) rather than pushing onto it. So a <code>← back</code> from the preview
+  lands on the guided picks, not on a half-written brief the player can never return to
+  meaningfully. The brief-writing beat is a transition, not a place.
+</aside>
+
+<p>
+  The three picks round-trip through <code>sessionStorage</code> (the client-core draft seam), so a
+  mid-flow reload re-prefills them. The draft deliberately survives synthesize → preview → rework
+  and even a preview that ages out — a <em>start over</em> or a 410 restart re-prefills the same
+  picks. Only an actual commit clears it, exactly once, from the controller.
+</p>
+
+<h3 id="synthesize-streamed-and-non-charging">Synthesize — streamed and non-charging</h3>
+
+<p>
+  Pressing <em>find my world</em> opens a one-shot stream against
+  <code>POST /api/campaigns/synthesize-preview/stream</code>. The guided screen owns the open, so
+  every pre-stream failure stays a calm inline notice right where the player can act on it; the
+  moment the 200 head arrives it hands the live stream to the controller and advances to
+  <code>synthesizing</code>, which renders the arriving prose (a paper-register streaming block, no
+  spinner). The server runs the identical guard chain, then hijacks the response into SSE:
+  <code>delta*</code> frames carry the brief's prose, and exactly one terminal frame (<code
+    >complete</code
+  >
+  | <code>rejected</code> | <code>error</code>) closes it. A synchronous twin,
+  <code>POST /api/campaigns/synthesize-preview</code>, returns the whole concept as a single 201 —
+  the dev-tool panel and any non-streaming client drive that one.
+</p>
+
+<p>
+  Underneath, <code>synthesizeConcept</code> is one Sonnet call at temperature 0.9 through the
+  canonical <code>generateObject</code> wrapper, producing a <code>concept</code> string and an
+  <code>intentSummary</code> (aesthetics, themes, and an internal
+  <code>sourcesInternal</code> list). The streamed variant is its structural twin over
+  <code>streamObject</code> — same prompt, schema, and repair chain — deriving prose deltas from the
+  growing <code>concept</code> field. The validated output, not the streamed text, is authoritative:
+  a post-stream schema repair can rewrite what the player watched arrive, so the terminal frame's
+  concept wins.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The concept has a floor but no ceiling</strong> — the synthesizer schema puts a
+  <code>.min(50)</code> on the concept (a too-short brief is malformed) but deliberately <em>no</em>
+  <code>.max()</code>. A max ceiling would terminal-fail an otherwise good over-length generation
+  instead of accepting it, and the concept's destination — <code>worlds.concept</code> — is a bare
+  <code>TEXT</code> column with no length check, so nothing downstream needs a mirror. LLM prose
+  gets a floor, never a cap.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The stream is not the reconnecting SSE client</strong> — synthesis is a
+  <em>non-idempotent</em> POST: a silent reconnect would re-run Sonnet and bill a second brief. So
+  <code>startSynthesisStream</code> is its own small client (a zustand store, the StreamingFetch
+  seam — <code>EventSource</code> is banned), and a dropped connection is a terminal
+  <code>failed{stream_interrupted}</code> that keeps the halted partial text on the page, never a
+  retry. The player retries deliberately, from the guided picks. This is why it doesn't reuse the
+  <a href="../frontend/realtime-transport.html">reconnecting transport</a> the play and world-gen
+  flows run on.
+</aside>
+
+<h3 id="the-input-gate-and-rejection">The input gate and rejection</h3>
+
+<p>
+  Whatever the synthesizer produces is judged by the input gate — one Sonnet call over three axes
+  (does it fit the SRD, is it a thinly-veiled franchise clone, is it inappropriate). The gate
+  receives <code>sourcesInternal</code> too, which closes a prompt-injection path: the synthesizer's
+  own note of what it drew from is visible to the judge but never echoed to the player and never fed
+  to a later stage. An <code>allow</code> verdict parks the concept; a <code>reject</code> becomes a
+  <code>concept_rejected</code> outcome (a 422 on the synchronous route, a terminal
+  <code>rejected</code> frame on the stream — identical payloads).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The player sees a message, never the reasoning</strong> — a rejection carries a
+  server-authored <code>rejectionMessage</code> and, on the guided path, the
+  <code>synthesizedConcept</code> that was judged (so the player can adopt it as freeform and adjust
+  it themselves). The model's raw axis reasoning is logged server-side only — it never reaches the
+  response body. The rejection screen falls back to a calm generic line when the model declined to
+  author a message.
+</aside>
+
+<p>
+  <code>content_filtered</code> is a distinct terminal: Anthropic's content policy blocked the
+  prompt, so retrying the same text hits the same filter. That screen offers no rework or edit —
+  only start over.
+</p>
+
+<h3 id="rework-one-change-gate-pass-only">Rework — one change, gate-pass-only</h3>
+
+<p>
+  A parked preview buys the player exactly one change. <em>Ask for one change</em> reveals a note
+  field; <code>POST /api/campaigns/preview/:previewId/rework</code> feeds the parked concept and the
+  note to <code>reviseConcept</code> (again one Sonnet call, same output contract), re-runs the
+  input gate, and — only on a pass — overwrites the stored preview, bumping
+  <code>reworkCount</code> from 0 to 1. A second attempt is a 409. The change note is capped at 800
+  characters, the same bound the synthesizer puts on a pick's "why I like it": a note is a sentence
+  or two, not an essay.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A rejected rework leaves the budget intact</strong> — nothing is persisted until the gate
+  passes. If the revised concept is rejected, the original gated preview <em>and</em>
+  <code>reworkCount: 0</code> survive untouched — the player still holds their one budgeted change.
+  The rejection still increments the rejection-storm counter, so a loop of rejecting reworks trips
+  the cooldown on the next request rather than burning Sonnet unbounded.
+</aside>
+
+<h3 id="where-the-concept-lives">Where the concept lives</h3>
+
+<p>
+  Between synthesis and commit the concept sits in Redis, not Postgres — a
+  <code>PreviewRecord</code> (the concept, the intent summary, the rework count) under the key
+  <code>{env}:{region}:campaign-preview:{userId}:{previewId}</code> with a 30-minute TTL. An
+  abandoned preview reaps itself; nothing accumulates. The commit reads the record but doesn't
+  delete it — the TTL is the only cleanup.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The user id is baked into the key — that is the whole IDOR defence</strong> — a preview is
+  keyed by the <em>authenticated</em> user, never a client-supplied id. So a stolen or guessed
+  <code>previewId</code> read under a different user simply misses the key and returns the uniform
+  410 (<code>preview_expired</code>) — the same response a genuinely expired preview gives. There is
+  no surface where user B reads user A's concept.
+</aside>
+
+<h3 id="commit-from-preview-to-world-gen">Commit — from preview to world-gen</h3>
+
+<p>
+  Begin calls the shared create endpoint with a wrapped
+  <code>{ mode: 'guided', previewId }</code> body. The commit loads the already-gated preview by
+  (authenticated user, previewId) and re-uses its concept verbatim:
+  <strong>no re-synthesis, no re-gate</strong>. The concept was synthesized and gated during preview
+  and is entirely server-authored — the client only ever held the opaque previewId — so re-gating
+  would burn Sonnet on an input the caller could not have altered. From there the commit debits one
+  <code>world_gen</code> credit inside an advisory-locked transaction and enqueues world generation;
+  that half of the story is <a href="../runtime/world-gen.html">World gen</a>. A commit whose
+  preview has aged out returns a 410, and the flow restarts at the guided picks (which the draft
+  re-prefills).
+</p>
+
+<h3 id="cost-and-rate-posture">Cost and rate posture</h3>
+
+<p>
+  Preview and rework never charge a credit, but they do burn Sonnet, so the same cheap guards run
+  before any model call on every preview route — synchronous, streamed, and rework alike. In order:
+  a Zod body parse (guided-only, exactly three picks), a per-user rate limit of five requests a
+  minute, a read-only rejection-storm cooldown peek, and a non-charging credit-balance peek. Only
+  then does the synthesizer fire. Because the guards run before the SSE hijack, a trip on the
+  streamed route is a plain JSON status the client handles exactly like the synchronous endpoint's
+  errors.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A zero-credit user is stopped before the first token</strong> — the credit peek is a
+  <em>non-charging</em> balance check, and it runs before any LLM call even though preview itself
+  doesn't debit. There's no point letting someone synthesize and rework a concept they can never
+  afford to commit; blocking at the peek keeps a zero-balance account from driving Sonnet cost at
+  all.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The storm counter is checked at the start, incremented at the end</strong> — the
+  rejection-storm counter increments on each gate rejection but is <em>read</em> at the start of the
+  next request. So a request that trips the threshold (more than three rejections in an hour) still
+  gets its own answer; the following request is the one that 429s into the cooldown. It's the
+  cheapest possible rejection — no LLM call — for a user who has been repeatedly rejected.
+</aside>
+
+<p>
+  Disconnects are handled as cost, not just correctness: the streamed route's SSE sink aborts the
+  Sonnet stream on client close, and the SPA controller closes the stream handle on back-out,
+  replacement, and unmount. A closed tab stops the token burn instead of generating into the void.
+</p>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The streamed synthesis rides the SSE framing described on
+  <a href="../frontend/realtime-transport.html">Realtime transport</a> and
+  <a href="../runtime/pipeline-status.html">Pipeline status</a>, but deliberately as its own
+  one-shot client rather than the reconnecting one. The commit endpoint, the credit debit, and the
+  input gate on the freeform fork all belong to <a href="../runtime/world-gen.html">World gen</a>,
+  which this flow hands off to. The parked concept becomes <code>worlds.concept</code>; the campaign
+  it seeds surfaces on the <a href="./campaign-hub-payload.html">campaign hub</a>. The synchronous
+  preview route is one of the <a href="../runtime/dev-tool.html">dev tool</a>'s targets. The wire
+  union for the stream is <code>SynthesizeStreamEvent</code> in
+  <code>frontend/contract/src/events/synthesize-stream.ts</code>.
+</p>
+
+<h2 id="appendix-the-preview-routes">Appendix: the preview routes</h2>
+
+<table>
+  <tr>
+    <th>Route</th>
+    <th>Charges?</th>
+    <th>Terminal outcomes</th>
+  </tr>
+  <tr>
+    <td><code>POST /api/campaigns/synthesize-preview</code></td>
+    <td>No</td>
+    <td>
+      201 <code>{ previewId, concept }</code> · 422 <code>concept_rejected</code> · 400 / 403 / 429
+    </td>
+  </tr>
+  <tr>
+    <td><code>POST /api/campaigns/synthesize-preview/stream</code></td>
+    <td>No</td>
+    <td>
+      <code>delta*</code> → <code>complete</code> | <code>rejected</code> | <code>error</code>;
+      guard trips are pre-hijack JSON (400 / 403 / 429)
+    </td>
+  </tr>
+  <tr>
+    <td><code>POST /api/campaigns/preview/:previewId/rework</code></td>
+    <td>No</td>
+    <td>
+      200 <code>{ previewId, concept }</code> · 409 <code>rework_exhausted</code> · 410
+      <code>preview_expired</code> · 422 <code>concept_rejected</code>
+    </td>
+  </tr>
+  <tr>
+    <td><code>POST /api/campaigns</code> (guided commit)</td>
+    <td>1 <code>world_gen</code></td>
+    <td>
+      201 <code>{ campaignId }</code> · 410 <code>preview_expired</code> — see
+      <a href="../runtime/world-gen.html">World gen</a>
+    </td>
+  </tr>
+</table>
+
+<p>
+  Shared bounds and constants: picks are exactly three, each a title (1–200 chars) and a reason
+  (1–800); a rework note is 1–800 chars; the preview TTL is 30 minutes; the rate limit is five
+  requests a minute per user per route; the rejection-storm cooldown trips after more than three
+  gate rejections in an hour.
+</p>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/routes/campaign-preview.ts</code> ·
+  <code>backend/src/routes/campaign-preview-stream.ts</code> ·
+  <code>backend/src/routes/concept-gate.ts</code> ·
+  <code>backend/src/preview/preview-store.ts</code> ·
+  <code>backend/src/llm/prep/synthesize-concept.ts</code> ·
+  <code>backend/src/llm/prep/revise-concept.ts</code> ·
+  <code>frontend/src/routes/campaign-new.tsx</code> +
+  <code>frontend/src/routes/campaign-new/</code> ·
+  <code>frontend/client-core/src/api/synthesize-stream.ts</code> ·
+  <code>frontend/contract/src/events/synthesize-stream.ts</code>
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-screen-state-machine">The screen state machine</a></li><li style="padding-left:12px"><a href="#synthesize-streamed-and-non-charging">Synthesize — streamed and non-charging</a></li><li style="padding-left:12px"><a href="#the-input-gate-and-rejection">The input gate and rejection</a></li><li style="padding-left:12px"><a href="#rework-one-change-gate-pass-only">Rework — one change, gate-pass-only</a></li><li style="padding-left:12px"><a href="#where-the-concept-lives">Where the concept lives</a></li><li style="padding-left:12px"><a href="#commit-from-preview-to-world-gen">Commit — from preview to world-gen</a></li><li style="padding-left:12px"><a href="#cost-and-rate-posture">Cost and rate posture</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-preview-routes">Appendix: the preview routes</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

@@ -691,18 +691,21 @@
   <code>World</code> row, plot columns included, and is the prep / Slow-Thinker tier read. The
   composite
   <a href="../runtime/world-gen.html">world-snapshot view</a> (<code>worldSnapshotView.fetch</code>)
-  composes <code>getSnapshotSummary</code> rather than re-deriving its own projection.
+  composes <code>getSnapshotSummary</code>, then re-projects it to the plot-safe
+  <code>WikiWorldSummary</code> shape before the wire (myth-0xwos follow-up) — dropping
+  <code>concept</code>, since the snapshot endpoint is now member-readable.
 </p>
 
 <p>
   MYT-74c adds a <em>third</em> world-summary projection: <code>worlds.getWikiSummary(id)</code>,
   the home of the even-narrower <strong>player</strong> allowlist. It returns a
   <code>WikiWorldSummary</code> of <code>id, name, tone, themes, era, vocabulary_registry</code> —
-  the snapshot's list <em>minus <code>concept</code></em
-  >. The owner's raw freeform <code>concept</code> seed is fine for the owner-facing snapshot but
-  can contain plot, so the player wiki must not carry it. Like <code>getSnapshotSummary</code>, the
-  SELECT lives once in <code>worlds.ts</code>, so widening the player wire is a deliberate edit,
-  never an accidental <code>SELECT *</code>.
+  <code>getSnapshotSummary</code>'s list <em>minus <code>concept</code></em
+  >. The owner's raw freeform <code>concept</code> seed can contain plot, so no player-facing wire
+  carries it: the play wiki composes <code>getWikiSummary</code> directly, and the member-readable
+  world-snapshot view re-projects into the <em>same</em> plot-safe shape (myth-0xwos follow-up).
+  Like <code>getSnapshotSummary</code>, the SELECT lives once in <code>worlds.ts</code>, so widening
+  the player wire is a deliberate edit, never an accidental <code>SELECT *</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -711,10 +714,12 @@
   column list copied into every player-facing read. Pointing a Fast-Thinker world read at
   <code>getById</code> re-exposes the plot fields, so the split makes that a type error rather than
   a silent leak: a player-facing caller takes <code>WorldSummary</code> or
-  <code>WikiWorldSummary</code>, neither of which can carry the plot columns. The owner snapshot and
-  the player wiki are separate audiences with separate allowlists (the owner sees
-  <code>concept</code>; the player does not), so they get separate projections rather than one
-  shared one a future widening could leak across.
+  <code>WikiWorldSummary</code>, neither of which can carry the heavy plot columns. Since both the
+  snapshot and the play wiki are now member-readable, neither serves <code>concept</code> on the
+  wire — the wiki composes <code>getWikiSummary</code> and the snapshot view re-projects into that
+  same plot-safe shape — so the split is composition, not audience. <code>concept</code> survives
+  only in the repo-layer <code>WorldSummary</code> (never surfaced to a client), and a future
+  widening is a deliberate, reviewed edit to one projection rather than a leak across a shared one.
 </aside>
 
 <h3 id="the-player-campaign-wiki-view">The player campaign-wiki view</h3>
@@ -739,14 +744,16 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>A separate view, because the snapshot's composition leaks for a player</strong> — the
-  tempting shortcut is to point the player wiki at <code>worldSnapshotView</code>. It carries the
-  owner's raw <code>concept</code> (now dropped by <code>getWikiSummary</code>) and, worse,
-  per-entity <strong>prose kernels</strong> — FT-facing generation artifacts that are <em>not</em>
-  tier-gated, so a play-promoted secret entity's kernel is its full characterization blob. The wiki
-  view therefore composes its own player-safe surface and attaches neither kernels nor stat blocks.
-  The owner-only snapshot keeps its full composition unchanged; the two reads are distinct surfaces
-  for distinct audiences, exactly like the three world-summary projections above. The
+  <strong>A separate view, because the snapshot carries more than a play wiki should</strong> — the
+  tempting shortcut is to point the play wiki at <code>worldSnapshotView</code>. The two now share
+  the same plot-safe world summary (both re-project to <code>WikiWorldSummary</code>, so
+  <code>concept</code> is on neither wire since myth-0xwos), but the snapshot still attaches
+  per-entity <strong>prose kernels</strong> and stat blocks — FT-facing generation artifacts that
+  are <em>not</em> tier-gated, so a play-promoted secret entity's kernel is its full
+  characterization blob. The wiki view therefore composes its own narrower surface and attaches
+  neither kernels nor stat blocks. The two reads are distinct surfaces for distinct moments in a
+  campaign's life, exactly like the three world-summary projections above (the split is composition,
+  not audience). The
   <a href="../runtime/session-reconcile.html#the-player-campaign-wiki">reconcile page</a> covers the
   route's member-auth, no-bypass, and readiness gates.
 </aside>

@@ -21,7 +21,7 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:fdd5c7f0ccc59dca61e79899e6d82b32178782747f5c848840b4061cca28b6c3 -->
+<!-- source-hash: sha256:39faa27542e948c859d2d2973a6a7712f5eabd4be71e0f7cc292109c1d40fa99 -->
 <!-- last-ticket: MYT-74c -->
 
 <h1>End-of-session reconciliation</h1>
@@ -633,7 +633,7 @@
 </p>
 
 <p>
-  The composition is deliberately narrow — a sibling of the owner-only dev-tool
+  The composition is deliberately narrow — a sibling of the fuller
   <a href="./world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a>,
   <em>not</em> a re-pointing of it. It carries: a <strong>narrow world summary</strong> (<code
     >worlds.getWikiSummary</code
@@ -659,15 +659,16 @@
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>A purpose-built projection, not the owner snapshot's composition</strong> — the obvious
-  shortcut is to point the player wiki at the existing <code>worldSnapshotView</code>. It leaks. The
-  snapshot's <code>WorldSummary</code> includes the owner's raw freeform <code>concept</code> (the
-  world seed, which can contain plot), and its per-entity prose kernels are FT-facing generation
-  artifacts that are <em>not</em> tier-gated — a play-promoted secret entity's kernel is its full
-  characterization blob. So the wiki gets its own composition over a new
-  <code>getWikiSummary</code> that drops <code>concept</code> at the SELECT, and the view attaches
-  no kernels and no stat blocks. The owner-only snapshot keeps its full composition unchanged; the
-  two reads are distinct surfaces for distinct audiences.
+  <strong>A purpose-built projection, not the snapshot's composition</strong> — the obvious shortcut
+  is to point the player wiki at the existing <code>worldSnapshotView</code>. Both reads now share
+  the same plot-safe world summary (each re-projects to <code>WikiWorldSummary</code>, so the
+  owner's raw freeform <code>concept</code> seed is on neither member-readable wire since
+  myth-0xwos), but the snapshot still attaches per-entity prose kernels and stat blocks — FT-facing
+  generation artifacts that are <em>not</em> tier-gated, a play-promoted secret entity's kernel
+  being its full characterization blob. So the wiki gets its own narrower composition — the
+  <code>getWikiSummary</code> summary plus <code>known</code> entities, facts, and relationships,
+  with no kernels and no stat blocks. The two reads are distinct surfaces for distinct moments in a
+  campaign's life; the split is composition, not audience.
 </aside>
 
 <aside class="wiki-rationale">
@@ -860,7 +861,7 @@
   flips and the player wiki's <code>campaignWikiView</code> +
   <code>getWikiSummary</code> composition also live in the
   <a href="../data/repository.html">repository layer</a>; the wiki read is a deliberately narrow
-  sibling of world-gen's owner-only
+  sibling of world-gen's fuller
   <a href="./world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint">world-snapshot</a>
   (which shares the <code>known</code> / <code>discoverable</code> / <code>secret</code> tier
   model). Downstream, the next session's <a href="./session-prep.html">prep</a> reads the handoff

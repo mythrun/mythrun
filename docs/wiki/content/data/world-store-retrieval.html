@@ -16,7 +16,7 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: infra/modules/serving/variables.tf -->
-<!-- source-hash: sha256:0543a6c696373e23820c1027aa95d33d234778bba800f0887786baf93534267a -->
+<!-- source-hash: sha256:f49ac5a5803eb89411d7423ec19c49831e702532cf3c28860f547ecbb991a3da -->
 <!-- last-ticket: MYT-74a -->
 
 <h1>World-store retrieval</h1>
@@ -66,15 +66,23 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Over-pull, no tier filter anywhere in this layer</strong> — not the SQL binder, not the
-  search resolvers, not the graph walks apply an <code>access_level</code> predicate. Every query
-  returns <code>known</code>, <code>discoverable</code>, and <code>secret</code> rows alike. That is
-  intentional and load-bearing: the tier-safety boundary is the
+  <strong
+    >Over-pull of node <em>content</em>, no tier filter — but edge <em>traversal</em> is
+    gated</strong
+  >
+  — no <code>access_level</code> predicate filters the <em>nodes</em> a query returns: the SQL
+  binder, the search resolvers, and the graph walks all return <code>known</code>,
+  <code>discoverable</code>, and <code>secret</code> rows alike, each carrying its tier. That is
+  intentional and load-bearing: the tier-safety boundary for node content is the
   <a href="../runtime/slow-thinker.html">Slow Thinker</a> gate that sits between retrieval and the
-  player-facing Fast Thinker. A tier filter <em>here</em>
-  would blind the Slow Thinker to the very secrets it needs to reason about — and would be a second,
-  weaker enforcement point competing with the real one. The resolver's job is recall; the gate's job
-  is safety. Putting a filter in this layer would be a bug, and the code comments say so.
+  player-facing Fast Thinker. A node-content filter <em>here</em> would blind the Slow Thinker to
+  the very secrets it needs to reason about — and would be a second, weaker enforcement point
+  competing with the real one. The resolver's job is recall; the gate's job is safety.
+  <strong>The one deliberate exception is relationship-edge traversal</strong> (myth-got9q): a graph
+  walk that <em>crossed</em> a secret edge would leak the edge's existence with no downstream gate
+  able to catch it, because the walk's output carries only node tiers. So
+  <code>charactersKnownTo</code> gates which edges it may cross — the graph-walk section below tells
+  that story. Node over-pull is unchanged; only edge reachability is filtered.
 </aside>
 
 <aside class="wiki-rationale">
@@ -264,6 +272,32 @@
   <em>are</em> included on graph paths (unlike the lore searches), so the result type carries the
   widened <code>GraphEntityType</code> that includes <code>'pc'</code>.
 </p>
+
+<p>
+  <code>opts.edgeAccessLevels</code> is <strong>required</strong> (myth-got9q): the recursive term
+  adds <code>AND r.access_level = ANY($3)</code> to both direction-arms, so the walk only crosses
+  edges whose tier is in the caller's list. There is deliberately no insecure "walk everything"
+  default — a caller must name the tiers it may traverse, exactly as
+  <code>relationships.listAmong</code> demands an explicit tier list. The Fast Thinker's lookup
+  passes <code>['known']</code>; the walk therefore reaches characters connected by known
+  relationships only.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why edges are gated when nodes aren't</strong> — node over-pull is safe because every node
+  the walk returns carries its tier, so the
+  <a href="../runtime/fast-thinker.html">Slow-Thinker vet</a> downstream can see a
+  <code>secret</code> node and gate its content. An <em>edge</em> has no such downstream check: the
+  walk's output is a set of reachable nodes, tiers attached, but the edges it crossed to get there
+  are gone. Cross a <code>secret</code> edge and a node reached <em>only</em> through that secret
+  connection surfaces indistinguishably from a legitimately-known one — the reachability itself is
+  the leak, and nothing downstream can undo it. This is the exact known↔known secret-connection leak
+  that
+  <a href="../runtime/world-gen.html#relationship-tiering">MYT-89's relationship tiering</a>
+  (migration 031) exists to close deterministically, so the gate has to live here, at traversal
+  time. Node over-pull is untouched: a <code>secret</code> node sitting at the far end of a
+  <em>known</em> edge still returns, tier attached, for the vet to judge.
+</aside>
 
 <p>
   <code>factionTree(deps, entityId)</code> walks <code>entity_hierarchy</code> parent→child from a
@@ -491,7 +525,10 @@
     </tr>
     <tr>
       <td><code>charactersKnownTo(deps, entityId, opts)</code></td>
-      <td>Both-direction relationship walk to a clamped depth; cycle-safe, min-depth deduped.</td>
+      <td>
+        Both-direction relationship walk to a clamped depth; cycle-safe, min-depth deduped.
+        <code>opts.edgeAccessLevels</code> is required — the walk crosses only edges of those tiers.
+      </td>
     </tr>
     <tr>
       <td><code>factionTree(deps, entityId)</code></td>

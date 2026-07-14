@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Design system</div>
         <article>
@@ -519,9 +519,11 @@
     (Button's loading state, IconButton).
   </li>
   <li>
-    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>, plus a native
+    <strong>Controls</strong> — <code>Button</code> (incl. <code>loading</code>, a native
     leading-<code>icon</code> slot — a platform-neutral icon prop, not an <code>asChild</code> DOM
-    trick, carrying the Google/Discord provider marks on the sign-in buttons),
+    trick, carrying the Google/Discord provider marks on the sign-in buttons, plus MYT-90
+    <code>aria-expanded</code>/<code>aria-controls</code> disclosure props for a button that toggles a
+    revealable region, e.g. the character sheet's "See full sheet"),
     <code>IconButton</code> (requires an accessible name), <code>Input</code>,
     <code>TextArea</code> (autosizing), <code>Select</code>, <code>Checkbox</code>,
     <code>Radio</code>/<code>RadioGroup</code>, <code>Switch</code>, and
@@ -606,7 +608,13 @@
   to the system, while its fog-, graph-, status-card, loading, and reveal-transition composites
   (<code>WorldGenFog</code>, <code>WorldGenGraph</code>, <code>WorldGenStatusCard</code>,
   <code>WorldGenLoading</code>, <code>RevealTransition</code>) stay feature components documented on
-  that page.
+  that page. The <a href="./character-creation.html">character-creation experience</a> (MYT-90) drew
+  the line the same way: its screen composites — <code>LevelCard</code>, <code>FreeformPrompt</code>,
+  <code>GuidedBuilder</code>, <code>CharacterLoadingBeat</code> (a <code>Dither</code> reuse),
+  <code>CharacterSheetReveal</code>, and <code>PartyRoster</code> — are controlled/presentational
+  feature components (their sequencing lives in a client-core reducer, not the component) documented
+  on that page, while the reusable primitive extension it needed landed in the system as the
+  <code>Button</code> disclosure props above.
 </p>
 
 <h2 id="responsive-by-construction">Responsive by construction</h2>

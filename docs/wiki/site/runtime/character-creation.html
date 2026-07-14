@@ -31,8 +31,11 @@
 <p class="lead">
   The per-player parallel character-creation surface. After world-gen completes and the wiki
   snapshot is fetchable, the owner picks one of the three generated starting situations for the
-  entire party, and each member submits a character (a concept text plus a situation-grounding
-  text). Every <code>POST /characters</code> commits one transaction that flips the player's
+  entire party <em>and</em> a party-wide starting level (1–5), and each member submits a character
+  (a concept text plus a situation-grounding text). The starting level is the one
+  <strong>deterministic</strong> input the pipeline injects rather than letting the model choose it
+  (ZFC); everything else about the character is the model's interpretation of the player's prose.
+  Every <code>POST /characters</code> commits one transaction that flips the player's
   <code>character_concepts</code> row to <code>'processing'</code> AND seeds a
   <code>character_concept</code> recovery row in <code>pipeline_runs</code>, then — after that
   transaction commits — enqueues one <code>character-creation</code> job on the
@@ -57,7 +60,14 @@
   MYT-54; phase 1 (pre-world-gen lobby retrofit) is a separate bead. MYT-53 owns the middle two
   steps — owner picks situation, members submit characters and the per-player pipeline auto-fires on
   submit — plus the three-stage worker pipeline that turns those submissions into characters ready
-  for the campaign-scoped integration pass.
+  for the campaign-scoped integration pass. MYT-90 extended the owner's setup with a
+  <strong>party-wide starting level</strong> (a second owner pick, threaded deterministically into
+  the sheet stage), taught the <code>starting_situation</code> stage to emit a per-situation
+  <strong>invitation</strong> whisper (the elicitation the player answers to write the grounding
+  text), and added the reveal's <strong>reset</strong> ("Start over") and
+  <strong>confirmation</strong> ("This is me") self-routes. The
+  <a href="../frontend/character-creation.html">character-creation experience</a> page documents the
+  frontend flow those routes drive.
 </p>
 
 <pre><code>                    ┌──────────────────────────────────────────────────┐
@@ -76,6 +86,11 @@ Wiki read           │   Members read the world's wiki                  │
 PHASE 4 ★ MYT-53:   │ Step 1: Owner picks starting situation           │
 Per-player char     │   POST /api/campaigns/:id/starting-situation     │
 creation            │   campaigns.starting_situation_index ← {0,1,2}   │
+                    │                                                  │
+                    │ Step 1b (MYT-90): Owner picks starting level     │
+                    │   POST /api/campaigns/:id/starting-level         │
+                    │   campaigns.starting_level ← {1..5} — locks once │
+                    │   any concept is processing/completed            │
                     │                                                  │
                     │ Step 2: Each member submits, auto-fires job      │
                     │   POST /api/campaigns/:id/characters             │
@@ -163,6 +178,20 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   fits") but the backend column is the same.
 </p>
 
+<p>
+  MYT-90 gave the grounding prompt a <strong>grounded elicitation</strong>. Each of the three
+  starting situations now carries an <code>invitation</code> — a short 2nd-person whisper the
+  <a href="./world-gen.html">world-gen</a> <code>starting_situation</code> stage writes in the same
+  call as the situation's title and prose, so it names <em>that</em> hook's concrete draw ("The
+  toll-clerk's manifests don't add up, and you're the only one who noticed. What kept you
+  counting?") rather than gesturing at generic mystery. The frontend surfaces the chosen situation's
+  invitation as the second one-question step, and the player's answer becomes
+  <code>situationGroundingText</code>. The field is stored on the situation entry's JSONB, so it is
+  <em>optional</em> on read — worlds generated before MYT-90 have no invitation, and
+  <code>GET /starting-situations</code> passes the older shape through with a generic client
+  fallback rather than hard-failing Zod.
+</p>
+
 <aside class="wiki-rationale">
   <strong>Both fields required in v1; guided-choices deferred to its own bead</strong> — the
   freeform path is the only consumer today, so the body schema is a two-field object with both
@@ -174,7 +203,29 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   and one less branch to keep covered.
 </aside>
 
-<h2 id="the-eight-routes">The eight routes</h2>
+<h2 id="the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</h2>
+
+<p>
+  The route surface grew past the 400-line module cap, so
+  <code>campaign-characters.ts</code> is now a <strong>thin composer</strong>: it owns the shared
+  plugin options and queue types and registers five nested plugins, each a coherent slice of the
+  lifecycle. The registered plugin (<code>campaignCharactersPlugin</code>) and its exported types
+  keep their identity, so <code>app.ts</code>, <code>server-queues</code>, and the route tests
+  import from here unchanged. Route registration is instance-global (no shared decorators to leak),
+  so the split is behaviour-neutral — the <code>onRoute</code>/<code>onReady</code> contract hooks
+  on the root app still fire for routes registered inside the nested plugins.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Split by lifecycle slice, not alphabetically</strong> — the five modules each own one
+  phase of the member's or owner's journey: <code>campaign-setup-routes</code> (owner picks
+  situation + level, member reads the situation list), <code>character-concept-routes</code> (the
+  member's own concept write lifecycle — submit, reset, confirm),
+  <code>character-roster-routes</code> (the two read-back rosters),
+  <code>world-read-routes</code> (the character sheet + world reads a member makes), and
+  <code>campaign-lifecycle-routes</code> (finalize + archive). A reader tracing "what happens when a
+  player clicks Start over" lands in one file, not a 900-line grab-bag.
+</aside>
 
 <table>
   <thead>
@@ -186,20 +237,45 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   </thead>
   <tbody>
     <tr>
-      <td><code>POST /api/campaigns/:campaignId/starting-situation</code></td>
-      <td>Owner</td>
-      <td>
-        Sets <code>campaigns.starting_situation_index</code> to one of <code>{0, 1, 2}</code>.
-        Idempotent while all <code>character_concepts</code> rows are still
-        <code>'submitted'</code> or absent.
+      <td colspan="3">
+        <strong><code>campaign-setup-routes.ts</code> — owner picks the table</strong>
       </td>
     </tr>
     <tr>
-      <td><code>POST /api/campaigns/:campaignId/archive</code></td>
+      <td><code>POST /api/campaigns/:campaignId/starting-situation</code></td>
       <td>Owner</td>
       <td>
-        Soft-deletes the campaign by flipping <code>campaigns.status</code> to
-        <code>'archived'</code>.
+        Sets <code>campaigns.starting_situation_index</code> to one of <code>{0, 1, 2}</code>. World
+        must be <code>complete</code>; <code>409 'situation_locked'</code> once any concept is
+        <code>'processing'</code>/<code>'completed'</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/starting-level</code> <em>(MYT-90)</em></td>
+      <td>Owner</td>
+      <td>
+        Sets the party-wide <code>campaigns.starting_level</code> to <code>{1..5}</code>. Same guard
+        chain as the situation pick — world <code>complete</code>, and
+        <code>409 'level_locked'</code> once any concept is
+        <code>'processing'</code>/<code>'completed'</code>. Replies <code>204</code>; the persisted
+        column is the whole payload.
+      </td>
+    </tr>
+    <tr>
+      <td><code>GET /api/campaigns/:campaignId/starting-situations</code></td>
+      <td>Member</td>
+      <td>
+        Returns the three world-generated situations
+        (<code>worlds.starting_situation_entries</code>, each now carrying its optional
+        <code>invitation</code>) plus the chosen index and <code>startingLevel</code>.
+        <code>404 'world_not_ready'</code> when the entries array is empty.
+      </td>
+    </tr>
+    <tr>
+      <td colspan="3">
+        <strong
+          ><code>character-concept-routes.ts</code> — the member's own concept lifecycle</strong
+        >
       </td>
     </tr>
     <tr>
@@ -212,18 +288,40 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
         <code>character_concept</code> recovery row in <code>pipeline_runs</code>. After the
         transaction commits, it enqueues the per-player <code>character-creation</code> job on the
         <code>campaign-setup</code> queue. Returns
-        <code>200 { conceptId, status: 'processing', jobId }</code>.
-        <code>409 'concept_locked'</code> for <code>'processing'</code> / <code>'completed'</code>;
-        <code>503 'queue_not_ready'</code> if the queue connection is unhealthy. Re-POSTing while
-        <code>'failed'</code> resets the row and re-enqueues.
+        <code>200 { conceptId, status: 'processing', jobId }</code>. Gate codes:
+        <code>409 'world_not_complete'</code>, <code>409 'starting_situation_not_chosen'</code>,
+        <code>409 'starting_level_not_chosen'</code> (MYT-90), <code>409 'concept_locked'</code> for
+        <code>'processing'</code>/<code>'completed'</code>, <code>503 'queue_not_ready'</code> if
+        the queue is unhealthy. Re-POSTing while <code>'failed'</code> resets the row and
+        re-enqueues.
       </td>
     </tr>
     <tr>
-      <td><code>GET /api/campaigns/:campaignId/starting-situations</code></td>
-      <td>Member</td>
+      <td><code>POST /api/campaigns/:campaignId/characters/reset</code> <em>(MYT-90)</em></td>
+      <td>Member (self)</td>
       <td>
-        Returns the three world-generated starting situations
-        (<code>worlds.starting_situation_entries</code>) plus the chosen index, if any.
+        "Start over" at the reveal. Flips the caller's own <code>'completed'</code>/<code
+          >'failed'</code
+        >
+        concept back to a resubmittable state and DELETEs the generated sheet, in one transaction,
+        so the next <code>POST /characters</code> re-runs the pipeline.
+        <code>409 'not_resettable'</code> once the character is <code>'integrated'</code> or the
+        campaign is <code>'active'</code>. Replies <code>204</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/characters/confirm</code> <em>(MYT-90)</em></td>
+      <td>Member (self)</td>
+      <td>
+        "This is me." Stamps <code>character_concepts.confirmed_at</code> on the caller's own
+        <code>'completed'</code> concept. Idempotent (a repeat click keeps the first timestamp →
+        <code>204</code>); <code>409 'not_confirmable'</code> when the concept isn't
+        <code>'completed'</code>.
+      </td>
+    </tr>
+    <tr>
+      <td colspan="3">
+        <strong><code>character-roster-routes.ts</code> — the read-back rosters</strong>
       </td>
     </tr>
     <tr>
@@ -233,6 +331,23 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
         Per-member roster: <code>userId</code>, display name, concept status (<code
           >none | submitted | processing | completed | failed</code
         >), and <code>characterId</code> once the row exists.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>GET /api/campaigns/:campaignId/character-creation-progress</code> <em>(MYT-90)</em>
+      </td>
+      <td>Member</td>
+      <td>
+        The party progress view the FE routing table polls: <code>totalMembers</code>, per-concept
+        <code>status</code> + <code>submittedAt</code> + <code>confirmedAt</code> +
+        <code>characterId</code> (plus <code>error</code> only while <code>'failed'</code>), and a
+        <code>missing</code> list of members with no concept yet.
+      </td>
+    </tr>
+    <tr>
+      <td colspan="3">
+        <strong><code>world-read-routes.ts</code> — the character sheet + world reads</strong>
       </td>
     </tr>
     <tr>
@@ -259,13 +374,36 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
         the dev tool and any future session-runtime UI can render them.
       </td>
     </tr>
+    <tr>
+      <td colspan="3">
+        <strong><code>campaign-lifecycle-routes.ts</code> — finalize + archive</strong>
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/finalize-character-creation</code></td>
+      <td>Owner</td>
+      <td>
+        Fires the campaign-scoped <a href="./character-integration.html">integration</a> pass over
+        every <code>'completed'</code> concept and moves the campaign toward <code>'active'</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>POST /api/campaigns/:campaignId/archive</code></td>
+      <td>Owner</td>
+      <td>
+        Soft-deletes the campaign by flipping <code>campaigns.status</code> to
+        <code>'archived'</code>.
+      </td>
+    </tr>
   </tbody>
 </table>
 
 <p>
-  All eight routes carry <code>config.pipelineRoute = true</code> and are registered in
+  Every route carries <code>config.pipelineRoute = true</code> and is registered in
   <code>backend/src/contract/pipeline-routes.ts</code>, so the boot-time route-audit invariant keeps
-  the plugin, the contract, and the dev tool honest in lockstep. The
+  the plugins, the contract, and the dev tool honest in lockstep — a new route that skips
+  <code>pipeline-routes.ts</code> fails app boot, and one that skips
+  <code>contract/backend-routes.ts</code> reds the drift test. The
   <code>character-creation</code> job kind is registered in
   <code>backend/src/contract/pipeline-jobs.ts</code> with the deterministic id
   <code>cc-&lt;campaignId&gt;-&lt;userId&gt;</code> so a duplicate POST while a job is in flight
@@ -417,6 +555,97 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   the campaign-scoped <a href="./character-integration.html">integration pass</a>.
 </aside>
 
+<h2 id="starting-level-the-one-deterministic-input">Starting level: the one deterministic input</h2>
+
+<p>
+  Everything about a character is the model's interpretation of the player's prose — except its
+  level. The party plays at one <strong>starting level</strong> (1–5), the owner picks it, and the
+  pipeline threads it in deterministically. Migration <code>033_starting_level.sql</code> adds
+  <code>campaigns.starting_level SMALLINT</code> (CHECKed <code>NULL OR BETWEEN 1 AND 5</code>,
+  matching the sibling <code>starting_situation_index</code> shape) alongside
+  <code>character_concepts.confirmed_at TIMESTAMPTZ</code>. The owner sets the level between the
+  situation pick and character creation (<code>POST /starting-level</code>), and the submit gate
+  refuses characters (<code>409 'starting_level_not_chosen'</code>) until it is set — the same
+  strict-order discipline as the situation gate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The level is injected, never generated (ZFC)</strong> — the level is a known input, not a
+  D&amp;D judgment the model should make. The <code>character_concept</code> stage still emits a
+  <code>level</code> field, but the processor <em>overrides</em> it with
+  <code>campaign.starting_level</code> before persisting the concept output — the model's echo is
+  discarded, not trusted. That single override carries every downstream consumer, because they all
+  read <code>narrative.level</code>: the persisted <code>characters.level</code>, the hit-dice pool,
+  <code>spellSlotsFor</code>, and <code>validateCoherence</code>. The invariant is exact —
+  <em>persisted <code>character.level</code> == <code>campaign.starting_level</code></em
+  >. A null <code>starting_level</code> when a job runs is a broken invariant (the submit gate
+  should guarantee it), so the processor <strong>fails loud</strong> rather than silently
+  substituting level 1 and shipping a wrong-level character.
+</aside>
+
+<p>
+  The sheet prompt is level-parametric. A <code>{{level}}</code> placeholder threads
+  <code>narrative.level</code> through every rule — proficiency bonus by level, HP summed across all
+  N levels, features gained through level N, the subclass features once the class has a subclass by
+  that level, the level-4 ASI, and Extra Attack at 5. It also teaches <strong>caster onset</strong>,
+  which is the subtle trap: half-casters (paladin, ranger) get no spell slots until level 2 and
+  third-casters none below level 3, so a level-1 paladin that emitted a leveled spell would burn the
+  three-attempt regenerate budget and terminal-fail. The prompt states the onset explicitly per
+  progression archetype (<code>full</code>/<code>half</code>/<code>third</code>/<code>pact</code>).
+</p>
+
+<p>
+  <code>validateCoherence</code> is the deterministic backstop that runs after every sheet
+  generation, over structured fields only — no CON-mod guesswork, no class-name string-matching. It
+  keeps the two shipped invariants (every leveled spell's level ≤
+  <code>maxSlotLevel(progression, level)</code>; leveled spells present ⟹ progression ≠
+  <code>none</code>) and MYT-90 adds two more: <code>proficiency_bonus</code> matches the level (1–4
+  → +2, 5 → +3), and <code>max_hit_points</code> sits inside an HP band derived from
+  <code>hit_die</code>, the CON modifier, and the level (with a small per-level slack for racial HP
+  like Hill Dwarf's +1/level, so a legal sheet never false-fails the ceiling). A violation raises a
+  <code>CharacterSheetCoherenceError</code>, which triggers a bounded full regeneration and then a
+  loud terminal fail rather than persisting a brickable character.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The guard asserts validity, not level-appropriateness</strong> — a sheet that is
+  internally consistent but <em>under</em>-leveled (a level-5 build that reads like a level-3 one)
+  still passes; the check proves the sheet isn't mechanically impossible, not that it earned every
+  level-5 feature. Two things are deliberately <strong>not</strong> gated here: ASI/feat presence
+  and subclass-feature presence at level N. There is no pre-ASI baseline to diff the final ability
+  scores against, and detecting a feat would mean string-matching free-prose <code>features[]</code>
+  — a ZFC violation. Those ride on prompt quality and the guided builder, not on this deterministic
+  shell. Level-appropriateness at the top of the 1–5 range is the acknowledged residual risk (the
+  reason the range is bounded and both ends carry a constructed-state real-LLM smoke), not something
+  the validator claims to catch.
+</aside>
+
+<h2 id="reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</h2>
+
+<p>
+  Two small self-scoped routes make the reveal robust to a reload and a change of heart. A
+  <code>'completed'</code> concept is locked — <code>POST /characters</code> rejects it — so
+  <strong>Start over</strong> can't just re-submit. <code>POST /characters/reset</code> flips the
+  caller's own completed (or failed) concept back to a resubmittable state and DELETEs the generated
+  sheet in one transaction, so the next submit re-runs the pipeline from scratch (it costs another
+  round of Sonnet calls, by design — a genuine re-roll). The reset is guarded transactionally: it
+  refuses (<code>409 'not_resettable'</code>) once the character is <code>'integrated'</code> or the
+  campaign is <code>'active'</code>, because you can't unwind a character that is already woven into
+  a running game.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>confirmed_at</code> is what keeps a reload from bouncing the player</strong> — the
+  window between a concept reaching <code>'completed'</code> and the campaign going
+  <code>'active'</code> is where the player reads their sheet and waits for the party. Without a
+  persisted marker, a reload in that window would land the player back on the reveal every time. The
+  <a href="../frontend/character-creation.html">frontend routing table</a> keys the
+  reveal→party-staging split on <code>confirmed_at</code>: <strong>This is me</strong> (<code
+    >POST /characters/confirm</code
+  >) stamps it, idempotently, and a reload thereafter routes straight to party staging. It is a
+  durable-state answer to a refresh-survival requirement, not a UI flag.
+</aside>
+
 <h2 id="lifecycle-and-late-joiners">Lifecycle and late joiners</h2>
 
 <p>
@@ -538,10 +767,12 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   Upstream: <a href="./world-gen.html">world gen</a> populates
   <code>worlds.starting_situation_entries</code> (extended in MYT-53 + myth-k1ee) — stage
   <code>starting_situation</code> emits a structured three-entry array alongside the existing prose
-  blob, with each entry carrying a <code>title</code> (LLM-emitted, 5–60 chars) and a
+  blob, with each entry carrying a <code>title</code> (LLM-emitted, 5–60 chars), a
   <code>locationName</code> (worker-resolved from <code>entities.name</code> via
-  <code>locationEntityId</code>). <code>GET /starting-situations</code> passes the JSONB through
-  verbatim so older worlds without the new fields keep rendering. Downstream: the
+  <code>locationEntityId</code>), and — since MYT-90 — the 2nd-person
+  <code>invitation</code> whisper the freeform path uses to elicit the grounding text.
+  <code>GET /starting-situations</code> passes the JSONB through verbatim so older worlds without
+  the new fields keep rendering. Downstream: the
   <a href="./pipeline-status.html">pipeline status</a> surface carries per-player events on the same
   campaign-scoped channel (<code>pipeline:campaign:{campaignId}</code>) — each event payload carries
   <code>user_id</code> so subscribers can route per-player. The dev tool's
@@ -582,6 +813,15 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </ul>
 
 <p>
+  Migration <code>033_starting_level.sql</code> (MYT-90) adds two columns and no new table:
+  <code>campaigns.starting_level SMALLINT</code> CHECKed <code>NULL OR BETWEEN 1 AND 5</code> (the
+  owner's party-wide level pick), and <code>character_concepts.confirmed_at TIMESTAMPTZ</code> (the
+  "This is me" timestamp, null until confirmed). The situation <code>invitation</code> whisper needs
+  no migration — it rides inside the existing <code>worlds.starting_situation_entries</code> JSONB
+  and is read back as an optional field.
+</p>
+
+<p>
   The migration also seeds <code>settings('character_creation_cost_cap_usd', '5.00')</code>;
   <code>server.ts</code>'s <code>readCostCapsAtBoot</code> helper reads it once on startup and
   injects the value as <code>CharacterCreationDeps.costCapUsd</code>. The
@@ -596,7 +836,11 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 
 <p>
   <code>backend/migrations/016_character_concepts.sql</code>,
-  <code>backend/src/routes/campaign-characters.ts</code>,
+  <code>backend/migrations/033_starting_level.sql</code>,
+  <code>backend/src/routes/campaign-characters.ts</code> (the composer) +
+  <code>campaign-setup-routes.ts</code> / <code>character-concept-routes.ts</code> /
+  <code>character-roster-routes.ts</code> / <code>world-read-routes.ts</code> /
+  <code>campaign-lifecycle-routes.ts</code> (the five slices),
   <code>backend/src/llm/prep/character-creation-processor.ts</code>,
   <code>backend/src/llm/prep/stages/</code> (location-selection, character-concept, character-sheet,
   character-integration),
@@ -608,15 +852,16 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   <code>backend/src/llm/prep/stages/starting-situation.ts</code> (extended to emit the structured
   entries array). Contract wiring: <code>backend/src/contract/pipeline-routes.ts</code>,
   <code>backend/src/contract/pipeline-jobs.ts</code>,
-  <code>backend/src/contract/backend-routes.ts</code>. Design spec:
-  <code>docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md</code>.
+  <code>backend/src/contract/backend-routes.ts</code>. Design specs:
+  <code>docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md</code> and
+  <code>docs/superpowers/specs/2026-07-11-myt-90-character-creation-design.md</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-eight-routes">The eight routes</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

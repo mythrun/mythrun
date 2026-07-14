@@ -94,6 +94,7 @@ export const structure: Section[] = [
       { slug: 'app-shell', title: 'App shell & data layer' },
       { slug: 'campaign-hub', title: 'Campaign hub' },
       { slug: 'world-gen-experience', title: 'World-gen experience' },
+      { slug: 'character-creation', title: 'Character-creation experience' },
       { slug: 'realtime-transport', title: 'Realtime transport' },
     ],
   },

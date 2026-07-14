@@ -1,0 +1,572 @@
+<!-- source: frontend/src/routes/character-new/ -->
+<!-- source: frontend/src/routes/character-new.tsx -->
+<!-- source: frontend/src/routes/worldgen/situation-pick.tsx -->
+<!-- source: frontend/src/routes/campaign-page.tsx -->
+<!-- source: frontend/src/routes/campaign-detail.tsx -->
+<!-- source: frontend/src/app/router.tsx -->
+<!-- source: frontend/client-core/src/character/ -->
+<!-- source: frontend/client-core/src/srd/ -->
+<!-- source: frontend/client-core/src/api/characters.ts -->
+<!-- source: frontend/client-core/src/api/starting-level.ts -->
+<!-- source: frontend/client-core/src/contract/character/ -->
+<!-- source: frontend/contract/src/events/pipeline-events.ts -->
+<!-- source: frontend/ui/src/components/LevelCard/ -->
+<!-- source: frontend/ui/src/components/FreeformPrompt/ -->
+<!-- source: frontend/ui/src/components/GuidedBuilder/ -->
+<!-- source: frontend/ui/src/components/CharacterLoadingBeat/ -->
+<!-- source: frontend/ui/src/components/CharacterSheetReveal/ -->
+<!-- source: frontend/ui/src/components/PartyRoster/ -->
+<!-- source-hash: sha256:2937678a5fbd959b60bcb7affe581ffd315dd2e5509373e592d6c497ee7db0aa -->
+<!-- last-ticket: MYT-90 -->
+
+<h1>Character-creation experience</h1>
+
+<p class="lead">
+  What a player walks through between the finished world and the first scene of play: the owner picks
+  an opening situation and a party-wide starting level, everyone makes a character — either by
+  describing them in a sentence or by answering a few D&amp;D questions — a 1-bit "coming into being"
+  beat holds the screen while the sheet is generated, the player meets their character as a
+  field-guide entry and confirms it, and the owner begins the adventure. The whole arc turns on one
+  idea: the frontend decides which screen to show from <em>viewer-relative</em> signals — the
+  campaign status, the current user's own concept status, and whether they own the world — never from
+  the derived pipeline <code>phase</code>. A DOM-free <code>client-core</code> brain holds the flow
+  logic; <a href="./design-system.html">@mythrun/ui</a> paints it; discrete routes and one campaign-page
+  surface share the work.
+</p>
+
+<!-- @diagram: frontend/character-creation -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The experience follows the frontend's brain/render split (see
+  <a href="./design-system.html">the design system</a>). The
+  <strong><code>client-core/character</code></strong> subpath is the platform-neutral brain — the
+  create-flow state machine, the guided-builder reducer and its flatten-to-concept-text fold, the
+  sheet and party-roster view-models, and the per-user SSE fold behind the loading beat — none of it
+  touches the DOM. A sibling <strong><code>client-core/srd</code></strong> subpath carries the static
+  SRD-2014 catalog the guided builder shows. <strong>@mythrun/ui</strong> turns the brain into pixels:
+  a level card, a freeform prompt, a guided builder, the loading beat, the sheet reveal, and the party
+  roster. <strong>@mythrun/web</strong> composes them across a handful of discrete routes and one
+  campaign-page surface. The routes consume five backend surfaces — the situations/level reads, the
+  concept submit, the <a href="../runtime/pipeline-status.html">status SSE stream</a>, the
+  character-creation progress board, and the finalize fan-in — and never reach past a
+  <code>client-core</code> function to do it. The
+  <a href="../runtime/character-creation.html">backend pipeline</a> that generates each sheet is a
+  separate page; this one is the flow, the screens, and the routing model.
+</p>
+
+<h3>Two state models, one flow</h3>
+
+<p>
+  There are two distinct state models in play, and keeping them apart is what makes the flow both
+  smooth and reload-proof. The first is the <strong>create-machine</strong>
+  (<code>client-core/character/create-machine.ts</code>): a tiny in-session machine —
+  <code>chooser → freeform | guided → processing → reveal → staging</code> — that sequences the
+  create route's own screens while the player is actively composing a character. The second is the
+  <strong>routing table</strong> (<code>deriveCharacterRoute</code>): a pure function that maps three
+  durable, server-backed signals onto a screen, re-evaluated every time the campaign page mounts.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why two models instead of one</strong> — the create-machine is ephemeral: it lives in React
+  state, remembers which path you chose and whether you have submitted, and vanishes on reload. That
+  is exactly right for a form you are filling out, and exactly wrong for the question "where is this
+  player in the arc?" — which has to survive a refresh, a second browser tab, and the ten minutes a
+  character sheet takes to generate. So the durable question is answered by re-reading server state
+  (the concept status, the confirmation timestamp) on every mount, not by trusting an in-memory
+  machine. The create route drives the machine; the campaign-page surface drives the table; the two
+  never share state.
+</aside>
+
+<h3>The routing model — viewer signals, not the pipeline phase</h3>
+
+<p>
+  This is the load-bearing decision. The frontend does <strong>not</strong> route on the derived
+  pipeline <code>phase</code>. That phase is the wrong signal for three concrete reasons:
+  <code>derivePhase</code> returns <code>character_creation</code> only <em>transiently</em> while a
+  concept is <code>processing</code> and falls back to <code>world_ready</code> the moment concepts
+  are <code>completed</code>; it collapses <em>any one</em> member's failed concept into a
+  <strong>party-wide</strong> <code>failed</code> phase; and the status client further coarsens that
+  into a <code>terminal</code> state that short-circuits to the world-gen
+  <a href="./world-gen-experience.html">TerminalView</a> before any per-user branch runs. Routing on
+  it would dead-end a recoverable concept on the wrong screen and let one player's bad roll
+  terminal-screen the whole table.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Three viewer-relative signals instead</strong> — the surface reads
+  <code>campaign.status</code> (which stays a stable <code>setup</code> throughout creation), the
+  <em>current user's own</em> <code>character_concepts.status</code> (from
+  <code>GET /character-creation-progress</code>, found by matching the viewer's id), and the viewer's
+  <em>role</em> (<code>CampaignSummary.creator === null</code> ⟹ owner). All three are relative to the
+  person looking: a member and the owner viewing the same campaign at the same instant can, and
+  should, land on different screens. This is why the failed-concept case shows a calm
+  character-context retry rather than the world-gen terminal, and why a party never all-goes-home for
+  one member's failure.
+</aside>
+
+<p>
+  <code>deriveCharacterRoute</code> reproduces the spec's §3.3 table faithfully, all within
+  <code>campaign.status === 'setup'</code> unless a terminal gate fires first:
+</p>
+
+<table>
+  <tr>
+    <th>Condition (for the viewing user)</th>
+    <th>Screen</th>
+  </tr>
+  <tr>
+    <td>campaign <code>failed</code> (terminal integration failure)</td>
+    <td>character-context <strong>failure + retry</strong> (not the world-gen terminal)</td>
+  </tr>
+  <tr>
+    <td>campaign <code>active</code>, or concept <code>integrated</code></td>
+    <td><strong>play</strong> entry</td>
+  </tr>
+  <tr>
+    <td>no starting situation chosen</td>
+    <td>owner → <strong>situation pick</strong>; member → <strong>hold</strong></td>
+  </tr>
+  <tr>
+    <td>situation set, no starting level</td>
+    <td>owner → <strong>level pick</strong>; member → <strong>hold</strong></td>
+  </tr>
+  <tr>
+    <td>both set, no concept row (or a resubmittable one)</td>
+    <td><strong>create</strong></td>
+  </tr>
+  <tr>
+    <td>concept <code>failed</code></td>
+    <td>character-context <strong>failure + retry</strong> (reset → create)</td>
+  </tr>
+  <tr>
+    <td>concept <code>processing</code></td>
+    <td><strong>loading beat</strong></td>
+  </tr>
+  <tr>
+    <td>concept <code>completed</code>, <code>confirmed_at</code> null</td>
+    <td><strong>meet your character</strong></td>
+  </tr>
+  <tr>
+    <td>concept <code>completed</code>, <code>confirmed_at</code> set</td>
+    <td><strong>party staging</strong> (owner: finalize; member: waiting for the party)</td>
+  </tr>
+</table>
+
+<aside class="wiki-rationale">
+  <strong><code>confirmed_at</code> is what makes the reveal survive a reload</strong> — "meet your
+  character" and "party staging" are both <code>completed</code>; the only thing separating them is
+  whether the player pressed <em>This is me</em>. Keying that split on an in-session flag would bounce
+  a player back to the reveal on every refresh in the completed→active window. So confirmation is
+  persisted (<code>character_concepts.confirmed_at</code>) and the progress board serves it back —
+  a reload re-reads the timestamp and lands on staging, not the reveal, exactly as it should.
+</aside>
+
+<h3>Discrete routes vs the campaign-page surface</h3>
+
+<p>
+  The flow is split across two web layers, and which layer owns a beat is deliberate. The
+  <strong>discrete routes</strong> (<code>router.tsx</code>) are the one-way "compose and submit"
+  steps: <code>/campaigns/:id/situation</code>, <code>/…/level</code>,
+  <code>/…/character/new</code>, <code>/…/join</code>, and <code>/…/play</code>. The
+  <strong>campaign-page surface</strong> — <code>CharacterSurface</code>, mounted by
+  <code>CampaignPage</code> at <code>/campaigns/:id</code>, superseding its old stub seam — owns the
+  durable lifecycle beats: the member hold, the loading beat, the reveal, party staging, the
+  character-context failure surface, and the play entry.
+</p>
+
+<p>
+  The two connect through the routing table. When the surface decides the viewer is an owner who still
+  owes a situation, a level, or a first concept, it does not render those inline — it
+  <em>redirects</em> to the matching discrete route (a react-router <code>Navigate</code>). The
+  discrete route does its work and hands off: the situation pick POSTs the chosen index and navigates
+  to the level route; the level pick POSTs 1–5 and navigates to <code>/character/new</code>; the
+  create route runs the create-machine and submits. Once a concept exists, the durable states
+  (<code>processing</code> → <code>completed</code> → <code>confirmed</code> → <code>integrated</code>)
+  are read back at <code>/campaigns/:id</code> and the surface mounts the loading, reveal, and staging
+  beats itself.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The create-machine's tail states are vestigial</strong> — the machine can reach
+  <code>processing</code>, <code>reveal</code>, and <code>staging</code>, but on the discrete
+  <code>/character/new</code> route only <code>chooser → freeform | guided → processing</code> are
+  actually driven; nothing there dispatches <code>ready</code> or <code>confirm</code>. On submit the
+  route shows a brief processing placeholder, and the <em>real</em> loading beat and reveal are the
+  campaign-page surface's beats, keyed on the server concept status. The machine sequences the
+  in-session form; the surface owns everything after submit. This is the same "durable question is
+  answered by server state" split as above, seen from the route's side.
+</aside>
+
+<h3>The owner's opening — situation, then starting level</h3>
+
+<p>
+  Two owner-only beats precede character creation, because both decisions are party-wide. The
+  <strong>situation pick</strong> (a modification of the shipped
+  <code>worldgen/situation-pick.tsx</code>, now owner-gated) offers the world's three opening hooks —
+  title, place, and a paragraph of prose — as a borderless <code>GhostHookList</code>. Each hook also
+  carries an LLM-authored <code>invitation</code> whisper generated with it; the situation pick keeps
+  it in the response and character creation consumes it later as the grounding prompt. The
+  <strong>level pick</strong> offers five <code>LevelCard</code>s (1–5), each with a plain, hedged
+  one-line gloss of what the level grants, defaulting to level 3; confirming locks the party's shared
+  starting level and hands off to create.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The situation pick reuses <code>GhostHookList</code>, not a new <code>SituationCard</code></strong>
+  — the design called for a dedicated card component, but the shipped pick composes the already-shipped
+  ghost-hook list primitive instead. It reads correctly in the flat 1-bit register with zero new
+  design-system surface. This is the "prefer a composition of shipped primitives" resolution the spec
+  left open (§5.4): only pieces that are genuinely reusable become new DS components. The path chooser
+  is the same call — an in-route composition of <code>Card</code>/<code>Button</code>, not a component.
+</aside>
+
+<p>
+  Both beats fail closed. Role is resolved from the <code>/api/campaigns/mine</code> payload
+  (<code>creator === null</code> ⟹ owner); an unresolved or failed probe resolves to <em>member</em>,
+  so the owner-only picker never flashes for a non-owner. A member reaching either route directly sees
+  a calm "setting up the table" hold. And each pick treats its own already-locked 409
+  (<code>situation_locked</code> / <code>level_locked</code>) as idempotent success — it just hands off
+  — so a double-submit or a stale tab never strands the owner.
+</p>
+
+<h3>The two paths into a character</h3>
+
+<p>
+  The create route opens on a <strong>path chooser</strong>: "tell us who you are" or "build your
+  character." Both paths POST the <em>same</em> two-field body — a <code>conceptText</code> and a
+  <code>situationGroundingText</code> — and both collect the grounding field the same way, through the
+  chosen situation's <code>invitation</code> whisper.
+</p>
+
+<p>
+  The <strong>freeform path</strong> collects the two required fields one at a time: first "Who are
+  you?" → <code>conceptText</code>, then the situation's invitation whisper → the grounding text. Each
+  field mirrors the backend's 20-character floor as a calm inline nudge (never a red error), and a
+  synchronous in-flight guard keeps a double-press from firing a second submit. The
+  <strong>guided path</strong> is a controlled driver around the presentational
+  <code>GuidedBuilder</code>, wired to the client-core guided reducer: one question at a time —
+  <code>Class → Subclass → Species → Background → Notes</code> — with a progress rail carrying the
+  prior picks. The reducer owns the sequence <em>and</em> the conditional skip: the Subclass step
+  appears only when the party's starting level grants the chosen class its subclass
+  (<code>SUBCLASS_LEVEL[class] ≤ level</code>), and stepping back over a skipped step just works. On
+  completion the reducer flattens the picks into an English concept sentence from the catalog's
+  canonical names, and the grounding whisper collects the second field exactly as freeform does.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The flatten emits canonical English, not display copy</strong> — the concept text the
+  backend LLM reads is composed from the SRD catalog's canonical English names
+  (<code>"I am a Fighter, a Champion. I am a Human with a Toll-clerk background."</code>), because LLM
+  input is locale-independent. The <code>[ph:]</code> display copy the cards show is a separate,
+  later web-layer concern. The subclass clause is dropped from the sentence whenever the level does
+  not grant it — the same gate the builder uses to skip the step — so a stale draft subclass can
+  never leak into the concept.
+</aside>
+
+<h3>Coming into being — the loading beat</h3>
+
+<p>
+  While the sheet generates, the surface mounts <code>CharacterLoadingSurface</code> over the
+  <code>CharacterLoadingBeat</code>: the shipped 1-bit loading register (paper, not voxel — the
+  April spec's voxel silhouette is post-launch), a squared figure that fills in from the feet up
+  beside a column of surfacing beat rows. Its real-time source is the
+  <a href="./realtime-transport.html">MYT-85 status SSE</a>, folded by
+  <code>useCharacterCreationStream</code> and <strong>filtered to the current user's id</strong> — the
+  stream is campaign-wide, so a party of four all watch the same channel, each seeing only their own
+  stages. The hook maps the per-player pipeline stages onto four fixed beats (a name surfaces, a class
+  takes shape, ability scores settle, equipment is gathered), advancing each pending → active → done;
+  under <code>prefers-reduced-motion</code> the fill snaps and the rows swap without churn.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The beat folds live events only; the routing table is the reload backstop</strong> — the
+  fold accumulates in client memory and does not seed from the connect-time snapshot, so a refresh
+  mid-generation restarts the beats from pending until the next live event, and a refresh <em>after</em>
+  completion won't re-flip <code>done</code> (completion is a live event, not replayed). That is fine
+  because the durable "already completed" case is the routing table's job — a returning player's
+  concept status routes them straight to the reveal without ever mounting the beat. The
+  <code>character_creation_complete</code> event is a properly-typed, <code>userId</code>-carrying arm
+  on the status stream, so the live swap fires for exactly the right player; the progress board's
+  <code>confirmed_at</code>/<code>characterId</code> fields are the refresh-stable snapshot behind it.
+</aside>
+
+<h3>Meet your character</h3>
+
+<p>
+  The reveal is a field-guide entry, not a stat block. <code>CharacterRevealSurface</code> fetches the
+  finished character (the raw snake-case read), adapts it deterministically into a
+  <code>{ curated, full }</code> view-model, and renders <code>CharacterSheetReveal</code>: the name;
+  a mono identity line; an AC / HP / Proficiency / Hit-Die / Speed stripe; six square ability tiles;
+  one or two paragraphs of connection prose; and "what they can do / carry / cast" panels — the spells
+  panel appearing only for casters. Three actions ride it: <em>This is me</em> persists
+  <code>confirmed_at</code> and routes to staging; <em>See full sheet</em> is a pure client expansion
+  of data already in props (skills, saving throws, the full kit — no network, no LLM call); and
+  <em>Start over</em> calls the concept-reset route and returns to create (which does cost a fresh
+  generation).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Every derivation on the reveal is deterministic math, never a prose parse</strong> — the
+  adapter computes ability modifiers by formula, resolves saving throws through the SRD
+  <code>CLASS_SAVES</code> map plus the structured proficiency bonus, and defaults an unreturned speed
+  to 30 ft. Subclass is <em>omitted</em> rather than guessed: the character row has no structured
+  subclass column, and splitting one out of the free class string or feature names is exactly the
+  pattern-match <a href="../runtime/character-creation.html">ZFC</a> forbids. The connection prose is
+  <em>assembled</em>, not generated — the concept stage's own already-authored fields (physical
+  description, personality sentences, the player's grounding text) concatenated in order, degrading to
+  a shorter panel when a field is blank.
+</aside>
+
+<h3>Party staging and Begin</h3>
+
+<p>
+  Once the viewer's own character is confirmed, the surface mounts <code>PartyStagingSurface</code>
+  over the <code>PartyRoster</code>. It fetches the roster from
+  <code>GET /character-creation-progress</code>, maps it through the party-roster view-model (owner
+  first, each row marked ready / creating / you), and polls on a modest interval so late finishers
+  surface — live join and invite links are <a href="./realtime-transport.html">MYT-91</a>, so the poll
+  is enough for this shell and the invite affordance is a no-op seam. In the <strong>solo</strong> case
+  (launch-critical) the roster shows the one-person party plus a dashed invite slot and a "begin the
+  adventure" control. In a <strong>party</strong>, the owner-only Begin is enabled once the owner's own
+  concept is ready; it fans in every currently-<code>completed</code> concept through
+  <code>POST /finalize-character-creation</code>, which triggers
+  <a href="../runtime/character-integration.html">character integration</a>, flips the campaign to
+  <code>active</code>, and leads into the opening scene. Status reads as prose, never a badge or dot —
+  the brand rule holds here.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The laggard boundary is a known limitation, not a bug</strong> — integration loads only the
+  concepts that are <code>completed</code> at fire time, and the campaign then flips <code>active</code>,
+  so a member who finishes <em>after</em> Begin is left out (a later finalize 409s
+  <code>not_in_setup</code>). Re-integrating a late joiner into an already-active campaign is a §7
+  follow-up entangled with MYT-91's live-join work, deliberately not solved here. An integration
+  failure routes to the calm character-context failure surface (retry re-attempts the fan-in), never
+  the world-gen terminal.
+</aside>
+
+<h3>The member's briefer way in</h3>
+
+<p>
+  A joining member (arriving via an MYT-91 invite) skips the owner beats — the situation and level are
+  already set — and lands on <code>JoinSummaryRoute</code>: a stripped-down reveal that fetches the
+  world snapshot and shows just the world's name and a paragraph of introduction in the same
+  paper/serif register, then a single "create your character" CTA into the same create route. The rest
+  of the arc (loading, meet, staging) is identical; a member simply waits for the owner's Begin instead
+  of pressing it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The member summary reads the world-snapshot, and fails closed on anything else</strong> —
+  the <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot endpoint</a
+  >
+  is readable by any accepted campaign member (myth-0xwos widened it from owner-only for exactly this
+  render), so a joined member fetches the same known-tier intro the owner's reveal uses. A failed or
+  forbidden fetch — a transient error, or a member whose invite isn't accepted yet — resolves to the
+  same calm, retryable notice, never a fake, nameless world, so the surface is honest about a gap
+  rather than papering over it. (The <code>join-summary.tsx</code> header comment still describes the
+  pre-myth-0xwos owner-only state; the route guard is the source of truth, and it is member-scoped.)
+</aside>
+
+<h3>The brain — the client-core character layer</h3>
+
+<p>
+  The character data layer is a real MYT-90 deliverable: none of it existed before. The
+  <code>client-core/character</code> subpath holds the create-machine, the guided reducer and its
+  flatten, the sheet and party-roster view-models, and the per-user stream fold — all DOM-free, all
+  unit-tested against injected inputs. The <code>client-core/api</code> layer adds the character-submit,
+  progress, finalize, starting-level, reset, and confirm endpoint slices (each a
+  <code>defineEndpoint</code> with Zod request/response validation), and the
+  <code>client-core/srd</code> subpath carries the static SRD-2014 catalog the guided builder shows.
+  Every @mythrun/ui character component takes its props from a DOM-free contract file in
+  <code>client-core/contract/character/</code> first — the enforced portability seam — so the
+  components stay controlled and presentational, with all sequencing in the reducer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The subclass table is one SRD fact kept in two places</strong> — the client-core
+  <code>SUBCLASS_LEVEL</code> table (which gates the builder's Subclass step) and the backend's
+  level-scaling prompt/validation are two independent copies of the same SRD-2014 rule, with no shared
+  enforcement. A drift between them yields a concept the sheet stage can't satisfy coherently. Both
+  are pinned explicitly (not derived) and unit-tested against the same 12-classes × 5-levels matrix,
+  and the coupling is noted at both ends. The <code>CLASS_SAVES</code> map the reveal uses to compute
+  saving throws is the same shape of client-side mechanics — the only mechanics in the SRD data, homed
+  here because the reveal derives saves in deterministic code rather than reading them off the wire.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Walk the character-creation flow locally</h3>
+<ol>
+  <li>
+    Bring up the stack: <code>pnpm db:up</code>, <code>pnpm dev</code> (backend + worker), and the web
+    app (<code>pnpm --filter @mythrun/web dev</code>). A real generation needs live Anthropic
+    credentials in <code>backend/.env.development</code>.
+  </li>
+  <li>
+    Sign in, create a campaign, and let the world generate. On the settled
+    <a href="./world-gen-experience.html">reveal</a>, press Continue — as the owner you land on the
+    situation pick, then the level pick.
+  </li>
+  <li>
+    Choose a path on <code>/campaigns/:id/character/new</code>. Freeform collects two prompts; the
+    guided builder walks Class → (Subclass) → Species → Background → Notes, then the grounding whisper.
+    Submit.
+  </li>
+  <li>
+    Return to <code>/campaigns/:id</code> to watch the loading beat fill in, then the reveal. Press
+    <em>This is me</em>, then <em>Begin the adventure</em> to finalize and enter play.
+  </li>
+  <li>
+    To inspect the underlying events, open the same campaign in the
+    <a href="../runtime/pipeline-status.html#watch-a-campaign-locally">dev tool's wire-log drawer</a>
+    — it streams the identical SSE frames the loading beat is folding, including the per-user
+    <code>character_creation_complete</code> arm.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The flow reads the <a href="../runtime/character-creation.html">backend character-creation pipeline</a>
+  through the situations/level reads, the two-field concept submit, the character-creation progress
+  board, and the owner finalize — the last of which triggers
+  <a href="../runtime/character-integration.html">character integration</a> and the flip to
+  <code>active</code>. The loading beat rides the same <a href="./realtime-transport.html">status SSE
+  transport</a> as the rest of the app, filtered to the current player. The preceding
+  <a href="./world-gen-experience.html">world-gen reveal</a> hands off here once a starting situation
+  is chosen (<code>campaign-detail.tsx</code> delegates to <code>CampaignPage</code>), and the whole
+  surface is built from <a href="./design-system.html">mythrunUI</a> components over the DOM-free
+  <code>client-core</code> brain. Enforced ignorance and the sheet's mechanical honesty are the
+  pipeline's concern; the frontend renders only the player-safe projection it is served.
+</p>
+
+<h2>Appendix: the modules</h2>
+
+<h3>The brain — <code>client-core/character</code> + <code>client-core/srd</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>create-machine.ts</code></td>
+    <td>The in-session create flow — chooser → path → processing → reveal → staging (a pure transition table).</td>
+  </tr>
+  <tr>
+    <td><code>guided-reducer.ts</code></td>
+    <td>The guided step sequence + the conditional Subclass skip + the progress-rail selector.</td>
+  </tr>
+  <tr>
+    <td><code>flatten.ts</code></td>
+    <td>Folds the guided picks into an English concept sentence from canonical SRD names.</td>
+  </tr>
+  <tr>
+    <td><code>sheet-view-model.ts</code></td>
+    <td>The normalized sheet → the reveal's curated (field-guide) and full (mechanical) views; caster gating.</td>
+  </tr>
+  <tr>
+    <td><code>party-roster-view-model.ts</code></td>
+    <td>The progress board → roster rows (owner-first, ready/creating/empty, viewer-marked).</td>
+  </tr>
+  <tr>
+    <td><code>use-character-creation-stream.ts</code></td>
+    <td>The status-SSE fold → <code>{ beats, done }</code>, filtered to the current <code>userId</code>.</td>
+  </tr>
+  <tr>
+    <td><code>srd/</code></td>
+    <td>The SRD-2014 catalog — classes, species, backgrounds, <code>SUBCLASS_LEVEL</code>, <code>CLASS_SAVES</code>.</td>
+  </tr>
+  <tr>
+    <td><code>api/characters.ts</code> · <code>api/starting-level.ts</code></td>
+    <td>The typed endpoint slices — submit, roster, full read, progress, finalize, reset, confirm, starting level.</td>
+  </tr>
+</table>
+
+<h3>The render — <code>@mythrun/ui</code></h3>
+<table>
+  <tr>
+    <th>Component</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>LevelCard</code></td>
+    <td>One owner starting-level pick (1–5) — a real button, ember-ring selection, no layout shift.</td>
+  </tr>
+  <tr>
+    <td><code>FreeformPrompt</code></td>
+    <td>The "describe who you are" seamless prompt — the question labels the answer.</td>
+  </tr>
+  <tr>
+    <td><code>GuidedBuilder</code></td>
+    <td>The controlled one-question-at-a-time builder — rail + question + option cards, no internal step state.</td>
+  </tr>
+  <tr>
+    <td><code>CharacterLoadingBeat</code></td>
+    <td>The 1-bit "coming into being" figure filling in beside advancing beat rows (reuses <code>Dither</code>).</td>
+  </tr>
+  <tr>
+    <td><code>CharacterSheetReveal</code></td>
+    <td>The field-guide reveal — identity, stat stripe, ability tiles, prose, panels, and the controlled full-sheet expand.</td>
+  </tr>
+  <tr>
+    <td><code>PartyRoster</code></td>
+    <td>The staging roster — member rows as prose (no dots/chips), owner Begin, the invite seam.</td>
+  </tr>
+</table>
+
+<h3>The routes — <code>@mythrun/web</code></h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>character-new/character-surface.tsx</code> · <code>character-route.ts</code></td>
+    <td>The campaign-page surface — fetches the viewer signals and runs <code>deriveCharacterRoute</code>.</td>
+  </tr>
+  <tr>
+    <td><code>character-new/character-beat.tsx</code></td>
+    <td>Maps the decided kind to a redirect or a mounted beat (loading / reveal / staging / hold / failure / play).</td>
+  </tr>
+  <tr>
+    <td><code>character-new.tsx</code> · <code>path-chooser.tsx</code> · <code>freeform-path.tsx</code> · <code>guided-path.tsx</code></td>
+    <td>The discrete create route — the chooser and the two paths driving the create-machine + guided reducer.</td>
+  </tr>
+  <tr>
+    <td><code>worldgen/situation-pick.tsx</code> · <code>character-new/level-pick.tsx</code></td>
+    <td>The owner-gated situation and starting-level discrete routes.</td>
+  </tr>
+  <tr>
+    <td><code>character-new/character-loading.tsx</code> · <code>character-reveal.tsx</code> · <code>party-staging.tsx</code></td>
+    <td>The three durable surface beats — the loading fold, the reveal + sheet adapter, and the staging roster.</td>
+  </tr>
+  <tr>
+    <td><code>character-new/sheet-adapter.ts</code></td>
+    <td>The raw character read → the reveal view-model (deterministic math + SRD maps, never a prose parse).</td>
+  </tr>
+  <tr>
+    <td><code>character-new/join-summary.tsx</code></td>
+    <td>The member-join world-intro summary — world name + introduction → create.</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/src/routes/character-new/</code>, <code>frontend/src/routes/character-new.tsx</code>,
+  <code>frontend/src/routes/worldgen/situation-pick.tsx</code>,
+  <code>frontend/src/routes/campaign-page.tsx</code>,
+  <code>frontend/src/routes/campaign-detail.tsx</code>, <code>frontend/src/app/router.tsx</code>,
+  <code>frontend/client-core/src/character/</code>, <code>frontend/client-core/src/srd/</code>,
+  <code>frontend/client-core/src/api/characters.ts</code>,
+  <code>frontend/client-core/src/api/starting-level.ts</code>,
+  <code>frontend/client-core/src/contract/character/</code>,
+  <code>frontend/contract/src/events/pipeline-events.ts</code>, and the <code>LevelCard</code> /
+  <code>FreeformPrompt</code> / <code>GuidedBuilder</code> / <code>CharacterLoadingBeat</code> /
+  <code>CharacterSheetReveal</code> / <code>PartyRoster</code> components under
+  <code>frontend/ui/src/components/</code>.
+</p>

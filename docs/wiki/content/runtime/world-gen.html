@@ -53,7 +53,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:df986618d61afab8f7d439ea2a6222b4b9787c0a0bfde4712c250aa5b0ba75a8 -->
+<!-- source-hash: sha256:1239c3c90a5b4258399210821b1ffc8b7bae4edc8967c0ff351d051aeadb37cc -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>World gen</h1>
@@ -112,17 +112,18 @@
   world + every dependent row. <code>PATCH /api/campaigns/:campaignId/name</code> is the rename path
   for owners: <code>concept_intake</code> auto-names the campaign from the LLM-synthesized world
   name, and this is how the owner overrides that default.
-  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the owner-only known-tier view of
-  the persisted world — the reveal's data source, carrying the introduction page — fetchable once
-  <code>world_introduction</code> commits (the reveal boundary, myth-zaqxh). The endpoint's
-  pre-readiness gate, the SSE phase derivation, and the worker's
-  <code>world_snapshot_ready</code> publish now all key on that one stage's
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the known-tier view of the persisted
+  world — the reveal's data source, carrying the introduction page — fetchable once
+  <code>world_introduction</code> commits (the reveal boundary, myth-zaqxh). It is readable by any
+  accepted campaign member (myth-0xwos widened it from owner-only so a party member's reveal
+  renders, not just the owner's). The endpoint's pre-readiness gate, the SSE phase derivation, and
+  the worker's <code>world_snapshot_ready</code> publish now all key on that one stage's
   <code>completed</code> row. <code>GET /api/campaigns/:campaignId/wiki</code> (MYT-74c) is the
-  <em>member-readable</em> counterpart to the owner-only snapshot — a deliberately narrower
-  known-tier projection for players (no owner <code>concept</code>, no prose kernels, no stat
-  blocks, no introduction). It keeps the earlier <code>entity_relationships</code> readiness gate
-  (there is no intro on the member wiki to wait for), so it becomes fetchable one stage before the
-  owner snapshot does; see
+  <em>narrower</em> known-tier projection for in-campaign play — the same audience, less content
+  (both drop the owner <code>concept</code>; the play wiki additionally carries no prose kernels, no
+  stat blocks, no introduction). It keeps the earlier <code>entity_relationships</code> readiness
+  gate (there is no intro on the play wiki to wait for), so it becomes fetchable one stage before
+  the snapshot does; see
   <a href="./session-reconcile.html#the-player-campaign-wiki">the player campaign wiki</a>.
 </p>
 
@@ -775,9 +776,12 @@
       <td>
         <code>worlds.starting_situations</code> (prose blob) +
         <code>worlds.starting_situation_entries</code> (the three structured
-        <code>{ index, locationEntityId, locationName, title, prose }</code> rows MYT-53's
-        character-creation flow picks one from; the LLM emits the title, the worker resolves
-        <code>locationName</code> from <code>entities.name</code> after the stage commits)
+        <code>{ index, locationEntityId, locationName, title, prose, invitation }</code> rows
+        MYT-53's character-creation flow picks one from; the LLM emits the title and, since MYT-90,
+        the 2nd-person <code>invitation</code> whisper that
+        <a href="./character-creation.html">character creation</a> uses to elicit the grounding
+        text; the worker resolves <code>locationName</code> from <code>entities.name</code> after
+        the stage commits)
       </td>
       <td>none</td>
     </tr>
@@ -1694,52 +1698,62 @@
 </p>
 
 <p>
-  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is owner-only,
-  rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the pre-readiness
-  check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'world_introduction')</code>) passes —
-  <code>world_introduction</code> is the earliest stage at which the world is both coherent
-  (entities and relationships all committed at <code>entity_relationships</code>)
+  <code>GET /api/campaigns/:campaignId/world-snapshot</code> is the read side. It is readable by any
+  accepted campaign member (myth-0xwos widened it from owner-only so a party member's reveal
+  renders), rate-limited per IP, and serves a <code>409 snapshot_not_ready</code> until the
+  pre-readiness check (<code>pipelineRunsRepo.isStageCompleted(worldId, 'world_introduction')</code
+  >) passes — <code>world_introduction</code> is the earliest stage at which the world is both
+  coherent (entities and relationships all committed at <code>entity_relationships</code>)
   <em>and</em> carries the introduction page a served snapshot always includes. The response is a
-  <code>WorldSnapshot</code>: a <code>WorldSummary</code> projection of the worlds row, the composed
-  <code>introduction</code> (the world-name title, the prose, and its dig-deeper references
-  re-filtered against the served known-tier entity set — a reference to a non-served entity is
-  dropped at compose time), the entities, their prose kernels and facts, the relationships among
-  them, the entity hierarchy rows for resolved parents, and stat blocks for entities that have them.
-  Eight read queries — most run in parallel — make up the composition;
-  <code>world-snapshot-view.ts</code> owns it.
+  <code>WorldSnapshot</code>: a plot-safe world summary (the <code>WikiWorldSummary</code> shape,
+  <code>concept</code> dropped — see below), the composed <code>introduction</code> (the world-name
+  title, the prose, and its dig-deeper references re-filtered against the served known-tier entity
+  set — a reference to a non-served entity is dropped at compose time), the entities, their prose
+  kernels and facts, the relationships among them, the entity hierarchy rows for resolved parents,
+  and stat blocks for entities that have them. Eight read queries — most run in parallel — make up
+  the composition; <code>world-snapshot-view.ts</code> owns it.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The owner snapshot is not the player wiki</strong> — this endpoint is the
-  <em>owner-only</em> dev-tool inspector. MYT-74c added a separate <em>member-readable</em>
+  <strong>The snapshot is not the player wiki</strong> — two known-tier reads over the same world,
+  both member-readable and both serving the same plot-safe world summary (the
+  <code>WikiWorldSummary</code> shape — <code>concept</code> never on either wire, see the
+  projection note below). They split by <em>composition</em> and lifecycle. The snapshot is the
+  <em>fuller</em> one-time reveal-and-inspection surface: it adds the composed introduction, the
+  per-entity prose kernels, and stat blocks, fetchable the instant <code>world_introduction</code>
+  commits and never changing after. MYT-74c added the separate
   <a href="./session-reconcile.html#the-player-campaign-wiki"
     ><code>GET /api/campaigns/:campaignId/wiki</code></a
   >
-  for players, in the same <code>routes/campaigns.ts</code> file. The wiki is deliberately narrower:
-  it drops the owner's raw <code>concept</code> seed (via a dedicated
-  <code>getWikiSummary</code> projection), carries no prose kernels and no stat blocks, and
-  hardcodes the tier bypass off — and it <em>grows with play</em>, because the
+  for in-campaign play, in the same <code>routes/campaigns.ts</code> file. The wiki is deliberately
+  narrower still — no prose kernels, no stat blocks, the tier bypass hardcoded off — and it
+  <em>grows with play</em>, because the
   <a href="./session-reconcile.html#the-access-tier-promotion-state-machine"
     >end-of-session reconcile</a
   >
   promotes the <code>discoverable</code> / <code>secret</code> facts the party discovered this
-  session up to <code>known</code>. The owner snapshot below is unchanged; the two reads are
-  distinct surfaces for distinct audiences.
+  session up to <code>known</code>. The two reads are distinct surfaces for distinct moments in a
+  campaign's life.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>An explicit <code>WorldSummary</code> projection, not <code>SELECT *</code></strong> — the
+  <strong>An explicit allowlist, in two layers, not <code>SELECT *</code></strong> — the
   <code>worlds</code> table holds plot-bearing columns the Fast Thinker must never see:
   <code>key_tensions</code>, <code>political_summary</code>, <code>starting_situations</code>,
   <code>follow_up_questions</code>, <code>geography_summary</code>, <code>world_overview</code>, and
-  (notably) <code>dev_bypass_access_filter</code>. The snapshot view explicitly selects
-  <code>id</code>, <code>name</code>, <code>concept</code>, <code>tone</code>, <code>themes</code>,
-  <code>era</code>, and <code>vocabulary_registry</code> — the registry is the one jsonb column that
-  does cross the wire, with its entries tier-filtered against the same access-level list as entities
-  and facts before they're attached to <code>WorldSummary.vocabularyRegistry</code>. New columns
-  added to the <code>worlds</code> table never reach the wire automatically — adding a column
-  requires authoring a deliberate addition to the projection. This is the inverse of the usual
-  repo-mapper default: most repos return the row shape; this one returns an allowlist.
+  (notably) <code>dev_bypass_access_filter</code>. The repo projection
+  <code>worlds.getSnapshotSummary</code> selects only <code>id</code>, <code>name</code>,
+  <code>concept</code>, <code>tone</code>, <code>themes</code>, <code>era</code>, and
+  <code>vocabulary_registry</code> — dropping the heavy plot columns. The snapshot
+  <em>view</em> then re-projects that to the plot-safe <code>WikiWorldSummary</code> shape before it
+  reaches the wire, dropping <code>concept</code> too (myth-0xwos follow-up): once the endpoint
+  became member-readable, the owner's raw freeform seed — which can carry plot — could no longer
+  ride a player-facing response, so the wire carries only <code>id</code>, <code>name</code>,
+  <code>tone</code>, <code>themes</code>, <code>era</code>, and <code>vocabulary_registry</code>.
+  The registry is the one jsonb column that crosses the wire, its entries tier-filtered against the
+  same access-level list as entities and facts. New columns on the <code>worlds</code> table never
+  reach the wire automatically — this is the inverse of the usual repo-mapper default: most repos
+  return the row shape; these return an allowlist.
 </aside>
 
 <h3>Three-tier access classification</h3>

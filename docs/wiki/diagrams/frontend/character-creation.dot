@@ -1,0 +1,93 @@
+digraph frontend_character_creation {
+  // The player-facing character-creation flow (MYT-90): the phase-4 arc from the
+  // world reveal to a playable, party-integrated campaign. Two web layers cooperate
+  // — DISCRETE routes own the one-way "compose + submit" beats (situation, level,
+  // create machine, member join), and the CampaignPage CHARACTER SURFACE owns the
+  // durable, refresh-stable lifecycle beats (hold, loading, meet, staging, failure,
+  // play) keyed on deriveCharacterRoute over three VIEWER-RELATIVE signals — never
+  // the derived pipeline phase. A DOM-free client-core brain (create-machine, guided
+  // reducer + flatten, sheet + roster view-models, the per-user SSE fold, the SRD
+  // catalog) is painted by @mythrun/ui. The backend pipeline + SSE surface are other
+  // pages.
+  compound=true;
+
+  // The decision core — the routing table (§3.3) is the load-bearing idea.
+  signals [label="viewer signals\ncampaign.status (stable 'setup') ·\nMY concept status (progress GET) ·\nrole (creator===null ⟹ owner)", color="ember", fontcolor="ember"];
+  route [label="deriveCharacterRoute\n§3.3 routing table · pure ·\nviewer-relative · NOT the phase", color="ember", fontcolor="ember"];
+
+  subgraph cluster_discrete {
+    label="@mythrun/web  ·  discrete routes  (compose + submit, one way)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    situation [label="SituationPickRoute\n/…/situation · owner picks a hook\n(GhostHookList) → level"];
+    level [label="LevelPickRoute\n/…/level · owner picks 1–5\n(LevelCard ×5) → create"];
+    create [label="CharacterNewRoute\n/…/character/new\ncreate-machine: chooser →\nfreeform | guided → submit"];
+    join [label="JoinSummaryRoute\n/…/join · member entry\nworld name + intro → create"];
+    play [label="PlayRoute\n/…/play"];
+  }
+
+  subgraph cluster_surface {
+    label="CampaignPage character surface  (mounted at /campaigns/:id · durable · reload-stable)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    hold [label="hold\nmember 'setting up the table'"];
+    loading [label="loading beat\nCharacterLoadingBeat ← per-user SSE"];
+    meet [label="meet your character\nCharacterSheetReveal · This is me /\nfull sheet / start over"];
+    staging [label="party staging\nPartyRoster · owner Begin → finalize"];
+    failure [label="failure + retry\nconcept reset | integration re-fan-in"];
+    playentry [label="play entry"];
+  }
+
+  subgraph cluster_brain {
+    label="@mythrun/client-core  ·  brain (DOM-free · R1)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    machine [label="create-machine\nchooser → path → processing →\nreveal → staging (in-session)"];
+    guided [label="guided-reducer + flatten\nClass→Subclass?→Species→Background→Notes\n→ conceptText (canonical English)"];
+    srd [label="/srd catalog\n12 classes · species · backgrounds ·\nSUBCLASS_LEVEL · CLASS_SAVES"];
+    sheetvm [label="sheet-view-model\ncurated | full"];
+    rostervm [label="party-roster-view-model"];
+    stream [label="useCharacterCreationStream\nSSE fold → beats/done · filtered to userId"];
+  }
+
+  api [label="API  (other pages)\nGET/POST situation · POST starting-level ·\nPOST characters (2 fields) · progress GET\n(confirmedAt/characterId) · status SSE ·\nPOST finalize · characters/reset · confirm", color="ember", fontcolor="ember"];
+
+  // The routing table fans the three signals onto a screen.
+  signals -> route [style="dotted"];
+  route -> situation [label="owner · no situation"];
+  route -> level [label="owner · no level"];
+  route -> create [label="no concept"];
+  route -> hold [label="member · pre-setup"];
+  route -> loading [label="processing"];
+  route -> meet [label="completed · unconfirmed"];
+  route -> staging [label="completed · confirmed"];
+  route -> failure [label="concept/campaign failed"];
+  route -> playentry [label="integrated / active"];
+
+  // Discrete one-way flow + the finalize hand-off.
+  situation -> level [style="dotted"];
+  level -> create [style="dotted"];
+  join -> create [style="dotted"];
+  staging -> play [label="Begin"];
+
+  // Brain / render wiring (the surface + routes read the brain, never the DOM).
+  create -> machine [style="dotted"];
+  create -> guided [style="dotted"];
+  guided -> srd [style="dotted"];
+  loading -> stream [style="dotted"];
+  meet -> sheetvm [style="dotted"];
+  sheetvm -> srd [label="saves + mods", style="dotted"];
+  staging -> rostervm [style="dotted"];
+
+  // API reads (the durable state lives server-side).
+  route -> api [label="progress + situations", style="dotted"];
+  stream -> api [label="SSE"];
+  create -> api [label="POST"];
+  staging -> api [label="finalize"];
+}

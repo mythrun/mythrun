@@ -20,7 +20,7 @@
 <!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:5765bbe9975ec92fecb50459c61f604b66d10acb4f99e67cf1cfd268d02995a5 -->
+<!-- source-hash: sha256:61498a32c2c74bdaf56dff9693f4b8099083883b37a18f5a352dfc47ba70bbd5 -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>Fast Thinker</h1>
@@ -461,6 +461,23 @@
   player-facing answer, surfaced verbatim, exactly as the Slow Thinker's stage
   <a href="./slow-thinker.html">directions</a> are authoritative prose.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Node over-pull, but the <code>characters_known_to</code> walk crosses known edges only</strong
+  >
+  — over-pull is a <em>node-content</em> policy: the resolver hands the vet secret <em>nodes</em>,
+  tier-annotated, to gate. Relationship <em>edges</em> are different, because the walk's result
+  carries only node tiers — the edges it crossed are invisible downstream, so no vet could gate a
+  secret connection after the fact. The FT lookup therefore calls
+  <a href="../data/world-store-retrieval.html#the-read-path-part-two-graph-walks"
+    ><code>charactersKnownTo</code></a
+  >
+  with <code>edgeAccessLevels: ['known']</code> (myth-got9q): a secret connection's reachability
+  never enters the FT-facing walk. Node over-pull is unchanged — a secret NPC at the end of a known
+  edge still surfaces to the ST-vet. When play reveals a connection, the
+  <a href="./scribe.html">Scribe</a> flips that edge to <code>known</code> and it starts traversing.
+</aside>
 
 <aside class="wiki-rationale">
   <strong

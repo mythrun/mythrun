@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html" class="active">World-gen experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html" class="active">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › World-gen experience</div>
         <article>
@@ -488,8 +488,13 @@
   <code>WorldReveal</code> — even though the pipeline's tail stages (<code
     >entity_consolidation</code
   >
-  through <code>embed_world</code>) are still running. The reveal fetches the owner world-snapshot
-  and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door is the
+  through <code>embed_world</code>) are still running. The reveal fetches the
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  (readable by any campaign member since myth-0xwos, so a party member's reveal renders too, not just
+  the owner's) and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door
+  is the
   introduction: the world's name as the title, a few paragraphs of grounding prose, and an ordered
   list of dig-deeper references, with the search field and the browse-by-kind index one scroll
   below. There is no separate entity list — the wiki is the browse surface.
@@ -533,7 +538,7 @@
 
 <aside class="wiki-rationale">
   <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
-  the owner world-snapshot at the same <code>world_introduction</code> boundary the endpoint's
+  the world-snapshot at the same <code>world_introduction</code> boundary the endpoint's
   readiness gate keys on, so it never races the 409. The known-tier filter is entirely
   <a href="../runtime/world-gen.html#relationship-tiering">server-side</a>: the snapshot returns
   only <code>known</code> entities, facts, relationships, <em>and</em> the introduction (its
