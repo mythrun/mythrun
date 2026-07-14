@@ -68,8 +68,19 @@ echo "→ pre-push gate (5/7): wiki source-hash freshness"
 # Source backend/.env.development so DATABASE_URL is set for the schema
 # fragment build. The check itself is a fast hash diff against the live
 # source tree (~2s). Mirrors the wiki CI workflow.
-set -a && . backend/.env.development && set +a
-pnpm wiki:check
+#
+# The sourcing is scoped to a subshell: `set -a` exports EVERYTHING in that
+# env file — including NODE_ENV=development — and an exported NODE_ENV leaks
+# into the frontend `vite build` below, silently flipping the pre-push
+# build-check to DEV mode (import.meta.env.DEV=true), so it stops mirroring
+# the deploy build (myth-fks7c: the DEV-only transport chunk appeared in the
+# pre-push dist while the real prod build correctly excluded it). The
+# subshell keeps the env inside gate 5; `set -e` still propagates a
+# wiki:check failure.
+(
+  set -a && . backend/.env.development && set +a
+  pnpm wiki:check
+)
 
 echo "→ pre-push gate (6/7): dev-tool verifier"
 # Only run when the diff touches dev-tool subtree or backend contract
