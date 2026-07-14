@@ -26,6 +26,7 @@ export { DmMessage } from './components/DmMessage/DmMessage.tsx'
 export { ThinkingIndicator } from './components/ThinkingIndicator/ThinkingIndicator.tsx'
 export { SessionStartBeat } from './components/SessionStartBeat/SessionStartBeat.tsx'
 export { SessionInput } from './components/SessionInput/SessionInput.tsx'
+export { PlayerMessage } from './components/PlayerMessage/PlayerMessage.tsx'
 
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
