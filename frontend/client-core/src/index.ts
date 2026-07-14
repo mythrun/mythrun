@@ -317,3 +317,18 @@ export type {
   KnowledgeCacheDeps,
   SnapshotToGraph,
 } from './session/knowledge-cache.ts'
+
+// In-session sheet (MYT-94): the viewer's own CuratedSheet + a live CharacterOverlay
+// folded from their ledger_update frames (authoritative SET semantics — see
+// ledger-reducer.ts). `adaptSheet` is injected until the raw→sheet adaptation is
+// promoted out of the character-new web route.
+export { useSessionSheet } from './session/use-session-sheet.ts'
+export type {
+  SessionSheetState,
+  SessionSheetDeps,
+  AdaptSheet,
+  FetchRoster,
+  FetchCharacter,
+} from './session/use-session-sheet.ts'
+export { reduceLedger, emptyOverlay } from './session/ledger-reducer.ts'
+export type { CharacterOverlay, LedgerUpdateFrame } from './session/ledger-reducer.ts'
