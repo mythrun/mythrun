@@ -22,6 +22,10 @@ export type { CreateState, CreateEvent } from './create-machine.ts'
 export { sheetViewModel } from './sheet-view-model.ts'
 export type { CharacterSheetSource, SheetAbilityScores, SheetSpell } from './sheet-view-model.ts'
 
+// The RAW getCharacter → reveal view-model adapter (promoted from the character-new
+// web route in MYT-94 so the in-session sheet view-model can adapt brain-side, R1).
+export { toCharacterSheetSource, toRevealViewModel } from './sheet-adapter.ts'
+
 export { partyRosterViewModel } from './party-roster-view-model.ts'
 export type {
   CharacterCreationProgress,

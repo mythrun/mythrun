@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import type { CharacterFull } from '@mythrun/client-core'
-import { toCharacterSheetSource, toRevealViewModel } from './sheet-adapter.ts'
+import type { CharacterFull } from '../../api/characters.ts'
+import { toCharacterSheetSource, toRevealViewModel } from '../sheet-adapter.ts'
 
-// The RAW getCharacter → reveal view-model adapter (MYT-90 D6). These tests pin the
-// deterministic derivations the adapter owns: ability modifiers by formula, the AC /
-// HP / Proficiency / Hit Die / Speed(30) stripe, the identity line (with a graceful
-// subclass OMIT — the raw shape carries no structured subclass, and the free `class`
-// string is NEVER split, per ZFC), caster-only spells, the CLASS_SAVES-driven saving
-// throws, and the skills / features / equipment reshape.
+// The RAW getCharacter → reveal view-model adapter (MYT-90 D6; promoted into
+// client-core in MYT-94). These tests pin the deterministic derivations the adapter
+// owns: ability modifiers by formula, the AC / HP / Proficiency / Hit Die / Speed(30)
+// stripe, the identity line (with a graceful subclass OMIT — the raw shape carries no
+// structured subclass, and the free `class` string is NEVER split, per ZFC),
+// caster-only spells, the CLASS_SAVES-driven saving throws, and the skills / features
+// / equipment reshape.
 
 const BASE_CHARACTER: CharacterFull['character'] = {
   id: 'char-1',

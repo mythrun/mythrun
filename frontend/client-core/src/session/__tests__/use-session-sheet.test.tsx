@@ -8,6 +8,7 @@ import { ApiClientProvider } from '../../api/client-context.tsx'
 import type { CharacterFull, PartyRoster } from '../../api/characters.ts'
 import type { CuratedSheet } from '../../contract/index.ts'
 import type { LedgerUpdateFrame } from '../ledger-reducer.ts'
+import { toRevealViewModel } from '../../character/sheet-adapter.ts'
 import {
   useSessionSheet,
   type AdaptSheet,
@@ -260,6 +261,29 @@ describe('useSessionSheet — the fetch/adapt path', () => {
     })
     expect(result.current.failed).toBe(false)
     expect(result.current.sheet).toBe(curatedFixture)
+    unmount()
+  })
+
+  it('defaults deps entirely — real reads + the canonical client-core curated adapter', async () => {
+    // No `deps` arg at all: the reads default to the real endpoints AND `adaptSheet`
+    // defaults to the client-core `toRevealViewModel(raw).curated` reshape (the
+    // promoted brain-side adapter), so the produced sheet is the real curated view.
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/${CID}/characters`, () => HttpResponse.json(rosterWithViewer)),
+      http.get(`${BASE_URL}/api/campaigns/${CID}/characters/${CHAR_ID}`, () =>
+        HttpResponse.json(rawCharacter),
+      ),
+    )
+
+    const { result, unmount } = renderHook(() => useSessionSheet(CID, VIEWER, VIEWER_CHAR, []), {
+      wrapper: makeWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.failed).toBe(false)
+    expect(result.current.sheet).toEqual(toRevealViewModel(rawCharacter).curated)
     unmount()
   })
 })

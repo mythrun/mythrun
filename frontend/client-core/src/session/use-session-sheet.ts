@@ -22,16 +22,12 @@
 //    `characterName === viewerCharacterName`) through `reduceLedger` — the caller
 //    (the shell, Task 14) passes the `ledger_update` frames it extracts from
 //    `SessionView.items`; the reducer never re-reads the transport.
-//  - The raw→CuratedSheet ADAPTER is INJECTED (deviation from the plan's hard
-//    import — see the report). The canonical reshape (`toCharacterSheetSource` +
-//    `sheetViewModel`) currently lives web-side (character-new/sheet-adapter.ts);
-//    the composition passes `(raw) => toRevealViewModel(raw).curated`. Importing
-//    it here would be a client-core → web dependency inversion (the web app
-//    depends on client-core, not the reverse), so the hook takes it through
-//    `deps.adaptSheet` — identical to how the sibling `knowledge-cache` injects
-//    Task 4's not-yet-canonical `snapshotToGraph`. The controller promotes
-//    `toCharacterSheetSource` into client-core at reconciliation, after which this
-//    hook can default `adaptSheet` and be fully brain-side (R1).
+//  - The raw→CuratedSheet ADAPTER defaults to the canonical client-core reshape
+//    (`toRevealViewModel(raw).curated`, promoted beside `sheetViewModel` in MYT-94)
+//    so the hook is fully brain-side (R1) with no injection required. `adaptSheet`
+//    stays OVERRIDABLE via `deps` for tests that pin a fixed curated fixture without
+//    exercising the whole adapter; the default is a module-level stable ref so it
+//    never re-fires the fetch effect.
 
 import { useEffect, useMemo, useState } from 'react'
 import { useApiContext } from '../api/client-context.tsx'
@@ -42,6 +38,7 @@ import {
   type CharacterFull,
   type PartyRoster,
 } from '../api/characters.ts'
+import { toRevealViewModel } from '../character/sheet-adapter.ts'
 import type { CuratedSheet } from '../contract/index.ts'
 import { emptyOverlay, reduceLedger, type CharacterOverlay, type LedgerUpdateFrame } from './ledger-reducer.ts'
 
@@ -57,15 +54,19 @@ export type FetchCharacter = (
   charId: string,
 ) => Promise<CharacterFull>
 
-/** Raw `CharacterFull` → the curated in-session sheet. Injected (see the module
- *  header): the composition passes `(raw) => toRevealViewModel(raw).curated`. */
+/** Raw `CharacterFull` → the curated in-session sheet. Defaults to the canonical
+ *  client-core adapter (see the module header); overridable via `deps` in tests. */
 export type AdaptSheet = (raw: CharacterFull) => CuratedSheet
 
-/** Injected dependencies. `adaptSheet` is REQUIRED (there is no client-core default
- *  yet — see the header); the two reads default to the real endpoints and are
- *  injected only by tests. */
+/** The default raw→curated adapter — the canonical client-core reshape. A
+ *  module-level stable ref so it never re-fires the fetch effect. */
+const defaultAdaptSheet: AdaptSheet = (raw) => toRevealViewModel(raw).curated
+
+/** Injected dependencies — all OPTIONAL. `adaptSheet` defaults to the canonical
+ *  client-core adapter; the two reads default to the real endpoints. Tests inject
+ *  any subset. */
 export interface SessionSheetDeps {
-  readonly adaptSheet: AdaptSheet
+  readonly adaptSheet?: AdaptSheet
   readonly fetchRoster?: FetchRoster
   readonly fetchCharacter?: FetchCharacter
 }
@@ -117,9 +118,13 @@ export function useSessionSheet(
   viewerUserId: string,
   viewerCharacterName: string,
   ledgerFrames: readonly LedgerUpdateFrame[],
-  deps: SessionSheetDeps,
+  deps: SessionSheetDeps = {},
 ): SessionSheetState {
-  const { adaptSheet, fetchRoster = getCharacters, fetchCharacter = getCharacter } = deps
+  const {
+    adaptSheet = defaultAdaptSheet,
+    fetchRoster = getCharacters,
+    fetchCharacter = getCharacter,
+  } = deps
   const ctx = useApiContext()
   const [fetchState, setFetchState] = useState<SheetFetchState>(LOADING_FETCH_STATE)
 
