@@ -96,6 +96,10 @@ export {
   ensurePrimaryInvite,
 } from './api/invites.ts'
 export type { Invite, InviteListItem, InvitePreview, AcceptResult } from './api/invites.ts'
+// MYT-91 arm mapping + join-path helpers: typed-code -> calm-notice arms
+// (ZFC-exempt structural mapping) + the guarded returnTo path builders.
+export { mapAcceptError, mapPreviewError, signinReturnToJoin, joinPath } from './invites/accept-arm.ts'
+export type { AcceptArmKind, PreviewArmKind } from './contract/invite/types.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'

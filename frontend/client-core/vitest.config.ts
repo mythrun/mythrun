@@ -52,6 +52,11 @@ export default defineConfig({
         // runtime logic; 100%-gated.
         'src/srd/**/*.ts',
         'src/character/**/*.ts',
+        // MYT-91 invite/join brain: the accept/preview error → arm mappings +
+        // the pure join-path helpers, and (later, T9) the live-roster hook. All
+        // runtime logic; 100%-gated. The types-only prop contracts live under
+        // src/contract/** and are not gated (like the rest of the contract barrel).
+        'src/invites/**/*.ts',
         'eslint-rules/**/*.js',
       ],
       exclude: [

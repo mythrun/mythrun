@@ -255,3 +255,14 @@ export type {
   CharacterSheetRevealProps,
   PartyRosterProps,
 } from './character/index.ts'
+
+// Invite/join contracts (MYT-91) — the DOM-free prop vocabulary for the two
+// invite/join @mythrun/ui components (InvitePanel, JoinPreview) plus the arm
+// unions the accept/preview error mappings resolve to. Type-only (the barrel
+// stays keyless — contract.test.ts).
+export type {
+  AcceptArmKind,
+  PreviewArmKind,
+  InvitePanelProps,
+  JoinPreviewProps,
+} from './invite/types.ts'
