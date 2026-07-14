@@ -100,6 +100,11 @@ export type { Invite, InviteListItem, InvitePreview, AcceptResult } from './api/
 // (ZFC-exempt structural mapping) + the guarded returnTo path builders.
 export { mapAcceptError, mapPreviewError, signinReturnToJoin, joinPath } from './invites/accept-arm.ts'
 export type { AcceptArmKind, PreviewArmKind } from './contract/invite/types.ts'
+// MYT-91 live roster: folds character_creation_complete off the campaign
+// status SSE + reloads on each reconnect; the web foreground refetch is the
+// pre-finalize fallback.
+export { useLiveRoster } from './invites/use-live-roster.ts'
+export type { LiveRosterDeps, ProgressState } from './invites/use-live-roster.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'

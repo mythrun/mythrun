@@ -2,9 +2,11 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { I18nextProvider } from 'react-i18next'
 import {
   ApiClientProvider,
+  createSseStatusClient,
   type ApiContext,
   type CampaignSummary,
   type CharacterCreationProgress,
+  type SseStatusClient,
 } from '@mythrun/client-core'
 import { i18n } from '../../i18n/config.ts'
 import { PartyStagingSurface, type PartyStagingDeps } from './party-staging.tsx'
@@ -47,8 +49,21 @@ function campaign(over: Partial<CampaignSummary> = {}): CampaignSummary {
   }
 }
 
-// A deps seam that resolves fixed data (no live backend). A large poll cadence so
-// the specimen never refetches under Storybook.
+// A never-opened status-SSE client so a specimen never touches the network — the
+// live roster stays quiet and renders the fixed specimen data.
+const quietClient = (ctx: ApiContext): SseStatusClient => {
+  const { connectionState } = createSseStatusClient(ctx)
+  return {
+    open: () => undefined,
+    onEvent: () => () => undefined,
+    onSnapshot: () => () => undefined,
+    connectionState,
+    close: () => undefined,
+  }
+}
+
+// A deps seam that resolves fixed data (no live backend); the quiet SSE client keeps
+// the specimen static under Storybook.
 function fixture(
   progress: CharacterCreationProgress,
   campaigns: readonly CampaignSummary[],
@@ -57,7 +72,7 @@ function fixture(
     getProgress: () => Promise.resolve(progress),
     getCampaigns: () => Promise.resolve(campaigns),
     finalize: () => Promise.resolve({ campaignId: STORY_CID, jobId: 'story-job' }),
-    pollMs: 1_000_000,
+    createClient: quietClient,
   }
 }
 

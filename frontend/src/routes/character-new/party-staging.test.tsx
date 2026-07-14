@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import {
   ApiClientProvider,
   HttpError,
+  createSseStatusClient,
   type ApiContext,
   type CampaignSummary,
   type CharacterCreationProgress,
+  type SseStatusClient,
 } from '@mythrun/client-core'
+import type { PipelineEvent } from '@mythrun/contract/events'
 import { i18n } from '../../i18n/config.ts'
 import { PartyStagingSurface, type PartyStagingDeps } from './party-staging.tsx'
 
@@ -71,6 +74,36 @@ interface Opts {
   readonly onFinalized?: () => void
 }
 
+/** A hand-driven status-SSE client: the test pushes `PipelineEvent`s the live
+ *  roster folds. It borrows a real (never-opened) connection store and no-ops the
+ *  rest; `createClient` is a STABLE reference (the live-roster SSE effect re-runs if
+ *  it changes). Mirrors the campaign-page test's driver. */
+function makeDriver(): {
+  createClient: NonNullable<PartyStagingDeps['createClient']>
+  emit: (e: PipelineEvent) => void
+} {
+  const eventCbs = new Set<(e: PipelineEvent) => void>()
+  const { connectionState } = createSseStatusClient(testCtx)
+  const client: SseStatusClient = {
+    open: () => undefined,
+    onEvent: (cb) => {
+      eventCbs.add(cb)
+      return () => {
+        eventCbs.delete(cb)
+      }
+    },
+    onSnapshot: () => () => undefined,
+    connectionState,
+    close: () => undefined,
+  }
+  return {
+    createClient: () => client,
+    emit: (e) => {
+      for (const cb of eventCbs) cb(e)
+    },
+  }
+}
+
 /** Resolve a full deps object from partial overrides — every seam defaults to a
  *  happy-path mock so a test only names the seam it cares about. */
 function resolveDeps(deps: PartyStagingDeps = {}): Required<PartyStagingDeps> {
@@ -78,8 +111,9 @@ function resolveDeps(deps: PartyStagingDeps = {}): Required<PartyStagingDeps> {
     getProgress: deps.getProgress ?? vi.fn().mockResolvedValue(progress()),
     finalize: deps.finalize ?? vi.fn().mockResolvedValue({ campaignId: CID, jobId: 'job-1' }),
     getCampaigns: deps.getCampaigns ?? vi.fn().mockResolvedValue([campaign()]),
-    // A large default cadence so the background poll never fires mid-test.
-    pollMs: deps.pollMs ?? 100_000,
+    // A quiet default transport (never emits, never connects) so the roster is
+    // static unless a test drives its own driver.
+    createClient: deps.createClient ?? makeDriver().createClient,
   }
 }
 
@@ -227,13 +261,57 @@ describe('PartyStagingSurface — load lifecycle', () => {
     expect(getProgress).toHaveBeenCalledTimes(2)
   })
 
-  it('polls the roster on the modest interval so late finishers surface', async () => {
-    const getProgress = vi.fn().mockResolvedValue(progress())
-    renderSurface({ viewerUserId: OWNER, deps: { getProgress, pollMs: 20 } })
-    await screen.findByTestId('party-staging')
-    // The interval refetches without any user action.
-    await waitFor(() => {
-      expect(getProgress.mock.calls.length).toBeGreaterThan(1)
+  it('refetches the roster live when a character_creation_complete event arrives', async () => {
+    const driver = makeDriver()
+    // First fetch: Pell has joined but not built a character (gathering). The event
+    // fires; the second fetch shows Pell ready — no manual reload.
+    const getProgress = vi
+      .fn()
+      .mockResolvedValueOnce(
+        progress({
+          totalMembers: 2,
+          concepts: [{ userId: OWNER, displayName: 'Kessa', status: 'completed', submittedAt: 't1' }],
+          missing: [{ userId: MEMBER, displayName: 'Pell' }],
+        }),
+      )
+      .mockResolvedValue(
+        progress({
+          totalMembers: 2,
+          concepts: [
+            { userId: OWNER, displayName: 'Kessa', status: 'completed', submittedAt: 't1' },
+            { userId: MEMBER, displayName: 'Pell', status: 'completed', submittedAt: 't2' },
+          ],
+        }),
+      )
+    const getCampaigns = vi.fn().mockResolvedValue([
+      campaign({
+        party: [
+          { userId: OWNER, displayName: 'Kessa', hasCharacter: true },
+          { userId: MEMBER, displayName: 'Pell', hasCharacter: false },
+        ],
+      }),
+    ])
+    renderSurface({
+      viewerUserId: OWNER,
+      deps: { getProgress, getCampaigns, createClient: driver.createClient },
     })
+
+    await screen.findByTestId('party-staging')
+    const pellRow = (): Element | null =>
+      screen.getByText('Pell').closest('[data-testid="party-roster-member"]')
+    expect(pellRow()?.getAttribute('data-status')).toBe('gathering')
+    // The owner's Begin is enabled throughout — the owner-role + canBegin read is unchanged.
+    const beginBefore = await screen.findByRole('button', { name: /begin/i })
+    expect((beginBefore as HTMLButtonElement).disabled).toBe(false)
+
+    act(() => {
+      driver.emit({ type: 'character_creation_complete', userId: MEMBER })
+    })
+    await waitFor(() => {
+      expect(pellRow()?.getAttribute('data-status')).toBe('ready')
+    })
+    expect(getProgress.mock.calls.length).toBeGreaterThan(1)
+    const beginAfter = await screen.findByRole('button', { name: /begin/i })
+    expect((beginAfter as HTMLButtonElement).disabled).toBe(false)
   })
 })
