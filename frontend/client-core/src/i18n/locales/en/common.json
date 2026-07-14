@@ -169,11 +169,16 @@
     }
   },
   "stub": {
-    "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
     "characterNew": "[ph_character_new_screen]",
     "play": "[ph_play_screen]",
     "settings": "[ph_settings_screen]"
+  },
+  "join": {
+    "loading": "[ph: looking up your invitation…]",
+    "invalid": "[ph: this invite link isn't valid]",
+    "loadError": "[ph: we couldn't load this invitation — try again]",
+    "retry": "[ph: try again]"
   },
   "worldGen": {
     "failedTitle": "[ph: the world stalled]",
@@ -279,10 +284,6 @@
     "settling": "[ph: settling your campaign]",
     "notFound": "[ph: we couldn't find this campaign]",
     "eyebrow": "[ph: your campaign]",
-    "invite": {
-      "title": "[ph: invite your players]",
-      "body": "[ph: send a link so your table can join — invites land next (MYT-91)]"
-    },
     "character": {
       "loading": "[ph: getting your character ready]",
       "error": {
