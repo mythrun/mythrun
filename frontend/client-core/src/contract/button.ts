@@ -61,4 +61,14 @@ export interface ButtonProps extends BaseProps {
    * `aria-expanded`.
    */
   'aria-controls'?: string
+  /**
+   * Pressed (toggle) state — for a button that toggles on/off rather than firing
+   * a one-shot action (the WAI-ARIA button toggle pattern): `true` when the
+   * control is pressed/selected, `false` when released. Use it to surface a
+   * selected state to assistive tech for a segmented single-select (e.g.
+   * PackList's à-la-carte quantity presets). Forwarded straight to the control
+   * (a native impl maps it to the platform's pressed/selected accessibility
+   * state).
+   */
+  'aria-pressed'?: boolean
 }

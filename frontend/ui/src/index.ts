@@ -31,6 +31,7 @@ export { PartyRoster } from './components/PartyRoster/PartyRoster.tsx'
 // Billing (MYT-95).
 export { CreditBalance } from './components/CreditBalance/CreditBalance.tsx'
 export { PurchaseHistory } from './components/PurchaseHistory/PurchaseHistory.tsx'
+export { PackList } from './components/PackList/PackList.tsx'
 export { CharacterSheetReveal } from './components/CharacterSheetReveal/CharacterSheetReveal.tsx'
 
 // Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
