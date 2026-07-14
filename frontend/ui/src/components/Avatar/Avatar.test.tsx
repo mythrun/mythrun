@@ -121,4 +121,35 @@ describe('Avatar', () => {
     const withFallback = render(<Avatar name="Grace Hopper" />)
     expect(await axe(withFallback.container)).toHaveNoViolations()
   })
+
+  // The `placeholder` variant — a seal for a member with no identity yet (e.g. a
+  // party member still building a character). It shows the muted hatch instead of
+  // the pigment initials, but the Root still NAMES the member for assistive tech.
+  it('renders the muted hatch placeholder instead of the pigment initials', () => {
+    render(<Avatar name="Ada Lovelace" placeholder />)
+    // Still named by the Root (the member is not silent to AT)…
+    expect(screen.getByRole('img', { name: 'Ada Lovelace' })).toBeInTheDocument()
+    // …but no pigment initials render (identity is unresolved).
+    expect(screen.queryByText('AL')).toBeNull()
+  })
+
+  it('keeps the square border-strong frame in the placeholder variant', () => {
+    render(<Avatar name="Ada Lovelace" placeholder />)
+    const root = screen.getByRole('img', { name: 'Ada Lovelace' })
+    expect(root).toHaveClass('border')
+    expect(root).toHaveClass('border-border-strong')
+    expect(root).toHaveClass('rounded-none')
+  })
+
+  it('a placeholder ignores src/color and shows no image or pigment', () => {
+    render(<Avatar name="Ada Lovelace" placeholder src="https://example.test/ada.png" color="lapis" />)
+    // No initials chip (so no pigment), and the Root is still named.
+    expect(screen.queryByText('AL')).toBeNull()
+    expect(screen.getByRole('img', { name: 'Ada Lovelace' })).toBeInTheDocument()
+  })
+
+  it('has no axe violations in the placeholder variant', async () => {
+    const { container } = render(<Avatar name="Ada Lovelace" placeholder />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
 })

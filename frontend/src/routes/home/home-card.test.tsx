@@ -136,3 +136,54 @@ describe('CampaignCard — party seals + click target', () => {
     expect(screen.getByRole('link').getAttribute('href')).toBe('/campaigns/c-42')
   })
 })
+
+describe('CampaignCard — assembling party (built vs building seals)', () => {
+  // The hub foot reflects the party FILLING: a member who has made a character
+  // (`hasCharacter:true`) is a pigment Avatar seal; a member who has joined but is
+  // still building (`hasCharacter:false`) is a distinct muted 1-bit placeholder
+  // seal (the roster's hatch treatment) — NOT a chip/dot (register rule) — so an
+  // owner watching the hub sees the party assemble.
+  it('renders built members as pigment seals and a distinct placeholder seal for each still-building member', () => {
+    const party = [
+      { userId: 'u-1', displayName: 'Ada', hasCharacter: true },
+      { userId: 'u-2', displayName: 'Bram', hasCharacter: true },
+      { userId: 'u-3', displayName: 'Cyra', hasCharacter: false },
+    ]
+    renderCard(makeCampaign({ party }))
+    // Built members are pigment Avatar seals (role="img", named).
+    expect(screen.getByRole('img', { name: 'Ada' })).toBeDefined()
+    expect(screen.getByRole('img', { name: 'Bram' })).toBeDefined()
+    // The still-building member renders a distinct placeholder seal (by testid, not
+    // a chip) that still names the member — a11y parity with the pigment seals.
+    const building = screen.getAllByTestId('card-building-seal')
+    expect(building).toHaveLength(1)
+    expect(building[0]?.getAttribute('aria-label')).toBe('Cyra')
+  })
+
+  it('renders a solo built owner as a single seal with no placeholder', () => {
+    renderCard(makeCampaign({ party: [{ userId: 'u-1', displayName: 'Ada', hasCharacter: true }] }))
+    expect(screen.getByRole('img', { name: 'Ada' })).toBeDefined()
+    expect(screen.queryByTestId('card-building-seal')).toBeNull()
+  })
+
+  it('caps the combined party at 5 seals (built first, then building) with a +N overflow', () => {
+    // 3 built + 4 building = 7 total → the first 5 (3 built + 2 building) render as
+    // seals and the remaining 2 collapse into a single +2 overflow.
+    const party = [
+      ...Array.from({ length: 3 }, (_, i) => ({
+        userId: `b-${String(i)}`,
+        displayName: `Built ${String(i)}`,
+        hasCharacter: true,
+      })),
+      ...Array.from({ length: 4 }, (_, i) => ({
+        userId: `g-${String(i)}`,
+        displayName: `Gathering ${String(i)}`,
+        hasCharacter: false,
+      })),
+    ]
+    renderCard(makeCampaign({ party }))
+    // Both a pigment Avatar and a placeholder seal are role="img"; 5 seals show.
+    expect(screen.getAllByRole('img')).toHaveLength(5)
+    expect(screen.getByText('+2')).toBeDefined()
+  })
+})

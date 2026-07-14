@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { render, screen, waitFor, act, fireEvent, configure } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -146,9 +146,13 @@ function balanceOk(balance: BalanceResponse = BALANCE) {
 
 // Render the real route tree at /home through the real provider stack. A fresh
 // QueryClient per render (retry: false → a 500 case errors immediately, no retry
-// storm) keeps each test's cache isolated.
-function renderHome(): void {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+// storm) keeps each test's cache isolated. `queryDefaults` lets a case mirror the
+// PRODUCTION default set (providers.tsx) — the focus-refetch case pins
+// `refetchOnWindowFocus:false` globally to prove the hub query overrides it.
+function renderHome(queryDefaults: Record<string, unknown> = {}): void {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, ...queryDefaults } },
+  })
   const router = createMemoryRouter(routes, { initialEntries: ['/home'] })
   const wrapper = ({ children }: { children: ReactNode }): React.JSX.Element => (
     <ThemeProvider>
@@ -325,5 +329,52 @@ describe('home hub (wired)', () => {
       expect(screen.getByTestId('error-retry')).toBeDefined()
     })
     expect(screen.getByTestId('error-retryable')).toBeDefined()
+  })
+
+  it('re-fetches the hub on window focus (the hub query overrides the global refetchOnWindowFocus:false)', async () => {
+    seedReady()
+    // Count the /mine hits so the focus-refetch is observable as a second request.
+    let mineCalls = 0
+    server.use(
+      http.get(`${BASE_URL}/api/campaigns/mine`, () => {
+        mineCalls += 1
+        return HttpResponse.json({ campaigns: [campaignA] })
+      }),
+      balanceOk(),
+    )
+
+    // Mirror production: providers.tsx disables refetch-on-focus app-wide, so the
+    // hub's per-query `refetchOnWindowFocus:true` must OVERRIDE it — otherwise a
+    // just-joined member never surfaces on the hub without a manual reload.
+    renderHome({ refetchOnWindowFocus: false })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('campaign-card-c-1')).toBeDefined()
+    })
+    const callsBeforeFocus = mineCalls
+
+    // useSuspenseQuery clamps staleTime to a 1s floor (ensureSuspenseTimers), so a
+    // focus in that first second sees a still-fresh query and won't refetch. A real
+    // user tabs back well after 1s; wait past the floor so the query is stale.
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+
+    // Simulate the tab regaining focus deterministically via the focusManager
+    // singleton (raw visibilitychange/focus event dispatch is flaky in jsdom):
+    // toggle away then back so the manager fires a focus change.
+    act(() => {
+      focusManager.setFocused(false)
+    })
+    act(() => {
+      focusManager.setFocused(true)
+    })
+
+    await waitFor(() => {
+      expect(mineCalls).toBeGreaterThan(callsBeforeFocus)
+    })
+
+    // Restore auto-detected focus so the singleton doesn't bleed into later tests.
+    act(() => {
+      focusManager.setFocused(undefined)
+    })
   })
 })

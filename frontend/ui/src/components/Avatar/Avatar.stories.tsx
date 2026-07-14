@@ -30,6 +30,7 @@ const meta: Meta<typeof Avatar> = {
     src: { control: 'text' },
     size: { control: 'inline-radio', options: ['sm', 'md', 'lg'] },
     color: { control: 'select', options: [undefined, ...AVATAR_COLOR_NAMES] },
+    placeholder: { control: 'boolean' },
   },
   args: { name: 'Ada Lovelace', size: 'md' },
 }
@@ -115,3 +116,17 @@ export const AutoAssign: Story = {
 // image avatar is framed, not borderless. The picture is clipped object-cover
 // inside the bordered frame.
 export const BorderedImage: Story = { args: { src: SAMPLE_IMAGE } }
+
+// The `placeholder` variant — a seal for a member with no identity yet (a party
+// member who has joined but not made a character). The muted `--ink-tertiary`
+// hatch fills the square instead of a pigment; the Root still names the member.
+// At all three sizes so the hatch density reads at each seal measure.
+export const Placeholder: Story = {
+  render: () => (
+    <div className="flex items-center gap-[var(--space-3)]">
+      <Avatar name="Ada Lovelace" placeholder size="sm" />
+      <Avatar name="Ada Lovelace" placeholder size="md" />
+      <Avatar name="Ada Lovelace" placeholder size="lg" />
+    </div>
+  ),
+}

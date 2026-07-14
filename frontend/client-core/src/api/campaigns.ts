@@ -25,6 +25,12 @@ export function useMyCampaigns() {
   return useSuspenseQuery({
     queryKey: ['campaigns', 'mine'],
     queryFn: () => getMyCampaigns(undefined, ctx),
+    // The hub has NO status stream (MYT-91) — a member who joins or finishes their
+    // character on another surface won't push here. Re-fetch on window focus so
+    // tabbing back to the hub surfaces the assembled party (built vs building
+    // seals) without a manual reload. This OVERRIDES the app-wide
+    // `refetchOnWindowFocus:false` default (providers.tsx) for this one query.
+    refetchOnWindowFocus: true,
   })
 }
 
