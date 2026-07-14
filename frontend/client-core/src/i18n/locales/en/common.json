@@ -172,8 +172,7 @@
     "join": "[ph_join_screen]",
     "recap": "[ph_recap_screen]",
     "characterNew": "[ph_character_new_screen]",
-    "play": "[ph_play_screen]",
-    "settings": "[ph_settings_screen]"
+    "play": "[ph_play_screen]"
   },
   "worldGen": {
     "failedTitle": "[ph: the world stalled]",
@@ -524,6 +523,26 @@
     }
   },
   "billing": {
+    "sectionTitle": "[ph: sessions & billing]",
+    "sessionLabel": "[ph: session credits]",
+    "worldGenLabel": "[ph: world credits]",
+    "subscribe": "[ph: subscribe]",
+    "upgrade": "[ph: upgrade]",
+    "manage": "[ph: manage]",
+    "current": "[ph: current plan]",
+    "buy": "[ph: buy]",
+    "pricePerMonth": "[ph: {{price}} / mo]",
+    "priceEach": "[ph: {{price}} each]",
+    "portalLink": "[ph: manage billing & payment methods]",
+    "pendingUpgrade": "[ph: an upgrade is already processing — it'll settle shortly]",
+    "history": {
+      "title": "[ph: purchase history]",
+      "empty": "[ph: no purchases yet]",
+      "purchase": "[ph: purchase — {{amount}}]",
+      "subscription": "[ph: {{tier}} — {{amount}}]",
+      "refund": "[ph: refund — {{amount}}]",
+      "refundedSuffix": "[ph: (refunded)]"
+    },
     "return": {
       "polling": "[ph: confirming your purchase…]",
       "settled": "[ph: credits added — you're all set]",
