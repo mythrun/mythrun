@@ -20,7 +20,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:4e83facc0a9cec6811254600bb23b158e5db7bafa79b9b5b912af4fa42c198eb -->
+<!-- source-hash: sha256:9d4c09a79c9e37be70189f482c0f81a4907a6375713dfdea06750f54c97a37ac -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>Design system</h1>
@@ -373,7 +373,9 @@
     <strong>Display</strong> — <code>Avatar</code>/<code>AvatarGroup</code> (image-with-initials
     fallback, twelve curated pigments; <code>AvatarGroup</code> gained a <code>size</code> and a
     <code>surface</code> prop — its overlap ring follows either the page or a card surface, so seals
-    clustered on a card don't halo), <code>CoverDither</code> (a card-scale full-field Bayer
+    clustered on a card don't halo; MYT-91 added a <code>placeholder</code> variant — a muted hatch
+    seal for a party member who hasn't made a character yet, the one reusable primitive the
+    <a href="./invites-party.html">invites &amp; party</a> surface contributed), <code>CoverDither</code> (a card-scale full-field Bayer
     gradient between two <code>WorldColor</code>s — a world's cover art, distinct from the
     fixed-geometry transition-strip <code>Dither</code>), <code>Badge</code>, <code>Dither</code>.
   </li>
@@ -435,7 +437,15 @@
   <code>CharacterSheetReveal</code>, and <code>PartyRoster</code> — are controlled/presentational
   feature components (their sequencing lives in a client-core reducer, not the component) documented
   on that page, while the reusable primitive extension it needed landed in the system as the
-  <code>Button</code> disclosure props above.
+  <code>Button</code> disclosure props above. The play/invite/billing wave (MYT-91/92/95) drew it
+  once more: the six <a href="./live-play.html">live-play</a> components
+  (<code>MessageStream</code>/<code>DmMessage</code>/<code>PlayerMessage</code>/<code>SessionInput</code>/<code>SessionStartBeat</code>/<code>ThinkingIndicator</code>),
+  the <a href="./invites-party.html">invite</a> pair (<code>InvitePanel</code>/<code>JoinPreview</code>),
+  and the four <a href="./billing-credits.html">billing</a> components
+  (<code>CreditBalance</code>/<code>PackList</code>/<code>PurchaseHistory</code>/<code>PurchasePrompt</code>)
+  are all controlled feature composites documented on their pages — their state lives in client-core
+  reducers and view-models — while the one reusable primitive that wave added to the system is the
+  <code>Avatar</code> <code>placeholder</code> variant above.
 </p>
 
 <h2>Responsive by construction</h2>

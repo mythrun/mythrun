@@ -1,0 +1,474 @@
+<!-- source: frontend/src/routes/play.tsx -->
+<!-- source: frontend/src/routes/play/ -->
+<!-- source: frontend/client-core/src/session/ -->
+<!-- source: frontend/client-core/src/api/play-session.ts -->
+<!-- source: frontend/client-core/src/contract/session/ -->
+<!-- source: frontend/ui/src/components/DmMessage/ -->
+<!-- source: frontend/ui/src/components/PlayerMessage/ -->
+<!-- source: frontend/ui/src/components/MessageStream/ -->
+<!-- source: frontend/ui/src/components/SessionInput/ -->
+<!-- source: frontend/ui/src/components/SessionStartBeat/ -->
+<!-- source: frontend/ui/src/components/ThinkingIndicator/ -->
+<!-- source-hash: sha256:15277d03324c49106750a50c31a8b98549b83362836f25851f21d95a4c30d9c4 -->
+<!-- last-ticket: MYT-92 -->
+
+<h1>Live play</h1>
+
+<p class="lead">
+  The table itself: <code>/campaigns/:id/play</code>, where the party and the AI DM run a session.
+  An atmospheric prep beat gives way to a Start that debits the owner's session credit, then the
+  screen becomes a streamed multiplayer transcript — the DM's prose arrives token by token, the
+  humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, and a
+  dropped connection resyncs without double-rendering the turn it dropped during. The route is a thin
+  composition; all the reasoning — the start classifier, the transcript reducer, the transport
+  view-model — lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
+</p>
+
+<!-- @diagram: frontend/live-play -->
+
+<aside class="wiki-rationale">
+  <strong>The screen adds no frame type and no read surface</strong> — enforced ignorance holds here
+  by construction, not by prompt discipline. The play screen only ever renders frames the
+  <a href="../runtime/session-transport.html">session transport</a> hands it; it introduces no new
+  WebSocket frame, no new backend read. There is deliberately no Slow-Thinker stage-direction frame
+  anywhere in the client, and nothing on this screen may add one — the reason the DM intervened is
+  never on the wire the player consumes.
+</aside>
+
+<h2>How it fits together</h2>
+
+<p>
+  <code>PlayRoute</code> (<code>routes/play.tsx</code>) is the router-mounted entry, and because the
+  router mounts it directly — not through <a href="./character-creation.html">CampaignPage</a>, which
+  feeds the character surface a <code>campaign</code> prop — it resolves its <em>own</em> identity
+  signals first. <code>usePlayViewer</code> loads two reads it already has slices for: <code>getMe</code>
+  (the viewer's DB id — the reconcile key the server stamps on this player's message echoes — plus the
+  display name) and the same <code>GET /api/campaigns/mine</code> payload the
+  <a href="./campaign-hub.html">hub</a> renders, found by id. From the campaign it derives ownership
+  (<code>creator === null</code> ⟹ owner, the same signal
+  <a href="./character-creation.html">character creation</a> uses) and the party roster
+  (<code>userId → displayName</code>). A campaign the viewer can't see resolves to a calm error — you
+  can't play a session you're not a member of.
+</p>
+
+<p>
+  With the viewer resolved, <code>PlaySession</code> owns the rest. It calls <code>start()</code> once
+  on mount and renders by the start flow's phase: the short connecting beat while the attempt is in
+  flight, the prep beat, the live session shell, the purchase seam, or a calm retry notice. The route
+  file itself stays a thin shell — the client-core hooks (the start classifier, the prep SSE fold, the
+  transport view-model) carry every judgment, and each is an injectable seam so a test drives any
+  phase deterministically without a live transport.
+</p>
+
+<h2>The start flow — one classifier, five arms</h2>
+
+<p>
+  <code>POST /api/sessions/:campaignId/start</code> debits <strong>the campaign owner's</strong>
+  session credit regardless of who pressed Start, and answers with one of several shapes that each
+  mean a different next screen. <code>classifyStartError</code> (in
+  <code>client-core/session/start-flow.ts</code>) maps a caught error to a discriminated
+  <code>StartOutcome</code>, keying <strong>only</strong> on the contract-blessed
+  <code>status</code>/<code>code</code>/<code>body</code> — never on prose (the
+  <a href="../runtime/index.html">ZFC</a> line: pure orchestration, no pattern-matching). The
+  <code>useSessionStart</code> hook resolves each outcome to a render phase:
+</p>
+
+<ul>
+  <li><strong><code>200</code></strong> → <code>ready{sessionId}</code>: mount the live shell.</li>
+  <li>
+    <strong><code>409 session_already_active</code></strong> → the <em>join</em> path. The 409 body
+    carries no sessionId, so the hook calls <code>GET …/active</code> to resolve the running session's
+    id, then mounts the shell against it. This is the mid-session join.
+  </li>
+  <li>
+    <strong><code>409 prep_not_ready</code></strong> → the prep beat (below), which resolves
+    <em>upward</em>: when prep completes it re-attempts <code>start()</code>.
+  </li>
+  <li>
+    <strong><code>402 insufficient_credits</code></strong> → the
+    <a href="./billing-credits.html">purchase moment</a>, carrying the owner-vs-member split.
+  </li>
+  <li>
+    <strong><code>409 campaign_not_active</code> / <code>reconcile_pending</code> /
+    <code>session_ending</code></strong> → a calm, retryable "blocked" notice; anything unrecognized
+    is a generic retry.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The join arm and the prep arm are only distinguishable because the backend reordered its
+  preconditions (MYT-92)</strong> — the start flow drives the atmospheric prep beat on
+  <code>prep_not_ready</code> and the join path on <code>session_already_active</code>, so the two
+  must be told apart truthfully. Until the play E2E caught it, a member whose <code>/start</code>
+  raced an already-running session got <code>prep_not_ready</code> — because
+  <code>maxSessionNumber</code> counts the live session, so the "next" prep legitimately doesn't
+  exist — and pinned forever on the prep beat. The
+  <a href="../runtime/session-transport.html#starting-a-session-the-atomicity-critical-ordering">fix
+  moved the active-session guard ahead of the prep guard</a> on the server; the client relies on that
+  discrimination.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Seed <code>lastSeq = 0</code> on the very first connect</strong> — the view-model connects
+  with <code>seedLastSeq: 0</code>, which asks the transport for a full-history replay. A fresh connect
+  would otherwise get a <code>session_ready</code> with no messages, and only a reconnect replays the
+  backlog. Seeding zero makes the owner's first connect, a reload, and the 409-join / mid-session
+  joiner all rebuild the whole transcript from one <code>session_reconnect</code> batch — one code
+  path covers every entry into a running session.
+</aside>
+
+<p>
+  The <strong>prep beat</strong> (<code>PrepBeat</code> + <code>useSessionPrep</code>) is the
+  "the DM is preparing tonight's session…" experience. It rides the shipped
+  <a href="../runtime/session-prep.html">prep-status SSE</a> (the campaign-scoped channel, distinct
+  from world-gen), seeds its coarse bit off the connect-time snapshot, and advances on the live
+  <code>prep-started</code>/<code>prep-ready</code>/<code>prep-failed</code> events. On
+  <code>ready</code> it re-attempts start. It <strong>latches</strong> a failure: because a reconnect
+  re-snapshots <code>generating</code> (the prep row's existence is the snapshot's only signal), the
+  beat holds a seen failure on the calm retry rather than re-arming the atmospheric wait off a
+  post-failure re-snapshot.
+</p>
+
+<h2>The transcript reducer — the reconnect-safe core</h2>
+
+<p>
+  Once a session is <code>ready</code>, <code>SessionShell</code> drives <code>useSession</code>, the
+  view-model over the shipped <a href="./realtime-transport.html">WS session client</a> (a dumb typed
+  pipe with production-grade reconnection). Every inbound frame folds through
+  <code>reduceFrameReconciling</code> — the pure <code>transcript-reducer.ts</code> wrapped in the
+  optimistic own-echo layer. The reducer models the transcript as an ordered list of
+  <code>TranscriptItem</code>s and owns <strong>transcript content only</strong>: the streamed DM
+  prose (<code>text_delta</code> accumulates into one <code>dm</code> item per <code>turnId</code>,
+  settling on <code>turn_end</code>), the confirmed player messages (deduped on <code>seq</code>), and
+  every mechanical frame.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Every mechanical frame is a first-class item, even though MYT-92 renders it as one mono
+  line</strong> — <code>skill_check</code>, <code>dice_roll</code>, <code>ledger_update</code>,
+  <code>mode_change</code>, and the two <code>combat_*</code> frames each become a typed transcript
+  item carrying the whole frame, not a flattened string. MYT-92 renders each as a terse system line,
+  but modeling them fully now is the wave-2 shared contract: the
+  <a href="./character-creation.html">dice-and-skill-checks</a> and knowledge-sidebar issues extend
+  the <em>rendering</em> (MessageStream's item dispatch), never the reducer's shape. The reducer is
+  wave-2-final so two parallel issues can build on it without touching it.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Whole-turn replace, so a reconnect can't double-render the turn it dropped during</strong> —
+  a client that drops mid-turn has a partial <code>dm</code> item built from live
+  <code>text_delta</code>s. On reconnect the transport replays that same turn as seq-bearing rows. If
+  the reducer merely appended them, the turn would render twice. So <code>applyReconnect</code> — an
+  explicit <em>folder seam</em>, not a hidden branch — first prunes every existing DM/mechanical item
+  whose <code>turnId</code> the replay batch carries, then re-folds the batch so each turn rebuilds
+  settled. Player items (turnId <code>null</code>) survive the prune and dedup on <code>seq</code>
+  instead. The seam is a separate exported function precisely so the optimistic layer can re-fold the
+  same batch through a <em>reconciling</em> folder (below) rather than the raw one.
+</aside>
+
+<h2>Optimistic own-messages</h2>
+
+<p>
+  A player's own message appears the instant it's typed — <code>addPending</code> appends a
+  <code>player</code> item with <code>pending: true</code> and no seq, keyed by a stable local id so
+  React reuses the same node when the server echo confirms it in place. <code>reduceFrameReconciling</code>
+  wraps the raw reducer: an inbound own <code>player_message</code> reconciles the <strong>first</strong>
+  matching pending item — settling it and adopting the server's authoritative seq — instead of
+  appending a duplicate. Because that confirmation happens outside the raw append path, it records the
+  seq in the dedup ledger itself, or a redelivery would slip past. On a
+  <code>reconnecting → connected</code> transition the hook arms a resend that fires <em>after</em> the
+  replay batch settles: the replay confirms the messages that landed, and every still-pending one is
+  re-sent.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The resend can duplicate, and that residual is accepted on purpose</strong> — the wire
+  protocol carries no client message id, so reconciliation matches on
+  <code>(viewerUserId, text)</code> in FIFO order. If a pending message actually landed but fell
+  outside the transport's filtered replay window, the reconnect resend duplicates it. Adding a client
+  message id is out of MYT-92 scope, so the residual is annotated in the code rather than hidden — the
+  two dominant paths (a first-join backlog and a single in-flight-turn reconnect) are exact, and a
+  rare duplicate on a lossy reconnect is the accepted cost of an input that never feels laggy.
+</aside>
+
+<h2>Presence, and the parts the reducer won't touch</h2>
+
+<p>
+  The reducer deliberately ignores the out-of-band control and presence frames; <code>useSession</code>
+  folds those into a separate <code>SessionPresence</code> state through <code>foldOutOfBand</code>.
+  The <strong>thinking indicator</strong> opens on <code>dm_thinking</code> and clears on the first
+  <code>text_delta</code>/<code>turn_end</code>/<code>turn_error</code> for that turn; the
+  <strong>typing set</strong> tracks <code>typing_start</code>/<code>typing_stop</code>; the
+  <strong><code>ended</code> flag</strong> flips on <code>session_end</code>. A <code>session_reconnect</code>
+  resets the thinking indicator, so a stuck "DM is thinking…" can't survive a drop — a turn genuinely
+  still running re-arms it with a fresh live frame. The route maps the transport's own connection
+  status (<code>reconnecting</code>/<code>failed</code>) to a quiet system line pinned under the
+  transcript, and resolves the presence typing userIds to display names through the party roster
+  (unknown ids are omitted, never shown raw).
+</p>
+
+<h2>The stage — six components, two registers</h2>
+
+<p>
+  <code>SessionShell</code> composes six <a href="./design-system.html">mythrunUI</a> components into a
+  full-height flex column: the scroller, the thinking line, and the input, beside a desktop-only
+  sidebar seam. The register split <em>is</em> the meaning — the DM speaks in narrative, the humans at
+  the table speak in the mechanical voice:
+</p>
+
+<ul>
+  <li>
+    <strong><code>MessageStream</code></strong> — the transcript scroller. Auto-follows the tail with
+    a "jump to now" affordance, and positions <em>instantly</em> under
+    <code>prefers-reduced-motion</code> (no smooth-scroll vestibular trigger). It dispatches each
+    transcript item to its renderer and carries the connection system line.
+  </li>
+  <li>
+    <strong><code>DmMessage</code></strong> — the DM's prose in <strong>Source Serif 4</strong>
+    (<code>--font-body</code>), on a paper tint, appended token-wise as <code>text_delta</code>s
+    arrive and settling on <code>turn_end</code>.
+  </li>
+  <li>
+    <strong><code>PlayerMessage</code></strong> — a human utterance in <strong>IBM Plex Mono</strong>
+    (<code>--font-ui</code>), a distinct tint, on its own paper band. There is no bubbles-and-avatars
+    chat idiom; the mono voice marks the players as the mechanical register against the DM's narrative
+    one.
+  </li>
+  <li>
+    <strong><code>SessionInput</code></strong> — the composer, with a prominent <code>@DM</code>
+    summon. The summon uses the <strong>explicit-text path</strong>: it composes the visible
+    <code>@dm</code> token into the sent message, which persists and broadcasts as an ordinary
+    <code>player_message</code> the backend's explicit-trigger path recognizes — so the whole table
+    sees the summon. The invisible <code>dm_invoke</code> frame is deliberately not used.
+  </li>
+  <li>
+    <strong><code>SessionStartBeat</code></strong> — the 1-bit loading-beat family, with two labeled
+    phases: the SSE-driven atmospheric prep wait and the short socket-connect boundary. Reduced-motion
+    lands instantly.
+  </li>
+  <li>
+    <strong><code>ThinkingIndicator</code></strong> — "DM is thinking…" on the thinking bit, player
+    typing on the typing set.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>The <code>@DM</code> summon is explicit text, not an invisible control frame</strong> — the
+  transport supports a payload-free <code>dm_invoke</code> summon, but the play screen composes a
+  visible <code>@dm</code> token into a normal message instead. A summon is a social act at the table;
+  routing it through the visible transcript means the other players see who called the DM and why,
+  rather than the DM answering an invisible prod. <code>composeSummon</code> is a deterministic string
+  helper (a protocol token, not user copy, so it is not an i18n key).
+</aside>
+
+<h3>The full-bleed frame</h3>
+
+<p>
+  The play route escapes the app frame's padded content box: it carries a <code>fullBleed</code>
+  route handle that <a href="./app-shell.html">AppFrame</a> reads to render header-plus-stage as
+  exactly one viewport, so the transcript scrolls <em>inside</em> its column and the page never
+  scrolls. The unbroken <code>min-h-0</code> flex-scroll chain (the full-bleed AppFrame root → the
+  play route root → the transcript column → <code>MessageStream</code>) is the one place the play
+  routes use a raw layout element — the layout scaffold isn't expressible through mythrunUI
+  <code>Stack</code> props (which ban <code>className</code>), so it takes the sanctioned, reasoned
+  <code>no-ad-hoc-ui</code> escape hatch, while every piece of visible content composes the design
+  system.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A route handle, not ad-hoc negative margins — and a declared shared file</strong> — the
+  full-bleed breakout is owned by the play route as an explicit AppFrame variant because MYT-95's
+  <a href="./billing-credits.html">header credit chrome</a> edits the same <code>AppFrame</code>. The
+  two changes were declared up front so neither worktree rewrote the frame wholesale: the play route
+  owns the content full-bleed variant, the billing work owns the header. A pile of negative margins on
+  the screen would have collided; a route-handle variant keeps the frame's one composition root intact.
+</aside>
+
+<h3>Session end lands on the recap route</h3>
+
+<p>
+  When <code>session_end</code> arrives the shell shows a brief "session complete" transition and
+  navigates to <code>/campaigns/:id/recap</code>. That is where MYT-92 stops.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The recap is a stub route, deliberately — not silently dropped</strong> — the session's
+  summary exists in the database (<a href="../runtime/session-reconcile.html">post-session analysis</a>
+  writes <code>sessions.summary</code>), but there is no player-facing recap read yet. So MYT-92's
+  done-when was softened to "session end lands on the recap route," with the real recap screen and a
+  minimal recap read filed as a follow-up bead (which also resolves the campaignId-vs-sessionId param
+  question). The UX-spec recap experience is explicitly deferred, not quietly abandoned.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Walk a live session end-to-end (dev)</h3>
+<ol>
+  <li>
+    Bring up the stack (<code>pnpm db:up</code>, <code>pnpm dev</code> for backend + worker, the web
+    app), sign in, and take a campaign through
+    <a href="./character-creation.html">character creation</a> to the play entry. A real session needs
+    live Anthropic credentials.
+  </li>
+  <li>
+    Enter <code>/campaigns/:id/play</code>. If prep hasn't run you land on the atmospheric prep beat;
+    when it completes, Start debits the <strong>owner's</strong> session credit and the transcript
+    opens. Type a message — it posts instantly (optimistic), then settles when its seq echo returns —
+    and watch the DM's prose stream in token by token.
+  </li>
+  <li>
+    Open the same campaign as a <strong>second identity</strong> mid-session: it should rebuild the
+    full backlog (the <code>lastSeq = 0</code> seed), then stream live and show typing presence.
+    Press <code>@DM</code> — the summon is visible to both tables and draws a response.
+  </li>
+  <li>
+    Kill and restore the connection mid-turn: the turn resyncs without double-rendering. Then end the
+    session (the <code>end_session</code> summon) — the DM renders a send-off, then the screen lands on
+    the recap route.
+  </li>
+  <li>
+    To inspect the wire, watch the WS frames and the <code>session_messages</code> /
+    <code>credit_ledger</code> rows — the server side is on the
+    <a href="../runtime/session-transport.html">session transport</a> page.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  This screen is the client half of the <a href="../runtime/session-transport.html">session
+  transport</a>: it consumes that transport's frames through the shipped
+  <a href="./realtime-transport.html">WS session client</a> and prep-status SSE, and every start arm
+  maps to a backend precondition documented there. The 402 arm hands off to the
+  <a href="./billing-credits.html">billing &amp; credits</a> purchase moment; the full-bleed frame is a
+  declared shared edit with that work on the <a href="./app-shell.html">app shell</a>'s
+  <code>AppFrame</code>. The play entry itself is reached from
+  <a href="./character-creation.html">character creation</a> once the party finalizes, and every
+  visible element is a <a href="./design-system.html">mythrunUI</a> component over the DOM-free
+  <a href="./app-shell.html">client brain</a>. The session-end recap read and the wave-2 mechanical-
+  frame rendering (dice cards, the knowledge sidebar) build on this reducer's first-class item shape.
+</p>
+
+<h2>Appendix: the modules</h2>
+
+<h3>Client-core — the brain (<code>client-core/session</code>)</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>start-flow.ts</code></td>
+    <td>
+      <code>classifyStartError</code> + <code>useSessionStart</code> — the start classifier and its
+      async state machine; exports the <code>PurchaseMoment</code> seam MYT-95 consumes.
+    </td>
+  </tr>
+  <tr>
+    <td><code>use-session.ts</code></td>
+    <td>
+      The play view-model over the WS client — folds frames, owns out-of-band presence
+      (<code>foldOutOfBand</code>), sends optimistically, resends on reconnect.
+    </td>
+  </tr>
+  <tr>
+    <td><code>transcript-reducer.ts</code> · <code>transcript-types.ts</code></td>
+    <td>
+      The pure per-frame reducer + item types; <code>applyReconnect</code> is the whole-turn-replace
+      folder seam.
+    </td>
+  </tr>
+  <tr>
+    <td><code>optimistic.ts</code></td>
+    <td>
+      <code>addPending</code> / <code>reduceFrameReconciling</code> / <code>unconfirmedPending</code> —
+      the own-echo FIFO reconcile layer.
+    </td>
+  </tr>
+  <tr>
+    <td><code>use-session-prep.ts</code></td>
+    <td>The prep-status SSE fold → <code>{ status, terminal }</code>.</td>
+  </tr>
+  <tr>
+    <td><code>api/play-session.ts</code></td>
+    <td>The <code>startSession</code> / <code>getActiveSession</code> endpoint slices.</td>
+  </tr>
+</table>
+
+<h3>Web — the composition (<code>routes/play</code>)</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>play.tsx</code> · <code>play/play-viewer.ts</code></td>
+    <td>
+      <code>PlayRoute</code> + <code>usePlayViewer</code> — the full-bleed route; resolves viewer id,
+      ownership, and the party roster.
+    </td>
+  </tr>
+  <tr>
+    <td><code>play/play-session.tsx</code></td>
+    <td>The started-session driver — kicks off start, dispatches the phase to its screen.</td>
+  </tr>
+  <tr>
+    <td><code>play/session-shell.tsx</code> · <code>session-compose.ts</code></td>
+    <td>
+      The live stage (the six components + the route-side send / connection-line / typing-name
+      wiring); the pure compose helpers (<code>composeSummon</code>, …).
+    </td>
+  </tr>
+  <tr>
+    <td><code>play/prep-beat.tsx</code> · <code>purchase-seam.tsx</code> · <code>notices.tsx</code> · <code>sidebar-placeholder.tsx</code></td>
+    <td>
+      The prep phase (with the failure latch), the 402 purchase seam, the calm holds/notices, and the
+      collapsed sidebar seam MYT-94 fills.
+    </td>
+  </tr>
+</table>
+
+<h3>mythrunUI — the six play components</h3>
+<table>
+  <tr>
+    <th>Component</th>
+    <th>Register / behavior</th>
+  </tr>
+  <tr>
+    <td><code>MessageStream</code></td>
+    <td>The scroller — auto-follow + jump-to-now; instant positioning under reduced motion.</td>
+  </tr>
+  <tr>
+    <td><code>DmMessage</code></td>
+    <td>Serif (<code>--font-body</code>), paper tint, token-streamed, settles on turn end.</td>
+  </tr>
+  <tr>
+    <td><code>PlayerMessage</code></td>
+    <td>Mono (<code>--font-ui</code>), own paper band — the mechanical register, no bubbles.</td>
+  </tr>
+  <tr>
+    <td><code>SessionInput</code></td>
+    <td>Compose + send + the visible <code>@DM</code> explicit-text summon.</td>
+  </tr>
+  <tr>
+    <td><code>SessionStartBeat</code></td>
+    <td>The 1-bit beat — prep phase (SSE) + connect phase; reduced-motion instant.</td>
+  </tr>
+  <tr>
+    <td><code>ThinkingIndicator</code></td>
+    <td>DM-thinking + player-typing presence line.</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>,
+  <code>frontend/client-core/src/session/</code> (the transcript reducer + types, the optimistic
+  layer, <code>use-session</code>, <code>use-session-prep</code>, <code>start-flow</code>),
+  <code>frontend/client-core/src/api/play-session.ts</code>,
+  <code>frontend/client-core/src/contract/session/</code>, and the <code>DmMessage</code> /
+  <code>PlayerMessage</code> / <code>MessageStream</code> / <code>SessionInput</code> /
+  <code>SessionStartBeat</code> / <code>ThinkingIndicator</code> components under
+  <code>frontend/ui/src/components/</code>.
+</p>

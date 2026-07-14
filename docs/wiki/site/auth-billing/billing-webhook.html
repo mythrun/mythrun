@@ -515,6 +515,29 @@
   <a href="./stripe-contract.html">Stripe contract</a>.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong
+    >Today this gate blocks every locally-forwarded webhook — and is a production revenue risk
+    (myth-e3ary)</strong
+  >
+  — a reality caught by the MYT-95 billing E2E. The Stripe CLI forwarder delivers events at the
+  account's default API version, or, under <code>stripe listen --latest</code>, at the newest one —
+  currently <code>2026-03-25.dahlia</code> and <code>2026-06-24.dahlia</code> respectively, neither
+  of which equals the pinned <code>2026-04-22.dahlia</code>. So in dev a local checkout completes,
+  the webhook arrives, the dispatcher records the <code>stripe_events</code> row and returns 200 —
+  and <em>no handler runs, so no credits land</em>. A signed replay of the same event
+  <em>at the pinned version</em> grants perfectly, which is how the gate was confirmed to be the
+  sole blocker. The consequence for the
+  <a href="../frontend/billing-credits.html">billing screens</a>: running the Stripe webhook
+  forwarder is a necessary precondition for a local billing smoke, but not currently a sufficient
+  one — the forwarded events must also carry the pinned version. The same mechanism is a production
+  risk: the prod webhook endpoint was created by hand, so if its configured
+  <code>api_version</code> ever diverges from the SDK pin, real checkouts would record events and
+  never credit the paying customer. Aligning the endpoint's version to
+  <code>STRIPE_API_VERSION</code> (the runbook below) is therefore revenue-critical, and managing
+  the endpoint's version declaratively is the durable fix.
+</aside>
+
 <p>
   Second, <strong>phase 1: prefetch outside any DB transaction</strong>. Several handlers need
   fields that aren't on the event payload — Stripe's webhook payloads don't deep-expand by default,
@@ -821,7 +844,10 @@
     <code>stripe_webhook_api_version_mismatch</code> → Stripe's account default API version was
     changed in the Dashboard, or a webhook endpoint is configured with an explicit API version
     different from the SDK pin. Both should be set to the SDK's pinned
-    <code>STRIPE_API_VERSION</code> value.
+    <code>STRIPE_API_VERSION</code> value. In local dev this fires on <em>every</em> Stripe-CLI
+    forwarded event today (the forwarder's version doesn't match the pin — see the gate callout
+    above, myth-e3ary), so a local checkout that logs this and grants nothing is the known-open bug,
+    not a secret drift.
   </li>
   <li>
     <code>billing.handler_validation_failed_committed</code> → a handler returned the

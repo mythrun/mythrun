@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Invites & party · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="invites-party">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html" class="active">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Invites & party</div>
+        <article>
+<h1>Invites &amp; party</h1>
+
+<p class="lead">
+  How a campaign fills its table. The owner shares one short link from the campaign page; a friend
+  opens it, sees who invited them, signs in through the app's existing guarded return path, accepts,
+  and makes a character. Meanwhile the owner watches a roster that fills itself in — a party member
+  finishing their character surfaces on the owner's screen without a reload. The frontend half of the
+  shipped <a href="../auth-billing/onboarding.html">invite backend</a>: the panel, the public join
+  card, and the liveness plumbing.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1653pt" height="287pt"
+ viewBox="14.00 14.00 1639.00 272.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 268.24)">
+<title>invites_party</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-253.84 1620.41,-253.84 1620.41,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_owner</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-88.84 8,-241.84 709.06,-241.84 709.06,-88.84 8,-88.84"/>
+<text xml:space="preserve" text-anchor="middle" x="358.53" y="-227.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the owner (campaign page + hub card)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_recipient</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="781.06,-37.84 781.06,-176.84 1428.91,-176.84 1428.91,-37.84 781.06,-37.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1104.99" y="-162.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the recipient (/join/:code)</text>
+</g>
+<!-- panel -->
+<g id="node1" class="node">
+<title>panel</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="323.53,-220.28 8,-220.28 8,-163.4 323.53,-163.4 323.53,-220.28"/>
+<text xml:space="preserve" text-anchor="middle" x="165.76" y="-201.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CampaignInvitePanel &#160;(owner&#45;only)</text>
+<text xml:space="preserve" text-anchor="middle" x="165.76" y="-188.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ensurePrimaryInvite → InvitePanel</text>
+<text xml:space="preserve" text-anchor="middle" x="165.76" y="-175.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">copy · navigator.share · revoke↻re&#45;mint</text>
+</g>
+<!-- link -->
+<g id="node7" class="node">
+<title>link</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="646.35,-88.68 423.24,-88.68 423.24,-45 646.35,-45 646.35,-88.68"/>
+<text xml:space="preserve" text-anchor="middle" x="534.79" y="-70.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">primary share link</text>
+<text xml:space="preserve" text-anchor="middle" x="534.79" y="-56.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">${frontendBaseUrl}/join/:code</text>
+</g>
+<!-- panel&#45;&gt;link -->
+<g id="edge1" class="edge">
+<title>panel&#45;&gt;link</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M309.65,-162.72C314.47,-160.02 319.12,-157.06 323.53,-153.84 349.12,-135.12 334.13,-110.41 360.53,-92.84 376.52,-82.2 395.16,-75.22 414.18,-70.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="414.54,-73.18 420.87,-69.31 413.51,-68.39 414.54,-73.18"/>
+</g>
+<!-- roster -->
+<g id="node2" class="node">
+<title>roster</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="300.42,-145.28 31.1,-145.28 31.1,-88.4 300.42,-88.4 300.42,-145.28"/>
+<text xml:space="preserve" text-anchor="middle" x="165.76" y="-126.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PartyStaging · useLiveRoster</text>
+<text xml:space="preserve" text-anchor="middle" x="165.76" y="-113.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">status SSE + useForegroundRefetch</text>
+<text xml:space="preserve" text-anchor="middle" x="165.76" y="-100.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(focus + visibility&#45;gated slow poll)</text>
+</g>
+<!-- imprint -->
+<g id="node3" class="node">
+<title>imprint</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="709.06,-150.68 360.53,-150.68 360.53,-107 709.06,-107 709.06,-150.68"/>
+<text xml:space="preserve" text-anchor="middle" x="534.79" y="-132.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">home card imprint</text>
+<text xml:space="preserve" text-anchor="middle" x="534.79" y="-118.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">built pigment seals + building placeholder seals</text>
+</g>
+<!-- roster&#45;&gt;imprint -->
+<!-- preview -->
+<g id="node4" class="node">
+<title>preview</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1043.78,-103.68 781.06,-103.68 781.06,-60 1043.78,-60 1043.78,-103.68"/>
+<text xml:space="preserve" text-anchor="middle" x="912.42" y="-85.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">JoinRoute · previewInvite (PUBLIC)</text>
+<text xml:space="preserve" text-anchor="middle" x="912.42" y="-71.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ JoinPreview card</text>
+</g>
+<!-- signin -->
+<g id="node5" class="node">
+<title>signin</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1409.11,-94.28 1159.59,-94.28 1159.59,-37.4 1409.11,-37.4 1409.11,-94.28"/>
+<text xml:space="preserve" text-anchor="middle" x="1284.35" y="-75.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">signed out → signinReturnToJoin</text>
+<text xml:space="preserve" text-anchor="middle" x="1284.35" y="-62.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the SHIPPED isLocalPath ?returnTo</text>
+<text xml:space="preserve" text-anchor="middle" x="1284.35" y="-49.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ OAuth&#45;state round&#45;trip</text>
+</g>
+<!-- preview&#45;&gt;signin -->
+<g id="edge3" class="edge">
+<title>preview&#45;&gt;signin</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1044.3,-76.19C1069.99,-75.08 1096.74,-73.92 1121.79,-72.84 1131.12,-72.44 1140.75,-72.02 1150.45,-71.6"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1150.28,-74.06 1157.17,-71.31 1150.07,-69.16 1150.28,-74.06"/>
+<text xml:space="preserve" text-anchor="middle" x="1091.79" y="-78.31" font-family="Courier,monospace" font-size="10.00">signed out</text>
+</g>
+<!-- accept -->
+<g id="node6" class="node">
+<title>accept</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1428.91,-155.68 1139.79,-155.68 1139.79,-112 1428.91,-112 1428.91,-155.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1284.35" y="-137.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">signed in → acceptInvite</text>
+<text xml:space="preserve" text-anchor="middle" x="1284.35" y="-123.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">alreadyMember ? campaign : join&#45;summary</text>
+</g>
+<!-- preview&#45;&gt;accept -->
+<g id="edge5" class="edge">
+<title>preview&#45;&gt;accept</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1044.37,-100.25C1072.27,-104.17 1101.97,-108.34 1130.61,-112.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1129.98,-114.76 1137.26,-113.3 1130.67,-109.9 1129.98,-114.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1091.79" y="-113.95" font-family="Courier,monospace" font-size="10.00">signed in</text>
+</g>
+<!-- signin&#45;&gt;preview -->
+<g id="edge4" class="edge">
+<title>signin&#45;&gt;preview</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1159.02,-56.27C1127.28,-55.22 1093.24,-55.31 1061.78,-57.84 1058.83,-58.08 1055.85,-58.34 1052.85,-58.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1052.86,-56.16 1046.15,-59.31 1053.36,-61.04 1052.86,-56.16"/>
+<text xml:space="preserve" text-anchor="middle" x="1091.79" y="-60.84" font-family="Courier,monospace" font-size="10.00">return</text>
+</g>
+<!-- create -->
+<g id="node8" class="node">
+<title>create</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1616.41,-43.68 1465.91,-43.68 1465.91,0 1616.41,0 1616.41,-43.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1541.16" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">character creation</text>
+<text xml:space="preserve" text-anchor="middle" x="1541.16" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ finalize</text>
+</g>
+<!-- accept&#45;&gt;create -->
+<g id="edge6" class="edge">
+<title>accept&#45;&gt;create</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1407.14,-111.33C1414.61,-108.79 1421.93,-105.97 1428.91,-102.84 1458.62,-89.54 1488.22,-67.45 1509.41,-49.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1510.86,-51.68 1514.6,-45.28 1507.68,-47.95 1510.86,-51.68"/>
+</g>
+<!-- link&#45;&gt;preview -->
+<g id="edge2" class="edge">
+<title>link&#45;&gt;preview</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M646.97,-71.28C686.05,-72.84 730.48,-74.61 771.61,-76.26"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="771.42,-78.7 778.52,-76.53 771.62,-73.81 771.42,-78.7"/>
+<text xml:space="preserve" text-anchor="middle" x="745.06" y="-78.68" font-family="Courier,monospace" font-size="10.00">opened</text>
+</g>
+<!-- create&#45;&gt;roster -->
+<g id="edge7" class="edge">
+<title>create&#45;&gt;roster</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1465.22,-16.45C1414.48,-13.26 1345.91,-9.84 1285.35,-9.84 533.79,-9.84 533.79,-9.84 533.79,-9.84 455.92,-9.84 435.52,-14.89 360.53,-35.84 316.92,-48.02 270.03,-67.44 233.3,-84.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="232.61,-81.84 227.28,-86.99 234.66,-86.29 232.61,-81.84"/>
+<text xml:space="preserve" text-anchor="middle" x="912.42" y="-24.84" font-family="Courier,monospace" font-size="10.00">character_creation_complete</text>
+<text xml:space="preserve" text-anchor="middle" x="912.42" y="-12.84" font-family="Courier,monospace" font-size="10.00">(status SSE) → refetch</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The whole surface sits on the invite routes shipped with
+  <a href="../auth-billing/onboarding.html">onboarding &amp; invites</a> (create / list / revoke /
+  accept, the public preview, the server-side party cap of six). The
+  <code>client-core/api/invites.ts</code> slice wraps them as the only sanctioned reach to that
+  backend — five typed <code>defineEndpoint</code>s plus <code>ensurePrimaryInvite</code>, the
+  idempotent "one link per campaign" helper. The preview slice carries
+  <code>skipAuthRetry: true</code> because the join route calls it <em>pre-auth</em>: it answers 200
+  or 404, never 401, so a signed-out lookup never spins the token-refresh path.
+</p>
+
+<h2 id="the-owner-s-link-one-primary-invite-not-a-dashboard">The owner's link — one primary invite, not a dashboard</h2>
+
+<p>
+  On the campaign page the owner sees a <code>CampaignInvitePanel</code> — mounted
+  <strong>only</strong> for the owner (<code>creator === null</code>; invite create/list/revoke are
+  owner-only backend routes, so a non-owner sees nothing where the seam was). It resolves the primary
+  share link on mount through <code>ensurePrimaryInvite</code> (the existing primary invite, or a
+  freshly minted one), then offers exactly three actions: copy, native share, and "replace link"
+  (revoke, then re-mint). All the network calls and web globals live in this route wrapper; the
+  <a href="./design-system.html">mythrunUI</a> <code>InvitePanel</code> is a pure presentational
+  component taking resolved props and neutral callbacks. Terse lifecycle only — a single link, never
+  an invite dashboard.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Native share is progressive enhancement over a clipboard copy</strong> — the panel offers a
+  <code>navigator.share</code> button only where the platform has it (<code>canWebShare()</code>), and
+  copy-to-clipboard everywhere. Both are web globals, so they live in the sanctioned
+  <code>platform/web/share.ts</code> carve-out; the DOM-free layers never touch <code>navigator</code>.
+  A user-cancelled share rejects with an <code>AbortError</code>, which is a non-event — the handler
+  swallows it rather than surfacing a false error.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The mounted ref is reset on mount, not just cleared on unmount (the StrictMode fix)</strong>
+  — the panel guards its async settles with a mounted ref so a late resolve can't setState after
+  teardown. But under React StrictMode's dev mount → cleanup → remount, a ref that is only
+  <em>cleared</em> in the cleanup stays <code>false</code> after the remount — and every subsequent
+  settle is suppressed, so the panel sticks forever on "preparing your link…". Setting the ref back to
+  <code>true</code> in the mount effect (mirroring <code>useLiveRoster</code>) is what lets the link
+  resolve. A caught <code>invite_cap_reached</code> maps to a calm advisory line; any other failure to
+  the transient error notice with a re-mint affordance.
+</aside>
+
+<h2 id="receiving-an-invite-the-public-join-route">Receiving an invite — the public join route</h2>
+
+<p>
+  A share link resolves to <code>/join/:code</code> (<code>${frontendBaseUrl}/join/${inviteCode}</code>),
+  a <strong>public</strong> route. <code>JoinRoute</code> previews the invite on mount and renders the
+  <code>JoinPreview</code> card — the campaign name, who invited you, and one CTA. The preview endpoint
+  distinguishes three outcomes, and the route forks on them: a revoked or expired code resolves
+  <code>200</code> with <code>valid: false</code> (the card renders that in place, still showing the
+  real campaign and owner); a code that never existed throws <code>404</code> →
+  <code>invalid</code>, a terminal standalone notice where retry is pointless; a transient failure →
+  <code>error</code>, a calm retry.
+</p>
+
+<p>
+  The CTA branches on whether the viewer is signed in. Signed in, it accepts inline —
+  <code>acceptInvite</code>, then navigate: an already-a-member goes straight to the campaign, a fresh
+  member to the <a href="./character-creation.html">join-summary</a> and character creation. A failed
+  accept maps through <code>mapAcceptError</code> to one of five calm arms — <code>full</code>
+  (the party cap), <code>revoked</code>, <code>gone</code>, <code>not-found</code>,
+  <code>timeout</code> — that the card surfaces without navigating.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Signed-out acceptance reuses the shipped guarded <code>?returnTo</code>, introducing no new
+  redirect target</strong> — the CTA for a signed-out viewer routes to
+  <code>signinReturnToJoin(code)</code>, which url-encodes the <code>/join/:code</code> path onto the
+  <em>existing</em> <code>?returnTo</code> parameter that the
+  <a href="./app-shell.html#oauth-flow">sign-in flow</a> already validates through its
+  <code>isLocalPath</code> guard and OAuth-state round-trip. That flow was built to reject
+  open-redirect vectors; the invite hand-off must reuse it as-is rather than invent a second redirect
+  mechanism. A crafted <code>returnTo</code> to an external host is rejected by the same guard that
+  protects every other return path.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Inline accept, not a home-screen invite banner (a declared deviation)</strong> — the UX
+  spec routes a signed-in acceptance through a banner on the home screen; this surface accepts inline
+  on the join route instead and does not build the banner. The join link is the only entry path at
+  launch, so the banner — a discoverability nicety for invites noticed while already browsing — is
+  deferred rather than built speculatively.
+</aside>
+
+<h2 id="the-party-fills-itself-in-live-roster-without-a-member-joined-event">The party fills itself in — live roster without a member-joined event</h2>
+
+<p>
+  On the owner's <a href="./character-creation.html">party-staging</a> surface the roster is live.
+  <code>useLiveRoster</code> (client-core) replaces the earlier blind five-second poll with the real
+  signal, and <code>useForegroundRefetch</code> (the web port) adds the browser-native fallbacks. A
+  teammate finishing their character appears on the owner's screen without a reload, and the refetch
+  swaps the roster <strong>in place</strong> — the surface never blinks back to a loading line
+  mid-assembly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>There is no member-joined event, so the roster keys off
+  <code>character_creation_complete</code></strong> — no shipped transport carries a "a member just
+  joined" event. The real liveness signal is the campaign
+  <a href="../runtime/pipeline-status.html">status SSE</a>'s <code>character_creation_complete</code>,
+  which fires per member at finalize on the stream the owner already holds. So <code>useLiveRoster</code>
+  treats that event as a pure <em>trigger</em> — any member's completion refetches the whole progress
+  read (the event carries no roster data). For the pre-finalize window (a member accepted but not yet
+  finished), the roster also refetches on each entry into <code>connected</code> (the initial connect
+  and every reconnect), on window focus, and on a visibility-gated slow poll that pauses on a
+  backgrounded tab. A real <code>member_joined</code> event is a possible backend follow-up, not part
+  of this surface.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>gathering</code> is a real teammate, distinct from an empty invite slot</strong> — the
+  <a href="./character-creation.html">party-roster view-model</a> maps a member who has joined but not
+  yet started a character to a <code>gathering</code> status, <em>not</em> <code>empty</code>.
+  <code>empty</code> is exclusively the synthetic "invite a friend" slot the staging surface appends
+  when soloing; the view-model never emits it. Without the distinction, a genuine teammate who is
+  still deciding would render as the invite-a-friend affordance — the roster would tell the owner to
+  invite someone who is already there. Status reads as prose (owner-first ordering, viewer-marked),
+  never a dot or chip, per the paper register.
+</aside>
+
+<h3 id="the-home-card-party-imprint">The home-card party imprint</h3>
+
+<p>
+  The <a href="./campaign-hub.html">hub card</a>'s foot imprint reflects the party assembling: members
+  with a character are pigment <code>Avatar</code> seals, members still building are muted
+  <code>placeholder</code> seals, both in one <code>AvatarGroup</code> so the overlap ring and the
+  <code>+N</code> overflow span the combined cluster. Built seals lead, so a ready party reads first,
+  and the seal cap drops still-building members before built ones. The <code>placeholder</code> Avatar
+  variant — a muted hatch seal for a member without a character yet — is the one reusable primitive
+  extension this surface added to the <a href="./design-system.html">design system</a>.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="walk-the-invite-join-assemble-flow-dev">Walk the invite → join → assemble flow (dev)</h3>
+<ol>
+  <li>
+    As the owner, open a campaign and copy the primary link from the invite panel. "Replace link"
+    revokes and re-mints — the old link then previews <code>valid: false</code>.
+  </li>
+  <li>
+    In a second browser identity (signed out), open <code>/join/:code</code>. You should see the
+    campaign and the inviter; the CTA sends you through sign-in and back to the same join route. Then
+    accept — a fresh member lands on the join-summary and into
+    <a href="./character-creation.html">character creation</a>.
+  </li>
+  <li>
+    Back on the owner's screen, finish the second character: the owner's roster updates on the
+    <code>character_creation_complete</code> signal without a reload. Tab away and back to confirm the
+    focus refetch.
+  </li>
+  <li>
+    Probe the arms: a full party previews and then accepts to the <code>full</code> notice; a revoked
+    code previews <code>valid: false</code>; a crafted <code>returnTo</code> to an external host is
+    rejected at sign-in (the open-redirect guard).
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  This surface wraps the <a href="../auth-billing/onboarding.html">invite backend</a> (routes, the
+  party cap, the public preview) and rides the <a href="../runtime/pipeline-status.html">status
+  SSE</a> for liveness through the shipped <a href="./realtime-transport.html">realtime transport</a>.
+  The signed-out hand-off reuses the <a href="./app-shell.html#oauth-flow">OAuth sign-in flow</a>'s
+  guarded <code>returnTo</code>. Accepting an invite leads into
+  <a href="./character-creation.html">character creation</a>, whose party-staging surface hosts the
+  live roster and whose view-model owns the <code>gathering</code> status; the
+  <a href="./campaign-hub.html">hub card</a> renders the party imprint. Every visible element is a
+  <a href="./design-system.html">mythrunUI</a> component (the <code>InvitePanel</code>,
+  <code>JoinPreview</code>, and the <code>Avatar</code> <code>placeholder</code> variant) over the
+  DOM-free <a href="./app-shell.html">client brain</a>.
+</p>
+
+<h2 id="appendix-the-modules">Appendix: the modules</h2>
+
+<h3 id="client-core-the-brain">Client-core — the brain</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>api/invites.ts</code></td>
+    <td>
+      The five invite slices (create / list / revoke / preview / accept) + <code>ensurePrimaryInvite</code>.
+      The preview is public (<code>skipAuthRetry</code>).
+    </td>
+  </tr>
+  <tr>
+    <td><code>invites/accept-arm.ts</code></td>
+    <td>
+      <code>mapAcceptError</code> / <code>mapPreviewError</code> (typed-code → arm) +
+      <code>signinReturnToJoin</code> / <code>joinPath</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>invites/use-live-roster.ts</code></td>
+    <td>
+      The roster fetch driven by the status SSE (<code>character_creation_complete</code> + reconnect)
+      → in-place progress swap.
+    </td>
+  </tr>
+  <tr>
+    <td><code>contract/invite/types.ts</code></td>
+    <td>
+      <code>InvitePanelProps</code> / <code>JoinPreviewProps</code> + the <code>AcceptArmKind</code> /
+      <code>PreviewArmKind</code> vocabularies.
+    </td>
+  </tr>
+  <tr>
+    <td><code>character/party-roster-view-model.ts</code></td>
+    <td>The progress read → roster rows; the <code>gathering</code> vs <code>empty</code> distinction.</td>
+  </tr>
+</table>
+
+<h3 id="web-the-routes-amp-ports">Web — the routes &amp; ports</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/campaign-invite-panel.tsx</code></td>
+    <td>
+      The owner-gated wired panel — link resolution, copy/share/revoke, the StrictMode mounted-ref
+      reset.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/join.tsx</code></td>
+    <td>The public <code>/join/:code</code> — preview forks, guarded sign-in return, inline accept.</td>
+  </tr>
+  <tr>
+    <td><code>platform/web/share.ts</code></td>
+    <td><code>canWebShare</code> / <code>webShare</code> / <code>copyText</code> — the web-global carve-out.</td>
+  </tr>
+  <tr>
+    <td><code>platform/web/use-foreground-refetch.ts</code></td>
+    <td>The focus + visibility-gated slow-poll fallback over the live roster.</td>
+  </tr>
+  <tr>
+    <td><code>ui/…/InvitePanel</code> · <code>ui/…/JoinPreview</code></td>
+    <td>The presentational share panel and public join card.</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/src/routes/join.tsx</code>, <code>frontend/src/routes/campaign-invite-panel.tsx</code>,
+  <code>frontend/client-core/src/api/invites.ts</code>, <code>frontend/client-core/src/invites/</code>
+  (accept-arm, use-live-roster), <code>frontend/client-core/src/contract/invite/</code>,
+  <code>frontend/src/platform/web/share.ts</code>,
+  <code>frontend/src/platform/web/use-foreground-refetch.ts</code>, and the <code>InvitePanel</code> /
+  <code>JoinPreview</code> components under <code>frontend/ui/src/components/</code>. The party-roster
+  view-model (<code>frontend/client-core/src/character/party-roster-view-model.ts</code>) and the hub
+  card (<code>frontend/src/routes/home/home-card.tsx</code>) are shared with
+  <a href="./character-creation.html">character creation</a> and the
+  <a href="./campaign-hub.html">campaign hub</a>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-owner-s-link-one-primary-invite-not-a-dashboard">The owner's link — one primary invite, not a dashboard</a></li><li style="padding-left:0"><a href="#receiving-an-invite-the-public-join-route">Receiving an invite — the public join route</a></li><li style="padding-left:0"><a href="#the-party-fills-itself-in-live-roster-without-a-member-joined-event">The party fills itself in — live roster without a member-joined event</a></li><li style="padding-left:12px"><a href="#the-home-card-party-imprint">The home-card party imprint</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#walk-the-invite-join-assemble-flow-dev">Walk the invite → join → assemble flow (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain">Client-core — the brain</a></li><li style="padding-left:12px"><a href="#web-the-routes-amp-ports">Web — the routes &amp; ports</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

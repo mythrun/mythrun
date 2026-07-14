@@ -11,7 +11,7 @@
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
-<!-- source-hash: sha256:c6986ae81bfce5de4a869a207145a0cae5db559c3a1f08ed28a14b0905b67878 -->
+<!-- source-hash: sha256:818f3c6ed9412605a4dc1527dee1ae76004f6bba29963592a566768e4b57d087 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Session transport</h1>
@@ -61,11 +61,27 @@
 
 <p>
   <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
-  five preconditions (campaign is active, a session prep exists for the next session number, no
-  session already active, — MYT-74a — the campaign's prior session is fully reconciled, and —
-  MYT-74b — no session-end is mid-flight), the handler runs a fixed four-step sequence whose
-  ordering is load-bearing:
+  five preconditions (campaign is active, no session already active, a session prep exists for the
+  next session number, — MYT-74a — the campaign's prior session is fully reconciled, and — MYT-74b —
+  no session-end is mid-flight), the handler runs a fixed four-step sequence whose ordering is
+  load-bearing:
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The no-session-active check must precede the prep check (MYT-92)</strong> — the ordering
+  of the first three preconditions is itself load-bearing, and a mid-session-join bug caught by the
+  play screen's E2E is why. <code>maxSessionNumber</code> counts the <em>live</em> session, so while
+  session N is active the computed "next" number is N+1, whose prep legitimately does not exist yet.
+  With the prep check ahead of the active check, a member whose <code>/start</code> raced an
+  already-running session got answered <code>409 prep_not_ready</code> — a false signal that pinned
+  them on the atmospheric prep beat forever — instead of <code>409 session_already_active</code>,
+  which tells the client to look up the running session (<code>GET …/active</code>) and join it.
+  When a session is live, that fact dominates every other precondition, so the active-session guard
+  now runs second, right after the campaign-active check and before prep. The
+  <a href="../frontend/live-play.html">play screen</a>'s start flow depends on this discrimination:
+  it drives the prep beat only on a real <code>prep_not_ready</code>, and the join path only on
+  <code>session_already_active</code>.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The reconcile-pending interlock (MYT-74a)</strong> — the fourth precondition returns
@@ -681,7 +697,10 @@
   <code>trigger_kind</code> column: the turn controller stamps each DM row's originating trigger so
   the <a href="./session-reconcile.html#the-containment-verifier">post-session analysis</a> can
   exclude correction and farewell rows, and the repo's <code>listForAnalysis</code> read serves the
-  analysis worker its transcript tail.
+  analysis worker its transcript tail. The client that drives all of this from the player's side —
+  the start flow's precondition arms, the streamed transcript, optimistic own-messages, reconnect
+  replay, and the presence line — is the frontend
+  <a href="../frontend/live-play.html">live play screen</a>.
 </p>
 
 <h2>Appendix: surface</h2>

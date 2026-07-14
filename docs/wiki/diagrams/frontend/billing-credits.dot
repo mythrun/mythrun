@@ -1,0 +1,48 @@
+digraph billing_credits {
+  // The money surfaces. The Sessions & Billing settings screen reads balance /
+  // skus / history and renders two independent credit buckets, the price-ordered
+  // tiers (each with a GATED CTA), and the ledger. Every purchase CTA routes to a
+  // Stripe redirect that grants NOTHING synchronously — the credit lands only via
+  // the checkout webhook, so the return route polls the balance until it changes.
+  rankdir=TB;
+  compound=true;
+
+  subgraph cluster_settings {
+    label="Sessions & Billing  (settings)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    balance [label="CreditBalance\nsession · world_gen (never summed)", color="ember", fontcolor="ember"];
+    packs [label="PackList\ntiers (subscriptionCta gate) + à-la-carte packs\nquantity presets"];
+    history [label="PurchaseHistory\nterse mono ledger (packs name no credit count)"];
+  }
+
+  gate [label="subscriptionCta(activeSubscription, target)\nnull → subscribe · higher → upgrade\nsame/lower/unresolvable → manage"];
+
+  subgraph cluster_actions {
+    label="the routed action";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    checkout [label="createCheckout → Stripe Checkout"];
+    upgrade [label="upgradeTier → prorated (409 pending → calm arm)"];
+    portal [label="openPortal → Customer Portal"];
+  }
+
+  play402 [label="play 402 (owner shortfall)\n→ PurchaseSeam · owner buy / member hold"];
+  header [label="AppFrame header\nsession-credit count + quiet quick-buy"];
+  ret [label="/billing/return · useCheckoutReturn\npoll balance: changed → settled\nbudget spent → processing (calm)"];
+  webhook [label="checkout.session.completed webhook\nGRANTS the credit  (the source of truth)"];
+
+  packs -> gate;
+  gate -> checkout [label="subscribe"];
+  gate -> upgrade [label="upgrade"];
+  gate -> portal [label="manage"];
+  play402 -> checkout [label="owner buy (à-la-carte)"];
+  header -> checkout [style="dotted"];
+  checkout -> ret [label="redirect back"];
+  webhook -> balance [style="dashed", label="async grant"];
+  ret -> webhook [style="dotted", label="waits on"];
+}

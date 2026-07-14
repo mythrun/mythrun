@@ -18,7 +18,7 @@
 <!-- source: frontend/src/routes/landing.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:3ed2ab5a94ea37c7335ffc5a351ea4527ce81ad7a7120b68a683702745f9a507 -->
+<!-- source-hash: sha256:27ec6414eb3d3838bbeddc474b21e54256910aa831d270b28bea48f833350d1a -->
 <!-- last-ticket: MYT-86 -->
 
 <h1>App shell &amp; data layer</h1>
@@ -180,7 +180,12 @@
   and a native shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract
   and its slice to <code>client-core/api</code>; the pattern never changes — the
   <a href="./campaign-hub.html">campaign hub</a> added the <code>useBalance</code> (billing) slice
-  and widened the <code>/mine</code> contract this way.
+  and widened the <code>/mine</code> contract this way, and the play/invite/billing wave added whole
+  slice families the same way — the <a href="./live-play.html">play-session</a> start/active slices,
+  the <a href="./invites-party.html">invite</a> create/list/revoke/preview/accept slices, and the
+  <a href="./billing-credits.html">billing</a> balance/skus/history reads plus the
+  checkout/upgrade-tier/portal mutations (the mutations follow the imperative
+  <code>(ctx, body)</code> shape, not the suspense-hook shape).
 </p>
 
 <aside class="wiki-rationale">
@@ -434,7 +439,12 @@
   >, since built out into the app's first full screen — a shelf of book-cover campaign cards with
   the header's credit balance wired live — and the
   <strong><a href="#the-landing-page">public landing page</a></strong>
-  (MYT-86), the first public-branch screen built out from a stub.
+  (MYT-86), the first public-branch screen built out from a stub. The play/invite/billing wave then
+  filled most of the rest: the <a href="./live-play.html">live play</a> screen and its full-bleed
+  variant of the frame, the public <a href="./invites-party.html">join</a> route on the public branch,
+  and the <a href="./billing-credits.html">Sessions &amp; Billing</a> settings screen and
+  checkout-return routes — and it made the header's credit balance a real quick-buy into that billing
+  surface rather than an interim stub.
 </p>
 
 <aside class="wiki-rationale">
@@ -448,6 +458,17 @@
   display name can never push a text label past the edge. Every piece is a
   <a href="./design-system.html#responsive-by-construction">responsive mythrunUI primitive</a>, so
   the fix lives in the design system, not in raw CSS on the frame.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A full-bleed content variant driven by a route handle, not per-screen margins</strong> — most
+  screens render inside the frame's padded content box, but the <a href="./live-play.html">live play</a>
+  screen needs the whole viewport so its transcript scrolls internally. So the play route carries a
+  <code>fullBleed</code> route handle the frame reads to drop the content padding, rather than the screen
+  cancelling it with negative margins. This edit and MYT-95's header credit chrome were <em>declared
+  shared edits</em> to <code>AppFrame</code> up front — the play work owns the content variant, the
+  billing work owns the header — so two parallel worktrees never both restructured the frame's one
+  composition root.
 </aside>
 
 <p>

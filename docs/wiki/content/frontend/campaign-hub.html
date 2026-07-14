@@ -1,7 +1,7 @@
 <!-- source: frontend/src/routes/home.tsx -->
 <!-- source: frontend/src/routes/home/ -->
 <!-- source: frontend/src/app/header-credits.tsx -->
-<!-- source-hash: sha256:ab4366d064fad1d850812f1c31db0c1333d986e685ca27a7c9b109c5796a6cd9 -->
+<!-- source-hash: sha256:831f74447ec66614f98f3e06f25b591ae5f2bb3b93e2209753b56d70d98af97e -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>Campaign hub</h1>
@@ -40,13 +40,27 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>The imprint reflects the party <em>assembling</em> (MYT-91)</strong> — the foot seals now
+  distinguish a member who has a character (a pigment <code>Avatar</code>) from one still building
+  their character (a muted <code>placeholder</code> seal — the Avatar variant that surface added to
+  the design system). Both sit in one <code>AvatarGroup</code>, so the overlap ring and the
+  <code>+N</code> overflow span the combined cluster; built seals lead so a ready party reads first,
+  and the seal cap drops still-building members before built ones. The live-roster and invite story
+  behind the imprint is the <a href="./invites-party.html">invites &amp; party</a> page's.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>Status is text, never a dot</strong> — the paper register forbids status dots, badges, and
   chips. A campaign's state is conveyed by the mono ledger line plus the implicit party seals, and
   nothing else. The line is derived once by <code>cardPhaseLine</code> from the payload's
   <code>cardPhase</code>: "shaping your world", "make your character", "waiting for players", or,
   once played, the "<em>N sessions · 2 days ago</em>" record — the only place the hub formats a
   relative time (mechanical <code>Intl.RelativeTimeFormat</code>, locale-aware). The card and the
-  mobile row render this exact string, so the logic lives in one shared module.
+  mobile row render this exact string, so the logic lives in one shared module. MYT-95 adds one more
+  foot line, still as prose: an <strong>owner-only</strong> low-credit nudge, gated on
+  <code>creator === null</code> so a member never sees the owner's billing state (no member-visible
+  owner-balance read exists, by design) and on the fail-open
+  <a href="./billing-credits.html">low-session-credits</a> hook.
 </aside>
 
 <aside class="wiki-rationale">
@@ -102,8 +116,10 @@
   down the whole authed shell through the router error boundary. So the slot loads behind a small
   spinner and renders nothing on failure; the "+" buy affordance beside it sits
   <em>outside</em> that boundary, so a player can still act even if the number didn't load. The buy
-  "+" and the settings gear route to an interim <code>/settings</code> until the dedicated buy flow
-  ships; the frame's logomark and display-name slots remain chrome placeholders for now. The card's
+  "+" and the settings gear now route to the real <a href="./billing-credits.html">Sessions &amp;
+  Billing</a> surface at <code>/settings</code> (MYT-95 filled the interim stub; the header count
+  tracks session credits only); the frame's logomark and display-name slots remain chrome
+  placeholders for now. The card's
   click target is <code>/campaigns/:id</code> — the phase-aware
   <a href="./world-gen-experience.html">world-generation experience</a>, which shows the live
   generation graph while a world is still building and the settled reveal once it's done.

@@ -1,0 +1,291 @@
+<!-- source: frontend/src/routes/join.tsx -->
+<!-- source: frontend/src/routes/campaign-invite-panel.tsx -->
+<!-- source: frontend/client-core/src/api/invites.ts -->
+<!-- source: frontend/client-core/src/invites/ -->
+<!-- source: frontend/client-core/src/contract/invite/ -->
+<!-- source: frontend/src/platform/web/share.ts -->
+<!-- source: frontend/src/platform/web/use-foreground-refetch.ts -->
+<!-- source: frontend/ui/src/components/InvitePanel/ -->
+<!-- source: frontend/ui/src/components/JoinPreview/ -->
+<!-- source-hash: sha256:bf1da633c9886e8c5dd6d301e980e8c3693e1c464d27f437f919d00cab34020e -->
+<!-- last-ticket: MYT-91 -->
+
+<h1>Invites &amp; party</h1>
+
+<p class="lead">
+  How a campaign fills its table. The owner shares one short link from the campaign page; a friend
+  opens it, sees who invited them, signs in through the app's existing guarded return path, accepts,
+  and makes a character. Meanwhile the owner watches a roster that fills itself in — a party member
+  finishing their character surfaces on the owner's screen without a reload. The frontend half of the
+  shipped <a href="../auth-billing/onboarding.html">invite backend</a>: the panel, the public join
+  card, and the liveness plumbing.
+</p>
+
+<!-- @diagram: frontend/invites-party -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The whole surface sits on the invite routes shipped with
+  <a href="../auth-billing/onboarding.html">onboarding &amp; invites</a> (create / list / revoke /
+  accept, the public preview, the server-side party cap of six). The
+  <code>client-core/api/invites.ts</code> slice wraps them as the only sanctioned reach to that
+  backend — five typed <code>defineEndpoint</code>s plus <code>ensurePrimaryInvite</code>, the
+  idempotent "one link per campaign" helper. The preview slice carries
+  <code>skipAuthRetry: true</code> because the join route calls it <em>pre-auth</em>: it answers 200
+  or 404, never 401, so a signed-out lookup never spins the token-refresh path.
+</p>
+
+<h2>The owner's link — one primary invite, not a dashboard</h2>
+
+<p>
+  On the campaign page the owner sees a <code>CampaignInvitePanel</code> — mounted
+  <strong>only</strong> for the owner (<code>creator === null</code>; invite create/list/revoke are
+  owner-only backend routes, so a non-owner sees nothing where the seam was). It resolves the primary
+  share link on mount through <code>ensurePrimaryInvite</code> (the existing primary invite, or a
+  freshly minted one), then offers exactly three actions: copy, native share, and "replace link"
+  (revoke, then re-mint). All the network calls and web globals live in this route wrapper; the
+  <a href="./design-system.html">mythrunUI</a> <code>InvitePanel</code> is a pure presentational
+  component taking resolved props and neutral callbacks. Terse lifecycle only — a single link, never
+  an invite dashboard.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Native share is progressive enhancement over a clipboard copy</strong> — the panel offers a
+  <code>navigator.share</code> button only where the platform has it (<code>canWebShare()</code>), and
+  copy-to-clipboard everywhere. Both are web globals, so they live in the sanctioned
+  <code>platform/web/share.ts</code> carve-out; the DOM-free layers never touch <code>navigator</code>.
+  A user-cancelled share rejects with an <code>AbortError</code>, which is a non-event — the handler
+  swallows it rather than surfacing a false error.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The mounted ref is reset on mount, not just cleared on unmount (the StrictMode fix)</strong>
+  — the panel guards its async settles with a mounted ref so a late resolve can't setState after
+  teardown. But under React StrictMode's dev mount → cleanup → remount, a ref that is only
+  <em>cleared</em> in the cleanup stays <code>false</code> after the remount — and every subsequent
+  settle is suppressed, so the panel sticks forever on "preparing your link…". Setting the ref back to
+  <code>true</code> in the mount effect (mirroring <code>useLiveRoster</code>) is what lets the link
+  resolve. A caught <code>invite_cap_reached</code> maps to a calm advisory line; any other failure to
+  the transient error notice with a re-mint affordance.
+</aside>
+
+<h2>Receiving an invite — the public join route</h2>
+
+<p>
+  A share link resolves to <code>/join/:code</code> (<code>${frontendBaseUrl}/join/${inviteCode}</code>),
+  a <strong>public</strong> route. <code>JoinRoute</code> previews the invite on mount and renders the
+  <code>JoinPreview</code> card — the campaign name, who invited you, and one CTA. The preview endpoint
+  distinguishes three outcomes, and the route forks on them: a revoked or expired code resolves
+  <code>200</code> with <code>valid: false</code> (the card renders that in place, still showing the
+  real campaign and owner); a code that never existed throws <code>404</code> →
+  <code>invalid</code>, a terminal standalone notice where retry is pointless; a transient failure →
+  <code>error</code>, a calm retry.
+</p>
+
+<p>
+  The CTA branches on whether the viewer is signed in. Signed in, it accepts inline —
+  <code>acceptInvite</code>, then navigate: an already-a-member goes straight to the campaign, a fresh
+  member to the <a href="./character-creation.html">join-summary</a> and character creation. A failed
+  accept maps through <code>mapAcceptError</code> to one of five calm arms — <code>full</code>
+  (the party cap), <code>revoked</code>, <code>gone</code>, <code>not-found</code>,
+  <code>timeout</code> — that the card surfaces without navigating.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Signed-out acceptance reuses the shipped guarded <code>?returnTo</code>, introducing no new
+  redirect target</strong> — the CTA for a signed-out viewer routes to
+  <code>signinReturnToJoin(code)</code>, which url-encodes the <code>/join/:code</code> path onto the
+  <em>existing</em> <code>?returnTo</code> parameter that the
+  <a href="./app-shell.html#oauth-flow">sign-in flow</a> already validates through its
+  <code>isLocalPath</code> guard and OAuth-state round-trip. That flow was built to reject
+  open-redirect vectors; the invite hand-off must reuse it as-is rather than invent a second redirect
+  mechanism. A crafted <code>returnTo</code> to an external host is rejected by the same guard that
+  protects every other return path.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Inline accept, not a home-screen invite banner (a declared deviation)</strong> — the UX
+  spec routes a signed-in acceptance through a banner on the home screen; this surface accepts inline
+  on the join route instead and does not build the banner. The join link is the only entry path at
+  launch, so the banner — a discoverability nicety for invites noticed while already browsing — is
+  deferred rather than built speculatively.
+</aside>
+
+<h2>The party fills itself in — live roster without a member-joined event</h2>
+
+<p>
+  On the owner's <a href="./character-creation.html">party-staging</a> surface the roster is live.
+  <code>useLiveRoster</code> (client-core) replaces the earlier blind five-second poll with the real
+  signal, and <code>useForegroundRefetch</code> (the web port) adds the browser-native fallbacks. A
+  teammate finishing their character appears on the owner's screen without a reload, and the refetch
+  swaps the roster <strong>in place</strong> — the surface never blinks back to a loading line
+  mid-assembly.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>There is no member-joined event, so the roster keys off
+  <code>character_creation_complete</code></strong> — no shipped transport carries a "a member just
+  joined" event. The real liveness signal is the campaign
+  <a href="../runtime/pipeline-status.html">status SSE</a>'s <code>character_creation_complete</code>,
+  which fires per member at finalize on the stream the owner already holds. So <code>useLiveRoster</code>
+  treats that event as a pure <em>trigger</em> — any member's completion refetches the whole progress
+  read (the event carries no roster data). For the pre-finalize window (a member accepted but not yet
+  finished), the roster also refetches on each entry into <code>connected</code> (the initial connect
+  and every reconnect), on window focus, and on a visibility-gated slow poll that pauses on a
+  backgrounded tab. A real <code>member_joined</code> event is a possible backend follow-up, not part
+  of this surface.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>gathering</code> is a real teammate, distinct from an empty invite slot</strong> — the
+  <a href="./character-creation.html">party-roster view-model</a> maps a member who has joined but not
+  yet started a character to a <code>gathering</code> status, <em>not</em> <code>empty</code>.
+  <code>empty</code> is exclusively the synthetic "invite a friend" slot the staging surface appends
+  when soloing; the view-model never emits it. Without the distinction, a genuine teammate who is
+  still deciding would render as the invite-a-friend affordance — the roster would tell the owner to
+  invite someone who is already there. Status reads as prose (owner-first ordering, viewer-marked),
+  never a dot or chip, per the paper register.
+</aside>
+
+<h3>The home-card party imprint</h3>
+
+<p>
+  The <a href="./campaign-hub.html">hub card</a>'s foot imprint reflects the party assembling: members
+  with a character are pigment <code>Avatar</code> seals, members still building are muted
+  <code>placeholder</code> seals, both in one <code>AvatarGroup</code> so the overlap ring and the
+  <code>+N</code> overflow span the combined cluster. Built seals lead, so a ready party reads first,
+  and the seal cap drops still-building members before built ones. The <code>placeholder</code> Avatar
+  variant — a muted hatch seal for a member without a character yet — is the one reusable primitive
+  extension this surface added to the <a href="./design-system.html">design system</a>.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3>Walk the invite → join → assemble flow (dev)</h3>
+<ol>
+  <li>
+    As the owner, open a campaign and copy the primary link from the invite panel. "Replace link"
+    revokes and re-mints — the old link then previews <code>valid: false</code>.
+  </li>
+  <li>
+    In a second browser identity (signed out), open <code>/join/:code</code>. You should see the
+    campaign and the inviter; the CTA sends you through sign-in and back to the same join route. Then
+    accept — a fresh member lands on the join-summary and into
+    <a href="./character-creation.html">character creation</a>.
+  </li>
+  <li>
+    Back on the owner's screen, finish the second character: the owner's roster updates on the
+    <code>character_creation_complete</code> signal without a reload. Tab away and back to confirm the
+    focus refetch.
+  </li>
+  <li>
+    Probe the arms: a full party previews and then accepts to the <code>full</code> notice; a revoked
+    code previews <code>valid: false</code>; a crafted <code>returnTo</code> to an external host is
+    rejected at sign-in (the open-redirect guard).
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  This surface wraps the <a href="../auth-billing/onboarding.html">invite backend</a> (routes, the
+  party cap, the public preview) and rides the <a href="../runtime/pipeline-status.html">status
+  SSE</a> for liveness through the shipped <a href="./realtime-transport.html">realtime transport</a>.
+  The signed-out hand-off reuses the <a href="./app-shell.html#oauth-flow">OAuth sign-in flow</a>'s
+  guarded <code>returnTo</code>. Accepting an invite leads into
+  <a href="./character-creation.html">character creation</a>, whose party-staging surface hosts the
+  live roster and whose view-model owns the <code>gathering</code> status; the
+  <a href="./campaign-hub.html">hub card</a> renders the party imprint. Every visible element is a
+  <a href="./design-system.html">mythrunUI</a> component (the <code>InvitePanel</code>,
+  <code>JoinPreview</code>, and the <code>Avatar</code> <code>placeholder</code> variant) over the
+  DOM-free <a href="./app-shell.html">client brain</a>.
+</p>
+
+<h2>Appendix: the modules</h2>
+
+<h3>Client-core — the brain</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>api/invites.ts</code></td>
+    <td>
+      The five invite slices (create / list / revoke / preview / accept) + <code>ensurePrimaryInvite</code>.
+      The preview is public (<code>skipAuthRetry</code>).
+    </td>
+  </tr>
+  <tr>
+    <td><code>invites/accept-arm.ts</code></td>
+    <td>
+      <code>mapAcceptError</code> / <code>mapPreviewError</code> (typed-code → arm) +
+      <code>signinReturnToJoin</code> / <code>joinPath</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>invites/use-live-roster.ts</code></td>
+    <td>
+      The roster fetch driven by the status SSE (<code>character_creation_complete</code> + reconnect)
+      → in-place progress swap.
+    </td>
+  </tr>
+  <tr>
+    <td><code>contract/invite/types.ts</code></td>
+    <td>
+      <code>InvitePanelProps</code> / <code>JoinPreviewProps</code> + the <code>AcceptArmKind</code> /
+      <code>PreviewArmKind</code> vocabularies.
+    </td>
+  </tr>
+  <tr>
+    <td><code>character/party-roster-view-model.ts</code></td>
+    <td>The progress read → roster rows; the <code>gathering</code> vs <code>empty</code> distinction.</td>
+  </tr>
+</table>
+
+<h3>Web — the routes &amp; ports</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/campaign-invite-panel.tsx</code></td>
+    <td>
+      The owner-gated wired panel — link resolution, copy/share/revoke, the StrictMode mounted-ref
+      reset.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/join.tsx</code></td>
+    <td>The public <code>/join/:code</code> — preview forks, guarded sign-in return, inline accept.</td>
+  </tr>
+  <tr>
+    <td><code>platform/web/share.ts</code></td>
+    <td><code>canWebShare</code> / <code>webShare</code> / <code>copyText</code> — the web-global carve-out.</td>
+  </tr>
+  <tr>
+    <td><code>platform/web/use-foreground-refetch.ts</code></td>
+    <td>The focus + visibility-gated slow-poll fallback over the live roster.</td>
+  </tr>
+  <tr>
+    <td><code>ui/…/InvitePanel</code> · <code>ui/…/JoinPreview</code></td>
+    <td>The presentational share panel and public join card.</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/src/routes/join.tsx</code>, <code>frontend/src/routes/campaign-invite-panel.tsx</code>,
+  <code>frontend/client-core/src/api/invites.ts</code>, <code>frontend/client-core/src/invites/</code>
+  (accept-arm, use-live-roster), <code>frontend/client-core/src/contract/invite/</code>,
+  <code>frontend/src/platform/web/share.ts</code>,
+  <code>frontend/src/platform/web/use-foreground-refetch.ts</code>, and the <code>InvitePanel</code> /
+  <code>JoinPreview</code> components under <code>frontend/ui/src/components/</code>. The party-roster
+  view-model (<code>frontend/client-core/src/character/party-roster-view-model.ts</code>) and the hub
+  card (<code>frontend/src/routes/home/home-card.tsx</code>) are shared with
+  <a href="./character-creation.html">character creation</a> and the
+  <a href="./campaign-hub.html">campaign hub</a>.
+</p>
