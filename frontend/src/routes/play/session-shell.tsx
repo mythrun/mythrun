@@ -2,12 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   useSession,
+  useRollReveal,
+  buildRevealView,
   type ApiContext,
   type SessionParams,
   type SessionView,
 } from '@mythrun/client-core'
+import type { RollCardLabels } from '@mythrun/client-core/contract'
 import { MessageStream, ThinkingIndicator, SessionInput, Show } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { SidebarPlaceholder } from './sidebar-placeholder.tsx'
 import { SessionCompleteNotice } from './notices.tsx'
 import { composeSummon, connectionLineStatus, resolveTypingNames } from './session-compose.ts'
@@ -71,6 +75,17 @@ export function SessionShell({
   // unbound-method). The data fields are plain values — safe to destructure.
   const { items, connection, thinking, typingUserIds, ended } = session
 
+  // The dice-moment reveal (MYT-93, spec §5). PRESENTATION ONLY — the roll arrived
+  // whole in the skill_check/dice_roll frame; this layer just delays the DISPLAY and
+  // gates the post-check prose behind Continue. `buildRevealView` DERIVES the per-card
+  // phase + the set of prose-gated turnIds from `items` + the reducer state; both are
+  // threaded to MessageStream as plain data (R1 — @mythrun/ui holds no reveal runtime).
+  // A pending (un-continued) card does NOT disable SessionInput — the player may keep
+  // typing (the spec is silent; keep the calm default).
+  const reveal = useRollReveal()
+  const rollReveal = useMemo(() => buildRevealView(items, reveal.state), [items, reveal.state])
+  const rollLabels = useMemo(() => buildRollLabels(t), [t])
+
   // Session end → the recap route (the recap read is a filed bead; 92 only lands).
   useEffect(() => {
     if (ended) void navigate(`/campaigns/${campaignId}/recap`)
@@ -83,6 +98,15 @@ export function SessionShell({
   const onSummonDm = (): void => {
     session.summonDm(composeSummon(draft))
     setDraft('')
+  }
+  // `reveal.roll` / `reveal.advance` are typed as METHODS on the RollReveal view, so
+  // thread them through local arrows rather than bare references (@typescript-eslint/
+  // unbound-method — the same rail the send/summon handlers above satisfy).
+  const onRoll = (key: string): void => {
+    reveal.roll(key)
+  }
+  const onContinue = (key: string): void => {
+    reveal.advance(key)
   }
 
   const lineToken = connectionLineStatus(connection.status)
@@ -104,7 +128,15 @@ export function SessionShell({
             min-h-0 region and scrolls internally (the page never scrolls). */}
         {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- transcript scroll slot; MessageStream (h-full) fills this flex-1 min-h-0 region */}
         <div className="flex min-h-0 flex-1 flex-col">
-          <MessageStream items={items} connectionLine={connectionLine} reducedMotion={reducedMotion} />
+          <MessageStream
+            items={items}
+            connectionLine={connectionLine}
+            reducedMotion={reducedMotion}
+            rollReveal={rollReveal}
+            rollLabels={rollLabels}
+            onRoll={onRoll}
+            onContinue={onContinue}
+          />
         </div>
         <ThinkingIndicator
           thinking={thinking}
@@ -133,4 +165,24 @@ export function SessionShell({
       </Show>
     </div>
   )
+}
+
+/** Resolve the dice-moment [ph:] label bundle threaded to each RollCard (MYT-93).
+ *  Extracted so the shell body stays a thin composition; the outcome-tier map uses the
+ *  frame's snake_case tiers (`great_success`) keyed off the camelCase i18n leaf. The
+ *  copy behind these keys is MYT-100's one pass — the values are `[ph:]` for now. */
+function buildRollLabels(t: TFunction): RollCardLabels {
+  return {
+    roll: t('play.roll.roll'),
+    continue: t('play.roll.continue'),
+    tier: {
+      fail: t('play.roll.tier.fail'),
+      success: t('play.roll.tier.success'),
+      great_success: t('play.roll.tier.greatSuccess'),
+    },
+    dc: t('play.roll.dc'),
+    advantage: t('play.roll.advantage'),
+    disadvantage: t('play.roll.disadvantage'),
+    dieResult: t('play.roll.dieResult'),
+  }
 }

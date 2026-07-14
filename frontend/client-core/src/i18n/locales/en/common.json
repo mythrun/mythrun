@@ -576,6 +576,19 @@
       "dm": "[ph: the DM is thinking…]",
       "typing": "[ph: is typing…]"
     },
+    "roll": {
+      "roll": "[ph: roll]",
+      "continue": "[ph: continue]",
+      "dc": "[ph: DC]",
+      "advantage": "[ph: advantage]",
+      "disadvantage": "[ph: disadvantage]",
+      "dieResult": "[ph: your roll]",
+      "tier": {
+        "fail": "[ph: miss]",
+        "success": "[ph: success]",
+        "greatSuccess": "[ph: critical success]"
+      }
+    },
     "sidebar": {
       "title": "[ph: at the table]",
       "body": "[ph: the party + your sheet live here soon]",
