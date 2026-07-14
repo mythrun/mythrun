@@ -72,15 +72,18 @@ function LandingFooter(): React.JSX.Element {
 // Sign-in route to /auth/signin via SPA navigation. The footer is the INVERTED
 // surface (dark on a light page, light on a dark page); the page→footer Dither
 // flips direction with the theme to grade the page into it.
-export function LandingRoute(): React.JSX.Element {
+export function LandingRoute({ dev = import.meta.env.DEV }: { dev?: boolean } = {}): React.JSX.Element {
   const { theme } = useTheme()
   const status = useSessionStore((s) => s.status)
   const [searchParams] = useSearchParams()
   // DEV-only escape hatch: `/?preview` lets an auto-authed dev VIEW the marketing
-  // landing even while signed in. In a prod build `import.meta.env.DEV` is a
-  // statically-`false` constant, so the whole branch dead-code-eliminates — an
-  // authed prod visitor ALWAYS redirects, `?preview` or not.
-  const preview = import.meta.env.DEV && searchParams.has('preview')
+  // landing even while signed in. The `dev` flag is an injectable seam (mirrors
+  // `buildRoutes(dev)`): the router renders `<LandingRoute/>` propless so it
+  // resolves from the build env, while a test can pin it to assert prod behaviour.
+  // In a prod build `import.meta.env.DEV` is a statically-`false` constant, so the
+  // default is `false` and the whole branch dead-code-eliminates — an authed prod
+  // visitor ALWAYS redirects, `?preview` or not.
+  const preview = dev && searchParams.has('preview')
   // Redirect ONLY when definitively authed (`ready`): `/` is the anonymous
   // marketing page, so a signed-in player hitting it lands in the app. While
   // `initializing` (jwt on-load refresh not settled) we must NOT redirect — that

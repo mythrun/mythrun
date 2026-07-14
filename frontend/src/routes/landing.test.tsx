@@ -50,10 +50,14 @@ function setMatch(): void {
   Object.defineProperty(window, 'matchMedia', { writable: true, value: (q: string) => ({ matches: false, media: q, onchange: null, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn() }) })
 }
 
-function renderLanding(entry = '/'): void {
+// `dev` pins the build flag so a case can assert prod behaviour without a real
+// prod build (mirrors `buildRoutes(dev)`). Omitting it renders `<LandingRoute/>`
+// propless — exactly as the router does — so its default `import.meta.env.DEV`
+// (true under vitest) applies, preserving the store-agnostic cases' semantics.
+function renderLanding(entry = '/', dev?: boolean): void {
   const router = createMemoryRouter(
     [
-      { path: '/', element: <LandingRoute /> },
+      { path: '/', element: dev === undefined ? <LandingRoute /> : <LandingRoute dev={dev} /> },
       { path: '/auth/signin', element: <div data-testid="signin-stub" /> },
       // The authed-redirect target. `<LandingRoute/>` bounces a `ready` session
       // here, so the mini-router needs a stub to resolve — asserting `home-stub`
@@ -156,5 +160,16 @@ describe('LandingRoute', () => {
     renderLanding('/?preview')
     expect(screen.getByTestId('route-landing')).toBeDefined()
     expect(screen.queryByTestId('home-stub')).toBeNull()
+  })
+
+  it('ignores /?preview in a prod build — an authed visitor still redirects to /home', () => {
+    // The escape hatch is DEV-only. Pin the build flag to `false` (a prod build,
+    // where `import.meta.env.DEV` is a static `false`) via the injected seam: even
+    // with `?preview`, a `ready` visitor bounces to /home. This is what guarantees
+    // nothing dev-only leaks into prod behaviour.
+    act(() => { useSessionStore.getState().setReady('dev-user-1') })
+    renderLanding('/?preview', false)
+    expect(screen.getByTestId('home-stub')).toBeDefined()
+    expect(screen.queryByTestId('route-landing')).toBeNull()
   })
 })
