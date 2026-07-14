@@ -1,0 +1,59 @@
+digraph guided_create {
+  // The guided campaign-creation flow. The SPA walks fork → guided picks → a
+  // streamed synthesis → preview/rework. Each backend step is gated by Sonnet
+  // and parked (NON-charging) in Redis under a user-scoped previewId. The credit
+  // is charged only at commit (POST /api/campaigns), which loads the already-gated
+  // preview and hands off to the world-gen pipeline. The freeform fork skips the
+  // preview store entirely and is gated at commit instead.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_spa {
+    label="campaign-new  (SPA screen state machine)";
+    style="dashed";
+
+    fork [label="fork\nan idea | build from what you love"];
+    guided [label="guided\n3 picks · draft in sessionStorage"];
+    synth [label="synthesizing\nthe brief writes itself"];
+    preview [label="preview\nBegin · one change · start over"];
+    reject [label="rejection\nmessage — never raw reasoning"];
+    freeform [label="freeform\nidea prose"];
+  }
+
+  subgraph cluster_routes {
+    label="preview routes  (non-charging)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    rsynth [label="POST synthesize-preview[/stream]"];
+    rrework [label="POST preview/:id/rework\nsingle-shot"];
+  }
+
+  sonnet [label="synthesize / revise concept\n(Sonnet · temp 0.9)", color="ember", fontcolor="ember"];
+  gate [label="input gate (Sonnet)\n3-axis · allow | reject", color="ember", fontcolor="ember"];
+
+  store [label="Redis preview store\ncampaign-preview:{user}:{id}\n30-min TTL · reworkCount", shape=cylinder];
+
+  create [label="POST /api/campaigns\nload preview · debit 1 credit"];
+  worldgen [label="world-gen pipeline"];
+
+  fork -> guided;
+  fork -> freeform;
+  guided -> rsynth [label="find my world (SSE open)"];
+  rsynth -> sonnet;
+  sonnet -> gate;
+  rsynth -> synth [style="dashed", label="prose deltas"];
+  gate -> store [label="allow → park"];
+  store -> preview [label="previewId + concept"];
+  synth -> preview [label="complete"];
+  gate -> reject [label="reject (422)"];
+  synth -> reject [style="dashed", label="rejected"];
+  preview -> rrework [label="ask for one change"];
+  rrework -> sonnet;
+  rrework -> store [label="gate-pass → overwrite (reworkCount:1)"];
+  preview -> create [label="Begin"];
+  freeform -> create [label="commit (gated here)"];
+  store -> create [label="load (auth, id) · 410 if gone"];
+  create -> worldgen [label="enqueue"];
+}
