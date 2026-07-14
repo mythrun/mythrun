@@ -108,6 +108,15 @@ export type { BalanceView } from './billing/balance-view-model.ts'
 // pinned in its test for every non-null subscription state).
 export { subscriptionCta } from './billing/subscription-cta.ts'
 export type { SubscriptionCta, TierCtaDecision } from './billing/subscription-cta.ts'
+// MYT-95 purchase-moment brains: history prose facts (only what the feed
+// sources), the 402 seam guard + prompt model (owner/non-owner), and the
+// checkout-return poll with its calm non-error terminal states.
+export { purchaseHistoryView } from './billing/purchase-history-view-model.ts'
+export type { HistoryRowView } from './billing/purchase-history-view-model.ts'
+export { isInsufficientCredits, purchasePromptModel } from './billing/insufficient-credits.ts'
+export type { InsufficientCreditsError, PurchasePromptModel } from './billing/insufficient-credits.ts'
+export { useCheckoutReturn } from './billing/use-checkout-return.ts'
+export type { CheckoutReturnStatus } from './billing/use-checkout-return.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
