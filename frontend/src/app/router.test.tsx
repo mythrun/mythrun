@@ -1,5 +1,5 @@
 import { render, screen, act } from '@testing-library/react'
-import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@mythrun/ui'
@@ -219,5 +219,25 @@ describe('app router', () => {
     // presence proves the full-bleed dithered 404 rendered.
     const dither = document.querySelector('[data-dither-texture]')
     expect(dither).not.toBeNull()
+  })
+})
+
+// Recursively locate a route entry by its `path` in the (nested) route tree.
+function findByPath(entries: readonly RouteObject[], path: string): RouteObject | undefined {
+  for (const entry of entries) {
+    if (entry.path === path) return entry
+    const found = entry.children ? findByPath(entry.children, path) : undefined
+    if (found) return found
+  }
+  return undefined
+}
+
+describe('app router — the play route full-bleed handle (MYT-92 T15)', () => {
+  it('marks /campaigns/:id/play full-bleed so AppFrame drops the padded content box', () => {
+    // The route-level opt-in AppFrame reads via useMatches() to render the live-play
+    // stage edge-to-edge below the header (spec §2/§7). AppFrame owns the branch; the
+    // route only declares the flag.
+    const play = findByPath(routes, 'campaigns/:id/play')
+    expect(play?.handle).toEqual({ fullBleed: true })
   })
 })

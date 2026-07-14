@@ -1,4 +1,4 @@
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useMatches, useNavigate } from 'react-router-dom'
 import { Box, Stack, Text, IconButton } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { HeaderCredits } from './header-credits.tsx'
@@ -30,14 +30,28 @@ import { HeaderCredits } from './header-credits.tsx'
 // module const so the path isn't a JSX-attribute string literal (the i18n rule).
 const SETTINGS_PATH = '/settings'
 
+// The content region has two layouts, chosen by the MATCHED route, not by AppFrame
+// (MYT-92 T15). A route opts its content OUT of the frame's padded Box and INTO a
+// full-bleed viewport-fill stage by declaring `handle: { fullBleed: true }` on its
+// route entry (router.tsx) — the React-Router idiomatic "a child route influences
+// the layout" seam. The live-play screen uses it so the transcript owns the screen
+// below the header (header + content = exactly one viewport; the content scrolls
+// internally). Structural validation only (a handle-shape check) — no cognition.
+function hasFullBleedHandle(handle: unknown): boolean {
+  return (
+    typeof handle === 'object' && handle !== null && 'fullBleed' in handle && handle.fullBleed === true
+  )
+}
+
 export function AppFrame(): React.JSX.Element {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const fullBleed = useMatches().some((match) => hasFullBleedHandle(match.handle))
   const goToSettings = (): void => {
     void navigate(SETTINGS_PATH)
   }
   return (
-    <Stack data-testid="app-frame">
+    <Stack {...(fullBleed ? { minHeight: 'screen' as const } : {})} data-testid="app-frame">
       <Box padding={4} surface="base" border data-testid="app-frame-header">
         <Stack direction="row" justify="between" align="center" gap={5}>
           {/* The wordmark — the frame's quiet anchor (left). Fixed: it holds its
@@ -75,10 +89,24 @@ export function AppFrame(): React.JSX.Element {
           </Stack>
         </Stack>
       </Box>
-      {/* The content surface — the matched authed route renders here. */}
-      <Box padding={6} data-testid="app-frame-content">
-        <Outlet />
-      </Box>
+      {/* The content surface — the matched authed route renders here. A route that
+          declares handle.fullBleed (MYT-92 T15) escapes the padded Box and fills the
+          viewport below the header (the live-play stage); every other route keeps the
+          padded content box unchanged. */}
+      {fullBleed ? (
+        // The app-shell's ONE full-viewport layout root. `min-h-0`/`flex-1` is the
+        // flex-scroll unblocker (a tall transcript scrolls INSIDE this region, not the
+        // page) — not expressible via Stack props because BaseProps forbids className,
+        // so this is the sanctioned raw-element escape hatch, scoped to the shell.
+        // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- app-shell viewport-fill layout root; the min-h-0 flex-scroll unblocker is not expressible via @mythrun/ui Stack props (BaseProps bans className)
+        <div className="flex min-h-0 flex-1 flex-col" data-testid="app-frame-content-bleed">
+          <Outlet />
+        </div>
+      ) : (
+        <Box padding={6} data-testid="app-frame-content">
+          <Outlet />
+        </Box>
+      )}
     </Stack>
   )
 }
