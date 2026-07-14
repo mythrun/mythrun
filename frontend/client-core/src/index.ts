@@ -92,6 +92,11 @@ export type { ActiveSession, ActiveSessionResponse, InsufficientCreditsBody } fr
 // live prep-started/ready/failed events over the shipped SSE status client).
 export { useSessionPrep } from './session/use-session-prep.ts'
 export type { SessionPrepStream, SessionPrepDeps } from './session/use-session-prep.ts'
+// MYT-92 start flow: the ZFC-exempt structural classifier over the start
+// arms + the async start/join state machine. PurchaseMoment is the
+// cross-issue seam MYT-95's PurchasePrompt consumes.
+export { useSessionStart, classifyStartError } from './session/start-flow.ts'
+export type { StartFlow, StartOutcome, PurchaseMoment } from './session/start-flow.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
