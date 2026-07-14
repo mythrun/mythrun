@@ -24,6 +24,7 @@ export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
 // Session play-screen (MYT-92)
 export { DmMessage } from './components/DmMessage/DmMessage.tsx'
 export { ThinkingIndicator } from './components/ThinkingIndicator/ThinkingIndicator.tsx'
+export { SessionStartBeat } from './components/SessionStartBeat/SessionStartBeat.tsx'
 
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
@@ -225,6 +226,7 @@ export type {
   StreamingProseProps,
   DmMessageProps,
   ThinkingIndicatorProps,
+  SessionStartBeatProps,
   HeadingProps,
   HeadingLevel,
   HeadingRole,
