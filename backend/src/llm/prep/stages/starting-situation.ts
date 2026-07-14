@@ -149,15 +149,18 @@ export async function runStartingSituationStage(
 }
 
 function renderPrompt(args: StartingSituationArgs): string {
-  return PROMPT_TEMPLATE.replace('{{name}}', args.worldName)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{key_tensions}}', args.keyTensions)
-    .replace('{{locations_summary}}', args.locationsSummary)
-    .replace('{{npcs_summary}}', args.npcsSummary)
-    .replace('{{factions_summary}}', args.factionsSummary)
-    .replace('{{canonical_names}}', args.canonicalNames)
-    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
+  // Function replacers: every value is user/LLM-derived, so a `$&`/`$'`-style
+  // sequence must splice in literally rather than being read as a special
+  // replacement pattern.
+  return PROMPT_TEMPLATE.replace('{{name}}', () => args.worldName)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
+    .replace('{{key_tensions}}', () => args.keyTensions)
+    .replace('{{locations_summary}}', () => args.locationsSummary)
+    .replace('{{npcs_summary}}', () => args.npcsSummary)
+    .replace('{{factions_summary}}', () => args.factionsSummary)
+    .replace('{{canonical_names}}', () => args.canonicalNames)
+    .replace('{{vocabularyRegistry}}', () => renderVocabularyRegistry(args.vocabularyRegistry))
 }
 
 interface ResolvedEntry {

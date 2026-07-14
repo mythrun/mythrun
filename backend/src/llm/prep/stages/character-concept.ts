@@ -59,18 +59,21 @@ export interface CharacterConceptStageResult {
 export async function runCharacterConceptStage(
   args: CharacterConceptArgs,
 ): Promise<CharacterConceptStageResult> {
-  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.worldName)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{era}}', args.era)
-    .replace('{{geographySummary}}', args.geographySummary)
-    .replace('{{politicalSummary}}', args.politicalSummary)
-    .replace('{{keyTensions}}', args.keyTensions)
+  // Function replacers: every value is user/LLM-derived (the concept text is
+  // user input), so a `$&`/`$'`-style sequence must splice in literally rather
+  // than being read as a special replacement pattern.
+  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', () => args.worldName)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
+    .replace('{{era}}', () => args.era)
+    .replace('{{geographySummary}}', () => args.geographySummary)
+    .replace('{{politicalSummary}}', () => args.politicalSummary)
+    .replace('{{keyTensions}}', () => args.keyTensions)
     .replace(
       '{{vocabularyRegistry}}',
-      renderVocabularyRegistry(args.vocabularyRegistry),
+      () => renderVocabularyRegistry(args.vocabularyRegistry),
     )
-    .replace('{{conceptText}}', args.conceptText)
+    .replace('{{conceptText}}', () => args.conceptText)
 
   const result = await generateObject({
     model: SONNET,

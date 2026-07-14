@@ -85,13 +85,16 @@ export async function runRandomTablesStage(
   repo: Repo,
   args: RandomTablesArgs,
 ): Promise<StageCostResult> {
-  const prompt = PROMPT_TEMPLATE.replaceAll('{{name}}', args.worldName)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{era}}', args.era)
-    .replace('{{geography_summary}}', args.geographySummary)
-    .replace('{{seed_tables}}', args.seedTablesBlock)
-    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
+  // Function replacers: every value is user/LLM-derived, so a `$&`/`$'`-style
+  // sequence in it must splice in literally (a plain string replacement would
+  // read those as special patterns).
+  const prompt = PROMPT_TEMPLATE.replaceAll('{{name}}', () => args.worldName)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
+    .replace('{{era}}', () => args.era)
+    .replace('{{geography_summary}}', () => args.geographySummary)
+    .replace('{{seed_tables}}', () => args.seedTablesBlock)
+    .replace('{{vocabularyRegistry}}', () => renderVocabularyRegistry(args.vocabularyRegistry))
 
   const result = await generateObject({
     model: HAIKU,

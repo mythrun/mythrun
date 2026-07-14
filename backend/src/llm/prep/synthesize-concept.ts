@@ -29,7 +29,11 @@ export const SynthesizerPick = z.object({
 export type SynthesizerPick = z.infer<typeof SynthesizerPick>
 
 export const SynthesizerOutput = z.object({
-  concept: z.string().min(50).max(4000),
+  // No .max() on the concept: it is LLM prose, and a max ceiling terminal-fails
+  // an over-length generation instead of accepting it. The .min() floor stays
+  // (a too-short brief is malformed). Its destination — worlds.concept — is a
+  // bare TEXT column with no length CHECK, so nothing downstream needs a mirror.
+  concept: z.string().min(50),
   intentSummary: z.object({
     aesthetics: z.array(z.string().min(1).max(100)).min(1).max(8),
     themes: z.array(z.string().min(1).max(100)).min(1).max(8),
@@ -51,7 +55,10 @@ function buildPrompt(picks: readonly SynthesizerPick[]): string {
   const picksBlock = picks
     .map((p) => `- Title: ${p.title}\n  Why they like it: ${p.whyILikeIt}`)
     .join('\n')
-  return PROMPT_TEMPLATE.replace(/\{\{#picks\}\}[\s\S]*?\{\{\/picks\}\}/, picksBlock)
+  // Function replacer so a `$&`/`$1`/`$'` sequence in a user-supplied title or
+  // reason is spliced in literally (String.prototype.replace treats those as
+  // special in a STRING replacement — a replacer function bypasses that).
+  return PROMPT_TEMPLATE.replace(/\{\{#picks\}\}[\s\S]*?\{\{\/picks\}\}/, () => picksBlock)
 }
 
 export async function synthesizeConcept(
@@ -77,7 +84,7 @@ export async function synthesizeConcept(
 }
 
 // myth-umggn: wall-clock budget for the streamed synthesis — covers the whole
-// stream (first byte through final token), not just connect. A ≤4000-char
+// stream (first byte through final token), not just connect. A few-thousand-char
 // Sonnet brief streams in well under a minute; 3 min leaves headroom for SDK
 // connect retries without letting a stalled socket hang the player's screen.
 const STREAM_TIMEOUT_MS = 3 * 60 * 1000

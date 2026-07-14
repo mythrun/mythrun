@@ -47,12 +47,16 @@ export type RepairResult<T> =
 const SCHEMA_DESCRIPTION = '(schema described by validation errors below)'
 
 export async function repairStructuredOutput<T>(args: RepairArgs<T>): Promise<RepairResult<T>> {
+  // Function replacers for the dynamic blocks: the current tree is LLM output
+  // (JSON.stringify does not escape `$`) and the Zod messages can echo input
+  // values, so a `$&`/`$'` sequence in either must splice in literally.
+  // `{{schemaJson}}` is a static constant, so a plain string replace is safe.
   const prompt = PROMPT_TEMPLATE
     .replace('{{schemaJson}}', SCHEMA_DESCRIPTION)
-    .replace('{{currentTree}}', JSON.stringify(args.tree, null, 2))
+    .replace('{{currentTree}}', () => JSON.stringify(args.tree, null, 2))
     .replace(
       '{{zodErrors}}',
-      args.zodErrors.issues.map((i) => `- ${i.path.join('.')}: ${i.message}`).join('\n'),
+      () => args.zodErrors.issues.map((i) => `- ${i.path.join('.')}: ${i.message}`).join('\n'),
     )
 
   const result = await generateText({

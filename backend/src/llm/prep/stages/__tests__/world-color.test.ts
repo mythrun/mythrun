@@ -168,6 +168,22 @@ describe('runWorldColorStage', () => {
     expect(opts.prompt).not.toContain('{{rejectedFeedback}}')
   })
 
+  // Regression (myth-8rtvl): a vibe field containing `$&`/`$'`-style sequences
+  // must land in the prompt verbatim. Plain String.replace would interpret them
+  // as replacement patterns, so the dynamic substitutions use a function replacer.
+  it('inserts vibe fields containing $-replacement sequences verbatim', async () => {
+    mockPair(PASSING)
+
+    const repo = makeColorRepo()
+    await runWorldColorStage(repo as unknown as Repo, {
+      ...ARGS,
+      concept: "a market where $& costs $$ and $' is the coin of the tide",
+    })
+
+    const opts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(opts.prompt).toContain("a market where $& costs $$ and $' is the coin of the tide")
+  })
+
   it('falls back to the widest-separation proposal when every attempt misses the floor', async () => {
     // Three sub-floor pairs (none clears 6 rungs). The widest-separation pair
     // sits in the MIDDLE position, so this assertion can only pass if the stage

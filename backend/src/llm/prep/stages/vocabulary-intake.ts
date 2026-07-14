@@ -58,15 +58,18 @@ export async function runVocabularyIntakeStage(
   repo: Repo,
   args: VocabularyIntakeArgs,
 ): Promise<StageCostResult> {
+  // Function replacers: every value is user/LLM-derived (the concept is user
+  // input), so a `$&`/`$'`-style sequence must splice in literally rather than
+  // being read as a special replacement pattern.
   const prompt = PROMPT_TEMPLATE
-    .replace('{{worldName}}', args.worldName)
-    .replace('{{concept}}', args.concept)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{era}}', args.era)
-    .replace('{{geographySummary}}', args.geographySummary)
-    .replace('{{politicalSummary}}', args.politicalSummary)
-    .replace('{{keyTensions}}', args.keyTensions)
+    .replace('{{worldName}}', () => args.worldName)
+    .replace('{{concept}}', () => args.concept)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
+    .replace('{{era}}', () => args.era)
+    .replace('{{geographySummary}}', () => args.geographySummary)
+    .replace('{{politicalSummary}}', () => args.politicalSummary)
+    .replace('{{keyTensions}}', () => args.keyTensions)
 
   const result = await generateObject({
     model: SONNET,

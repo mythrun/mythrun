@@ -117,6 +117,25 @@ describe('runInputGate', () => {
     expect(v.reason).toBe('inappropriate')
   })
 
+  // Regression (myth-8rtvl): a user-supplied concept containing `$&`/`$'`-style
+  // sequences must land in the prompt verbatim. Plain String.replace treats
+  // those as special replacement patterns, so the substitution goes through a
+  // function replacer.
+  it('inserts a concept containing $-replacement sequences verbatim', async () => {
+    mockGateReturn({})
+    await runInputGate({
+      concept: "a bazaar where $& buys $' and $$ is a curse and $1 a blessing",
+      intentSummary: null,
+    })
+    const callArgs = vi.mocked(ai.generateText).mock.calls.at(-1)?.[0] as unknown as Record<
+      string,
+      unknown
+    >
+    expect(callArgs.prompt).toContain(
+      "a bazaar where $& buys $' and $$ is a curse and $1 a blessing",
+    )
+  })
+
   it('passes intentSummary into the prompt', async () => {
     mockGateReturn({})
     await runInputGate({

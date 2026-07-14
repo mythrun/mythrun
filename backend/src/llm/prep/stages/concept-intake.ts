@@ -62,9 +62,11 @@ export async function runConceptIntakeStage(
     args.intentSummary === null
       ? '(none — freeform mode)'
       : `aesthetics: ${args.intentSummary.aesthetics.join(', ')}\nthemes: ${args.intentSummary.themes.join(', ')}`
-  const prompt = PROMPT_TEMPLATE.replace('{{concept}}', args.conceptText).replace(
+  // Function replacers: the concept is user input and the intent block is
+  // derived from it, so a `$&`/`$'`-style sequence must splice in literally.
+  const prompt = PROMPT_TEMPLATE.replace('{{concept}}', () => args.conceptText).replace(
     '{{intent}}',
-    intentBlock,
+    () => intentBlock,
   )
 
   const result = await validateAndGenerateConcept({

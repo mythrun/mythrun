@@ -53,10 +53,10 @@ describe('reviseConcept', () => {
     expect(callArgs.prompt).toContain('less water, more forgetting')
   })
 
-  it('throws when the model output violates the concept schema (over-length)', async () => {
+  it('throws when the model output violates the concept schema (under-length)', async () => {
     const mockResult = {
       output: {
-        concept: 'x'.repeat(5000), // exceeds SynthesizerOutput concept max(4000)
+        concept: 'too short', // below SynthesizerOutput concept min(50)
         intentSummary: {
           aesthetics: ['a'],
           themes: ['b'],
@@ -71,5 +71,23 @@ describe('reviseConcept', () => {
     await expect(
       reviseConcept('a prior concept', 'a change note'),
     ).rejects.toThrow()
+  })
+
+  // Standing rule: no .max() on LLM prose. A revised concept over the old 4000
+  // ceiling must pass through, not terminal-fail.
+  it('returns a revised concept far longer than 4000 chars', async () => {
+    const longConcept = 'y'.repeat(6000)
+    const mockResult = {
+      output: {
+        concept: longConcept,
+        intentSummary: { aesthetics: ['a'], themes: ['b'], sourcesInternal: ['c'] },
+      },
+      finishReason: 'stop',
+      usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+    } as never
+    vi.mocked(ai.generateText).mockResolvedValueOnce(mockResult)
+
+    const result = await reviseConcept('a prior concept', 'a change note')
+    expect(result.concept).toBe(longConcept)
   })
 })

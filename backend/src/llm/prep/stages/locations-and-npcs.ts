@@ -294,14 +294,17 @@ export async function runLocationsAndNpcsStage(
   repo: Repo,
   args: RunLocationsAndNpcsArgs,
 ): Promise<StageDispatchResult> {
-  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.world.name)
-    .replace('{{tone}}', args.world.tone)
-    .replace('{{themes}}', args.world.themes)
-    .replace('{{era}}', args.world.era)
-    .replace('{{worldOverview}}', args.world.worldOverview)
-    .replace('{{regionsSummary}}', args.world.regionsSummary)
-    .replace('{{factionsSummary}}', args.world.factionsSummary)
-    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
+  // Function replacers: every value is user/LLM-derived, so a `$&`/`$'`-style
+  // sequence must splice in literally rather than being read as a special
+  // replacement pattern.
+  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', () => args.world.name)
+    .replace('{{tone}}', () => args.world.tone)
+    .replace('{{themes}}', () => args.world.themes)
+    .replace('{{era}}', () => args.world.era)
+    .replace('{{worldOverview}}', () => args.world.worldOverview)
+    .replace('{{regionsSummary}}', () => args.world.regionsSummary)
+    .replace('{{factionsSummary}}', () => args.world.factionsSummary)
+    .replace('{{vocabularyRegistry}}', () => renderVocabularyRegistry(args.vocabularyRegistry))
 
   // maxRetries: 0 per design D2 — predictable cost attribution + repair
   // chain owns validation recovery + BullMQ stage retry owns transport

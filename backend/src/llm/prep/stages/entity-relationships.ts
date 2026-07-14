@@ -102,12 +102,15 @@ function renderInventory(inv: readonly InventoryEntry[]): string {
 }
 
 function buildPrompt(args: EntityRelationshipsArgs, inventory: readonly InventoryEntry[]): string {
-  return PROMPT_TEMPLATE.replace('{{worldName}}', args.worldName)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{keyTensions}}', args.keyTensions)
-    .replace('{{entityInventory}}', renderInventory(inventory))
-    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
+  // Function replacers: every value is user/LLM-derived, so a `$&`/`$'`-style
+  // sequence must splice in literally rather than being read as a special
+  // replacement pattern.
+  return PROMPT_TEMPLATE.replace('{{worldName}}', () => args.worldName)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
+    .replace('{{keyTensions}}', () => args.keyTensions)
+    .replace('{{entityInventory}}', () => renderInventory(inventory))
+    .replace('{{vocabularyRegistry}}', () => renderVocabularyRegistry(args.vocabularyRegistry))
 }
 
 interface AcceptedRow {

@@ -395,11 +395,14 @@ function renderPrompt(vars: PromptVars): string {
       ? vars.preIntegrationNotes
       : '(none)'
   /* c8 ignore stop */
-  return PROMPT_TEMPLATE.replace('{{preIntegrationNotes}}', notes)
-    .replace('{{startingSituationProse}}', vars.startingSituationProse)
-    .replace('{{worldVocabulary}}', vars.worldVocabulary)
-    .replace('{{worldDump}}', vars.worldDump)
-    .replace('{{party}}', vars.party)
+  // Function replacers: every value is user/LLM-derived, so a `$&`/`$'`-style
+  // sequence must splice in literally rather than being read as a special
+  // replacement pattern.
+  return PROMPT_TEMPLATE.replace('{{preIntegrationNotes}}', () => notes)
+    .replace('{{startingSituationProse}}', () => vars.startingSituationProse)
+    .replace('{{worldVocabulary}}', () => vars.worldVocabulary)
+    .replace('{{worldDump}}', () => vars.worldDump)
+    .replace('{{party}}', () => vars.party)
 }
 
 // ---------------------------------------------------------------------------

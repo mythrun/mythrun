@@ -97,10 +97,14 @@ function renderRejectedFeedback(rejected: readonly WorldColorPair[]): string {
 }
 
 function buildPrompt(args: WorldColorArgs, rejected: readonly WorldColorPair[]): string {
-  return PROMPT_TEMPLATE.replace('{{worldName}}', args.worldName)
-    .replace('{{concept}}', args.concept)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
+  // Function replacers for the dynamic vibe fields so a `$&`/`$'`-style sequence
+  // in user/LLM-derived text splices in literally rather than being read as a
+  // replacement pattern. `paletteList` is a static constant and `rejectedFeedback`
+  // is built from closed-enum palette tokens, so those two stay plain-string.
+  return PROMPT_TEMPLATE.replace('{{worldName}}', () => args.worldName)
+    .replace('{{concept}}', () => args.concept)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
     .replace('{{paletteList}}', PALETTE_LIST)
     .replace('{{rejectedFeedback}}', renderRejectedFeedback(rejected))
 }

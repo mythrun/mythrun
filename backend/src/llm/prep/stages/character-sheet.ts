@@ -282,19 +282,21 @@ export function validateCoherence(sheet: CharacterSheetOutput, level: number): v
 }
 
 function renderPrompt(args: CharacterSheetArgs): string {
-  return PROMPT_TEMPLATE.replace('{{name}}', args.narrative.name)
-    .replace('{{race}}', args.narrative.race)
-    .replace('{{class}}', args.narrative.class)
-    .replace('{{background}}', args.narrative.background)
-    .replace('{{alignment}}', args.narrative.alignment)
-    .replace('{{physicalDescription}}', args.narrative.physical_description)
-    .replace('{{backstory}}', args.narrative.backstory)
-    .replace('{{tone}}', args.worldTone)
-    .replace('{{era}}', args.worldEra)
+  // Function replacers for the narrative/world fields: each is user/LLM-derived,
+  // so a `$&`/`$'`-style sequence must splice in literally rather than being read
+  // as a special replacement pattern.
+  return PROMPT_TEMPLATE.replace('{{name}}', () => args.narrative.name)
+    .replace('{{race}}', () => args.narrative.race)
+    .replace('{{class}}', () => args.narrative.class)
+    .replace('{{background}}', () => args.narrative.background)
+    .replace('{{alignment}}', () => args.narrative.alignment)
+    .replace('{{physicalDescription}}', () => args.narrative.physical_description)
+    .replace('{{backstory}}', () => args.narrative.backstory)
+    .replace('{{tone}}', () => args.worldTone)
+    .replace('{{era}}', () => args.worldEra)
     // MYT-90 A4: level is deterministic (campaign.starting_level, injected by
-    // the processor). It appears in multiple places in the template, so
-    // replaceAll — the single-shot `.replace` above suffices only for the
-    // once-each narrative/world placeholders.
+    // the processor) — a number, so `$`-free and safe as a plain string
+    // replacement. It appears in multiple places in the template, so replaceAll.
     .replaceAll('{{level}}', String(args.narrative.level))
 }
 

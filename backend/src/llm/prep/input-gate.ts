@@ -66,9 +66,12 @@ export async function runInputGate(args: InputGateArgs): Promise<InputGateVerdic
     args.intentSummary === null
       ? '(none — freeform mode)'
       : JSON.stringify(args.intentSummary, null, 2)
-  const prompt = PROMPT_TEMPLATE.replace('{{concept}}', args.concept).replace(
+  // Function replacers: the concept is user input and the intentSummary block
+  // is LLM-derived — a `$&`/`$'`-style sequence in either must splice in
+  // literally rather than being read as a replacement pattern.
+  const prompt = PROMPT_TEMPLATE.replace('{{concept}}', () => args.concept).replace(
     '{{intentSummary}}',
-    intentSummaryBlock,
+    () => intentSummaryBlock,
   )
   const result = await generateObject({
     model: SONNET,

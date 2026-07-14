@@ -151,7 +151,9 @@ export async function validateAndGenerateConcept<TDraft>(
     const judgeResult = await generateObject({
       model: SONNET,
       schema: PaintJobJudgementSchema,
-      prompt: JUDGE_TEMPLATE.replace('{{draft}}', JSON.stringify(genResult.output, null, 2)),
+      // Function replacer: the draft is LLM output (JSON.stringify does not
+      // escape `$`), so a `$&`/`$'` sequence in it must splice in literally.
+      prompt: JUDGE_TEMPLATE.replace('{{draft}}', () => JSON.stringify(genResult.output, null, 2)),
       temperature: 0.1,
       maxRetries: 3,
       callSite: 'paint-job-validator/judge',

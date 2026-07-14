@@ -774,9 +774,12 @@ export async function runCoherencePassStage(
   const inventory = await repo.worldInventory.load(args.worldId)
 
   const worldDump = renderWorldDump(inventory)
-  const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', worldDump).replace(
+  // Function replacers: both blocks are LLM-derived world content, so a
+  // `$&`/`$'`-style sequence must splice in literally rather than being read as
+  // a special replacement pattern.
+  const prompt = PROMPT_TEMPLATE.replaceAll('{{worldDump}}', () => worldDump).replace(
     '{{vocabularyRegistry}}',
-    renderVocabularyRegistry(args.vocabularyRegistry),
+    () => renderVocabularyRegistry(args.vocabularyRegistry),
   )
 
   const result = await generateObject({

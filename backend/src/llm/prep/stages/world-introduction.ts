@@ -147,12 +147,14 @@ function renderPrompt(
     entries: args.vocabularyRegistry.entries.filter((e) => e.access_level === 'known'),
     adjacent_franchises: args.vocabularyRegistry.adjacent_franchises,
   }
-  // replaceAll: worldName appears more than once in the template.
-  return PROMPT_TEMPLATE.replaceAll('{{worldName}}', args.worldName)
-    .replaceAll('{{tone}}', args.tone)
-    .replaceAll('{{themes}}', args.themes)
-    .replaceAll('{{vocabularyRegistry}}', renderVocabularyRegistry(knownVocab))
-    .replaceAll('{{knownWorld}}', renderKnownWorld(entities, facts, prose, relationships))
+  // replaceAll: worldName appears more than once in the template. Function
+  // replacers: every value is user/LLM-derived, so a `$&`/`$'`-style sequence
+  // must splice in literally rather than being read as a replacement pattern.
+  return PROMPT_TEMPLATE.replaceAll('{{worldName}}', () => args.worldName)
+    .replaceAll('{{tone}}', () => args.tone)
+    .replaceAll('{{themes}}', () => args.themes)
+    .replaceAll('{{vocabularyRegistry}}', () => renderVocabularyRegistry(knownVocab))
+    .replaceAll('{{knownWorld}}', () => renderKnownWorld(entities, facts, prose, relationships))
 }
 
 function renderKnownWorld(

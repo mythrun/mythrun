@@ -151,13 +151,16 @@ export async function runEntityConsolidationStage(
     .join('\n')
   const phantomBlock = buildPhantomBlock(pending)
 
-  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', args.worldName)
-    .replace('{{tone}}', args.tone)
-    .replace('{{themes}}', args.themes)
-    .replace('{{keyTensions}}', args.keyTensions)
-    .replace('{{vocabularyRegistry}}', renderVocabularyRegistry(args.vocabularyRegistry))
-    .replace('{{entityInventory}}', inventoryBlock)
-    .replace('{{phantomBlock}}', phantomBlock)
+  // Function replacers: every value is user/LLM-derived, so a `$&`/`$'`-style
+  // sequence must splice in literally rather than being read as a special
+  // replacement pattern.
+  const prompt = PROMPT_TEMPLATE.replace('{{worldName}}', () => args.worldName)
+    .replace('{{tone}}', () => args.tone)
+    .replace('{{themes}}', () => args.themes)
+    .replace('{{keyTensions}}', () => args.keyTensions)
+    .replace('{{vocabularyRegistry}}', () => renderVocabularyRegistry(args.vocabularyRegistry))
+    .replace('{{entityInventory}}', () => inventoryBlock)
+    .replace('{{phantomBlock}}', () => phantomBlock)
 
   // 5. Sonnet generateObject. The wrapper runs the Haiku→Sonnet repair
   // chain on LlmStructuredOutputError; on terminal failure the outer
