@@ -48,4 +48,17 @@ export interface ButtonProps extends BaseProps {
   onPress?: () => void
   /** Native button behaviour. Default `button` (does not submit a form). */
   type?: ButtonType
+  /**
+   * Disclosure state — for a toggle that shows/hides a region (the WAI-ARIA
+   * disclosure pattern). `true` when the controlled region is shown, `false`
+   * when hidden; pair with `aria-controls`. Forwarded straight to the control
+   * (a native impl maps it to the platform's expanded accessibility state).
+   */
+  'aria-expanded'?: boolean
+  /**
+   * The id of the region a disclosure toggle shows/hides — the `aria-controls`
+   * half of the pattern, pointing at the controlled content. Pair with
+   * `aria-expanded`.
+   */
+  'aria-controls'?: string
 }

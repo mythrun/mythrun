@@ -289,6 +289,34 @@ describe('Button', () => {
     expect(ref.current).toBeInstanceOf(HTMLButtonElement)
   })
 
+  it('forwards aria-expanded + aria-controls to the underlying <button> (disclosure trigger)', () => {
+    // The DS Button is the sanctioned control for a WAI-ARIA disclosure toggle (e.g.
+    // the CharacterSheetReveal "See full sheet" expander): the contract carries the
+    // two disclosure aria props explicitly, forwarded to the real <button> so the
+    // toggle exposes aria-expanded (open/closed) + aria-controls (the panel id). The
+    // `expanded` role option asserts aria-expanded is present with the right value.
+    const collapsed = render(
+      <Button aria-expanded={false} aria-controls="sheet-panel">
+        Toggle
+      </Button>,
+    )
+    expect(collapsed.getByRole('button', { expanded: false })).toHaveAttribute(
+      'aria-controls',
+      'sheet-panel',
+    )
+    collapsed.unmount()
+
+    const expanded = render(
+      <Button aria-expanded aria-controls="sheet-panel">
+        Toggle
+      </Button>,
+    )
+    expect(expanded.getByRole('button', { expanded: true })).toHaveAttribute(
+      'aria-controls',
+      'sheet-panel',
+    )
+  })
+
   it('has no axe violations (default / disabled / loading)', async () => {
     const { container } = render(
       <div>

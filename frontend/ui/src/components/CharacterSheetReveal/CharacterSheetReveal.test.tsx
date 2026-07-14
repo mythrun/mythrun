@@ -203,6 +203,35 @@ describe('CharacterSheetReveal', () => {
     expect(opened.getByRole('button', { name: /hide full sheet/i })).toBeInTheDocument()
   })
 
+  it('wires the toggle as a WAI-ARIA disclosure — aria-expanded reflects the expanded state', () => {
+    const collapsed = render(<CharacterSheetReveal {...baseProps({ expanded: false })} />)
+    expect(collapsed.getByRole('button', { name: /see full sheet/i })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    collapsed.unmount()
+    const expanded = render(<CharacterSheetReveal {...baseProps({ expanded: true })} />)
+    expect(expanded.getByRole('button', { name: /hide full sheet/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+  })
+
+  it('the toggle aria-controls resolves to the rendered full-sheet region (disclosure target)', () => {
+    const { getByRole, getByTestId } = render(
+      <CharacterSheetReveal {...baseProps({ expanded: true })} />,
+    )
+    const toggle = getByRole('button', { name: /hide full sheet/i })
+    const controls = toggle.getAttribute('aria-controls')
+    expect(controls).toBeTruthy()
+    // The id resolves to a real element that wraps the full mechanical sheet.
+    const region = document.getElementById(controls ?? '')
+    if (!region) throw new Error(`no element for aria-controls id "${controls ?? ''}"`)
+    expect(within(region).getByTestId('character-sheet-reveal-full')).toBe(
+      getByTestId('character-sheet-reveal-full'),
+    )
+  })
+
   it('fires onToggleExpand — and nothing else — when the toggle is pressed (pure, no network)', async () => {
     const onToggleExpand = vi.fn()
     const onConfirm = vi.fn()

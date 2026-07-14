@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useId } from 'react'
 import type {
   CharacterSheetRevealProps,
   AbilityTile,
@@ -246,6 +246,10 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
     ref,
   ) {
     const hasSpells = curated.spells !== undefined && curated.spells.length > 0
+    // WAI-ARIA disclosure wiring: the "See full sheet" toggle carries
+    // aria-expanded + aria-controls pointing at the full-sheet region. `useId`
+    // keeps the IDREF unique across multiple reveals on one page.
+    const fullSheetId = useId()
     return (
       <Stack ref={ref} data-testid="character-sheet-reveal" gap={5}>
         {/* Name + identity eyebrow — the one real heading (display role) over the mono
@@ -306,15 +310,27 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
           </div>
         </div>
 
-        {/* The opt-in full mechanical sheet — a pure client reveal (no network). */}
-        {expanded && <FullSheetView full={full} />}
+        {/* The opt-in full mechanical sheet — a pure client reveal (no network).
+            The `id` wrapper is the disclosure region the toggle's aria-controls
+            targets (Stack carries no id; a bare wrapper keeps the layout identical). */}
+        {expanded && (
+          <div id={fullSheetId}>
+            <FullSheetView full={full} />
+          </div>
+        )}
 
         {/* Actions: confirm into the party · toggle the full sheet · start over. */}
         <div className={ACTIONS_CLASS}>
           <Button variant="primary" size="lg" onPress={onConfirm}>
             This is me <span aria-hidden="true">→</span>
           </Button>
-          <Button variant="secondary" size="lg" onPress={onToggleExpand}>
+          <Button
+            variant="secondary"
+            size="lg"
+            onPress={onToggleExpand}
+            aria-expanded={expanded}
+            aria-controls={fullSheetId}
+          >
             {expanded ? HIDE_FULL_LABEL : SEE_FULL_LABEL}
           </Button>
           <Button variant="ghost" size="lg" onPress={onStartOver}>
