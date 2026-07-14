@@ -3,3 +3,5 @@
 // re-exports: the barrel carries no runtime values (asserted by contract.test.ts).
 export type { CreditBalanceProps } from './credit-balance-props.ts'
 export type { PackListProps, SubscriptionTierView, AlaCarteView } from './pack-list-props.ts'
+export type { PurchasePromptProps } from './purchase-prompt-props.ts'
+export type { PurchaseHistoryProps, PurchaseHistoryRow } from './purchase-history-props.ts'
