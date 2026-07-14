@@ -21,6 +21,8 @@ import { LevelPickRoute } from '../routes/character-new/level-pick.tsx'
 import { JoinSummaryRoute } from '../routes/character-new/join-summary.tsx'
 import { PlayRoute } from '../routes/play.tsx'
 import { SettingsRoute } from '../routes/settings.tsx'
+import { CheckoutReturnRoute } from '../routes/billing/checkout-return.tsx'
+import { CheckoutCancelledRoute } from '../routes/billing/checkout-cancelled.tsx'
 
 // DEV-only realtime-transport harness (MYT-85 T9). React.lazy over a
 // DEV-STATIC dynamic import: in a prod build `import.meta.env.DEV` is a
@@ -113,6 +115,11 @@ export function buildRoutes(dev: boolean): RouteObject[] {
                 { path: 'campaigns/:id/character/new', element: <CharacterNewRoute /> },
                 { path: 'campaigns/:id/play', element: <PlayRoute /> },
                 { path: 'settings', element: <SettingsRoute /> },
+                // Stripe checkout-return landings (MYT-95). A completed or
+                // abandoned Checkout Session redirects the signed-in player back
+                // here; both sit in the authed, framed branch.
+                { path: 'billing/return', element: <CheckoutReturnRoute /> },
+                { path: 'billing/cancelled', element: <CheckoutCancelledRoute /> },
               ],
             },
           ],

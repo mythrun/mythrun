@@ -320,4 +320,11 @@ export const descriptions: Record<string, string> = {
   'characterCreate.joinSummary.loadError': 'Calm inline notice on the member-join summary when the world snapshot cannot be fetched — a quiet, retryable note paired with the retry affordance (the snapshot endpoint is owner-only today, so a joined member lands here; transient failures look the same), never an apology or an error code. Terse, ~5-8 words.',
   'characterCreate.joinSummary.retry': 'Retry affordance label on the member-join summary\'s load-error state — re-fetches the world snapshot. ~1-2 words, e.g. "Try again".',
   'characterCreate.joinSummary.cta': 'Primary CTA on the member-join summary that hands off to character creation (the owner already set the situation + level, so the member skips those). Brand-voiced verb phrase, ~2-4 words, e.g. "Create your character".',
+  'billing.return.polling': 'Calm status line on the Stripe checkout-RETURN screen while the balance is polled for the async credit grant (the webhook is the source of truth, so the grant is not synchronous). A reassuring "confirming your purchase" beat, never an error. ~3-5 words.',
+  'billing.return.settled': 'Status line on the checkout-return screen once the polled balance changes — the credits have landed. A calm "you\'re all set" confirmation. ~4-6 words.',
+  'billing.return.processing': 'Status line on the checkout-return screen when the poll budget expires before the balance changes — the payment completed but the grant is still in flight. Calm and reassuring (the credits will appear shortly), NEVER a failure. Paired with the view-history link. ~1 short sentence.',
+  'billing.return.viewHistory': 'Low-emphasis affordance on the checkout-return "processing" beat that navigates to the settings purchase history, where the pending grant will appear. Terse verb phrase, ~2-4 words.',
+  'billing.cancelled.title': 'Headline on the Stripe checkout-CANCELLED screen (the player abandoned Checkout). Calm and neutral — NOT an error surface. Short, ~2-3 words.',
+  'billing.cancelled.body': 'Body on the checkout-cancelled screen — reassures that no charge was made and invites picking back up. Calm, ~1 short sentence.',
+  'billing.cancelled.back': 'Low-emphasis affordance on the checkout-cancelled screen that navigates back to the billing settings surface. Terse, ~2-4 words.',
 }

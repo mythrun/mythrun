@@ -522,5 +522,18 @@
       "retry": "[ph: try again]",
       "cta": "[ph: create your character]"
     }
+  },
+  "billing": {
+    "return": {
+      "polling": "[ph: confirming your purchase…]",
+      "settled": "[ph: credits added — you're all set]",
+      "processing": "[ph: purchase processing — your credits will appear shortly]",
+      "viewHistory": "[ph: view purchase history]"
+    },
+    "cancelled": {
+      "title": "[ph: checkout cancelled]",
+      "body": "[ph: no charge was made — pick up where you left off]",
+      "back": "[ph: back to billing]"
+    }
   }
 }
