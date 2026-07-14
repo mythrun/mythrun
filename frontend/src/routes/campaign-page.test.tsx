@@ -1,24 +1,28 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
 import {
   ApiClientProvider,
   createSseStatusClient,
+  HttpError,
   type ApiContext,
   type CampaignSummary,
   type SseStatusClient,
 } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
 import { CampaignPage } from './campaign-page.tsx'
+import type { InvitePanelDeps } from './campaign-invite-panel.tsx'
 import type { CharacterSurfaceDeps } from './character-new/character-surface.tsx'
 
-// The campaign page (MYT-89 D5 → MYT-90 D8): world identity + the invite stub seam
-// (MYT-91) + the real character surface (MYT-90). `fetchCampaigns` is injected for
-// the identity; `characterDeps` drives the mounted surface to a stable, non-network
-// beat (a processing concept → the loading beat) so the page renders without a live
-// SSE/endpoint. The surface's own routing is covered in character-surface.test.tsx.
+// The campaign page (MYT-89 D5 → MYT-90 D8 → MYT-91): world identity + the OWNER
+// InvitePanel (MYT-91, replacing the old stub seam) + the real character surface
+// (MYT-90). `fetchCampaigns` is injected for the identity; `characterDeps` drives
+// the mounted surface to a stable, non-network beat (a processing concept → the
+// loading beat); `inviteDeps` injects the invite endpoints + web share/clipboard
+// ports so the owner panel resolves a link without a live endpoint or a real
+// clipboard. The surface's own routing is covered in character-surface.test.tsx.
 
 // A never-opened SSE client so the mounted loading beat never touches the network.
 const characterDeps: CharacterSurfaceDeps = {
@@ -52,6 +56,19 @@ const characterDeps: CharacterSurfaceDeps = {
       }
     },
   },
+}
+
+// A deterministic invite seam: `ensurePrimary` resolves a fixed primary link so the
+// owner panel renders without a live endpoint; the ports are inert no-ops (each
+// test that exercises copy/share/cap-reached overrides the slice it drives).
+const DEFAULT_INVITE_DEPS: InvitePanelDeps = {
+  ensurePrimary: () =>
+    Promise.resolve({ inviteUrl: 'https://mythrun.com/join/ABC123', inviteCode: 'ABC123' }),
+  create: () => Promise.resolve({ inviteUrl: 'https://mythrun.com/join/NEW', inviteCode: 'NEW' }),
+  revoke: () => Promise.resolve(),
+  copyText: () => Promise.resolve(),
+  webShare: () => Promise.resolve(),
+  canShare: false,
 }
 
 // ENVIRONMENT shim (Node 25 vs jsdom): @mythrun/ui's <ThemeProvider> reads
@@ -117,6 +134,7 @@ const CAMPAIGN: CampaignSummary = {
 function renderPage(
   fetchCampaigns: (ctx: ApiContext) => Promise<readonly CampaignSummary[]>,
   campaignId = 'c1',
+  inviteDeps: InvitePanelDeps = DEFAULT_INVITE_DEPS,
 ): void {
   render(
     <ThemeProvider>
@@ -127,6 +145,7 @@ function renderPage(
               campaignId={campaignId}
               fetchCampaigns={fetchCampaigns}
               characterDeps={characterDeps}
+              inviteDeps={inviteDeps}
             />
           </MemoryRouter>
         </I18nextProvider>
@@ -145,40 +164,82 @@ describe('CampaignPage — world identity + MYT-90/91 seams', () => {
     expect(screen.queryByTestId('campaign-cover-ghost')).toBeNull()
   })
 
-  it('renders the invite stub seam (MYT-91) and mounts the real character surface (MYT-90)', async () => {
+  it('mounts the owner InvitePanel (MYT-91) with the primary link and the character surface (MYT-90)', async () => {
     renderPage(() => Promise.resolve([CAMPAIGN]))
     await screen.findByTestId('campaign-world-name')
-    const invite = screen.getByTestId('seam-invite')
-    expect(invite).toBeDefined()
-    // The invite region is still a clearly-marked stub, never a fake-working control.
-    expect(invite.textContent).toContain('[ph:')
-    // The character region is no longer a stub — the surface routes the injected
-    // processing concept to the live loading beat.
+    // The invite region is now the real owner panel (not a stub), still under the
+    // `seam-invite` testid so the campaign-detail selectors don't dangle.
+    expect(screen.getByTestId('seam-invite')).toBeDefined()
+    // The read-only link field shows the resolved primary invite verbatim.
+    expect(await screen.findByDisplayValue('https://mythrun.com/join/ABC123')).toBeDefined()
+    // The character region routes the injected processing concept to the live
+    // loading beat.
     expect(await screen.findByTestId('character-loading')).toBeDefined()
     expect(screen.queryByTestId('seam-character')).toBeNull()
   })
 
-  it('renders a ghost cover when the world has no colour pick yet', async () => {
+  it('copies the invite link through the injected port and flips the copied ack', async () => {
+    const copyText = vi.fn().mockResolvedValue(undefined)
+    renderPage(() => Promise.resolve([CAMPAIGN]), 'c1', {
+      ...DEFAULT_INVITE_DEPS,
+      copyText,
+      canShare: true,
+    })
+    await screen.findByTestId('invite-panel-link')
+    fireEvent.click(screen.getByTestId('invite-panel-copy'))
+    await waitFor(() => {
+      expect(copyText).toHaveBeenCalledWith('https://mythrun.com/join/ABC123')
+    })
+    // The panel reflects the transient "copied" acknowledgement (the route's timer).
+    await waitFor(() => {
+      expect(screen.getByTestId('invite-panel-copy').textContent).toMatch(/copied/i)
+    })
+  })
+
+  it('surfaces the cap-reached notice when the invite endpoint reports the cap (409)', async () => {
+    renderPage(() => Promise.resolve([CAMPAIGN]), 'c1', {
+      ...DEFAULT_INVITE_DEPS,
+      ensurePrimary: () =>
+        Promise.reject(new HttpError(409, 'invite cap reached', 'invite_cap_reached')),
+    })
+    // A calm cap-reached notice (a soft limit), and — with no resolved link — the
+    // create affordance, never a dead field.
+    expect(await screen.findByTestId('invite-panel-notice')).toBeDefined()
+    expect(screen.queryByTestId('invite-panel-link')).toBeNull()
+  })
+
+  it('renders NO invite panel for a non-owner (a joined member, creator set)', async () => {
+    renderPage(() => Promise.resolve([{ ...CAMPAIGN, creator: 'Other Player' }]))
+    // The owner-only invite region is absent for a member; the rest of the page
+    // (identity + the character surface) still renders.
+    expect(await screen.findByTestId('campaign-world-name')).toBeDefined()
+    expect(screen.queryByTestId('seam-invite')).toBeNull()
+    expect(screen.queryByTestId('invite-panel')).toBeNull()
+    expect(await screen.findByTestId('character-loading')).toBeDefined()
+  })
+
+  it('renders a ghost cover (and still the owner panel) when the world has no colour pick yet', async () => {
     renderPage(() => Promise.resolve([{ ...CAMPAIGN, worldColors: null }]))
     expect(await screen.findByTestId('campaign-cover-ghost')).toBeDefined()
     expect(screen.queryByTestId('campaign-cover')).toBeNull()
-    // The seams still render regardless of identity resolution.
+    // The owner panel still renders regardless of identity colour resolution.
     expect(screen.getByTestId('seam-invite')).toBeDefined()
   })
 
-  it('settles to a calm ghost identity when the campaign is not found', async () => {
+  it('settles to a calm ghost identity (no invite panel) when the campaign is not found', async () => {
     renderPage(() => Promise.resolve([]), 'missing')
-    // The page still renders (the invite seam + the surface); the identity falls to
-    // the ghost swatch, and the surface holds on its calm loading line (campaign null).
-    expect(await screen.findByTestId('seam-invite')).toBeDefined()
-    expect(screen.getByTestId('character-surface-loading')).toBeDefined()
+    // No matched campaign ⟹ no owner gate ⟹ no invite panel; the surface still
+    // holds on its calm loading line (campaign null) and the identity falls to the
+    // ghost swatch.
+    expect(await screen.findByTestId('character-surface-loading')).toBeDefined()
+    expect(screen.queryByTestId('seam-invite')).toBeNull()
     expect(screen.getByTestId('campaign-cover-ghost')).toBeDefined()
     expect(screen.queryByTestId('campaign-world-name')).toBeNull()
   })
 
-  it('settles to a calm ghost identity when the campaign fetch fails', async () => {
+  it('settles to a calm ghost identity (no invite panel) when the campaign fetch fails', async () => {
     renderPage(() => Promise.reject(new Error('boom')))
-    expect(await screen.findByTestId('seam-invite')).toBeDefined()
-    expect(screen.getByTestId('campaign-cover-ghost')).toBeDefined()
+    expect(await screen.findByTestId('campaign-cover-ghost')).toBeDefined()
+    expect(screen.queryByTestId('seam-invite')).toBeNull()
   })
 })
