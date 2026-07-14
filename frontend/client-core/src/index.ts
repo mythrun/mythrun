@@ -301,3 +301,19 @@ export type {
   OAuthCognitoConfig,
 } from './auth/oauth.ts'
 export type { OAuthStateStore } from './platform/oauth-state-store.ts'
+
+// Knowledge cache (MYT-94): ONE member-readable world-snapshot fetch → the three
+// in-session projections (wiki view model / graph seed / entity index), with a
+// boundary-only refetch. `frameRefetchesCache`/`CACHE_PROMOTION_FRAME_TYPES` are
+// the executable enforced-ignorance invariant (no session frame promotes the
+// cache). `GraphSeed` is re-exported by the worldgen slice (Task 4), not here.
+export {
+  useKnowledgeCache,
+  frameRefetchesCache,
+  CACHE_PROMOTION_FRAME_TYPES,
+} from './session/knowledge-cache.ts'
+export type {
+  KnowledgeCache,
+  KnowledgeCacheDeps,
+  SnapshotToGraph,
+} from './session/knowledge-cache.ts'
