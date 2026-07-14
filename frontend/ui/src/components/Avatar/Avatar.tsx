@@ -69,6 +69,13 @@ const BG_AVATAR_CLASS: Record<AvatarColor, string> = {
   slate: 'bg-avatar-slate',
 }
 
+// The muted 1-bit placeholder hatch — a diagonal repeat in the theme-aware
+// `--ink-tertiary` alias over the square's paper ground (a bare `var(--…)` flips
+// light/dark; not a frozen `--color-*`). Same treatment as the PartyRoster tile,
+// for a member seal with no identity yet (`placeholder`). Drawn on `bg-bg`.
+const PLACEHOLDER_HATCH =
+  'repeating-linear-gradient(45deg, var(--ink-tertiary) 0 1px, transparent 1px 5px)'
+
 /** 1–2 initials from a name: first letter of the first two whitespace-split
  *  words, uppercased. A single-word name yields one initial; an empty/blank name
  *  yields '' (the Root's aria-label still names it). */
@@ -83,7 +90,7 @@ export function initialsOf(name: string): string {
 }
 
 export const Avatar = forwardRef<HTMLSpanElement, AvatarProps>(function Avatar(
-  { name, src, size = 'md', color, 'data-testid': dataTestId },
+  { name, src, size = 'md', color, placeholder = false, 'data-testid': dataTestId },
   ref,
 ) {
   // Explicit `color` wins; otherwise a STABLE name-derived pigment (same name →
@@ -102,21 +109,33 @@ export const Avatar = forwardRef<HTMLSpanElement, AvatarProps>(function Avatar(
         AVATAR_SIZE_CLASS[size],
       )}
     >
-      {src !== undefined ? (
-        <RadixAvatar.Image src={src} alt="" className="h-full w-full object-cover" />
-      ) : null}
-      <RadixAvatar.Fallback
-        {...(src !== undefined ? { delayMs: 0 } : {})}
-        aria-hidden="true"
-        className={cn(
-          'flex h-full w-full items-center justify-center',
-          // Pigment chip: a curated avatar token bg + paper-50 initials (≥4.5:1).
-          BG_AVATAR_CLASS[pigment],
-          'text-paper-50 font-ui font-medium leading-none',
-        )}
-      >
-        {initialsOf(name)}
-      </RadixAvatar.Fallback>
+      {placeholder ? (
+        // No identity yet — the muted hatch fills the square (decorative; the Root
+        // still names the member). This precedes/overrides the image + initials.
+        <span
+          aria-hidden="true"
+          className="h-full w-full bg-bg"
+          style={{ backgroundImage: PLACEHOLDER_HATCH }}
+        />
+      ) : (
+        <>
+          {src !== undefined ? (
+            <RadixAvatar.Image src={src} alt="" className="h-full w-full object-cover" />
+          ) : null}
+          <RadixAvatar.Fallback
+            {...(src !== undefined ? { delayMs: 0 } : {})}
+            aria-hidden="true"
+            className={cn(
+              'flex h-full w-full items-center justify-center',
+              // Pigment chip: a curated avatar token bg + paper-50 initials (≥4.5:1).
+              BG_AVATAR_CLASS[pigment],
+              'text-paper-50 font-ui font-medium leading-none',
+            )}
+          >
+            {initialsOf(name)}
+          </RadixAvatar.Fallback>
+        </>
+      )}
     </RadixAvatar.Root>
   )
 })

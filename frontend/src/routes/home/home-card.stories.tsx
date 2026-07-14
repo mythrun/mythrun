@@ -53,6 +53,16 @@ const partyOf = (n: number): CampaignSummary['party'] =>
     hasCharacter: true,
   }))
 
+// A party mid-assembly: the first `built` members have made characters (pigment
+// seals), the rest have joined but are still building (muted hatch placeholder
+// seals) — the MYT-91 "watch the party fill" imprint.
+const assemblingParty = (built: number, building: number): CampaignSummary['party'] =>
+  Array.from({ length: built + building }, (_, i) => ({
+    userId: `u-${String(i)}`,
+    displayName: PARTY_NAMES[i % PARTY_NAMES.length] ?? `Player ${String(i)}`,
+    hasCharacter: i < built,
+  }))
+
 // One card per viewer-relative phase, spanning chromatic + monochromatic pairs, the
 // joined-world creator credit, the +N overflow, and the ghost (no colour pick yet).
 const NOT_PLAYED = campaign({
@@ -113,10 +123,23 @@ const GENERATING = campaign({
   cardPhase: 'generating',
 })
 
+// A party assembling (MYT-91): two members have made characters (pigment seals),
+// two have joined but are still building (muted hatch placeholder seals). The foot
+// imprint shows the party filling as an owner watches the hub.
+const ASSEMBLING = campaign({
+  id: 'c-assembling',
+  name: 'The Tidereach Pact',
+  worldName: 'Selavere',
+  worldColors: { from: 'lapis-100', to: 'lapis-900' },
+  party: assemblingParty(2, 2),
+  cardPhase: 'waiting-for-players',
+})
+
 const SPECIMENS: readonly CampaignSummary[] = [
   NOT_PLAYED,
   NEEDS_CHARACTER,
   WAITING,
+  ASSEMBLING,
   PLAYED,
   FAILED,
   GENERATING,
@@ -167,4 +190,11 @@ export const Single: Story = {
 // The ghost — a still-generating world with no colour pick yet: the muted paper band.
 export const Generating: Story = {
   render: () => <CampaignCard campaign={GENERATING} />,
+}
+
+// The assembling party (MYT-91) — built members read as pigment seals, still-
+// building members as muted hatch placeholder seals, so the foot shows the party
+// fill as members join and make their characters.
+export const Assembling: Story = {
+  render: () => <CampaignCard campaign={ASSEMBLING} />,
 }

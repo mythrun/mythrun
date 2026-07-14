@@ -1,10 +1,15 @@
 // The party-finalize roster view-model (MYT-90): maps the character-creation-progress
 // response into the roster rows the @mythrun/ui PartyRoster renders. It marks the
-// viewer's own row, derives creating / ready / empty status from each member's
+// viewer's own row, derives creating / ready / gathering status from each member's
 // concept status, and orders the campaign owner (host) first — the owner may sit in
 // the response's `missing[]` (not yet submitted), so ordering them first lets the
 // caller read the owner's readiness off a known position when computing finalize
 // eligibility (`viewerIsOwner` + the owner's own row being ready).
+//
+// A member in `missing[]` is `gathering` — a real joined teammate who hasn't started
+// a character yet — NOT `empty` (MYT-91). `empty` is exclusively the synthetic invite
+// slot the party-staging surface appends when soloing; the view-model never emits it,
+// so a genuine teammate never renders as the "Invite a friend" affordance.
 //
 // Platform-independent BRAIN (R1): no React/DOM. Owner-finalize eligibility itself is
 // the component's call (it has `viewerIsOwner`); this model just shapes the rows.
@@ -50,8 +55,9 @@ function ownerFirst(rows: readonly RosterMember[], ownerUserId: string): RosterM
 }
 
 /** Map the progress response into roster rows: submitted concepts first (their
- *  derived status), then members with no concept yet (`empty`), re-ordered so the
- *  owner leads. Each row is flagged `isViewer` for the current player. */
+ *  derived status), then members with no concept yet (`gathering` — real joined
+ *  teammates still building, never the `empty` invite slot), re-ordered so the owner
+ *  leads. Each row is flagged `isViewer` for the current player. */
 export function partyRosterViewModel(
   progress: CharacterCreationProgress,
   viewerUserId: string,
@@ -67,7 +73,7 @@ export function partyRosterViewModel(
     ...progress.missing.map((m) => ({
       userId: m.userId,
       displayName: m.displayName,
-      status: 'empty' as const,
+      status: 'gathering' as const,
       isViewer: m.userId === viewerUserId,
     })),
   ]

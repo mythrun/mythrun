@@ -54,6 +54,12 @@ export interface AvatarProps extends BaseProps {
    *  always maps to the same color. An explicit `color` overrides the
    *  auto-assignment. (No effect when an image is shown.) */
   color?: AvatarColor
+  /** Render the muted 1-bit HATCH placeholder instead of the pigment initials —
+   *  a seal for a member who exists but has NOT set up their identity yet (e.g. a
+   *  party member who has joined but not made a character). `name` is still the
+   *  accessible label, so the member is never silent to assistive tech. Overrides
+   *  `src`/`color`/the initials (an identity-less seal shows no pigment or photo). */
+  placeholder?: boolean
 }
 
 /**

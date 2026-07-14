@@ -1,17 +1,21 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Stack, Heading, Text, Button, PartyRoster } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import {
   getCharacterCreationProgress as getProgressApi,
   finalizeCharacterCreation as finalizeApi,
   getMyCampaigns,
+  createSseStatusClient,
   useApiContext,
+  useLiveRoster,
   type ApiContext,
   type CampaignSummary,
   type CharacterCreationProgress,
+  type SseStatusClient,
 } from '@mythrun/client-core'
 import { partyRosterViewModel } from '@mythrun/client-core/character'
 import type { RosterMember } from '@mythrun/client-core/contract'
+import { useForegroundRefetch } from '../../platform/web/use-foreground-refetch.ts'
 
 // The PARTY-STAGING SURFACE (MYT-90 D7) — the "ready to begin?" screen the D8
 // routing table mounts once the viewer's OWN character is confirmed. It is a
@@ -30,10 +34,12 @@ import type { RosterMember } from '@mythrun/client-core/contract'
 // It owns three behaviours:
 //   • Begin (owner only, `canBegin` = the owner's own concept ready) →
 //     finalizeCharacterCreation → onFinalized (D8 re-routes to the weave/play).
-//   • Invite → a MYT-91 boundary. The live join + invite-link flow is MYT-91, so
-//     here the affordance is a no-op placeholder seam (NOT the real invite flow).
-//   • A modest interval refetch of the roster so late finishers surface — live WS
-//     updates are MYT-91; a poll is enough for the MYT-90 shell.
+//   • Invite → a no-op placeholder seam here (the live invite-link flow / InvitePanel
+//     is a separate MYT-91 surface); the roster's `empty` slot fires it.
+//   • LIVE roster updates (MYT-91): `useLiveRoster` folds the campaign status SSE
+//     (`character_creation_complete` + each reconnect) so a teammate finishing their
+//     character surfaces without a reload; `useForegroundRefetch` adds the web
+//     focus + visible-tab slow-poll fallback the SSE can't provide.
 //
 // A failed Begin keeps the roster up under a calm, retryable note; a failed initial
 // roster fetch shows a calm error with a retry. Non-owners see the waiting line
@@ -45,16 +51,18 @@ type GetProgress = (ctx: ApiContext, campaignId: string) => Promise<CharacterCre
 type Finalize = (ctx: ApiContext, campaignId: string) => Promise<unknown>
 /** The role probe (`/api/campaigns/mine`) — defaults to the real endpoint; tests substitute it. */
 type GetCampaigns = (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
+/** The status-SSE transport factory — defaults to the real client; tests substitute a hand-driven one. */
+type CreateClient = (ctx: ApiContext) => SseStatusClient
 
-/** The injectable endpoint + cadence seam. Every field is optional and defaults to
- *  the real endpoint; D8 mounts the surface with `deps` unset, tests + stories
- *  substitute hand-driven ones. */
+/** The injectable endpoint + transport seam. Every field is optional and defaults to
+ *  the real endpoint/transport; D8 mounts the surface with `deps` unset, tests +
+ *  stories substitute hand-driven ones. */
 export interface PartyStagingDeps {
   getProgress?: GetProgress
   finalize?: Finalize
   getCampaigns?: GetCampaigns
-  /** Roster poll cadence (ms) — a modest interval refetch until MYT-91 brings live updates. */
-  pollMs?: number
+  /** The status-SSE transport the live roster subscribes to (default: the real client). */
+  createClient?: CreateClient
 }
 
 export interface PartyStagingSurfaceProps {
@@ -64,14 +72,12 @@ export interface PartyStagingSurfaceProps {
   viewerUserId: string
   /** Called after a successful finalize — D8 re-routes to the weave/opening scene. */
   onFinalized: () => void
-  /** Injected endpoint + cadence seams (default to the real endpoints); tests + stories substitute. */
+  /** Injected endpoint + transport seams (default to the real ones); tests + stories substitute. */
   deps?: PartyStagingDeps
 }
 
 const defaultGetCampaigns: GetCampaigns = (ctx) =>
   getMyCampaigns(undefined, ctx).then((r) => r.campaigns)
-
-const DEFAULT_POLL_MS = 5000
 
 // The synthetic invite affordance — a single dashed "empty" slot the surface
 // appends in the solo case (PartyRoster renders an `empty` row as the invite CTA).
@@ -133,63 +139,6 @@ function useOwnerRole(
   return role
 }
 
-/** The roster-fetch lifecycle. `ready` carries the latest progress; the poll folds
- *  fresh progress in place (and self-heals a prior error) without a loading flash. */
-type ProgressState =
-  | { readonly status: 'loading' }
-  | { readonly status: 'error' }
-  | { readonly status: 'ready'; readonly progress: CharacterCreationProgress }
-
-/** Fetch the roster once (owning the loading/error UI), then refetch it on a modest
- *  interval so members finishing after the owner lands surface without a reload. A
- *  poll failure is swallowed — the last-good roster stays up, the next tick retries. */
-function useProgressPolling(
-  campaignId: string,
-  ctx: ApiContext,
-  getProgress: GetProgress,
-  pollMs: number,
-): { state: ProgressState; reload: () => void } {
-  const [state, setState] = useState<ProgressState>({ status: 'loading' })
-  const [reloadKey, setReloadKey] = useState(0)
-
-  useEffect(() => {
-    let active = true
-    setState({ status: 'loading' })
-    void getProgress(ctx, campaignId)
-      .then((progress) => {
-        if (active) setState({ status: 'ready', progress })
-      })
-      .catch(() => {
-        if (active) setState({ status: 'error' })
-      })
-    return () => {
-      active = false
-    }
-  }, [campaignId, ctx, getProgress, reloadKey])
-
-  useEffect(() => {
-    let active = true
-    const id = setInterval(() => {
-      void getProgress(ctx, campaignId)
-        .then((progress) => {
-          if (active) setState({ status: 'ready', progress })
-        })
-        .catch(() => {
-          // Keep the last-good roster; the next tick retries.
-        })
-    }, pollMs)
-    return () => {
-      active = false
-      clearInterval(id)
-    }
-  }, [campaignId, ctx, getProgress, pollMs])
-
-  const reload = useCallback(() => {
-    setReloadKey((k) => k + 1)
-  }, [])
-  return { state, reload }
-}
-
 export function PartyStagingSurface({
   campaignId,
   viewerUserId,
@@ -202,11 +151,12 @@ export function PartyStagingSurface({
     getProgress = getProgressApi,
     finalize = finalizeApi,
     getCampaigns = defaultGetCampaigns,
-    pollMs = DEFAULT_POLL_MS,
+    createClient = createSseStatusClient,
   } = deps ?? {}
 
   const role = useOwnerRole(campaignId, viewerUserId, ctx, getCampaigns)
-  const { state: progress, reload } = useProgressPolling(campaignId, ctx, getProgress, pollMs)
+  const { state: progress, reload } = useLiveRoster(campaignId, ctx, { getProgress, createClient })
+  useForegroundRefetch(reload)
   const [beginFailed, setBeginFailed] = useState(false)
 
   const handleBegin = (): void => {
@@ -220,11 +170,10 @@ export function PartyStagingSurface({
       })
   }
 
-  // MYT-91: the real invite flow (share a join link + live join). Until then the
-  // roster's invite affordance is a no-op placeholder seam — the roster shell +
-  // the finalize control are MYT-90; live join + invite links are MYT-91.
+  // The roster's invite affordance is a no-op placeholder seam here — the live
+  // invite-link flow (InvitePanel) is a separate MYT-91 surface, not this screen.
   const handleInvite = (): void => {
-    // MYT-91 boundary — intentionally a no-op.
+    // Intentionally a no-op on party-staging.
   }
 
   if (progress.status === 'loading' || role.status === 'loading') {

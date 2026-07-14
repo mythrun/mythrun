@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Stack, Heading, Text, Card, CardBody, CoverDither } from '@mythrun/ui'
+import { Stack, Heading, Text, CoverDither } from '@mythrun/ui'
 import {
   getMyCampaigns,
   useApiContext,
@@ -8,24 +8,22 @@ import {
 } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
 import { CharacterSurface, type CharacterSurfaceDeps } from './character-new/character-surface.tsx'
+import { CampaignInvitePanel, type InvitePanelDeps } from './campaign-invite-panel.tsx'
 
-// The CAMPAIGN PAGE (MYT-89 Phase D, D5 → MYT-90 D8) — where a player lands at
-// `/campaigns/:id` once world-gen is settled AND a starting situation is chosen
-// (see campaign-detail.tsx for the routing). It shows the world IDENTITY (the
-// per-world dither cover + world name, reusing the home-hub card's treatment) plus
-// two setup regions: the INVITE seam (still a dashed MYT-91 stub) and — since
-// MYT-90 D8 — the real CHARACTER SURFACE, which reads the viewer's creation state
-// and mounts the right beat (situation/level redirect, member hold, loading beat,
-// reveal, party staging, character-context failure+retry, or a play entry) per the
-// spec §3.3 routing table. Flat 1-bit paper register; all UI composes @mythrun/ui;
-// the identity comes from the same `getMyCampaigns` payload the hub renders
-// (worldName + worldColors + status + creator), found by id — and that same
-// `campaign` is handed to the surface so it doesn't re-fetch the role/status.
-
-/** The invite boundary seam testid (still a MYT-91 stub), hoisted to a module const
- *  so it rides as a JSX EXPRESSION (the i18next no-literal rail excludes
- *  `data-testid` but flags a bare `testId="…"` on a custom component). */
-const INVITE_SEAM_TESTID = 'seam-invite'
+// The CAMPAIGN PAGE (MYT-89 Phase D, D5 → MYT-90 D8 → MYT-91) — where a player
+// lands at `/campaigns/:id` once world-gen is settled AND a starting situation is
+// chosen (see campaign-detail.tsx for the routing). It shows the world IDENTITY
+// (the per-world dither cover + world name, reusing the home-hub card's treatment)
+// plus two setup regions: the OWNER INVITE PANEL (MYT-91 — the real share-link
+// surface, mounted only when `creator === null`) and — since MYT-90 D8 — the real
+// CHARACTER SURFACE, which reads the viewer's creation state and mounts the right
+// beat (situation/level redirect, member hold, loading beat, reveal, party staging,
+// character-context failure+retry, or a play entry) per the spec §3.3 routing
+// table. Flat 1-bit paper register; all UI composes @mythrun/ui; the identity comes
+// from the same `getMyCampaigns` payload the hub renders (worldName + worldColors +
+// status + creator), found by id — and that same `campaign` is handed to the
+// surface (and its `creator` gates the invite panel) so nothing re-fetches the
+// role/status.
 
 /** The campaigns source — defaults to the real `/api/campaigns/mine` endpoint (the
  *  hub's payload, carrying each world's identity); tests substitute it. */
@@ -82,32 +80,6 @@ function WorldIdentity({
   )
 }
 
-/** A clearly-marked stub seam — a dashed "not-yet-written" Card with a heading +
- *  a `[ph: …]` note. Shared by the two MYT-89 boundary regions (invite / character)
- *  so both read identically as "the next ticket," never a working control. */
-function StubSeam({
-  testId,
-  title,
-  body,
-}: {
-  testId: string
-  title: string
-  body: string
-}): React.JSX.Element {
-  return (
-    <Card frame="dashed" data-testid={testId}>
-      <CardBody>
-        <Stack gap={2}>
-          <Heading level={2}>{title}</Heading>
-          <Text role="ui-caption" as="p">
-            {body}
-          </Text>
-        </Stack>
-      </CardBody>
-    </Card>
-  )
-}
-
 export interface CampaignPageProps {
   /** The campaign whose world identity + setup seams are shown. */
   campaignId: string
@@ -117,14 +89,17 @@ export interface CampaignPageProps {
    *  the real endpoints; tests + stories substitute them so the mounted surface
    *  routes without a live SSE/endpoint. */
   characterDeps?: CharacterSurfaceDeps
+  /** Injected invite endpoints + web share/clipboard ports for the owner panel —
+   *  defaults to the real client-core fns + web port; tests substitute them. */
+  inviteDeps?: InvitePanelDeps
 }
 
 export function CampaignPage({
   campaignId,
   fetchCampaigns = defaultFetchCampaigns,
   characterDeps,
+  inviteDeps,
 }: CampaignPageProps): React.JSX.Element {
-  const { t } = useTranslation()
   const ctx = useApiContext()
   const [campaign, setCampaign] = useState<CampaignSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -151,11 +126,14 @@ export function CampaignPage({
   return (
     <Stack gap={5} data-testid="route-campaign-detail">
       <WorldIdentity campaign={campaign} loading={loading} />
-      <StubSeam
-        testId={INVITE_SEAM_TESTID}
-        title={t('campaign.invite.title')}
-        body={t('campaign.invite.body')}
-      />
+      {/* The invite region is OWNER-ONLY (`creator === null`); a member — or a
+          still-resolving / not-found campaign — sees nothing here. */}
+      {campaign?.creator === null ? (
+        <CampaignInvitePanel
+          campaignId={campaignId}
+          {...(inviteDeps !== undefined && { deps: inviteDeps })}
+        />
+      ) : null}
       <CharacterSurface
         campaign={campaign}
         campaignId={campaignId}

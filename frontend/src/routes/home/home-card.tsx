@@ -34,6 +34,13 @@ export function CampaignCard({ campaign }: { campaign: CampaignSummary }): React
   const { t, i18n } = useTranslation()
   const { id, name, worldName, worldColors, creator, party } = campaign
 
+  // The foot imprint reflects the party ASSEMBLING: members with a character are
+  // pigment Avatar seals; members still building are muted placeholder seals. Built
+  // lead so a ready party reads first; the `MAX_SEALS` cap (+N overflow) spans the
+  // combined cluster, dropping still-building members before built ones.
+  const builtMembers = party.filter((member) => member.hasCharacter)
+  const buildingMembers = party.filter((member) => !member.hasCharacter)
+
   // The mono ledger line (shared with the mobile index row — see card-phase-line).
   const stateLine = cardPhaseLine(campaign, t, i18n.language)
 
@@ -57,12 +64,27 @@ export function CampaignCard({ campaign }: { campaign: CampaignSummary }): React
           )
         }
         foot={
-          // Foot imprint — party seals over the mono record/state line.
+          // Foot imprint — party seals over the mono record/state line. (MYT-95
+          // layers its low-credit line onto this same foot at merge — keep the
+          // Stack composable; do not collapse it into a single child.)
           <Stack gap={2}>
             {party.length > 0 ? (
+              // Built (pigment) seals first, still-building (muted `placeholder`
+              // hatch) seals after — one AvatarGroup so the ring, overlap, and +N
+              // overflow span the combined party and the MAX_SEALS cap truncates
+              // building members first.
               <AvatarGroup size="sm" surface="surface" max={MAX_SEALS}>
-                {party.map((member) => (
+                {builtMembers.map((member) => (
                   <Avatar key={member.userId} name={member.displayName} size="sm" />
+                ))}
+                {buildingMembers.map((member) => (
+                  <Avatar
+                    key={member.userId}
+                    name={member.displayName}
+                    size="sm"
+                    placeholder
+                    data-testid="card-building-seal"
+                  />
                 ))}
               </AvatarGroup>
             ) : null}

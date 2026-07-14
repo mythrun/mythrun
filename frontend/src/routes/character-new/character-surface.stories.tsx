@@ -142,7 +142,7 @@ function baseDeps(over: Partial<CharacterSurfaceDeps> = {}): CharacterSurfaceDep
       getProgress: () =>
         Promise.resolve(progress([myConcept({ status: 'completed', characterId: 'char-1' })])),
       getCampaigns: () => Promise.resolve([campaign()]),
-      pollMs: 1_000_000,
+      createClient: loadingStub.createClient,
     },
     ...over,
   }

@@ -168,7 +168,11 @@ function baseDeps(over: Partial<CharacterSurfaceDeps> = {}): CharacterSurfaceDep
     fetchProgress: () => Promise.resolve(progress([myConcept()])),
     loading: stubLoadingDeps,
     reveal: { getCharacter: () => pending() },
-    staging: { getProgress: () => pending(), getCampaigns: () => pending() },
+    staging: {
+      getProgress: () => pending(),
+      getCampaigns: () => pending(),
+      createClient: stubLoadingDeps.createClient,
+    },
     ...over,
   }
 }
@@ -381,7 +385,7 @@ describe('CharacterSurface — mounted routing', () => {
           getProgress: () => Promise.resolve(staged),
           getCampaigns: () => Promise.resolve([CAMPAIGN]),
           finalize,
-          pollMs: 1_000_000,
+          createClient: stubLoadingDeps.createClient,
         },
       }),
     )

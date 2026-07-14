@@ -35,6 +35,10 @@ export { FreeformPrompt } from './components/FreeformPrompt/FreeformPrompt.tsx'
 export { GuidedBuilder } from './components/GuidedBuilder/GuidedBuilder.tsx'
 export { CharacterLoadingBeat } from './components/CharacterLoadingBeat/CharacterLoadingBeat.tsx'
 export { PartyRoster } from './components/PartyRoster/PartyRoster.tsx'
+// Invite & party (MYT-91).
+export { InvitePanel } from './components/InvitePanel/InvitePanel.tsx'
+// JoinPreview (MYT-91) — the public invite landing card on /join/:code.
+export { JoinPreview } from './components/JoinPreview/JoinPreview.tsx'
 export { CharacterSheetReveal } from './components/CharacterSheetReveal/CharacterSheetReveal.tsx'
 
 // Leaf primitives (MYT-82 Wave 1c) — composed by the controls (Button loading,
