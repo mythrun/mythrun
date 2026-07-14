@@ -52,6 +52,10 @@ export default defineConfig({
         // runtime logic; 100%-gated.
         'src/srd/**/*.ts',
         'src/character/**/*.ts',
+        // MYT-95 billing brains: the tier catalogue, balance/purchase-history
+        // view-models, subscription-CTA gating, the 402-mapping seam, and the
+        // checkout-return poll hook. All runtime logic; 100%-gated.
+        'src/billing/**/*.ts',
         'eslint-rules/**/*.js',
       ],
       exclude: [

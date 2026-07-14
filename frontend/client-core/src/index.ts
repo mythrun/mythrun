@@ -97,6 +97,12 @@ export {
   upgradeTier,
 } from './api/billing.ts'
 export type { CheckoutBody, PortalBody, UpgradeTierBody } from './api/billing.ts'
+// MYT-95 billing brains: the tier catalogue (three named tiers, rank for
+// the CTA gate, no best-value flags by register rule) + the two-bucket
+// balance view (session/worldGen independent — never conflated).
+export { subscriptionTiers, aLaCarteSkus, tierRank } from './billing/tier-catalogue.ts'
+export { balanceView } from './billing/balance-view-model.ts'
+export type { BalanceView } from './billing/balance-view-model.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
