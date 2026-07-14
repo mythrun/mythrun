@@ -103,6 +103,11 @@ export type { CheckoutBody, PortalBody, UpgradeTierBody } from './api/billing.ts
 export { subscriptionTiers, aLaCarteSkus, tierRank } from './billing/tier-catalogue.ts'
 export { balanceView } from './billing/balance-view-model.ts'
 export type { BalanceView } from './billing/balance-view-model.ts'
+// The subscription CTA gate — the blind-review showstopper criterion: an
+// active subscriber can NEVER reach plain subscription checkout (property-
+// pinned in its test for every non-null subscription state).
+export { subscriptionCta } from './billing/subscription-cta.ts'
+export type { SubscriptionCta, TierCtaDecision } from './billing/subscription-cta.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
