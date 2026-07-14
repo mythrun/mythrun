@@ -88,6 +88,10 @@ export { getBalance, useBalance } from './api/billing.ts'
 // the start-flow classifier) + the /active lookup the 409-join path needs.
 export { startSession, getActiveSession } from './api/play-session.ts'
 export type { ActiveSession, ActiveSessionResponse, InsufficientCreditsBody } from './api/play-session.ts'
+// MYT-92 prep-status hook: the "DM is preparing" beat's brain (snapshot +
+// live prep-started/ready/failed events over the shipped SSE status client).
+export { useSessionPrep } from './session/use-session-prep.ts'
+export type { SessionPrepStream, SessionPrepDeps } from './session/use-session-prep.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
