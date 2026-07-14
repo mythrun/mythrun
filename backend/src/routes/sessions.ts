@@ -251,18 +251,25 @@ async function handleSessionStart(
     return reply.code(409).send({ code: 'campaign_not_active' })
   }
 
+  // Precondition 2: no active session already. This check MUST precede the
+  // prep check: `maxSessionNumber` counts the LIVE session, so while session N
+  // is active the "next" number is N+1, whose prep legitimately doesn't exist
+  // yet — the old order therefore answered a mid-session joiner's /start with
+  // `prep_not_ready` (a false signal that pinned them on the prep beat)
+  // instead of `session_already_active` (join the running one). When a session
+  // is live, that fact dominates every other precondition (myth-92 T1 probe,
+  // DEV-1).
+  if (await repo.sessions.getActiveByCampaign(campaignId)) {
+    return reply.code(409).send({ code: 'session_already_active' })
+  }
+
   // Next session number = max existing + 1 (1 when none), mirroring how the
   // session-prep pipeline numbers preps.
   const sessionNumber = (await repo.sessions.maxSessionNumber(campaignId)) + 1
 
-  // Precondition 2: a session prep exists for that number.
+  // Precondition 3: a session prep exists for that number.
   if (!(await repo.sessionPreps.existsFor(campaignId, sessionNumber))) {
     return reply.code(409).send({ code: 'prep_not_ready' })
-  }
-
-  // Precondition 3: no active session already.
-  if (await repo.sessions.getActiveByCampaign(campaignId)) {
-    return reply.code(409).send({ code: 'session_already_active' })
   }
 
   // Precondition 4 (MYT-74a §4 start interlock): the prior session must be

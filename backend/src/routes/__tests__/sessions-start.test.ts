@@ -303,11 +303,12 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
     })
 
     // NOTE on the fail-soft `prep === null` warn branch: it can't be reached
-    // through the HTTP flow — precondition 2 (`existsFor`) 409s `prep_not_ready`
-    // first (the 'no session prep …' test below proves it). The getBy read is a
-    // second, narrower window (the row could vanish between the two reads), so
-    // the warn arm is a defensive narrow-race net, c8-ignored in the route like
-    // its sibling unreachable guards.
+    // through the HTTP flow — when no session is active, the prep precondition
+    // (`existsFor`) 409s `prep_not_ready` before the getBy read (the 'no
+    // session prep …' test proves it). The getBy read is a second, narrower
+    // window (the row could vanish between the two reads), so the warn arm is
+    // a defensive narrow-race net, c8-ignored in the route like its sibling
+    // unreachable guards.
     it('duplicate /start while one is active → 409; NO second debit', async () => {
       const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
 
@@ -320,11 +321,25 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(await sessionBalance(pool, owner.userId)).toBe(2)
     })
 
-    it('active session AND a prep for the NEXT number → 409 session_already_active (precondition 3)', async () => {
-      // The plain duplicate test 409s at `prep_not_ready` (no prep for session
-      // 2). Seeding a prep for the next number lets /start get PAST the prep
-      // precondition and hit precondition 3 (an active session already exists)
-      // → the `getActiveByCampaign` 409 arm specifically.
+    it('active session + NO prep for the next number → session_already_active, NOT prep_not_ready (mid-session joiner)', async () => {
+      // myth-92 T1 probe DEV-1: `maxSessionNumber` counts the LIVE session, so
+      // while session 1 runs the "next" prep (2) legitimately doesn't exist.
+      // The old precondition order answered a mid-session joiner's /start with
+      // the FALSE `prep_not_ready` (pinning them on the prep beat); the active
+      // check now precedes the prep check. Observed red live before the fix
+      // (tmp/sdd/myt92-verify-notes.md §3B).
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      expect((await postStart(app, campaignId, owner.devSub)).statusCode).toBe(200)
+      // Deliberately NO prep for session 2 — the joiner's real-world state.
+      const second = await postStart(app, campaignId, owner.devSub)
+      expect(second.statusCode).toBe(409)
+      expect(second.json<{ code: string }>().code).toBe('session_already_active')
+      expect(await sessionBalance(pool, owner.userId)).toBe(2)
+    })
+
+    it('active session AND a prep for the NEXT number → 409 session_already_active', async () => {
+      // The active-session arm fires whether or not the next prep exists —
+      // this variant pins the with-prep side.
       const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
       expect((await postStart(app, campaignId, owner.devSub)).statusCode).toBe(200)
       await seedPrep(pool, campaignId, 2) // next number after the active session
