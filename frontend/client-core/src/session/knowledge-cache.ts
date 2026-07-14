@@ -24,13 +24,13 @@
 // takes it through `deps.snapshotToGraph` rather than importing it (which would be
 // a compile dependency on a module that does not exist). This avoids authoring a
 // divergent second adapter (Ambiguity G) AND keeps the deliverable self-verifying;
-// the composition (Task 14) passes the canonical adapter. `GraphSeed` is defined
-// locally here (shape-identical to worldgen's private `GraphSeed`) and NOT
-// re-exported from the main barrel — Task 4 owns that export.
+// the composition (Task 14) passes the canonical adapter. `GraphSeed` is now imported
+// from Task 4's `snapshot-to-graph.ts` (the canonical decl) and re-exported here; the
+// worldgen slice owns the main-barrel export.
 
 import { useEffect, useState } from 'react'
 import type { ServerFrame } from '@mythrun/contract/events'
-import type { GraphEdge, GraphNode } from '../worldgen/graph-reducers.ts'
+import type { GraphSeed } from '../worldgen/snapshot-to-graph.ts'
 import { toWikiViewModel, type WikiViewModel } from '../worldgen/wiki-view-model.ts'
 import { getWorldSnapshot, type WorldGenSnapshot } from '../api/campaigns.ts'
 import { useApiContext } from '../api/client-context.tsx'
@@ -38,14 +38,11 @@ import type { ApiContext } from '../api/endpoint.ts'
 import { buildEntityIndex, type EntityIndex } from './entity-index.ts'
 
 /** The finalized graph seed the in-session Relationship Graph tab renders — the
- *  known-tier entities → nodes + relationships → edges from ONE snapshot. Shape-
- *  identical to Task 4's canonical `snapshotToGraph` output (and worldgen's
- *  private `GraphSeed`); the controller converges the two decls at the Task-4
- *  merge. */
-export interface GraphSeed {
-  readonly nodes: GraphNode[]
-  readonly edges: GraphEdge[]
-}
+ *  known-tier entities → nodes + relationships → edges from ONE snapshot. Now the
+ *  canonical `GraphSeed` from Task 4's `snapshotToGraph` module (was a local
+ *  shape-identical decl until Task 4 landed), re-exported so this module's public
+ *  surface is unchanged. */
+export type { GraphSeed }
 
 /** Projects a member-readable snapshot into the finalized graph seed — Task 4's
  *  canonical `snapshotToGraph`, injected here (see the module header). */

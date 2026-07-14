@@ -43,7 +43,7 @@ export function useMyCampaigns() {
 //
 // ONE endpoint, TWO consumers. The schema is the contract's known-tier
 // `WorldSnapshotSchema` (entities + facts + entityHierarchy — the D1 wiki view
-// model) WIDENED with the graph's `relationships` edges. `snapshotToSeed` (the
+// model) WIDENED with the graph's `relationships` edges. `snapshotToGraph` (the
 // graph, C5) reads entities + relationships; `toWikiViewModel` (the wiki, D3)
 // reads entities + facts + entityHierarchy. The union type is a SUPERSET of the
 // contract `WorldSnapshot`, so it drops straight into `toWikiViewModel`. Zod's

@@ -61,7 +61,7 @@ export interface GraphEdge {
   readonly relationship: string
   /** The `deriveEdges` event-loop index at which this edge FIRST appeared —
    *  first-seen arrival order, so C6 can sequence the weave. A re-add keeps the
-   *  original index; seed edges (`snapshotToSeed`) use the -1 sentinel. */
+   *  original index; seed edges (`snapshotToGraph`) use the -1 sentinel. */
   readonly arrivalIndex: number
   readonly sourceStage: EdgeSourceStage
 }

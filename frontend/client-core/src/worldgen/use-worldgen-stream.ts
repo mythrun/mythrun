@@ -13,6 +13,7 @@ import { isHttpError } from '../api/errors.ts'
 import { getWorldSnapshot, resumeGeneration, type WorldGenSnapshot } from '../api/campaigns.ts'
 import { createSseStatusClient, type SseStatusClient } from '../realtime/sse-status-client.ts'
 import { deriveEdges, deriveNodes, type GraphEdge, type GraphNode } from './graph-reducers.ts'
+import { snapshotToGraph, type GraphSeed, type GraphSeedSource } from './snapshot-to-graph.ts'
 
 // useWorldGenStream (MYT-89 Phase C, C5): the DOM-free data layer feeding the
 // streaming world-gen graph (C4's `WorldGenGraph` takes the derived
@@ -65,11 +66,6 @@ export interface WorldGenStreamDeps {
   readonly resume?: (ctx: ApiContext, campaignId: string) => Promise<unknown>
 }
 
-interface GraphSeed {
-  readonly nodes: GraphNode[]
-  readonly edges: GraphEdge[]
-}
-
 const streamPath = (campaignId: string): string =>
   `/api/campaigns/${encodeURIComponent(campaignId)}/status/stream`
 
@@ -104,23 +100,6 @@ function statusForPhase(phase: PipelinePhase | null): WorldGenStatus {
     default:
       return 'generating' // null, not_started, world_gen, world_snapshot_ready
   }
-}
-
-/** The graph-seed slice a snapshot payload can carry: the known-tier entities +
- *  relationships committed so far. Both the mid-gen connect frame (myth-gcsp1)
- *  and the post-boundary world-snapshot fetch produce this shape; `snapshotToSeed`
- *  turns either into finalized seed nodes/edges. */
-interface GraphSeedSource {
-  readonly entities: readonly {
-    readonly id: string
-    readonly entityType: string
-    readonly name: string
-  }[]
-  readonly relationships: readonly {
-    readonly sourceEntityId: string
-    readonly targetEntityId: string
-    readonly relationshipType: string
-  }[]
 }
 
 /** The progress the first-frame `snapshot` payload (a PhaseAndStages) carries:
@@ -242,37 +221,6 @@ function foldStages(
   return [...map.values()]
 }
 
-/** Convert a persisted world-snapshot (or the mid-gen connect-frame gen-seed)
- *  into finalized seed nodes/edges. Persisted rows carry the real entity UUID, so
- *  a seed node is `finalized` with `displayId === synthKey === id`;
- *  `lastEventIndex` is -1 (pre-stream). Takes the structural `GraphSeedSource`
- *  slice so both the world-snapshot fetch and the connect frame feed it. */
-function snapshotToSeed(snap: GraphSeedSource): GraphSeed {
-  const nodes = snap.entities.map(
-    (e): GraphNode => ({
-      synthKey: e.id,
-      kind: e.entityType,
-      name: e.name,
-      displayId: e.id,
-      state: 'finalized',
-      lastEventIndex: -1,
-    }),
-  )
-  const edges = snap.relationships.map(
-    (r): GraphEdge => ({
-      synthKey: `seed:${r.sourceEntityId}->${r.targetEntityId}:${r.relationshipType}`,
-      from: r.sourceEntityId,
-      to: r.targetEntityId,
-      relationship: r.relationshipType,
-      // A pre-existing edge already present in the snapshot: it should not
-      // animate as a weave, so it carries the `snap` stage + the -1 sentinel.
-      arrivalIndex: -1,
-      sourceStage: 'snap',
-    }),
-  )
-  return { nodes, edges }
-}
-
 /** Overlay live-folded nodes on the seed. A live node whose resolved identity
  *  (`displayId`, the real UUID once finalized) matches a seed node supersedes
  *  it — so an entity the snapshot has AND the stream re-emits renders once (the
@@ -311,7 +259,7 @@ function loadSeed(
 ): Promise<void> {
   return fetchSnapshot(ctx, campaignId)
     .then((snap) => {
-      if (mountedRef.current) setSeed(snapshotToSeed(snap))
+      if (mountedRef.current) setSeed(snapshotToGraph(snap))
     })
     .catch(() => {
       // 409 snapshot_not_ready race / transient — leave the graph sparse.
@@ -385,7 +333,7 @@ export function useWorldGenStream(
       // fold on top; the post-boundary world-snapshot seed still refines at the
       // reveal. An empty seed (fresh gen in prep) leaves both untouched.
       if (snapshot.entities.length > 0) {
-        setSeed(snapshotToSeed(snapshot))
+        setSeed(snapshotToGraph(snapshot))
         setResumedMidGen(true)
       }
     })

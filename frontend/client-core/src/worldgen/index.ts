@@ -62,6 +62,14 @@ export { MIN_EXPECTED_ENTITIES } from './entity-floor.ts'
 export { deriveNodes, deriveEdges } from './graph-reducers.ts'
 export type { GraphNode, GraphEdge, GraphNodeState } from './graph-reducers.ts'
 
+// The canonical known-tier snapshot → finalized graph seed adapter (MYT-94 Task 4).
+// Extracted from `useWorldGenStream`'s private `snapshotToSeed` and made the single
+// source of truth: the world-gen stream delegates here, and the in-session knowledge
+// cache (Task 2) projects the same known-tier seed. Pure data (DOM-free), so it rides
+// this UI-safe subpath alongside the reducers.
+export { snapshotToGraph } from './snapshot-to-graph.ts'
+export type { GraphSeed, GraphSeedSource } from './snapshot-to-graph.ts'
+
 // The pure remaining-wait derivation (MYT-89 waiting-feedback): historical
 // per-stage averages ∩ live stage statuses → the ms left in the visible wait
 // at a given `now`. Pure data (only type imports from @mythrun/contract), so
