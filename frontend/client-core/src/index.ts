@@ -100,6 +100,11 @@ export type { StartFlow, StartOutcome, PurchaseMoment } from './session/start-fl
 // MYT-92 optimistic own-messages: pending model + FIFO reconcile over the
 // reducer (incl. reconnect-batch echoes via the applyReconnect folder seam).
 export { addPending, reduceFrameReconciling, unconfirmedPending } from './session/optimistic.ts'
+// MYT-92 useSession: the play view-model — transcript + presence + connection
+// over the shipped WS transport (seedLastSeq 0 first join; batch-triggered
+// confirm-or-resend; thinking clears on turnId-matched delta/end/error).
+export { useSession } from './session/use-session.ts'
+export type { SessionView, SessionParams, SessionDeps } from './session/use-session.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
