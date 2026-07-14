@@ -317,6 +317,21 @@ describe('Button', () => {
     )
   })
 
+  it('forwards aria-pressed to the underlying <button> (toggle button state)', () => {
+    // The DS Button is also the sanctioned control for a WAI-ARIA TOGGLE button —
+    // a segmented single-select where each option reports its on/off state (e.g.
+    // PackList's à-la-carte quantity presets). The contract carries aria-pressed
+    // explicitly, forwarded to the real <button> so the toggle exposes its
+    // pressed/selected state. The `pressed` role option asserts aria-pressed is
+    // present with the right value.
+    const off = render(<Button aria-pressed={false}>Preset</Button>)
+    expect(off.getByRole('button', { pressed: false })).toBeInTheDocument()
+    off.unmount()
+
+    const on = render(<Button aria-pressed>Preset</Button>)
+    expect(on.getByRole('button', { pressed: true })).toBeInTheDocument()
+  })
+
   it('has no axe violations (default / disabled / loading)', async () => {
     const { container } = render(
       <div>

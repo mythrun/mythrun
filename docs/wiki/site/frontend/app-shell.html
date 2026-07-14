@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html" class="active">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › App shell & data layer</div>
         <article>
@@ -341,7 +341,12 @@
   and a native shell reuses them verbatim. A flow ticket adds its endpoint's schema to the contract
   and its slice to <code>client-core/api</code>; the pattern never changes — the
   <a href="./campaign-hub.html">campaign hub</a> added the <code>useBalance</code> (billing) slice
-  and widened the <code>/mine</code> contract this way.
+  and widened the <code>/mine</code> contract this way, and the play/invite/billing wave added whole
+  slice families the same way — the <a href="./live-play.html">play-session</a> start/active slices,
+  the <a href="./invites-party.html">invite</a> create/list/revoke/preview/accept slices, and the
+  <a href="./billing-credits.html">billing</a> balance/skus/history reads plus the
+  checkout/upgrade-tier/portal mutations (the mutations follow the imperative
+  <code>(ctx, body)</code> shape, not the suspense-hook shape).
 </p>
 
 <aside class="wiki-rationale">
@@ -595,7 +600,12 @@
   >, since built out into the app's first full screen — a shelf of book-cover campaign cards with
   the header's credit balance wired live — and the
   <strong><a href="#the-landing-page">public landing page</a></strong>
-  (MYT-86), the first public-branch screen built out from a stub.
+  (MYT-86), the first public-branch screen built out from a stub. The play/invite/billing wave then
+  filled most of the rest: the <a href="./live-play.html">live play</a> screen and its full-bleed
+  variant of the frame, the public <a href="./invites-party.html">join</a> route on the public branch,
+  and the <a href="./billing-credits.html">Sessions &amp; Billing</a> settings screen and
+  checkout-return routes — and it made the header's credit balance a real quick-buy into that billing
+  surface rather than an interim stub.
 </p>
 
 <aside class="wiki-rationale">
@@ -609,6 +619,17 @@
   display name can never push a text label past the edge. Every piece is a
   <a href="./design-system.html#responsive-by-construction">responsive mythrunUI primitive</a>, so
   the fix lives in the design system, not in raw CSS on the frame.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A full-bleed content variant driven by a route handle, not per-screen margins</strong> — most
+  screens render inside the frame's padded content box, but the <a href="./live-play.html">live play</a>
+  screen needs the whole viewport so its transcript scrolls internally. So the play route carries a
+  <code>fullBleed</code> route handle the frame reads to drop the content padding, rather than the screen
+  cancelling it with negative margins. This edit and MYT-95's header credit chrome were <em>declared
+  shared edits</em> to <code>AppFrame</code> up front — the play work owns the content variant, the
+  billing work owns the header — so two parallel worktrees never both restructured the frame's one
+  composition root.
 </aside>
 
 <p>

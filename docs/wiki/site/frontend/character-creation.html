@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html" class="active">Character-creation experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html" class="active">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Character-creation experience</div>
         <article>
@@ -677,12 +677,15 @@
 <p>
   Once the viewer's own character is confirmed, the surface mounts <code>PartyStagingSurface</code>
   over the <code>PartyRoster</code>. It fetches the roster from
-  <code>GET /character-creation-progress</code>, maps it through the party-roster view-model (owner
-  first, each row marked ready / creating / you), and polls on a modest interval so late finishers
-  surface — live join and invite links are <a href="./realtime-transport.html">MYT-91</a>, so the poll
-  is enough for this shell and the invite affordance is a no-op seam. In the <strong>solo</strong> case
-  (launch-critical) the roster shows the one-person party plus a dashed invite slot and a "begin the
-  adventure" control. In a <strong>party</strong>, the owner-only Begin is enabled once the owner's own
+  <code>GET /character-creation-progress</code> and maps it through the party-roster view-model (owner
+  first, each row marked ready / creating / <code>gathering</code> / you). As of
+  <a href="./invites-party.html">MYT-91</a> the roster is <strong>live</strong>: the shell's earlier
+  blind poll is replaced by <code>useLiveRoster</code> (the campaign status SSE folds a teammate's
+  <code>character_creation_complete</code> into an in-place refetch, with a window-focus + slow-poll
+  fallback), and the invite affordance is the wired <code>CampaignInvitePanel</code> on the campaign
+  page, not a no-op seam. In the <strong>solo</strong> case (launch-critical) the roster shows the
+  one-person party plus a dashed invite slot and a "begin the adventure" control. In a
+  <strong>party</strong>, the owner-only Begin is enabled once the owner's own
   concept is ready; it fans in every currently-<code>completed</code> concept through
   <code>POST /finalize-character-creation</code>, which triggers
   <a href="../runtime/character-integration.html">character integration</a>, flips the campaign to
@@ -694,16 +697,17 @@
   <strong>The laggard boundary is a known limitation, not a bug</strong> — integration loads only the
   concepts that are <code>completed</code> at fire time, and the campaign then flips <code>active</code>,
   so a member who finishes <em>after</em> Begin is left out (a later finalize 409s
-  <code>not_in_setup</code>). Re-integrating a late joiner into an already-active campaign is a §7
-  follow-up entangled with MYT-91's live-join work, deliberately not solved here. An integration
-  failure routes to the calm character-context failure surface (retry re-attempts the fan-in), never
-  the world-gen terminal.
+  <code>not_in_setup</code>). <a href="./invites-party.html">MYT-91</a> shipped the live roster and the
+  invite/join flow, but re-integrating a late joiner into an already-<code>active</code> campaign
+  remains a separate backend follow-up, deliberately not solved here. An integration failure routes to
+  the calm character-context failure surface (retry re-attempts the fan-in), never the world-gen
+  terminal.
 </aside>
 
 <h3 id="the-member-s-briefer-way-in">The member's briefer way in</h3>
 
 <p>
-  A joining member (arriving via an MYT-91 invite) skips the owner beats — the situation and level are
+  A joining member (arriving via an <a href="./invites-party.html">invite</a>) skips the owner beats — the situation and level are
   already set — and lands on <code>JoinSummaryRoute</code>: a stripped-down reveal that fetches the
   world snapshot and shows just the world's name and a paragraph of introduction in the same
   paper/serif register, then a single "create your character" CTA into the same create route. The rest

@@ -21,7 +21,7 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:39faa27542e948c859d2d2973a6a7712f5eabd4be71e0f7cc292109c1d40fa99 -->
+<!-- source-hash: sha256:0dff702a9a9e973a2b5b4e10f38ed549aac8cb7f505f661c815ffcdcde524e6a -->
 <!-- last-ticket: MYT-74c -->
 
 <h1>End-of-session reconciliation</h1>
@@ -219,6 +219,20 @@
   <code>finalizeEndedSession</code>
   itself. Idempotent, so a double-fire with the in-worker path is safe. Without it a crashed
   farewell would leave a session that never finalizes — the table waiting forever.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The finalize logger keeps its pino binding (MYT-92)</strong> — the turn worker hands
+  <code>finalizeEndedSession</code> a logger, and the finalize logs at <code>info</code> after each
+  step. Pino's methods read instance internals through <code>this</code>, so plucking them into a
+  plain object literal (<code>{ info: logger.info, … }</code>) detaches the binding and every
+  finalize log call throws — <em>after</em> the flip, the enqueues, and the broadcast have already
+  landed. That late throw marks the whole farewell turn job failed, so BullMQ retries it and the
+  table gets a <em>second</em> send-off for a session that already ended.
+  <code>bindFinalizeLogger</code> wraps the source logger in delegating arrows that keep each call
+  on the original instance (a fake logger with no <code>info</code> falls back to
+  <code>warn</code>), so the finalize's logging can't fail a turn that otherwise succeeded. Caught
+  live by the play screen's end-to-end session run.
 </aside>
 
 <h3>The cross-session start interlock</h3>

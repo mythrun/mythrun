@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Design system</div>
         <article>
@@ -552,7 +552,9 @@
     <strong>Display</strong> — <code>Avatar</code>/<code>AvatarGroup</code> (image-with-initials
     fallback, twelve curated pigments; <code>AvatarGroup</code> gained a <code>size</code> and a
     <code>surface</code> prop — its overlap ring follows either the page or a card surface, so seals
-    clustered on a card don't halo), <code>CoverDither</code> (a card-scale full-field Bayer
+    clustered on a card don't halo; MYT-91 added a <code>placeholder</code> variant — a muted hatch
+    seal for a party member who hasn't made a character yet, the one reusable primitive the
+    <a href="./invites-party.html">invites &amp; party</a> surface contributed), <code>CoverDither</code> (a card-scale full-field Bayer
     gradient between two <code>WorldColor</code>s — a world's cover art, distinct from the
     fixed-geometry transition-strip <code>Dither</code>), <code>Badge</code>, <code>Dither</code>.
   </li>
@@ -614,7 +616,15 @@
   <code>CharacterSheetReveal</code>, and <code>PartyRoster</code> — are controlled/presentational
   feature components (their sequencing lives in a client-core reducer, not the component) documented
   on that page, while the reusable primitive extension it needed landed in the system as the
-  <code>Button</code> disclosure props above.
+  <code>Button</code> disclosure props above. The play/invite/billing wave (MYT-91/92/95) drew it
+  once more: the six <a href="./live-play.html">live-play</a> components
+  (<code>MessageStream</code>/<code>DmMessage</code>/<code>PlayerMessage</code>/<code>SessionInput</code>/<code>SessionStartBeat</code>/<code>ThinkingIndicator</code>),
+  the <a href="./invites-party.html">invite</a> pair (<code>InvitePanel</code>/<code>JoinPreview</code>),
+  and the four <a href="./billing-credits.html">billing</a> components
+  (<code>CreditBalance</code>/<code>PackList</code>/<code>PurchaseHistory</code>/<code>PurchasePrompt</code>)
+  are all controlled feature composites documented on their pages — their state lives in client-core
+  reducers and view-models — while the one reusable primitive that wave added to the system is the
+  <code>Avatar</code> <code>placeholder</code> variant above.
 </p>
 
 <h2 id="responsive-by-construction">Responsive by construction</h2>

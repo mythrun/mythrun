@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Billing & credits · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="frontend" data-page="billing-credits">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html" class="active">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html" class="active">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Billing & credits</div>
+        <article>
+<h1>Billing &amp; credits</h1>
+
+<p class="lead">
+  The player's side of the money. A Sessions &amp; Billing settings screen shows both credit balances,
+  the subscription tiers, and a purchase ledger; the app header carries the live session-credit count
+  with a quiet quick-buy; a drained owner meets a purchase prompt at session start; and a checkout
+  return waits for the credit to land. It's a thin client over the shipped
+  <a href="../auth-billing/billing-routes.html">billing routes</a> — every purchase routes to a Stripe
+  redirect that grants nothing synchronously, because the credit lands only through the
+  <a href="../auth-billing/billing-webhook.html">webhook</a>.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1383pt" height="509pt"
+ viewBox="14.00 14.00 1368.00 494.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 490.12)">
+<title>billing_credits</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-475.72 1350,-475.72 1350,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_settings</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="355,-385.64 355,-463.72 1338,-463.72 1338,-385.64 355,-385.64"/>
+<text xml:space="preserve" text-anchor="middle" x="846.5" y="-449.82" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Sessions &amp; Billing &#160;(settings)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_actions</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-196.56 8,-253.76 898,-253.76 898,-196.56 8,-196.56"/>
+<text xml:space="preserve" text-anchor="middle" x="453" y="-239.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the routed action</text>
+</g>
+<!-- balance -->
+<g id="node1" class="node">
+<title>balance</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="984.36,-435.92 721.64,-435.92 721.64,-392.24 984.36,-392.24 984.36,-435.92"/>
+<text xml:space="preserve" text-anchor="middle" x="853" y="-417.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CreditBalance</text>
+<text xml:space="preserve" text-anchor="middle" x="853" y="-404.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session · world_gen (never summed)</text>
+</g>
+<!-- packs -->
+<g id="node2" class="node">
+<title>packs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="703.27,-442.52 354.73,-442.52 354.73,-385.64 703.27,-385.64 703.27,-442.52"/>
+<text xml:space="preserve" text-anchor="middle" x="529" y="-423.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PackList</text>
+<text xml:space="preserve" text-anchor="middle" x="529" y="-410.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tiers (subscriptionCta gate) + à&#45;la&#45;carte packs</text>
+<text xml:space="preserve" text-anchor="middle" x="529" y="-397.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quantity presets</text>
+</g>
+<!-- gate -->
+<g id="node4" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="438.76,-348.64 123.24,-348.64 123.24,-291.76 438.76,-291.76 438.76,-348.64"/>
+<text xml:space="preserve" text-anchor="middle" x="281" y="-330.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">subscriptionCta(activeSubscription, target)</text>
+<text xml:space="preserve" text-anchor="middle" x="281" y="-316.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">null → subscribe · higher → upgrade</text>
+<text xml:space="preserve" text-anchor="middle" x="281" y="-303.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">same/lower/unresolvable → manage</text>
+</g>
+<!-- packs&#45;&gt;gate -->
+<g id="edge1" class="edge">
+<title>packs&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M453.24,-385.01C425.25,-374.64 393.37,-362.83 364.71,-352.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.84,-350.02 358.42,-349.88 364.13,-354.61 365.84,-350.02"/>
+</g>
+<!-- history -->
+<g id="node3" class="node">
+<title>history</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1337.66,-435.92 1002.34,-435.92 1002.34,-392.24 1337.66,-392.24 1337.66,-435.92"/>
+<text xml:space="preserve" text-anchor="middle" x="1170" y="-417.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PurchaseHistory</text>
+<text xml:space="preserve" text-anchor="middle" x="1170" y="-404.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">terse mono ledger (packs name no credit count)</text>
+</g>
+<!-- checkout -->
+<g id="node5" class="node">
+<title>checkout</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="898.06,-232.56 641.94,-232.56 641.94,-196.56 898.06,-196.56 898.06,-232.56"/>
+<text xml:space="preserve" text-anchor="middle" x="770" y="-211.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createCheckout → Stripe Checkout</text>
+</g>
+<!-- gate&#45;&gt;checkout -->
+<g id="edge2" class="edge">
+<title>gate&#45;&gt;checkout</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M439.32,-292.83C500.13,-281.9 570.03,-268.36 633,-253.76 655.82,-248.47 680.55,-241.85 702.63,-235.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="703.14,-238.02 709.2,-233.75 701.8,-233.31 703.14,-238.02"/>
+<text xml:space="preserve" text-anchor="middle" x="622.12" y="-264.76" font-family="Courier,monospace" font-size="10.00">subscribe</text>
+</g>
+<!-- upgrade -->
+<g id="node6" class="node">
+<title>upgrade</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="376.17,-232.56 7.83,-232.56 7.83,-196.56 376.17,-196.56 376.17,-232.56"/>
+<text xml:space="preserve" text-anchor="middle" x="192" y="-211.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">upgradeTier → prorated (409 pending → calm arm)</text>
+</g>
+<!-- gate&#45;&gt;upgrade -->
+<g id="edge3" class="edge">
+<title>gate&#45;&gt;upgrade</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M256.92,-291.15C243.04,-275 225.79,-254.91 212.56,-239.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="214.76,-238.3 208.34,-234.58 211.04,-241.49 214.76,-238.3"/>
+<text xml:space="preserve" text-anchor="middle" x="262.83" y="-264.76" font-family="Courier,monospace" font-size="10.00">upgrade</text>
+</g>
+<!-- portal -->
+<g id="node7" class="node">
+<title>portal</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="623.86,-232.56 394.14,-232.56 394.14,-196.56 623.86,-196.56 623.86,-232.56"/>
+<text xml:space="preserve" text-anchor="middle" x="509" y="-211.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">openPortal → Customer Portal</text>
+</g>
+<!-- gate&#45;&gt;portal -->
+<g id="edge4" class="edge">
+<title>gate&#45;&gt;portal</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M343,-291.02C380.76,-273.85 428.21,-252.29 462.69,-236.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="463.27,-239.04 468.63,-233.91 461.24,-234.58 463.27,-239.04"/>
+<text xml:space="preserve" text-anchor="middle" x="419.84" y="-264.76" font-family="Courier,monospace" font-size="10.00">manage</text>
+</g>
+<!-- ret -->
+<g id="node10" class="node">
+<title>ret</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1030.66,-148.56 761.34,-148.56 761.34,-91.68 1030.66,-91.68 1030.66,-148.56"/>
+<text xml:space="preserve" text-anchor="middle" x="896" y="-130.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/billing/return · useCheckoutReturn</text>
+<text xml:space="preserve" text-anchor="middle" x="896" y="-116.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">poll balance: changed → settled</text>
+<text xml:space="preserve" text-anchor="middle" x="896" y="-103.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">budget spent → processing (calm)</text>
+</g>
+<!-- checkout&#45;&gt;ret -->
+<g id="edge7" class="edge">
+<title>checkout&#45;&gt;ret</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M794,-195.96C810.02,-184.2 831.6,-168.37 850.78,-154.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="852.06,-156.39 856.26,-150.28 849.17,-152.44 852.06,-156.39"/>
+<text xml:space="preserve" text-anchor="middle" x="872.01" y="-169.56" font-family="Courier,monospace" font-size="10.00">redirect back</text>
+</g>
+<!-- play402 -->
+<g id="node8" class="node">
+<title>play402</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="772.76,-342.04 457.24,-342.04 457.24,-298.36 772.76,-298.36 772.76,-342.04"/>
+<text xml:space="preserve" text-anchor="middle" x="615" y="-323.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">play 402 (owner shortfall)</text>
+<text xml:space="preserve" text-anchor="middle" x="615" y="-310.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ PurchaseSeam · owner buy / member hold</text>
+</g>
+<!-- play402&#45;&gt;checkout -->
+<g id="edge5" class="edge">
+<title>play402&#45;&gt;checkout</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M647.12,-297.73C673.21,-280.27 709.92,-255.73 736.41,-238.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="737.62,-240.16 742.08,-234.23 734.9,-236.08 737.62,-240.16"/>
+<text xml:space="preserve" text-anchor="middle" x="766.16" y="-264.76" font-family="Courier,monospace" font-size="10.00">owner buy (à&#45;la&#45;carte)</text>
+</g>
+<!-- header -->
+<g id="node9" class="node">
+<title>header</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1073.26,-342.04 790.74,-342.04 790.74,-298.36 1073.26,-298.36 1073.26,-342.04"/>
+<text xml:space="preserve" text-anchor="middle" x="932" y="-323.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppFrame header</text>
+<text xml:space="preserve" text-anchor="middle" x="932" y="-310.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session&#45;credit count + quiet quick&#45;buy</text>
+</g>
+<!-- header&#45;&gt;checkout -->
+<g id="edge6" class="edge">
+<title>header&#45;&gt;checkout</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M898.43,-297.73C871.04,-280.2 832.47,-255.52 804.76,-237.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="806.35,-235.91 799.13,-234.2 803.71,-240.03 806.35,-235.91"/>
+</g>
+<!-- webhook -->
+<g id="node11" class="node">
+<title>webhook</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1145.86,-43.68 850.14,-43.68 850.14,0 1145.86,0 1145.86,-43.68"/>
+<text xml:space="preserve" text-anchor="middle" x="998" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">checkout.session.completed webhook</text>
+<text xml:space="preserve" text-anchor="middle" x="998" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GRANTS the credit &#160;(the source of truth)</text>
+</g>
+<!-- ret&#45;&gt;webhook -->
+<g id="edge9" class="edge">
+<title>ret&#45;&gt;webhook</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M925.78,-91.01C939.32,-78.23 955.29,-63.15 968.77,-50.43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="970.43,-52.23 973.84,-45.64 967.07,-48.67 970.43,-52.23"/>
+<text xml:space="preserve" text-anchor="middle" x="980.14" y="-64.68" font-family="Courier,monospace" font-size="10.00">waits on</text>
+</g>
+<!-- webhook&#45;&gt;balance -->
+<g id="edge8" class="edge">
+<title>webhook&#45;&gt;balance</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1044.38,-44.35C1071.72,-60.55 1101,-85.71 1101,-119.12 1101,-321.2 1101,-321.2 1101,-321.2 1101,-350.75 1038.3,-373.81 975.95,-389.44"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="975.54,-387.02 969.33,-391.07 976.71,-391.78 975.54,-387.02"/>
+<text xml:space="preserve" text-anchor="middle" x="1134.01" y="-211.56" font-family="Courier,monospace" font-size="10.00">async grant</text>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  The <code>client-core/api/billing.ts</code> slice wraps the shipped endpoints: <code>getBalance</code>
+  (self-scoped <code>{ session, world_gen, active_subscription }</code>), <code>getSkus</code> (the
+  public pricing catalogue), <code>getHistory</code> (the unified purchase feed), and the three
+  mutations — <code>createCheckout</code>, <code>upgradeTier</code>, <code>openPortal</code> — each
+  returning only a Stripe redirect URL. On top sit pure client-core view-models
+  (<code>client-core/billing/</code>) that shape those reads for the screen, and the
+  <a href="./design-system.html">mythrunUI</a> components that render them. The one hard rule that
+  shapes every surface: <strong>credits land only via the webhook</strong>, never from a mutation's
+  response, so the client polls rather than assumes.
+</p>
+
+<h2 id="two-credit-buckets-never-one-number">Two credit buckets, never one number</h2>
+
+<p>
+  Session credits and world-gen credits are independent, and no surface ever shows a conflated sum.
+  <code>balanceView</code> passes each bucket through unchanged; the settings screen's
+  <code>CreditBalance</code> itemizes both, while the play-adjacent chrome — the header count and the
+  <a href="./campaign-hub.html">campaign card</a>'s low-credit line — tracks <strong>session credits
+  only</strong>. Starting a session spends a session credit; generating a world spends a world-gen
+  credit; the two are different currencies and the UI keeps them apart.
+</p>
+
+<h2 id="the-subscription-cta-gate-the-double-subscribe-guard">The subscription CTA gate — the double-subscribe guard</h2>
+
+<p>
+  Every subscription tier renders a CTA, and <code>subscriptionCta</code> decides which one from the
+  viewer's <code>active_subscription</code> and the target tier's price rank (read off the shared
+  catalogue, so this layer never re-sums prices):
+</p>
+
+<ul>
+  <li><strong>No active subscription</strong> → <code>subscribe</code> (Checkout, mode subscription).</li>
+  <li><strong>Active, target higher</strong> → <code>upgrade</code> (<code>POST /upgrade-tier</code>, prorated).</li>
+  <li><strong>Active, target same or lower, or unresolvable</strong> → <code>manage</code> (Customer Portal).</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong><code>subscribe</code> is returned only when there is no active subscription — this is a
+  required acceptance criterion, not chrome</strong> — Stripe will happily create a <em>second</em>
+  live subscription for a user who already has one; it does not dedupe. So a plain subscription-checkout
+  CTA presented to an already-subscribed user double-charges them. The gate makes that state
+  unreachable: an active subscriber's every tile routes to <code>upgrade</code> or <code>manage</code>,
+  and the defensive arm sends even an <em>unresolvable</em> tier (an active sub whose tier the catalogue
+  no longer lists) to the Portal rather than to a second subscribe. This is the showstopper the blind
+  review flagged; the guard is what keeps the pin total. A pending upgrade (<code>409
+  upgrade_already_pending</code>) renders a calm "your upgrade is processing" arm, never an error.
+</aside>
+
+<h2 id="the-purchase-moment-the-owner-pays">The purchase moment — the owner pays</h2>
+
+<p>
+  Starting a session debits the <strong>campaign owner's</strong> session credit regardless of who
+  pressed Start, so the <a href="./live-play.html">play screen</a>'s <code>402</code> arm fires on the
+  <em>owner's</em> shortfall. The <code>PurchaseSeam</code> splits on who is looking:
+</p>
+
+<ul>
+  <li>
+    <strong>The owner</strong> gets an inline <code>PurchasePrompt</code> with the buy path —
+    à-la-carte session credits through Checkout, a quantity control with terse presets
+    (<code>1 / 4 / 8</code>) — returning through the <code>/billing/return</code> poll.
+  </li>
+  <li>
+    <strong>A non-owner member</strong> gets a calm notice: the campaign's owner is out of session
+    credits. No buy CTA.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>A non-owner is shown no buy button because buying would credit the wrong ledger</strong> —
+  the session debits the owner's balance, and a member's purchase credits the <em>member's</em> own
+  ledger, which does nothing to unblock the session. Offering a member a buy CTA would take their money
+  and leave the session just as stuck. So the seam's non-owner variant is a calm explanation with no
+  action, and the campaign-card low-credit line is owner-only for the same reason — there is no
+  member-visible read of the owner's balance, and one must not be added. "Trial-end" as a distinct
+  surface is dropped: the trial is a non-expiring starter credit with no trial flag on any read, so the
+  out-of-credits prompt is the one moment.
+</aside>
+
+<h2 id="checkout-return-the-webhook-is-the-truth">Checkout return — the webhook is the truth</h2>
+
+<p>
+  Stripe redirects a completed checkout to <code>/billing/return</code>, but the grant rides the async
+  <code>checkout.session.completed</code> webhook, so the balance can't be confirmed synchronously.
+  <code>useCheckoutReturn</code> snapshots the balance on its first poll and polls until it
+  <em>changes</em> (→ <code>settled</code>, and it invalidates the cached balance) or the budget
+  expires (→ <code>processing</code> — a calm, non-error beat pointing at the settings history, never a
+  failure claim for a completed payment). A cancelled checkout lands on a separate calm
+  <code>/billing/cancelled</code> route.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The "arrived" signal keys off an observed balance change, not the pre-redirect
+  baseline</strong> — the natural check is "did the balance go up from what it was before I left for
+  Stripe?" But that pre-redirect baseline doesn't survive the full-page Stripe round-trip. So the hook
+  captures its baseline on the <em>first poll after return</em> and watches for a change from there. The
+  cost is a known, accepted fallback: a webhook that landed <em>before</em> the first poll makes the
+  already-updated balance the baseline, so it never appears to change and the return lands on the calm
+  <code>processing</code> beat — correct and non-alarming, just not the celebratory "settled" copy.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The forwarded-webhook gotcha the billing smoke must clear</strong> — because the grant
+  depends entirely on the webhook, a local billing smoke needs the Stripe CLI forwarder running. But
+  the forwarder currently delivers events at an API version that doesn't match the SDK pin, and the
+  <a href="../auth-billing/billing-webhook.html">dispatcher fail-closes</a> on that mismatch — records
+  the event, returns 200, grants nothing. So a dev checkout can complete and the return route will sit
+  on <code>processing</code> forever with no credit. The current behavior and the parallel production
+  risk are documented on the <a href="../auth-billing/billing-webhook.html#the-dispatcher-api-version-gate-idempotency-tx-prefetch-then-write">billing
+  webhook</a> page (filed as myth-e3ary).
+</aside>
+
+<h2 id="the-settings-surface-and-its-components">The settings surface and its components</h2>
+
+<p>
+  <code>/settings</code> is the Sessions &amp; Billing screen: <code>SessionsBilling</code> reads the
+  balance, skus, and history suspense queries and hands each to a component.
+</p>
+
+<ul>
+  <li><strong><code>CreditBalance</code></strong> — both buckets, itemized, never summed.</li>
+  <li>
+    <strong><code>PackList</code></strong> — the price-ordered subscription tiers by their brand names
+    (<strong>Wayfarer / Sojourner / Mythwright</strong>) each with its gated CTA, over the à-la-carte
+    packs with a quantity control (presets <code>1 / 4 / 8 / 16</code>).
+  </li>
+  <li>
+    <strong><code>PurchaseHistory</code></strong> — a terse mono ledger.
+  </li>
+  <li>
+    <strong><code>PurchasePrompt</code></strong> — the owner/non-owner purchase-moment variants (used
+    by the play seam).
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>No "best value" labels, and a pack row can't name a credit count</strong> — the tier names
+  are server data carried through verbatim; the catalogue view adds no "recommended" or "best value"
+  marker (the brand register constraint). And the history feed carries <code>lookup_key</code> only for
+  subscription <em>invoice</em> rows — an à-la-carte pack row has none — so the view-model can never
+  resolve a tier name or promise per-item credit detail for a pack. Its prose is "Purchase — $X.XX",
+  because the webhook (not the client) is the authority on what a purchase granted.
+</aside>
+
+<h3 id="header-chrome-and-the-low-credit-card-line">Header chrome and the low-credit card line</h3>
+
+<p>
+  The <a href="./app-shell.html">AppFrame</a> header carries the live session-credit count with a quiet
+  quick-buy path to the purchase surface (the header edit is MYT-95's; the play route's full-bleed
+  variant is a declared shared edit on the same frame). The <a href="./campaign-hub.html">campaign
+  card</a> shows an owner-only low-credit line, driven by <code>useLowSessionCredits</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>useLowSessionCredits</code> fails open</strong> — the low-credit nudge is decorative
+  chrome on the hub, so it must never let a billing blip degrade the shelf. The hook is a non-suspense
+  query with retries off: while loading, on error, or with no data it reports <code>false</code>, so
+  the nudge simply doesn't appear rather than tearing down the card or showing a spurious warning. It
+  shares the same <code>['billing','balance']</code> cache the header warms, so it costs no extra
+  fetch. The shipped resilience contract already isolates a failed balance read to the credits slot;
+  this keeps the card on the safe side of that line.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>One closed SKU set, pinned across the wire by a test</strong> — the frontend keys its
+  tier/pack logic off the contract's <code>LookupKeySchema</code> enum
+  (<code>tier_wayfarer</code>/<code>sojourner</code>/<code>mythwright</code>,
+  <code>sku_session</code>/<code>sku_world</code>); the backend keys its Stripe wiring off its own
+  <code>LOOKUP_KEYS</code>. These are two hand-maintained copies of the same closed set, so a
+  <a href="../auth-billing/stripe-contract.html">drift-pin test</a> asserts them equal in both
+  directions — a key added on either side fails that test rather than drifting into a runtime mismatch
+  (a contract enum that rejects a real backend lookup key, or the reverse).
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="run-the-billing-smoke-dev-stripe-test-mode">Run the billing smoke (dev, Stripe test mode)</h3>
+<ol>
+  <li>
+    <strong>Precondition:</strong> the Stripe CLI webhook forwarder must be running — without it,
+    credits never land and the smoke should fail the precondition check, not hang. Note the
+    <a href="../auth-billing/billing-webhook.html">api-version gotcha</a>: the forwarder's events must
+    also carry the pinned API version, or the dispatcher records-and-acks them without granting.
+  </li>
+  <li>
+    Open <code>/settings</code>: both balances render, the tiers show their gated CTAs, and history
+    lists real rows. As a new subscriber, the subscription CTA is <code>subscribe</code>; as an
+    already-subscribed test user, the same tiles render <code>upgrade</code> / <code>manage</code> —
+    never a second checkout.
+  </li>
+  <li>
+    Buy an à-la-carte pack: Checkout → <code>/billing/return</code> polls until the credited balance
+    changes (<code>settled</code>) or the budget expires (<code>processing</code>). Confirm the ledger
+    reflects it.
+  </li>
+  <li>
+    Drain the owner's session credits and press Start on a session: the owner sees the inline purchase
+    prompt; a non-owner member sees the calm "owner is out of credits" notice.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  This surface consumes the <a href="../auth-billing/billing-routes.html">billing routes</a> and the
+  <a href="../auth-billing/stripe-contract.html">SKU catalogue</a>; every credit grant lands through the
+  <a href="../auth-billing/billing-webhook.html">billing webhook</a> (whose current api-version behavior
+  is the reason the checkout-return sits on <code>processing</code> in dev). The live
+  <code>402</code> purchase moment belongs to the <a href="./live-play.html">play flow</a>; the header
+  credit chrome edits the <a href="./app-shell.html">app frame</a>; the owner-only low-credit line
+  rides the <a href="./campaign-hub.html">campaign card</a>. Every visible element is a
+  <a href="./design-system.html">mythrunUI</a> component over the DOM-free
+  <a href="./app-shell.html">client brain</a>, and each checkout/upgrade/portal action navigates the
+  browser to the returned Stripe URL through the platform navigation seam (a screen never touches
+  <code>window</code>).
+</p>
+
+<h2 id="appendix-the-modules">Appendix: the modules</h2>
+
+<h3 id="client-core-the-brain-client-core-billing-api-billing-ts">Client-core — the brain (<code>client-core/billing</code> + <code>api/billing.ts</code>)</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>api/billing.ts</code></td>
+    <td>
+      The slices — <code>getBalance</code>/<code>useBalance</code>, <code>useSkus</code>,
+      <code>useHistory</code>, <code>createCheckout</code>, <code>openPortal</code>,
+      <code>upgradeTier</code>, and the fail-open <code>useLowSessionCredits</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>billing/balance-view-model.ts</code></td>
+    <td>The two independent buckets + the resolved subscription tier name (never a sum).</td>
+  </tr>
+  <tr>
+    <td><code>billing/tier-catalogue.ts</code></td>
+    <td>
+      <code>subscriptionTiers</code> / <code>aLaCarteSkus</code> / <code>tierRank</code> — price-ordered
+      derivations over the SKU listing.
+    </td>
+  </tr>
+  <tr>
+    <td><code>billing/subscription-cta.ts</code></td>
+    <td>The <code>subscribe</code>/<code>upgrade</code>/<code>manage</code> gate (the double-subscribe guard).</td>
+  </tr>
+  <tr>
+    <td><code>billing/insufficient-credits.ts</code></td>
+    <td>The 402 guard + <code>purchasePromptModel</code> (owner / non-owner variant).</td>
+  </tr>
+  <tr>
+    <td><code>billing/purchase-history-view-model.ts</code></td>
+    <td>The unified feed → ledger rows; packs name no credit count.</td>
+  </tr>
+  <tr>
+    <td><code>billing/use-checkout-return.ts</code></td>
+    <td>The post-redirect balance poll → <code>settled</code> / <code>processing</code>.</td>
+  </tr>
+  <tr>
+    <td><code>contract/rest/billing.ts</code></td>
+    <td>The wire schemas + the closed <code>LookupKeySchema</code> (the drift-pinned SKU set).</td>
+  </tr>
+</table>
+
+<h3 id="web-the-screens">Web — the screens</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/settings.tsx</code> · <code>routes/settings/sessions-billing.tsx</code></td>
+    <td>The Sessions &amp; Billing surface (balance + tiers + à-la-carte + history + portal).</td>
+  </tr>
+  <tr>
+    <td><code>routes/billing/checkout-return.tsx</code> · <code>checkout-cancelled.tsx</code></td>
+    <td>The pinned post-checkout terminal states.</td>
+  </tr>
+  <tr>
+    <td><code>routes/play/purchase-seam.tsx</code></td>
+    <td>The live 402 purchase moment (owner buy / member hold) — shared with the play flow.</td>
+  </tr>
+  <tr>
+    <td><code>ui/…/CreditBalance</code> · <code>PackList</code> · <code>PurchaseHistory</code> · <code>PurchasePrompt</code></td>
+    <td>The four presentational billing components.</td>
+  </tr>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>frontend/contract/src/rest/billing.ts</code>, <code>frontend/client-core/src/billing/</code>,
+  <code>frontend/client-core/src/api/billing.ts</code>,
+  <code>frontend/client-core/src/contract/billing/</code>, <code>frontend/src/routes/settings.tsx</code>,
+  <code>frontend/src/routes/settings/sessions-billing.tsx</code>,
+  <code>frontend/src/routes/billing/</code> (checkout-return, checkout-cancelled),
+  <code>frontend/src/routes/play/purchase-seam.tsx</code>, and the <code>CreditBalance</code> /
+  <code>PackList</code> / <code>PurchaseHistory</code> / <code>PurchasePrompt</code> components under
+  <code>frontend/ui/src/components/</code>. The backend drift-pin test lives at
+  <code>backend/src/billing/__tests__/lookup-keys-contract.test.ts</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#two-credit-buckets-never-one-number">Two credit buckets, never one number</a></li><li style="padding-left:0"><a href="#the-subscription-cta-gate-the-double-subscribe-guard">The subscription CTA gate — the double-subscribe guard</a></li><li style="padding-left:0"><a href="#the-purchase-moment-the-owner-pays">The purchase moment — the owner pays</a></li><li style="padding-left:0"><a href="#checkout-return-the-webhook-is-the-truth">Checkout return — the webhook is the truth</a></li><li style="padding-left:0"><a href="#the-settings-surface-and-its-components">The settings surface and its components</a></li><li style="padding-left:12px"><a href="#header-chrome-and-the-low-credit-card-line">Header chrome and the low-credit card line</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-billing-smoke-dev-stripe-test-mode">Run the billing smoke (dev, Stripe test mode)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-billing-api-billing-ts">Client-core — the brain (client-core/billing + api/billing.ts)</a></li><li style="padding-left:12px"><a href="#web-the-screens">Web — the screens</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

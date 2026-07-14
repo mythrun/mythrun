@@ -1,0 +1,336 @@
+<!-- source: frontend/contract/src/rest/billing.ts -->
+<!-- source: frontend/client-core/src/billing/ -->
+<!-- source: frontend/client-core/src/api/billing.ts -->
+<!-- source: frontend/client-core/src/contract/billing/ -->
+<!-- source: frontend/src/routes/settings.tsx -->
+<!-- source: frontend/src/routes/settings/sessions-billing.tsx -->
+<!-- source: frontend/src/routes/billing/checkout-return.tsx -->
+<!-- source: frontend/src/routes/billing/checkout-cancelled.tsx -->
+<!-- source: frontend/src/routes/play/purchase-seam.tsx -->
+<!-- source: frontend/ui/src/components/CreditBalance/ -->
+<!-- source: frontend/ui/src/components/PackList/ -->
+<!-- source: frontend/ui/src/components/PurchaseHistory/ -->
+<!-- source: frontend/ui/src/components/PurchasePrompt/ -->
+<!-- source-hash: sha256:8f3ba8c1fe05d634d1fc6e80c6806e0aa1c5fde01207e32b1970b552349c33d9 -->
+<!-- last-ticket: MYT-95 -->
+
+<h1>Billing &amp; credits</h1>
+
+<p class="lead">
+  The player's side of the money. A Sessions &amp; Billing settings screen shows both credit balances,
+  the subscription tiers, and a purchase ledger; the app header carries the live session-credit count
+  with a quiet quick-buy; a drained owner meets a purchase prompt at session start; and a checkout
+  return waits for the credit to land. It's a thin client over the shipped
+  <a href="../auth-billing/billing-routes.html">billing routes</a> — every purchase routes to a Stripe
+  redirect that grants nothing synchronously, because the credit lands only through the
+  <a href="../auth-billing/billing-webhook.html">webhook</a>.
+</p>
+
+<!-- @diagram: frontend/billing-credits -->
+
+<h2>How it fits together</h2>
+
+<p>
+  The <code>client-core/api/billing.ts</code> slice wraps the shipped endpoints: <code>getBalance</code>
+  (self-scoped <code>{ session, world_gen, active_subscription }</code>), <code>getSkus</code> (the
+  public pricing catalogue), <code>getHistory</code> (the unified purchase feed), and the three
+  mutations — <code>createCheckout</code>, <code>upgradeTier</code>, <code>openPortal</code> — each
+  returning only a Stripe redirect URL. On top sit pure client-core view-models
+  (<code>client-core/billing/</code>) that shape those reads for the screen, and the
+  <a href="./design-system.html">mythrunUI</a> components that render them. The one hard rule that
+  shapes every surface: <strong>credits land only via the webhook</strong>, never from a mutation's
+  response, so the client polls rather than assumes.
+</p>
+
+<h2>Two credit buckets, never one number</h2>
+
+<p>
+  Session credits and world-gen credits are independent, and no surface ever shows a conflated sum.
+  <code>balanceView</code> passes each bucket through unchanged; the settings screen's
+  <code>CreditBalance</code> itemizes both, while the play-adjacent chrome — the header count and the
+  <a href="./campaign-hub.html">campaign card</a>'s low-credit line — tracks <strong>session credits
+  only</strong>. Starting a session spends a session credit; generating a world spends a world-gen
+  credit; the two are different currencies and the UI keeps them apart.
+</p>
+
+<h2>The subscription CTA gate — the double-subscribe guard</h2>
+
+<p>
+  Every subscription tier renders a CTA, and <code>subscriptionCta</code> decides which one from the
+  viewer's <code>active_subscription</code> and the target tier's price rank (read off the shared
+  catalogue, so this layer never re-sums prices):
+</p>
+
+<ul>
+  <li><strong>No active subscription</strong> → <code>subscribe</code> (Checkout, mode subscription).</li>
+  <li><strong>Active, target higher</strong> → <code>upgrade</code> (<code>POST /upgrade-tier</code>, prorated).</li>
+  <li><strong>Active, target same or lower, or unresolvable</strong> → <code>manage</code> (Customer Portal).</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong><code>subscribe</code> is returned only when there is no active subscription — this is a
+  required acceptance criterion, not chrome</strong> — Stripe will happily create a <em>second</em>
+  live subscription for a user who already has one; it does not dedupe. So a plain subscription-checkout
+  CTA presented to an already-subscribed user double-charges them. The gate makes that state
+  unreachable: an active subscriber's every tile routes to <code>upgrade</code> or <code>manage</code>,
+  and the defensive arm sends even an <em>unresolvable</em> tier (an active sub whose tier the catalogue
+  no longer lists) to the Portal rather than to a second subscribe. This is the showstopper the blind
+  review flagged; the guard is what keeps the pin total. A pending upgrade (<code>409
+  upgrade_already_pending</code>) renders a calm "your upgrade is processing" arm, never an error.
+</aside>
+
+<h2>The purchase moment — the owner pays</h2>
+
+<p>
+  Starting a session debits the <strong>campaign owner's</strong> session credit regardless of who
+  pressed Start, so the <a href="./live-play.html">play screen</a>'s <code>402</code> arm fires on the
+  <em>owner's</em> shortfall. The <code>PurchaseSeam</code> splits on who is looking:
+</p>
+
+<ul>
+  <li>
+    <strong>The owner</strong> gets an inline <code>PurchasePrompt</code> with the buy path —
+    à-la-carte session credits through Checkout, a quantity control with terse presets
+    (<code>1 / 4 / 8</code>) — returning through the <code>/billing/return</code> poll.
+  </li>
+  <li>
+    <strong>A non-owner member</strong> gets a calm notice: the campaign's owner is out of session
+    credits. No buy CTA.
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>A non-owner is shown no buy button because buying would credit the wrong ledger</strong> —
+  the session debits the owner's balance, and a member's purchase credits the <em>member's</em> own
+  ledger, which does nothing to unblock the session. Offering a member a buy CTA would take their money
+  and leave the session just as stuck. So the seam's non-owner variant is a calm explanation with no
+  action, and the campaign-card low-credit line is owner-only for the same reason — there is no
+  member-visible read of the owner's balance, and one must not be added. "Trial-end" as a distinct
+  surface is dropped: the trial is a non-expiring starter credit with no trial flag on any read, so the
+  out-of-credits prompt is the one moment.
+</aside>
+
+<h2>Checkout return — the webhook is the truth</h2>
+
+<p>
+  Stripe redirects a completed checkout to <code>/billing/return</code>, but the grant rides the async
+  <code>checkout.session.completed</code> webhook, so the balance can't be confirmed synchronously.
+  <code>useCheckoutReturn</code> snapshots the balance on its first poll and polls until it
+  <em>changes</em> (→ <code>settled</code>, and it invalidates the cached balance) or the budget
+  expires (→ <code>processing</code> — a calm, non-error beat pointing at the settings history, never a
+  failure claim for a completed payment). A cancelled checkout lands on a separate calm
+  <code>/billing/cancelled</code> route.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The "arrived" signal keys off an observed balance change, not the pre-redirect
+  baseline</strong> — the natural check is "did the balance go up from what it was before I left for
+  Stripe?" But that pre-redirect baseline doesn't survive the full-page Stripe round-trip. So the hook
+  captures its baseline on the <em>first poll after return</em> and watches for a change from there. The
+  cost is a known, accepted fallback: a webhook that landed <em>before</em> the first poll makes the
+  already-updated balance the baseline, so it never appears to change and the return lands on the calm
+  <code>processing</code> beat — correct and non-alarming, just not the celebratory "settled" copy.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The forwarded-webhook gotcha the billing smoke must clear</strong> — because the grant
+  depends entirely on the webhook, a local billing smoke needs the Stripe CLI forwarder running. But
+  the forwarder currently delivers events at an API version that doesn't match the SDK pin, and the
+  <a href="../auth-billing/billing-webhook.html">dispatcher fail-closes</a> on that mismatch — records
+  the event, returns 200, grants nothing. So a dev checkout can complete and the return route will sit
+  on <code>processing</code> forever with no credit. The current behavior and the parallel production
+  risk are documented on the <a href="../auth-billing/billing-webhook.html#the-dispatcher-api-version-gate-idempotency-tx-prefetch-then-write">billing
+  webhook</a> page (filed as myth-e3ary).
+</aside>
+
+<h2>The settings surface and its components</h2>
+
+<p>
+  <code>/settings</code> is the Sessions &amp; Billing screen: <code>SessionsBilling</code> reads the
+  balance, skus, and history suspense queries and hands each to a component.
+</p>
+
+<ul>
+  <li><strong><code>CreditBalance</code></strong> — both buckets, itemized, never summed.</li>
+  <li>
+    <strong><code>PackList</code></strong> — the price-ordered subscription tiers by their brand names
+    (<strong>Wayfarer / Sojourner / Mythwright</strong>) each with its gated CTA, over the à-la-carte
+    packs with a quantity control (presets <code>1 / 4 / 8 / 16</code>).
+  </li>
+  <li>
+    <strong><code>PurchaseHistory</code></strong> — a terse mono ledger.
+  </li>
+  <li>
+    <strong><code>PurchasePrompt</code></strong> — the owner/non-owner purchase-moment variants (used
+    by the play seam).
+  </li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>No "best value" labels, and a pack row can't name a credit count</strong> — the tier names
+  are server data carried through verbatim; the catalogue view adds no "recommended" or "best value"
+  marker (the brand register constraint). And the history feed carries <code>lookup_key</code> only for
+  subscription <em>invoice</em> rows — an à-la-carte pack row has none — so the view-model can never
+  resolve a tier name or promise per-item credit detail for a pack. Its prose is "Purchase — $X.XX",
+  because the webhook (not the client) is the authority on what a purchase granted.
+</aside>
+
+<h3>Header chrome and the low-credit card line</h3>
+
+<p>
+  The <a href="./app-shell.html">AppFrame</a> header carries the live session-credit count with a quiet
+  quick-buy path to the purchase surface (the header edit is MYT-95's; the play route's full-bleed
+  variant is a declared shared edit on the same frame). The <a href="./campaign-hub.html">campaign
+  card</a> shows an owner-only low-credit line, driven by <code>useLowSessionCredits</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>useLowSessionCredits</code> fails open</strong> — the low-credit nudge is decorative
+  chrome on the hub, so it must never let a billing blip degrade the shelf. The hook is a non-suspense
+  query with retries off: while loading, on error, or with no data it reports <code>false</code>, so
+  the nudge simply doesn't appear rather than tearing down the card or showing a spurious warning. It
+  shares the same <code>['billing','balance']</code> cache the header warms, so it costs no extra
+  fetch. The shipped resilience contract already isolates a failed balance read to the credits slot;
+  this keeps the card on the safe side of that line.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>One closed SKU set, pinned across the wire by a test</strong> — the frontend keys its
+  tier/pack logic off the contract's <code>LookupKeySchema</code> enum
+  (<code>tier_wayfarer</code>/<code>sojourner</code>/<code>mythwright</code>,
+  <code>sku_session</code>/<code>sku_world</code>); the backend keys its Stripe wiring off its own
+  <code>LOOKUP_KEYS</code>. These are two hand-maintained copies of the same closed set, so a
+  <a href="../auth-billing/stripe-contract.html">drift-pin test</a> asserts them equal in both
+  directions — a key added on either side fails that test rather than drifting into a runtime mismatch
+  (a contract enum that rejects a real backend lookup key, or the reverse).
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Run the billing smoke (dev, Stripe test mode)</h3>
+<ol>
+  <li>
+    <strong>Precondition:</strong> the Stripe CLI webhook forwarder must be running — without it,
+    credits never land and the smoke should fail the precondition check, not hang. Note the
+    <a href="../auth-billing/billing-webhook.html">api-version gotcha</a>: the forwarder's events must
+    also carry the pinned API version, or the dispatcher records-and-acks them without granting.
+  </li>
+  <li>
+    Open <code>/settings</code>: both balances render, the tiers show their gated CTAs, and history
+    lists real rows. As a new subscriber, the subscription CTA is <code>subscribe</code>; as an
+    already-subscribed test user, the same tiles render <code>upgrade</code> / <code>manage</code> —
+    never a second checkout.
+  </li>
+  <li>
+    Buy an à-la-carte pack: Checkout → <code>/billing/return</code> polls until the credited balance
+    changes (<code>settled</code>) or the budget expires (<code>processing</code>). Confirm the ledger
+    reflects it.
+  </li>
+  <li>
+    Drain the owner's session credits and press Start on a session: the owner sees the inline purchase
+    prompt; a non-owner member sees the calm "owner is out of credits" notice.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  This surface consumes the <a href="../auth-billing/billing-routes.html">billing routes</a> and the
+  <a href="../auth-billing/stripe-contract.html">SKU catalogue</a>; every credit grant lands through the
+  <a href="../auth-billing/billing-webhook.html">billing webhook</a> (whose current api-version behavior
+  is the reason the checkout-return sits on <code>processing</code> in dev). The live
+  <code>402</code> purchase moment belongs to the <a href="./live-play.html">play flow</a>; the header
+  credit chrome edits the <a href="./app-shell.html">app frame</a>; the owner-only low-credit line
+  rides the <a href="./campaign-hub.html">campaign card</a>. Every visible element is a
+  <a href="./design-system.html">mythrunUI</a> component over the DOM-free
+  <a href="./app-shell.html">client brain</a>, and each checkout/upgrade/portal action navigates the
+  browser to the returned Stripe URL through the platform navigation seam (a screen never touches
+  <code>window</code>).
+</p>
+
+<h2>Appendix: the modules</h2>
+
+<h3>Client-core — the brain (<code>client-core/billing</code> + <code>api/billing.ts</code>)</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>api/billing.ts</code></td>
+    <td>
+      The slices — <code>getBalance</code>/<code>useBalance</code>, <code>useSkus</code>,
+      <code>useHistory</code>, <code>createCheckout</code>, <code>openPortal</code>,
+      <code>upgradeTier</code>, and the fail-open <code>useLowSessionCredits</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>billing/balance-view-model.ts</code></td>
+    <td>The two independent buckets + the resolved subscription tier name (never a sum).</td>
+  </tr>
+  <tr>
+    <td><code>billing/tier-catalogue.ts</code></td>
+    <td>
+      <code>subscriptionTiers</code> / <code>aLaCarteSkus</code> / <code>tierRank</code> — price-ordered
+      derivations over the SKU listing.
+    </td>
+  </tr>
+  <tr>
+    <td><code>billing/subscription-cta.ts</code></td>
+    <td>The <code>subscribe</code>/<code>upgrade</code>/<code>manage</code> gate (the double-subscribe guard).</td>
+  </tr>
+  <tr>
+    <td><code>billing/insufficient-credits.ts</code></td>
+    <td>The 402 guard + <code>purchasePromptModel</code> (owner / non-owner variant).</td>
+  </tr>
+  <tr>
+    <td><code>billing/purchase-history-view-model.ts</code></td>
+    <td>The unified feed → ledger rows; packs name no credit count.</td>
+  </tr>
+  <tr>
+    <td><code>billing/use-checkout-return.ts</code></td>
+    <td>The post-redirect balance poll → <code>settled</code> / <code>processing</code>.</td>
+  </tr>
+  <tr>
+    <td><code>contract/rest/billing.ts</code></td>
+    <td>The wire schemas + the closed <code>LookupKeySchema</code> (the drift-pinned SKU set).</td>
+  </tr>
+</table>
+
+<h3>Web — the screens</h3>
+<table>
+  <tr>
+    <th>Module</th>
+    <th>Role</th>
+  </tr>
+  <tr>
+    <td><code>routes/settings.tsx</code> · <code>routes/settings/sessions-billing.tsx</code></td>
+    <td>The Sessions &amp; Billing surface (balance + tiers + à-la-carte + history + portal).</td>
+  </tr>
+  <tr>
+    <td><code>routes/billing/checkout-return.tsx</code> · <code>checkout-cancelled.tsx</code></td>
+    <td>The pinned post-checkout terminal states.</td>
+  </tr>
+  <tr>
+    <td><code>routes/play/purchase-seam.tsx</code></td>
+    <td>The live 402 purchase moment (owner buy / member hold) — shared with the play flow.</td>
+  </tr>
+  <tr>
+    <td><code>ui/…/CreditBalance</code> · <code>PackList</code> · <code>PurchaseHistory</code> · <code>PurchasePrompt</code></td>
+    <td>The four presentational billing components.</td>
+  </tr>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>frontend/contract/src/rest/billing.ts</code>, <code>frontend/client-core/src/billing/</code>,
+  <code>frontend/client-core/src/api/billing.ts</code>,
+  <code>frontend/client-core/src/contract/billing/</code>, <code>frontend/src/routes/settings.tsx</code>,
+  <code>frontend/src/routes/settings/sessions-billing.tsx</code>,
+  <code>frontend/src/routes/billing/</code> (checkout-return, checkout-cancelled),
+  <code>frontend/src/routes/play/purchase-seam.tsx</code>, and the <code>CreditBalance</code> /
+  <code>PackList</code> / <code>PurchaseHistory</code> / <code>PurchasePrompt</code> components under
+  <code>frontend/ui/src/components/</code>. The backend drift-pin test lives at
+  <code>backend/src/billing/__tests__/lookup-keys-contract.test.ts</code>.
+</p>

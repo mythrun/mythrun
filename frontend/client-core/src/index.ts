@@ -127,6 +127,39 @@ export type { AcceptArmKind, PreviewArmKind } from './contract/invite/types.ts'
 // pre-finalize fallback.
 export { useLiveRoster } from './invites/use-live-roster.ts'
 export type { LiveRosterDeps, ProgressState } from './invites/use-live-roster.ts'
+// MYT-95 billing slices: catalog/history reads (suspense) + the three
+// redirect/mutation posts; upgradeTier surfaces the 409
+// upgrade_already_pending arm as its typed HttpError, never remapped.
+export {
+  getSkus,
+  useSkus,
+  getHistory,
+  useHistory,
+  createCheckout,
+  openPortal,
+  upgradeTier,
+} from './api/billing.ts'
+export type { CheckoutBody, PortalBody, UpgradeTierBody } from './api/billing.ts'
+// MYT-95 billing brains: the tier catalogue (three named tiers, rank for
+// the CTA gate, no best-value flags by register rule) + the two-bucket
+// balance view (session/worldGen independent — never conflated).
+export { subscriptionTiers, aLaCarteSkus, tierRank } from './billing/tier-catalogue.ts'
+export { balanceView } from './billing/balance-view-model.ts'
+export type { BalanceView } from './billing/balance-view-model.ts'
+// The subscription CTA gate — the blind-review showstopper criterion: an
+// active subscriber can NEVER reach plain subscription checkout (property-
+// pinned in its test for every non-null subscription state).
+export { subscriptionCta } from './billing/subscription-cta.ts'
+export type { SubscriptionCta, TierCtaDecision } from './billing/subscription-cta.ts'
+// MYT-95 purchase-moment brains: history prose facts (only what the feed
+// sources), the 402 seam guard + prompt model (owner/non-owner), and the
+// checkout-return poll with its calm non-error terminal states.
+export { purchaseHistoryView } from './billing/purchase-history-view-model.ts'
+export type { HistoryRowView } from './billing/purchase-history-view-model.ts'
+export { isInsufficientCredits, purchasePromptModel } from './billing/insufficient-credits.ts'
+export type { InsufficientCreditsError, PurchasePromptModel } from './billing/insufficient-credits.ts'
+export { useCheckoutReturn } from './billing/use-checkout-return.ts'
+export type { CheckoutReturnStatus } from './billing/use-checkout-return.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
@@ -153,6 +186,7 @@ export type {
   GateReason,
 } from '@mythrun/contract/rest'
 export type { BalanceResponse, ActiveSubscriptionSummary } from '@mythrun/contract/rest'
+export type { SkuListing, BillingHistoryEvent, LookupKey } from '@mythrun/contract/rest'
 export type {
   RegisterRequest,
   RegisterResponse,

@@ -1,0 +1,54 @@
+digraph live_play {
+  // The /campaigns/:id/play keystone. PlayRoute resolves the viewer identity +
+  // ownership, then PlaySession runs the start-flow classifier — each /start arm
+  // resolves to a different screen. The `ready` arm mounts SessionShell, the
+  // streamed multiplayer transcript over the WS transport view-model (useSession),
+  // which folds every frame through the reconnect-safe transcript reducer.
+  rankdir=TB;
+  compound=true;
+
+  route [label="PlayRoute  ·  /campaigns/:id/play\nfullBleed route handle · usePlayViewer\ngetMe + /mine → { userId, isOwner, party }"];
+  start [label="PlaySession · useSessionStart\nPOST /start  (the OWNER's credit debits)\nclassify the caught arm ↓"];
+
+  subgraph cluster_arms {
+    label="the start-flow arms (one screen each)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    prep [label="409 prep_not_ready\n→ PrepBeat · useSessionPrep (SSE)\nready ⟹ retry()", color="ember", fontcolor="ember"];
+    join [label="409 session_already_active\n→ GET /active → sessionId\n(the mid-session join)"];
+    purchase [label="402 insufficient_credits\n→ PurchaseSeam\nowner buy · member hold"];
+    blocked [label="409 campaign_not_active /\nreconcile_pending / session_ending\n→ calm retry notice"];
+  }
+
+  shell [label="SessionShell  (ready{sessionId})\nuseSession over ws-session-client\nconnect(seedLastSeq: 0) — full replay"];
+
+  subgraph cluster_shell {
+    label="the live stage";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    reducer [label="reduceFrameReconciling\ntranscript reducer + own-echo FIFO reconcile\n+ turnId whole-turn replace", color="ember", fontcolor="ember"];
+    stream [label="MessageStream\nDmMessage (serif, streams) · PlayerMessage (mono)\nmechanical frames → terse system lines"];
+    presence [label="out-of-band presence\nThinkingIndicator · typing · connection line"];
+    input [label="SessionInput\nsend · @dm explicit-text summon"];
+  }
+
+  recap [label="session_end → /campaigns/:id/recap\n(stub route — the recap read is a filed bead)"];
+
+  route -> start;
+  start -> prep;
+  start -> join;
+  start -> purchase;
+  start -> blocked;
+  start -> shell [label="200"];
+  join -> shell [style="dotted"];
+  prep -> shell [style="dotted"];
+  shell -> reducer [lhead=cluster_shell];
+  reducer -> stream [style="invis"];
+  reducer -> presence [style="invis"];
+  reducer -> input [style="invis"];
+  shell -> recap [ltail=cluster_shell, label="ended"];
+}

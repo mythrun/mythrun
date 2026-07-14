@@ -69,16 +69,17 @@ function EmptyShelf(): React.JSX.Element {
  */
 function CampaignHub(): React.JSX.Element {
   const { data } = useMyCampaigns()
+  // MYT-95 T13: fail-open low-credit nudge (a billing blip renders no line;
+  // the shipped resilience contract isolates billing failures to the credits
+  // slot, and this read never suspends or throws). Called unconditionally —
+  // hooks precede the empty-shelf early return.
+  const lowOnSessionCredits = useLowSessionCredits()
   const { campaigns } = data
 
   if (campaigns.length === 0) {
     return <EmptyShelf />
   }
 
-  // MYT-95 T13: fail-open low-credit nudge (a billing blip renders no line;
-  // the shipped resilience contract isolates billing failures to the credits
-  // slot, and this read never suspends or throws).
-  const lowOnSessionCredits = useLowSessionCredits()
   return <CampaignHubBody campaigns={campaigns} lowOnSessionCredits={lowOnSessionCredits} />
 }
 

@@ -1,0 +1,44 @@
+digraph invites_party {
+  // Two actors meeting at one party. The OWNER shares a primary link from the
+  // campaign page and watches a live roster; the RECIPIENT lands on the public
+  // /join/:code, signs in through the guarded returnTo, accepts, and makes a
+  // character. When a member finalizes, the status SSE's character_creation_complete
+  // event refetches the owner's roster — the substitute for a member-joined event
+  // that no shipped transport carries.
+  rankdir=LR;
+  compound=true;
+
+  subgraph cluster_owner {
+    label="the owner (campaign page + hub card)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    panel [label="CampaignInvitePanel  (owner-only)\nensurePrimaryInvite → InvitePanel\ncopy · navigator.share · revoke↻re-mint", color="ember", fontcolor="ember"];
+    roster [label="PartyStaging · useLiveRoster\nstatus SSE + useForegroundRefetch\n(focus + visibility-gated slow poll)"];
+    imprint [label="home card imprint\nbuilt pigment seals + building placeholder seals"];
+  }
+
+  subgraph cluster_recipient {
+    label="the recipient (/join/:code)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    preview [label="JoinRoute · previewInvite (PUBLIC)\n→ JoinPreview card", color="ember", fontcolor="ember"];
+    signin [label="signed out → signinReturnToJoin\nthe SHIPPED isLocalPath ?returnTo\n+ OAuth-state round-trip"];
+    accept [label="signed in → acceptInvite\nalreadyMember ? campaign : join-summary"];
+  }
+
+  link [label="primary share link\n${frontendBaseUrl}/join/:code"];
+  create [label="character creation\n→ finalize"];
+
+  panel -> link;
+  link -> preview [label="opened"];
+  preview -> signin [label="signed out"];
+  signin -> preview [style="dotted", label="return"];
+  preview -> accept [label="signed in"];
+  accept -> create;
+  create -> roster [label="character_creation_complete\n(status SSE) → refetch", style="bold"];
+  roster -> imprint [style="invis"];
+}
