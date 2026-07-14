@@ -27,6 +27,7 @@ export { ThinkingIndicator } from './components/ThinkingIndicator/ThinkingIndica
 export { SessionStartBeat } from './components/SessionStartBeat/SessionStartBeat.tsx'
 export { SessionInput } from './components/SessionInput/SessionInput.tsx'
 export { PlayerMessage } from './components/PlayerMessage/PlayerMessage.tsx'
+export { MessageStream } from './components/MessageStream/MessageStream.tsx'
 
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
@@ -229,6 +230,8 @@ export type {
   DmMessageProps,
   ThinkingIndicatorProps,
   SessionStartBeatProps,
+  MessageStreamProps,
+  TranscriptItem,
   HeadingProps,
   HeadingLevel,
   HeadingRole,
