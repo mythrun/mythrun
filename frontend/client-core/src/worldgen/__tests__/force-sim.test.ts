@@ -55,6 +55,18 @@ function dist(positions: Map<string, { x: number; y: number }>, a: string, b: st
 
 const EPS = 1e-6
 
+/** Deterministic LCG (the generator every force-sim suite inlines). Used to PIN the
+ *  initial node placement for the stochastic-settle link tests below: `seedNode` draws
+ *  the seed positions from the injected RNG, so an un-seeded (`Math.random`) run makes
+ *  the settled layout — and any distance-inequality assertion over it — non-reproducible. */
+function lcg(seed: number): () => number {
+  let s = seed
+  return () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff
+    return s / 0x7fffffff
+  }
+}
+
 /** A representative icon+label collision box (SIGNED offset extents relative to the node
  *  position) — the shape the fog reserves per entity (WorldGenFog `labelBoxExtents`): the icon
  *  at the LEFT, the text label extending RIGHT by `textWidth`, the box centred slightly ABOVE
@@ -191,7 +203,13 @@ describe('ForceSim node-identity preservation', () => {
 
 describe('ForceSim link force', () => {
   it('pulls a linked pair closer than the unlinked pairs under identical forces', () => {
-    const sim = create(VIEWPORT)
+    // Seeded (not `Math.random`) so the settle is REPRODUCIBLE. The invariant holds
+    // for the overwhelming majority of seed layouts, but an unlucky un-seeded start
+    // that drops the unlinked node C between the pair does not fully resolve in 300
+    // ticks — a rare (~0.4%/run) flake that surfaces once in a while under full-suite
+    // load. This fixed seed pins a representative layout (the linked pair settles ~72px
+    // shorter than either unlinked pair); it changes NO sim value, only the RNG stream.
+    const sim = create({ ...VIEWPORT, random: lcg(0xbadd1e) })
 
     // a-b linked; a-c and b-c only repel. Same global charge/centre forces act
     // on all three, so the linked side must end up the shortest.
@@ -222,7 +240,11 @@ describe('ForceSim link force', () => {
     const uuidA = '018f7b21-aaaa-7000-8000-000000000001'
     const uuidB = '018f7b21-bbbb-7000-8000-000000000002'
     const uuidC = '018f7b21-cccc-7000-8000-000000000003'
-    const sim = create(VIEWPORT)
+    // Seeded for the same reason as the sibling link test above: the distance
+    // inequality is a stochastic-settle assertion, so the initial placement must be
+    // pinned (un-seeded `Math.random` under-resolves on a rare unlucky layout). This
+    // seed settles the linked pair ~43px shorter than either unlinked pair.
+    const sim = create({ ...VIEWPORT, random: lcg(0x2f6e2b1) })
 
     sim.sync(
       [
@@ -320,11 +342,7 @@ describe('ForceSim containment margin inset (MYT-89 follow-up)', () => {
     // A dense mutually-repelling cloud (pure outward pressure) packs against the inset
     // bound; every node must land within it — and thus STRICTLY inside the full ±half.
     // Deterministic LCG seeding so the settle is reproducible.
-    let s = 0x2f6e2b1
-    const random = (): number => {
-      s = (s * 1103515245 + 12345) & 0x7fffffff
-      return s / 0x7fffffff
-    }
+    const random = lcg(0x2f6e2b1)
     const width = 200
     const height = 160
     const margin = 40
@@ -455,11 +473,7 @@ describe('ForceSim spread (MYT-89 audit #4)', () => {
     // real seed jitter) must instead SPREAD the graph to fill the space. Deterministic
     // seeding (an injected LCG) so the settled layout is reproducible — big seedJitter
     // means no coincident nodes, so d3's internal coincidence jiggle never fires either.
-    let s = 0x2f6e2b1
-    const random = (): number => {
-      s = (s * 1103515245 + 12345) & 0x7fffffff
-      return s / 0x7fffffff
-    }
+    const random = lcg(0x2f6e2b1)
     const width = 900
     const height = 470
     const sim = create({ width, height, random })

@@ -1,6 +1,5 @@
 import {
   forceCenter,
-  forceLink,
   forceManyBody,
   forceSimulation,
   forceX,
@@ -8,10 +7,10 @@ import {
   type Force,
   type ForceLink,
   type Simulation,
-  type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
 import type { GraphEdge, GraphNode } from './graph-reducers.ts'
+import { buildSimLinks, createLinkForce, type SimLink } from './force-links.ts'
 
 // ForceSim (MYT-89 Phase C, Task C2): a platform-neutral (DOM-free) wrapper
 // around `d3-force` for the world-gen streaming graph. The graph populates live
@@ -286,7 +285,7 @@ export interface StaticKeepOut {
  *  `?? 0` defensiveness. `box` is the measured icon+label AABB (set via `setBoxes`
  *  from the ui) the rectangular collision force keeps apart; `undefined` until the
  *  ui has measured the label (the node is then ignored by collision). */
-interface SimNode extends SimulationNodeDatum {
+export interface SimNode extends SimulationNodeDatum {
   synthKey: string
   displayId: string
   x: number
@@ -294,20 +293,6 @@ interface SimNode extends SimulationNodeDatum {
   // Required-with-`undefined` (not plain optional) so `applyBoxes` can clear a stale box by
   // assigning the `Map.get(…)` result directly under `exactOptionalPropertyTypes`.
   box: NodeBox | undefined
-}
-
-/** A d3 link datum. `source`/`target` are seeded as `synthKey` strings (the edge's
- *  UUID endpoints translated to the endpoints' stable `synthKey` by `buildSimLinks`)
- *  and resolved to node objects by d3 via the `id` accessor on (re-)initialisation.
- *  `synthKey` here is the edge's OWN stable id (unused by the node resolver).
- *  `strength` is the PRE-COMPUTED spring strength for this link — d3's
- *  degree-normalised default (`1 / min(degree)`) scaled by the tunable
- *  `linkStrength` multiplier, stamped by `buildSimLinks` (which already walks the
- *  edge set and so computes the degrees d3 would) and read by the link force's
- *  strength accessor (MYT-89 untangle). */
-interface SimLink extends SimulationLinkDatum<SimNode> {
-  synthKey: string
-  strength: number
 }
 
 export interface ForceSim {
@@ -502,12 +487,12 @@ function boxCollide(padding: number, keepOuts: StaticKeepOut[]): Force<SimNode, 
 
 /** Build the STOPPED d3 simulation with the re-tuned spread forces (MYT-89 audit #4):
  *  charge (`chargeStrength` + `chargeDistanceMax`), the CLUSTERING-tuned link force
- *  (`linkDistance` rest length + the per-link `strength` `buildSimLinks` pre-computed
- *  from `linkStrength` — the MYT-89 untangle, replacing d3's tangle-inducing
- *  defaults), a centre pull (`centerStrength`), the rectangular box collide
- *  (`collisionPadding` — no icon/label overlap, the box is the keep-out unit), and
- *  the per-axis inward boundary pull (`boundaryStrength`). `.stop()` because C4's
- *  render loop drives `tick()`, not d3's internal timer. */
+ *  (arrives pre-configured from `createLinkForce` — `linkDistance` rest length + the
+ *  per-link `strength` `buildSimLinks` pre-computed from `linkStrength`, the MYT-89
+ *  untangle replacing d3's tangle-inducing defaults), a centre pull (`centerStrength`),
+ *  the rectangular box collide (`collisionPadding` — no icon/label overlap, the box is
+ *  the keep-out unit), and the per-axis inward boundary pull (`boundaryStrength`).
+ *  `.stop()` because C4's render loop drives `tick()`, not d3's internal timer. */
 function buildSimulation(
   nodes: SimNode[],
   linkForce: ForceLink<SimNode, SimLink>,
@@ -526,10 +511,7 @@ function buildSimulation(
         .strength(params.chargeStrength)
         .distanceMax(params.chargeDistanceMax),
     )
-    .force(
-      'link',
-      linkForce.distance(params.linkDistance).strength((link) => link.strength),
-    )
+    .force('link', linkForce)
     .force('center', forceCenter<SimNode>().strength(params.centerStrength))
     .force('collide', boxCollide(params.collisionPadding, keepOuts))
     .force('boundX', forceX<SimNode>(0).strength(params.boundaryStrength))
@@ -592,69 +574,6 @@ function reheatAlpha(seen: Set<string>, edges: GraphEdge[]): number {
   return hasNew ? EDGE_REHEAT_ALPHA : REHEAT_ALPHA
 }
 
-/** A mutable per-endpoint link count. SHARED BY REFERENCE between the degree tally
- *  and every resolved link touching the endpoint, so after the resolve pass each
- *  link reads its endpoints' FINAL degrees — no post-hoc map lookup (whose
- *  `undefined` arm would be unreachable) needed. */
-interface DegreeCounter {
-  n: number
-}
-
-/** Get-or-create the endpoint's counter and count this link against it. */
-function tallyDegree(degrees: Map<string, DegreeCounter>, synthKey: string): DegreeCounter {
-  const existing = degrees.get(synthKey)
-  if (existing !== undefined) {
-    existing.n += 1
-    return existing
-  }
-  const fresh = { n: 1 }
-  degrees.set(synthKey, fresh)
-  return fresh
-}
-
-/** Translate the derived edges into d3 link data. Edge endpoints are entity UUIDs
- *  (= the endpoints' `displayId`); each is translated through `toSynth` to the
- *  endpoint's internal `synthKey` so d3's `id` resolver (keyed on synthKey) finds the
- *  node. An edge with an unknown endpoint is DROPPED — a dangling endpoint would make
- *  the resolver throw (`node not found`). Each link is stamped with its spring
- *  strength (MYT-89 untangle): d3's degree-normalised default (`1 / min(degree)`,
- *  counted over the SAME resolved link set d3 would count) scaled by the tunable
- *  `linkStrength` multiplier. */
-function buildSimLinks(
-  edges: GraphEdge[],
-  toSynth: Map<string, string>,
-  linkStrength: number,
-): SimLink[] {
-  const degrees = new Map<string, DegreeCounter>()
-  const resolved: {
-    synthKey: string
-    source: string
-    target: string
-    sourceDeg: DegreeCounter
-    targetDeg: DegreeCounter
-  }[] = []
-  for (const e of edges) {
-    const source = toSynth.get(e.from)
-    const target = toSynth.get(e.to)
-    if (source === undefined || target === undefined) continue
-    resolved.push({
-      synthKey: e.synthKey,
-      source,
-      target,
-      sourceDeg: tallyDegree(degrees, source),
-      targetDeg: tallyDegree(degrees, target),
-    })
-  }
-  // The shared counters now hold the FINAL degrees, so each link's strength reads
-  // them directly — the exact `1 / min(degree)` d3 would compute, times the knob.
-  return resolved.map((link) => ({
-    synthKey: link.synthKey,
-    source: link.source,
-    target: link.target,
-    strength: linkStrength / Math.min(link.sourceDeg.n, link.targetDeg.n),
-  }))
-}
-
 /** The persistent icon+label box store: the ui-measured boxes keyed by the EXTERNAL
  *  `displayId`, plus `applyBoxes` which stamps each onto the matching persistent `SimNode`.
  *  Kept off `create` so the box plumbing is one line there. `setBoxes` replaces the whole set
@@ -673,6 +592,39 @@ function makeBoxStore(byKey: Map<string, SimNode>): {
     applyBoxes()
   }
   return { applyBoxes, setBoxes }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// EXTERNAL displayId READ LAYER — pure reads over `byKey`, module-scoped (like
+// `clampNodes` / `reheatAlpha`) so the `create` factory stays lean. Every consumer
+// surface speaks `displayId` (the render/edge/pointer id-space); these translate
+// the internal `synthKey`-keyed `byKey` store back into it.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** A `displayId → synthKey` map over the CURRENT nodes — the translation from the
+ *  external (edge/render/pointer) id-space into the sim's internal synthKey key. */
+function displayIdToSynthKey(byKey: Map<string, SimNode>): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const simNode of byKey.values()) out.set(simNode.displayId, simNode.synthKey)
+  return out
+}
+
+/** Every node's CURRENT position, keyed by the EXTERNAL `displayId` so consumers resolve
+ *  in displayId/UUID space (drawNodes via `node.displayId`, drawEdges via UUID edge
+ *  endpoints). */
+function readPositions(byKey: Map<string, SimNode>): Map<string, { x: number; y: number }> {
+  const out = new Map<string, { x: number; y: number }>()
+  for (const simNode of byKey.values()) {
+    out.set(simNode.displayId, { x: simNode.x, y: simNode.y })
+  }
+  return out
+}
+
+/** The persistent `SimNode` for an external `displayId`, or undefined — the same
+ *  displayId→synthKey lookup `buildSimLinks` uses, then resolved to the sim node. */
+function nodeByDisplayId(byKey: Map<string, SimNode>, displayId: string): SimNode | undefined {
+  const synthKey = displayIdToSynthKey(byKey).get(displayId)
+  return synthKey === undefined ? undefined : byKey.get(synthKey)
 }
 
 export function create(opts: {
@@ -714,7 +666,7 @@ export function create(opts: {
   // STATIC keep-outs (the status-card footprint): mutated in place by `setKeepOuts`
   // so the collide force (which closes over the array) always reads the current set.
   const keepOuts: StaticKeepOut[] = []
-  const linkForce = forceLink<SimNode, SimLink>([]).id((node) => node.synthKey)
+  const linkForce = createLinkForce(params)
   const simulation = buildSimulation(nodes, linkForce, params, keepOuts)
 
   // Icon+label box store (keyed by displayId); re-applied after every merge so a late node resolves its box.
@@ -749,14 +701,6 @@ export function create(opts: {
     for (const simNode of byKey.values()) nodes.push(simNode)
   }
 
-  /** A `displayId → synthKey` map over the CURRENT nodes — the translation from the
-   *  external (edge/render/pointer) id-space into the sim's internal synthKey key. */
-  function displayIdToSynthKey(): Map<string, string> {
-    const out = new Map<string, string>()
-    for (const simNode of byKey.values()) out.set(simNode.displayId, simNode.synthKey)
-    return out
-  }
-
   // Edge synthKeys already seen — a sync carrying a NEW one is a topology change
   // and gets the hotter `EDGE_REHEAT_ALPHA` via `reheatAlpha` (module scope).
   const seenEdgeKeys = new Set<string>()
@@ -767,7 +711,7 @@ export function create(opts: {
     applyBoxes() // re-attach the measured boxes to survivors + freshly-seeded nodes.
     simulation.nodes(nodes) // re-inits forces; survivors keep x/y/vx/vy (valid → not re-seeded).
     // Resolve edge endpoints against the current nodes + stamp spring strengths.
-    linkForce.links(buildSimLinks(edges, displayIdToSynthKey(), params.linkStrength))
+    linkForce.links(buildSimLinks(edges, displayIdToSynthKey(byKey), params.linkStrength))
     // Reheat WITHOUT restart — keeps the timer stopped. A new EDGE reheats hotter
     // than a node arrival: topology changes need migration energy (MYT-89 untangle).
     simulation.alpha(reheatAlpha(seenEdgeKeys, edges))
@@ -801,32 +745,15 @@ export function create(opts: {
     simulation.alpha(Math.max(simulation.alpha(), REHEAT_ALPHA))
   }
 
-  function positions(): Map<string, { x: number; y: number }> {
-    // Keyed by the EXTERNAL `displayId` so consumers resolve in displayId/UUID space
-    // (drawNodes via `node.displayId`, drawEdges via UUID edge endpoints).
-    const out = new Map<string, { x: number; y: number }>()
-    for (const simNode of byKey.values()) {
-      out.set(simNode.displayId, { x: simNode.x, y: simNode.y })
-    }
-    return out
-  }
-
-  /** The persistent `SimNode` for an external `displayId`, or undefined — the same
-   *  displayId→synthKey lookup `buildSimLinks` uses, then resolved to the sim node. */
-  function nodeByDisplayId(displayId: string): SimNode | undefined {
-    const synthKey = displayIdToSynthKey().get(displayId)
-    return synthKey === undefined ? undefined : byKey.get(synthKey)
-  }
-
   function pin(displayId: string, x: number, y: number): void {
-    const simNode = nodeByDisplayId(displayId)
+    const simNode = nodeByDisplayId(byKey, displayId)
     if (simNode === undefined) return
     simNode.fx = x
     simNode.fy = y
   }
 
   function unpin(displayId: string): void {
-    const simNode = nodeByDisplayId(displayId)
+    const simNode = nodeByDisplayId(byKey, displayId)
     if (simNode === undefined) return
     // The release reheat (MYT-89 audit v4, the forceful settle regime): freeing
     // a node that was ACTUALLY pinned re-energises the field so the forces
@@ -850,7 +777,7 @@ export function create(opts: {
     setKeepOuts,
     reheat,
     tick,
-    positions,
+    positions: () => readPositions(byKey),
     pin,
     unpin,
   }
