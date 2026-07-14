@@ -285,3 +285,26 @@ export type { CreditBalanceProps } from './billing/index.ts'
 export type { PackListProps, SubscriptionTierView, AlaCarteView } from './billing/index.ts'
 export type { PurchasePromptProps } from './billing/index.ts'
 export type { PurchaseHistoryProps, PurchaseHistoryRow } from './billing/index.ts'
+
+// Knowledge-layer contracts (MYT-94) — the DOM-free prop + shared-type vocabulary for
+// the entity-highlighting + knowledge-sidebar @mythrun/ui components (EntityMention /
+// EntityPopover / SessionSheet / KnowledgeSidebar). Re-exports the matcher vocabulary
+// (Task 3) + the three brain view-models (cache / sheet-state / character overlay) so a
+// consumer reads them off this surface. Type-only (§9): pure data + neutral callbacks +
+// resolved i18n-key labels, no className/style/raw DOM events.
+export type {
+  EntityGlyph,
+  EntityCard,
+  ProseSegment,
+  EntityIndex,
+  KnowledgeCache,
+  SessionSheetState,
+  CharacterOverlay,
+  KnowledgeTab,
+  WikiTabLabels,
+  SessionSheetLabels,
+  EntityMentionProps,
+  EntityPopoverProps,
+  SessionSheetPanelProps,
+  KnowledgeSidebarProps,
+} from './session-knowledge.ts'
