@@ -912,11 +912,16 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         // resolver_degraded signal §7 wires; searchLore can't set it).
         const resolve: SubstrateResolver = async () => {
           try {
-            const chars = await charactersKnownTo(
-              deps.graph,
-              entityId,
-              nameFilter !== undefined ? { nameFilter } : {},
-            )
+            // known edges ONLY (myth-got9q): a secret connection's reachability
+            // never enters the FT-facing walk — the edge tier is invisible in
+            // the results, so no downstream vet could gate it. Node over-pull
+            // is unchanged (a secret NODE still surfaces to the ST-vet, tier
+            // attached). When play reveals a connection, the Scribe flips the
+            // edge to known and it traverses.
+            const chars = await charactersKnownTo(deps.graph, entityId, {
+              edgeAccessLevels: ['known'],
+              ...(nameFilter !== undefined ? { nameFilter } : {}),
+            })
             // MYT-73: flat-append the turn's working-set graph items (entity /
             // relationship) so a relationship invented mid-session is recallable.
             // The walk's `degraded` signal is the graph's own; working-set lines

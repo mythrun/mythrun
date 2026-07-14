@@ -1708,7 +1708,7 @@ describe('characters_known_to execute', () => {
     expect(capturedInput().question).toBe('Who is known to The Spymaster?')
 
     const resolved = await capturedResolve()()
-    expect(charactersKnownTo).toHaveBeenCalledWith('subj-1', expect.any(Number))
+    expect(charactersKnownTo).toHaveBeenCalledWith('subj-1', expect.any(Number), ['known'])
     expect(resolved.results).toContain('[tier=discoverable] Mara (depth 1)')
     expect(resolved.degraded).toBe(false)
   })
@@ -1769,7 +1769,7 @@ describe('characters_known_to execute', () => {
       callOpts(),
     )
     const resolved = await capturedResolve()()
-    expect(charactersKnownTo).toHaveBeenCalledWith('subj-1', expect.any(Number))
+    expect(charactersKnownTo).toHaveBeenCalledWith('subj-1', expect.any(Number), ['known'])
     expect(resolved.results).toContain('Mara')
     expect(resolved.results).not.toContain('Doran')
   })

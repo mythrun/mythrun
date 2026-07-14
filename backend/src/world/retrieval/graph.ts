@@ -12,10 +12,18 @@
 // is no totality/degradation contract at this layer; MYT-72's tool-error
 // handling is the catch site. A binder/DB failure surfaces to the caller as-is.
 //
-// OVER-PULL — no access_level predicate anywhere (the binder has none either);
-// `known`/`discoverable`/`secret` rows all flow through. The tier gate is the
-// Slow Thinker, downstream. PCs are INCLUDED on the graph paths (the binder does
-// not filter `entity_type = 'pc'` here), so the result entityType can carry 'pc'.
+// OVER-PULL (NODES) — no NODE access_level predicate anywhere (the binder has
+// none either); `known`/`discoverable`/`secret` nodes all flow through, tier
+// attached. Node-content gating is the Slow Thinker, downstream. PCs are
+// INCLUDED on the graph paths (the binder does not filter `entity_type = 'pc'`
+// here), so the result entityType can carry 'pc'.
+//
+// EDGE GATE (myth-got9q) — relationship EDGES are tier-gated AT TRAVERSAL: the
+// walk's output carries only node tiers, so a secret edge's reachability would
+// otherwise launder through with no downstream gate able to see it (the
+// known↔known secret-connection leak MYT-89 tiered relationships to close).
+// `charactersKnownTo` therefore requires an explicit `edgeAccessLevels` per
+// call — the `relationships.listAmong` contract.
 //
 // entityType TYPING DECISION (see report): T4's KnownCharacter/FactionNode
 // (world/retrieval/types.ts) type entityType as the NARROW EntityType (no 'pc'),
@@ -28,6 +36,7 @@
 // types should ultimately carry GraphEntityType too.
 
 import type { Repo } from '../../repo/index.js'
+import type { AccessLevel } from '../../repo/facts.js'
 import type {
   GraphEntityType,
   KnownCharacterDbRow,
@@ -51,6 +60,9 @@ export interface CharactersKnownToOpts {
   readonly nameFilter?: string
   /** Traversal depth; defaults GRAPH_DEFAULT_DEPTH, hard-capped GRAPH_MAX_DEPTH. */
   readonly maxDepth?: number
+  /** REQUIRED — edge tiers the walk may traverse (see the EDGE GATE header
+   *  note; myth-got9q). No insecure "walk everything" default. */
+  readonly edgeAccessLevels: readonly AccessLevel[]
 }
 
 /** Clamp a requested depth to [0, GRAPH_MAX_DEPTH], defaulting when absent. */
@@ -100,7 +112,11 @@ export async function charactersKnownTo(
   opts: CharactersKnownToOpts,
 ): Promise<KnownCharacter[]> {
   const depth = resolveDepth(opts.maxDepth)
-  const rows = await deps.repo.worldRetrieval.charactersKnownTo(entityId, depth)
+  const rows = await deps.repo.worldRetrieval.charactersKnownTo(
+    entityId,
+    depth,
+    opts.edgeAccessLevels,
+  )
   const mapped = rows.map(toKnownCharacter)
   if (opts.nameFilter === undefined) return mapped
   const wanted = normalizeName(opts.nameFilter)

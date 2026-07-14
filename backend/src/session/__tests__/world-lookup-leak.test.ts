@@ -333,13 +333,13 @@ describe('MYT-72 T10a — enforced-ignorance leak matrix', () => {
     const root = await seedEntity('npc', 'Open NPC', 'known')
     const secretNeighbor = await seedEntity('npc', `Informant ${SECRET}`, 'secret')
     await pool.query(
-      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-       VALUES ($1, $2, $3, 'knows', 'd')`,
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'knows', 'd', 'known')`,
       [uuidv7(), root, secretNeighbor],
     )
 
     const resolve: SubstrateResolver = async () => {
-      const chars = await charactersKnownTo({ repo }, root, {})
+      const chars = await charactersKnownTo({ repo }, root, { edgeAccessLevels: ['known'] })
       return {
         results: chars.map((c) => `[tier=${c.accessLevel}] ${c.name}`).join('\n'),
         degraded: false,

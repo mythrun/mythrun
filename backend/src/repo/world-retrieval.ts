@@ -4,10 +4,22 @@
 // search + recursive-CTE graph walks). The heavy read SQL lives here behind the
 // canonical `worldRetrievalNs(c)` binder, exactly like every other repo module.
 //
-// OVER-PULL — there is NO `access_level` predicate anywhere in this file. All
-// queries return `known` / `discoverable` / `secret` rows. The tier gate is a
-// downstream concern (the Slow Thinker is the safety boundary); a tier filter
-// here would be a BUG.
+// OVER-PULL (NODES) — there is no NODE `access_level` predicate anywhere in
+// this file. All queries return `known` / `discoverable` / `secret` rows, each
+// carrying its tier; node CONTENT gating is a downstream concern (the Slow
+// Thinker vet is the safety boundary) and a node-tier filter here would be a
+// BUG.
+//
+// EDGE GATE (myth-got9q) — relationship EDGES are the one exception, and the
+// line is principled: an edge's tier never reaches any downstream gate (the
+// walk's output carries only node tiers), so traversing a secret edge launders
+// its reachability — a known node reached only via a secret connection surfaces
+// indistinguishably from a legitimate one, the exact known↔known leak MYT-89's
+// relationship tiering (migration 031) exists to close deterministically.
+// `charactersKnownTo` therefore takes a REQUIRED `edgeAccessLevels` list and
+// only walks matching edges, mirroring `relationships.listAmong`'s explicit-
+// tier contract. Node over-pull is unchanged: a secret NODE at the end of a
+// known edge still returns, tier attached.
 //
 // WORLD SCOPE — `facts` has no `world_id` column (schema drift since migration
 // 001), so fact searches scope through `JOIN entities e ON e.id = f.entity_id
@@ -164,10 +176,16 @@ export function worldRetrievalNs(c: ClientLike) {
      * via a `path` array (`WHERE NOT next_id = ANY(path)`). DISTINCT ON
      * (entity_id) keeping the MIN depth dedups diamonds. The root is depth 0.
      * The `nameFilter` is NOT applied here — it's graph.ts's post-filter (T8).
+     *
+     * `edgeAccessLevels` is REQUIRED — only edges whose tier is in the list are
+     * walked (see the EDGE GATE header note: reachability over a secret edge is
+     * a deterministic leak no downstream gate can see; myth-got9q). There is no
+     * insecure "walk everything" default, matching `relationships.listAmong`.
      */
     charactersKnownTo: async (
       rootEntityId: string,
       maxDepth: number,
+      edgeAccessLevels: readonly AccessLevel[],
     ): Promise<readonly KnownCharacterDbRow[]> => {
       const result = await c.query<KnownCharacterDbRow>(
         `WITH RECURSIVE walk AS (
@@ -179,10 +197,12 @@ export function worldRetrievalNs(c: ClientLike) {
                SELECT r.target_entity_id AS next_id
                  FROM relationships r
                 WHERE r.source_entity_id = w.entity_id
+                  AND r.access_level = ANY($3)
                UNION ALL
                SELECT r.source_entity_id AS next_id
                  FROM relationships r
                 WHERE r.target_entity_id = w.entity_id
+                  AND r.access_level = ANY($3)
              ) edges
             WHERE w.depth < $2
               AND NOT edges.next_id = ANY(w.path)
@@ -192,7 +212,7 @@ export function worldRetrievalNs(c: ClientLike) {
            FROM walk m
            JOIN entities e ON e.id = m.entity_id
           ORDER BY m.entity_id, m.depth`,
-        [rootEntityId, maxDepth],
+        [rootEntityId, maxDepth, edgeAccessLevels],
       )
       return result.rows
     },

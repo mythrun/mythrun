@@ -253,10 +253,12 @@ describe('world-retrieval repo (MYT-71 T6)', () => {
     const c = await seedEntity(worldA, 'npc', 'C', 0)
     const d = await seedEntity(worldA, 'npc', 'D', 0)
     const e = await seedEntity(worldA, 'npc', 'E', 0) // depth 3 via D→E
+    // Mechanics test — every edge explicitly known-tier so the traversal
+    // shape (not the edge gate) is what's under test.
     const insert = async (src: string, tgt: string): Promise<void> => {
       await pool.query(
-        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-         VALUES ($1, $2, $3, 'knows', 'd')`,
+        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+         VALUES ($1, $2, $3, 'knows', 'd', 'known')`,
         [uuidv7(), src, tgt],
       )
     }
@@ -268,7 +270,7 @@ describe('world-retrieval repo (MYT-71 T6)', () => {
     await insert(d, e) // depth 3
     await insert(a, c) // reachable cycle: root→A→C→root revisits root (path-blocked)
 
-    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 3)
+    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 3, ['known'])
 
     const byId = new Map(rows.map((r) => [r.entity_id, r]))
     // root itself is depth 0.
@@ -288,19 +290,79 @@ describe('world-retrieval repo (MYT-71 T6)', () => {
   })
 
   it('charactersKnownTo returns access_level per node (MYT-72 T1)', async () => {
-    // Over-pull: a `known` root with a `secret` neighbor — both reachable, both
-    // carry their tier (the ST vet downstream is the gate, not this query).
+    // NODE over-pull: a `known` root with a `secret` neighbor over a KNOWN
+    // edge — both reachable, both carry their node tier (the ST vet downstream
+    // gates node CONTENT, not this query). Edge tiers gate at traversal
+    // (myth-got9q) — the edge here is explicitly known so the node over-pull
+    // contract is what's under test.
     const root = await seedEntity(worldA, 'npc', 'Open NPC', 0, 'known')
     const childSecret = await seedEntity(worldA, 'npc', 'Hidden NPC', 0, 'secret')
     await pool.query(
-      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-       VALUES ($1, $2, $3, 'knows', 'd')`,
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'knows', 'd', 'known')`,
       [uuidv7(), root, childSecret],
     )
-    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 5)
+    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 5, ['known'])
     const byName = new Map(rows.map((r) => [r.name, r]))
     expect(byName.get('Open NPC')?.access_level).toBe('known')
     expect(byName.get('Hidden NPC')?.access_level).toBe('secret')
+  })
+
+  it('charactersKnownTo does NOT traverse a secret edge between two known nodes (myth-got9q)', async () => {
+    // The MYT-89 leak class, on the FT-lookup path: a secret CONNECTION between
+    // two known entities must not surface — the edge tier never reaches any
+    // downstream gate (the render carries only node tiers), so reachability
+    // must be gated here, deterministically, like relationships.listAmong.
+    const root = await seedEntity(worldA, 'npc', 'Duke', 0, 'known')
+    const wen = await seedEntity(worldA, 'npc', 'Sister Wen', 0, 'known')
+    await pool.query(
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'knows', 'd', 'secret')`,
+      [uuidv7(), root, wen],
+    )
+    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 5, ['known'])
+    expect(rows.map((r) => r.name)).not.toContain('Sister Wen')
+    expect(rows.map((r) => r.entity_id)).toEqual([root])
+  })
+
+  it('charactersKnownTo does NOT reach a known node whose only path runs through a secret edge (myth-got9q)', async () => {
+    // Transitive laundering: Duke -[secret]-> Contact(secret) -[known]-> Harbormaster(known).
+    // Harbormaster is reachable ONLY because the secret edge exists; its
+    // presence + depth would leak that a path runs through the secret.
+    const root = await seedEntity(worldA, 'npc', 'Duke', 0, 'known')
+    const contact = await seedEntity(worldA, 'npc', 'Contact', 0, 'secret')
+    const harbor = await seedEntity(worldA, 'npc', 'Harbormaster', 0, 'known')
+    const insert = async (src: string, tgt: string, tier: string): Promise<void> => {
+      await pool.query(
+        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+         VALUES ($1, $2, $3, 'knows', 'd', $4)`,
+        [uuidv7(), src, tgt, tier],
+      )
+    }
+    await insert(root, contact, 'secret')
+    await insert(contact, harbor, 'known')
+    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 5, ['known'])
+    const names = rows.map((r) => r.name)
+    expect(names).not.toContain('Contact')
+    expect(names).not.toContain('Harbormaster')
+  })
+
+  it('charactersKnownTo traverses exactly the requested edge tiers (explicit-tier contract)', async () => {
+    // listAmong's REQUIRED-accessLevels contract, applied to traversal: a
+    // discoverable edge is invisible at ['known'] and traversed at
+    // ['known','discoverable'] — the caller makes the tier decision.
+    const root = await seedEntity(worldA, 'npc', 'Root', 0, 'known')
+    const rumor = await seedEntity(worldA, 'npc', 'Rumored Ally', 0, 'known')
+    await pool.query(
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'knows', 'd', 'discoverable')`,
+      [uuidv7(), root, rumor],
+    )
+    const ns = worldRetrievalNs(pool)
+    const knownOnly = await ns.charactersKnownTo(root, 5, ['known'])
+    expect(knownOnly.map((r) => r.name)).not.toContain('Rumored Ally')
+    const withDiscoverable = await ns.charactersKnownTo(root, 5, ['known', 'discoverable'])
+    expect(withDiscoverable.map((r) => r.name)).toContain('Rumored Ally')
   })
 
   it('charactersKnownTo respects maxDepth (excludes nodes deeper than the bound)', async () => {
@@ -309,14 +371,14 @@ describe('world-retrieval repo (MYT-71 T6)', () => {
     const b = await seedEntity(worldA, 'npc', 'B', 0)
     const insert = async (src: string, tgt: string): Promise<void> => {
       await pool.query(
-        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-         VALUES ($1, $2, $3, 'knows', 'd')`,
+        `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+         VALUES ($1, $2, $3, 'knows', 'd', 'known')`,
         [uuidv7(), src, tgt],
       )
     }
     await insert(root, a) // depth 1
     await insert(a, b) // depth 2 — must be excluded at maxDepth=1
-    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 1)
+    const rows = await worldRetrievalNs(pool).charactersKnownTo(root, 1, ['known'])
     const ids = rows.map((r) => r.entity_id)
     expect(ids).toContain(root)
     expect(ids).toContain(a)

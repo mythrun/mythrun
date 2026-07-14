@@ -20,6 +20,7 @@ import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import { entities } from '../../../repo/entities.js'
 import { createRepo, type Repo } from '../../../repo/index.js'
+import type { AccessLevel } from '../../../repo/facts.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -84,8 +85,8 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
 
   async function rel(src: string, tgt: string): Promise<void> {
     await pool.query(
-      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description)
-       VALUES ($1, $2, $3, 'knows', 'd')`,
+      `INSERT INTO relationships (id, source_entity_id, target_entity_id, relationship_type, description, access_level)
+       VALUES ($1, $2, $3, 'knows', 'd', 'known')`,
       [uuidv7(), src, tgt],
     )
   }
@@ -106,7 +107,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     await rel(root, out) // out-edge: root → out
     await rel(incoming, root) // in-edge: incoming → root (only reachable by reverse walk)
 
-    const result = await charactersKnownTo(deps, root, {})
+    const result = await charactersKnownTo(deps, root, { edgeAccessLevels: ['known'] })
     const ids = result.map((r) => r.entityId)
     expect(ids).toContain(out)
     expect(ids).toContain(incoming)
@@ -121,7 +122,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     await rel(a, b)
     await rel(b, c)
 
-    const result = await charactersKnownTo(deps, root, {})
+    const result = await charactersKnownTo(deps, root, { edgeAccessLevels: ['known'] })
     const byId = new Map(result.map((r) => [r.entityId, r]))
     expect(GRAPH_DEFAULT_DEPTH).toBe(2)
     expect(byId.get(a)?.depth).toBe(1)
@@ -146,7 +147,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     const root = chain[0]
     if (root === undefined) throw new Error('no root')
 
-    const result = await charactersKnownTo(deps, root, { maxDepth: GRAPH_MAX_DEPTH + 50 })
+    const result = await charactersKnownTo(deps, root, { maxDepth: GRAPH_MAX_DEPTH + 50, edgeAccessLevels: ['known'] })
     const ids = new Set(result.map((r) => r.entityId))
     const atCap = chain[GRAPH_MAX_DEPTH]
     const pastCap = chain[GRAPH_MAX_DEPTH + 1]
@@ -168,15 +169,15 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
       repo: {
         worldRetrieval: {
           ...repo.worldRetrieval,
-          charactersKnownTo: async (id: string, depth: number) => {
+          charactersKnownTo: async (id: string, depth: number, tiers: readonly AccessLevel[]) => {
             seen.push(depth)
-            return real(id, depth)
+            return real(id, depth, tiers)
           },
         },
       },
     }
 
-    const result = await charactersKnownTo(spyDeps, root, { maxDepth: -1 })
+    const result = await charactersKnownTo(spyDeps, root, { maxDepth: -1, edgeAccessLevels: ['known'] })
     expect(seen).toEqual([0]) // negative request clamped to 0
     const ids = result.map((r) => r.entityId)
     expect(ids).toEqual([root]) // only the seed; the depth-1 neighbor is excluded
@@ -191,7 +192,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     await rel(a, b)
     await rel(b, root) // cycle: root → a → b → root
 
-    const result = await charactersKnownTo(deps, root, { maxDepth: GRAPH_MAX_DEPTH })
+    const result = await charactersKnownTo(deps, root, { maxDepth: GRAPH_MAX_DEPTH, edgeAccessLevels: ['known'] })
     // Each node appears exactly once despite the cycle.
     const ids = result.map((r) => r.entityId)
     expect(new Set(ids).size).toBe(ids.length)
@@ -208,7 +209,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     await rel(a, shared) // depth 2
     await rel(b, shared) // depth 2 (second path to shared)
 
-    const result = await charactersKnownTo(deps, root, { maxDepth: GRAPH_MAX_DEPTH })
+    const result = await charactersKnownTo(deps, root, { maxDepth: GRAPH_MAX_DEPTH, edgeAccessLevels: ['known'] })
     const sharedRows = result.filter((r) => r.entityId === shared)
     expect(sharedRows).toHaveLength(1)
     expect(sharedRows[0]?.depth).toBe(2)
@@ -221,7 +222,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     await rel(root, target)
     await rel(root, other)
 
-    const result = await charactersKnownTo(deps, root, { nameFilter: '  mARA  ' })
+    const result = await charactersKnownTo(deps, root, { nameFilter: '  mARA  ', edgeAccessLevels: ['known'] })
     expect(result).toHaveLength(1)
     expect(result[0]?.entityId).toBe(target)
     expect(result[0]?.name).toBe('Mara')
@@ -232,7 +233,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     const pc = await seedEntity('pc', 'Ada')
     await rel(root, pc)
 
-    const result = await charactersKnownTo(deps, root, {})
+    const result = await charactersKnownTo(deps, root, { edgeAccessLevels: ['known'] })
     const found = result.find((r) => r.entityId === pc)
     expect(found).toBeDefined()
     expect(found?.entityType).toBe('pc')
@@ -241,7 +242,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
 
   it('maps DB rows to the camelCase KnownCharacter shape', async () => {
     const root = await seedEntity('faction', 'Crown')
-    const result = await charactersKnownTo(deps, root, {})
+    const result = await charactersKnownTo(deps, root, { edgeAccessLevels: ['known'] })
     const rootRow = result.find((r) => r.entityId === root)
     expect(rootRow).toEqual({
       entityId: root,
@@ -257,7 +258,7 @@ describe('world-retrieval graph orchestration (MYT-71 T8)', () => {
     const secret = await seedEntity('npc', 'Hidden NPC', 'secret')
     await rel(root, secret)
 
-    const result = await charactersKnownTo(deps, root, {})
+    const result = await charactersKnownTo(deps, root, { edgeAccessLevels: ['known'] })
     const byId = new Map(result.map((r) => [r.entityId, r]))
     expect(byId.get(root)?.accessLevel).toBe('known')
     expect(byId.get(secret)?.accessLevel).toBe('secret')
