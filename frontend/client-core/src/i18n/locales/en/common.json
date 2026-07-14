@@ -522,5 +522,63 @@
       "retry": "[ph: try again]",
       "cta": "[ph: create your character]"
     }
+  },
+  "play": {
+    "loading": "[ph: opening the table…]",
+    "error": {
+      "body": "[ph: we couldn't open this session just now]",
+      "retry": "[ph: try again]"
+    },
+    "start": {
+      "prep": "[ph: the DM is preparing tonight's session…]",
+      "connecting": "[ph: joining the table…]"
+    },
+    "prep": {
+      "failedTitle": "[ph: tonight's session didn't come together]",
+      "failedBody": "[ph: preparing the session was interrupted — try again]",
+      "failedRetry": "[ph: try again]"
+    },
+    "blocked": {
+      "body": "[ph: the table isn't ready just yet — give it a moment]",
+      "retry": "[ph: try again]"
+    },
+    "startError": {
+      "body": "[ph: we couldn't start the session just now]",
+      "retry": "[ph: try again]"
+    },
+    "purchase": {
+      "owner": {
+        "title": "[ph: you're out of session credits]",
+        "body": "[ph: add more to keep playing]",
+        "detail": "[ph: {{available}} of {{required}} needed]"
+      },
+      "notOwner": {
+        "title": "[ph: the table is paused]",
+        "body": "[ph: the host is out of session credits — hang tight]"
+      }
+    },
+    "complete": {
+      "title": "[ph: session complete]",
+      "body": "[ph: gathering tonight's recap…]"
+    },
+    "connection": {
+      "reconnecting": "[ph: reconnecting to the table…]",
+      "failed": "[ph: lost the connection — trying to get you back]"
+    },
+    "input": {
+      "placeholder": "[ph: what do you do?]",
+      "send": "[ph: send]",
+      "summon": "[ph: ask the DM]"
+    },
+    "thinking": {
+      "dm": "[ph: the DM is thinking…]",
+      "typing": "[ph: is typing…]"
+    },
+    "sidebar": {
+      "title": "[ph: at the table]",
+      "body": "[ph: the party + your sheet live here soon]",
+      "expand": "[ph: open the table panel]",
+      "collapse": "[ph: close the table panel]"
+    }
   }
 }
