@@ -334,10 +334,13 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
       relationships: { sourceEntityId: string; targetEntityId: string }[]
     }>()
 
-    // WorldSummary allowlist: plot columns must NOT appear on the wire.
+    // World-summary allowlist: plot columns must NOT appear on the wire —
+    // including `concept`, the owner's raw seed (the route is
+    // member-readable, so this is a security pin, not tidiness).
+    expect('concept' in body.world).toBe(false)
     expect(body.world.id).toBe(seed.worldId)
     expect(Object.keys(body.world).sort()).toEqual(
-      ['concept', 'era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
+      ['era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
     )
 
     // Only the two known-tier entities surface.

@@ -7,9 +7,12 @@
 // `follow_up_questions`, etc.).
 //
 // The allowlist is the wire-shape gate; if the consumer ever does
-// `JSON.stringify(snap.world)`, only id/name/concept/tone/themes/era
-// are emitted. Even under dev_bypass the WorldSummary stays narrow —
-// bypass widens entity/fact tiers, not the world's own column set.
+// `JSON.stringify(snap.world)`, only id/name/tone/themes/era are
+// emitted. `concept` — the owner's raw plot-bearing seed — is dropped
+// too (WikiWorldSummary projection): the route is member-readable since
+// myth-0xwos, so the seed must never be on the wire. Even under
+// dev_bypass the world summary stays narrow — bypass widens entity/fact
+// tiers, not the world's own column set.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
@@ -132,10 +135,11 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     expect(snap.world.id).toBe(worldId)
     expect(snap.world.name).toBe(scope.worldName(0))
     expect(Object.keys(snap.world).sort()).toEqual(
-      ['concept', 'era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
+      ['era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
     )
 
     // Critically — these MUST NOT appear under any tier.
+    expect('concept' in snap.world).toBe(false)
     expect('starting_situations' in snap.world).toBe(false)
     expect('startingSituations' in snap.world).toBe(false)
     expect('key_tensions' in snap.world).toBe(false)
@@ -182,8 +186,9 @@ describe('worldSnapshotView.fetch — myth-exac', () => {
     // tiers (and registry entry tiers), but the world's own column
     // projection stays narrow.
     expect(Object.keys(snap.world).sort()).toEqual(
-      ['concept', 'era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
+      ['era', 'id', 'name', 'themes', 'tone', 'vocabularyRegistry'].sort(),
     )
+    expect('concept' in snap.world).toBe(false)
     expect('starting_situations' in snap.world).toBe(false)
     expect('key_tensions' in snap.world).toBe(false)
 

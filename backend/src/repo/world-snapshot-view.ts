@@ -36,7 +36,11 @@ import type { EntityHierarchyRow } from './entity-hierarchy.js'
 import { entityHierarchy } from './entity-hierarchy.js'
 import type { StatBlockRow } from './stat-blocks.js'
 import { statBlocks } from './stat-blocks.js'
-import { worldsNs, type WorldSummary, type WorldIntroductionRow } from './worlds.js'
+import {
+  worldsNs,
+  type WikiWorldSummary,
+  type WorldIntroductionRow,
+} from './worlds.js'
 
 // The allowlist projection (the WorldSummary type + its column list) is
 // single-sourced in worlds.ts (`getSnapshotSummary`). Re-exported here for
@@ -55,7 +59,12 @@ export interface WorldSnapshotIntroduction {
 }
 
 export interface WorldSnapshot {
-  readonly world: WorldSummary
+  // WikiWorldSummary, not WorldSummary: the snapshot route is member-readable
+  // (myth-0xwos), and `concept` — the owner's raw plot-bearing world seed —
+  // must never be on a player-facing wire. The plot-safe projection is the
+  // same one the /wiki route serves; it structurally cannot hold the seed.
+  // (The reveal/dev-tool consumers only read name + vocabularyRegistry.)
+  readonly world: WikiWorldSummary
   // Absent only for worlds generated before the world_introduction stage
   // existed; the endpoint's 409 gate (keyed on that stage) means a served
   // snapshot always carries it.
@@ -96,8 +105,14 @@ async function fetch(
   const filteredEntries = summary.vocabularyRegistry.entries.filter((e) =>
     accessLevels.includes(e.access_level),
   )
-  const world: WorldSummary = {
-    ...summary,
+  // Explicit allowlist (not spread-and-omit): `concept` is deliberately
+  // absent — see the WorldSnapshot.world doc comment.
+  const world: WikiWorldSummary = {
+    id: summary.id,
+    name: summary.name,
+    tone: summary.tone,
+    themes: summary.themes,
+    era: summary.era,
     vocabularyRegistry: {
       entries: filteredEntries,
       adjacent_franchises: summary.vocabularyRegistry.adjacent_franchises,

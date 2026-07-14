@@ -12,10 +12,13 @@ export type EntityType = 'npc' | 'location' | 'faction' | 'item'
 
 export type AccessLevel = 'known' | 'discoverable' | 'secret'
 
+// Mirror of the backend's WikiWorldSummary (the plot-safe projection): the
+// snapshot route dropped `concept` — the owner's raw plot-bearing seed — when
+// it became member-readable (myth-0xwos follow-up). Type name kept as
+// WorldSummary locally to minimize mirror churn.
 export interface WorldSummary {
   readonly id: string
   readonly name: string
-  readonly concept: string
   readonly tone: string | null
   readonly themes: string | null
   readonly era: string | null
