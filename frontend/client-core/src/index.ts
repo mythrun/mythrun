@@ -84,6 +84,18 @@ export {
 } from './create/guided-draft.ts'
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
+// MYT-91 invite slices: the shipped MYT-75 invite routes as declarative
+// client-core endpoints (create/list/revoke/preview/accept) + the idempotent
+// `ensurePrimaryInvite` (list → the primary share link, else mint one).
+export {
+  createInvite,
+  listInvites,
+  revokeInvite,
+  previewInvite,
+  acceptInvite,
+  ensurePrimaryInvite,
+} from './api/invites.ts'
+export type { Invite, InviteListItem, InvitePreview, AcceptResult } from './api/invites.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
