@@ -624,7 +624,16 @@
   (<code>CreditBalance</code>/<code>PackList</code>/<code>PurchaseHistory</code>/<code>PurchasePrompt</code>)
   are all controlled feature composites documented on their pages — their state lives in client-core
   reducers and view-models — while the one reusable primitive that wave added to the system is the
-  <code>Avatar</code> <code>placeholder</code> variant above.
+  <code>Avatar</code> <code>placeholder</code> variant above. The
+  <a href="./live-play.html#the-dice-moment">dice-and-skill-check reveal</a> (MYT-93) drew the same
+  line once more: <code>RollCard</code> — the in-stream dice moment, a <code>skill_check</code> /
+  <code>dice_roll</code> transcript item rendered as a square paper card whose reveal phase is derived
+  route-side in a client-core reducer, not the component — and <code>DieSpin</code>, the stepped 2D
+  outlined d20 it spins, are both feature composites documented on
+  <a href="./live-play.html">live play</a>. <code>DieSpin</code> is a newly authored 1-bit die glyph —
+  no pixelarticons die exists, so it is the canonical reference for the mark — spun in the brand's
+  stepped-dither motion register (eight discrete 45° steps) rather than the smooth spin the UX spec
+  named, the brand-overrides-UX rule applied to motion.
 </p>
 
 <h2 id="responsive-by-construction">Responsive by construction</h2>
