@@ -220,3 +220,10 @@ echo
 echo "next:"
 echo "  1. pnpm install            (per-worktree node_modules)"
 echo "  2. pnpm db:migrate:test    (applies migrations to $db_name)"
+
+# myth: @mythrun/contract resolves ONLY through its built dist/ (the exports map
+# has no src conditional), and dist/ is gitignored — a fresh worktree therefore
+# fails every client-core/ui typecheck until the contract is built once. Build it
+# here so bring-up ends in a typecheckable tree.
+echo "→ building @mythrun/contract (dist-only exports; typecheck prerequisite)"
+pnpm --filter @mythrun/contract build
