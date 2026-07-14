@@ -34,6 +34,14 @@ type MechanicalFrame = FrameOf<
   'skill_check' | 'dice_roll' | 'ledger_update' | 'mode_change' | 'combat_started' | 'combat_resolved'
 >
 
+/** The per-frame folder a `session_reconnect` batch is re-folded through.
+ *  `reduceFrame` passes itself (unchanged semantics); the optimistic layer injects
+ *  a reconciling folder so an own echo INSIDE the batch confirms a pending item
+ *  instead of appending a duplicate (MYT-92 Task 5). It is a distinct SEAM (an
+ *  exported `applyReconnect` folder arg) rather than an optional 3rd param on
+ *  `reduceFrame`, so `reduceFrame` stays a bare 2-arg `Array.reduce` callback. */
+type FrameFolder = (state: TranscriptState, frame: ServerFrame) => TranscriptState
+
 /** Append one item, minting a stable monotonic React key from `nextId`. */
 function appendItem(state: TranscriptState, make: (key: string) => TranscriptItem): TranscriptState {
   const key = `item:${String(state.nextId)}`
@@ -112,12 +120,20 @@ function collectBatchTurnIds(messages: readonly ServerFrame[]): ReadonlySet<stri
   return ids
 }
 
-/** Whole-turn replace: prune items whose turnId the batch rebuilds, then re-fold. */
-function applyReconnect(state: TranscriptState, frame: FrameOf<'session_reconnect'>): TranscriptState {
+/** Whole-turn replace: prune items whose turnId the batch rebuilds, then re-fold
+ *  each batch message through `foldFrame`. Pending own items (turnId null) survive
+ *  the prune, so a reconciling `foldFrame` confirms them from their in-batch echo.
+ *  Exported as the reconnect-fold SEAM: `reduceFrame` calls it with `reduceFrame`
+ *  (raw semantics); the optimistic layer calls it with `reduceFrameReconciling`. */
+export function applyReconnect(
+  state: TranscriptState,
+  frame: FrameOf<'session_reconnect'>,
+  foldFrame: FrameFolder,
+): TranscriptState {
   const ids = collectBatchTurnIds(frame.messages)
   const items = state.items.filter((it) => it.turnId === null || !ids.has(it.turnId))
   let next: TranscriptState = { ...state, items }
-  for (const m of frame.messages) next = reduceFrame(next, m)
+  for (const m of frame.messages) next = foldFrame(next, m)
   return next
 }
 
@@ -142,7 +158,7 @@ export function reduceFrame(state: TranscriptState, frame: ServerFrame): Transcr
     case 'player_message':
       return appendPlayer(state, frame)
     case 'session_reconnect':
-      return applyReconnect(state, frame)
+      return applyReconnect(state, frame, reduceFrame)
     default:
       return state
   }

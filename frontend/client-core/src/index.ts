@@ -97,6 +97,9 @@ export type { SessionPrepStream, SessionPrepDeps } from './session/use-session-p
 // cross-issue seam MYT-95's PurchasePrompt consumes.
 export { useSessionStart, classifyStartError } from './session/start-flow.ts'
 export type { StartFlow, StartOutcome, PurchaseMoment } from './session/start-flow.ts'
+// MYT-92 optimistic own-messages: pending model + FIFO reconcile over the
+// reducer (incl. reconnect-batch echoes via the applyReconnect folder seam).
+export { addPending, reduceFrameReconciling, unconfirmedPending } from './session/optimistic.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
