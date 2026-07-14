@@ -41,7 +41,8 @@
       "notPlayed": "[ph: not played yet]",
       "record": "[ph: {{sessions}} sessions · {{when}}]",
       "recently": "[ph: recently]",
-      "byCreator": " · by {{creator}}"
+      "byCreator": " · by {{creator}}",
+      "lowCredits": "[ph: low on session credits — top up to start a session]"
     }
   },
   "theme": {

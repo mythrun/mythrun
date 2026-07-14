@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ApiContext } from './endpoint.ts'
 import { ApiClientProvider } from './client-context.tsx'
 import { isContractValidationError } from './errors.ts'
-import { getBalance, useBalance } from './billing.ts'
+import { getBalance, useBalance, useLowSessionCredits } from './billing.ts'
 
 // `useBalance` wires `getBalance` (GET /api/billing/balance, response validated
 // against the contract's BalanceResponseSchema) into a TanStack suspense query
@@ -122,5 +122,43 @@ describe('getBalance', () => {
       http.get(`${BASE_URL}/api/billing/balance`, () => HttpResponse.json(validBalance)),
     )
     await expect(getBalance(undefined, testCtx)).resolves.toEqual(validBalance)
+  })
+})
+
+// ── useLowSessionCredits (MYT-95 T13) — the FAIL-OPEN decorative signal ─────
+describe('useLowSessionCredits', () => {
+  it('true when the session bucket is at the threshold', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/billing/balance`, () =>
+        HttpResponse.json({ session: 1, world_gen: 5, active_subscription: null }),
+      ),
+    )
+    const { result } = renderHook(() => useLowSessionCredits(), { wrapper: makeWrapper() })
+    await waitFor(() => {
+      expect(result.current).toBe(true)
+    })
+  })
+
+  it('false above the threshold', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/billing/balance`, () =>
+        HttpResponse.json({ session: 2, world_gen: 0, active_subscription: null }),
+      ),
+    )
+    const { result } = renderHook(() => useLowSessionCredits(), { wrapper: makeWrapper() })
+    // settles false and stays false
+    await waitFor(() => {
+      expect(result.current).toBe(false)
+    })
+  })
+
+  it('FAILS OPEN: reports false while loading and false on a fetch error (never throws, never suspends)', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/billing/balance`, () => new HttpResponse(null, { status: 500 })),
+    )
+    const { result } = renderHook(() => useLowSessionCredits(), { wrapper: makeWrapper() })
+    expect(result.current).toBe(false)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(result.current).toBe(false)
   })
 })

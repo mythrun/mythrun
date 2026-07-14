@@ -38,8 +38,13 @@ const CAMPAIGN_NEW_PATH = '/campaigns/new'
 /** The responsive grid ⊕ index body for a non-empty campaign list, plus the "new campaign" CTA. */
 export function CampaignHubBody({
   campaigns,
+  lowOnSessionCredits = false,
 }: {
   campaigns: readonly CampaignSummary[]
+  /** MYT-95 T13: owner-only low-credit nudge, read fail-open by the ROUTE
+   *  (this body stays pure-presentational; the card's creator===null guard
+   *  enforces owner-only). */
+  lowOnSessionCredits?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -51,7 +56,7 @@ export function CampaignHubBody({
       <Show above={GRID_BREAKPOINT} data-testid="hub-grid">
         <Grid columns="auto-fill" minColumnPx={COVER_MIN_PX} gap={4}>
           {campaigns.map((campaign) => (
-            <CampaignCard key={campaign.id} campaign={campaign} />
+            <CampaignCard key={campaign.id} campaign={campaign} lowOnSessionCredits={lowOnSessionCredits} />
           ))}
         </Grid>
       </Show>

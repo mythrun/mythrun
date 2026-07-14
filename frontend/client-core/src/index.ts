@@ -84,6 +84,7 @@ export {
 } from './create/guided-draft.ts'
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
+export { useLowSessionCredits } from './api/billing.ts'
 // MYT-92 play-session slice: start (200/409/402 arms surface as HttpError for
 // the start-flow classifier) + the /active lookup the 409-join path needs.
 export { startSession, getActiveSession } from './api/play-session.ts'

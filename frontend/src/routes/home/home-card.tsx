@@ -30,7 +30,17 @@ const MAX_SEALS = 5
 const CARD_WIDTH = 230
 
 /** One campaign as a flat portrait cover card; the whole card links to its detail. */
-export function CampaignCard({ campaign }: { campaign: CampaignSummary }): React.JSX.Element {
+export function CampaignCard({
+  campaign,
+  lowOnSessionCredits = false,
+}: {
+  campaign: CampaignSummary
+  /** Owner-only quiet low-credit line (MYT-95 T13, controller-applied post-91-merge).
+   *  The `creator === null` guard enforces owner-only in the render — a member
+   *  never sees the owner's billing state (no member-visible owner-balance read
+   *  exists, by design). */
+  lowOnSessionCredits?: boolean
+}): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { id, name, worldName, worldColors, creator, party } = campaign
 
@@ -93,6 +103,12 @@ export function CampaignCard({ campaign }: { campaign: CampaignSummary }): React
             <Text role="meta" data-testid="card-state">
               {stateLine}
             </Text>
+
+            {creator === null && lowOnSessionCredits ? (
+              <Text role="meta" data-testid="card-low-credits">
+                {t('home.card.lowCredits')}
+              </Text>
+            ) : null}
           </Stack>
         }
       >

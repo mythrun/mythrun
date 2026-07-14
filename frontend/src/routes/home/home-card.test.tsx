@@ -39,10 +39,13 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
   }
 }
 
-function renderCard(campaign: CampaignSummary): void {
+function renderCard(
+  campaign: CampaignSummary,
+  extra: { lowOnSessionCredits?: boolean } = {},
+): void {
   render(
     <I18nextProvider i18n={i18n}>
-      <CampaignCard campaign={campaign} />
+      <CampaignCard campaign={campaign} {...extra} />
     </I18nextProvider>,
   )
 }
@@ -185,5 +188,23 @@ describe('CampaignCard — assembling party (built vs building seals)', () => {
     // Both a pigment Avatar and a placeholder seal are role="img"; 5 seals show.
     expect(screen.getAllByRole('img')).toHaveLength(5)
     expect(screen.getByText('+2')).toBeDefined()
+  })
+})
+
+// ── MYT-95 T13 (controller patch): owner-only low-credit line ───────────────
+describe('low-credit line', () => {
+  it('renders for the OWNER (creator null) when low', () => {
+    renderCard(makeCampaign({ creator: null }), { lowOnSessionCredits: true })
+    expect(screen.getByTestId('card-low-credits')).toBeDefined()
+  })
+
+  it('never renders for a joined member, even when low', () => {
+    renderCard(makeCampaign({ creator: 'Ana' }), { lowOnSessionCredits: true })
+    expect(screen.queryByTestId('card-low-credits')).toBeNull()
+  })
+
+  it('does not render for the owner when not low', () => {
+    renderCard(makeCampaign({ creator: null }), { lowOnSessionCredits: false })
+    expect(screen.queryByTestId('card-low-credits')).toBeNull()
   })
 })

@@ -3,6 +3,7 @@ import { Stack, Heading, Text, Card, CoverDither, Button, Icon, Spinner } from '
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useMyCampaigns } from '@mythrun/client-core'
+import { useLowSessionCredits } from '@mythrun/client-core'
 import { CampaignHubBody } from './home/home-hub.tsx'
 
 // The home hub — the ONE end-to-end wired screen (done-when #3: "renders real
@@ -74,7 +75,11 @@ function CampaignHub(): React.JSX.Element {
     return <EmptyShelf />
   }
 
-  return <CampaignHubBody campaigns={campaigns} />
+  // MYT-95 T13: fail-open low-credit nudge (a billing blip renders no line;
+  // the shipped resilience contract isolates billing failures to the credits
+  // slot, and this read never suspends or throws).
+  const lowOnSessionCredits = useLowSessionCredits()
+  return <CampaignHubBody campaigns={campaigns} lowOnSessionCredits={lowOnSessionCredits} />
 }
 
 export function HomeRoute(): React.JSX.Element {
