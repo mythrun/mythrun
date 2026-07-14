@@ -338,6 +338,8 @@ export const descriptions: Record<string, string> = {
   'play.purchase.owner.title': "Heading of the OWNER purchase-moment placeholder — the owner tried to start but is out of session credits (the MYT-95 buy-prompt seam). Calm, direct, ~3-5 words, e.g. \"You're out of session credits\".",
   'play.purchase.owner.body': 'Body under the owner purchase-moment heading — a brief nudge to add credits to keep playing. Calm, ~3-6 words, e.g. "Add more to keep playing".',
   'play.purchase.owner.detail': 'Mono data line on the owner purchase-moment showing the credit shortfall; interpolates {{available}} and {{required}} (numeric DATA). Terse, e.g. "{{available}} of {{required}} needed".',
+  'play.purchase.owner.buy':
+    'Group label for the quantity presets on the in-play out-of-credits buy prompt (owner only). ~3 words.',
   'play.purchase.notOwner.title': 'Heading of the MEMBER purchase-moment hold — a non-owner tried to start but the host is out of session credits (a member can\'t buy the owner\'s credits). Calm, ~2-4 words, e.g. "The table is paused".',
   'play.purchase.notOwner.body': "Body under the member purchase-moment heading — explains the host is out of session credits and to hang tight. Calm, brand-voiced, ~1 short sentence.",
   'play.complete.title': 'Heading of the brief post-session transition shown when a session_end arrives, before navigating to the recap. Calm, ~2-3 words, e.g. "Session complete".',

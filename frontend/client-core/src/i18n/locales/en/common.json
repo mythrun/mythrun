@@ -471,7 +471,8 @@
       "owner": {
         "body": "[ph: add more to keep playing]",
         "detail": "[ph: {{available}} of {{required}} needed]",
-        "title": "[ph: you're out of session credits]"
+        "title": "[ph: you're out of session credits]",
+        "buy": "[ph: add session credits]"
       }
     },
     "sidebar": {

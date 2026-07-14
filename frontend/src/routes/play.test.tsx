@@ -202,8 +202,12 @@ describe('PlayRoute — the purchase-moment seam', () => {
     })
     renderRoute({ useStart: hook })
     expect(await screen.findByTestId('purchase-moment-seam')).toBeDefined()
-    expect(screen.getByTestId('purchase-moment-detail').textContent).toContain('1')
-    expect(screen.getByTestId('purchase-moment-detail').textContent).toContain('2')
+    // The MYT-95 merge wired the real PurchasePrompt into the seam: the credit
+    // detail rides its body, and the owner buy group renders the presets.
+    const prompt = screen.getByTestId('purchase-moment-prompt')
+    expect(prompt.textContent).toContain('1')
+    expect(prompt.textContent).toContain('2')
+    expect(screen.getByRole('group')).toBeDefined()
   })
 
   it('renders the "host is out of credits" hold for a non-owner', async () => {
