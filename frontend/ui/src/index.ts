@@ -21,6 +21,8 @@ export { Link } from './components/Link/Link.tsx'
 export { VisuallyHidden } from './components/VisuallyHidden/VisuallyHidden.tsx'
 // Streamed prose (myth-umggn) — LLM text arriving live, with the writing caret.
 export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
+// Session play-screen (MYT-92)
+export { DmMessage } from './components/DmMessage/DmMessage.tsx'
 
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
@@ -220,6 +222,7 @@ export type {
   TextProps,
   TextRole,
   StreamingProseProps,
+  DmMessageProps,
   HeadingProps,
   HeadingLevel,
   HeadingRole,
