@@ -123,6 +123,17 @@ export default [
       'index.html',
       'vite.config.ts',
       'vitest.config.ts',
+      // The nested packages' SOURCE trees — fully linted by their own configs
+      // (@mythrun/ui + @mythrun/client-core each run type-aware `eslint src`
+      // in the pre-push gate). The umbrella linting them too is pure double
+      // coverage with mismatched rule registration: its jsx-a11y (and the
+      // app-only rails) are registered under `files: ['src/**']` — web-app
+      // only — so a legitimate rule-scoped eslint-disable in a ui file hits
+      // "definition for rule not found" and FAILS the umbrella run (found by
+      // the MYT-92 E2E battery on MessageStream's a11y disable). Each package
+      // owns its own lint; the umbrella owns the app.
+      'ui/src/**',
+      'client-core/src/**',
       'scripts/**', // node tooling scripts (e.g. i18n-todo.mjs) — outside the TS project
       // The custom vitest environment (test/jsdom-native-fetch.ts) is test-runtime
       // tooling that MUST default-export (vitest's Environment contract), the same

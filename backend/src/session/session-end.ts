@@ -39,6 +39,36 @@ export interface MinimalLogger {
   error: (o: Record<string, unknown> | string, m?: string) => void
 }
 
+/** Adapt an optional-`info` logger (the turn worker's surface) to the
+ *  REQUIRED-`info` MinimalLogger this module needs, preserving `this`-binding.
+ *  Pino methods read instance internals (`this[writeSym]`) — plucking them into
+ *  an object literal (`{ info: logger.info }`) detaches them and every call
+ *  throws `this[writeSym] is not a function` AFTER the finalize's effects have
+ *  landed, marking the whole turn job failed and inviting a farewell re-run on
+ *  retry (found live by the MYT-92 E2E). Delegating arrows keep the method
+ *  calls on the source instance; a missing `info` falls back to `warn`. */
+export function bindFinalizeLogger(source: {
+  info?: (o: Record<string, unknown> | string, m?: string) => void
+  warn: (o: Record<string, unknown> | string, m?: string) => void
+  error: (o: Record<string, unknown> | string, m?: string) => void
+}): MinimalLogger {
+  return {
+    info: (o, m): void => {
+      if (source.info) {
+        source.info(o, m)
+      } else {
+        source.warn(o, m)
+      }
+    },
+    warn: (o, m): void => {
+      source.warn(o, m)
+    },
+    error: (o, m): void => {
+      source.error(o, m)
+    },
+  }
+}
+
 /** The ids the end flow needs. `worldId` is resolved by the caller (the WS route
  *  reuses `resolveWorldId` — blob-cached campaign→world) and threaded onto both
  *  the farewell payload and the reconcile job, so the orchestration issues no

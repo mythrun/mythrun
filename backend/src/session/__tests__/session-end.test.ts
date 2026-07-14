@@ -23,6 +23,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import {
+  bindFinalizeLogger,
   endSession,
   finalizeEndedSession,
   type EndSessionDeps,
@@ -290,5 +291,60 @@ describe('finalizeEndedSession (complete)', () => {
     // But the broadcast did NOT fire (the flip lost → another finalize already
     // broadcast).
     expect(h.publishes).toHaveLength(0)
+  })
+})
+
+// ── bindFinalizeLogger (myth: the MYT-92 E2E's finalize-crash) ──────────────
+// Pino methods read instance internals via `this`; a detached pluck throws
+// `this[writeSym] is not a function`. The fake below reproduces that failure
+// shape: its methods touch a private field, so a detached call throws exactly
+// like pino's. The adapter must deliver on the INSTANCE.
+describe('bindFinalizeLogger', () => {
+  class BindingSensitiveLogger {
+    #lines: string[] = []
+    info(o: Record<string, unknown> | string, m?: string): void {
+      this.#lines.push(`info:${typeof o === 'string' ? o : (m ?? '')}`)
+    }
+    warn(o: Record<string, unknown> | string, m?: string): void {
+      this.#lines.push(`warn:${typeof o === 'string' ? o : (m ?? '')}`)
+    }
+    error(o: Record<string, unknown> | string, m?: string): void {
+      this.#lines.push(`error:${typeof o === 'string' ? o : (m ?? '')}`)
+    }
+    get lines(): readonly string[] {
+      return this.#lines
+    }
+  }
+
+  it('the detached-pluck shape throws with a pino-like logger (the bug being pinned)', () => {
+    const pinoLike = new BindingSensitiveLogger()
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- DELIBERATE: this pluck IS the bug shape being pinned (the production interface's property-function style exempts it from this rule, which is why the original slipped through)
+    const detached = { info: pinoLike.info, warn: pinoLike.warn, error: pinoLike.error }
+    expect(() => {
+      detached.info({}, 'session_finalized')
+    }).toThrow(TypeError)
+  })
+
+  it('delivers info/warn/error on the source instance', () => {
+    const pinoLike = new BindingSensitiveLogger()
+    const bound = bindFinalizeLogger(pinoLike)
+    bound.info({}, 'session_finalized')
+    bound.warn({}, 'w')
+    bound.error({}, 'e')
+    expect(pinoLike.lines).toEqual(['info:session_finalized', 'warn:w', 'error:e'])
+  })
+
+  it('falls back to warn (on the instance) when the source has no info', () => {
+    const pinoLike = new BindingSensitiveLogger()
+    const bound = bindFinalizeLogger({
+      warn: (o, m) => {
+        pinoLike.warn(o, m)
+      },
+      error: (o, m) => {
+        pinoLike.error(o, m)
+      },
+    })
+    bound.info({}, 'session_finalized')
+    expect(pinoLike.lines).toEqual(['warn:session_finalized'])
   })
 })

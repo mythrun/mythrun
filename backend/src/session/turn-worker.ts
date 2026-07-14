@@ -89,6 +89,7 @@ import {
 } from './st-eval-queue.js'
 import { QUEUE_SCRIBE, type ScribeJobPayload, type ScribeQueueLike } from './scribe-queue.js'
 import {
+  bindFinalizeLogger,
   endSession,
   finalizeEndedSession,
   type EndSessionArgs,
@@ -976,7 +977,7 @@ export function buildSessionTurnWorker(
     // `endSession` logs at info; the worker's MinimalLogger types `info` as
     // optional, so guarantee one (the real pino logger has it; a test fake
     // without it falls back to warn — the end-flow's info logs aren't load-bearing).
-    logger: { info: logger.info ?? logger.warn, warn: logger.warn, error: logger.error },
+    logger: bindFinalizeLogger(logger),
   }
 
   // MYT-74b §1.3 — the COMPLETE-phase finalize deps (the farewell turn's `finally`).
@@ -995,7 +996,7 @@ export function buildSessionTurnWorker(
       await redisRealtime.publish(sessionChannel(redisKeyPrefix, campaignId), JSON.stringify(frame))
     },
     /* c8 ignore stop */
-    logger: { info: logger.info ?? logger.warn, warn: logger.warn, error: logger.error },
+    logger: bindFinalizeLogger(logger),
   }
 
   const deps: TurnProcessorDeps = {
