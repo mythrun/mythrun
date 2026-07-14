@@ -3,6 +3,7 @@ import { createRef } from 'react'
 import { render } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { Icon } from './Icon.tsx'
+import { GLYPHS } from './glyphs.ts'
 
 describe('Icon', () => {
   it('renders an inline svg glyph tinted by currentColor', () => {
@@ -70,4 +71,18 @@ describe('Icon', () => {
     const { container } = render(<Icon name="external-link" label="Open in a new tab" />)
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  // Entity type glyphs (MYT-94) — person / pin / banner for npc / location /
+  // faction. Each new IconName renders exactly its GLYPHS path data.
+  it.each(['entity-npc', 'entity-location', 'entity-faction'] as const)(
+    'renders the %s glyph paths',
+    (name) => {
+      const { container } = render(<Icon name={name} decorative />)
+      expect(container.querySelector('svg')).not.toBeNull()
+      const rendered = Array.from(container.querySelectorAll('svg path')).map((p) =>
+        p.getAttribute('d'),
+      )
+      expect(rendered).toEqual([...GLYPHS[name].paths])
+    },
+  )
 })

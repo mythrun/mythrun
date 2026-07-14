@@ -30,6 +30,13 @@ export type IconName =
   // Theme toggle (MYT-84) — the FAB's sun (light) / moon (dark) glyphs.
   | 'sun'
   | 'moon'
+  // Entity type glyphs (MYT-94) — the leading glyph on an entity mention /
+  // popover: person (npc) / pin (location) / banner (faction). MONOCHROME — no
+  // entity-type color is derived from these (spec §6). The `other`/item/pc kinds
+  // get NO glyph, so only these three world-lore kinds are registered.
+  | 'entity-npc'
+  | 'entity-location'
+  | 'entity-faction'
 
 /** Token icon size → `--icon-sm/md/lg` (16 / 20 / 24px). Default `md`. */
 export type IconSize = 'sm' | 'md' | 'lg'

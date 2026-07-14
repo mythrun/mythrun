@@ -127,4 +127,27 @@ export const GLYPHS: Record<IconName, Glyph> = {
       'M18 22H8v-2h10v2ZM8 20H6v-2h2v2Zm12 0h-2v-2h2v2ZM6 18H4v-2h2v2Zm16 0h-2v-4h-2v-2h2v-2h2v8ZM4 16H2V6h2v10Zm14 0h-6v-2h6v2Zm-6-2h-2v-2h2v2Zm-2-2H8V6h2v6ZM6 6H4V4h2v2Zm8-2h-2v2h-2V4H6V2h8v2Z',
     ],
   },
+  // Entity type glyphs (MYT-94) — the leading glyph on an entity mention/popover.
+  // Monochrome (currentColor), no entity-type color (spec §6). Path data copied
+  // VERBATIM from the licensed Pixelarticons PRO set (Pro is a superset of the MIT
+  // base; same 24-grid, viewBox="0 0 24 24"):
+  //   entity-npc      = ../../Design/mythrun-design/brand/icons/pixelarticons-pro-2/svg/user.svg     (a single person)
+  //   entity-location = ../../Design/mythrun-design/brand/icons/pixelarticons-pro-2/svg/map-pin.svg  (a map pin/marker)
+  //   entity-faction  = ../../Design/mythrun-design/brand/icons/pixelarticons-pro-2/svg/flag.svg     (a banner/flag)
+  'entity-npc': {
+    viewBox: VIEWBOX_24,
+    paths: [
+      'M6 22H4v-4h2v4Zm14 0h-2v-4h2v4ZM8 18H6v-2h2v2Zm10 0h-2v-2h2v2Zm-2-2H8v-2h8v2Zm-1-4H9v-2h6v2Zm-6-2H7V4h2v6Zm8 0h-2V4h2v6Zm-2-6H9V2h6v2Z',
+    ],
+  },
+  'entity-location': {
+    viewBox: VIEWBOX_24,
+    paths: [
+      'M13 23h-2v-2h2v2Zm-2-2H9v-2h2v2Zm4 0h-2v-2h2v2Zm-6-2H7v-2h2v2Zm8 0h-2v-2h2v2ZM7 17H5v-3h2v3Zm12 0h-2v-3h2v3ZM5 14H3V6h2v8Zm9 0h-4v-2h4v2Zm7 0h-2V6h2v8Zm-11-2H8V8h2v4Zm6 0h-2V8h2v4Zm-2-4h-4V6h4v2ZM7 6H5V4h2v2Zm12 0h-2V4h2v2Zm-2-2H7V2h10v2Z',
+    ],
+  },
+  'entity-faction': {
+    viewBox: VIEWBOX_24,
+    paths: ['M6 4h14v2h-2v2h-2V6H6v6h10v-2h2v2h2v2H6v8H4V2h2v2Zm10 6h-2V8h2v2Z'],
+  },
 }

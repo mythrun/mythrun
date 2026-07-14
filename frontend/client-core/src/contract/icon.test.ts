@@ -26,6 +26,9 @@ describe('IconProps contract', () => {
       | 'square-alert'
       | 'sun'
       | 'moon'
+      | 'entity-npc'
+      | 'entity-location'
+      | 'entity-faction'
     >()
   })
 

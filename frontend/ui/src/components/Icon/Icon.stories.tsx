@@ -90,6 +90,29 @@ export const Catalogue: Story = {
   ),
 }
 
+// Entity type glyphs (MYT-94) — the leading glyph on an entity mention/popover:
+// person (npc) / pin (location) / banner (faction). Monochrome by design (no
+// entity-type color, spec §6); the glyph is the ONLY type differentiator.
+export const EntityTypeGlyphs: Story = {
+  name: 'Entity type glyphs',
+  render: () => (
+    <div className="flex items-center gap-[var(--space-5)] text-ink">
+      {(
+        [
+          ['entity-npc', 'npc'],
+          ['entity-location', 'location'],
+          ['entity-faction', 'faction'],
+        ] as const
+      ).map(([name, kind]) => (
+        <div key={name} className="flex flex-col items-center gap-[var(--space-1)]">
+          <Icon name={name} size="lg" decorative />
+          <span className="font-ui text-xs text-ink-secondary">{kind}</span>
+        </div>
+      ))}
+    </div>
+  ),
+}
+
 export const HoldsSizeBesideShrinkingText: Story = {
   name: 'Holds size beside shrinking text',
   render: () => (
