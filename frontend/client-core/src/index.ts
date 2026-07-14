@@ -84,6 +84,27 @@ export {
 } from './create/guided-draft.ts'
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
+// MYT-92 play-session slice: start (200/409/402 arms surface as HttpError for
+// the start-flow classifier) + the /active lookup the 409-join path needs.
+export { startSession, getActiveSession } from './api/play-session.ts'
+export type { ActiveSession, ActiveSessionResponse, InsufficientCreditsBody } from './api/play-session.ts'
+// MYT-92 prep-status hook: the "DM is preparing" beat's brain (snapshot +
+// live prep-started/ready/failed events over the shipped SSE status client).
+export { useSessionPrep } from './session/use-session-prep.ts'
+export type { SessionPrepStream, SessionPrepDeps } from './session/use-session-prep.ts'
+// MYT-92 start flow: the ZFC-exempt structural classifier over the start
+// arms + the async start/join state machine. PurchaseMoment is the
+// cross-issue seam MYT-95's PurchasePrompt consumes.
+export { useSessionStart, classifyStartError } from './session/start-flow.ts'
+export type { StartFlow, StartOutcome, PurchaseMoment } from './session/start-flow.ts'
+// MYT-92 optimistic own-messages: pending model + FIFO reconcile over the
+// reducer (incl. reconnect-batch echoes via the applyReconnect folder seam).
+export { addPending, reduceFrameReconciling, unconfirmedPending } from './session/optimistic.ts'
+// MYT-92 useSession: the play view-model — transcript + presence + connection
+// over the shipped WS transport (seedLastSeq 0 first join; batch-triggered
+// confirm-or-resend; thinking clears on turnId-matched delta/end/error).
+export { useSession } from './session/use-session.ts'
+export type { SessionView, SessionParams, SessionDeps } from './session/use-session.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'

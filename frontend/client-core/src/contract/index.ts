@@ -255,3 +255,16 @@ export type {
   CharacterSheetRevealProps,
   PartyRosterProps,
 } from './character/index.ts'
+
+// Session play-screen prop contracts (MYT-92) — the @mythrun/ui component
+// surface for the chat core. TranscriptItem re-exports the session reducer's
+// item union (the wave-2 rendering contract).
+export type {
+  TranscriptItem,
+  MessageStreamProps,
+  DmMessageProps,
+  PlayerMessageProps,
+  SessionInputProps,
+  ThinkingIndicatorProps,
+  SessionStartBeatProps,
+} from './session/index.ts'

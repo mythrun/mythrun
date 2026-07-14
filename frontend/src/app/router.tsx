@@ -111,7 +111,11 @@ export function buildRoutes(dev: boolean): RouteObject[] {
                 { path: 'campaigns/:id/level', element: <LevelPickRoute /> },
                 { path: 'campaigns/:id/join', element: <JoinSummaryRoute /> },
                 { path: 'campaigns/:id/character/new', element: <CharacterNewRoute /> },
-                { path: 'campaigns/:id/play', element: <PlayRoute /> },
+                // `fullBleed` tells AppFrame (via useMatches) to drop its padded
+                // content Box and let the live-play stage fill the viewport below
+                // the header (MYT-92 T15) — the one route that escapes the frame's
+                // default content inset.
+                { path: 'campaigns/:id/play', element: <PlayRoute />, handle: { fullBleed: true } },
                 { path: 'settings', element: <SettingsRoute /> },
               ],
             },

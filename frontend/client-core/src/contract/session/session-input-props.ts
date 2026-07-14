@@ -1,0 +1,27 @@
+// SessionInput (MYT-92) — the controlled composer: a text field + a Send affordance +
+// a prominent @DM summon. `onSend` fires the normal message; `onSummonDm` fires the
+// explicit-text @dm path (the route wire composes the `@dm` token into the visible
+// message so the table SEES the summon — the invisible dm_invoke frame is NOT used).
+// The component exposes the two intents only; token insertion lives at the route wire.
+// `disabled` gates both while the session is ended / not-ready. Platform-neutral (§9):
+// neutral callbacks (never DOM events), resolved [ph:] labels — no className/style.
+
+/** Props for the play-session composer. */
+export interface SessionInputProps {
+  /** Controlled value of the input. */
+  value: string
+  /** Neutral change callback — the new value, never a DOM event. */
+  onChange: (v: string) => void
+  /** Send the current message (Enter or the Send affordance). */
+  onSend: () => void
+  /** Summon the DM — the explicit-text @dm path (the route wire adds the token). */
+  onSummonDm: () => void
+  /** Gate both intents while the session is ended / not-ready. */
+  disabled: boolean
+  /** Resolved [ph:] placeholder copy (the web layer fills it). */
+  placeholder: string
+  /** Resolved [ph:] label for the @DM summon affordance. */
+  summonLabel: string
+  /** Resolved [ph:] label for the Send affordance. */
+  sendLabel: string
+}

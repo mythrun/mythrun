@@ -52,6 +52,12 @@ export default defineConfig({
         // runtime logic; 100%-gated.
         'src/srd/**/*.ts',
         'src/character/**/*.ts',
+        // MYT-92 play session: the live-play brain — the transcript reducer +
+        // item types, the optimistic own-message model, the play-session API
+        // slice, and the WS/SSE/start-flow view-model hooks. All runtime logic;
+        // 100%-gated. (The `transcript-types.ts` module is types + the
+        // `emptyTranscript` const, exercised on import.)
+        'src/session/**/*.ts',
         'eslint-rules/**/*.js',
       ],
       exclude: [
