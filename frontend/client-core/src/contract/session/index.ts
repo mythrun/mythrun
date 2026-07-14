@@ -10,6 +10,12 @@
 // TYPE is re-exported; the module's runtime `emptyTranscript` stays out of the barrel.
 export type { TranscriptItem } from '../../session/transcript-types.ts'
 
+// MYT-93 reveal view-model shapes (session/roll-reveal.ts) — the dice-moment card
+// model + its derived phase + the plain reveal view MessageStream renders against.
+// TYPE only; the module's runtime reducer/selectors (rollRevealReducer, buildRevealView,
+// useRollReveal) stay OUT of the barrel, mirroring TranscriptItem vs. emptyTranscript.
+export type { CardItem, RollPhase, RollRevealView } from '../../session/roll-reveal.ts'
+
 // Prop contracts — one per @mythrun/ui play component (Tasks 9–14).
 export type { MessageStreamProps } from './message-stream-props.ts'
 export type { DmMessageProps } from './dm-message-props.ts'
@@ -17,3 +23,8 @@ export type { PlayerMessageProps } from './player-message-props.ts'
 export type { SessionInputProps } from './session-input-props.ts'
 export type { ThinkingIndicatorProps } from './thinking-indicator-props.ts'
 export type { SessionStartBeatProps } from './session-start-beat-props.ts'
+
+// MYT-93 dice-moment prop contracts (RollCard / DieSpin — Tasks 4/5). RollCardLabels is
+// the resolved [ph:] bundle the play route threads through MessageStream to each card.
+export type { RollCardProps, RollCardLabels } from './roll-card.ts'
+export type { DieSpinProps } from './die-spin.ts'

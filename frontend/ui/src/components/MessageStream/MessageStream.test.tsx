@@ -3,7 +3,13 @@ import { createRef } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
-import type { TranscriptItem } from '@mythrun/client-core/contract'
+import type {
+  MessageStreamProps,
+  RollCardLabels,
+  RollPhase,
+  RollRevealView,
+  TranscriptItem,
+} from '@mythrun/client-core/contract'
 import { MessageStream } from './MessageStream.tsx'
 
 // ── Fixtures — one of every TranscriptItem kind, frames matching the shipped
@@ -126,6 +132,7 @@ const COMBAT_RESOLVED: TranscriptItem = {
   },
 }
 
+// The full mechanical set (MYT-93 moved skill_check / dice_roll to RollCard).
 const MECHANICAL: TranscriptItem[] = [
   SKILL_CHECK,
   DICE_ROLL,
@@ -135,7 +142,48 @@ const MECHANICAL: TranscriptItem[] = [
   COMBAT_RESOLVED,
 ]
 
+// The four post-92 mechanical kinds that still render as a terse mono system line
+// (skill_check / dice_roll are now RollCards — spec §5).
+const NON_CARD_MECHANICAL: TranscriptItem[] = [LEDGER_UPDATE, MODE_CHANGE, COMBAT_STARTED, COMBAT_RESOLVED]
+
 const MIXED: TranscriptItem[] = [DM_SETTLED, PLAYER_CONFIRMED, SKILL_CHECK, DM_STREAMING, PLAYER_PENDING]
+
+// ── Reveal scaffolding (MYT-93). MessageStream is presentational: the play route
+// computes the reveal view + label bundle (client-core selectors) and threads them
+// in. Tests supply a stub label bundle + a reveal view (default: nothing revealed,
+// nothing gated). Stub labels are i18n-exempt — the real [ph:] bundle resolves
+// route-side (MYT-100 is the copy pass). ─────────────────────────────────────────
+const STUB_LABELS: RollCardLabels = {
+  roll: 'Roll',
+  continue: 'Continue',
+  tier: { fail: 'Miss', success: 'Success', great_success: 'Critical' },
+  dc: 'DC',
+  advantage: 'advantage',
+  disadvantage: 'disadvantage',
+  dieResult: 'You rolled',
+}
+
+const NO_REVEAL: RollRevealView = { phaseByKey: {}, gatedTurnIds: new Set<string>() }
+
+// A reveal view from a phase map + an optional gated-turn list.
+function reveal(phaseByKey: Record<string, RollPhase>, gated: string[] = []): RollRevealView {
+  return { phaseByKey, gatedTurnIds: new Set(gated) }
+}
+
+// Build a full MessageStreamProps with the four MYT-93 props defaulted, so each
+// case overrides only what it exercises (items / reveal / callbacks / motion).
+function streamProps(overrides: Partial<MessageStreamProps> = {}): MessageStreamProps {
+  return {
+    items: [],
+    connectionLine: null,
+    reducedMotion: false,
+    rollReveal: NO_REVEAL,
+    rollLabels: STUB_LABELS,
+    onRoll: vi.fn(),
+    onContinue: vi.fn(),
+    ...overrides,
+  }
+}
 
 // jsdom has no layout, so `scrollTo` is undefined and scroll metrics are 0. The
 // tests install a spy / define the geometry they assert against per-case.
@@ -153,9 +201,7 @@ function stubScroll(el: HTMLElement, geom: { scrollHeight?: number; clientHeight
 
 describe('MessageStream', () => {
   it('routes a dm item to DmMessage (serif prose) and a player item to PlayerMessage', () => {
-    const { container } = render(
-      <MessageStream items={[DM_SETTLED, PLAYER_CONFIRMED]} connectionLine={null} reducedMotion={false} />,
-    )
+    const { container } = render(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED] })} />)
     // DM prose renders inside the DmMessage wrapper (not a mechanical line).
     const dm = container.querySelector('[data-dm-message]')
     expect(dm).not.toBeNull()
@@ -166,74 +212,107 @@ describe('MessageStream', () => {
     expect(screen.getByText(/keep my hand near my blade/)).toBeInTheDocument()
   })
 
-  it('renders every mechanical kind as a terse mono (font-ui) system line', () => {
-    const { container } = render(
-      <MessageStream items={MECHANICAL} connectionLine={null} reducedMotion={false} />,
-    )
-    for (const kind of [
-      'skill_check',
-      'dice_roll',
-      'ledger_update',
-      'mode_change',
-      'combat_started',
-      'combat_resolved',
-    ]) {
+  it('renders each non-card mechanical kind as a terse mono (font-ui) system line', () => {
+    const { container } = render(<MessageStream {...streamProps({ items: NON_CARD_MECHANICAL })} />)
+    for (const kind of ['ledger_update', 'mode_change', 'combat_started', 'combat_resolved']) {
       const line = container.querySelector(`[data-mechanical="${kind}"]`)
       expect(line, kind).not.toBeNull()
       expect(line?.className).toContain('font-ui')
     }
   })
 
-  it('formats each mechanical line from frame data', () => {
-    const { container } = render(
-      <MessageStream items={MECHANICAL} connectionLine={null} reducedMotion={false} />,
-    )
+  it('formats each non-card mechanical line from frame data', () => {
+    const { container } = render(<MessageStream {...streamProps({ items: NON_CARD_MECHANICAL })} />)
     const text = (kind: string): string | null =>
       container.querySelector(`[data-mechanical="${kind}"]`)?.textContent ?? null
-    expect(text('skill_check')).toBe('perception · 14 vs DC 12 · success')
-    expect(text('dice_roll')).toBe('2d20 · 17')
     expect(text('ledger_update')).toBe('Kessa takes 5 damage (12 → 7)')
     expect(text('mode_change')).toBe('— combat —')
     expect(text('combat_started')).toBe('2× goblin · bandit captain')
     expect(text('combat_resolved')).toBe('— victory —')
   })
 
+  it('routes skill_check / dice_roll to a RollCard, not a terse mono line', () => {
+    const { container } = render(<MessageStream {...streamProps({ items: [SKILL_CHECK, DICE_ROLL] })} />)
+    // Both card kinds render as RollCards…
+    expect(container.querySelector('[data-roll-card="skill_check"]')).not.toBeNull()
+    expect(container.querySelector('[data-roll-card="dice_roll"]')).not.toBeNull()
+    // …and no longer as terse mono system lines.
+    expect(container.querySelector('[data-mechanical="skill_check"]')).toBeNull()
+    expect(container.querySelector('[data-mechanical="dice_roll"]')).toBeNull()
+    // At the default idle phase each card exposes the Roll affordance.
+    expect(screen.getAllByRole('button', { name: 'Roll' })).toHaveLength(2)
+  })
+
+  it('drives each card phase from rollReveal.phaseByKey (revealed shows the readout + Continue)', () => {
+    render(<MessageStream {...streamProps({ items: [SKILL_CHECK], rollReveal: reveal({ 'sc-1': 'revealed' }) })} />)
+    // A revealed skill_check stamps its readout (DC prefix from labels) + Continue,
+    // and no longer the idle Roll button.
+    expect(screen.getByText('DC 12')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Roll' })).toBeNull()
+  })
+
+  it('gates a dm item whose turnId ∈ gatedTurnIds, then renders it once released', () => {
+    // SKILL_CHECK and DM_SETTLED share turn T1: the post-check prose is buffered
+    // until the card is continued.
+    const { rerender } = render(
+      <MessageStream {...streamProps({ items: [SKILL_CHECK, DM_SETTLED], rollReveal: reveal({ 'sc-1': 'idle' }, ['T1']) })} />,
+    )
+    expect(screen.queryByText(/tavern door creaks open/)).not.toBeInTheDocument()
+    // Continue released → the turn drops out of gatedTurnIds → the prose renders.
+    rerender(
+      <MessageStream {...streamProps({ items: [SKILL_CHECK, DM_SETTLED], rollReveal: reveal({ 'sc-1': 'released' }) })} />,
+    )
+    expect(screen.getByText(/tavern door creaks open/)).toBeInTheDocument()
+  })
+
+  it('binds onRoll to the card item key (fires when the spin completes)', async () => {
+    const onRoll = vi.fn()
+    const user = userEvent.setup()
+    // Reduced motion → the die lands instantly, so no fake timers are needed.
+    render(<MessageStream {...streamProps({ items: [SKILL_CHECK], reducedMotion: true, onRoll })} />)
+    await user.click(screen.getByRole('button', { name: 'Roll' }))
+    expect(onRoll).toHaveBeenCalledWith('sc-1')
+  })
+
+  it('binds onContinue to the card item key', async () => {
+    const onContinue = vi.fn()
+    const user = userEvent.setup()
+    render(<MessageStream {...streamProps({ items: [SKILL_CHECK], rollReveal: reveal({ 'sc-1': 'revealed' }), onContinue })} />)
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(onContinue).toHaveBeenCalledWith('sc-1')
+  })
+
   it('pins the connectionLine as a status line when non-null, and omits it when null', () => {
     const { rerender } = render(
-      <MessageStream items={[DM_SETTLED]} connectionLine={'[ph: reconnecting…]'} reducedMotion={false} />,
+      <MessageStream {...streamProps({ items: [DM_SETTLED], connectionLine: '[ph: reconnecting…]' })} />,
     )
     const line = screen.getByTestId('message-stream-connection')
     expect(line).toHaveTextContent('[ph: reconnecting…]')
     expect(line).toHaveAttribute('role', 'status')
-    rerender(<MessageStream items={[DM_SETTLED]} connectionLine={null} reducedMotion={false} />)
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED] })} />)
     expect(screen.queryByTestId('message-stream-connection')).not.toBeInTheDocument()
   })
 
   it('auto-follows the tail on new items with a smooth scroll when motion is allowed', () => {
-    const { rerender } = render(
-      <MessageStream items={[DM_SETTLED]} connectionLine={null} reducedMotion={false} />,
-    )
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_SETTLED] })} />)
     const scroller = screen.getByTestId('message-stream-scroll')
     const scrollTo = stubScroll(scroller, { scrollHeight: 500 })
-    rerender(<MessageStream items={[DM_SETTLED, PLAYER_CONFIRMED]} connectionLine={null} reducedMotion={false} />)
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED] })} />)
     expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 500, behavior: 'smooth' }))
   })
 
   it('follows streaming growth of the open DM turn even though item count is unchanged', () => {
-    const { rerender } = render(
-      <MessageStream items={[DM_STREAMING]} connectionLine={null} reducedMotion={false} />,
-    )
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_STREAMING] })} />)
     const scroller = screen.getByTestId('message-stream-scroll')
     const scrollTo = stubScroll(scroller, { scrollHeight: 800 })
     const grown: TranscriptItem = { ...DM_STREAMING, text: DM_STREAMING.text + ' and lowers their hood.' }
-    rerender(<MessageStream items={[grown]} connectionLine={null} reducedMotion={false} />)
+    rerender(<MessageStream {...streamProps({ items: [grown] })} />)
     expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
   })
 
   it('uses instant scrollTop under reducedMotion (never a smooth scroll)', () => {
-    const { rerender } = render(
-      <MessageStream items={[DM_SETTLED]} connectionLine={null} reducedMotion />,
-    )
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_SETTLED], reducedMotion: true })} />)
     const scroller = screen.getByTestId('message-stream-scroll')
     const scrollTo = vi.fn()
     ;(scroller as unknown as { scrollTo: unknown }).scrollTo = scrollTo
@@ -246,77 +325,75 @@ describe('MessageStream', () => {
         scrolledTo = v
       },
     })
-    rerender(<MessageStream items={[DM_SETTLED, PLAYER_CONFIRMED]} connectionLine={null} reducedMotion />)
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED], reducedMotion: true })} />)
     expect(scrolledTo).toBe(500)
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
   it('reveals a jump-to-latest control once the reader scrolls up, and hides it after jumping', async () => {
     const user = userEvent.setup()
-    render(<MessageStream items={MIXED} connectionLine={null} reducedMotion={false} />)
+    render(<MessageStream {...streamProps({ items: MIXED })} />)
     const scroller = screen.getByTestId('message-stream-scroll')
     // No jump while pinned to the bottom.
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump to latest' })).not.toBeInTheDocument()
     // Scroll up: 1000 content, 200 viewport, at top → not at bottom.
     const scrollTo = stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
     fireEvent.scroll(scroller)
-    const jump = screen.getByRole('button')
+    const jump = screen.getByRole('button', { name: 'Jump to latest' })
     expect(jump).toBeInTheDocument()
     await user.click(jump)
     expect(scrollTo).toHaveBeenCalled()
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump to latest' })).not.toBeInTheDocument()
   })
 
   it('does NOT auto-follow when the reader has scrolled up', () => {
-    const { rerender } = render(
-      <MessageStream items={[DM_SETTLED]} connectionLine={null} reducedMotion={false} />,
-    )
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_SETTLED] })} />)
     const scroller = screen.getByTestId('message-stream-scroll')
     const scrollTo = stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
     fireEvent.scroll(scroller) // marks not-at-bottom
     scrollTo.mockClear()
-    rerender(<MessageStream items={[DM_SETTLED, PLAYER_CONFIRMED]} connectionLine={null} reducedMotion={false} />)
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED] })} />)
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
   it('draws a light scene divider when a new DM turn opens after a different turn', () => {
-    render(<MessageStream items={[DM_SETTLED, DM_STREAMING]} connectionLine={null} reducedMotion={false} />)
+    render(<MessageStream {...streamProps({ items: [DM_SETTLED, DM_STREAMING] })} />)
     // DM_SETTLED is turn T1, DM_STREAMING is turn T2 → exactly one scene rule.
     expect(screen.getAllByRole('separator')).toHaveLength(1)
   })
 
   it('does not divide within a single turn (same turnId, or a non-DM row)', () => {
     const sameTurn: TranscriptItem = { ...DM_STREAMING, key: 'dm-3', turnId: 'T1' }
-    render(<MessageStream items={[DM_SETTLED, SKILL_CHECK, sameTurn]} connectionLine={null} reducedMotion={false} />)
+    render(<MessageStream {...streamProps({ items: [DM_SETTLED, SKILL_CHECK, sameTurn] })} />)
     // SKILL_CHECK is not a DM row; the second DM row is still turn T1 → no rule.
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
 
   it('renders an empty transcript without crashing or dividing', () => {
-    render(<MessageStream items={[]} connectionLine={null} reducedMotion={false} />)
+    render(<MessageStream {...streamProps({ items: [] })} />)
     expect(screen.getByTestId('message-stream-scroll')).toBeEmptyDOMElement()
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
 
   it('is square register — no circles anywhere in the surface', () => {
     const { container } = render(
-      <MessageStream items={MIXED} connectionLine={'[ph: reconnecting…]'} reducedMotion={false} />,
+      <MessageStream {...streamProps({ items: MIXED, connectionLine: '[ph: reconnecting…]' })} />,
     )
     expect(container.querySelector('.rounded-full')).toBeNull()
   })
 
   it('forwards the ref and carries a root data-testid', () => {
     const ref = createRef<HTMLDivElement>()
-    render(<MessageStream ref={ref} items={[DM_SETTLED]} connectionLine={null} reducedMotion={false} />)
+    render(<MessageStream ref={ref} {...streamProps({ items: [DM_SETTLED] })} />)
     expect(screen.getByTestId('message-stream')).toBeInTheDocument()
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
   it('has no a11y violations (mixed transcript, and with a connection line)', async () => {
-    const plain = render(<MessageStream items={MIXED} connectionLine={null} reducedMotion={false} />)
+    const plain = render(<MessageStream {...streamProps({ items: MIXED })} />)
     expect(await axe(plain.container)).toHaveNoViolations()
     const withLine = render(
-      <MessageStream items={MECHANICAL} connectionLine={'[ph: reconnecting…]'} reducedMotion={false} />,
+      <MessageStream {...streamProps({ items: MECHANICAL, connectionLine: '[ph: reconnecting…]' })} />,
     )
     expect(await axe(withLine.container)).toHaveNoViolations()
   })

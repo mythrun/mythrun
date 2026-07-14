@@ -258,7 +258,10 @@ export type {
 
 // Session play-screen prop contracts (MYT-92) — the @mythrun/ui component
 // surface for the chat core. TranscriptItem re-exports the session reducer's
-// item union (the wave-2 rendering contract).
+// item union (the wave-2 rendering contract). MYT-93 appends the dice-moment
+// surface: the reveal view-model shapes (CardItem / RollPhase / RollRevealView)
+// and the RollCard / DieSpin prop contracts (RollCardProps / RollCardLabels /
+// DieSpinProps) — all type-only, keeping this barrel value-free (contract.test.ts).
 export type {
   TranscriptItem,
   MessageStreamProps,
@@ -267,6 +270,12 @@ export type {
   SessionInputProps,
   ThinkingIndicatorProps,
   SessionStartBeatProps,
+  CardItem,
+  RollPhase,
+  RollRevealView,
+  RollCardProps,
+  RollCardLabels,
+  DieSpinProps,
 } from './session/index.ts'
 // Invite/join contracts (MYT-91) — the DOM-free prop vocabulary for the two
 // invite/join @mythrun/ui components (InvitePanel, JoinPreview) plus the arm
