@@ -84,6 +84,19 @@ export {
 } from './create/guided-draft.ts'
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
+// MYT-95 billing slices: catalog/history reads (suspense) + the three
+// redirect/mutation posts; upgradeTier surfaces the 409
+// upgrade_already_pending arm as its typed HttpError, never remapped.
+export {
+  getSkus,
+  useSkus,
+  getHistory,
+  useHistory,
+  createCheckout,
+  openPortal,
+  upgradeTier,
+} from './api/billing.ts'
+export type { CheckoutBody, PortalBody, UpgradeTierBody } from './api/billing.ts'
 export { createSession, refreshSession, logout } from './api/session.ts'
 // Dev-tooling: the dev/staging-only API-cost ticker read (never answers in prod).
 export { getDevApiCost } from './api/dev-cost.ts'
@@ -110,6 +123,7 @@ export type {
   GateReason,
 } from '@mythrun/contract/rest'
 export type { BalanceResponse, ActiveSubscriptionSummary } from '@mythrun/contract/rest'
+export type { SkuListing, BillingHistoryEvent, LookupKey } from '@mythrun/contract/rest'
 export type {
   RegisterRequest,
   RegisterResponse,
