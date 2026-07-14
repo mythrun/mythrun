@@ -104,13 +104,17 @@ export function CampaignInvitePanel({
     resolveLink(() => ensurePrimary(ctx, campaignId))
   }, [ctx, campaignId, ensurePrimary, resolveLink])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Reset on (re)mount — NOT just cleared on unmount. Under React StrictMode's
+    // dev mount→cleanup→remount, a cleanup-only ref stays `false` after the
+    // remount, suppressing every async settle (the panel sticks on "preparing…").
+    // Mirrors use-live-roster's useMountedRef.
+    mountedRef.current = true
+    return () => {
       mountedRef.current = false
       if (copiedTimer.current !== null) clearTimeout(copiedTimer.current)
-    },
-    [],
-  )
+    }
+  }, [])
 
   const onCopy = useCallback((): void => {
     if (inviteUrl === null) return
