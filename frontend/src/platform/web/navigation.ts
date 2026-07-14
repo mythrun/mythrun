@@ -7,3 +7,16 @@
 export function redirectTo(url: string): void {
   window.location.assign(url)
 }
+
+// The current page origin / full URL — the web realizations of "where the app is
+// running". The Sessions & Billing surface (MYT-95) reads these to build the
+// Stripe Checkout success/cancel return URLs (`${origin}/billing/return|cancelled`)
+// and the Customer Portal `return_url` (the current page). They live here in the
+// sanctioned web-globals carve-out so the screen stays DOM-free (R1); a native
+// shell supplies its own deep-link base behind the same intent.
+export function currentOrigin(): string {
+  return window.location.origin
+}
+export function currentHref(): string {
+  return window.location.href
+}

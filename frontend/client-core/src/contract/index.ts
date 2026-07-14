@@ -278,3 +278,10 @@ export type {
   InvitePanelProps,
   JoinPreviewProps,
 } from './invite/types.ts'
+// Billing contracts (MYT-95) — the DOM-free prop vocabulary for the billing
+// @mythrun/ui components on the Sessions & Billing settings surface. Type-only
+// (§9): pure data + shell-owned i18n'd labels, no React/DOM types.
+export type { CreditBalanceProps } from './billing/index.ts'
+export type { PackListProps, SubscriptionTierView, AlaCarteView } from './billing/index.ts'
+export type { PurchasePromptProps } from './billing/index.ts'
+export type { PurchaseHistoryProps, PurchaseHistoryRow } from './billing/index.ts'

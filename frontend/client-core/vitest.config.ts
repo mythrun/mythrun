@@ -63,6 +63,10 @@ export default defineConfig({
         // runtime logic; 100%-gated. The types-only prop contracts live under
         // src/contract/** and are not gated (like the rest of the contract barrel).
         'src/invites/**/*.ts',
+        // MYT-95 billing brains: the tier catalogue, balance/purchase-history
+        // view-models, subscription-CTA gating, the 402-mapping seam, and the
+        // checkout-return poll hook. All runtime logic; 100%-gated.
+        'src/billing/**/*.ts',
         'eslint-rules/**/*.js',
       ],
       exclude: [
