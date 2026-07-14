@@ -30,6 +30,7 @@ export { PlayerMessage } from './components/PlayerMessage/PlayerMessage.tsx'
 export { MessageStream } from './components/MessageStream/MessageStream.tsx'
 // Dice moment (MYT-93).
 export { DieSpin } from './components/DieSpin/DieSpin.tsx'
+export { RollCard } from './components/RollCard/RollCard.tsx'
 
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
@@ -238,6 +239,8 @@ export type {
   SessionStartBeatProps,
   MessageStreamProps,
   DieSpinProps,
+  RollCardProps,
+  RollCardLabels,
   TranscriptItem,
   HeadingProps,
   HeadingLevel,
