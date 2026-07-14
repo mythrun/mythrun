@@ -215,11 +215,11 @@ EOF
 echo "  ok: wrote $env_worktree"
 
 echo
-echo "worktree test DB ready: $db_name (empty — schema applies via db:migrate:test below)"
+echo "worktree test DB ready: $db_name (empty — the test suite's globalSetup bootstraps the schema on first run)"
 echo
 echo "next:"
 echo "  1. pnpm install            (per-worktree node_modules)"
-echo "  2. pnpm db:migrate:test    (applies migrations to $db_name)"
+echo "  2. run any backend test    (globalSetup bootstraps $db_name's schema; no migrate step)"
 
 # myth: @mythrun/contract resolves ONLY through its built dist/ (the exports map
 # has no src conditional), and dist/ is gitignored — a fresh worktree therefore
