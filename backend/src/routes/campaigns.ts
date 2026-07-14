@@ -702,7 +702,10 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   // GET /api/campaigns/:campaignId/world-snapshot (myth-exac)
   //
   // Returns the known-tier slice of a world's persisted content — the reveal's
-  // data source, incl. the introduction page. Owner-only. 409 until
+  // data source, incl. the introduction page. Any accepted campaign member
+  // (myth-0xwos: the reveal wiki is a player surface — the owner is just a
+  // player, and every party member sees the SAME server-side tier-filtered
+  // known-tier view). 409 until
   // world_introduction (the reveal boundary, myth-zaqxh) completes: the intro
   // is written there, and entities + facts + relationships are all committed by
   // then, so any earlier read would surface a partial world (or a missing
@@ -725,7 +728,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         rateLimit: { max: 30, timeWindow: '1 minute' },
         pipelineRoute: true,
       },
-      preHandler: requireCampaignMember(repo, 'owner'),
+      preHandler: requireCampaignMember(repo),
     },
     async (request, reply) => {
       const campaign = await repo.campaigns.getById(request.params.campaignId)

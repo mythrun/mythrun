@@ -3,8 +3,10 @@
 // myth-exac T20: integration tests for GET
 // /api/campaigns/:campaignId/world-snapshot.
 //
-// Owner-only. 409 until world_introduction (the reveal boundary, myth-zaqxh)
-// completes — the snapshot now carries the intro page written there. Bypass
+// Any accepted campaign member (myth-0xwos — the reveal wiki is a player
+// surface, not owner-only). 409 until world_introduction (the reveal boundary,
+// myth-zaqxh) completes — the snapshot now carries the intro page written
+// there. Bypass
 // requires BOTH world.dev_bypass_access_filter=true AND the requester
 // being in bypass-auth (defense in depth) — a prod-auth user requesting
 // a dev-tool-created world still sees the known-tier projection only.
@@ -353,7 +355,13 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
     expect(body.relationships[0]?.targetEntityId).toBe(seed.known2)
   })
 
-  it('403 not_campaign_owner for a non-owner member', async () => {
+  // myth-0xwos: a non-owner member is ALSO a player at the reveal — they must
+  // see the SAME known-tier snapshot the owner does (the owner is just a player;
+  // the DM is the AI). The projection is server-side tier-filtered, so extending
+  // WHO may read (owner → any accepted member) does not widen WHAT any player
+  // sees: the secret entity + secret fact stay hidden here exactly as for the
+  // owner's read above.
+  it('200 known-tier projection for a non-owner member (myth-0xwos)', async () => {
     const owner = await seedUser(pool, scope, 0)
     const seed = await seedCampaignWithSnapshot(pool, scope, owner, 0, {
       introductionStatus: 'completed',
@@ -370,8 +378,23 @@ describe('GET /api/campaigns/:campaignId/world-snapshot (myth-exac T20)', () => 
       url: `/api/campaigns/${seed.campaignId}/world-snapshot`,
       headers: { 'x-mythrun-dev-sub': player.devSub },
     })
-    expect(res.statusCode).toBe(403)
-    expect(res.json()).toEqual({ code: 'not_campaign_owner' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{
+      entities: { id: string; accessLevel: string }[]
+      facts: { content: string }[]
+      relationships: { sourceEntityId: string; targetEntityId: string }[]
+    }>()
+
+    // Same known-tier slice the owner receives — the secret entity + fact are
+    // still filtered out for the member (tier filtering is NOT weakened).
+    expect(body.entities).toHaveLength(2)
+    expect(body.entities.map((e) => e.id).sort()).toEqual([seed.known1, seed.known2].sort())
+    expect(body.entities.every((e) => e.accessLevel === 'known')).toBe(true)
+    expect(body.facts).toHaveLength(1)
+    expect(body.facts[0]?.content).toBe('k1-public')
+    expect(body.relationships).toHaveLength(1)
+    expect(body.relationships[0]?.sourceEntityId).toBe(seed.known1)
+    expect(body.relationships[0]?.targetEntityId).toBe(seed.known2)
   })
 
   it('403 not_campaign_member for a stranger', async () => {

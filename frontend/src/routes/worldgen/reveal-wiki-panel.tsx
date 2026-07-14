@@ -30,9 +30,9 @@ export interface WikiModelState {
   readonly model: WikiViewModel | null
   readonly loading: boolean
   /** The last (re)fetch REJECTED. Only rendered when no model has ever
-   *  resolved: the panel shows the honest UNAVAILABLE line (a member hitting
-   *  the owner-only snapshot endpoint 403s — myth-0xwos — and transient
-   *  failures look the same from here), never an error flash. */
+   *  resolved: the panel shows the honest UNAVAILABLE line (transient
+   *  failures and true denials — a non-member — look the same from here),
+   *  never an error flash. Members read the snapshot since myth-0xwos. */
   readonly failed: boolean
 }
 
