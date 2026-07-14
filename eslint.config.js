@@ -180,14 +180,13 @@ export default tseslint.config(
           message: 'Default exports are forbidden. Use named exports only.',
         },
         {
-          selector: "Literal[value=/DROP\\s+SCHEMA/i]",
+          selector: 'Literal[value=/DROP\\s+SCHEMA/i]',
           message:
             'DROP SCHEMA in tests is forbidden — globalSetup handles schema bootstrap. See backend/src/__tests__/CONVENTIONS.md.',
         },
         {
-          selector: "TemplateElement[value.raw=/DROP\\s+SCHEMA/i]",
-          message:
-            'DROP SCHEMA in tests is forbidden — globalSetup handles schema bootstrap.',
+          selector: 'TemplateElement[value.raw=/DROP\\s+SCHEMA/i]',
+          message: 'DROP SCHEMA in tests is forbidden — globalSetup handles schema bootstrap.',
         },
       ],
     },

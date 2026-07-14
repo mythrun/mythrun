@@ -13,8 +13,13 @@ AGENTS.md
 README.md
 docs/wiki/site/**
 
-# Generated design-token artifacts (MYT-81)
-frontend/ui/tokens.html
-frontend/ui/scripts/generate-palette.mjs
-frontend/ui/src/styles/colors.generated.css
-frontend/ui/src/styles/tokens.manifest.json
+# The code trees own their formatting via their own ESLint configs; repo-root
+# prettier was never actually applied there (no pre-commit hook runs the
+# lint-staged config, so hundreds of files had drifted), and reformatting
+# backend sources would drift the wiki's pinned source hashes. Scope prettier
+# to what it genuinely owns — prose, config, infra scripts — so format:check
+# is green and safe to wire into a gate (myth-tcze3). The frontend/ entry also
+# covers the generated design-token artifacts (MYT-81) previously listed one
+# by one.
+frontend/
+backend/

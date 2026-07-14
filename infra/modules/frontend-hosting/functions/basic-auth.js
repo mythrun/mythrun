@@ -1,15 +1,15 @@
-import cf from 'cloudfront';
+import cf from 'cloudfront'
 
-const kvs = cf.kvs();
+const kvs = cf.kvs()
 
 async function handler(event) {
-  const req = event.request;
-  const sent = req.headers.authorization && req.headers.authorization.value;
-  let expected;
+  const req = event.request
+  const sent = req.headers.authorization && req.headers.authorization.value
+  let expected
   try {
-    expected = await kvs.get('staging-basic-auth');
+    expected = await kvs.get('staging-basic-auth')
   } catch (e) {
-    expected = null;
+    expected = null
   }
   if (sent && expected && sent === expected) {
     // SPA deep-link routing. This REPLACES the distribution-level
@@ -18,15 +18,15 @@ async function handler(event) {
     // /api/* has its OWN CloudFront behavior with no function association, so it
     // never reaches here. A final path segment with no '.' is a client route ->
     // serve the SPA shell; assets (with an extension) pass straight to S3.
-    var lastSegment = req.uri.substring(req.uri.lastIndexOf('/') + 1);
+    var lastSegment = req.uri.substring(req.uri.lastIndexOf('/') + 1)
     if (lastSegment.indexOf('.') === -1) {
-      req.uri = '/index.html';
+      req.uri = '/index.html'
     }
-    return req;
+    return req
   }
   return {
     statusCode: 401,
     statusDescription: 'Unauthorized',
     headers: { 'www-authenticate': { value: 'Basic realm="Mythrun staging"' } },
-  };
+  }
 }
