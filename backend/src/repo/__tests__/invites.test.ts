@@ -324,7 +324,10 @@ describe('invites repo (integration)', () => {
       const { invites, campaign, owner } = await setup()
       const player = await makeExtraUser()
       const inv = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
-      await invites.revoke(inv.inviteCode, campaign.id)
+      // Asserted so a recurrence of the myth-lwh1z flake (killed by 61ad0ff4:
+      // expiry checks now share PG's clock) pinpoints the failing step instead
+      // of surfacing as a confusing accept-succeeded diff.
+      expect(await invites.revoke(inv.inviteCode, campaign.id)).toEqual({ revoked: true })
 
       const result = await invites.acceptInvite({ code: inv.inviteCode, userId: player.id })
       expect(result).toEqual({ revoked: true })
