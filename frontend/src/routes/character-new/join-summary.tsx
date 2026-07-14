@@ -24,11 +24,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 //
 // It owns one fetch + one behaviour:
 //   • FETCH the world snapshot (the same read the reveal wiki uses) and surface
-//     `introduction.title` + `introduction.prose`. A failed/forbidden fetch —
-//     the snapshot endpoint is OWNER-ONLY today (myth-0xwos), so a joined member
-//     403s until the character-scoped read (MYT-94) lands; a transient failure
-//     looks the same — fails CLOSED to a calm, retryable notice (never an error
-//     flash, never a fake identity).
+//     `introduction.title` + `introduction.prose`. The endpoint is readable by
+//     any campaign member (myth-0xwos) and serves the plot-safe world
+//     projection, so a joined member gets real content; any failed fetch
+//     (transient, or a true denial for a non-member) fails CLOSED to a calm,
+//     retryable notice (never an error flash, never a fake identity).
 //   • CTA "Create your character" → navigate to the create beat.
 //
 // Flat 1-bit paper register; all UI composes @mythrun/ui.

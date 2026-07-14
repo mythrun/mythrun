@@ -25,9 +25,9 @@ import { JoinSummaryRoute } from './join-summary.tsx'
 // object properties, not JSX attrs — so the i18next literal-string rail stays
 // clean), and assert: the world name + intro render, the CTA navigates to the
 // create beat, and the load lifecycle holds (a calm loading line, then a calm
-// retryable notice on a failed/forbidden fetch — the member-facing snapshot
-// endpoint is owner-only today, so a fail-CLOSED notice is the expected member
-// experience until the character-scoped read lands).
+// retryable notice on a failed fetch — the snapshot endpoint is member-readable
+// since myth-0xwos, so the notice is the transient-failure/non-member arm, not
+// the normal member experience).
 
 // ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads
 // `localStorage` on mount; the platform builtin can shadow jsdom's real Storage.
@@ -158,8 +158,9 @@ describe('JoinSummaryRoute — the load lifecycle', () => {
   })
 
   it('fails CLOSED to a calm retryable notice when the fetch rejects', async () => {
-    // The snapshot endpoint is owner-only today, so a joined member 403s; a
-    // transient failure looks the same — both land on the calm notice.
+    // A transient failure and a true denial (non-member) look the same from
+    // here — both land on the calm notice. (Members read the snapshot since
+    // myth-0xwos; this is the failure arm, not the member default.)
     const fetchSnapshot = vi.fn().mockRejectedValue(new Error('boom'))
     renderJoin({ fetchSnapshot })
     await screen.findByTestId('join-summary-error')
