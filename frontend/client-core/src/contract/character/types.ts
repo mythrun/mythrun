@@ -106,9 +106,12 @@ export interface FullSheet {
   spells: SheetEntry[]
 }
 
-/** A party member's creation state: `creating` (still building), `ready` (character
- *  made), or `empty` (joined but not started). */
-export type RosterStatus = 'creating' | 'ready' | 'empty'
+/** A party member's creation state: `creating` (concept submitted, character still
+ *  generating), `ready` (character made), `gathering` (a real joined teammate who
+ *  hasn't started a character yet), or `empty` (the synthetic invite slot only —
+ *  never a real member). A joined-but-unstarted member is `gathering`, distinct from
+ *  the `empty` invite affordance the party-staging surface appends when soloing. */
+export type RosterStatus = 'creating' | 'ready' | 'gathering' | 'empty'
 
 /** One row of the party-finalize roster. `characterName` is present once the member
  *  is `ready`; `isViewer` marks the current player's own row ("you"). */

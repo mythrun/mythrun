@@ -6,18 +6,21 @@ import { Button } from '../Button/Button.tsx'
 // PartyRoster (MYT-90 character creation) — the party-staging surface a player
 // lands on once their own character is confirmed. It lists the party (each
 // member's creation state), offers the owner the Begin (finalize) control, and
-// shows a member a waiting line. The `empty` row is the invite affordance (a
-// synthetic slot the view-model injects); the live join + invite-link plumbing
-// is MYT-91, so here it is a dashed CTA that fires `onInvite`. Pure/presentational
-// — it renders from props and fires the neutral `onBegin`/`onInvite` callbacks; no
-// flow/network/readiness logic (that lives in the client-core view-model —
-// `viewerIsOwner`/`canBegin` arrive as already-decided booleans).
+// shows a member a waiting line. A real teammate who has joined but not started a
+// character is `gathering` — a member row, NOT the invite affordance. The `empty`
+// row IS the invite affordance: a single synthetic slot the party-staging surface
+// appends when soloing (`withInviteSlot`), rendered as a dashed CTA firing
+// `onInvite`. Pure/presentational — it renders from props and fires the neutral
+// `onBegin`/`onInvite` callbacks; no flow/network/readiness logic (that lives in the
+// client-core view-model — `viewerIsOwner`/`canBegin` arrive as already-decided
+// booleans).
 //
 // BRAND — status is PROSE, never a dot/chip/badge (the non-negotiable rule): the
 // mockup's bordered `.status` pill is deliberately NOT ported. A member's state
-// reads as plain mono text — the character name (or a "choosing who they are…"
-// stand-in) on the sub-line, plus a terse "ready"/"creating…" marker whose only
-// emphasis is ink weight/ember COLOR, not a container. No circles/dots: the
+// reads as plain mono text — the character name (or a "choosing who they are…" /
+// "just joined…" stand-in) on the sub-line, plus a terse "ready"/"creating…"/
+// "gathering…" marker whose only emphasis is ink weight/ember COLOR, not a
+// container. No circles/dots: the
 // per-member tile is a SQUARE 1-bit hatch placeholder (no avatar), flat corners
 // (`rounded-none`) everywhere.
 //
@@ -44,20 +47,30 @@ const INVITE_NAME = 'Invite a friend'
 const INVITE_SUB = '[ph: share a link · they join here]'
 const INVITE_MARK = '+ invite'
 const CREATING_SUBLINE = '[ph: choosing who they are…]'
+// A gathering member has joined but not started a character — a real teammate, NOT
+// the invite affordance. Its stand-in sub-line reads distinctly from `creating`.
+const GATHERING_SUBLINE = '[ph: just joined — making their character…]'
 const WAITING_LINE = '[ph: waiting for the party to gather…]'
 const BEGIN_SOLO = '[ph: begin the adventure →]'
 const BEGIN_PARTY = "[ph: everyone's ready — begin →]"
 
+// The status a member row renders as — every real-member state (the `empty` invite
+// slot renders through InviteRow, never here).
+type MemberStatus = 'creating' | 'ready' | 'gathering'
+
 // The terse status marker per state (prose, not a chip).
-const STATUS_MARK: Record<'creating' | 'ready', string> = {
+const STATUS_MARK: Record<MemberStatus, string> = {
   ready: 'ready',
   creating: 'creating…',
+  gathering: 'gathering…',
 }
 // Marker emphasis is COLOR on the text itself (never a filled/bordered pill):
-// ready settles to quiet secondary ink; creating draws the eye in ember.
-const STATUS_TONE: Record<'creating' | 'ready', string> = {
+// ready settles to quiet secondary ink; creating draws the eye in ember; gathering
+// (just joined, not yet building) sits quietest in tertiary ink.
+const STATUS_TONE: Record<MemberStatus, string> = {
   ready: 'text-ink-secondary',
   creating: 'text-accent-fg',
+  gathering: 'text-ink-tertiary',
 }
 
 // The decorative 1-bit hatch — a diagonal repeat in the theme-aware ink-tertiary
@@ -97,11 +110,23 @@ const INVITE_MARK_CLASS = 'shrink-0 font-ui text-xs uppercase tracking-wide text
 const ACTIONS_CLASS = 'flex flex-col gap-[var(--space-2)]'
 const WAITING_CLASS = 'font-ui text-xs uppercase tracking-wide text-ink-tertiary'
 
-// One member (creating/ready) row. The `empty` slot renders through InviteRow.
+// The sub-line under a member's name: a made character shows its name; a still-
+// creating member shows the "choosing…" stand-in; a just-joined (gathering) member
+// shows the joined-not-started stand-in; a ready member with no name yet shows none.
+function memberSubline(member: RosterMember): string | undefined {
+  if (member.characterName !== undefined) return member.characterName
+  if (member.status === 'creating') return CREATING_SUBLINE
+  if (member.status === 'gathering') return GATHERING_SUBLINE
+  return undefined
+}
+
+// One real-member (creating/ready/gathering) row. The `empty` invite slot renders
+// through InviteRow, never here.
 function MemberRow({ member }: { member: RosterMember }): React.JSX.Element {
-  // ready → the character name; creating → the "choosing…" stand-in.
-  const status = member.status === 'creating' ? 'creating' : 'ready'
-  const sub = member.characterName ?? (member.status === 'creating' ? CREATING_SUBLINE : undefined)
+  // The invite slot is excluded upstream, so any non-`empty` status maps to its own
+  // marker; a stray `empty` (defensive) settles to the quiet `ready` marker.
+  const status: MemberStatus = member.status === 'empty' ? 'ready' : member.status
+  const sub = memberSubline(member)
   return (
     <li data-testid="party-roster-member" data-status={member.status} className={MEMBER_CLASS}>
       <span aria-hidden="true" className={TILE_CLASS} style={{ backgroundImage: TILE_HATCH }} />

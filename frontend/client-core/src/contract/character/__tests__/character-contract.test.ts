@@ -143,8 +143,8 @@ describe('shared data + view-model shapes', () => {
     }>()
   })
 
-  it('RosterStatus is the creating/ready/empty union', () => {
-    expectTypeOf<RosterStatus>().toEqualTypeOf<'creating' | 'ready' | 'empty'>()
+  it('RosterStatus is the creating/ready/gathering/empty union', () => {
+    expectTypeOf<RosterStatus>().toEqualTypeOf<'creating' | 'ready' | 'gathering' | 'empty'>()
   })
 
   it('RosterMember carries the viewer flag + optional character name', () => {

@@ -21,6 +21,13 @@ const PARTY: RosterMember[] = [
   { userId: 'u3', displayName: 'Pell', status: 'creating', isViewer: false },
 ]
 
+// A party with a just-joined member: the owner (ready) plus a real teammate who has
+// joined but not started a character yet (`gathering` — NOT the invite slot).
+const GATHERING: RosterMember[] = [
+  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm', status: 'ready', isViewer: true },
+  { userId: 'u2', displayName: 'Bree', status: 'gathering', isViewer: false },
+]
+
 const noop = (): void => undefined
 
 describe('PartyRoster', () => {
@@ -63,6 +70,39 @@ describe('PartyRoster', () => {
       <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     expect(getAllByText(/^ready$/i).length).toBeGreaterThan(0)
+  })
+
+  it('renders a gathering member as a real member row (not the invite slot) with the gathering marker', () => {
+    const { getByText, getAllByTestId, queryByTestId } = render(
+      <PartyRoster members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    // Bree is a real teammate, so she renders as a member row — NOT the dashed
+    // invite affordance (the bug this split fixes).
+    expect(getAllByTestId('party-roster-member')).toHaveLength(2)
+    expect(queryByTestId('party-roster-invite')).not.toBeInTheDocument()
+    expect(getByText('Bree')).toBeInTheDocument()
+    // The gathering member shows the joined-not-started stand-in sub-line…
+    expect(getByText(/just joined/i)).toBeInTheDocument()
+    // …and a terse "gathering…" marker (prose, not a chip).
+    expect(getByText(/gathering/i)).toBeInTheDocument()
+  })
+
+  it('counts a gathering member as a real member in the party label', () => {
+    const { getByText } = render(
+      <PartyRoster members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    // Owner (ready) + Bree (gathering) are both real → the panel reads "(2)".
+    expect(getByText(/your party \(2\)/i)).toBeInTheDocument()
+  })
+
+  it('conveys the gathering status as prose text, never a dot/chip/badge', () => {
+    const { getAllByTestId } = render(
+      <PartyRoster members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    for (const marker of getAllByTestId('party-roster-status')) {
+      expect(marker.className).not.toMatch(/border/)
+      expect(marker.className).not.toMatch(/\bbg-/)
+    }
   })
 
   it('renders the empty status as a dashed invite row that fires onInvite', async () => {

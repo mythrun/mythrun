@@ -26,6 +26,15 @@ const PARTY: RosterMember[] = [
   { userId: 'u3', displayName: 'Pell', status: 'creating', isViewer: false },
 ]
 
+// A just-joined teammate — the owner is ready and Bree has joined via an invite but
+// hasn't started her character yet (`gathering`). She reads as a real member row
+// (the "just joined…" stand-in), NOT the dashed invite slot, and no synthetic invite
+// row appears (the party is now 2 real members).
+const GATHERING: RosterMember[] = [
+  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm — Human Fighter', status: 'ready', isViewer: true },
+  { userId: 'u2', displayName: 'Bree', status: 'gathering', isViewer: false },
+]
+
 const meta: Meta<typeof PartyRoster> = {
   title: 'Character/PartyRoster',
   component: PartyRoster,
@@ -66,6 +75,14 @@ export const PartyOwner: Story = {
 export const OwnerNotReady: Story = {
   name: 'Owner — begin disabled (party not ready)',
   args: { members: PARTY, viewerIsOwner: true, canBegin: false },
+}
+
+// A just-joined member — the owner (ready) plus Bree, who joined via the invite link
+// but hasn't started her character (`gathering`). She renders as a real member row,
+// never the invite affordance; the owner may begin (their own concept is ready).
+export const PartyWithGatheringMember: Story = {
+  name: 'Party — a just-joined member gathering',
+  args: { members: GATHERING, viewerIsOwner: true, canBegin: true },
 }
 
 // Member (non-owner) view — no Begin control; a waiting line instead.
