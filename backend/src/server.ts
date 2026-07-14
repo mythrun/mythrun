@@ -389,6 +389,32 @@ async function fallbackStart(): Promise<void> {
   }
 }
 
+/** myth-iqi81: bind the HTTP port, failing hard (with a clear, actionable log
+ *  on EADDRINUSE) if it is already taken. Called BEFORE any BullMQ worker is
+ *  registered so a second `pnpm dev` under tsx watch can never fall through
+ *  into a hidden competing consumer of the shared queue — a worker whose watch
+ *  reloads would kill in-flight pipeline jobs mid-run. The throw propagates to
+ *  main()'s boot catch, which closes the partial clients and exits non-zero.
+ *  Extracted from main() to stay within the line budget (mirrors the
+ *  worker-builder extractions above). */
+async function listenOrFail(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  port: number,
+): Promise<void> {
+  try {
+    await app.listen({ port, host: '0.0.0.0' })
+  } catch (listenErr) {
+    if ((listenErr as { code?: string }).code === 'EADDRINUSE') {
+      console.error(
+        `✗ Port ${String(port)} is already in use — another server is already ` +
+          `running. Refusing to start: a second instance would register a ` +
+          `competing BullMQ worker and corrupt in-flight jobs. Exiting.`,
+      )
+    }
+    throw listenErr
+  }
+}
+
 export async function main(): Promise<void> {
   if (!bootGateEnabled()) {
     await fallbackStart()
@@ -535,6 +561,13 @@ export async function main(): Promise<void> {
       authOpts,
       { frontendBaseUrl: env.frontendBaseUrl, env },
     )
+    // myth-iqi81: bind the HTTP port BEFORE registering any BullMQ worker (see
+    // listenOrFail). If the port is taken, this throws into the outer boot
+    // catch — no worker has been created yet, so nothing is left holding the
+    // queue. The workers below only need `app.log`, which buildApp already
+    // provides without the server listening, so binding first costs nothing.
+    await listenOrFail(app, env.port)
+
     const caps = await readCostCapsAtBoot(pgRef)
     const worldGenWorker = await buildWorldGenWorker(
       pgRef, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
@@ -553,8 +586,6 @@ export async function main(): Promise<void> {
       repo, rTRRef, env.redisBatchUrl, env.redisKeyPrefix,
       abortController.signal,
     )
-
-    await app.listen({ port: env.port, host: '0.0.0.0' })
 
     // MYT-61 T4: the session-prep worker + queue are drained ahead of the
     // existing chain via withSessionPrepShutdown (see that helper for the

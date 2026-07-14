@@ -17,6 +17,10 @@ const mockBullmqQuit = vi.fn().mockResolvedValue('OK')
 const mockListen = vi.fn().mockResolvedValue(undefined)
 const mockCreateRedisClient = vi.fn()
 const mockProbe = vi.fn().mockResolvedValue(undefined)
+// myth-iqi81: records every `new Worker(...)` construction so tests can assert
+// that NO BullMQ worker is registered when the HTTP port bind fails (a second
+// `pnpm dev` must not become a hidden competing consumer of the shared queue).
+const mockWorkerCtor = vi.fn()
 
 vi.mock('../db/postgres.js', () => ({
   createPgPool: () => ({ query: mockPgQuery, end: mockPgEnd }) as unknown as Pool,
@@ -48,6 +52,9 @@ vi.mock('bullmq', () => ({
     close = (): Promise<void> => Promise.resolve()
   },
   Worker: class FakeWorker {
+    constructor(...args: unknown[]) {
+      mockWorkerCtor(...args)
+    }
     close = (): Promise<void> => Promise.resolve()
   },
 }))
@@ -131,6 +138,7 @@ describe('server boot gate', () => {
     mockProbeMigrationsCurrent.mockReset().mockResolvedValue(undefined)
     mockBullmqPing.mockReset().mockResolvedValue('PONG')
     mockBullmqQuit.mockReset().mockResolvedValue('OK')
+    mockWorkerCtor.mockReset()
     // Each call to createRedisClient returns a fresh ioredis-shaped object.
     // Order matters: server.ts calls realtime first, then batch.
     const fakeRtr = { ping: mockRtrPing, quit: mockRtrQuit } as unknown as Redis
@@ -246,6 +254,94 @@ describe('server boot gate', () => {
       expect(errorOutput).toContain('migrations-current')
       expect(errorOutput).toContain('Run `gh workflow run db-migrate`')
 
+      errSpy.mockRestore()
+    },
+    TEST_TIMEOUT_MS,
+  )
+
+  it(
+    'happy path: app.listen is called BEFORE any BullMQ worker is constructed',
+    async () => {
+      mockPgQuery.mockResolvedValue({})
+      mockRtrPing.mockResolvedValue('PONG')
+      mockRtbPing.mockResolvedValue('PONG')
+
+      await import('../server.js')
+
+      // Four in-process workers register on the happy path (world-gen,
+      // character-creation, session-prep, session-suspend).
+      expect(mockListen).toHaveBeenCalled()
+      expect(mockWorkerCtor).toHaveBeenCalledTimes(4)
+      // The bind must land before the first worker is constructed, so a bind
+      // failure can short-circuit before any worker holds the queue.
+      // (invocationCallOrder is 1-based; defaults keep the types `number`.)
+      const [listenOrder = 0] = mockListen.mock.invocationCallOrder
+      const [firstWorkerOrder = Infinity] = mockWorkerCtor.mock.invocationCallOrder
+      expect(listenOrder).toBeGreaterThan(0)
+      expect(listenOrder).toBeLessThan(firstWorkerOrder)
+    },
+    TEST_TIMEOUT_MS,
+  )
+
+  it(
+    'port bind fails (EADDRINUSE) → NO worker constructed, exitCode=1, partials closed, clear log',
+    async () => {
+      mockPgQuery.mockResolvedValue({})
+      mockRtrPing.mockResolvedValue('PONG')
+      mockRtbPing.mockResolvedValue('PONG')
+      const bindErr = Object.assign(
+        new Error('listen EADDRINUSE: address already in use 0.0.0.0:3000'),
+        { code: 'EADDRINUSE' },
+      )
+      mockListen.mockRejectedValue(bindErr)
+
+      let errorOutput = ''
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errorOutput += args.map(String).join(' ') + '\n'
+      })
+
+      await import('../server.js')
+
+      // The core guarantee: a failed bind means the process NEVER registers a
+      // BullMQ worker, so a second `pnpm dev` can't become a hidden competing
+      // consumer of the shared queue.
+      expect(mockWorkerCtor).not.toHaveBeenCalled()
+      expect(process.exitCode).toBe(1)
+      // Partials that WERE created (pg + the two shared redis clients) are
+      // closed so nothing lingers on the failure path.
+      expect(mockPgEnd).toHaveBeenCalled()
+      expect(mockRtrQuit).toHaveBeenCalled()
+      expect(mockRtbQuit).toHaveBeenCalled()
+      // A clear, actionable log line names the port-in-use cause.
+      expect(errorOutput).toContain('3000')
+      expect(errorOutput.toLowerCase()).toContain('in use')
+
+      errSpy.mockRestore()
+    },
+    TEST_TIMEOUT_MS,
+  )
+
+  it(
+    'listen fails with a non-EADDRINUSE error → still fails hard, NO worker constructed',
+    async () => {
+      mockPgQuery.mockResolvedValue({})
+      mockRtrPing.mockResolvedValue('PONG')
+      mockRtbPing.mockResolvedValue('PONG')
+      // e.g. EACCES on a privileged port — not the port-in-use case, so the
+      // port-specific log is skipped, but the bind failure must still abort
+      // boot before any worker registers.
+      mockListen.mockRejectedValue(
+        Object.assign(new Error('listen EACCES: permission denied 0.0.0.0:80'), {
+          code: 'EACCES',
+        }),
+      )
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      await import('../server.js')
+
+      expect(mockWorkerCtor).not.toHaveBeenCalled()
+      expect(process.exitCode).toBe(1)
+      expect(mockPgEnd).toHaveBeenCalled()
       errSpy.mockRestore()
     },
     TEST_TIMEOUT_MS,
