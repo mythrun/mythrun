@@ -4,16 +4,28 @@ import {
   useSession,
   useRollReveal,
   buildRevealView,
+  useKnowledgeCache,
+  useSessionSheet,
   type ApiContext,
+  type KnowledgeCache,
+  type KnowledgeCacheDeps,
+  type LedgerUpdateFrame,
   type SessionParams,
+  type SessionSheetState,
   type SessionView,
 } from '@mythrun/client-core'
+import { snapshotToGraph } from '@mythrun/client-core/worldgen'
 import type { RollCardLabels } from '@mythrun/client-core/contract'
-import { MessageStream, ThinkingIndicator, SessionInput, Show } from '@mythrun/ui'
+import { MessageStream, ThinkingIndicator, SessionInput } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { SidebarPlaceholder } from './sidebar-placeholder.tsx'
 import { SessionCompleteNotice } from './notices.tsx'
+import {
+  KnowledgePanel,
+  buildHighlightLabels,
+  usePlayKnowledge,
+  type PlayKnowledgeHooks,
+} from './knowledge-panel.tsx'
 import { composeSummon, connectionLineStatus, resolveTypingNames } from './session-compose.ts'
 
 // The live session shell (MYT-92 T16) — the `ready` phase: the streamed multiplayer
@@ -30,15 +42,41 @@ import { composeSummon, connectionLineStatus, resolveTypingNames } from './sessi
 //     transition and navigates to the recap route (the recap READ is a filed bead).
 //
 // Layout: a full-height flex row — the transcript column (flex-1, min-w-0) beside the
-// desktop-only collapsible sidebar seam. The transcript scrolls INSIDE its column
-// (MessageStream is `h-full`), so the min-h-0 flex-scroll chain (the AppFrame
-// full-bleed root → here) is unbroken. `min-h-0`/`flex` layout roots are the
-// sanctioned raw-element escape hatch (mirroring app-frame.tsx): not expressible via
-// @mythrun/ui Stack props (BaseProps bans className), scoped to the layout scaffold —
-// every piece of visible content composes the DS.
+// MYT-94 knowledge sidebar (`KnowledgePanel`: a collapsible ~30% desktop rail, the
+// shipped Drawer on narrow viewports — it owns its own responsive flip). The
+// transcript scrolls INSIDE its column (MessageStream is `h-full`), so the min-h-0
+// flex-scroll chain (the AppFrame full-bleed root → here) is unbroken. `min-h-0`/
+// `flex` layout roots are the sanctioned raw-element escape hatch (mirroring
+// app-frame.tsx): not expressible via @mythrun/ui Stack props (BaseProps bans
+// className), scoped to the layout scaffold — every piece of visible content composes
+// the DS.
+//
+// MYT-94 also threads the settled-prose entity HIGHLIGHTING into MessageStream: the
+// knowledge cache's matcher index + the chat→wiki `onEntityOpen` bridge + the
+// resolved popover chrome, passed ONLY once the cache index has settled (a null
+// index means plain DM prose — enforced ignorance holds either way).
 
 /** The `useSession` seam — injected for tests; defaults to the real hook. */
 type UseLiveSession = (ctx: ApiContext, params: SessionParams) => SessionView
+
+// The real client-core knowledge hooks, bound to their production deps — the default
+// `PlayKnowledgeHooks` the shell passes when tests inject none (the same real-hook
+// default seam `useLiveSession = useSession` rides). The cache's graph projection is
+// the canonical `snapshotToGraph` (a stable module ref); the sheet uses the real
+// endpoints + the canonical curated adapter.
+const CACHE_DEPS: KnowledgeCacheDeps = { snapshotToGraph }
+function useDefaultCache(campaignId: string, refreshToken: number): KnowledgeCache {
+  return useKnowledgeCache(campaignId, refreshToken, CACHE_DEPS)
+}
+function useDefaultSheet(
+  campaignId: string,
+  viewerUserId: string,
+  viewerCharacterName: string,
+  ledgerFrames: readonly LedgerUpdateFrame[],
+): SessionSheetState {
+  return useSessionSheet(campaignId, viewerUserId, viewerCharacterName, ledgerFrames)
+}
+const DEFAULT_KNOWLEDGE_HOOKS: PlayKnowledgeHooks = { useCache: useDefaultCache, useSheet: useDefaultSheet }
 
 export interface SessionShellProps {
   readonly ctx: ApiContext
@@ -52,6 +90,8 @@ export interface SessionShellProps {
   readonly reducedMotion: boolean
   /** Injected session hook (tests); defaults to `useSession`. */
   readonly useLiveSession?: UseLiveSession
+  /** Injected knowledge data hooks (tests); defaults to the real client-core hooks. */
+  readonly knowledgeHooks?: PlayKnowledgeHooks
 }
 
 export function SessionShell({
@@ -64,6 +104,7 @@ export function SessionShell({
   party,
   reducedMotion,
   useLiveSession = useSession,
+  knowledgeHooks = DEFAULT_KNOWLEDGE_HOOKS,
 }: SessionShellProps): React.JSX.Element {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -85,6 +126,20 @@ export function SessionShell({
   const reveal = useRollReveal()
   const rollReveal = useMemo(() => buildRevealView(items, reveal.state), [items, reveal.state])
   const rollLabels = useMemo(() => buildRollLabels(t), [t])
+
+  // The MYT-94 knowledge layer — the one-snapshot cache + the in-session sheet + the
+  // shared sidebar state, threaded into BOTH the chat (settled-prose highlighting)
+  // and the sidebar. `connection.status` drives the boundary refetch; the transcript
+  // supplies the ledger frames the sheet overlay folds.
+  const knowledge = usePlayKnowledge({
+    campaignId,
+    viewerUserId,
+    viewerCharacterName: characterName,
+    items,
+    connectionStatus: connection.status,
+    hooks: knowledgeHooks,
+  })
+  const highlightLabels = useMemo(() => buildHighlightLabels(t), [t])
 
   // Session end → the recap route (the recap read is a filed bead; 92 only lands).
   useEffect(() => {
@@ -136,6 +191,11 @@ export function SessionShell({
             rollLabels={rollLabels}
             onRoll={onRoll}
             onContinue={onContinue}
+            // Settled-prose entity highlighting (MYT-94) — passed ONLY once the
+            // cache index has settled; a null index leaves DM prose plain.
+            {...(knowledge.highlight !== undefined
+              ? { highlight: knowledge.highlight, onEntityOpen: knowledge.onEntityOpen, highlightLabels }
+              : {})}
           />
         </div>
         <ThinkingIndicator
@@ -158,11 +218,11 @@ export function SessionShell({
           sendLabel={t('play.input.send')}
         />
       </div>
-      {/* The sidebar seam — desktop only (MYT-92 wires no mobile drawer; the seam
-          renders nothing on mobile). Collapsed by default; MYT-94 fills it. */}
-      <Show above="lg">
-        <SidebarPlaceholder />
-      </Show>
+      {/* The knowledge sidebar (MYT-94) — fills MYT-92's placeholder seam: the
+          three knowledge tabs (world wiki / relationship graph / character sheet),
+          default-OPEN on desktop (~30% rail), the shipped Drawer on narrow
+          viewports. KnowledgePanel owns the responsive rail↔drawer flip. */}
+      <KnowledgePanel knowledge={knowledge} reducedMotion={reducedMotion} />
     </div>
   )
 }

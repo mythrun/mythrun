@@ -3,9 +3,15 @@ import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
-import { type ApiContext, type SessionView } from '@mythrun/client-core'
+import {
+  type ApiContext,
+  type KnowledgeCache,
+  type SessionSheetState,
+  type SessionView,
+} from '@mythrun/client-core'
 import { i18n } from '../../i18n/config.ts'
 import { SessionShell } from './session-shell.tsx'
+import type { PlayKnowledgeHooks } from './knowledge-panel.tsx'
 
 // The dice-moment wiring (MYT-93 T7). The shell subscribes `useRollReveal`, computes
 // `buildRevealView(items, state)` per render, and threads the reveal view + resolved
@@ -109,6 +115,20 @@ function makeSession(items: SessionView['items']): SessionView {
   }
 }
 
+// The MYT-94 knowledge sidebar is now part of the shell; inject calm empty data
+// hooks so these dice-focused tests don't drive the real client-core hooks (which
+// need an ApiClientProvider). The knowledge composition has its own tests
+// (knowledge-panel.test.tsx). A null cache index means the DM prose is NOT
+// highlighted — the reveal assertions below are unaffected.
+const EMPTY_CACHE: KnowledgeCache = { wiki: null, graph: null, index: null, loading: false, failed: true }
+const EMPTY_SHEET: SessionSheetState = {
+  sheet: null,
+  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [] },
+  loading: false,
+  failed: true,
+}
+const KNOWLEDGE_HOOKS: PlayKnowledgeHooks = { useCache: () => EMPTY_CACHE, useSheet: () => EMPTY_SHEET }
+
 function renderShell(items: SessionView['items'], reducedMotion = false): void {
   render(
     <ThemeProvider>
@@ -124,6 +144,7 @@ function renderShell(items: SessionView['items'], reducedMotion = false): void {
             party={new Map()}
             reducedMotion={reducedMotion}
             useLiveSession={() => makeSession(items)}
+            knowledgeHooks={KNOWLEDGE_HOOKS}
           />
         </MemoryRouter>
       </I18nextProvider>
@@ -184,5 +205,18 @@ describe('SessionShell — the dice-moment reveal wiring (MYT-93)', () => {
     expect(screen.getByText('+2 = 16')).toBeDefined()
     expect(screen.getByText(DM_TEXT)).toBeDefined()
     expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
+  })
+})
+
+describe('SessionShell — the knowledge sidebar (MYT-94)', () => {
+  it('mounts the knowledge sidebar beside the transcript (fills MYT-92 placeholder seam)', () => {
+    renderShell([DM_PROSE])
+    // The real sidebar seam replaces MYT-92's placeholder; the transcript still owns
+    // the shell (both mount).
+    expect(screen.getByTestId('session-sidebar-seam')).toBeDefined()
+    expect(screen.getByTestId('message-stream')).toBeDefined()
+    // A null cache index (not-yet-settled projections) leaves DM prose plain — no
+    // highlighting is threaded, the enforced-ignorance-safe default.
+    expect(screen.getByText(DM_TEXT)).toBeDefined()
   })
 })

@@ -32,6 +32,16 @@ export { MessageStream } from './components/MessageStream/MessageStream.tsx'
 export { DieSpin } from './components/DieSpin/DieSpin.tsx'
 export { RollCard } from './components/RollCard/RollCard.tsx'
 
+// Knowledge layer (MYT-94) — settled-prose entity highlighting (EntityMention +
+// its terse EntityPopover) and the three-tab in-session play sidebar
+// (KnowledgeSidebar, composing WorldWiki + WorldGenGraph + the in-session
+// SessionSheet). The sidebar/highlight brain (cache / matcher / sheet view-model)
+// lives in @mythrun/client-core; these are the presentation surfaces.
+export { EntityMention } from './components/EntityMention/EntityMention.tsx'
+export { EntityPopover } from './components/EntityPopover/EntityPopover.tsx'
+export { SessionSheet } from './components/SessionSheet/SessionSheet.tsx'
+export { KnowledgeSidebar } from './components/KnowledgeSidebar/KnowledgeSidebar.tsx'
+
 // Character creation (MYT-90).
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
 export { FreeformPrompt } from './components/FreeformPrompt/FreeformPrompt.tsx'
@@ -226,6 +236,9 @@ export { ThemeToggle } from './components/ThemeToggle/ThemeToggle.tsx'
 // SAME boolean the DS components (FullBleedStage, WorldGenGraph) flip on
 // internally. One query, one regime — the app and the DS can never disagree.
 export { useViewportNarrow } from './lib/use-viewport-narrow.ts'
+// The `lg`-step structural regime (MYT-94) — a sibling of useViewportNarrow at the
+// 1024px boundary, for a desktop RAIL that becomes the (portaled) Drawer below it.
+export { useViewportBelowLg } from './lib/use-viewport-below-lg.ts'
 
 export type {
   StackProps,
@@ -246,6 +259,20 @@ export type {
   DieSpinProps,
   RollCardProps,
   RollCardLabels,
+  EntityGlyph,
+  EntityCard,
+  ProseSegment,
+  EntityIndex,
+  KnowledgeCache,
+  SessionSheetState,
+  CharacterOverlay,
+  KnowledgeTab,
+  WikiTabLabels,
+  SessionSheetLabels,
+  EntityMentionProps,
+  EntityPopoverProps,
+  SessionSheetPanelProps,
+  KnowledgeSidebarProps,
   TranscriptItem,
   HeadingProps,
   HeadingLevel,

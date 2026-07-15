@@ -457,6 +457,45 @@
       "send": "[ph: send]",
       "summon": "[ph: ask the DM]"
     },
+    "knowledge": {
+      "tabs": "[ph: table knowledge]",
+      "wikiTab": "[ph: world]",
+      "graphTab": "[ph: connections]",
+      "sheetTab": "[ph: your character]",
+      "graphNodes": "[ph: browse the world by name]",
+      "wikiUnavailable": "[ph: the world guide isn't ready yet]",
+      "graphUnavailable": "[ph: the connections map isn't ready yet]",
+      "sheetUnavailable": "[ph: your character sheet isn't ready yet]",
+      "openInWiki": "[ph: open in the world guide]",
+      "mention": "[ph: {{name}}]",
+      "type": {
+        "npc": "[ph: person]",
+        "location": "[ph: place]",
+        "faction": "[ph: faction]",
+        "other": "[ph: entry]"
+      },
+      "wiki": {
+        "search": "[ph: search the world]",
+        "searchPlaceholder": "[ph: search by name]",
+        "empty": "[ph: nothing found]",
+        "back": "[ph: back]",
+        "related": "[ph: connected]",
+        "emptyBody": "[ph: nothing known here yet]",
+        "references": "[ph: dig deeper]",
+        "index": "[ph: browse]",
+        "group": {
+          "faction": "[ph: factions]",
+          "location": "[ph: places]",
+          "npc": "[ph: people]",
+          "item": "[ph: things]"
+        }
+      },
+      "sheet": {
+        "hp": "[ph: current HP]",
+        "conditions": "[ph: recent changes]",
+        "empty": "[ph: nothing has changed yet]"
+      }
+    },
     "loading": "[ph: opening the table…]",
     "prep": {
       "failedBody": "[ph: preparing the session was interrupted — try again]",
