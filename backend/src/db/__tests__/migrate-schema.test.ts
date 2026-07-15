@@ -316,7 +316,7 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   },
   {
     table_name: 'session_messages',
-    check_clause: `CHECK (((trigger_kind IS NULL) OR (trigger_kind = ANY (ARRAY['explicit'::text, 'solo'::text, 'auto'::text, 'correction'::text, 'farewell'::text]))))`,
+    check_clause: `CHECK (((trigger_kind IS NULL) OR (trigger_kind = ANY (ARRAY['explicit'::text, 'solo'::text, 'auto'::text, 'correction'::text, 'farewell'::text, 'session_opening'::text]))))`,
   },
   {
     table_name: 'sessions',
@@ -837,6 +837,7 @@ describe('schema-parity (integration)', () => {
       '032_world_introduction.sql',
       '033_starting_level.sql',
       '034_session_opening.sql',
+      '035_session_opening_trigger_kind.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

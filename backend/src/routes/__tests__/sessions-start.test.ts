@@ -148,6 +148,7 @@ async function seedPrep(
   pool: Pool,
   campaignId: string,
   sessionNumber: number,
+  opening?: string,
 ): Promise<void> {
   const repo = createRepo(pool)
   await repo.sessionPreps.insert({
@@ -155,6 +156,7 @@ async function seedPrep(
     sessionNumber,
     ftContext: 'FT-CONTEXT',
     sdPlaybook: 'SD-PLAYBOOK',
+    ...(opening !== undefined ? { opening } : {}),
   })
 }
 
@@ -285,6 +287,53 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
         ftContext: 'FT-CONTEXT',
         worldTone: '',
       })
+    })
+
+    it('MYT-101: a prep with an opening becomes the first dm_text row (seq 1, session_opening trigger); counter advanced', async () => {
+      const owner = await seedUser(pool, scope, 7)
+      await grantSessionCredits(pool, owner.userId, 3)
+      const campaignId = await seedActiveCampaign(pool, scope, owner, 7)
+      await seedPrep(pool, campaignId, 1, 'Welcome to the Marches. What do you do?')
+
+      const sessionId = await startAndGetSessionId(app, campaignId, owner.devSub)
+
+      const { rows } = await pool.query<{
+        seq: number
+        message_type: string
+        content: string
+        turn_id: string | null
+        trigger_kind: string | null
+        user_id: string | null
+      }>(
+        `SELECT seq, message_type, content, turn_id, trigger_kind, user_id
+           FROM session_messages WHERE session_id = $1 ORDER BY seq`,
+        [sessionId],
+      )
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.seq).toBe(1)
+      expect(rows[0]?.message_type).toBe('dm_text')
+      expect(rows[0]?.content).toBe('Welcome to the Marches. What do you do?')
+      expect(rows[0]?.turn_id).toMatch(/^[0-9a-f-]{36}$/)
+      expect(rows[0]?.trigger_kind).toBe('session_opening')
+      expect(rows[0]?.user_id).toBeNull()
+
+      // The Redis seq counter advanced past the opening — the first live turn
+      // gets seq 2, never colliding with the opening row.
+      expect(await makeSessionState(redis, KEY_PREFIX).nextSeq(campaignId)).toBe(2)
+    })
+
+    it('MYT-101: a legacy prep with NO opening -> zero rows, silent start (fail-soft)', async () => {
+      const owner = await seedUser(pool, scope, 8)
+      await grantSessionCredits(pool, owner.userId, 3)
+      const campaignId = await seedActiveCampaign(pool, scope, owner, 8)
+      await seedPrep(pool, campaignId, 1)
+
+      const sessionId = await startAndGetSessionId(app, campaignId, owner.devSub)
+      const { rowCount } = await pool.query(
+        `SELECT 1 FROM session_messages WHERE session_id = $1`,
+        [sessionId],
+      )
+      expect(rowCount).toBe(0)
     })
 
     it('MYT-68: a non-null world tone is threaded onto the state blob', async () => {

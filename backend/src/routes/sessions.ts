@@ -403,6 +403,8 @@ async function handleSessionStart(
   await sessionState.resetSessionSpend(campaignId)
   await triggerState.resetSessionKeys(campaignId)
 
+  await deliverOpening({ repo, sessionState, log, campaignId, sessionId, sessionNumber, opening: prep?.opening ?? null })
+
   return reply.code(200).send({ sessionId })
 }
 
@@ -417,4 +419,36 @@ function isOneActiveViolation(err: unknown): boolean {
     (err as { code?: string }).code === '23505' &&
     (err as { constraint?: string }).constraint === 'idx_sessions_one_active'
   )
+}
+
+// MYT-101: deliver the prep-generated opening as the session's first dm_text
+// row — deterministic persist of already-vetted prose (ZFC: no LLM here, no
+// trigger-system involvement). Seq comes from the SAME Redis counter the turn
+// worker uses, so the opening takes 1 and the first live turn starts at 2. No
+// live publish is needed: WS tickets bind to the freshly-minted sessionId, so
+// no socket can exist before /start returns — every joiner receives the row
+// via the full-history replay. Legacy preps (opening NULL) fail soft: silent
+// start, loud WARN — mirroring /start's missing-prep arm.
+async function deliverOpening(args: {
+  repo: Repo
+  sessionState: SessionState
+  log: FastifyBaseLogger
+  campaignId: string
+  sessionId: string
+  sessionNumber: number
+  opening: string | null
+}): Promise<void> {
+  const { repo, sessionState, log, campaignId, sessionId, sessionNumber, opening } = args
+  if (opening === null) {
+    log.warn({ campaignId, sessionId, sessionNumber }, 'session_start.no_opening')
+    return
+  }
+  const seq = await sessionState.nextSeq(campaignId)
+  await repo.sessionMessages.appendDmTurn({
+    sessionId,
+    turnId: uuidv7(),
+    rows: [{ kind: 'dm_text', content: opening }],
+    seqs: [seq],
+    triggerKind: 'session_opening',
+  })
 }
