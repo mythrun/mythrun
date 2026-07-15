@@ -417,6 +417,10 @@
   <code>useWorldGenStream</code> folds it exactly like a live frame, so a mid-gen reconnect
   rehydrates a populated graph and keeps folding toward the reveal. The seed is known-tier by the
   same invariant the live stream is, so a reconnecting client is caught up with zero new exposure.
+  That snapshot→nodes/edges projection was extracted into a canonical adapter,
+  <code>snapshotToGraph</code>, in MYT-94 — the same one the
+  <a href="./live-play.html#the-knowledge-layer">in-session Relationship Graph tab</a> renders its
+  known-tier edges from — so both consumers share one projection rather than a divergent second.
 </aside>
 
 <h3 id="act-two-the-fog-and-the-graph">Act two — the fog and the graph</h3>
@@ -818,12 +822,15 @@
   </tr>
   <tr>
     <td>
-      <code>graph-reducers.ts</code> · <code>wiki-view-model.ts</code> ·
-      <code>use-wiki-navigation.ts</code>
+      <code>graph-reducers.ts</code> · <code>snapshot-to-graph.ts</code> ·
+      <code>wiki-view-model.ts</code> · <code>use-wiki-navigation.ts</code>
     </td>
     <td>
-      SSE-event → node/edge reducers; snapshot → browsable wiki model (the introduction front door,
-      grouped entities, RELATED cross-links); the wiki page-history stack.
+      SSE-event → node/edge reducers; the canonical known-tier snapshot→graph seed adapter
+      (<code>snapshotToGraph</code>, MYT-94 — shared with the
+      <a href="./live-play.html#the-knowledge-layer">in-session graph tab</a>); snapshot → browsable
+      wiki model (the introduction front door, grouped entities, RELATED cross-links); the wiki
+      page-history stack.
     </td>
   </tr>
   <tr>

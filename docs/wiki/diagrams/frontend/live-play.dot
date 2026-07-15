@@ -39,6 +39,17 @@ digraph live_play {
     input [label="SessionInput\nsend · @dm explicit-text summon"];
   }
 
+  subgraph cluster_knowledge {
+    label="the knowledge layer (MYT-94) — only what the character knows";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    cache [label="usePlayKnowledge · useKnowledgeCache\nONE member snapshot → wiki + graph + entity index\nboundary-only refetch · no frame promotes it", color="ember", fontcolor="ember"];
+    sidebar [label="KnowledgePanel · KnowledgeSidebar\n~30% rail (desktop) / Drawer (narrow)\nWorld Wiki · Relationship Graph (drained) · Character Sheet"];
+    sheet [label="useSessionSheet · reduceLedger\ncurated sheet + live HP/condition overlay\n(ledger_update — authoritative SET)", color="ember", fontcolor="ember"];
+  }
+
   recap [label="session_end → /campaigns/:id/recap\n(stub route — the recap read is a filed bead)"];
 
   route -> start;
@@ -54,5 +65,9 @@ digraph live_play {
   reducer -> reveal [style="invis"];
   reveal -> presence [style="invis"];
   reducer -> input [style="invis"];
+  shell -> cache [lhead=cluster_knowledge, label="on ready"];
+  cache -> sheet [style="invis"];
+  sheet -> sidebar [style="invis"];
+  cache -> stream [label="entity highlight\n(settled prose)", style="dotted", constraint=false];
   shell -> recap [ltail=cluster_shell, label="ended"];
 }

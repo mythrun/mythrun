@@ -11,8 +11,13 @@
 <!-- source: frontend/ui/src/components/SessionInput/ -->
 <!-- source: frontend/ui/src/components/SessionStartBeat/ -->
 <!-- source: frontend/ui/src/components/ThinkingIndicator/ -->
-<!-- source-hash: sha256:b9a1afe4aecd66e5070b98fe24c32d2f5bc8ee6c4322b5414d526b522de47a6c -->
-<!-- last-ticket: MYT-93 -->
+<!-- source: frontend/ui/src/components/EntityMention/ -->
+<!-- source: frontend/ui/src/components/EntityPopover/ -->
+<!-- source: frontend/ui/src/components/SessionSheet/ -->
+<!-- source: frontend/ui/src/components/KnowledgeSidebar/ -->
+<!-- source: frontend/client-core/src/contract/session-knowledge.ts -->
+<!-- source-hash: sha256:2006fccb1ddde97f8a4c0137c1b8c8c0d52f073da3ad489cc92d5fd4eb0a94cd -->
+<!-- last-ticket: MYT-94 -->
 
 <h1>Live play</h1>
 
@@ -22,9 +27,13 @@
   screen becomes a streamed multiplayer transcript — the DM's prose arrives token by token, the
   humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, a
   dropped connection resyncs without double-rendering the turn it dropped during, and a skill check
-  arrives as an in-stream dice card the player rolls before the outcome prose unfolds. The route is a
-  thin composition; all the reasoning — the start classifier, the transcript reducer, the reveal gate,
-  the transport view-model — lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
+  arrives as an in-stream dice card the player rolls before the outcome prose unfolds. Beside the
+  transcript sits a knowledge sidebar — a browsable world wiki, a relationship graph, and the player's
+  live character sheet — and recognized names in the DM's settled prose highlight into terse knowledge
+  cards, every surface showing only what the character already knows. The route is a thin composition;
+  all the reasoning — the start classifier, the transcript reducer, the reveal gate, the transport
+  view-model, the one-snapshot knowledge cache — lives in the platform-neutral
+  <a href="./app-shell.html">client brain</a>.
 </p>
 
 <!-- @diagram: frontend/live-play -->
@@ -157,10 +166,11 @@
   system line and froze the reducer's shape as the wave-2 shared contract; MYT-93 then did exactly
   what that freeze was for — it extended the <em>rendering</em> of <code>skill_check</code> and
   <code>dice_roll</code> into the <a href="#the-dice-moment">RollCard dice moment</a> (MessageStream's
-  item dispatch) without adding a field to the reducer. <code>ledger_update</code>,
-  <code>mode_change</code>, and the <code>combat_*</code> frames still render as mono lines until their
-  own surfaces land. The knowledge-sidebar issue (MYT-94) is the other consumer building on this same
-  frozen shape.
+  item dispatch) without adding a field to the reducer. MYT-94 did the same again from the other side:
+  it reads the <code>ledger_update</code> item — still rendered as a mono line in the transcript — and
+  folds it into the <a href="#the-in-session-sheet">live character-sheet overlay</a> in the knowledge
+  sidebar, again without touching the reducer. <code>mode_change</code>
+  and the <code>combat_*</code> frames still render as mono lines until their own surfaces land.
 </aside>
 
 <aside class="wiki-rationale">
@@ -314,9 +324,9 @@
 
 <p>
   <code>SessionShell</code> composes six <a href="./design-system.html">mythrunUI</a> components into a
-  full-height flex column: the scroller, the thinking line, and the input, beside a desktop-only
-  sidebar seam. The register split <em>is</em> the meaning — the DM speaks in narrative, the humans at
-  the table speak in the mechanical voice:
+  full-height flex column: the scroller, the thinking line, and the input, beside the
+  <a href="#the-knowledge-layer">knowledge sidebar</a>. The register split <em>is</em> the meaning — the DM speaks in narrative, the humans at the table speak in
+  the mechanical voice:
 </p>
 
 <ul>
@@ -332,7 +342,9 @@
   <li>
     <strong><code>DmMessage</code></strong> — the DM's prose in <strong>Source Serif 4</strong>
     (<code>--font-body</code>), on a paper tint, appended token-wise as <code>text_delta</code>s
-    arrive and settling on <code>turn_end</code>.
+    arrive and settling on <code>turn_end</code>. Once a turn settles, recognized entity names in the
+    prose <a href="#entity-highlighting">highlight into knowledge cards</a>; the streaming path is
+    byte-unchanged.
   </li>
   <li>
     <strong><code>PlayerMessage</code></strong> — a human utterance in <strong>IBM Plex Mono</strong>
@@ -406,6 +418,171 @@
   question). The UX-spec recap experience is explicitly deferred, not quietly abandoned.
 </aside>
 
+<h2 id="the-knowledge-layer">The knowledge layer — what the character knows, beside the table</h2>
+
+<p>
+  MYT-94 fills the sidebar seam MYT-92 left collapsed. Beside the transcript sits a three-tab
+  <strong>knowledge sidebar</strong> — a browsable World Wiki, an interactive Relationship Graph, and
+  the player's live Character Sheet — and the DM's settled prose gains
+  <strong>entity highlighting</strong>: a recognized name in the narration becomes a quiet underline
+  that opens a terse knowledge card. Every surface renders <em>only what the character knows</em>. This
+  is the first player-facing read of the world store <em>during</em> play, and it holds the
+  enforced-ignorance line the same way the transcript does — by construction, not by prompt discipline.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The knowledge layer adds no backend read surface</strong> — the whole sidebar and the
+  highlighter are built from ONE snapshot: the member-readable, known-tier
+  <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  the <a href="./world-gen-experience.html">world-gen reveal</a> already fetches. The server filters it
+  to the known tier before it crosses the wire; the client adds <em>no</em> tier logic of its own,
+  invents no new endpoint, and — the load-bearing pin — no session frame ever promotes what the cache
+  holds. A player can only ever see, in the wiki, the graph, or a popover, exactly what the server
+  already decided they know.
+</aside>
+
+<h3>One snapshot, three projections</h3>
+
+<p>
+  <code>useKnowledgeCache</code> (<code>client-core/session/knowledge-cache.ts</code>) is the spine. It
+  fetches the world snapshot <strong>once</strong> and derives all three views from that single read:
+  the <strong>wiki view model</strong> (<code>toWikiViewModel</code>), the
+  <strong>relationship-graph seed</strong> (the canonical <code>snapshotToGraph</code>), and the
+  <strong>entity index</strong> the highlighter matches against (<code>buildEntityIndex</code>). The
+  cache refetches <em>quietly</em> — the current projections stay on screen until a fresh snapshot
+  resolves, and a refetch failure keeps the prior cache with no error flash — and it refetches on
+  exactly one trigger: a <strong>session boundary</strong> (the mount, or a WS
+  <code>reconnecting → connected</code> transition), threaded in as a bumped <code>refreshToken</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The no-frame-promotes-the-cache invariant is executable, not a comment</strong> — enforced
+  ignorance (spec §6) means no live session frame may carry pre-flip or tier-promotion content into the
+  cache. The module encodes that as code a test pins: <code>CACHE_PROMOTION_FRAME_TYPES</code> is the
+  empty set and <code>frameRefetchesCache</code> returns <code>false</code> for every frame type.
+  Opening a frame-driven promotion path would mean adding a type to that set — a single, reviewed,
+  test-visible change, never a silent drift. Until then the only way knowledge grows on screen is a
+  boundary refetch of a snapshot the server re-filtered.
+</aside>
+
+<h3>The three tabs</h3>
+
+<p><code>KnowledgeSidebar</code> is pure wiring over three shipped primitives, one per tab:</p>
+
+<ul>
+  <li>
+    <strong>World Wiki</strong> — the shipped <a href="./world-gen-experience.html">WorldWiki</a> over
+    <code>cache.wiki</code>, with client-side search. There are <strong>no stat blocks</strong>: the
+    <code>WorldSnapshotSchema</code> strips prose kernels and stat blocks server-side, so the model
+    carries only names, known facts, related entities, and the world introduction — the wiki
+    structurally <em>cannot</em> surface a mechanical secret.
+  </li>
+  <li>
+    <strong>Relationship Graph</strong> — the same
+    <a href="./world-gen-experience.html">WorldGenGraph</a> the world-gen reveal uses, mounted
+    <strong>drained</strong> (its shown count equals its total, so the fog field empties and never
+    animates) and interactive for node selection. It renders known-tier edges only.
+  </li>
+  <li>
+    <strong>Character Sheet</strong> — the in-session <code>SessionSheet</code> (below): the player's
+    own curated sheet with a live HP/condition overlay.
+  </li>
+</ul>
+
+<p>
+  The <strong>graph↔wiki bridge</strong> is a first-class seam: one <code>selectedEntityId</code> feeds
+  both the wiki and the graph, so a pick on either side highlights the other, and tapping a graph node
+  also switches the active tab to the wiki so the tap lands on that entity's page. A chat-highlight
+  click drives the same seam from the transcript.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The graph renders exactly the snapshot's edges and synthesizes none — the structural
+  secret-edge pin</strong> — a relationship between two <em>known</em> entities can still itself be
+  secret (a hidden pact between two people the player has both met). The server already drops those:
+  the snapshot's relationships are filtered to <code>access_level = 'known'</code> with both endpoints
+  in the known set. The canonical <code>snapshotToGraph</code> adapter — shared with the
+  <a href="./world-gen-experience.html">world-gen reveal</a>'s rehydration, so there is one known-tier
+  projection rather than a divergent second one — maps each snapshot edge to a graph edge and
+  <em>invents nothing</em>, so a secret edge the server withheld can never reappear on the client. The
+  live E2E seeds a secret known↔known edge and asserts it is absent from the rendered graph.
+</aside>
+
+<h3 id="entity-highlighting">Entity highlighting in settled prose</h3>
+
+<p>
+  When a DM turn <strong>settles</strong>, <code>DmMessage</code> swaps its plain paragraph for
+  <code>HighlightedProse</code>, which runs the cache's entity index over the text and wraps each
+  recognized name in an <code>EntityMention</code> (a quiet resting underline; hover or focus reveals a
+  small leading type glyph) inside an <code>EntityPopover</code> (a terse card — the name, its type, its
+  first known fact, and an "open in wiki" action that drives the graph↔wiki bridge). The streaming path
+  is <strong>byte-unchanged</strong>: highlighting only ever applies to settled text, so nothing
+  reflows mid-stream, and segmentation is memoized once per settled row rather than recomputed on every
+  render.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Matching is mechanical and names-only — ZFC, not classification</strong> — the matcher
+  (<code>client-core/session/entity-index.ts</code>) is a longest-first, Unicode-boundary-anchored
+  substring match over the known entities' <em>names</em>. It runs no model, classifies nothing, and
+  never pattern-matches on the prose — the narration is displayed verbatim; only the names are matched,
+  against a data-derived index. Only world-lore kinds highlight (npc / location / faction); the
+  player's own name and inventory items fall through unmarked. The type glyph is
+  <strong>monochrome</strong> — it conveys kind by shape alone, never a colour (spec §6) — so the
+  register stays paper-and-ink, not a tag cloud.
+</aside>
+
+<h3 id="the-in-session-sheet">The in-session sheet and its live overlay</h3>
+
+<p>
+  The Character Sheet tab is the player's own sheet, curated for play. <code>useSessionSheet</code>
+  resolves the viewer's character off the party roster, fetches the existing member-readable character
+  read, and adapts it to the same curated shape the
+  <a href="./character-creation.html">creation reveal</a> renders — reusing the raw→curated adapter
+  promoted into <code>client-core</code> for exactly this second consumer. Over that static base it
+  lays a <strong>live overlay</strong> folded from the session's <code>ledger_update</code> frames: the
+  HP readout shows the current hit points the instant an <code>adjust_hp</code> or rest frame lands,
+  and a quiet line logs recent condition changes.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The overlay SETS authoritative values, it doesn't apply deltas</strong> — a
+  <code>ledger_update</code> frame carries post-mutation values, not a change amount (an
+  <code>adjust_hp</code> frame sends the new HP; a rest frame <em>also</em> sends the restored HP). So
+  <code>reduceLedger</code> folds by <em>field presence</em> — any frame carrying
+  <code>hp</code>/<code>maxHp</code>/<code>gold</code> sets it — which makes re-applying a frame
+  idempotent, so a reconnect replay of the same frame is harmless. Conditions are the exception: the
+  frame boundary drops the apply/clear flag, so a deterministic active-condition set isn't derivable
+  without parsing prose (a ZFC violation). The overlay therefore keeps a chronological
+  <em>condition log</em> and renders it as recent changes; a maintained active set is a filed follow-up
+  that needs a wire flag. The live E2E confirmed the full
+  <code>ledger_update → reduceLedger → data-live</code> path against a real damage frame.
+</aside>
+
+<h3>The rail, the drawer, and one structural mount</h3>
+
+<p>
+  <code>usePlayKnowledge</code> is the route brain: it owns the cache, the sheet view-model, and the
+  shared sidebar state (active tab, selection, wiki query, open) that both the chat highlighter and the
+  sidebar read. <code>KnowledgePanel</code> presents it two ways from a <strong>single</strong> mount —
+  a collapsible ~30% desktop rail (default open) above the <code>lg</code> step, the shipped
+  mount-persistent <a href="./world-gen-experience.html">Drawer</a> below it — chosen by the
+  <code>useViewportBelowLg</code> breakpoint hook.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A JS breakpoint flip, not a pair of CSS <code>Show</code>s</strong> — the usual responsive
+  idiom is two sibling <code>Show</code>s, one hidden with <code>display:none</code>. That fails here
+  twice over: the narrow branch is the <code>Drawer</code>, whose content is <em>portaled</em> to
+  <code>&lt;body&gt;</code> — a <code>display:none</code> wrapper can't hide portaled content — and
+  rendering both branches would mount two <code>WorldGenGraph</code> canvases. So the rail↔drawer choice
+  is one structural mount driven by <code>useViewportBelowLg</code>, a
+  <a href="./design-system.html">design-system</a> hook that flips at the same <code>lg</code> (1024px)
+  boundary the CSS uses, so the JS regime and any <code>lg:</code> styling can never disagree.
+</aside>
+
 <h2>Operating this piece</h2>
 
 <h3>Walk a live session end-to-end (dev)</h3>
@@ -426,6 +603,15 @@
     Open the same campaign as a <strong>second identity</strong> mid-session: it should rebuild the
     full backlog (the <code>lastSeq = 0</code> seed), then stream live and show typing presence.
     Press <code>@DM</code> — the summon is visible to both tables and draws a response.
+  </li>
+  <li>
+    Open the knowledge sidebar (default-open on desktop, the edge-handle Drawer on a ~375px viewport).
+    The World Wiki lists the known entities and its search narrows client-side; the Relationship Graph
+    renders drained (no fog) with known-tier edges only; the Character Sheet shows your own sheet, and
+    an <code>adjust_hp</code> turn moves its HP readout live. Reload — the sidebar reopens and the
+    Network panel shows <strong>exactly one</strong> world-snapshot GET. To prove enforced ignorance,
+    seed a <code>secret</code>-tier relationship between two known entities and confirm it never appears
+    in the graph.
   </li>
   <li>
     Kill and restore the connection mid-turn: the turn resyncs without double-rendering. Then end the
@@ -452,8 +638,13 @@
   <a href="./character-creation.html">character creation</a> once the party finalizes, and every
   visible element is a <a href="./design-system.html">mythrunUI</a> component over the DOM-free
   <a href="./app-shell.html">client brain</a>. The <a href="#the-dice-moment">dice moment</a> (MYT-93)
-  is the first surface built on this reducer's first-class item shape; the session-end recap read and
-  the knowledge sidebar (MYT-94) are the next consumers of that same shape.
+  is the first surface built on this reducer's first-class item shape; the
+  <a href="#the-knowledge-layer">knowledge layer</a> (MYT-94) is the next consumer, reading the
+  <code>ledger_update</code> item into its live sheet overlay. That layer reuses the
+  <a href="./world-gen-experience.html">world-gen reveal</a>'s WorldWiki and WorldGenGraph and its
+  canonical snapshot→graph adapter, and the <a href="./character-creation.html">creation reveal</a>'s
+  curated-sheet adapter, both fed by the one member-readable world snapshot the server filters to the
+  known tier. The session-end recap read is still the outstanding consumer of the reducer's shape.
 </p>
 
 <h2>Appendix: the modules</h2>
@@ -504,10 +695,41 @@
     </td>
   </tr>
   <tr>
+    <td><code>knowledge-cache.ts</code></td>
+    <td>
+      <code>useKnowledgeCache</code> — ONE member-snapshot fetch → the wiki / graph / entity-index
+      projections; boundary-only refetch; <code>frameRefetchesCache</code> /
+      <code>CACHE_PROMOTION_FRAME_TYPES</code> are the executable no-frame-promotes-the-cache invariant.
+    </td>
+  </tr>
+  <tr>
+    <td><code>entity-index.ts</code></td>
+    <td>
+      <code>buildEntityIndex</code> — the mechanical, names-only, Unicode-boundary longest-match matcher
+      (settled prose → text/entity segments + the terse popover card). ZFC: no model, no classification.
+    </td>
+  </tr>
+  <tr>
+    <td><code>use-session-sheet.ts</code> · <code>ledger-reducer.ts</code></td>
+    <td>
+      The in-session sheet view-model (the viewer's own curated sheet via the promoted client-core
+      adapter) + <code>reduceLedger</code>, the authoritative-SET overlay folded from the viewer's own
+      <code>ledger_update</code> frames (live HP/gold + a chronological condition log).
+    </td>
+  </tr>
+  <tr>
     <td><code>api/play-session.ts</code></td>
     <td>The <code>startSession</code> / <code>getActiveSession</code> endpoint slices.</td>
   </tr>
 </table>
+
+<p>
+  The Relationship Graph tab's <code>snapshotToGraph</code> adapter lives in
+  <code>client-core/worldgen</code> (the canonical known-tier projection shared with the
+  <a href="./world-gen-experience.html">world-gen reveal</a>); the curated-sheet adapter lives in
+  <code>client-core/character</code> (shared with the
+  <a href="./character-creation.html">creation reveal</a>).
+</p>
 
 <h3>Web — the composition (<code>routes/play</code>)</h3>
 <table>
@@ -529,16 +751,21 @@
   <tr>
     <td><code>play/session-shell.tsx</code> · <code>session-compose.ts</code></td>
     <td>
-      The live stage (the six components + the route-side send / connection-line / typing-name
-      wiring); the pure compose helpers (<code>composeSummon</code>, …).
+      The live stage (the six components + the knowledge sidebar + the route-side send /
+      connection-line / typing-name wiring); the pure compose helpers (<code>composeSummon</code>, …).
     </td>
   </tr>
   <tr>
-    <td><code>play/prep-beat.tsx</code> · <code>purchase-seam.tsx</code> · <code>notices.tsx</code> · <code>sidebar-placeholder.tsx</code></td>
+    <td><code>play/knowledge-panel.tsx</code></td>
     <td>
-      The prep phase (with the failure latch), the 402 purchase seam, the calm holds/notices, and the
-      collapsed sidebar seam MYT-94 fills.
+      <code>usePlayKnowledge</code> (the route brain — cache + sheet + shared sidebar state) +
+      <code>KnowledgePanel</code> (the ~30% desktop rail / narrow Drawer, one structural mount) —
+      fills MYT-92's collapsed sidebar seam.
     </td>
+  </tr>
+  <tr>
+    <td><code>play/prep-beat.tsx</code> · <code>purchase-seam.tsx</code> · <code>notices.tsx</code></td>
+    <td>The prep phase (with the failure latch), the 402 purchase seam, and the calm holds/notices.</td>
   </tr>
 </table>
 
@@ -556,8 +783,12 @@
     </td>
   </tr>
   <tr>
-    <td><code>DmMessage</code></td>
-    <td>Serif (<code>--font-body</code>), paper tint, token-streamed, settles on turn end.</td>
+    <td><code>DmMessage</code> · <code>HighlightedProse</code></td>
+    <td>
+      Serif (<code>--font-body</code>), paper tint, token-streamed, settles on turn end. Settled rows
+      swap in <code>HighlightedProse</code> — entity mentions over the once-per-row segmentation; the
+      streaming path stays byte-identical.
+    </td>
   </tr>
   <tr>
     <td><code>PlayerMessage</code></td>
@@ -589,17 +820,46 @@
       a polite live region.
     </td>
   </tr>
+  <tr>
+    <td><code>EntityMention</code> · <code>EntityPopover</code></td>
+    <td>
+      The in-prose mention (a quiet underline + a monochrome type glyph on hover/focus) and the terse
+      popover card it anchors — name, type, first known fact, "open in wiki".
+    </td>
+  </tr>
+  <tr>
+    <td><code>SessionSheet</code></td>
+    <td>
+      The in-session curated sheet — the creation-reveal body without the confirm/start-over chrome,
+      with a live HP <code>data-live</code> overlay and a quiet recent-conditions line.
+    </td>
+  </tr>
+  <tr>
+    <td><code>KnowledgeSidebar</code></td>
+    <td>
+      The three-tab panel (World Wiki · Relationship Graph, drained · Character Sheet) over one snapshot;
+      the graph↔wiki bridge is a first-class seam. Pure wiring — the route owns the state.
+    </td>
+  </tr>
 </table>
 
 <h2>Source</h2>
 
 <p>
-  <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>,
-  <code>frontend/client-core/src/session/</code> (the transcript reducer + types, the optimistic
-  layer, <code>use-session</code>, <code>use-session-prep</code>, <code>start-flow</code>,
-  <code>roll-reveal</code>), <code>frontend/client-core/src/api/play-session.ts</code>,
-  <code>frontend/client-core/src/contract/session/</code>, and the <code>DmMessage</code> /
+  <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>
+  (incl. <code>knowledge-panel.tsx</code>), <code>frontend/client-core/src/session/</code> (the
+  transcript reducer + types, the optimistic layer, <code>use-session</code>,
+  <code>use-session-prep</code>, <code>start-flow</code>, <code>roll-reveal</code>, and the MYT-94
+  knowledge brain — <code>knowledge-cache</code>, <code>entity-index</code>, <code>ledger-reducer</code>,
+  <code>use-session-sheet</code>), <code>frontend/client-core/src/api/play-session.ts</code>,
+  <code>frontend/client-core/src/contract/session/</code> +
+  <code>frontend/client-core/src/contract/session-knowledge.ts</code>, and the <code>DmMessage</code> /
   <code>PlayerMessage</code> / <code>MessageStream</code> / <code>RollCard</code> /
   <code>DieSpin</code> / <code>SessionInput</code> / <code>SessionStartBeat</code> /
-  <code>ThinkingIndicator</code> components under <code>frontend/ui/src/components/</code>.
+  <code>ThinkingIndicator</code> / <code>EntityMention</code> / <code>EntityPopover</code> /
+  <code>SessionSheet</code> / <code>KnowledgeSidebar</code> components under
+  <code>frontend/ui/src/components/</code>. The shared <code>snapshotToGraph</code>
+  (<code>client-core/worldgen</code>) and curated-sheet (<code>client-core/character</code>) adapters
+  are documented on the <a href="./world-gen-experience.html">world-gen</a> and
+  <a href="./character-creation.html">character-creation</a> pages.
 </p>

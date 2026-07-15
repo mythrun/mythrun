@@ -12,6 +12,7 @@
 <!-- source: frontend/ui/src/brand-marks/ -->
 <!-- source: frontend/ui/src/theme/ -->
 <!-- source: frontend/ui/src/lib/cn.ts -->
+<!-- source: frontend/ui/src/lib/use-viewport-below-lg.ts -->
 <!-- source: frontend/ui/src/styles/theme.css -->
 <!-- source: frontend/ui/src/styles/semantic.css -->
 <!-- source: frontend/ui/eslint.config.js -->
@@ -20,8 +21,8 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:2966ae06c56f28f9cfef6ae70d7c126192d408f8e2c700e940b4a882adc93581 -->
-<!-- last-ticket: MYT-93 -->
+<!-- source-hash: sha256:f5501ab50ac6c6e0ee0ce15592a9f13f75688dcc740b12a38ac65cb4cde53149 -->
+<!-- last-ticket: MYT-94 -->
 
 <h1>Design system</h1>
 
@@ -454,7 +455,21 @@
   <a href="./live-play.html">live play</a>. <code>DieSpin</code> is a newly authored 1-bit die glyph —
   no pixelarticons die exists, so it is the canonical reference for the mark — spun in the brand's
   stepped-dither motion register (eight discrete 45° steps) rather than the smooth spin the UX spec
-  named, the brand-overrides-UX rule applied to motion.
+  named, the brand-overrides-UX rule applied to motion. The
+  <a href="./live-play.html#the-knowledge-layer">knowledge layer</a> (MYT-94) drew the line once more:
+  its four surfaces — <code>EntityMention</code> / <code>EntityPopover</code> (in-prose entity
+  highlighting), <code>SessionSheet</code> (the in-session curated sheet), and
+  <code>KnowledgeSidebar</code> (the three-tab world-wiki / relationship-graph / character-sheet panel,
+  composing the shipped <code>Tabs</code> + <code>WorldWiki</code> + <code>WorldGenGraph</code> +
+  <code>SessionSheet</code>) — are controlled feature composites documented on
+  <a href="./live-play.html">live play</a>, their data owned by client-core view-models. The reusable
+  pieces the wave folded back into the system are two: three monochrome entity-type glyphs
+  (<code>entity-npc</code> / <code>entity-location</code> / <code>entity-faction</code>) added to the
+  swappable <code>Icon</code> map (<code>glyphs.ts</code>) and the closed <code>IconName</code> union —
+  spec §6 monochrome, so they carry type by shape, never colour — and <code>useViewportBelowLg</code>,
+  a sibling of <code>useViewportNarrow</code> at the <code>lg</code> (1024px) step for a desktop rail
+  that becomes a portaled <code>Drawer</code> below it (a JS flip, because a <code>Show</code>'s
+  <code>display:none</code> can't hide the Drawer's portaled content).
 </p>
 
 <h2>Responsive by construction</h2>

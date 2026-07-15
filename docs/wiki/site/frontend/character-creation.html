@@ -650,7 +650,10 @@
 <p>
   The reveal is a field-guide entry, not a stat block. <code>CharacterRevealSurface</code> fetches the
   finished character (the raw snake-case read), adapts it deterministically into a
-  <code>{ curated, full }</code> view-model, and renders <code>CharacterSheetReveal</code>: the name;
+  <code>{ curated, full }</code> view-model — through the raw→curated adapter now promoted into
+  <code>client-core</code> (MYT-94), so the route delegates to it and the
+  <a href="./live-play.html#the-in-session-sheet">in-session sheet</a> reuses the same reshape — and
+  renders <code>CharacterSheetReveal</code>: the name;
   a mono identity line; an AC / HP / Proficiency / Hit-Die / Speed stripe; six square ability tiles;
   one or two paragraphs of connection prose; and "what they can do / carry / cast" panels — the spells
   panel appearing only for casters. Three actions ride it: <em>This is me</em> persists
@@ -902,8 +905,12 @@
     <td>The three durable surface beats — the loading fold, the reveal + sheet adapter, and the staging roster.</td>
   </tr>
   <tr>
-    <td><code>character-new/sheet-adapter.ts</code></td>
-    <td>The raw character read → the reveal view-model (deterministic math + SRD maps, never a prose parse).</td>
+    <td><code>client-core/character/sheet-adapter.ts</code> · <code>character-new/sheet-adapter.ts</code></td>
+    <td>
+      The raw character read → the reveal view-model (deterministic math + SRD maps, never a prose
+      parse). Promoted into <code>client-core</code> (MYT-94) as the canonical reshape; the
+      <code>character-new</code> file now delegates, and the in-session sheet reuses it.
+    </td>
   </tr>
   <tr>
     <td><code>character-new/join-summary.tsx</code></td>
