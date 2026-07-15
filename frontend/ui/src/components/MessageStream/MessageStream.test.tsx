@@ -3,7 +3,13 @@ import { createRef } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
-import type { TranscriptItem } from '@mythrun/client-core/contract'
+import type {
+  DmMessageProps,
+  EntityCard,
+  EntityIndex,
+  ProseSegment,
+  TranscriptItem,
+} from '@mythrun/client-core/contract'
 import { MessageStream } from './MessageStream.tsx'
 
 // ── Fixtures — one of every TranscriptItem kind, frames matching the shipped
@@ -319,5 +325,66 @@ describe('MessageStream', () => {
       <MessageStream items={MECHANICAL} connectionLine={'[ph: reconnecting…]'} reducedMotion={false} />,
     )
     expect(await axe(withLine.container)).toHaveNoViolations()
+  })
+})
+
+// ── MYT-94 (Task 11) — the settled-prose highlight seam threads straight through the
+// `dm` arm. MessageStream stays presentation-only: DmMessage owns the settle-only gating
+// + the once-per-row memoized segmentation. ────────────────────────────────────────────
+describe('MessageStream — entity-highlight seam (MYT-94)', () => {
+  const HL_CARDS: Record<string, EntityCard> = {
+    e1: { entityId: 'e1', name: 'Highreach', glyph: 'location', leadLine: 'A cliff town.' },
+  }
+  const HL_SEGMENTS: ProseSegment[] = [
+    { kind: 'text', text: 'A road climbs to ' },
+    { kind: 'entity', text: 'Highreach', entityId: 'e1', glyph: 'location' },
+    { kind: 'text', text: '.' },
+  ]
+  const HL_INDEX: EntityIndex = {
+    segment: vi.fn(() => HL_SEGMENTS),
+    card: vi.fn((id: string) => HL_CARDS[id] ?? null),
+  }
+  const HL_LABELS: NonNullable<DmMessageProps['highlightLabels']> = {
+    mentionLabelFor: (name) => `entity: ${name}`,
+    typeLabelFor: (glyph) => `type: ${glyph}`,
+    openInWikiLabel: 'Open in wiki',
+  }
+  const DM_HL_SETTLED: TranscriptItem = {
+    kind: 'dm',
+    key: 'dm-hl',
+    turnId: 'T9',
+    text: 'A road climbs to Highreach.',
+    streaming: false,
+  }
+
+  it('threads highlight through to a SETTLED dm row (mention renders) and fires onEntityOpen', async () => {
+    const user = userEvent.setup()
+    const onEntityOpen = vi.fn()
+    render(
+      <MessageStream
+        items={[DM_HL_SETTLED]}
+        connectionLine={null}
+        reducedMotion={false}
+        highlight={HL_INDEX}
+        highlightLabels={HL_LABELS}
+        onEntityOpen={onEntityOpen}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'entity: Highreach' }))
+    await user.click(screen.getByRole('button', { name: 'Open in wiki' }))
+    expect(onEntityOpen).toHaveBeenCalledWith('e1')
+  })
+
+  it('does NOT highlight a STREAMING dm row even when highlight is present', () => {
+    render(
+      <MessageStream
+        items={[{ ...DM_HL_SETTLED, key: 'dm-hl-s', streaming: true }]}
+        connectionLine={null}
+        reducedMotion={false}
+        highlight={HL_INDEX}
+        highlightLabels={HL_LABELS}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'entity: Highreach' })).toBeNull()
   })
 })

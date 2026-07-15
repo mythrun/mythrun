@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, Fragment } from 'react'
 import type { ReactNode } from 'react'
-import type { MessageStreamProps, TranscriptItem } from '@mythrun/client-core/contract'
+import type { EntityIndex, MessageStreamProps, TranscriptItem } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 import { Divider } from '../Divider/Divider.tsx'
@@ -68,9 +68,26 @@ function mechanicalText(item: MechanicalItem): string {
 
 // Per-item dispatch — the RENDERING seam MYT-93/94 extend (spec §7). Keys live on
 // the wrapping Fragment in the map, so the returned nodes are unkeyed.
-function renderItem(item: TranscriptItem): ReactNode {
+//
+// MYT-94 threads the settled-prose highlight seam straight into the `dm` arm (append-only
+// optionals — the player + mechanical arms are untouched). DmMessage owns the settle-only
+// gating + the once-per-row memoized segmentation; MessageStream is pure pass-through.
+function renderItem(
+  item: TranscriptItem,
+  highlight: EntityIndex | undefined,
+  onEntityOpen: ((entityId: string) => void) | undefined,
+  highlightLabels: MessageStreamProps['highlightLabels'],
+): ReactNode {
   if (item.kind === 'dm') {
-    return <DmMessage text={item.text} streaming={item.streaming} />
+    return (
+      <DmMessage
+        text={item.text}
+        streaming={item.streaming}
+        {...(highlight !== undefined ? { highlight } : {})}
+        {...(onEntityOpen !== undefined ? { onEntityOpen } : {})}
+        {...(highlightLabels !== undefined ? { highlightLabels } : {})}
+      />
+    )
   }
   if (item.kind === 'player') {
     return (
@@ -100,7 +117,7 @@ function needsDivider(items: readonly TranscriptItem[], i: number): boolean {
 }
 
 export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(function MessageStream(
-  { items, connectionLine, reducedMotion },
+  { items, connectionLine, reducedMotion, highlight, onEntityOpen, highlightLabels },
   ref,
 ) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -163,7 +180,7 @@ export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(func
         {items.map((item, i) => (
           <Fragment key={item.key}>
             {needsDivider(items, i) ? <Divider /> : null}
-            {renderItem(item)}
+            {renderItem(item, highlight, onEntityOpen, highlightLabels)}
           </Fragment>
         ))}
       </div>

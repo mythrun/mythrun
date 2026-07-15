@@ -1,5 +1,7 @@
 import { describe, it, expect, expectTypeOf } from 'vitest'
 import type { TranscriptItem as SourceTranscriptItem } from '../../../session/transcript-types.ts'
+import type { EntityIndex } from '../../../session/entity-index.ts'
+import type { EntityHighlightLabels } from '../dm-message-props.ts'
 import * as sessionBarrel from '../index.ts'
 import type {
   // Re-exported view-model shape (from session/transcript-types.ts)
@@ -36,19 +38,35 @@ describe('re-exported view-model shape', () => {
 })
 
 describe('prop contracts (exact — the U tasks build to these)', () => {
-  it('MessageStreamProps — the transcript items + a quiet connection line + reduced-motion', () => {
+  it('MessageStreamProps — transcript items + connection line + reduced-motion + MYT-94 highlight seam', () => {
+    // EXACT-shape pin (do NOT weaken to toMatchTypeOf). MYT-94 (Task 11) appends the
+    // three append-only optional highlight-seam fields below.
+    //
+    // ── CONTROLLER EXTENSION SPOT (wave-2 reconcile) ──────────────────────────────
+    // This worktree branched from main BEFORE MYT-93 merged, so the base shape here is
+    // MYT-92's 3 fields (items/connectionLine/reducedMotion) — NOT the "MYT-93 7 reveal
+    // fields" the bead note describes (they are not present in this worktree). At the
+    // MYT-93 + MYT-94 merge, UNION MYT-93's reveal fields into this same exact-shape
+    // literal alongside MYT-94's `highlight?/onEntityOpen?/highlightLabels?`.
     expectTypeOf<MessageStreamProps>().toEqualTypeOf<{
       items: readonly TranscriptItem[]
       connectionLine: string | null
       reducedMotion: boolean
+      highlight?: EntityIndex
+      onEntityOpen?: (entityId: string) => void
+      highlightLabels?: EntityHighlightLabels
     }>()
   })
 
-  it('DmMessageProps — serif streaming prose; writingLabel optional SR annotation', () => {
+  it('DmMessageProps — serif streaming prose; writingLabel SR annotation; MYT-94 highlight seam', () => {
     expectTypeOf<DmMessageProps>().toEqualTypeOf<{
       text: string
       streaming: boolean
       writingLabel?: string
+      // MYT-94 (Task 11) — append-only settled-prose highlight seam.
+      highlight?: EntityIndex
+      onEntityOpen?: (entityId: string) => void
+      highlightLabels?: EntityHighlightLabels
     }>()
   })
 

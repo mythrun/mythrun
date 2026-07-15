@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { DmMessage } from './DmMessage.tsx'
+import { STORY_INDEX, STORY_LABELS } from './highlight.fixture.ts'
 
 // DmMessage — the DM's narrative register in the live transcript (MYT-92). One row
 // of Source Serif 4 prose on a quiet warm paper tint: the feeling of a book being
@@ -77,4 +78,25 @@ function ArrivingDemo(): React.JSX.Element {
 export const Arriving: Story = {
   name: 'Arriving (demo stream)',
   render: () => <ArrivingDemo />,
+}
+
+// MYT-94 — a SETTLED turn with entity highlighting on. Recognized world-lore names
+// (Elenya, Highreach, the Ashen Hand) carry a subtle resting underline; hover/focus reveals
+// a monochrome type glyph and clicking opens the terse knowledge popover. Highlighting runs
+// ONLY on settled prose (the Streaming story shows the byte-identical mid-turn path). The
+// index + chrome labels come from a story fixture; in play they come from the client-core
+// knowledge cache + the route's i18n.
+const HL_NARRATION =
+  'You find Elenya on the switchback stairs below Highreach, her satchel heavy with fresh ' +
+  'cuttings. She does not look up from her work. "the Ashen Hand came through at first light," ' +
+  'she says, quiet as the wind. "They were asking after you by name."'
+
+export const Highlighted: Story = {
+  name: 'Highlighted (settled, with mentions)',
+  args: {
+    text: HL_NARRATION,
+    streaming: false,
+    highlight: STORY_INDEX,
+    highlightLabels: STORY_LABELS,
+  },
 }

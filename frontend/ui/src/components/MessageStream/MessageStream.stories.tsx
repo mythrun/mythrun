@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { ReactNode } from 'react'
 import type { TranscriptItem } from '@mythrun/client-core/contract'
 import { MessageStream } from './MessageStream.tsx'
+import { STORY_INDEX, STORY_LABELS } from '../DmMessage/highlight.fixture.ts'
 
 // MessageStream — the live-play transcript. Pure/presentational: these specimens
 // hand it fixed `items` snapshots; the real screen (MYT-92 route) wires the items
@@ -184,4 +185,47 @@ export const ReducedMotion: Story = {
 // The opening moment — an empty transcript before the first DM beat arrives.
 export const Empty: Story = {
   args: { items: [], connectionLine: null, reducedMotion: false },
+}
+
+// MYT-94 — the highlight seam on. Recognized world-lore names in SETTLED DM prose carry the
+// subtle mention underline (hover reveals a monochrome type glyph; click opens the terse
+// popover); the streaming DM row at the tail stays plain (no mid-stream highlighting). The
+// index + chrome come from the shared story fixture; in play they come from the knowledge
+// cache + route i18n.
+const HL_TRANSCRIPT: TranscriptItem[] = [
+  {
+    kind: 'dm',
+    key: 'h-dm-1',
+    turnId: 'H1',
+    text: 'The road climbs to Highreach in roped switchbacks, and the wind carries woodsmoke and the smell of crushed herbs.',
+    streaming: false,
+  },
+  {
+    kind: 'player',
+    key: 'h-pl-1',
+    turnId: null,
+    seq: 3,
+    userId: 'u1',
+    displayName: 'Miklos',
+    characterName: 'Kessa Vurm',
+    text: 'I look for the herb stall — Elenya said she would be here.',
+    pending: false,
+  },
+  {
+    kind: 'dm',
+    key: 'h-dm-2',
+    turnId: 'H2',
+    text: 'Elenya is bent over a table of cuttings. Without looking up she says the Ashen Hand rode through at dawn, asking after you by name. Then she goes still, and',
+    streaming: true,
+  },
+]
+
+export const Highlighted: Story = {
+  args: {
+    items: HL_TRANSCRIPT,
+    connectionLine: null,
+    reducedMotion: false,
+    highlight: STORY_INDEX,
+    highlightLabels: STORY_LABELS,
+  },
 }
