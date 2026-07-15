@@ -41,6 +41,7 @@ import { isTerminalError } from '../errors.js'
 import { logger } from '../logger.js'
 import { atomicClaimStage } from './world-gen-processor.js'
 import { generateSessionPrep } from './stages/session-prep.js'
+import { runSecretTripwire } from '../secret-tripwire.js'
 import { buildPriorSessionContext } from './prior-session-context.js'
 import { createRepo } from '../../repo/index.js'
 import { computeCostUsd } from '../../billing/model-pricing.js'
@@ -167,20 +168,28 @@ export async function processSessionPrepJob(
     // §6 — deterministically append the verbatim voice / atmosphere excerpts to
     // ft_context AFTER generation. NEVER paraphrased through the prep LLM.
     const ftContext = result.ft_context + buildReturningVoicesSection(priorSessionContext.latestHandoff)
+    const tripwire = await vetOpening(result.opening, result.sd_playbook)
     await repo.sessionPreps.insert({
       campaignId,
       sessionNumber,
       ftContext,
       sdPlaybook: result.sd_playbook,
+      opening: result.opening,
     })
     // The `?? 0` arms are defense-in-depth: the Anthropic SDK always populates
     // token counts (same rationale as paint-job-validator's addUsage), so the
     // undefined arms never fire in practice — exclude them from branch coverage.
     /* c8 ignore start */
-    const costUsd = computeCostUsd('claude-opus-4-7', {
-      inputTokens: result.usage.inputTokens ?? 0,
-      outputTokens: result.usage.outputTokens ?? 0,
-    })
+    const costUsd =
+      computeCostUsd('claude-opus-4-7', {
+        inputTokens: result.usage.inputTokens ?? 0,
+        outputTokens: result.usage.outputTokens ?? 0,
+      }) +
+      // MYT-101: the opening tripwire's Haiku spend rides the same stage cost.
+      computeCostUsd('claude-haiku-4-5-20251001', {
+        inputTokens: tripwire.usage.inputTokens ?? 0,
+        outputTokens: tripwire.usage.outputTokens ?? 0,
+      })
     /* c8 ignore stop */
     await repo.pipelineRuns.markStageCompleted({
       kind: 'campaign',
@@ -229,4 +238,24 @@ export function createSessionPrepProcessor(
   return async (job) => {
     await processSessionPrepJob(deps, job)
   }
+}
+
+// MYT-101: vet the player-facing opening against this generation's OWN
+// playbook (the session's complete secret surface). Recall-biased like the
+// scribe's per-turn tripwire: ANY breached verdict — regardless of confidence —
+// fails the stage (retryable; a regeneration may pass). A tripped opening is
+// NEVER persisted, and neither is the rest of the prep (the row is
+// all-or-nothing). Returns the tripwire output so its Haiku usage rides the
+// stage cost.
+async function vetOpening(
+  opening: string,
+  sdPlaybook: string,
+): Promise<Awaited<ReturnType<typeof runSecretTripwire>>> {
+  const tripwire = await runSecretTripwire({ prose: opening, secrets: sdPlaybook })
+  if (tripwire.result.breached) {
+    throw new Error(
+      `session-prep: opening breached the secret tripwire (confidence ${String(tripwire.result.confidence)}, ref ${tripwire.result.secretRef ?? 'none'})`,
+    )
+  }
+  return tripwire
 }

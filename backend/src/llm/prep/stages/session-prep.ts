@@ -20,6 +20,9 @@ export const sessionPrepSchema = z.object({
   // completeness check (spec §9). The prose-quality bar is an eval concern.
   ft_context: z.string().min(200),
   sd_playbook: z.string().min(100),
+  // MYT-101: the player-facing session opening the DM reads aloud at the top
+  // of the session. Floor only — no .max() on LLM prose.
+  opening: z.string().min(100),
 })
 export type SessionPrep = z.infer<typeof sessionPrepSchema>
 
@@ -48,6 +51,8 @@ export interface GenerateSessionPrepArgs {
 export interface SessionPrepResult {
   readonly ft_context: string
   readonly sd_playbook: string
+  /** MYT-101: player-facing opening — tripwire-vetted by the processor before persist. */
+  readonly opening: string
   readonly usage: LanguageModelUsage
 }
 
@@ -122,5 +127,5 @@ export async function generateSessionPrep(
 
   const output = await result.object
   const usage = await result.usage
-  return { ft_context: output.ft_context, sd_playbook: output.sd_playbook, usage }
+  return { ft_context: output.ft_context, sd_playbook: output.sd_playbook, opening: output.opening, usage }
 }

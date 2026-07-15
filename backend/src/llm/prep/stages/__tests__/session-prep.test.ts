@@ -78,7 +78,7 @@ import { OPUS } from '../../../models.js'
 
 function scripted(
   partials: Record<string, string>[],
-  object: { ft_context: string; sd_playbook: string },
+  object: { ft_context: string; sd_playbook: string; opening?: string },
 ) {
   function* gen(): Generator<Record<string, string>> {
     for (const p of partials) yield p
@@ -95,13 +95,14 @@ describe('generateSessionPrep', () => {
     streamObjectMock.mockReturnValueOnce(
       scripted(
         [{ ft_context: 'x'.repeat(200) }, { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) }],
-        { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) },
+        { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100), opening: 'o'.repeat(150) },
       ),
     )
     const repo = {} as never
     const result = await generateSessionPrep(repo, { campaignId: 'camp1', worldId: 'w1', sessionNumber: 1 })
     expect(result.ft_context).toBe('x'.repeat(200))
     expect(result.sd_playbook).toBe('y'.repeat(100))
+    expect(result.opening).toBe('o'.repeat(150))
     expect(result.usage.outputTokens).toBe(20)
     const call = streamObjectMock.mock.calls[0]?.[0] as Record<string, unknown>
     expect(call.model).toBe(OPUS)
@@ -109,6 +110,14 @@ describe('generateSessionPrep', () => {
     expect(call.prompt as string).toContain('SERIALIZED WORLD STATE')
     const po = call.providerOptions as { mythrun: { stage: string } }
     expect(po.mythrun.stage).toBe('session_prep')
+  })
+
+  it('sessionPrepSchema requires a real opening (MYT-101 floor)', async () => {
+    const { sessionPrepSchema } = await import('../session-prep.js')
+    const base = { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) }
+    expect(sessionPrepSchema.safeParse(base).success).toBe(false)
+    expect(sessionPrepSchema.safeParse({ ...base, opening: 'short' }).success).toBe(false)
+    expect(sessionPrepSchema.safeParse({ ...base, opening: 'o'.repeat(100) }).success).toBe(true)
   })
 
   it('emits ordered per-field prose deltas with no overlap or loss', async () => {

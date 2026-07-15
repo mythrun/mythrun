@@ -50,6 +50,7 @@ import {
   type SessionPrepProcessorDeps,
 } from '../session-prep-processor.js'
 import * as sessionPrepStage from '../stages/session-prep.js'
+import * as secretTripwire from '../../secret-tripwire.js'
 import { buildReturningVoicesSection } from '../session-prep-processor.js'
 import { createSessionsRepo } from '../../../repo/sessions.js'
 import type { SessionHandoff } from '../../schemas/post-session-analysis.js'
@@ -116,7 +117,17 @@ const STAGE_USAGE = {
 
 // Opus rates from MODEL_PRICING['claude-opus-4-7']: input 5.0, output 25.0
 // per million. (5000*5 + 9000*25) / 1e6 = (25000 + 225000) / 1e6 = 0.25.
-const EXPECTED_COST_USD = (5000 * 5.0 + 9000 * 25.0) / 1_000_000
+// MYT-101: the opening tripwire (Haiku) usage folded into the stage cost.
+// Haiku rates from MODEL_PRICING: input 1.0, output 5.0 per million.
+const TRIPWIRE_USAGE = {
+  inputTokens: 1000,
+  outputTokens: 50,
+  totalTokens: 1050,
+  inputTokenDetails: { noCacheTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  outputTokenDetails: { textTokens: 50, reasoningTokens: 0 },
+} as const
+const EXPECTED_COST_USD =
+  (5000 * 5.0 + 9000 * 25.0) / 1_000_000 + (1000 * 1.0 + 50 * 5.0) / 1_000_000
 
 // §6 — the pure verbatim-injection builder. Exercised end-to-end through the
 // processor below; these direct cases pin the empty/skip arms (an NPC with an
@@ -180,6 +191,12 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks()
+    // MYT-101: default-clean opening tripwire; the breach test overrides once.
+    vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValue({
+      result: { breached: false, confidence: 0.95, secretRef: null },
+      usage: { ...TRIPWIRE_USAGE },
+      repairAttempted: false,
+    })
     await cleanupTestScope(pool, scope)
   })
 
@@ -232,6 +249,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
         return Promise.resolve({
           ft_context: 'FT',
           sd_playbook: 'SD',
+          opening: 'OPENING '.repeat(15).trim(),
           usage: { ...STAGE_USAGE },
         })
       })
@@ -255,14 +273,15 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(stageSpy).toHaveBeenCalledTimes(1)
 
     // session_preps row persisted with the two prose artifacts.
-    const preps = await pool.query<{ ft_context: string; sd_playbook: string }>(
-      `SELECT ft_context, sd_playbook FROM session_preps
+    const preps = await pool.query<{ ft_context: string; sd_playbook: string; opening: string }>(
+      `SELECT ft_context, sd_playbook, opening FROM session_preps
         WHERE campaign_id = $1 AND session_number = 1`,
       [campaignId],
     )
     expect(preps.rowCount).toBe(1)
     expect(preps.rows[0]?.ft_context).toBe('FT')
     expect(preps.rows[0]?.sd_playbook).toBe('SD')
+    expect(preps.rows[0]?.opening).toBe('OPENING '.repeat(15).trim())
 
     // pipeline_runs row keyed on (campaign, 'session-prep:1'), user_id NULL.
     const runs = await pool.query<{ status: string; cost_usd: string }>(
@@ -353,6 +372,50 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(events).toHaveLength(0)
     expect(prose).toHaveLength(0)
     // No session_preps row was written by the no-op path.
+    const preps = await pool.query(
+      `SELECT 1 FROM session_preps WHERE campaign_id = $1 AND session_number = 1`,
+      [campaignId],
+    )
+    expect(preps.rowCount).toBe(0)
+  })
+
+  it('MYT-101: a breached opening fails the stage (retryable) and persists NOTHING', async () => {
+    const { campaignId } = await seed()
+    vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValueOnce({
+      ft_context: 'FT',
+      sd_playbook: 'SD with a core secret',
+      opening: 'o'.repeat(120),
+      usage: { ...STAGE_USAGE },
+    })
+    vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValueOnce({
+      result: { breached: true, confidence: 0.4, secretRef: 'npc:prioress' },
+      usage: { ...TRIPWIRE_USAGE },
+      repairAttempted: false,
+    })
+    const events: Record<string, unknown>[] = []
+
+    await expect(
+      processSessionPrepJob(
+        makeDeps(pool, {
+          publishEvent: (cid, e) => {
+            events.push({ campaignId: cid, ...e })
+            return Promise.resolve()
+          },
+        }),
+        makeJob({ campaignId, sessionNumber: 1 }),
+      ),
+    ).rejects.toThrow(/tripwire/)
+
+    // Recall-biased: ANY breached verdict (even low-confidence) fails the stage.
+    const runs = await pool.query<{ status: string }>(
+      `SELECT status FROM pipeline_runs
+        WHERE campaign_id = $1 AND stage = 'session-prep:1' AND user_id IS NULL`,
+      [campaignId],
+    )
+    expect(runs.rows[0]?.status).toBe('failed')
+    const failed = events.find((e) => e.type === 'prep-failed')
+    expect(failed?.terminal).toBe(false)
+    // A tripped opening is NEVER persisted — the whole prep row is withheld.
     const preps = await pool.query(
       `SELECT 1 FROM session_preps WHERE campaign_id = $1 AND session_number = 1`,
       [campaignId],
@@ -466,6 +529,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValue({
       ft_context: 'GENERATED FT',
       sd_playbook: 'SD',
+      opening: 'o'.repeat(120),
       usage: { ...STAGE_USAGE },
     })
 
@@ -496,6 +560,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValue({
       ft_context: 'GENERATED FT',
       sd_playbook: 'SD',
+      opening: 'o'.repeat(120),
       usage: { ...STAGE_USAGE },
     })
 
@@ -515,6 +580,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValue({
       ft_context: 'FT',
       sd_playbook: 'SD',
+      opening: 'o'.repeat(120),
       usage: { ...STAGE_USAGE },
     })
 
