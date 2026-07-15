@@ -9,7 +9,7 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:8430bc1f72b2eff5a2e5bc0151f4e7031a1868c285b919e650ac44020ca86df6 -->
+<!-- source-hash: sha256:171a77249cddbcd141f93395fdc98aff3eda3c76d570e20fb8d495181268ae9e -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>CI/CD</h1>
@@ -450,7 +450,9 @@
   raw <code>&lt;div&gt;</code> in feature code, a DOM prop on a public contract, or a raw hex in a
   <code>cva()</code> block all fail here. The one external dependency is the cached Playwright
   browser download; there are no Postgres, Redis, or secrets dependencies, so the job stays
-  self-contained (its timeout was raised 8 → 15 minutes to absorb the Chromium sweep).
+  self-contained (its timeout has been raised twice — 8 → 15 minutes to absorb the Chromium
+  sweep, then 15 → 20 when the MYT-93/94 wave grew the story surface enough that the sweep
+  overran the cap and was cancelled mid-run, masking real failures).
 </p>
 
 <aside class="wiki-rationale">
