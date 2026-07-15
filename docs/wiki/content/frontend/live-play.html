@@ -6,11 +6,13 @@
 <!-- source: frontend/ui/src/components/DmMessage/ -->
 <!-- source: frontend/ui/src/components/PlayerMessage/ -->
 <!-- source: frontend/ui/src/components/MessageStream/ -->
+<!-- source: frontend/ui/src/components/RollCard/ -->
+<!-- source: frontend/ui/src/components/DieSpin/ -->
 <!-- source: frontend/ui/src/components/SessionInput/ -->
 <!-- source: frontend/ui/src/components/SessionStartBeat/ -->
 <!-- source: frontend/ui/src/components/ThinkingIndicator/ -->
-<!-- source-hash: sha256:15277d03324c49106750a50c31a8b98549b83362836f25851f21d95a4c30d9c4 -->
-<!-- last-ticket: MYT-92 -->
+<!-- source-hash: sha256:b9a1afe4aecd66e5070b98fe24c32d2f5bc8ee6c4322b5414d526b522de47a6c -->
+<!-- last-ticket: MYT-93 -->
 
 <h1>Live play</h1>
 
@@ -18,10 +20,11 @@
   The table itself: <code>/campaigns/:id/play</code>, where the party and the AI DM run a session.
   An atmospheric prep beat gives way to a Start that debits the owner's session credit, then the
   screen becomes a streamed multiplayer transcript — the DM's prose arrives token by token, the
-  humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, and a
-  dropped connection resyncs without double-rendering the turn it dropped during. The route is a thin
-  composition; all the reasoning — the start classifier, the transcript reducer, the transport
-  view-model — lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
+  humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, a
+  dropped connection resyncs without double-rendering the turn it dropped during, and a skill check
+  arrives as an in-stream dice card the player rolls before the outcome prose unfolds. The route is a
+  thin composition; all the reasoning — the start classifier, the transcript reducer, the reveal gate,
+  the transport view-model — lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
 </p>
 
 <!-- @diagram: frontend/live-play -->
@@ -32,7 +35,10 @@
   <a href="../runtime/session-transport.html">session transport</a> hands it; it introduces no new
   WebSocket frame, no new backend read. There is deliberately no Slow-Thinker stage-direction frame
   anywhere in the client, and nothing on this screen may add one — the reason the DM intervened is
-  never on the wire the player consumes.
+  never on the wire the player consumes. MYT-93's dice moment holds the same line: the reveal drives
+  entirely off the <code>skill_check</code>/<code>dice_roll</code> frames already on the wire, and the
+  client→server <code>roll_complete</code> frame was deliberately excluded — pressing Roll sends
+  nothing, because the number is already server-resolved.
 </aside>
 
 <h2>How it fits together</h2>
@@ -144,14 +150,17 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Every mechanical frame is a first-class item, even though MYT-92 renders it as one mono
-  line</strong> — <code>skill_check</code>, <code>dice_roll</code>, <code>ledger_update</code>,
+  <strong>Every mechanical frame is a first-class item, so the rendering can grow without touching the
+  reducer</strong> — <code>skill_check</code>, <code>dice_roll</code>, <code>ledger_update</code>,
   <code>mode_change</code>, and the two <code>combat_*</code> frames each become a typed transcript
-  item carrying the whole frame, not a flattened string. MYT-92 renders each as a terse system line,
-  but modeling them fully now is the wave-2 shared contract: the
-  <a href="./character-creation.html">dice-and-skill-checks</a> and knowledge-sidebar issues extend
-  the <em>rendering</em> (MessageStream's item dispatch), never the reducer's shape. The reducer is
-  wave-2-final so two parallel issues can build on it without touching it.
+  item carrying the whole frame, not a flattened string. MYT-92 rendered every one as a terse mono
+  system line and froze the reducer's shape as the wave-2 shared contract; MYT-93 then did exactly
+  what that freeze was for — it extended the <em>rendering</em> of <code>skill_check</code> and
+  <code>dice_roll</code> into the <a href="#the-dice-moment">RollCard dice moment</a> (MessageStream's
+  item dispatch) without adding a field to the reducer. <code>ledger_update</code>,
+  <code>mode_change</code>, and the <code>combat_*</code> frames still render as mono lines until their
+  own surfaces land. The knowledge-sidebar issue (MYT-94) is the other consumer building on this same
+  frozen shape.
 </aside>
 
 <aside class="wiki-rationale">
@@ -207,6 +216,100 @@
   (unknown ids are omitted, never shown raw).
 </p>
 
+<h2 id="the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</h2>
+
+<p>
+  When the DM calls for a check, the backend rolls the die deterministically and sends the
+  <em>whole</em> result in one <code>skill_check</code> frame — the natural roll, the modifier, the
+  total, the DC, and the matched outcome tier. The player never rolls anything real. So MYT-93's dice
+  moment is <strong>pure presentation</strong>: it delays the <em>display</em> of a number the client
+  already holds and gates the outcome prose behind an explicit <em>Continue</em>, so a check feels like
+  a roll instead of arriving pre-decided. <code>useSession</code> is untouched — the reveal is a render
+  gate layered <em>over</em> the transcript the reducer already produces, not a hold-back inside it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The roll is server-resolved; the card sends nothing back</strong> — the number is generated
+  in deterministic backend code (the LLM never rolls), so the whole result is on the wire before the
+  card mounts. Pressing Roll therefore fires no request: there is no client→server
+  <code>roll_complete</code> frame, deliberately excluded from the contract. This keeps the screen's
+  no-new-frame boundary intact and means a reload or a mid-session joiner can reconstruct every roll
+  from the persisted frames alone — the theater is a local flourish, never a source of truth.
+</aside>
+
+<p>
+  The reveal state lives in a tiny separate reducer, <code>roll-reveal.ts</code>, exposed as
+  <code>useRollReveal</code>. It tracks only the two committed interactions — which card keys have been
+  <code>rolled</code> and which <code>continued</code> — as two sets. A card's
+  <strong>phase is derived, never stored per frame</strong>: <code>cardPhase</code> reads
+  <code>idle</code> (show a Roll button) → <code>revealed</code> (numbers land, show Continue) →
+  <code>released</code> (the outcome prose opens). A card whose frame carries a persisted
+  <code>seq</code> — a backlog row or a reconnect replay — is <em>history</em>, and derives straight to
+  <code>released</code>: no theater on anything the player has already lived through, the same
+  history-has-no-theater rule the reconnect-safe reducer follows.
+</p>
+
+<p>
+  The gate itself is one pure selector. <code>buildRevealView(items, state)</code> walks the transcript
+  and returns a plain view — <code>phaseByKey</code> (each card's derived phase) and
+  <code>gatedTurnIds</code> (the set of turns whose outcome prose is still held). MessageStream renders
+  a <code>dm</code> item as nothing while its <code>turnId</code> is in <code>gatedTurnIds</code>, so
+  the DM's post-check narration stays hidden until the check that provoked it is continued. A turn with
+  two checks stays gated until <em>both</em> are continued; a lead-in line the DM wrote
+  <em>before</em> the check folds into the same gated turn item and is held with it. A
+  <code>dice_roll</code> is the flavor variant — it reveals a number but never gates prose.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The <code>constraint</code> field is never rendered</strong> — a <code>skill_check</code>
+  frame carries the outcome constraint the DM's prose is written from (the pre-generated
+  fail/success/great-success seed). Painting it on the card would pre-empt the very narration the gate
+  exists to hold back — the player would read the outcome before the DM voiced it. So the card renders
+  the mechanical readout (die, modifier, total, DC, tier) and nothing else; the constraint is threaded
+  nowhere on the client. An E2E check asserts the constraint text is absent from the DOM at every phase.
+</aside>
+
+<p>
+  All of this is computed <strong>route-side</strong>. <code>SessionShell</code> runs
+  <code>useRollReveal</code>, derives the view with <code>buildRevealView</code>, and resolves the
+  <code>[ph:]</code> label bundle, then hands MessageStream plain data and neutral callbacks. The
+  <a href="./design-system.html">mythrunUI</a> layer holds <em>no</em> reveal runtime — RollCard's
+  phase arrives as a prop, its only local state the DieSpin transition (portability rule R1: the DOM
+  layer imports no client-core logic). A pending, un-continued card does not lock the composer — the
+  player may keep typing while a card waits, the calm default the spec leaves open.
+</p>
+
+<h3>The card and the die</h3>
+
+<p>
+  <code>RollCard</code> is the in-stream dice moment made visible: a square, flat-1-bit paper card that
+  reads as a mechanical interjection in the DM's serif transcript. It composes the skill and character
+  and any advantage/disadvantage posture, a <code>DieSpin</code> in the centre, a Roll button while
+  idle, then the modifier→total→DC readout and a Continue button once revealed. Every mechanical value
+  is <code>--font-ui</code> mono, and — matching the brand's no-status-chips register — the outcome tier
+  is carried by <strong>typographic weight</strong> (a heavier word for a better result), never a
+  coloured badge. There are no circles anywhere on it.
+</p>
+
+<p>
+  <code>DieSpin</code> is a flat 2D outlined d20, authored here as a new mark because no pixelarticons
+  die exists. It spins in a <strong>stepped</strong> rotation — eight discrete 45° steps over roughly a
+  second, the motion analog of the brand's stepped Bayer dither, never a smooth CSS interpolation — and
+  stamps the used die's numeral upright in its centre when it lands. Under
+  <code>prefers-reduced-motion</code> it does not spin: it lands instantly and reveals. Because motion
+  is never the only signal, the die glyph is <code>aria-hidden</code> decoration and the landed result
+  is announced through a polite live region, so a screen reader hears the number the sighted player
+  watches settle.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A stepped die, not a smooth one</strong> — the UX spec called for a smooth spin, but the
+  brand register is 1-bit and pixel-honest, so the die jumps in discrete steps the same way the Dither
+  bands rather than blending. This is the brand-overrides-UX rule applied to motion. The step count and
+  die geometry are story-tuned placeholders pending the end-of-milestone visual pass; the structure
+  (stepped, ~1s, reduced-motion-instant, mono numeral) is what's fixed now.
+</aside>
+
 <h2>The stage — six components, two registers</h2>
 
 <p>
@@ -221,7 +324,10 @@
     <strong><code>MessageStream</code></strong> — the transcript scroller. Auto-follows the tail with
     a "jump to now" affordance, and positions <em>instantly</em> under
     <code>prefers-reduced-motion</code> (no smooth-scroll vestibular trigger). It dispatches each
-    transcript item to its renderer and carries the connection system line.
+    transcript item to its renderer — <code>dm</code> to DmMessage, <code>player</code> to
+    PlayerMessage, <code>skill_check</code>/<code>dice_roll</code> to the
+    <a href="#the-dice-moment">RollCard</a>, the rest to a mono system line — holds a gated turn's DM
+    prose off-screen, and carries the connection system line.
   </li>
   <li>
     <strong><code>DmMessage</code></strong> — the DM's prose in <strong>Source Serif 4</strong>
@@ -345,8 +451,9 @@
   <code>AppFrame</code>. The play entry itself is reached from
   <a href="./character-creation.html">character creation</a> once the party finalizes, and every
   visible element is a <a href="./design-system.html">mythrunUI</a> component over the DOM-free
-  <a href="./app-shell.html">client brain</a>. The session-end recap read and the wave-2 mechanical-
-  frame rendering (dice cards, the knowledge sidebar) build on this reducer's first-class item shape.
+  <a href="./app-shell.html">client brain</a>. The <a href="#the-dice-moment">dice moment</a> (MYT-93)
+  is the first surface built on this reducer's first-class item shape; the session-end recap read and
+  the knowledge sidebar (MYT-94) are the next consumers of that same shape.
 </p>
 
 <h2>Appendix: the modules</h2>
@@ -390,6 +497,13 @@
     <td>The prep-status SSE fold → <code>{ status, terminal }</code>.</td>
   </tr>
   <tr>
+    <td><code>roll-reveal.ts</code></td>
+    <td>
+      <code>useRollReveal</code> + <code>buildRevealView</code> / <code>cardPhase</code> — the
+      presentation-only dice-moment gate (rolled/continued sets → per-card phase + gated turnIds).
+    </td>
+  </tr>
+  <tr>
     <td><code>api/play-session.ts</code></td>
     <td>The <code>startSession</code> / <code>getActiveSession</code> endpoint slices.</td>
   </tr>
@@ -428,7 +542,7 @@
   </tr>
 </table>
 
-<h3>mythrunUI — the six play components</h3>
+<h3>mythrunUI — the play components</h3>
 <table>
   <tr>
     <th>Component</th>
@@ -436,7 +550,10 @@
   </tr>
   <tr>
     <td><code>MessageStream</code></td>
-    <td>The scroller — auto-follow + jump-to-now; instant positioning under reduced motion.</td>
+    <td>
+      The scroller — auto-follow + jump-to-now; instant positioning under reduced motion. Dispatches
+      each item to its renderer and holds a gated turn's DM prose off-screen.
+    </td>
   </tr>
   <tr>
     <td><code>DmMessage</code></td>
@@ -458,6 +575,20 @@
     <td><code>ThinkingIndicator</code></td>
     <td>DM-thinking + player-typing presence line.</td>
   </tr>
+  <tr>
+    <td><code>RollCard</code></td>
+    <td>
+      The in-stream dice moment — skill + posture → Roll → readout → Continue; tier as typographic
+      weight, the <code>constraint</code> never rendered; phase passed in (no reveal runtime).
+    </td>
+  </tr>
+  <tr>
+    <td><code>DieSpin</code></td>
+    <td>
+      The stepped 2D outlined d20 — eight 45° steps, reduced-motion instant land, result announced via
+      a polite live region.
+    </td>
+  </tr>
 </table>
 
 <h2>Source</h2>
@@ -465,10 +596,10 @@
 <p>
   <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>,
   <code>frontend/client-core/src/session/</code> (the transcript reducer + types, the optimistic
-  layer, <code>use-session</code>, <code>use-session-prep</code>, <code>start-flow</code>),
-  <code>frontend/client-core/src/api/play-session.ts</code>,
+  layer, <code>use-session</code>, <code>use-session-prep</code>, <code>start-flow</code>,
+  <code>roll-reveal</code>), <code>frontend/client-core/src/api/play-session.ts</code>,
   <code>frontend/client-core/src/contract/session/</code>, and the <code>DmMessage</code> /
-  <code>PlayerMessage</code> / <code>MessageStream</code> / <code>SessionInput</code> /
-  <code>SessionStartBeat</code> / <code>ThinkingIndicator</code> components under
-  <code>frontend/ui/src/components/</code>.
+  <code>PlayerMessage</code> / <code>MessageStream</code> / <code>RollCard</code> /
+  <code>DieSpin</code> / <code>SessionInput</code> / <code>SessionStartBeat</code> /
+  <code>ThinkingIndicator</code> components under <code>frontend/ui/src/components/</code>.
 </p>

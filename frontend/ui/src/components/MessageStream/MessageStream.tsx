@@ -1,19 +1,32 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, Fragment } from 'react'
 import type { ReactNode } from 'react'
-import type { EntityIndex, MessageStreamProps, TranscriptItem } from '@mythrun/client-core/contract'
+import type {
+  EntityIndex,
+  MessageStreamProps,
+  RollCardLabels,
+  RollRevealView,
+  TranscriptItem,
+} from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 import { Divider } from '../Divider/Divider.tsx'
 import { IconButton } from '../IconButton/IconButton.tsx'
 import { DmMessage } from '../DmMessage/DmMessage.tsx'
 import { PlayerMessage } from '../PlayerMessage/PlayerMessage.tsx'
+import { RollCard } from '../RollCard/RollCard.tsx'
 
 // MessageStream (MYT-92, spec §2) — the live-play transcript: a scroll container
 // that maps each TranscriptItem to its register renderer and auto-follows the
 // tail. The DM narrates in serif prose (DmMessage), the humans speak in mono
-// (PlayerMessage), and every MECHANICAL frame renders as a terse mono system line
-// here in 92 — MYT-93/94 extend `renderItem`'s dispatch (the RENDERING seam) into
-// rich dice/skill/combat cards without touching the reducer or the dm/player arms.
+// (PlayerMessage). MYT-93 (spec §5) extended `renderItem`'s dispatch (the RENDERING
+// seam) so skill_check / dice_roll render as a RollCard (the dice moment) and a
+// dm turn whose skill_check is still un-continued is BUFFERED (renders nothing)
+// until its card's Continue — the post-check prose gate. The remaining four
+// mechanical kinds (ledger_update / mode_change / combat_*) still render as a terse
+// mono system line; MYT-94 extends the dispatch further (entity highlighting). The
+// reveal phase + gated-turn set are computed route-side by client-core selectors
+// and passed as plain data (`rollReveal`), so this component stays presentational
+// (no client-core runtime import — R1). The reducer + dm/player arms are untouched.
 //
 // Auto-follow: while the reader sits at the tail (`wasAtBottom`), a new item OR
 // streaming growth of the open DM turn scrolls the view down; the moment they
@@ -27,9 +40,13 @@ import { PlayerMessage } from '../PlayerMessage/PlayerMessage.tsx'
 // bubble chrome. Two faces only: serif body (DM prose) + mono `--font-ui`
 // (players + all mechanical / system lines).
 
-/** The mechanical-frame subset of TranscriptItem — every kind that renders as a
- *  terse mono system line (dm / player have their own register components). */
-type MechanicalItem = Exclude<TranscriptItem, { kind: 'dm' } | { kind: 'player' }>
+/** The non-card mechanical subset of TranscriptItem — the four kinds that still
+ *  render as a terse mono system line. dm / player have their own register
+ *  components; skill_check / dice_roll became RollCards (MYT-93, spec §5). */
+type MechanicalItem = Exclude<
+  TranscriptItem,
+  { kind: 'dm' } | { kind: 'player' } | { kind: 'skill_check' } | { kind: 'dice_roll' }
+>
 
 // Slack (px) from the bottom within which the stream still counts as "at the
 // tail" and keeps auto-following — a near-bottom read should not lose follow.
@@ -41,20 +58,12 @@ const BOTTOM_THRESHOLD = 32
 // for the Task 8 contract + the MYT-100 copy pass (see the T9 report).
 const JUMP_LABEL = 'Jump to latest'
 
-// The terse system line for a mechanical frame, composed from FRAME DATA only
-// (skill / roll totals / the server `summary` / enemy names) plus typographic
-// separators. No i18n keys — the committed contract carries no label props and
-// MYT-93/94 replace these lines with rich cards.
+// The terse system line for a non-card mechanical frame, composed from FRAME DATA
+// only (the server `summary` / enemy names / mode) plus typographic separators. No
+// i18n keys — the committed contract carries no label props for these. skill_check
+// / dice_roll no longer pass through here (they became RollCards — MYT-93).
 function mechanicalText(item: MechanicalItem): string {
   switch (item.kind) {
-    case 'skill_check': {
-      const f = item.frame
-      return `${f.skill} · ${String(f.total)} vs DC ${String(f.dc)} · ${f.outcomeTier.replace(/_/g, ' ')}`
-    }
-    case 'dice_roll': {
-      const f = item.frame
-      return `${String(f.count)}d${String(f.sides)} · ${String(f.total)}`
-    }
     case 'ledger_update':
       return item.frame.summary
     case 'mode_change':
@@ -66,19 +75,28 @@ function mechanicalText(item: MechanicalItem): string {
   }
 }
 
-// Per-item dispatch — the RENDERING seam MYT-93/94 extend (spec §7). Keys live on
-// the wrapping Fragment in the map, so the returned nodes are unkeyed.
-//
-// MYT-94 threads the settled-prose highlight seam straight into the `dm` arm (append-only
-// optionals — the player + mechanical arms are untouched). DmMessage owns the settle-only
-// gating + the once-per-row memoized segmentation; MessageStream is pure pass-through.
+// Per-item dispatch — the RENDERING seam (spec §7), extended by BOTH wave-2 issues.
+// MYT-93: skill_check / dice_roll dispatch to a RollCard (phase from
+// `reveal.phaseByKey`, callbacks bound to the item key), and a `dm` item whose turn
+// is still gated renders NOTHING (the post-check prose buffer, released on Continue).
+// MYT-94: the settled-prose highlight seam threads straight into the `dm` arm
+// (append-only optionals — DmMessage owns the settle-only gating + the once-per-row
+// memoized segmentation). The four remaining mechanical kinds keep their terse mono
+// line. Keys live on the wrapping Fragment in the map, so the returned nodes are unkeyed.
 function renderItem(
   item: TranscriptItem,
+  reveal: RollRevealView,
+  labels: RollCardLabels,
+  reducedMotion: boolean,
+  onRoll: (key: string) => void,
+  onContinue: (key: string) => void,
   highlight: EntityIndex | undefined,
   onEntityOpen: ((entityId: string) => void) | undefined,
   highlightLabels: MessageStreamProps['highlightLabels'],
 ): ReactNode {
   if (item.kind === 'dm') {
+    // Buffered until the turn's skill_check is continued (spec §5 prose gate).
+    if (reveal.gatedTurnIds.has(item.turnId)) return null
     return (
       <DmMessage
         text={item.text}
@@ -96,6 +114,22 @@ function renderItem(
         characterName={item.characterName}
         text={item.text}
         pending={item.pending}
+      />
+    )
+  }
+  if (item.kind === 'skill_check' || item.kind === 'dice_roll') {
+    return (
+      <RollCard
+        item={item}
+        phase={reveal.phaseByKey[item.key] ?? 'idle'}
+        reducedMotion={reducedMotion}
+        labels={labels}
+        onRoll={() => {
+          onRoll(item.key)
+        }}
+        onContinue={() => {
+          onContinue(item.key)
+        }}
       />
     )
   }
@@ -117,7 +151,7 @@ function needsDivider(items: readonly TranscriptItem[], i: number): boolean {
 }
 
 export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(function MessageStream(
-  { items, connectionLine, reducedMotion, highlight, onEntityOpen, highlightLabels },
+  { items, connectionLine, reducedMotion, rollReveal, rollLabels, onRoll, onContinue, highlight, onEntityOpen, highlightLabels },
   ref,
 ) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -180,7 +214,7 @@ export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(func
         {items.map((item, i) => (
           <Fragment key={item.key}>
             {needsDivider(items, i) ? <Divider /> : null}
-            {renderItem(item, highlight, onEntityOpen, highlightLabels)}
+            {renderItem(item, rollReveal, rollLabels, reducedMotion, onRoll, onContinue, highlight, onEntityOpen, highlightLabels)}
           </Fragment>
         ))}
       </div>

@@ -32,187 +32,197 @@
   The table itself: <code>/campaigns/:id/play</code>, where the party and the AI DM run a session.
   An atmospheric prep beat gives way to a Start that debits the owner's session credit, then the
   screen becomes a streamed multiplayer transcript — the DM's prose arrives token by token, the
-  humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, and a
-  dropped connection resyncs without double-rendering the turn it dropped during. The route is a thin
-  composition; all the reasoning — the start classifier, the transcript reducer, the transport
-  view-model — lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
+  humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, a
+  dropped connection resyncs without double-rendering the turn it dropped during, and a skill check
+  arrives as an in-stream dice card the player rolls before the outcome prose unfolds. The route is a
+  thin composition; all the reasoning — the start classifier, the transcript reducer, the reveal gate,
+  the transport view-model — lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1589pt" height="604pt"
- viewBox="14.00 14.00 1575.00 590.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 586.08)">
+<svg width="1748pt" height="685pt"
+ viewBox="14.00 14.00 1734.00 671.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 666.76)">
 <title>live_play</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-571.68 1556.21,-571.68 1556.21,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-652.36 1715.21,-652.36 1715.21,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_arms</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="520,-311.84 520,-389.92 1513,-389.92 1513,-311.84 520,-311.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1016.5" y="-376.02" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the start&#45;flow arms (one screen each)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="679,-392.52 679,-470.6 1672,-470.6 1672,-392.52 679,-392.52"/>
+<text xml:space="preserve" text-anchor="middle" x="1175.5" y="-456.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the start&#45;flow arms (one screen each)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_shell</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-8 8,-179.96 984,-179.96 984,-8 8,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="496" y="-166.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the live stage</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-8 8,-260.64 1148,-260.64 1148,-8 8,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="578" y="-246.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the live stage</text>
 </g>
 <!-- route -->
 <g id="node1" class="node">
 <title>route</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1305.06,-567.68 982.94,-567.68 982.94,-510.8 1305.06,-510.8 1305.06,-567.68"/>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-549.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PlayRoute &#160;· &#160;/campaigns/:id/play</text>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-535.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fullBleed route handle · usePlayViewer</text>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-522.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getMe + /mine → { userId, isOwner, party }</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1464.06,-648.36 1141.94,-648.36 1141.94,-591.48 1464.06,-591.48 1464.06,-648.36"/>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-629.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PlayRoute &#160;· &#160;/campaigns/:id/play</text>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-616.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fullBleed route handle · usePlayViewer</text>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-603.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">getMe + /mine → { userId, isOwner, party }</text>
 </g>
 <!-- start -->
 <g id="node2" class="node">
 <title>start</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1291.86,-473.8 996.14,-473.8 996.14,-416.92 1291.86,-416.92 1291.86,-473.8"/>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-455.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PlaySession · useSessionStart</text>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-442.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /start &#160;(the OWNER&#39;s credit debits)</text>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-428.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">classify the caught arm ↓</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1450.86,-554.48 1155.14,-554.48 1155.14,-497.6 1450.86,-497.6 1450.86,-554.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-535.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PlaySession · useSessionStart</text>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-522.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /start &#160;(the OWNER&#39;s credit debits)</text>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-509.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">classify the caught arm ↓</text>
 </g>
 <!-- route&#45;&gt;start -->
 <g id="edge1" class="edge">
 <title>route&#45;&gt;start</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1144,-510.17C1144,-501.62 1144,-492.1 1144,-483.07"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1146.45,-483.07 1144,-476.07 1141.55,-483.07 1146.45,-483.07"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1303,-590.85C1303,-582.3 1303,-572.78 1303,-563.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1305.45,-563.75 1303,-556.75 1300.55,-563.75 1305.45,-563.75"/>
 </g>
 <!-- prep -->
 <g id="node3" class="node">
 <title>prep</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="789.66,-368.72 520.34,-368.72 520.34,-311.84 789.66,-311.84 789.66,-368.72"/>
-<text xml:space="preserve" text-anchor="middle" x="655" y="-350.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">409 prep_not_ready</text>
-<text xml:space="preserve" text-anchor="middle" x="655" y="-336.98" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ PrepBeat · useSessionPrep (SSE)</text>
-<text xml:space="preserve" text-anchor="middle" x="655" y="-323.78" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ready ⟹ retry()</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="948.66,-449.4 679.34,-449.4 679.34,-392.52 948.66,-392.52 948.66,-449.4"/>
+<text xml:space="preserve" text-anchor="middle" x="814" y="-430.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">409 prep_not_ready</text>
+<text xml:space="preserve" text-anchor="middle" x="814" y="-417.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ PrepBeat · useSessionPrep (SSE)</text>
+<text xml:space="preserve" text-anchor="middle" x="814" y="-404.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ready ⟹ retry()</text>
 </g>
 <!-- start&#45;&gt;prep -->
 <g id="edge2" class="edge">
 <title>start&#45;&gt;prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M995.57,-426.71C933.97,-417.92 862.06,-405.73 798,-389.92 778.28,-385.05 757.41,-378.68 737.89,-372.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="738.74,-369.86 731.33,-369.94 737.17,-374.5 738.74,-369.86"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1154.57,-507.39C1092.97,-498.6 1021.06,-486.41 957,-470.6 937.28,-465.73 916.41,-459.36 896.89,-452.84"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="897.74,-450.54 890.33,-450.62 896.17,-455.18 897.74,-450.54"/>
 </g>
 <!-- join -->
 <g id="node4" class="node">
 <title>join</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1030.56,-368.72 807.44,-368.72 807.44,-311.84 1030.56,-311.84 1030.56,-368.72"/>
-<text xml:space="preserve" text-anchor="middle" x="919" y="-350.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">409 session_already_active</text>
-<text xml:space="preserve" text-anchor="middle" x="919" y="-336.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ GET /active → sessionId</text>
-<text xml:space="preserve" text-anchor="middle" x="919" y="-323.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(the mid&#45;session join)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1189.56,-449.4 966.44,-449.4 966.44,-392.52 1189.56,-392.52 1189.56,-449.4"/>
+<text xml:space="preserve" text-anchor="middle" x="1078" y="-430.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">409 session_already_active</text>
+<text xml:space="preserve" text-anchor="middle" x="1078" y="-417.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ GET /active → sessionId</text>
+<text xml:space="preserve" text-anchor="middle" x="1078" y="-404.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(the mid&#45;session join)</text>
 </g>
 <!-- start&#45;&gt;join -->
 <g id="edge3" class="edge">
 <title>start&#45;&gt;join</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1082.52,-416.19C1053.37,-402.84 1018.44,-386.83 988.35,-373.05"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="989.44,-370.86 982.06,-370.17 987.4,-375.31 989.44,-370.86"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1241.52,-496.87C1212.37,-483.52 1177.44,-467.51 1147.35,-453.73"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1148.44,-451.54 1141.06,-450.85 1146.4,-455.99 1148.44,-451.54"/>
 </g>
 <!-- purchase -->
 <g id="node5" class="node">
 <title>purchase</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1239.05,-368.72 1048.95,-368.72 1048.95,-311.84 1239.05,-311.84 1239.05,-368.72"/>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-350.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">402 insufficient_credits</text>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-336.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ PurchaseSeam</text>
-<text xml:space="preserve" text-anchor="middle" x="1144" y="-323.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">owner buy · member hold</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1398.05,-449.4 1207.95,-449.4 1207.95,-392.52 1398.05,-392.52 1398.05,-449.4"/>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-430.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">402 insufficient_credits</text>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-417.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ PurchaseSeam</text>
+<text xml:space="preserve" text-anchor="middle" x="1303" y="-404.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">owner buy · member hold</text>
 </g>
 <!-- start&#45;&gt;purchase -->
 <g id="edge4" class="edge">
 <title>start&#45;&gt;purchase</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1144,-416.19C1144,-404.38 1144,-390.48 1144,-377.88"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1146.45,-378.23 1144,-371.23 1141.55,-378.23 1146.45,-378.23"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1303,-496.87C1303,-485.06 1303,-471.16 1303,-458.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1305.45,-458.91 1303,-451.91 1300.55,-458.91 1305.45,-458.91"/>
 </g>
 <!-- blocked -->
 <g id="node6" class="node">
 <title>blocked</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1513.06,-368.72 1256.94,-368.72 1256.94,-311.84 1513.06,-311.84 1513.06,-368.72"/>
-<text xml:space="preserve" text-anchor="middle" x="1385" y="-350.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">409 campaign_not_active /</text>
-<text xml:space="preserve" text-anchor="middle" x="1385" y="-336.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reconcile_pending / session_ending</text>
-<text xml:space="preserve" text-anchor="middle" x="1385" y="-323.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ calm retry notice</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1672.06,-449.4 1415.94,-449.4 1415.94,-392.52 1672.06,-392.52 1672.06,-449.4"/>
+<text xml:space="preserve" text-anchor="middle" x="1544" y="-430.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">409 campaign_not_active /</text>
+<text xml:space="preserve" text-anchor="middle" x="1544" y="-417.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reconcile_pending / session_ending</text>
+<text xml:space="preserve" text-anchor="middle" x="1544" y="-404.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ calm retry notice</text>
 </g>
 <!-- start&#45;&gt;blocked -->
 <g id="edge5" class="edge">
 <title>start&#45;&gt;blocked</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1209.85,-416.19C1241.2,-402.78 1278.81,-386.7 1311.13,-372.88"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1312.08,-375.13 1317.56,-370.13 1310.16,-370.63 1312.08,-375.13"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1368.85,-496.87C1400.2,-483.46 1437.81,-467.38 1470.13,-453.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1471.08,-455.81 1476.56,-450.81 1469.16,-451.31 1471.08,-455.81"/>
 </g>
 <!-- shell -->
 <g id="node7" class="node">
 <title>shell</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1063.56,-274.84 774.44,-274.84 774.44,-217.96 1063.56,-217.96 1063.56,-274.84"/>
-<text xml:space="preserve" text-anchor="middle" x="919" y="-256.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionShell &#160;(ready{sessionId})</text>
-<text xml:space="preserve" text-anchor="middle" x="919" y="-243.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useSession over ws&#45;session&#45;client</text>
-<text xml:space="preserve" text-anchor="middle" x="919" y="-229.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connect(seedLastSeq: 0) — full replay</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1222.56,-355.52 933.44,-355.52 933.44,-298.64 1222.56,-298.64 1222.56,-355.52"/>
+<text xml:space="preserve" text-anchor="middle" x="1078" y="-336.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionShell &#160;(ready{sessionId})</text>
+<text xml:space="preserve" text-anchor="middle" x="1078" y="-323.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">useSession over ws&#45;session&#45;client</text>
+<text xml:space="preserve" text-anchor="middle" x="1078" y="-310.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connect(seedLastSeq: 0) — full replay</text>
 </g>
 <!-- start&#45;&gt;shell -->
 <g id="edge6" class="edge">
 <title>start&#45;&gt;shell</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1292.35,-441.96C1383.3,-436.99 1487.73,-423.77 1517,-389.92 1539.7,-363.67 1540.19,-337.66 1517,-311.84 1487.73,-279.25 1239.93,-261.7 1072.64,-253.47"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1073.16,-251.04 1066.05,-253.15 1072.92,-255.94 1073.16,-251.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1543.21" y="-337.28" font-family="Courier,monospace" font-size="10.00">200</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1451.35,-522.64C1542.3,-517.67 1646.73,-504.45 1676,-470.6 1698.7,-444.35 1699.19,-418.34 1676,-392.52 1646.73,-359.93 1398.93,-342.38 1231.64,-334.15"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1232.16,-331.72 1225.05,-333.83 1231.92,-336.62 1232.16,-331.72"/>
+<text xml:space="preserve" text-anchor="middle" x="1702.21" y="-417.96" font-family="Courier,monospace" font-size="10.00">200</text>
 </g>
 <!-- prep&#45;&gt;shell -->
 <g id="edge8" class="edge">
 <title>prep&#45;&gt;shell</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M735.64,-311.21C765.57,-300.8 799.67,-288.93 830.28,-278.28"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="830.88,-280.66 836.68,-276.05 829.26,-276.04 830.88,-280.66"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M894.64,-391.89C924.57,-381.48 958.67,-369.61 989.28,-358.96"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="989.88,-361.34 995.68,-356.73 988.26,-356.72 989.88,-361.34"/>
 </g>
 <!-- join&#45;&gt;shell -->
 <g id="edge7" class="edge">
 <title>join&#45;&gt;shell</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M919,-311.21C919,-302.66 919,-293.14 919,-284.11"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="921.45,-284.11 919,-277.11 916.55,-284.11 921.45,-284.11"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1078,-391.89C1078,-383.34 1078,-373.82 1078,-364.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1080.45,-364.79 1078,-357.79 1075.55,-364.79 1080.45,-364.79"/>
 </g>
 <!-- reducer -->
 <g id="node8" class="node">
 <title>reducer</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="845.06,-158.76 522.94,-158.76 522.94,-101.88 845.06,-101.88 845.06,-158.76"/>
-<text xml:space="preserve" text-anchor="middle" x="684" y="-140.22" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reduceFrameReconciling</text>
-<text xml:space="preserve" text-anchor="middle" x="684" y="-127.02" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">transcript reducer + own&#45;echo FIFO reconcile</text>
-<text xml:space="preserve" text-anchor="middle" x="684" y="-113.82" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ turnId whole&#45;turn replace</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="998.06,-239.44 675.94,-239.44 675.94,-182.56 998.06,-182.56 998.06,-239.44"/>
+<text xml:space="preserve" text-anchor="middle" x="837" y="-220.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reduceFrameReconciling</text>
+<text xml:space="preserve" text-anchor="middle" x="837" y="-207.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">transcript reducer + own&#45;echo FIFO reconcile</text>
+<text xml:space="preserve" text-anchor="middle" x="837" y="-194.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ turnId whole&#45;turn replace</text>
 </g>
 <!-- shell&#45;&gt;reducer -->
 <g id="edge9" class="edge">
 <title>shell&#45;&gt;reducer</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M861.21,-217.35C840.24,-207.17 815.82,-195.31 791.93,-183.71"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="793.2,-181.61 785.83,-180.75 791.06,-186.01 793.2,-181.61"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1018.74,-298.03C997.23,-287.85 972.18,-275.99 947.68,-264.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="948.77,-262.2 941.39,-261.42 946.67,-266.62 948.77,-262.2"/>
 </g>
 <!-- recap -->
-<g id="node12" class="node">
+<g id="node13" class="node">
 <title>recap</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1325.97,-152.16 984.03,-152.16 984.03,-108.48 1325.97,-108.48 1325.97,-152.16"/>
-<text xml:space="preserve" text-anchor="middle" x="1155" y="-133.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_end → /campaigns/:id/recap</text>
-<text xml:space="preserve" text-anchor="middle" x="1155" y="-120.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(stub route — the recap read is a filed bead)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1489.97,-232.84 1148.03,-232.84 1148.03,-189.16 1489.97,-189.16 1489.97,-232.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1319" y="-214.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_end → /campaigns/:id/recap</text>
+<text xml:space="preserve" text-anchor="middle" x="1319" y="-201.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(stub route — the recap read is a filed bead)</text>
 </g>
 <!-- shell&#45;&gt;recap -->
-<g id="edge13" class="edge">
+<g id="edge14" class="edge">
 <title>shell&#45;&gt;recap</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M977.03,-217.35C1015.51,-198.75 1065.58,-174.54 1102.8,-156.55"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1103.67,-158.85 1108.91,-153.6 1101.54,-154.44 1103.67,-158.85"/>
-<text xml:space="preserve" text-anchor="middle" x="1052" y="-190.96" font-family="Courier,monospace" font-size="10.00">ended</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1137.26,-298.03C1176.56,-279.43 1227.69,-255.22 1265.7,-237.23"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1266.68,-239.48 1271.96,-234.27 1264.59,-235.05 1266.68,-239.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1213.5" y="-271.64" font-family="Courier,monospace" font-size="10.00">ended</text>
 </g>
 <!-- stream -->
 <g id="node9" class="node">
 <title>stream</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="369.87,-64.88 8.13,-64.88 8.13,-8 369.87,-8 369.87,-64.88"/>
-<text xml:space="preserve" text-anchor="middle" x="189" y="-46.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MessageStream</text>
-<text xml:space="preserve" text-anchor="middle" x="189" y="-33.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DmMessage (serif, streams) · PlayerMessage (mono)</text>
-<text xml:space="preserve" text-anchor="middle" x="189" y="-19.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mechanical frames → terse system lines</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="488.28,-145.56 7.72,-145.56 7.72,-88.68 488.28,-88.68 488.28,-145.56"/>
+<text xml:space="preserve" text-anchor="middle" x="248" y="-127.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">MessageStream</text>
+<text xml:space="preserve" text-anchor="middle" x="248" y="-113.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DmMessage (serif, streams) · PlayerMessage (mono)</text>
+<text xml:space="preserve" text-anchor="middle" x="248" y="-100.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">skill_check/dice_roll → RollCard · other mechanical → mono line</text>
 </g>
 <!-- reducer&#45;&gt;stream -->
-<!-- presence -->
+<!-- reveal -->
 <g id="node10" class="node">
-<title>presence</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="723.66,-58.28 388.34,-58.28 388.34,-14.6 723.66,-14.6 723.66,-58.28"/>
-<text xml:space="preserve" text-anchor="middle" x="556" y="-39.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">out&#45;of&#45;band presence</text>
-<text xml:space="preserve" text-anchor="middle" x="556" y="-26.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ThinkingIndicator · typing · connection line</text>
+<title>reveal</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="887.77,-145.56 506.23,-145.56 506.23,-88.68 887.77,-88.68 887.77,-145.56"/>
+<text xml:space="preserve" text-anchor="middle" x="697" y="-127.02" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">useRollReveal · buildRevealView</text>
+<text xml:space="preserve" text-anchor="middle" x="697" y="-113.82" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dice moment: phase (idle→revealed→released)</text>
+<text xml:space="preserve" text-anchor="middle" x="697" y="-100.62" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ gatedTurnIds (outcome prose held) — no wire frame</text>
 </g>
-<!-- reducer&#45;&gt;presence -->
+<!-- reducer&#45;&gt;reveal -->
 <!-- input -->
-<g id="node11" class="node">
+<g id="node12" class="node">
 <title>input</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="984.46,-58.28 741.54,-58.28 741.54,-14.6 984.46,-14.6 984.46,-58.28"/>
-<text xml:space="preserve" text-anchor="middle" x="863" y="-39.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionInput</text>
-<text xml:space="preserve" text-anchor="middle" x="863" y="-26.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">send · @dm explicit&#45;text summon</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1148.46,-138.96 905.54,-138.96 905.54,-95.28 1148.46,-95.28 1148.46,-138.96"/>
+<text xml:space="preserve" text-anchor="middle" x="1027" y="-120.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionInput</text>
+<text xml:space="preserve" text-anchor="middle" x="1027" y="-107.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">send · @dm explicit&#45;text summon</text>
 </g>
 <!-- reducer&#45;&gt;input -->
+<!-- presence -->
+<g id="node11" class="node">
+<title>presence</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="864.66,-51.68 529.34,-51.68 529.34,-8 864.66,-8 864.66,-51.68"/>
+<text xml:space="preserve" text-anchor="middle" x="697" y="-33.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">out&#45;of&#45;band presence</text>
+<text xml:space="preserve" text-anchor="middle" x="697" y="-19.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ThinkingIndicator · typing · connection line</text>
+</g>
+<!-- reveal&#45;&gt;presence -->
 </g>
 </svg>
 
@@ -227,7 +237,10 @@
   <a href="../runtime/session-transport.html">session transport</a> hands it; it introduces no new
   WebSocket frame, no new backend read. There is deliberately no Slow-Thinker stage-direction frame
   anywhere in the client, and nothing on this screen may add one — the reason the DM intervened is
-  never on the wire the player consumes.
+  never on the wire the player consumes. MYT-93's dice moment holds the same line: the reveal drives
+  entirely off the <code>skill_check</code>/<code>dice_roll</code> frames already on the wire, and the
+  client→server <code>roll_complete</code> frame was deliberately excluded — pressing Roll sends
+  nothing, because the number is already server-resolved.
 </aside>
 
 <h2 id="how-it-fits-together">How it fits together</h2>
@@ -339,14 +352,17 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Every mechanical frame is a first-class item, even though MYT-92 renders it as one mono
-  line</strong> — <code>skill_check</code>, <code>dice_roll</code>, <code>ledger_update</code>,
+  <strong>Every mechanical frame is a first-class item, so the rendering can grow without touching the
+  reducer</strong> — <code>skill_check</code>, <code>dice_roll</code>, <code>ledger_update</code>,
   <code>mode_change</code>, and the two <code>combat_*</code> frames each become a typed transcript
-  item carrying the whole frame, not a flattened string. MYT-92 renders each as a terse system line,
-  but modeling them fully now is the wave-2 shared contract: the
-  <a href="./character-creation.html">dice-and-skill-checks</a> and knowledge-sidebar issues extend
-  the <em>rendering</em> (MessageStream's item dispatch), never the reducer's shape. The reducer is
-  wave-2-final so two parallel issues can build on it without touching it.
+  item carrying the whole frame, not a flattened string. MYT-92 rendered every one as a terse mono
+  system line and froze the reducer's shape as the wave-2 shared contract; MYT-93 then did exactly
+  what that freeze was for — it extended the <em>rendering</em> of <code>skill_check</code> and
+  <code>dice_roll</code> into the <a href="#the-dice-moment">RollCard dice moment</a> (MessageStream's
+  item dispatch) without adding a field to the reducer. <code>ledger_update</code>,
+  <code>mode_change</code>, and the <code>combat_*</code> frames still render as mono lines until their
+  own surfaces land. The knowledge-sidebar issue (MYT-94) is the other consumer building on this same
+  frozen shape.
 </aside>
 
 <aside class="wiki-rationale">
@@ -402,6 +418,100 @@
   (unknown ids are omitted, never shown raw).
 </p>
 
+<h2 id="the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</h2>
+
+<p>
+  When the DM calls for a check, the backend rolls the die deterministically and sends the
+  <em>whole</em> result in one <code>skill_check</code> frame — the natural roll, the modifier, the
+  total, the DC, and the matched outcome tier. The player never rolls anything real. So MYT-93's dice
+  moment is <strong>pure presentation</strong>: it delays the <em>display</em> of a number the client
+  already holds and gates the outcome prose behind an explicit <em>Continue</em>, so a check feels like
+  a roll instead of arriving pre-decided. <code>useSession</code> is untouched — the reveal is a render
+  gate layered <em>over</em> the transcript the reducer already produces, not a hold-back inside it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The roll is server-resolved; the card sends nothing back</strong> — the number is generated
+  in deterministic backend code (the LLM never rolls), so the whole result is on the wire before the
+  card mounts. Pressing Roll therefore fires no request: there is no client→server
+  <code>roll_complete</code> frame, deliberately excluded from the contract. This keeps the screen's
+  no-new-frame boundary intact and means a reload or a mid-session joiner can reconstruct every roll
+  from the persisted frames alone — the theater is a local flourish, never a source of truth.
+</aside>
+
+<p>
+  The reveal state lives in a tiny separate reducer, <code>roll-reveal.ts</code>, exposed as
+  <code>useRollReveal</code>. It tracks only the two committed interactions — which card keys have been
+  <code>rolled</code> and which <code>continued</code> — as two sets. A card's
+  <strong>phase is derived, never stored per frame</strong>: <code>cardPhase</code> reads
+  <code>idle</code> (show a Roll button) → <code>revealed</code> (numbers land, show Continue) →
+  <code>released</code> (the outcome prose opens). A card whose frame carries a persisted
+  <code>seq</code> — a backlog row or a reconnect replay — is <em>history</em>, and derives straight to
+  <code>released</code>: no theater on anything the player has already lived through, the same
+  history-has-no-theater rule the reconnect-safe reducer follows.
+</p>
+
+<p>
+  The gate itself is one pure selector. <code>buildRevealView(items, state)</code> walks the transcript
+  and returns a plain view — <code>phaseByKey</code> (each card's derived phase) and
+  <code>gatedTurnIds</code> (the set of turns whose outcome prose is still held). MessageStream renders
+  a <code>dm</code> item as nothing while its <code>turnId</code> is in <code>gatedTurnIds</code>, so
+  the DM's post-check narration stays hidden until the check that provoked it is continued. A turn with
+  two checks stays gated until <em>both</em> are continued; a lead-in line the DM wrote
+  <em>before</em> the check folds into the same gated turn item and is held with it. A
+  <code>dice_roll</code> is the flavor variant — it reveals a number but never gates prose.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The <code>constraint</code> field is never rendered</strong> — a <code>skill_check</code>
+  frame carries the outcome constraint the DM's prose is written from (the pre-generated
+  fail/success/great-success seed). Painting it on the card would pre-empt the very narration the gate
+  exists to hold back — the player would read the outcome before the DM voiced it. So the card renders
+  the mechanical readout (die, modifier, total, DC, tier) and nothing else; the constraint is threaded
+  nowhere on the client. An E2E check asserts the constraint text is absent from the DOM at every phase.
+</aside>
+
+<p>
+  All of this is computed <strong>route-side</strong>. <code>SessionShell</code> runs
+  <code>useRollReveal</code>, derives the view with <code>buildRevealView</code>, and resolves the
+  <code>[ph:]</code> label bundle, then hands MessageStream plain data and neutral callbacks. The
+  <a href="./design-system.html">mythrunUI</a> layer holds <em>no</em> reveal runtime — RollCard's
+  phase arrives as a prop, its only local state the DieSpin transition (portability rule R1: the DOM
+  layer imports no client-core logic). A pending, un-continued card does not lock the composer — the
+  player may keep typing while a card waits, the calm default the spec leaves open.
+</p>
+
+<h3 id="the-card-and-the-die">The card and the die</h3>
+
+<p>
+  <code>RollCard</code> is the in-stream dice moment made visible: a square, flat-1-bit paper card that
+  reads as a mechanical interjection in the DM's serif transcript. It composes the skill and character
+  and any advantage/disadvantage posture, a <code>DieSpin</code> in the centre, a Roll button while
+  idle, then the modifier→total→DC readout and a Continue button once revealed. Every mechanical value
+  is <code>--font-ui</code> mono, and — matching the brand's no-status-chips register — the outcome tier
+  is carried by <strong>typographic weight</strong> (a heavier word for a better result), never a
+  coloured badge. There are no circles anywhere on it.
+</p>
+
+<p>
+  <code>DieSpin</code> is a flat 2D outlined d20, authored here as a new mark because no pixelarticons
+  die exists. It spins in a <strong>stepped</strong> rotation — eight discrete 45° steps over roughly a
+  second, the motion analog of the brand's stepped Bayer dither, never a smooth CSS interpolation — and
+  stamps the used die's numeral upright in its centre when it lands. Under
+  <code>prefers-reduced-motion</code> it does not spin: it lands instantly and reveals. Because motion
+  is never the only signal, the die glyph is <code>aria-hidden</code> decoration and the landed result
+  is announced through a polite live region, so a screen reader hears the number the sighted player
+  watches settle.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A stepped die, not a smooth one</strong> — the UX spec called for a smooth spin, but the
+  brand register is 1-bit and pixel-honest, so the die jumps in discrete steps the same way the Dither
+  bands rather than blending. This is the brand-overrides-UX rule applied to motion. The step count and
+  die geometry are story-tuned placeholders pending the end-of-milestone visual pass; the structure
+  (stepped, ~1s, reduced-motion-instant, mono numeral) is what's fixed now.
+</aside>
+
 <h2 id="the-stage-six-components-two-registers">The stage — six components, two registers</h2>
 
 <p>
@@ -416,7 +526,10 @@
     <strong><code>MessageStream</code></strong> — the transcript scroller. Auto-follows the tail with
     a "jump to now" affordance, and positions <em>instantly</em> under
     <code>prefers-reduced-motion</code> (no smooth-scroll vestibular trigger). It dispatches each
-    transcript item to its renderer and carries the connection system line.
+    transcript item to its renderer — <code>dm</code> to DmMessage, <code>player</code> to
+    PlayerMessage, <code>skill_check</code>/<code>dice_roll</code> to the
+    <a href="#the-dice-moment">RollCard</a>, the rest to a mono system line — holds a gated turn's DM
+    prose off-screen, and carries the connection system line.
   </li>
   <li>
     <strong><code>DmMessage</code></strong> — the DM's prose in <strong>Source Serif 4</strong>
@@ -540,8 +653,9 @@
   <code>AppFrame</code>. The play entry itself is reached from
   <a href="./character-creation.html">character creation</a> once the party finalizes, and every
   visible element is a <a href="./design-system.html">mythrunUI</a> component over the DOM-free
-  <a href="./app-shell.html">client brain</a>. The session-end recap read and the wave-2 mechanical-
-  frame rendering (dice cards, the knowledge sidebar) build on this reducer's first-class item shape.
+  <a href="./app-shell.html">client brain</a>. The <a href="#the-dice-moment">dice moment</a> (MYT-93)
+  is the first surface built on this reducer's first-class item shape; the session-end recap read and
+  the knowledge sidebar (MYT-94) are the next consumers of that same shape.
 </p>
 
 <h2 id="appendix-the-modules">Appendix: the modules</h2>
@@ -585,6 +699,13 @@
     <td>The prep-status SSE fold → <code>{ status, terminal }</code>.</td>
   </tr>
   <tr>
+    <td><code>roll-reveal.ts</code></td>
+    <td>
+      <code>useRollReveal</code> + <code>buildRevealView</code> / <code>cardPhase</code> — the
+      presentation-only dice-moment gate (rolled/continued sets → per-card phase + gated turnIds).
+    </td>
+  </tr>
+  <tr>
     <td><code>api/play-session.ts</code></td>
     <td>The <code>startSession</code> / <code>getActiveSession</code> endpoint slices.</td>
   </tr>
@@ -623,7 +744,7 @@
   </tr>
 </table>
 
-<h3 id="mythrunui-the-six-play-components">mythrunUI — the six play components</h3>
+<h3 id="mythrunui-the-play-components">mythrunUI — the play components</h3>
 <table>
   <tr>
     <th>Component</th>
@@ -631,7 +752,10 @@
   </tr>
   <tr>
     <td><code>MessageStream</code></td>
-    <td>The scroller — auto-follow + jump-to-now; instant positioning under reduced motion.</td>
+    <td>
+      The scroller — auto-follow + jump-to-now; instant positioning under reduced motion. Dispatches
+      each item to its renderer and holds a gated turn's DM prose off-screen.
+    </td>
   </tr>
   <tr>
     <td><code>DmMessage</code></td>
@@ -653,6 +777,20 @@
     <td><code>ThinkingIndicator</code></td>
     <td>DM-thinking + player-typing presence line.</td>
   </tr>
+  <tr>
+    <td><code>RollCard</code></td>
+    <td>
+      The in-stream dice moment — skill + posture → Roll → readout → Continue; tier as typographic
+      weight, the <code>constraint</code> never rendered; phase passed in (no reveal runtime).
+    </td>
+  </tr>
+  <tr>
+    <td><code>DieSpin</code></td>
+    <td>
+      The stepped 2D outlined d20 — eight 45° steps, reduced-motion instant land, result announced via
+      a polite live region.
+    </td>
+  </tr>
 </table>
 
 <h2 id="source">Source</h2>
@@ -660,19 +798,19 @@
 <p>
   <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>,
   <code>frontend/client-core/src/session/</code> (the transcript reducer + types, the optimistic
-  layer, <code>use-session</code>, <code>use-session-prep</code>, <code>start-flow</code>),
-  <code>frontend/client-core/src/api/play-session.ts</code>,
+  layer, <code>use-session</code>, <code>use-session-prep</code>, <code>start-flow</code>,
+  <code>roll-reveal</code>), <code>frontend/client-core/src/api/play-session.ts</code>,
   <code>frontend/client-core/src/contract/session/</code>, and the <code>DmMessage</code> /
-  <code>PlayerMessage</code> / <code>MessageStream</code> / <code>SessionInput</code> /
-  <code>SessionStartBeat</code> / <code>ThinkingIndicator</code> components under
-  <code>frontend/ui/src/components/</code>.
+  <code>PlayerMessage</code> / <code>MessageStream</code> / <code>RollCard</code> /
+  <code>DieSpin</code> / <code>SessionInput</code> / <code>SessionStartBeat</code> /
+  <code>ThinkingIndicator</code> components under <code>frontend/ui/src/components/</code>.
 </p>
 </article>
         <footer class="wiki-page-footer"></footer>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-start-flow-one-classifier-five-arms">The start flow — one classifier, five arms</a></li><li style="padding-left:0"><a href="#the-transcript-reducer-the-reconnect-safe-core">The transcript reducer — the reconnect-safe core</a></li><li style="padding-left:0"><a href="#optimistic-own-messages">Optimistic own-messages</a></li><li style="padding-left:0"><a href="#presence-and-the-parts-the-reducer-won-t-touch">Presence, and the parts the reducer won't touch</a></li><li style="padding-left:0"><a href="#the-stage-six-components-two-registers">The stage — six components, two registers</a></li><li style="padding-left:12px"><a href="#the-full-bleed-frame">The full-bleed frame</a></li><li style="padding-left:12px"><a href="#session-end-lands-on-the-recap-route">Session end lands on the recap route</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#walk-a-live-session-end-to-end-dev">Walk a live session end-to-end (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-session">Client-core — the brain (client-core/session)</a></li><li style="padding-left:12px"><a href="#web-the-composition-routes-play">Web — the composition (routes/play)</a></li><li style="padding-left:12px"><a href="#mythrunui-the-six-play-components">mythrunUI — the six play components</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-start-flow-one-classifier-five-arms">The start flow — one classifier, five arms</a></li><li style="padding-left:0"><a href="#the-transcript-reducer-the-reconnect-safe-core">The transcript reducer — the reconnect-safe core</a></li><li style="padding-left:0"><a href="#optimistic-own-messages">Optimistic own-messages</a></li><li style="padding-left:0"><a href="#presence-and-the-parts-the-reducer-won-t-touch">Presence, and the parts the reducer won't touch</a></li><li style="padding-left:0"><a href="#the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</a></li><li style="padding-left:12px"><a href="#the-card-and-the-die">The card and the die</a></li><li style="padding-left:0"><a href="#the-stage-six-components-two-registers">The stage — six components, two registers</a></li><li style="padding-left:12px"><a href="#the-full-bleed-frame">The full-bleed frame</a></li><li style="padding-left:12px"><a href="#session-end-lands-on-the-recap-route">Session end lands on the recap route</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#walk-a-live-session-end-to-end-dev">Walk a live session end-to-end (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-session">Client-core — the brain (client-core/session)</a></li><li style="padding-left:12px"><a href="#web-the-composition-routes-play">Web — the composition (routes/play)</a></li><li style="padding-left:12px"><a href="#mythrunui-the-play-components">mythrunUI — the play components</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

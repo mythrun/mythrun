@@ -2,10 +2,21 @@ import { describe, it, expect, expectTypeOf } from 'vitest'
 import type { TranscriptItem as SourceTranscriptItem } from '../../../session/transcript-types.ts'
 import type { EntityIndex } from '../../../session/entity-index.ts'
 import type { EntityHighlightLabels } from '../dm-message-props.ts'
+import type {
+  // MYT-93 reveal view-model shapes (from session/roll-reveal.ts) — re-exported
+  // by THIS barrel (type-only), same pattern as TranscriptItem above.
+  RollPhase as SourceRollPhase,
+  RollRevealView as SourceRollRevealView,
+  CardItem as SourceCardItem,
+} from '../../../session/roll-reveal.ts'
 import * as sessionBarrel from '../index.ts'
 import type {
   // Re-exported view-model shape (from session/transcript-types.ts)
   TranscriptItem,
+  // Re-exported reveal shapes (from session/roll-reveal.ts — MYT-93)
+  RollPhase,
+  RollRevealView,
+  CardItem,
   // Prop contracts — one per @mythrun/ui play component
   MessageStreamProps,
   DmMessageProps,
@@ -13,6 +24,10 @@ import type {
   SessionInputProps,
   ThinkingIndicatorProps,
   SessionStartBeatProps,
+  // MYT-93 dice-moment prop contracts (RollCard / DieSpin)
+  RollCardProps,
+  RollCardLabels,
+  DieSpinProps,
 } from '../index.ts'
 
 // Type-level contract for the MYT-92 live-play surface. The runtime barrel stays
@@ -35,26 +50,66 @@ describe('re-exported view-model shape', () => {
     // import — mirroring how character/index.ts re-exports LoadingBeat.
     expectTypeOf<TranscriptItem>().toEqualTypeOf<SourceTranscriptItem>()
   })
+
+  it('RollPhase / RollRevealView / CardItem re-export the roll-reveal shapes unchanged (MYT-93)', () => {
+    // Type-only re-exports of the reveal view-model — RollCard/DieSpin read their
+    // phase + card model off THIS contract surface; the runtime reducer stays out
+    // of the barrel (same split as TranscriptItem vs. emptyTranscript).
+    expectTypeOf<RollPhase>().toEqualTypeOf<SourceRollPhase>()
+    expectTypeOf<RollRevealView>().toEqualTypeOf<SourceRollRevealView>()
+    expectTypeOf<CardItem>().toEqualTypeOf<SourceCardItem>()
+  })
 })
 
 describe('prop contracts (exact — the U tasks build to these)', () => {
-  it('MessageStreamProps — transcript items + connection line + reduced-motion + MYT-94 highlight seam', () => {
-    // EXACT-shape pin (do NOT weaken to toMatchTypeOf). MYT-94 (Task 11) appends the
-    // three append-only optional highlight-seam fields below.
-    //
-    // ── CONTROLLER EXTENSION SPOT (wave-2 reconcile) ──────────────────────────────
-    // This worktree branched from main BEFORE MYT-93 merged, so the base shape here is
-    // MYT-92's 3 fields (items/connectionLine/reducedMotion) — NOT the "MYT-93 7 reveal
-    // fields" the bead note describes (they are not present in this worktree). At the
-    // MYT-93 + MYT-94 merge, UNION MYT-93's reveal fields into this same exact-shape
-    // literal alongside MYT-94's `highlight?/onEntityOpen?/highlightLabels?`.
+  it('MessageStreamProps — transcript items + reveal seam (MYT-93) + highlight seam (MYT-94)', () => {
+    // EXACT-shape pin (do NOT weaken to toMatchTypeOf). MYT-93 appended the four
+    // required reveal-seam fields; MYT-94 appended the three optional highlight-seam
+    // fields. The two extensions union on distinct names — this literal is the union.
     expectTypeOf<MessageStreamProps>().toEqualTypeOf<{
       items: readonly TranscriptItem[]
       connectionLine: string | null
       reducedMotion: boolean
+      rollReveal: RollRevealView
+      rollLabels: RollCardLabels
+      onRoll: (key: string) => void
+      onContinue: (key: string) => void
       highlight?: EntityIndex
       onEntityOpen?: (entityId: string) => void
       highlightLabels?: EntityHighlightLabels
+    }>()
+  })
+
+  it('RollCardProps — one card item + its derived phase + resolved labels + neutral callbacks', () => {
+    expectTypeOf<RollCardProps>().toEqualTypeOf<{
+      item: CardItem
+      phase: RollPhase
+      reducedMotion: boolean
+      labels: RollCardLabels
+      onRoll: () => void
+      onContinue: () => void
+    }>()
+  })
+
+  it('RollCardLabels — the resolved [ph:] bundle the route threads to each card', () => {
+    expectTypeOf<RollCardLabels>().toEqualTypeOf<{
+      readonly roll: string
+      readonly continue: string
+      readonly tier: Readonly<Record<'fail' | 'success' | 'great_success', string>>
+      readonly dc: string
+      readonly advantage: string
+      readonly disadvantage: string
+      readonly dieResult: string
+    }>()
+  })
+
+  it('DieSpinProps — spinning + result + reduced-motion; onSpinComplete + optional SR label', () => {
+    expectTypeOf<DieSpinProps>().toEqualTypeOf<{
+      spinning: boolean
+      result: number | null
+      reducedMotion: boolean
+      onSpinComplete: () => void
+      resultLabel?: string
     }>()
   })
 

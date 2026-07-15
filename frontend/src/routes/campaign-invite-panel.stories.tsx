@@ -13,6 +13,7 @@ const STORYBOOK_CTX: ApiContext = {
 }
 
 const LINK = { inviteCode: 'stor1bookcode', inviteUrl: 'https://mythrun.test/join/stor1bookcode' }
+const CAMPAIGN_ID = 'storybook-campaign'
 
 const RESOLVED: InvitePanelDeps = {
   ensurePrimary: () => Promise.resolve(LINK),
@@ -38,7 +39,7 @@ function mount(deps: InvitePanelDeps): React.JSX.Element {
   return (
     <MemoryRouter>
       <ApiClientProvider value={STORYBOOK_CTX}>
-        <CampaignInvitePanel campaignId="storybook-campaign" deps={deps} />
+        <CampaignInvitePanel campaignId={CAMPAIGN_ID} deps={deps} />
       </ApiClientProvider>
     </MemoryRouter>
   )

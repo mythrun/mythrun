@@ -106,6 +106,11 @@ export { addPending, reduceFrameReconciling, unconfirmedPending } from './sessio
 // confirm-or-resend; thinking clears on turnId-matched delta/end/error).
 export { useSession } from './session/use-session.ts'
 export type { SessionView, SessionParams, SessionDeps } from './session/use-session.ts'
+// MYT-93 roll-reveal brain: the presentation-only dice/skill-check reveal
+// reducer + phase/gate selectors (client-core computes the RollRevealView the
+// web route threads into MessageStream; no UI-side runtime import — R1).
+export { useRollReveal, buildRevealView } from './session/roll-reveal.ts'
+export type { RollPhase, RollRevealState, RollRevealView, CardItem } from './session/roll-reveal.ts'
 // MYT-91 invite slices: the shipped MYT-75 invite routes as declarative
 // client-core endpoints (create/list/revoke/preview/accept) + the idempotent
 // `ensurePrimaryInvite` (list → the primary share link, else mint one).

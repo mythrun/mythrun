@@ -3,7 +3,9 @@ digraph live_play {
   // ownership, then PlaySession runs the start-flow classifier — each /start arm
   // resolves to a different screen. The `ready` arm mounts SessionShell, the
   // streamed multiplayer transcript over the WS transport view-model (useSession),
-  // which folds every frame through the reconnect-safe transcript reducer.
+  // which folds every frame through the reconnect-safe transcript reducer. A
+  // second, presentation-only reveal gate (useRollReveal) turns skill_check /
+  // dice_roll frames into in-stream RollCards and holds the outcome prose.
   rankdir=TB;
   compound=true;
 
@@ -31,7 +33,8 @@ digraph live_play {
     fontcolor="ember";
 
     reducer [label="reduceFrameReconciling\ntranscript reducer + own-echo FIFO reconcile\n+ turnId whole-turn replace", color="ember", fontcolor="ember"];
-    stream [label="MessageStream\nDmMessage (serif, streams) · PlayerMessage (mono)\nmechanical frames → terse system lines"];
+    stream [label="MessageStream\nDmMessage (serif, streams) · PlayerMessage (mono)\nskill_check/dice_roll → RollCard · other mechanical → mono line"];
+    reveal [label="useRollReveal · buildRevealView\ndice moment: phase (idle→revealed→released)\n+ gatedTurnIds (outcome prose held) — no wire frame", color="ember", fontcolor="ember"];
     presence [label="out-of-band presence\nThinkingIndicator · typing · connection line"];
     input [label="SessionInput\nsend · @dm explicit-text summon"];
   }
@@ -48,7 +51,8 @@ digraph live_play {
   prep -> shell [style="dotted"];
   shell -> reducer [lhead=cluster_shell];
   reducer -> stream [style="invis"];
-  reducer -> presence [style="invis"];
+  reducer -> reveal [style="invis"];
+  reveal -> presence [style="invis"];
   reducer -> input [style="invis"];
   shell -> recap [ltail=cluster_shell, label="ended"];
 }

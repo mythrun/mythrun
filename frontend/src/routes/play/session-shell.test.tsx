@@ -1,0 +1,188 @@
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { I18nextProvider } from 'react-i18next'
+import { ThemeProvider } from '@mythrun/ui'
+import { type ApiContext, type SessionView } from '@mythrun/client-core'
+import { i18n } from '../../i18n/config.ts'
+import { SessionShell } from './session-shell.tsx'
+
+// The dice-moment wiring (MYT-93 T7). The shell subscribes `useRollReveal`, computes
+// `buildRevealView(items, state)` per render, and threads the reveal view + resolved
+// [ph:] label bundle into MessageStream. These tests assert the wiring BEHAVIOURALLY
+// (not just that the type break is gone): a live skill_check renders a RollCard whose
+// turn's outcome prose is BUFFERED until Continue, and a replayed (persisted `seq`)
+// card renders already-released with its prose shown. The reveal reducer + card
+// rendering are covered in client-core / @mythrun/ui; here we pin the ROUTE seam.
+
+// The DieSpin stepped budget (8 steps × 125ms ≈ 1s) — mirrored so the spin walk below
+// is self-describing. Kept in lockstep with DieSpin.tsx.
+const SPIN_STEPS = 8
+const STEP_MS = 125
+
+// ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads `localStorage`
+// on mount; install a functional in-memory one (mirrors the sibling route tests).
+class MemStorage {
+  private readonly store = new Map<string, string>()
+  getItem(key: string): string | null {
+    return this.store.has(key) ? (this.store.get(key) ?? null) : null
+  }
+  setItem(key: string, value: string): void {
+    this.store.set(key, value)
+  }
+  removeItem(key: string): void {
+    this.store.delete(key)
+  }
+  clear(): void {
+    this.store.clear()
+  }
+  key(index: number): string | null {
+    return [...this.store.keys()][index] ?? null
+  }
+  get length(): number {
+    return this.store.size
+  }
+}
+
+const testCtx: ApiContext = {
+  baseUrl: 'http://api.test',
+  getAuthHeaders: () => Promise.resolve({}),
+}
+
+// Shell identity props as constants (referenced as expressions, not inline JSX string
+// literals — the i18next/no-literal-string rail applies to test files too).
+const CAMPAIGN_ID = 'c1'
+const SESSION_ID = 's1'
+const VIEWER_ID = 'viewer-1'
+const DISPLAY_NAME = 'Ada'
+
+const DM_TEXT = 'The lock gives with a soft click, and the strongbox lid lifts.'
+
+/** A LIVE skill_check (no `seq`) — the theatre case: idle → revealed → released. */
+const SKILL_CHECK: SessionView['items'][number] = {
+  kind: 'skill_check',
+  key: 'sc-1',
+  turnId: 'T1',
+  frame: {
+    type: 'skill_check',
+    turnId: 'T1',
+    characterName: 'Kessa Vurm',
+    skill: 'sleight of hand',
+    context: 'working the strongbox lock',
+    roll: 14,
+    roll2: null,
+    rollType: 'normal',
+    modifier: 2,
+    total: 16,
+    dc: 12,
+    outcomeTier: 'success',
+    // The prose seed — NEVER rendered on the card (it would pre-empt the buffer).
+    constraint: 'The lock opens; inside is a folded letter.',
+  },
+}
+
+/** The post-check outcome prose — same turnId, so it is gated behind the card. */
+const DM_PROSE: SessionView['items'][number] = {
+  kind: 'dm',
+  key: 'dm-1',
+  turnId: 'T1',
+  text: DM_TEXT,
+  streaming: false,
+}
+
+/** A REPLAYED skill_check (persisted `seq`) — history, no theatre. */
+const REPLAYED_SKILL_CHECK: SessionView['items'][number] = {
+  ...SKILL_CHECK,
+  frame: { ...SKILL_CHECK.frame, seq: 7 },
+}
+
+function makeSession(items: SessionView['items']): SessionView {
+  return {
+    items,
+    connection: { status: 'connected', attempt: 0 },
+    thinking: false,
+    typingUserIds: [],
+    ended: false,
+    sendMessage: vi.fn(),
+    summonDm: vi.fn(),
+    endSession: vi.fn(),
+  }
+}
+
+function renderShell(items: SessionView['items'], reducedMotion = false): void {
+  render(
+    <ThemeProvider>
+      <I18nextProvider i18n={i18n}>
+        <MemoryRouter>
+          <SessionShell
+            ctx={testCtx}
+            campaignId={CAMPAIGN_ID}
+            sessionId={SESSION_ID}
+            viewerUserId={VIEWER_ID}
+            displayName={DISPLAY_NAME}
+            characterName=""
+            party={new Map()}
+            reducedMotion={reducedMotion}
+            useLiveSession={() => makeSession(items)}
+          />
+        </MemoryRouter>
+      </I18nextProvider>
+    </ThemeProvider>,
+  )
+}
+
+beforeAll(() => {
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: new MemStorage(),
+    configurable: true,
+    writable: true,
+  })
+})
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.clearAllMocks()
+})
+
+describe('SessionShell — the dice-moment reveal wiring (MYT-93)', () => {
+  it('renders a live skill_check as a RollCard and buffers its outcome prose (gated)', () => {
+    renderShell([SKILL_CHECK, DM_PROSE])
+    // The card is an in-stream RollCard with a Roll affordance, not a mono system line.
+    expect(document.querySelector('[data-roll-card="skill_check"]')).not.toBeNull()
+    expect(screen.getByRole('button', { name: i18n.t('play.roll.roll') })).toBeDefined()
+    // The constraint (prose seed) is never on the card, and the outcome prose is
+    // BUFFERED behind the un-continued card.
+    expect(screen.queryByText(SKILL_CHECK.frame.constraint)).toBeNull()
+    expect(screen.queryByText(DM_TEXT)).toBeNull()
+  })
+
+  it('reveals the server numbers on Roll, then releases the buffered prose on Continue', () => {
+    vi.useFakeTimers()
+    renderShell([SKILL_CHECK, DM_PROSE])
+
+    // Roll → the local spin runs, lands, and commits the reveal.
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('play.roll.roll') }))
+    act(() => {
+      vi.advanceTimersByTime(SPIN_STEPS * STEP_MS)
+    })
+
+    // Revealed: the die stamps the used natural roll (total − modifier = 14) and the
+    // mod→total readout settles — but the outcome prose is STILL gated (Continue-only).
+    expect(screen.getByTestId('die-spin-result').textContent).toBe('14')
+    expect(screen.getByText('+2 = 16')).toBeDefined()
+    expect(screen.queryByText(DM_TEXT)).toBeNull()
+
+    // Continue → the turn drops out of gatedTurnIds → the buffered prose renders.
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('play.roll.continue') }))
+    expect(screen.getByText(DM_TEXT)).toBeDefined()
+  })
+
+  it('renders a replayed skill_check already released — prose shown, no Roll (history)', () => {
+    renderShell([REPLAYED_SKILL_CHECK, DM_PROSE])
+    // History: the readout is present, the prose is shown, and there is no Roll theatre.
+    expect(screen.getByText('+2 = 16')).toBeDefined()
+    expect(screen.getByText(DM_TEXT)).toBeDefined()
+    expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
+  })
+})
