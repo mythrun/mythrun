@@ -377,6 +377,8 @@ export const Highlighted: Story = {
     items: HL_TRANSCRIPT,
     connectionLine: null,
     reducedMotion: false,
+    rollReveal: { phaseByKey: {}, gatedTurnIds: new Set<string>() },
+    rollLabels: ROLL_LABELS,
     highlight: STORY_INDEX,
     highlightLabels: STORY_LABELS,
   },

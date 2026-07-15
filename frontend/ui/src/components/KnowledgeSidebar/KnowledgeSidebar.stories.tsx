@@ -167,7 +167,7 @@ type Story = StoryObj<typeof KnowledgeSidebar>
 
 // The desktop rail (~30% of the play screen) frames the sidebar throughout.
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return <div className="h-[42rem] w-[24rem] overflow-hidden bg-bg p-[var(--space-4)]">{children}</div>
+  return <div className="h-[42rem] w-full max-w-[24rem] overflow-hidden bg-bg p-[var(--space-4)]">{children}</div>
 }
 
 export const WorldWikiTab: Story = {
