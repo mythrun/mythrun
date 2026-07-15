@@ -11,7 +11,8 @@
 <!-- source: backend/migrations/023_session_messages_unique_seq.sql -->
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
-<!-- source-hash: sha256:818f3c6ed9412605a4dc1527dee1ae76004f6bba29963592a566768e4b57d087 -->
+<!-- source: backend/migrations/035_session_opening_trigger_kind.sql -->
+<!-- source-hash: sha256:5b0a6c518eef02a69381eb2a9f53b549c7ef52a4ac0fc7ae352282d41329a686 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Session transport</h1>
@@ -63,7 +64,7 @@
   <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
   five preconditions (campaign is active, no session already active, a session prep exists for the
   next session number, — MYT-74a — the campaign's prior session is fully reconciled, and — MYT-74b —
-  no session-end is mid-flight), the handler runs a fixed four-step sequence whose ordering is
+  no session-end is mid-flight), the handler runs a fixed five-step sequence whose ordering is
   load-bearing:
 </p>
 
@@ -132,6 +133,13 @@
     per turn without a Postgres round-trip. A fresh session leaves the <code>:seq</code> counter
     unset, so the first <code>nextSeq</code> returns 1.
   </li>
+  <li>
+    <a href="#delivering-the-opening">Deliver the prep-generated opening</a> (MYT-101) as the
+    session's first DM row — a single <code>dm_text</code> append at seq 1, trigger_kind
+    <code>session_opening</code>, consuming that first <code>nextSeq</code>. A deterministic persist
+    of already-vetted prose: no LLM call, no trigger-system involvement. A legacy prep with no
+    opening fails soft — the session starts silent, logged loudly at WARN.
+  </li>
 </ol>
 
 <aside class="wiki-rationale">
@@ -155,6 +163,52 @@
   <code>402</code>, never a 500, because the money invariant already holds (no debit happened, and
   the active-session guard blocks a double-charge on retry). The only fallout of a failed cleanup is
   a stranded row, diagnosable from the logged line.
+</aside>
+
+<h2 id="delivering-the-opening">
+  Delivering the opening: a persisted first frame, no live publish
+</h2>
+
+<p>
+  Every session opens the way a human DM opens a table — with a spoken introduction. The
+  <a href="./session-prep.html#vetting-the-opening">session prep</a> generated and tripwire-vetted
+  that prose (the <code>opening</code> document); <code>/start</code>'s fifth step delivers it.
+  Delivery is a plain persist: one <code>dm_text</code> row appended through
+  <code>appendDmTurn</code> with a fresh <code>turnId</code>, <code>user_id</code> NULL, and
+  <code>trigger_kind: 'session_opening'</code>. Its seq comes from the same
+  <code>:seq</code> counter every turn draws on, so the opening takes seq 1 and the session's first
+  live turn starts at seq 2. This is <a href="./index.html">ZFC</a> in the small: the prose was
+  pre-generated and pre-vetted at prep time, so start touches no model and no trigger system — it
+  moves an already-settled document into the transcript.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Persist-only, no live broadcast — and that is provably sufficient</strong> — the opening
+  lands as an ordinary settled row, with no accompanying pub/sub publish, and every participant
+  still sees it. The proof is a timing invariant: a socket can only open with a
+  <a href="../auth-billing/access-control-ws-ticket.html">WS ticket</a>, and a ticket binds to a
+  <code>sessionId</code> that does not exist until <code>/start</code> has minted the row and
+  returned. So no socket can be listening while <code>/start</code> runs — there is no live audience
+  to broadcast to. Every client, the starter included, connects afterward and pulls the opening
+  through the persisted-transcript replay (<code>listAfterSeq</code>) — served both by the
+  <a href="#connect-presence-registration-then-the-first-frame">reconnect frame</a> and the
+  <code>GET&nbsp;/messages</code> backfill — the same path that carries every settled DM row. A live
+  publish would fan out to zero sockets; the persisted row is what actually reaches the table.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The opening is fiction the party experienced, so it is not excluded from post-session
+    analysis</strong
+  >
+  — <code>trigger_kind</code> has a second reader: the
+  <a href="./session-reconcile.html#the-containment-verifier">post-session analysis</a> structurally
+  drops <code>correction</code> and <code>farewell</code> rows from NPC voice-excerpt selection
+  (they point at buried secrets). <code>session_opening</code> is deliberately left <em>out</em> of
+  that exclusion set — the opening is real narrative the table opened on, the same status as any DM
+  prose, so the analysis should draw on it rather than fence it off. Migration 035 adds
+  <code>session_opening</code> to the closed <code>trigger_kind</code> CHECK set for exactly this: a
+  recorded, first-class trigger kind, distinct from the turn-trigger kinds because it is not a turn.
 </aside>
 
 <h2>The upgrade handshake is the enforced-ignorance boundary's entry point</h2>
@@ -308,7 +362,9 @@
   <code>player_left</code>, <code>typing_*</code>, <code>session_ready</code>, <code>error</code>)
   are out-of-band: they're never persisted to <code>session_messages</code> and are absent from the
   replay, so they must never carry a seq a client could gap-detect on — that would corrupt
-  reconnect-replay ordering. The first <code>player_message</code> is therefore seq 1.
+  reconnect-replay ordering. The <a href="#delivering-the-opening">prep-generated opening</a>
+  (MYT-101) is the session's first persisted row and takes seq 1, so the first
+  <code>player_message</code> is seq 2 — or seq 1 when a legacy prep delivered no opening.
 </aside>
 
 <aside class="wiki-rationale">

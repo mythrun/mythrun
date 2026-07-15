@@ -720,39 +720,46 @@
   <code>llm/prep/stages/session-prep.ts</code> is the first consumer of the
   <code>maxOutputTokens</code> seam, and the first call site that builds for a tier the live game
   hasn't reached yet.
-  <code>generateSessionPrep(repo, { campaignId, worldId, sessionNumber })</code> produces the two
+  <code>generateSessionPrep(repo, { campaignId, worldId, sessionNumber })</code> produces the three
   prep documents a session needs before play starts: <code>ft_context</code> — the
-  Fast-Thinker-facing context, enforced-ignorance safe — and <code>sd_playbook</code> — the
-  Slow-Thinker's stage-direction playbook carrying every secret, clue, and revelation condition. It
-  serializes the omniscient world state (<code>llm/prep/serialize-world-state-for-prep.ts</code>),
-  renders the <code>prompts/prep/session-prep.txt</code> template against it, and runs one
-  <code>streamObject</code> call on <code>OPUS</code> against a two-string Zod schema
-  (<code>sessionPrepSchema</code>: <code>{ ft_context, sd_playbook }</code> with presence/length
-  floors), returning the parsed object plus its token usage.
+  Fast-Thinker-facing context, enforced-ignorance safe — <code>sd_playbook</code> — the
+  Slow-Thinker's stage-direction playbook carrying every secret, clue, and revelation condition —
+  and (MYT-101) <code>opening</code>, the short player-facing DM introduction the table opens on,
+  read aloud at session start. It serializes the omniscient world state
+  (<code>llm/prep/serialize-world-state-for-prep.ts</code>), renders the
+  <code>prompts/prep/session-prep.txt</code> template against it, and runs one
+  <code>streamObject</code> call on <code>OPUS</code> against a three-string Zod schema
+  (<code>sessionPrepSchema</code>: <code>{ ft_context, sd_playbook, opening }</code> with
+  presence/length floors — <code>opening</code> carries a 100-character floor). Like
+  <code>ft_context</code>, the <code>opening</code> is player-facing prose an all-seeing model
+  wrote, so the <a href="./session-prep.html#vetting-the-opening">session-prep processor</a> runs it
+  through the secret tripwire before persisting: this primitive produces the opening, the processor
+  vets it. The call returns the parsed object plus its token usage.
 </p>
 
 <aside class="wiki-rationale">
   <strong>The generation primitive, wired into a job</strong> — this page documents
   <code>generateSessionPrep</code> as a building block. The orchestration around it — a
-  <code>session-prep</code> BullMQ job, a processor that persists the two documents to
-  <code>session_preps</code> and records cost, a dedicated queue and worker — ships on the
-  <a href="./session-prep.html">session prep</a> page. Still ahead: the route that enqueues the job
-  and the <code>/start</code> path in Session Runtime that reads the persisted prep and feeds
-  <code>ft_context</code> to the Fast Thinker. There is no runtime leak guard on
-  <code>ft_context</code> and there will not be one — see the omniscient-serializer note below for
-  how enforced ignorance is achieved instead.
+  <code>session-prep</code> BullMQ job, a processor that tripwire-vets the opening, persists the
+  three documents to <code>session_preps</code>, and records cost, a dedicated queue and worker —
+  ships on the <a href="./session-prep.html">session prep</a> page. The <code>/start</code> path in
+  Session Runtime reads the persisted prep and feeds <code>ft_context</code> to the Fast Thinker and
+  delivers the <code>opening</code> as the session's first DM row (MYT-101). There is no runtime
+  leak guard on <code>ft_context</code> and there will not be one — see the omniscient-serializer
+  note below for how enforced ignorance is achieved instead.
 </aside>
 
 <aside class="wiki-rationale">
   <strong
-    >Two prose docs in one structured object → an explicit <code>maxOutputTokens</code></strong
+    >Long prose docs in one structured object → an explicit <code>maxOutputTokens</code></strong
   >
   — the call asks Opus for two long markdown documents (a ~2,000–3,000-word context plus a
-  ~1,000–2,000-word playbook) inside a single structured response. The SDK's default output ceiling
-  truncates that mid-document, which a schema-presence floor can't recover from. The stage pins
-  <code>maxOutputTokens: 16384</code> — the reason the <code>maxOutputTokens</code> opt was added to
-  the wrapper at all. It also sets the codebase's largest LLM timeout (9 minutes) because two long
-  Opus documents over a streamed object is the slowest single call in the system.
+  ~1,000–2,000-word playbook), alongside the short 150–350-word <code>opening</code>, inside a
+  single structured response. The two long docs are what drive the ceiling. The SDK's default output
+  ceiling truncates that mid-document, which a schema-presence floor can't recover from. The stage
+  pins <code>maxOutputTokens: 16384</code> — the reason the <code>maxOutputTokens</code> opt was
+  added to the wrapper at all. It also sets the codebase's largest LLM timeout (9 minutes) because
+  two long Opus documents over a streamed object is the slowest single call in the system.
 </aside>
 
 <aside class="wiki-rationale">
@@ -774,11 +781,13 @@
   callback. When a caller supplies it — the
   <a href="./session-prep.html#two-channels-one-stream">session-prep processor</a> does, to push the
   prose live to the dev tool — the stage drains <code>result.partialObjectStream</code> before
-  reading the final object, emitting the newly-appended substring of each field as it streams. The
-  two-string object is still finalized through <code>await result.object</code> afterward (consuming
-  the partial stream doesn't consume the object or usage promises), so the persisted documents and
-  the token usage are unchanged. When the callback is absent (the stage's own unit tests, a
-  direct-call smoke), the drain is skipped entirely and the result is identical.
+  reading the final object, emitting the newly-appended substring of each long field as it streams
+  (the delta stream carries the two long docs, <code>ft_context</code> and <code>sd_playbook</code>;
+  the short <code>opening</code> is finalized with the object, not streamed). The three-string
+  object is still finalized through <code>await result.object</code> afterward (consuming the
+  partial stream doesn't consume the object or usage promises), so the persisted documents and the
+  token usage are unchanged. When the callback is absent (the stage's own unit tests, a direct-call
+  smoke), the drain is skipped entirely and the result is identical.
 </p>
 
 <aside class="wiki-rationale">

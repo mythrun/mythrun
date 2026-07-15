@@ -29,9 +29,11 @@
 <h1>Session prep</h1>
 
 <p class="lead">
-  Before a session can run, one Opus call produces the two prep documents that session needs — a
-  Fast-Thinker-safe <code>ft_context</code> and a secrets-bearing <code>sd_playbook</code> — and a
-  dedicated BullMQ worker persists them to <code>session_preps</code>. The job is keyed on
+  Before a session can run, one Opus call produces the three prep documents that session needs — a
+  Fast-Thinker-safe <code>ft_context</code>, a secrets-bearing <code>sd_playbook</code>, and
+  (MYT-101) the player-facing <code>opening</code> the DM reads aloud to open the table — and a
+  dedicated BullMQ worker vets the opening against that same generation's secrets, then persists all
+  three to <code>session_preps</code>. The job is keyed on
   <code>(campaign_id, session_number)</code>, so re-enqueuing the same session is a resume, not a
   duplicate. A prep failure is session-scoped: it never fails the campaign. The Opus call streams,
   so two parallel signals come off it: <strong>phase</strong> events (a player's "the DM is
@@ -517,7 +519,7 @@
   campaign's <code>world_id</code>, reads the
   <a href="#consuming-the-prior-session-handoff">prior-session context</a> (the summaries and the
   latest handoff from the previous session's <a href="./session-reconcile.html">analysis</a>), and
-  calls <code>generateSessionPrep</code> — one Opus <code>streamObject</code> producing the two
+  calls <code>generateSessionPrep</code> — one Opus <code>streamObject</code> producing the three
   prose documents. That call runs against the raw pool, outside any open transaction: it is the
   slowest single call in the system (a 9-minute timeout, two long markdown documents), and holding a
   pooled connection for its full duration would starve the rest of the worker. The
@@ -532,16 +534,54 @@
   <a href="#consuming-the-prior-session-handoff"
     >deterministically appends the prior handoff's verbatim voice and atmosphere excerpts</a
   >
-  to the generated <code>ft_context</code>, then persists the two artifacts to
+  to the generated <code>ft_context</code>,
+  <a href="#vetting-the-opening">vets the opening</a> against this generation's own secrets — a gate
+  that persists nothing if it trips — then persists the three artifacts to
   <code>session_preps</code> through <code>repo.sessionPreps.insert</code> (<code
     >ON CONFLICT (campaign_id, session_number) DO NOTHING</code
   >
   — the first persisted row wins), marks the <code>pipeline_runs</code> row
-  <code>completed</code> with the call's cost, and publishes a <code>prep-ready</code> event
-  carrying the recorded <code>costUsd</code>. On any error it publishes
-  <code>prep-failed</code> with the terminal flag instead. These three <code>prep-*</code> arms are
-  the entire player-visible signal — they ride the campaign's pipeline channel, never the prose.
+  <code>completed</code> with the call's cost (Opus generation plus the opening tripwire's Haiku
+  spend), and publishes a <code>prep-ready</code> event carrying the recorded <code>costUsd</code>.
+  On any error it publishes <code>prep-failed</code> with the terminal flag instead. These three
+  <code>prep-*</code> arms are the entire player-visible signal — they ride the campaign's pipeline
+  channel, never the prose.
 </p>
+
+<h3 id="vetting-the-opening">Vetting the opening against its own playbook</h3>
+
+<p>
+  The <code>opening</code> is the one prep artifact that reaches players as prose, and an all-seeing
+  model wrote it — the same enforced-ignorance hazard the <code>ft_context</code> carries, now on a
+  document delivered verbatim to the table. So before the insert, the processor runs the opening
+  through the <a href="./scribe.html">secret tripwire</a> (<code>runSecretTripwire</code>), checking
+  it against this <em>same generation's</em> <code>sd_playbook</code> — the complete secret surface
+  the opening was drawn from. The check is recall-biased, like the scribe's per-turn breach
+  detector: any breached verdict, regardless of confidence, fails the stage. The failure is
+  retryable — it re-throws as a non-terminal error, so BullMQ re-runs the job and a fresh generation
+  may pass — and it persists nothing: the vet runs <em>before</em> <code>insert</code>, so a tripped
+  opening takes the whole prep down with it. There is no half-written prep with a leaky opening; the
+  row is all-or-nothing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The opening is vetted, the <code>ft_context</code> is not — because only the opening is
+    player-facing prose</strong
+  >
+  — the <code>ft_context</code> reaches no player directly; it is grounding the
+  <a href="./fast-thinker.html">Fast Thinker</a> reads and rewrites, and enforced ignorance for it
+  lives in the prompt's own
+  <a href="./llm.html#the-session-prep-generation-stage">omniscient-serializer split</a>
+  (<code>discoverable</code> / <code>secret</code> material never enters it). The opening is
+  different:
+  <a href="./session-transport.html#delivering-the-opening"><code>/start</code></a> delivers it
+  verbatim as the session's first DM row, with no Fast Thinker in the loop to launder it. Verbatim
+  player-facing prose from an omniscient author is exactly the shape enforced ignorance exists to
+  catch, so it gets a runtime gate the <code>ft_context</code> doesn't need. Vetting against the
+  generation's own playbook — not a broader secret store — keeps the check tight: the only secrets
+  the opening could plausibly leak are the ones this prep just wrote down.
+</aside>
 
 <p>
   This whole LLM path is now smoke-validated against real Opus. The
@@ -739,10 +779,12 @@
 
 <p>
   <code>session_preps</code> holds one row per prepared session: <code>ft_context</code>,
-  <code>sd_playbook</code>, an optional <code>snapshot_id</code> (the world snapshot a session is
-  pinned to, populated by Session Runtime), and the usual id + timestamp. Migration 022 adds a named
-  <code>UNIQUE (campaign_id, session_number)</code> constraint — the original schema had only a
-  non-unique index. That constraint is what makes the processor's <code>INSERT … ON CONFLICT</code>
+  <code>sd_playbook</code>, the MYT-101 <code>opening</code> (migration 034, nullable TEXT — the
+  tripwire-vetted introduction, NULL on pre-MYT-101 rows), an optional <code>snapshot_id</code> (the
+  world snapshot a session is pinned to, populated by Session Runtime), and the usual id +
+  timestamp. Migration 022 adds a named <code>UNIQUE (campaign_id, session_number)</code> constraint
+  — the original schema had only a non-unique index. That constraint is what makes the processor's
+  <code>INSERT … ON CONFLICT</code>
   resume sound: without it, a retried job could write a second prep for the same session. The
   <code>repo.sessionPreps</code> binder exposes <code>insert</code> (the ON-CONFLICT landing),
   <code>existsFor</code> (the resume existence check), and <code>getBy</code> (the read Session
@@ -1063,10 +1105,12 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
   >); the producer queue handle reaches them via <code>AppDeps.sessionPrepQueue</code>, built by
   <code>buildSessionPrepQueue</code> in <code>server-queues.ts</code> (see the
   <a href="../data/repository.html">repository layer</a> for the <code>AppDeps</code> shape).
-  Downstream: Session Runtime will read <code>session_preps</code> at <code>/start</code> through
-  the in-process <code>repo.sessionPreps.getBy</code> binder, debit the session credit, and feed
-  <code>ft_context</code> to the Fast Thinker and <code>sd_playbook</code> to the Slow Thinker — the
-  playbook reaches the Slow Thinker in-process, never over the HTTP surface, which serves only
+  Downstream: <a href="./session-transport.html#delivering-the-opening">Session Runtime</a> reads
+  <code>session_preps</code> at <code>/start</code> through the in-process
+  <code>repo.sessionPreps.getBy</code> binder, debits the session credit, feeds
+  <code>ft_context</code> to the Fast Thinker and <code>sd_playbook</code> to the Slow Thinker, and
+  (MYT-101) delivers the vetted <code>opening</code> as the session's first DM row — the playbook
+  reaches the Slow Thinker in-process, never over the HTTP surface, which serves only
   <code>SafeSessionPrep</code>.
 </p>
 
@@ -1153,6 +1197,14 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
     <tr>
       <td><code>sd_playbook</code></td>
       <td>Slow-Thinker stage-direction playbook; carries secrets, clues, revelation conditions.</td>
+    </tr>
+    <tr>
+      <td><code>opening</code></td>
+      <td>
+        MYT-101 (migration 034); nullable TEXT. The tripwire-vetted player-facing DM introduction
+        <code>/start</code> delivers as the session's first DM row. NULL on preps written before
+        MYT-101 — <code>/start</code> fails soft (silent start + WARN).
+      </td>
     </tr>
     <tr>
       <td><code>snapshot_id</code></td>
@@ -1257,7 +1309,7 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#consuming-the-prior-session-handoff">Consuming the prior-session handoff</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:12px"><a href="#the-http-surface">The HTTP surface: four routes, one safe projection</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:12px"><a href="#run-the-session-prep-smoke">Run the session-prep smoke</a></li><li style="padding-left:12px"><a href="#regenerate-the-ready-to-play-fixture">Regenerate the ready-to-play fixture</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:12px"><a href="#http-routes">HTTP routes</a></li><li style="padding-left:12px"><a href="#safesessionprep-fields-the-http-projection">SafeSessionPrep fields (the HTTP projection)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-dedicated-queue-and-worker">The dedicated queue and worker</a></li><li style="padding-left:12px"><a href="#claim-generate-persist-mark">Claim, generate, persist, mark</a></li><li style="padding-left:12px"><a href="#vetting-the-opening">Vetting the opening against its own playbook</a></li><li style="padding-left:12px"><a href="#consuming-the-prior-session-handoff">Consuming the prior-session handoff</a></li><li style="padding-left:12px"><a href="#two-channels-one-stream">Two channels off one stream</a></li><li style="padding-left:12px"><a href="#cost-is-recorded-not-capped">Cost is recorded, not capped</a></li><li style="padding-left:12px"><a href="#a-prep-failure-is-session-scoped">A prep failure is session-scoped</a></li><li style="padding-left:12px"><a href="#the-persistence-row-and-its-unique-constraint">The persistence row and its unique constraint</a></li><li style="padding-left:12px"><a href="#the-http-surface">The HTTP surface: four routes, one safe projection</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a></li><li style="padding-left:12px"><a href="#re-run-a-failed-session-prep">Re-run a failed session prep</a></li><li style="padding-left:12px"><a href="#confirm-a-session-prep-landed">Confirm a session prep landed</a></li><li style="padding-left:12px"><a href="#run-the-session-prep-smoke">Run the session-prep smoke</a></li><li style="padding-left:12px"><a href="#regenerate-the-ready-to-play-fixture">Regenerate the ready-to-play fixture</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-and-outputs">Appendix: inputs and outputs</a></li><li style="padding-left:12px"><a href="#job-payload">Job payload</a></li><li style="padding-left:12px"><a href="#queue-configuration">Queue configuration</a></li><li style="padding-left:12px"><a href="#session-preps-columns">session_preps columns</a></li><li style="padding-left:12px"><a href="#http-routes">HTTP routes</a></li><li style="padding-left:12px"><a href="#safesessionprep-fields-the-http-projection">SafeSessionPrep fields (the HTTP projection)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
