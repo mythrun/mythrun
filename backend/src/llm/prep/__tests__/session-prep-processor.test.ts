@@ -423,6 +423,24 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(preps.rowCount).toBe(0)
   })
 
+  it('MYT-101: a breached opening with a NULL secretRef formats the failure as ref none', async () => {
+    const { campaignId } = await seed()
+    vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValueOnce({
+      ft_context: 'FT',
+      sd_playbook: 'SD',
+      opening: 'o'.repeat(120),
+      usage: { ...STAGE_USAGE },
+    })
+    vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValueOnce({
+      result: { breached: true, confidence: 0.9, secretRef: null },
+      usage: { ...TRIPWIRE_USAGE },
+      repairAttempted: false,
+    })
+    await expect(
+      processSessionPrepJob(makeDeps(pool), makeJob({ campaignId, sessionNumber: 1 })),
+    ).rejects.toThrow(/ref none/)
+  })
+
   it('non-terminal failure: marks pipeline_runs failed, publishes prep-failed{terminal:false}, RETHROWS, leaves campaign status unchanged', async () => {
     const { campaignId } = await seed()
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockRejectedValueOnce(
