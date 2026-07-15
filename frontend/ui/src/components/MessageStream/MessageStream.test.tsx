@@ -440,6 +440,10 @@ describe('MessageStream — entity-highlight seam (MYT-94)', () => {
         items={[DM_HL_SETTLED]}
         connectionLine={null}
         reducedMotion={false}
+        rollReveal={NO_REVEAL}
+        rollLabels={STUB_LABELS}
+        onRoll={() => undefined}
+        onContinue={() => undefined}
         highlight={HL_INDEX}
         highlightLabels={HL_LABELS}
         onEntityOpen={onEntityOpen}
@@ -456,6 +460,10 @@ describe('MessageStream — entity-highlight seam (MYT-94)', () => {
         items={[{ ...DM_HL_SETTLED, key: 'dm-hl-s', streaming: true }]}
         connectionLine={null}
         reducedMotion={false}
+        rollReveal={NO_REVEAL}
+        rollLabels={STUB_LABELS}
+        onRoll={() => undefined}
+        onContinue={() => undefined}
         highlight={HL_INDEX}
         highlightLabels={HL_LABELS}
       />,
