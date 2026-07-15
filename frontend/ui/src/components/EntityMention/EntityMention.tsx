@@ -1,6 +1,7 @@
 import { forwardRef } from 'react'
-import type { EntityMentionProps, EntityGlyph, IconName } from '@mythrun/client-core/contract'
+import type { EntityMentionProps } from '@mythrun/client-core/contract'
 import { Icon } from '../Icon/Icon.tsx'
+import { GLYPH_ICON } from '../Icon/glyph-for-kind.ts'
 import { cn } from '../../lib/cn.ts'
 
 // EntityMention — a recognized entity name highlighted INSIDE settled DM serif
@@ -27,12 +28,6 @@ import { cn } from '../../lib/cn.ts'
 
 // The type-glyph vocabulary → the icon names (Task 8). `other` (item / pc — not
 // world lore) gets NO glyph, so only the three world-lore kinds are mapped.
-const GLYPH_ICON: Record<Exclude<EntityGlyph, 'other'>, IconName> = {
-  npc: 'entity-npc',
-  location: 'entity-location',
-  faction: 'entity-faction',
-}
-
 // Reset the native button to inline body-serif text, then paint the resting
 // underline + the hover/focus style change + the shared a11y focus ring.
 const MENTION_CLASS = cn(
@@ -55,7 +50,7 @@ export const EntityMention = forwardRef<HTMLButtonElement, EntityMentionProps>(f
   { text, glyph, label, ...rest },
   ref,
 ) {
-  const iconName = glyph === 'other' ? null : GLYPH_ICON[glyph]
+  const iconName = GLYPH_ICON[glyph]
   return (
     <button ref={ref} type="button" aria-label={label} className={MENTION_CLASS} {...rest}>
       {iconName !== null ? (
