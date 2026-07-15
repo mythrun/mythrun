@@ -412,6 +412,9 @@ export interface SessionPrepRow {
   readonly sessionNumber: number
   readonly ftContext: string
   readonly sdPlaybook: string
+  /** Player-facing DM introduction (MYT-101), tripwire-vetted at generation.
+   *  NULL on pre-MYT-101 rows — /start fails soft (silent start + WARN). */
+  readonly opening: string | null
   readonly snapshotId: string | null
   readonly createdAt: Date
 }

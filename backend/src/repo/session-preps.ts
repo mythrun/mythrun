@@ -3,7 +3,7 @@
 // Repo for the session_preps table (migration 001 lines 322–331).
 //
 // Columns: id, campaign_id, session_number, ft_context, sd_playbook,
-// snapshot_id, created_at. NO status column. The (campaign_id,
+// opening (MYT-101), snapshot_id, created_at. NO status column. The (campaign_id,
 // session_number) UNIQUE constraint (MYT-61 T1) backs the idempotent
 // ON CONFLICT DO NOTHING insert: a re-run of the prep stage keeps the
 // first persisted row rather than overwriting it.
@@ -18,6 +18,7 @@ interface SessionPrepDbRow {
   readonly session_number: number
   readonly ft_context: string
   readonly sd_playbook: string
+  readonly opening: string | null
   readonly snapshot_id: string | null
   readonly created_at: Date
 }
@@ -29,6 +30,7 @@ function mapSessionPrepRow(r: SessionPrepDbRow): SessionPrepRow {
     sessionNumber: r.session_number,
     ftContext: r.ft_context,
     sdPlaybook: r.sd_playbook,
+    opening: r.opening,
     snapshotId: r.snapshot_id,
     createdAt: r.created_at,
   }
@@ -43,12 +45,15 @@ export function sessionPrepsNs(c: ClientLike) {
       sessionNumber: number
       ftContext: string
       sdPlaybook: string
+      /** MYT-101: player-facing opening. Optional so pre-MYT-101 callers and
+       *  legacy replays stay valid; persisted as NULL when absent. */
+      opening?: string
     }): Promise<void> => {
       await c.query(
-        `INSERT INTO session_preps (id, campaign_id, session_number, ft_context, sd_playbook)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO session_preps (id, campaign_id, session_number, ft_context, sd_playbook, opening)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (campaign_id, session_number) DO NOTHING`,
-        [uuidv7(), input.campaignId, input.sessionNumber, input.ftContext, input.sdPlaybook],
+        [uuidv7(), input.campaignId, input.sessionNumber, input.ftContext, input.sdPlaybook, input.opening ?? null],
       )
     },
     existsFor: async (campaignId: string, sessionNumber: number): Promise<boolean> => {
@@ -60,7 +65,7 @@ export function sessionPrepsNs(c: ClientLike) {
     },
     getBy: async (campaignId: string, sessionNumber: number): Promise<SessionPrepRow | null> => {
       const { rows } = await c.query<SessionPrepDbRow>(
-        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, snapshot_id, created_at
+        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, opening, snapshot_id, created_at
          FROM session_preps WHERE campaign_id = $1 AND session_number = $2`,
         [campaignId, sessionNumber],
       )
@@ -69,7 +74,7 @@ export function sessionPrepsNs(c: ClientLike) {
     },
     listFor: async (campaignId: string): Promise<readonly SessionPrepRow[]> => {
       const { rows } = await c.query<SessionPrepDbRow>(
-        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, snapshot_id, created_at
+        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, opening, snapshot_id, created_at
          FROM session_preps WHERE campaign_id = $1 ORDER BY session_number`,
         [campaignId],
       )
@@ -77,7 +82,7 @@ export function sessionPrepsNs(c: ClientLike) {
     },
     getById: async (prepId: string): Promise<SessionPrepRow | null> => {
       const { rows } = await c.query<SessionPrepDbRow>(
-        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, snapshot_id, created_at
+        `SELECT id, campaign_id, session_number, ft_context, sd_playbook, opening, snapshot_id, created_at
          FROM session_preps WHERE id = $1`,
         [prepId],
       )

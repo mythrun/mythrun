@@ -53,6 +53,22 @@ describe('sessionPreps repo', () => {
     expect((await repo.sessionPreps.getBy(campaignId, 1))?.ftContext).toBe('FT')
   })
 
+  it('opening round-trips when provided and reads back null when omitted (MYT-101)', async () => {
+    const repo = createRepo(pool)
+    await repo.sessionPreps.insert({
+      campaignId,
+      sessionNumber: 1,
+      ftContext: 'FT',
+      sdPlaybook: 'SD',
+      opening: 'Welcome to the Marches. What do you do?',
+    })
+    expect((await repo.sessionPreps.getBy(campaignId, 1))?.opening).toBe(
+      'Welcome to the Marches. What do you do?',
+    )
+    await repo.sessionPreps.insert({ campaignId, sessionNumber: 2, ftContext: 'FT', sdPlaybook: 'SD' })
+    expect((await repo.sessionPreps.getBy(campaignId, 2))?.opening).toBeNull()
+  })
+
   it('getBy returns null when no prep exists for the session', async () => {
     const repo = createRepo(pool)
     expect(await repo.sessionPreps.getBy(campaignId, 7)).toBeNull()

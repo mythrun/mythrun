@@ -836,6 +836,7 @@ describe('schema-parity (integration)', () => {
       '031_relationship_access_level.sql',
       '032_world_introduction.sql',
       '033_starting_level.sql',
+      '034_session_opening.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
