@@ -92,6 +92,24 @@ describe('typedErrorHandler', () => {
     }
   })
 
+  it('maps a Postgres 22P02 (invalid uuid/text) to a clean 404 — no raw SQLSTATE leak (MYT-102 QA)', async () => {
+    const pgErr = Object.assign(new Error('invalid input syntax for type uuid: "not-a-uuid"'), {
+      code: '22P02',
+    })
+    const app = await buildAppThatThrows(pgErr)
+    try {
+      const res = await app.inject({ method: 'GET', url: '/throw' })
+      expect(res.statusCode).toBe(404)
+      const body = res.json<{ code?: string; message?: string }>()
+      expect(body.code).toBe('not_found')
+      // The raw Postgres message + SQLSTATE never reach the client.
+      expect(JSON.stringify(body)).not.toContain('22P02')
+      expect(JSON.stringify(body)).not.toContain('invalid input syntax')
+    } finally {
+      await app.close()
+    }
+  })
+
   it('preserves Fastify validation errors (statusCode!=500)', async () => {
     // A Fastify FastifyError with statusCode=400 (e.g., schema validation
     // failure) shouldn't be remapped to 500 by the fallback branch — the

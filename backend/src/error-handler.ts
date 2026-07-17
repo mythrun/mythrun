@@ -62,6 +62,18 @@ export function typedErrorHandler(
     return
   }
 
+  // A Postgres 22P02 (invalid_text_representation) means a malformed path param
+  // reached a typed column — almost always a non-UUID :campaignId/:id typed
+  // straight into the URL (MYT-102 QA S1). Map it to a clean 404: the resource
+  // that bad id names cannot exist, the raw SQLSTATE + query text never leak to
+  // the client, and 404 is the terminal status the SSE status client stops
+  // retrying on (403/404 -> failed{denied}) — so a malformed-id deep-link no
+  // longer hammers the backend in an unbounded reconnect loop.
+  if ((err as { code?: string }).code === '22P02') {
+    void reply.code(404).send({ code: 'not_found' })
+    return
+  }
+
   // Anything else falls through to Fastify's default 500 (untyped).
   // Future application-level typed errors can add arms here.
   void reply.send(err)
