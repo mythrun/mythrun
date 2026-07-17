@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Stack, Text, Button, SeamlessInput } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { createCampaign, useApiContext, isHttpError } from '@mythrun/client-core'
@@ -57,6 +57,12 @@ export function FreeformScreen({
   const [concept, setConcept] = useState(() => initialConcept)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  // Synchronous double-submit guard (the character-creation submit's pattern):
+  // `busy`/`disabled` are async state, so two clicks in the same tick both pass
+  // the disabled check and fire TWO createCampaign calls — a real double-charge
+  // on a money-adjacent CTA (2 campaigns + 2 world-gen credits). The ref is set
+  // synchronously, so the second click returns immediately.
+  const committing = useRef(false)
 
   const trimmed = concept.trim()
   const ready = trimmed.length >= MIN_CONCEPT_CHARS
@@ -72,6 +78,8 @@ export function FreeformScreen({
   }
 
   const begin = async (): Promise<void> => {
+    if (committing.current) return
+    committing.current = true
     setNotice(null)
     setBusy(true)
     try {
@@ -83,6 +91,7 @@ export function FreeformScreen({
       setNotice(noticeFor(err))
     } finally {
       setBusy(false)
+      committing.current = false
     }
   }
 
@@ -112,7 +121,7 @@ export function FreeformScreen({
         <Button
           variant="primary"
           loading={busy}
-          disabled={!ready}
+          disabled={!ready || busy}
           onPress={() => { void begin() }}
           data-testid="freeform-begin"
         >

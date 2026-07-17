@@ -256,6 +256,28 @@ describe('CampaignNewRoute freeform screen', () => {
     })
   })
 
+  it('a double-click fires exactly ONE createCampaign — no double-charge (MYT-102 QA)', async () => {
+    let calls = 0
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, async () => {
+        calls += 1
+        // Hold the response open so the two synchronous clicks race the in-flight guard.
+        await new Promise((r) => setTimeout(r, 30))
+        return HttpResponse.json({ campaignId: 'c-once' }, { status: 201 })
+      }),
+    )
+    gotoFreeform()
+    typeConcept('A drowned cathedral city the tide never fully leaves.')
+    act(() => {
+      begin().click()
+      begin().click()
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-once')
+    })
+    expect(calls).toBe(1)
+  })
+
   it('shows a 422 concept_rejected rejectionMessage inline, without navigating', async () => {
     server.use(
       http.post(`${BASE_URL}/api/campaigns`, () =>
