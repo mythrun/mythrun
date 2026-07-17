@@ -284,6 +284,29 @@ describe('entities repo', () => {
     expect(byType.get('faction')?.name).toBe('Salt Guild')
   })
 
+  // MYT-102 track D: the starting-situation input read feeds a PLAYER-FACING
+  // surface (the invitation whisper in the character-creation picker). Secret /
+  // discoverable entity names + prose must never enter that context — same
+  // deterministic-leak family as the MYT-89 relationship tiering. Pin: only
+  // `known` entities come back, across all three types.
+  it('listProseByTypeForStartingSituation excludes secret + discoverable entities (known-only)', async () => {
+    const knownLocId = uuidv7()
+    const secretNpcId = uuidv7()
+    await entities.insert(pool, { id: knownLocId, worldId, entityType: 'location', name: 'Wharf', accessLevel: 'known', createdIn: 'stage:test' })
+    // A secret NPC with prose — the exact leak shape: its name + kernel would
+    // otherwise be rendered into the invitation-generation prompt.
+    await entities.insert(pool, { id: secretNpcId, worldId, entityType: 'npc', name: 'The Hidden Regent', accessLevel: 'secret', createdIn: 'stage:test' })
+    await entities.insert(pool, { id: uuidv7(), worldId, entityType: 'faction', name: 'Veiled Court', accessLevel: 'discoverable', createdIn: 'stage:test' })
+    await pool.query(`INSERT INTO prose_kernels (id, entity_id, content) VALUES ($1, $2, 'Secretly rules from the undercroft.')`, [uuidv7(), secretNpcId])
+
+    const rows = await repo.entities.listProseByTypeForStartingSituation(worldId)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.name).toBe('Wharf')
+    // The seeded secret NPC is absent — name AND prose.
+    expect(rows.some((r) => r.name === 'The Hidden Regent')).toBe(false)
+    expect(rows.some((r) => r.prose === 'Secretly rules from the undercroft.')).toBe(false)
+  })
+
   it('listProseByTypeForStage3 returns only location + faction rows with prose', async () => {
     const locId = uuidv7()
     const facId = uuidv7()

@@ -255,11 +255,16 @@ export function entitiesNs(c: ClientLike) {
       return result.rowCount ?? 0
     },
     /**
-     * starting-situation (stage 6) input read: every location / npc / faction
-     * entity for a world with its prose-kernel content, ordered by type then
-     * creation. SQL verbatim from the processor's `loadStartingSituationInputs`.
-     * Runs on the pool OUTSIDE the persist tx exactly as the prior inline read
-     * did. The caller renders the "- name: prose" bullets per kind.
+     * starting-situation (stage 6) input read: every KNOWN location / npc /
+     * faction entity for a world with its prose-kernel content, ordered by type
+     * then creation. Runs on the pool OUTSIDE the persist tx. The caller
+     * renders the "- name: prose" bullets per kind.
+     *
+     * MYT-102: known-only by construction. This read feeds a player-facing
+     * surface — the starting-situation hooks + invitation whispers shown in
+     * the character-creation picker — so secret/discoverable entity names and
+     * prose must never enter the generation context (deterministic leak class,
+     * same family as the MYT-89 relationship tiering).
      */
     listProseByTypeForStartingSituation: async (
       worldId: string,
@@ -269,6 +274,7 @@ export function entitiesNs(c: ClientLike) {
            FROM entities e
            LEFT JOIN prose_kernels pk ON pk.entity_id = e.id
           WHERE e.world_id = $1 AND e.entity_type IN ('location', 'npc', 'faction')
+            AND e.access_level = 'known'
           ORDER BY e.entity_type, e.created_at`,
         [worldId],
       )
