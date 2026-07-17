@@ -90,16 +90,54 @@ describe('CharacterLoadingBeat', () => {
     expect(getByTestId('character-loading-beat').className).toContain('rounded-none')
   })
 
+  it('renders the countdown label as a quiet aria-hidden tabular line when provided', () => {
+    const { getByTestId } = render(
+      <CharacterLoadingBeat
+        beats={MID_BEATS}
+        reducedMotion={false}
+        countdownLabel="[ph: ~2:10 left]"
+      />,
+    )
+    const countdown = getByTestId('character-loading-beat-countdown')
+    expect(countdown.textContent).toBe('[ph: ~2:10 left]')
+    // aria-hidden: the SR live region stays the single AT source of truth (a
+    // per-second churn must never spam a live region).
+    expect(countdown).toHaveAttribute('aria-hidden', 'true')
+    // The world-gen countdown register: quiet tertiary ink, tabular digits so
+    // the ticking `M:SS` never jitters.
+    expect(countdown.className).toMatch(/tabular-nums/)
+    expect(countdown.className).toMatch(/text-ink-tertiary/)
+    // Wrap-safe: an over-long label (a verbose locale; the raw-key [ph:] era)
+    // wraps inside the narrow text column instead of spilling its box at 375px
+    // (the overflow gate's intra-row check).
+    expect(countdown.className).toMatch(/break-words/)
+  })
+
+  it('omits the countdown line entirely when no label is provided (no fake estimate)', () => {
+    const { queryByTestId } = render(
+      <CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />,
+    )
+    expect(queryByTestId('character-loading-beat-countdown')).toBeNull()
+  })
+
   it('forwards the ref to the root element', () => {
     const ref = createRef<HTMLDivElement>()
     render(<CharacterLoadingBeat ref={ref} beats={MID_BEATS} reducedMotion={false} />)
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
-  it('has no a11y violations (mid-progress and complete)', async () => {
+  it('has no a11y violations (mid-progress, complete, and with the countdown)', async () => {
     const mid = render(<CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />)
     expect(await axe(mid.container)).toHaveNoViolations()
     const done = render(<CharacterLoadingBeat beats={ALL_DONE} reducedMotion />)
     expect(await axe(done.container)).toHaveNoViolations()
+    const counting = render(
+      <CharacterLoadingBeat
+        beats={MID_BEATS}
+        reducedMotion={false}
+        countdownLabel="[ph: ~2:10 left]"
+      />,
+    )
+    expect(await axe(counting.container)).toHaveNoViolations()
   })
 })

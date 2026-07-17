@@ -90,7 +90,13 @@ describe('guidedReducer — back', () => {
 describe('guidedRail', () => {
   it('shows all steps at the start with the class step active and no chosen values', () => {
     const rail = guidedRail(initialGuidedState(1))
-    expect(rail.map((r) => r.step)).toEqual(['class', 'species', 'background', 'notes'])
+    expect(rail.map((r) => r.step)).toEqual([
+      'class',
+      'species',
+      'background',
+      'notes',
+      'grounding',
+    ])
     expect(rail[0]).toEqual({ step: 'class', label: 'Class', state: 'now' })
     expect(rail.slice(1).every((r) => r.state === 'todo')).toBe(true)
   })
@@ -114,16 +120,38 @@ describe('guidedRail', () => {
       'species',
       'background',
       'notes',
+      'grounding',
     ])
   })
 
-  it('marks every rung done when the flow is complete', () => {
+  // The grounding rung (MYT-102): the screen AFTER the builder is a first-class
+  // rung of the same journey — `todo` while the builder runs, `now` once the flow
+  // completes and the route shows the grounding prompt. It is NOT a reducer step
+  // (back/advance never land on it); only the rail models it.
+  it('carries a final grounding rung — todo during the builder, with no chosen value', () => {
+    const rail = guidedRail(initialGuidedState(1))
+    expect(rail.at(-1)).toEqual({ step: 'grounding', label: 'Grounding', state: 'todo' })
+  })
+
+  it('marks every builder rung done and the grounding rung NOW when the flow is complete', () => {
     let s = initialGuidedState(1)
     s = guidedReducer(s, { type: 'choose', value: 'fighter' })
     s = guidedReducer(s, { type: 'choose', value: 'Human' })
     s = guidedReducer(s, { type: 'choose', value: 'Soldier' })
     s = guidedReducer(s, { type: 'choose', value: 'stoic' })
-    expect(guidedRail(s).every((r) => r.state === 'done')).toBe(true)
+    const rail = guidedRail(s)
+    expect(rail.slice(0, -1).every((r) => r.state === 'done')).toBe(true)
+    expect(rail.at(-1)).toEqual({ step: 'grounding', label: 'Grounding', state: 'now' })
+  })
+
+  it('returns the grounding rung to todo when the player steps back out of completion', () => {
+    let s = initialGuidedState(1)
+    s = guidedReducer(s, { type: 'choose', value: 'fighter' })
+    s = guidedReducer(s, { type: 'choose', value: 'Human' })
+    s = guidedReducer(s, { type: 'choose', value: 'Soldier' })
+    s = guidedReducer(s, { type: 'choose', value: 'stoic' })
+    s = guidedReducer(s, { type: 'back' }) // complete → notes
+    expect(guidedRail(s).at(-1)).toEqual({ step: 'grounding', label: 'Grounding', state: 'todo' })
   })
 })
 

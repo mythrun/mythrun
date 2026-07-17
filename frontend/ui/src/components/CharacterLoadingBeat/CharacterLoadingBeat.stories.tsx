@@ -50,11 +50,23 @@ export const Complete: Story = {
   args: { beats: COMPLETE_BEATS, reducedMotion: false },
 }
 
+// With the countdown — the quiet tabular `~M:SS` remaining-wait line under the
+// rows (MYT-102; the world-gen waiting register). The label arrives resolved
+// from the consumer (the surface owns the tick + i18n); it is OMITTED entirely
+// on cold-start, so the mid-progress story above doubles as the no-estimate
+// specimen.
+export const WithCountdown: Story = {
+  name: 'With countdown (~2:10 left)',
+  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: '[ph: ~2:10 left]' },
+}
+
 // Reduced motion — the same mid-progress snapshot with every transition dropped
-// (the fill snaps to its proportion; rows swap state with no fade).
+// (the fill snaps to its proportion; rows swap state with no fade). The
+// countdown still ticks under reduced motion (content, not decoration) — shown
+// here so the frozen fill + live countdown pairing has a specimen.
 export const ReducedMotion: Story = {
   name: 'Reduced motion (mid-progress, no transitions)',
-  args: { beats: MID_BEATS, reducedMotion: true },
+  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: '[ph: ~2:10 left]' },
 }
 
 // Narrow — the loadwrap at ~375px, confirming the figure + text column hold

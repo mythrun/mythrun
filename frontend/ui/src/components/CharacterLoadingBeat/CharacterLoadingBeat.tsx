@@ -70,8 +70,18 @@ const FILL_ANIM_CLASS = 'transition-[height] duration-[var(--duration-slow)] eas
 // cross-axis min-width exceeds 80px; the surplus is clipped).
 const DITHER_WRAP_CLASS = 'absolute inset-x-0 bottom-0 left-1/2 -translate-x-1/2'
 
-// The text column — the eyebrow + the surfacing beat rows.
+// The text column — the eyebrow + the surfacing beat rows + the countdown.
 const TEXT_CLASS = 'flex min-w-0 flex-col gap-[var(--space-2)]'
+// The ticking `~M:SS` wait (MYT-102) — the WorldGenLoading countdown register:
+// quiet tertiary ink, tabular digits so the per-second tick never jitters the
+// column. aria-hidden like the rows — the SR live region stays the single AT
+// source of truth (a per-second churn must never spam a live region). NOT
+// gated on reducedMotion: the changing number is CONTENT (the remaining wait),
+// not decoration — freezing it would show a wrong number. `break-words` keeps
+// an over-long label (a verbose locale; the raw-key [ph:] era) wrapping inside
+// the narrow text column instead of spilling its box at 375px (the overflow
+// gate's intra-row check).
+const COUNTDOWN_CLASS = 'font-ui text-xs tabular-nums text-ink-tertiary break-words'
 const HEADING_CLASS = 'font-ui text-xs uppercase tracking-wide text-accent-fg'
 const ROWS_CLASS = 'flex flex-col gap-[var(--space-1)]'
 const ROW_CLASS = 'font-ui text-sm leading-[1.4]'
@@ -88,7 +98,7 @@ const ROW_STATE_CLASS: Record<CharacterLoadingBeatProps['beats'][number]['state'
 }
 
 export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingBeatProps>(
-  function CharacterLoadingBeat({ beats, reducedMotion }, ref) {
+  function CharacterLoadingBeat({ beats, reducedMotion, countdownLabel }, ref) {
     const total = beats.length
     const doneCount = beats.filter((beat) => beat.state === 'done').length
     // Fill proportion as an integer percent — the mechanical done/total ratio (no
@@ -150,6 +160,17 @@ export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingB
               </li>
             ))}
           </ul>
+          {/* The remaining-wait countdown — present only with a usable estimate
+              (the contract OMITS the prop on cold-start; no fake numbers). */}
+          {countdownLabel !== undefined && (
+            <p
+              aria-hidden="true"
+              data-testid="character-loading-beat-countdown"
+              className={COUNTDOWN_CLASS}
+            >
+              {countdownLabel}
+            </p>
+          )}
         </div>
       </div>
     )

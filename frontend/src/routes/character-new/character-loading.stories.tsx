@@ -6,6 +6,7 @@ import {
   createSseStatusClient,
   type ApiContext,
   type SseStatusClient,
+  type StageTiming,
 } from '@mythrun/client-core'
 import type { CharacterCreationStreamDeps } from '@mythrun/client-core/character'
 import { i18n } from '../../i18n/config.ts'
@@ -15,10 +16,14 @@ import { CharacterLoadingSurface } from './character-loading.tsx'
 // under its screen headline, driven by useCharacterCreationStream). The specimens
 // feed the surface a hand-driven stream through the hook's `deps` seam: a fake SSE
 // client that replays a fixed event set on open, so the fold settles to a fixed
-// progress WITHOUT a live backend. Mid = concept done + sheet underway; Done =
-// every stage complete + the completion event (the swap-to-reveal moment). The
-// live folding itself is covered by use-character-creation-stream.test.ts; these
-// exist for the E1 responsive/a11y sweep.
+// progress WITHOUT a live backend — plus a stubbed progress probe (calm
+// `processing`) and, for the countdown specimen, an injected stage-timings
+// history so the MYT-102 `~M:SS` line ticks live. Mid = concept done + sheet
+// underway; Done = every stage complete + the completion event (the
+// swap-to-reveal moment). The live folding itself is covered by
+// use-character-creation-stream.test.ts; these exist for the E1 responsive/a11y
+// sweep. (The countdown/stall copy keys are the controller's i18n pass — until
+// then the countdown line renders its raw key, the deliberate [ph:]-era look.)
 
 const VIEWER = 'viewer'
 const STORY_CID = 'story-campaign'
@@ -44,7 +49,8 @@ const complete = (): PipelineEvent => ({ type: 'character_creation_complete', us
 
 // A deps seam whose client replays `events` on open. The hook subscribes via
 // onEvent BEFORE calling open, so the synchronous replay reaches its listener and
-// the beats fold to their final state on mount.
+// the beats fold to their final state on mount. The progress probe resolves a
+// calm `processing` (never `completed` — a story must not fire the reveal swap).
 function replay(events: readonly PipelineEvent[]): CharacterCreationStreamDeps {
   return {
     createClient: (ctx): SseStatusClient => {
@@ -66,6 +72,20 @@ function replay(events: readonly PipelineEvent[]): CharacterCreationStreamDeps {
         close: () => undefined,
       }
     },
+    fetchProgress: () =>
+      Promise.resolve({
+        campaignId: STORY_CID,
+        totalMembers: 1,
+        concepts: [
+          {
+            userId: VIEWER,
+            displayName: 'Viewer',
+            status: 'processing',
+            submittedAt: new Date().toISOString(),
+          },
+        ],
+        missing: [],
+      }),
   }
 }
 
@@ -79,7 +99,27 @@ const DONE_EVENTS: readonly PipelineEvent[] = [
   complete(),
 ]
 
-function renderWith(events: readonly PipelineEvent[]): React.JSX.Element {
+// The countdown specimen's stream: setup + concept done, the sheet freshly
+// underway (a startedAt of "just now", so the live 1-second tick visibly walks
+// the estimate down from ~2:30 in the running story).
+const TICKING_EVENTS = (): readonly PipelineEvent[] => [
+  completed('location_selection'),
+  completed('character_concept'),
+  { type: 'stage-started', stage: 'character_sheet', userId: VIEWER, startedAt: new Date().toISOString() },
+]
+
+// An injected stage-timings history (the un-filtered aggregate the real
+// endpoint serves) — realistic per-stage averages for the creation slice.
+const STORY_TIMINGS: readonly StageTiming[] = [
+  { stage: 'location_selection', avgMs: 2_000 },
+  { stage: 'character_concept', avgMs: 45_000 },
+  { stage: 'character_sheet', avgMs: 150_000 },
+]
+
+function renderWith(
+  events: readonly PipelineEvent[],
+  fetchTimings?: () => Promise<readonly StageTiming[]>,
+): React.JSX.Element {
   return (
     <I18nextProvider i18n={i18n}>
       <ApiClientProvider value={STORY_CTX}>
@@ -88,6 +128,7 @@ function renderWith(events: readonly PipelineEvent[]): React.JSX.Element {
           userId={VIEWER}
           onDone={() => undefined}
           deps={replay(events)}
+          {...(fetchTimings !== undefined ? { fetchTimings } : {})}
         />
       </ApiClientProvider>
     </I18nextProvider>
@@ -108,6 +149,15 @@ type Story = StoryObj<typeof CharacterLoadingSurface>
 export const MidProgress: Story = {
   name: 'Mid-progress (concept done, sheet underway)',
   render: () => renderWith(MID_EVENTS),
+}
+
+// With the countdown (MYT-102) — an injected timings history + a sheet stage
+// started "just now", so the `~M:SS` line under the rows ticks down live. The
+// default stories above stay countdown-less (the honest cold-start: no history,
+// no number).
+export const WithCountdown: Story = {
+  name: 'With countdown (ticking, sheet underway)',
+  render: () => renderWith(TICKING_EVENTS(), () => Promise.resolve(STORY_TIMINGS)),
 }
 
 // Complete — every stage done and the completion event delivered (the swap

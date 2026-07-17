@@ -70,11 +70,13 @@ export function remainingPrepWaitMs(
  * The shared slice-summing core: the sum of `slice`'s un-completed stage
  * averages, minus the elapsed time inside any currently-RUNNING stage (that
  * stage's contribution clamps at 0). `null` when there is no usable history.
- * The two public entry points differ ONLY in which canonical stage slice they
- * pass — the reveal target (WATCHED_STAGES) vs the graph-arrival target
- * (PREP_STAGES).
+ * The two public entry points above differ ONLY in which canonical stage slice
+ * they pass — the reveal target (WATCHED_STAGES) vs the graph-arrival target
+ * (PREP_STAGES). Exported (MYT-102) so the character-creation countdown
+ * (`character/creation-eta.ts`) runs the SAME math over its own per-player
+ * slice instead of forking the derivation.
  */
-function remainingOverSlice(
+export function remainingOverSlice(
   timings: readonly StageTiming[] | null,
   stages: readonly StageProgress[],
   nowMs: number,

@@ -38,3 +38,5 @@ export type {
   CharacterCreationStream,
   CharacterCreationStreamDeps,
 } from './use-character-creation-stream.ts'
+export { CHARACTER_CREATION_STAGES, remainingCreationWaitMs } from './creation-eta.ts'
+export type { CharacterCreationStage } from './creation-eta.ts'

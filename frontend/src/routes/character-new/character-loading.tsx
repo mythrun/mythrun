@@ -1,29 +1,89 @@
-import { useEffect, useRef } from 'react'
-import { CharacterLoadingBeat, Heading, Stack } from '@mythrun/ui'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { CharacterLoadingBeat, Heading, Stack, Text } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
+  getStageTimings,
+  useApiContext,
+  type ApiContext,
+  type StageTiming,
+} from '@mythrun/client-core'
+import {
+  remainingCreationWaitMs,
   useCharacterCreationStream,
   type CharacterCreationStreamDeps,
 } from '@mythrun/client-core/character'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
 
-// The CHARACTER-LOADING SURFACE (MYT-90 D5) — the "coming into being" screen the
-// D8 routing table mounts while the viewer's character concept is `processing`.
-// It is a thin composition: the DS <CharacterLoadingBeat> (the 1-bit figure
-// filling in beside the surfacing beat rows) driven by the client-core
-// useCharacterCreationStream (the per-user SSE fold → `{ beats, done }`), under a
-// screen headline that matches the other create beats (the chooser's `role="title"`).
+// The CHARACTER-LOADING SURFACE (MYT-90 D5 + the MYT-102 waiting upgrade) — the
+// "coming into being" screen the D8 routing table mounts while the viewer's
+// character concept is `processing`. It composes the DS <CharacterLoadingBeat>
+// (the 1-bit figure filling in beside the surfacing beat rows) over the
+// client-core useCharacterCreationStream (the per-user SSE fold — snapshot-
+// seeded, so a mid-creation refresh shows the truth at once), under a screen
+// headline that matches the other create beats.
 //
-// The one behaviour it owns is the SWAP: the instant the viewer's own
-// `character_creation_complete` arrives (`done` flips true) it calls `onDone`
-// EXACTLY ONCE — D8 re-evaluates routing and lands the player on the reveal. A
-// latch ref keeps it one-shot even if the surface re-renders while `done` holds.
+// The SWAP: the instant the viewer's completion arrives (`done` — the live
+// event OR the hook's reload-stable progress probe) it calls `onDone` EXACTLY
+// ONCE — D8 re-evaluates routing and lands the player on the reveal. A latch
+// ref keeps it one-shot even if the surface re-renders while `done` holds.
 //
-// SCOPE: the hook is LIVE-only (a mid-creation refresh restarts the beats until
-// the next event, and a refresh AFTER completion won't re-flip `done`). The
-// durable "already completed" case is D8's job — its concept-status routing sends
-// a returning player straight to the reveal without ever mounting this surface —
-// so here we only need the live `done → onDone` swap.
+// The WAIT (MYT-102, the world-gen waiting register): one `getStageTimings`
+// fetch (the un-filtered historical aggregate — it already carries the
+// character stages) + a real 1-second tick turn the hook's folded viewer
+// `stages` into the beat's ticking `~M:SS` countdown via
+// `remainingCreationWaitMs`. HONESTY is load-bearing: cold-start / no usable
+// history → the prop is OMITTED (no fake numbers); an overrun HOLDS at the
+// remaining-future floor and jumps at the next stage event; the tick is NOT
+// gated on reduced motion (the number is content, not decoration). When the
+// wait has exhausted 3× the initial estimate — or 5 minutes when there is no
+// history to estimate from — with no terminal event, a calm "taking longer
+// than usual" line appears under the beat. No retry affordance here (resume
+// is Track A's surface; this line composes above whatever lands there).
+
+/** Stall thresholds: with a usable estimate the wait reads as stalled once the
+ *  elapsed time reaches 3× the initial ETA; with none, after 5 minutes. */
+const STALL_ETA_MULTIPLIER = 3
+const NO_HISTORY_STALL_MS = 5 * 60_000
+
+/** The 1-second tick behind the countdown + stall clock (the generating.tsx
+ *  idiom): the current epoch ms, refreshed by a REAL 1s interval while
+ *  `active`. Each tick re-derives the remaining wait from scratch, so a stage
+ *  event landing between ticks recalibrates on the next render. NOT gated on
+ *  reduced motion — the ticking number is CONTENT (the remaining wait), not
+ *  decoration; freezing it would show a wrong number. */
+function useNowMs(active: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    setNowMs(Date.now())
+    // Bare timer globals (not window.*) — universal across web + native (R1).
+    const id = setInterval(() => {
+      setNowMs(Date.now())
+    }, 1000)
+    return () => {
+      clearInterval(id)
+    }
+  }, [active])
+  return nowMs
+}
+
+/** Format the remaining wait into the ticking `~M:SS` countdown label, or
+ *  `undefined` when there is no usable estimate (no history) — the beat shows
+ *  nothing rather than a fake number. 0 renders as `0:00` (the overrun holds
+ *  there — "any moment now" — until the completion fires). The digits are
+ *  mechanical; the words around them are i18n. (Replicated from the world-gen
+ *  generating view — the two screens share the register, not a module, until a
+ *  third consumer earns the lift.) */
+function countdownLabelFrom(remainingMs: number | null, t: TFunction): string | undefined {
+  if (remainingMs === null) return undefined
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return t('characterCreate.loading.countdown', {
+    time: `${String(minutes)}:${String(seconds).padStart(2, '0')}`,
+  })
+}
 
 export interface CharacterLoadingSurfaceProps {
   /** The campaign whose status stream carries the per-player creation events. */
@@ -32,9 +92,14 @@ export interface CharacterLoadingSurfaceProps {
   userId: string
   /** Called once when the viewer's creation completes — D8 re-routes to the reveal. */
   onDone: () => void
-  /** Injected stream transport — defaults to the real SSE client; tests + stories
-   *  substitute a hand-driven one (forwarded to useCharacterCreationStream). */
+  /** Injected stream transport + progress probe — defaults to the real ones;
+   *  tests + stories substitute hand-driven ones (forwarded to
+   *  useCharacterCreationStream). */
   deps?: CharacterCreationStreamDeps
+  /** The stage-timings history source (the countdown's input) — defaults to the
+   *  real endpoint; tests + stories substitute it. A failed fetch degrades to no
+   *  countdown, never an error surface. */
+  fetchTimings?: (ctx: ApiContext) => Promise<readonly StageTiming[]>
 }
 
 export function CharacterLoadingSurface({
@@ -42,9 +107,11 @@ export function CharacterLoadingSurface({
   userId,
   onDone,
   deps,
+  fetchTimings = getStageTimings,
 }: CharacterLoadingSurfaceProps): React.JSX.Element {
   const { t } = useTranslation()
-  const { beats, done } = useCharacterCreationStream(campaignId, userId, deps)
+  const ctx = useApiContext()
+  const { beats, done, stages } = useCharacterCreationStream(campaignId, userId, deps)
   const reducedMotion = usePrefersReducedMotion()
 
   // Fire the swap exactly once: `done` latches true in the hook and never goes
@@ -57,12 +124,66 @@ export function CharacterLoadingSurface({
     }
   }, [done, onDone])
 
+  // The one-time timings fetch. `null` until it resolves (or forever, on a
+  // failed fetch / cold-start) → no countdown, and the stall clock falls back
+  // to the no-history threshold.
+  const [timings, setTimings] = useState<readonly StageTiming[] | null>(null)
+  useEffect(() => {
+    let active = true
+    fetchTimings(ctx)
+      .then((rows) => {
+        if (active) setTimings(rows)
+      })
+      .catch(() => {
+        // Calm: the beat simply shows no countdown.
+      })
+    return () => {
+      active = false
+    }
+  }, [ctx, fetchTimings])
+
+  // The tick runs for the whole wait (it also drives the stall clock, which
+  // needs no history) and stops once done — the surface swaps away right after.
+  const nowMs = useNowMs(!done)
+  const remainingMs = useMemo(
+    () => remainingCreationWaitMs(timings, stages, nowMs),
+    [timings, stages, nowMs],
+  )
+  const countdownLabel = useMemo(() => countdownLabelFrom(remainingMs, t), [remainingMs, t])
+
+  // The stall clock: elapsed-since-mount vs 3× the FIRST usable estimate (the
+  // expected whole wait as this screen first saw it — later recalibrations
+  // must not let the threshold creep), or the flat no-history window. A 0
+  // initial estimate ("already done, any moment now") carries no usable scale
+  // → the no-history window applies.
+  const mountedAtRef = useRef(Date.now())
+  const initialEtaRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (initialEtaRef.current === null && remainingMs !== null) initialEtaRef.current = remainingMs
+  }, [remainingMs])
+  const stallThresholdMs =
+    initialEtaRef.current !== null && initialEtaRef.current > 0
+      ? initialEtaRef.current * STALL_ETA_MULTIPLIER
+      : NO_HISTORY_STALL_MS
+  const stalled = !done && nowMs - mountedAtRef.current >= stallThresholdMs
+
   return (
     <Stack gap={5} data-testid="character-loading">
       <Heading level={1} role="title">
         {t('characterCreate.loading.title')}
       </Heading>
-      <CharacterLoadingBeat beats={beats} reducedMotion={reducedMotion} />
+      <CharacterLoadingBeat
+        beats={beats}
+        reducedMotion={reducedMotion}
+        // Omit on undefined (exactOptionalPropertyTypes; the honesty contract —
+        // no usable history means NO countdown, never an empty one).
+        {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+      />
+      {stalled && (
+        <Text role="ui-caption" as="p" data-testid="character-loading-stalled">
+          {t('characterCreate.loading.stalled')}
+        </Text>
+      )}
     </Stack>
   )
 }
