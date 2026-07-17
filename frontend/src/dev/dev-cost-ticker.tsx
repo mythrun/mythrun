@@ -1,4 +1,4 @@
-/* eslint-disable mythrun-ui/no-ad-hoc-ui, mythrun-ui/no-untranslated-jsx-text, i18next/no-literal-string -- DEV/STAGING-ONLY internal tool. The DevCostTicker is a deliberately ad-hoc floating widget that lives OUTSIDE the design system + i18n: it is never shown to real users (it renders only while the dev/staging-gated /api/dev/api-cost endpoint answers, and hides on the 404 it returns in production). Routing a throwaway dev counter through @mythrun/ui + i18n keys would be gold-plating. */
+/* eslint-disable mythrun-ui/no-ad-hoc-ui, mythrun-ui/no-untranslated-jsx-text, i18next/no-literal-string -- DEV-ONLY internal tool. The DevCostTicker is a deliberately ad-hoc floating widget that lives OUTSIDE the design system + i18n: it is never shown to real users (it renders only in dev builds — `import.meta.env.DEV` — against the bypass-gated /api/dev/api-cost endpoint, and additionally hides on a 404). Routing a throwaway dev counter through @mythrun/ui + i18n keys would be gold-plating. */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getDevApiCost, isHttpError, useApiContext } from '@mythrun/client-core'
 
@@ -14,12 +14,34 @@ function formatDelta(usd: number): string {
 
 /**
  * A floating, fixed-position running total of Anthropic API spend for the
- * current dev/staging deploy. Captures the first successful reading as a
- * baseline and displays the delta above it; Reset re-captures the baseline
- * (display → $0.0000). Renders `null` when the endpoint 404s (production, or the
- * route otherwise absent), so it can be mounted unconditionally at the app root.
+ * current dev stack. Captures the first successful reading as a baseline and
+ * displays the delta above it; Reset re-captures the baseline (display →
+ * $0.0000).
+ *
+ * BUILD GATE (MYT-102): renders `null` — without ever starting the poll loop —
+ * unless `dev` is true. The default is `import.meta.env.DEV`, a statically-
+ * `false` constant in any built bundle (staging AND production ship prod
+ * builds), so the widget + its polling are dev-server-only. The prop seam
+ * exists for tests, matching the LandingRoute pattern. Previously the widget
+ * mounted everywhere and relied on the endpoint 404ing to hide; staging's
+ * backend answered 200 (its route was env-gated, not bypass-gated), so the
+ * ticker rendered there and polled indefinitely. The 404-hide in the inner
+ * component remains as defense in depth (e.g. a dev build pointed at a
+ * real-auth backend). Mounting `<DevCostTicker />` unconditionally at the app
+ * root stays safe.
  */
-export function DevCostTicker(): React.JSX.Element | null {
+export function DevCostTicker({
+  dev = import.meta.env.DEV,
+}: { dev?: boolean } = {}): React.JSX.Element | null {
+  // Hook-free gate: the early return is rules-of-hooks-safe because ALL hooks
+  // live in the inner component, which simply never mounts in a non-dev build.
+  if (!dev) return null
+  return <DevCostTickerInner />
+}
+
+// The real widget — hooks + poll loop + render. Module-private: only reachable
+// through the gate above.
+function DevCostTickerInner(): React.JSX.Element | null {
   const ctx = useApiContext()
   const [total, setTotal] = useState<number | null>(null)
   const [baseline, setBaseline] = useState<number | null>(null)

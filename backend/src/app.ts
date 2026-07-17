@@ -513,6 +513,15 @@ export const buildApp = async (
   // mythrunProseSubscriber so the shutdown handler can close it.
   if (config.env.authMode === 'bypass') {
     await app.register(devCreditsRoutes, { pool: deps.pg })
+    // MYT-102 — dev-only GET /api/dev/api-cost (the DevCostTicker's endpoint).
+    // Previously gated on mythrunEnv !== 'production' ("staging still wants the
+    // ticker"), which left it registered on staging (authMode='real') and the
+    // widget polling it indefinitely there. The ticker is dev-stack tooling, so
+    // it now lives in THIS bypass block like every other /api/dev route: a
+    // real-auth boot (staging AND production) never registers it, the request
+    // 404s, and the widget hides. The route stays `public` (allowlisted) so it
+    // answers on pre-login screens under the bypass identity.
+    await app.register(devApiCostRoutes)
     // MYT-66 T10 — dev-only POST /api/dev/campaigns/:campaignId/fire-turn:
     // enqueues one session-turn job so the enqueue → worker → broadcast
     // round-trip can be smoked without the (MYT-67) player-chat trigger path.
@@ -526,16 +535,6 @@ export const buildApp = async (
       counter,
       frontendBaseUrl: config.env.frontendBaseUrl,
     })
-  }
-
-  // Dev/staging-only API-cost ticker endpoint (internal tooling). Gated on
-  // mythrunEnv, NOT authMode — staging boots authMode='real' but still wants the
-  // ticker, so this cannot live in the bypass block above. The route is `public`
-  // (a non-sensitive cumulative process counter the floating DevCostTicker polls
-  // on every page); it is LITERALLY ABSENT in a production boot (this gate + the
-  // plugin's own self-gate), so it 404s there and the widget auto-hides.
-  if (config.env.mythrunEnv !== 'production') {
-    await app.register(devApiCostRoutes, { mythrunEnv: config.env.mythrunEnv })
   }
 
   // Billing plugin (MYT-42 Tasks 25–31). Registered last as a direct
