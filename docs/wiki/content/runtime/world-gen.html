@@ -53,8 +53,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:1239c3c90a5b4258399210821b1ffc8b7bae4edc8967c0ff351d051aeadb37cc -->
-<!-- last-ticket: MYT-89 -->
+<!-- source-hash: sha256:9677b8ed713843e921d4835bf2bb2fe1db0c1f4b0c7e8fcfb1b6b8b13c1dbc1e -->
+<!-- last-ticket: MYT-102 -->
 
 <h1>World gen</h1>
 
@@ -217,11 +217,17 @@
       </td>
       <td>
         <code>202 { campaignId, action }</code> when the world-gen job is re-enqueued;
-        <code>409</code>
-        with a typed code on every phase that has no resume action (in-progress, already-complete,
-        terminal-failure, stuck-on-not-implemented-stage, world-gen-capped, content-filtered);
-        <code>422 phase_resume_not_yet_implemented</code> for <code>character_creation</code> /
-        <code>post_creation</code> phases.
+        <code>202 { action: 'character-creation-re-enqueued', reEnqueued }</code> when a
+        <code>character_creation</code> phase had stuck per-player concepts to re-drive (MYT-102 —
+        see
+        <a href="./character-creation.html#recovering-a-stuck-character"
+          >recovering a stuck character</a
+        >); <code>409</code> with a typed code on every phase that has no resume action
+        (in-progress, already-complete, terminal-failure, world-gen-capped, content-filtered, or a
+        <code>character_creation</code> phase with nothing stuck — <code>nothing_to_resume</code>);
+        <code>503 queue_not_ready</code> when the character-creation queue isn't wired on this
+        deployment; and <code>422 phase_resume_not_yet_implemented</code> for the
+        <code>post_creation</code> phase, the one arm still without a recovery path.
       </td>
     </tr>
     <tr>
@@ -779,9 +785,16 @@
         <code>{ index, locationEntityId, locationName, title, prose, invitation }</code> rows
         MYT-53's character-creation flow picks one from; the LLM emits the title and, since MYT-90,
         the 2nd-person <code>invitation</code> whisper that
-        <a href="./character-creation.html">character creation</a> uses to elicit the grounding
-        text; the worker resolves <code>locationName</code> from <code>entities.name</code> after
-        the stage commits)
+        <a href="./character-creation.html">character creation</a> uses to elicit the grounding text
+        — reworked in MYT-102 into an <em>arrival-draw</em> a newcomer with no history in the world
+        can answer, never a presumed acquaintance with a named NPC; the worker resolves
+        <code>locationName</code> from <code>entities.name</code> after the stage commits). The
+        stage reads a <strong>known-tier-only</strong> entity context (<code
+          >listProseByTypeForStartingSituation</code
+        >
+        filters <code>access_level = 'known'</code> — MYT-102), so no secret or discoverable entity
+        can seed a player-facing hook: structural enforced ignorance, the same family as the
+        <a href="#relationship-tiering">relationship tiering</a> above.
       </td>
       <td>none</td>
     </tr>

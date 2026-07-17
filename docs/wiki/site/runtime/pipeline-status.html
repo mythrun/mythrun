@@ -617,8 +617,11 @@
     <tr>
       <td><code>failed</code></td>
       <td>
-        Any character-creation or post-creation stage failed (post-worldgen failure; unrecoverable
-        for now).
+        Any character-creation or post-creation stage failed (post-worldgen failure). A
+        <em>character-creation</em> failure is recoverable since MYT-102 — the owner's
+        <a href="./character-creation.html#recovering-a-stuck-character">resume</a> re-drives stuck
+        or failed per-player concepts; the <code>post_creation</code> (integration) arm remains
+        manual for now.
       </td>
     </tr>
     <tr>

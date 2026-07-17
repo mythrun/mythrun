@@ -12,8 +12,8 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
-<!-- source-hash: sha256:09974e5ec7cfdd62b4aecc3a511f5790f6f3559cc0d0bd0781229a6cdae814a8 -->
-<!-- last-ticket: MYT-62 -->
+<!-- source-hash: sha256:e6b27303449fdf562d6fc6840f8abe81ab7763281912dd8e9d8d72795d531417 -->
+<!-- last-ticket: MYT-102 -->
 
 <h1>Pipeline status</h1>
 
@@ -341,8 +341,11 @@
     <tr>
       <td><code>failed</code></td>
       <td>
-        Any character-creation or post-creation stage failed (post-worldgen failure; unrecoverable
-        for now).
+        Any character-creation or post-creation stage failed (post-worldgen failure). A
+        <em>character-creation</em> failure is recoverable since MYT-102 — the owner's
+        <a href="./character-creation.html#recovering-a-stuck-character">resume</a> re-drives stuck
+        or failed per-player concepts; the <code>post_creation</code> (integration) arm remains
+        manual for now.
       </td>
     </tr>
     <tr>

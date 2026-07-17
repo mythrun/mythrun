@@ -16,8 +16,8 @@
 <!-- source: frontend/ui/src/components/CharacterLoadingBeat/ -->
 <!-- source: frontend/ui/src/components/CharacterSheetReveal/ -->
 <!-- source: frontend/ui/src/components/PartyRoster/ -->
-<!-- source-hash: sha256:04da7ca58001672ceaf539854911f42b4e85cc1f4b0a8dc61f07fdf37bac8fc1 -->
-<!-- last-ticket: MYT-94 -->
+<!-- source-hash: sha256:982d2554c7f56e8e59067e3ec04862a10cefa455a013c4152c8aaaf8e72e9f9a -->
+<!-- last-ticket: MYT-102 -->
 
 <h1>Character-creation experience</h1>
 
@@ -192,8 +192,10 @@
   <strong>The create-machine's tail states are vestigial</strong> — the machine can reach
   <code>processing</code>, <code>reveal</code>, and <code>staging</code>, but on the discrete
   <code>/character/new</code> route only <code>chooser → freeform | guided → processing</code> are
-  actually driven; nothing there dispatches <code>ready</code> or <code>confirm</code>. On submit the
-  route shows a brief processing placeholder, and the <em>real</em> loading beat and reveal are the
+  actually driven; nothing there dispatches <code>ready</code> or <code>confirm</code>. On submit
+  the route <em>redirects</em> to the campaign surface (<code>/campaigns/:id</code>, a
+  <code>replace</code> so Back never returns to a spent form) — MYT-102 replaced the dead processing
+  placeholder that used to sit here — and the <em>real</em> loading beat and reveal are the
   campaign-page surface's beats, keyed on the server concept status. The machine sequences the
   in-session form; the surface owns everything after submit. This is the same "durable question is
   answered by server state" split as above, seen from the route's side.
@@ -242,15 +244,20 @@
 
 <p>
   The <strong>freeform path</strong> collects the two required fields one at a time: first "Who are
-  you?" → <code>conceptText</code>, then the situation's invitation whisper → the grounding text. Each
-  field mirrors the backend's 20-character floor as a calm inline nudge (never a red error), and a
-  synchronous in-flight guard keeps a double-press from firing a second submit. The
-  <strong>guided path</strong> is a controlled driver around the presentational
+  you?" → <code>conceptText</code>, then the situation's invitation whisper → the grounding text.
+  Each step now carries a quiet mono <strong>"N of 2" signpost</strong> above the prompt (MYT-102),
+  so a player knows a second question is coming and doesn't front-load their whole character into
+  the first answer. Each field mirrors the backend's 20-character floor as a calm inline nudge
+  (never a red error), and a synchronous in-flight guard keeps a double-press from firing a second
+  submit. The <strong>guided path</strong> is a controlled driver around the presentational
   <code>GuidedBuilder</code>, wired to the client-core guided reducer: one question at a time —
-  <code>Class → Subclass → Species → Background → Notes</code> — with a progress rail carrying the
-  prior picks. The reducer owns the sequence <em>and</em> the conditional skip: the Subclass step
-  appears only when the party's starting level grants the chosen class its subclass
-  (<code>SUBCLASS_LEVEL[class] ≤ level</code>), and stepping back over a skipped step just works. On
+  <code>Class → Subclass → Species → Background → Notes → grounding</code> — with a progress rail
+  carrying the prior picks. The reducer owns the sequence <em>and</em> the conditional skip: the
+  Subclass step appears only when the party's starting level grants the chosen class its subclass
+  (<code>SUBCLASS_LEVEL[class] ≤ level</code>), and stepping back over a skipped step just works.
+  MYT-102 extracted the rail into a standalone <a href="./design-system.html">GuidedRail</a> with a
+  first-class <strong>grounding</strong> rung, so the signposting stays on screen through the
+  builder-less Notes and grounding screens instead of vanishing when the option grids do. On
   completion the reducer flattens the picks into an English concept sentence from the catalog's
   canonical names, and the grounding whisper collects the second field exactly as freeform does.
 </p>
@@ -265,6 +272,34 @@
   never leak into the concept.
 </aside>
 
+<h3>Writing against the world — the recap and the wiki at hand</h3>
+
+<p>
+  The playtest's core complaint was that a player wrote their character into a vacuum: the opening
+  scene they were grounding against wasn't on screen, and the world they were joining was a name and
+  a paragraph. MYT-102 puts both in front of them. A
+  <a href="./design-system.html">SituationRecap</a> card — a quiet paper card with the chosen
+  situation's title, its location, and its prose — sits above the free-writing prompts, so the
+  player writes against the actual opening scene rather than from memory. In the guided path the
+  recap appears only on the grounding screen, where the writing happens; on the mechanical
+  option-grid steps (class, species, …) it would compete with the builder's own question, so it
+  stays off them.
+</p>
+
+<p>
+  And the world's <a href="./world-gen-experience.html">wiki</a> is mounted alongside the whole
+  create route, so a player can look up a place or a faction before they commit to how their
+  character fits. The panel model was promoted out of the reveal into a shared
+  <code>routes/wiki-panel.tsx</code> (the reveal keeps a behavior-preserving re-export shim): on
+  desktop it is a collapsible ~30%-width side rail, default open, its model owned by the route so a
+  collapse never refetches; on a phone it is the same edge-handle
+  <a href="./design-system.html">Drawer</a> the reveal uses, flipped in on the
+  <code>lg</code> breakpoint through <code>useViewportBelowLg</code> and mount-persistent so the
+  reader's page survives a dismiss. Its data is the member-readable world snapshot — enforced
+  ignorance is the server's concern, so the panel renders exactly the known-tier world the reveal
+  does.
+</p>
+
 <h3>Coming into being — the loading beat</h3>
 
 <p>
@@ -273,23 +308,41 @@
   April spec's voxel silhouette is post-launch), a squared figure that fills in from the feet up
   beside a column of surfacing beat rows. Its real-time source is the
   <a href="./realtime-transport.html">MYT-85 status SSE</a>, folded by
-  <code>useCharacterCreationStream</code> and <strong>filtered to the current user's id</strong> — the
-  stream is campaign-wide, so a party of four all watch the same channel, each seeing only their own
-  stages. The hook maps the per-player pipeline stages onto four fixed beats (a name surfaces, a class
-  takes shape, ability scores settle, equipment is gathered), advancing each pending → active → done;
-  under <code>prefers-reduced-motion</code> the fill snaps and the rows swap without churn.
+  <code>useCharacterCreationStream</code> and <strong>filtered to the current user's id</strong> —
+  the stream is campaign-wide, so a party of four all watch the same channel, each seeing only their
+  own stages. Under <code>prefers-reduced-motion</code> the fill snaps and the rows swap without
+  churn.
+</p>
+
+<p>
+  MYT-102 made the wait <strong>honest and reload-proof</strong>, giving it the same responsiveness
+  register world gen already had. The fold now <em>seeds</em> from the connect-time snapshot frame's
+  per-user <code>stages[]</code> — so a mid-generation refresh rehydrates the already-completed
+  stages instead of restarting the beats from empty — and live events fold monotonically on top (a
+  stale buffered <code>stage-started</code> can't regress a snapshot-completed stage). The
+  reload-stable <code>done</code> signal is derived from the progress GET's
+  <code>status === 'completed'</code>, probed at mount and re-checked whenever a snapshot reports the
+  viewer's terminal <code>character_sheet</code> stage complete — so a missed completion event can no
+  longer strand the player on a dead screen. Beneath the rows an <code>aria-hidden</code> countdown
+  ticks a <code>~N left</code> estimate off the same
+  <a href="./world-gen-experience.html#waiting-feedback">stage-timings history</a> the world-gen
+  countdown reads, omitted entirely on a cold start (no history is not a fake instant estimate) and
+  holding at its floor when a stage overruns. And once the elapsed wait passes 3× the first usable
+  estimate, a calm stall notice appears, so a genuinely stuck job reads as "taking longer than
+  usual" rather than as a frozen screen.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The beat folds live events only; the routing table is the reload backstop</strong> — the
-  fold accumulates in client memory and does not seed from the connect-time snapshot, so a refresh
-  mid-generation restarts the beats from pending until the next live event, and a refresh <em>after</em>
-  completion won't re-flip <code>done</code> (completion is a live event, not replayed). That is fine
-  because the durable "already completed" case is the routing table's job — a returning player's
-  concept status routes them straight to the reveal without ever mounting the beat. The
-  <code>character_creation_complete</code> event is a properly-typed, <code>userId</code>-carrying arm
-  on the status stream, so the live swap fires for exactly the right player; the progress board's
-  <code>confirmed_at</code>/<code>characterId</code> fields are the refresh-stable snapshot behind it.
+  <strong>Snapshot-seeded, with the progress GET as the reload backstop</strong> — the live fold
+  alone can't survive a refresh (the events it accumulated are gone) or a missed completion event
+  (the terminal <code>character_creation_complete</code> arm is a live event, not replayed). So the
+  hook seeds from the connect-time snapshot and derives <code>done</code> from the durable progress
+  board, not from the in-memory fold. A returning player whose concept already
+  <code>completed</code> is still routed straight to the reveal by the routing table above without
+  ever mounting the beat; the seeding is what keeps an <em>in-progress</em> refresh from dropping to
+  a dead loading screen in the window before that route resolves. The
+  <code>character_creation_complete</code> event stays a properly-typed, <code>userId</code>-carrying
+  arm on the status stream, so the live swap still fires for exactly the right player.
 </aside>
 
 <h3>Meet your character</h3>
@@ -481,7 +534,11 @@
   </tr>
   <tr>
     <td><code>use-character-creation-stream.ts</code></td>
-    <td>The status-SSE fold → <code>{ beats, done }</code>, filtered to the current <code>userId</code>.</td>
+    <td>The status-SSE fold, snapshot-seeded and filtered to the current <code>userId</code>; the reload-stable <code>done</code> from the progress GET (MYT-102).</td>
+  </tr>
+  <tr>
+    <td><code>creation-eta.ts</code> <em>(MYT-102)</em></td>
+    <td>The <code>~N left</code> countdown math — a canonical stage-slice mirror of the backend order, over the shared world-gen remaining-wait core; <code>null</code> on a cold start.</td>
   </tr>
   <tr>
     <td><code>srd/</code></td>
@@ -512,8 +569,16 @@
     <td>The controlled one-question-at-a-time builder — rail + question + option cards, no internal step state.</td>
   </tr>
   <tr>
+    <td><code>GuidedRail</code> <em>(MYT-102)</em></td>
+    <td>The progress rail, extracted standalone with a first-class <code>grounding</code> rung so signposting persists on the builder-less screens.</td>
+  </tr>
+  <tr>
+    <td><code>SituationRecap</code> <em>(MYT-102)</em></td>
+    <td>The quiet paper card above the free-writing prompts — the chosen situation's title, location, and prose, so the player writes against the opening scene.</td>
+  </tr>
+  <tr>
     <td><code>CharacterLoadingBeat</code></td>
-    <td>The 1-bit "coming into being" figure filling in beside advancing beat rows (reuses <code>Dither</code>).</td>
+    <td>The 1-bit "coming into being" figure filling in beside advancing beat rows (reuses <code>Dither</code>); MYT-102 added an aria-hidden countdown line under the rows.</td>
   </tr>
   <tr>
     <td><code>CharacterSheetReveal</code></td>

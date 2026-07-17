@@ -632,6 +632,17 @@
   composition root.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>The viewport floor is unconditional now (MYT-102)</strong> — the frame used to apply its
+  <code>minHeight="screen"</code> floor only on <code>fullBleed</code> routes. A staging audit found
+  short content (the world-gen loading beat, the calm "setting up the table" holds) leaving the app
+  626px tall, exposing the page background beneath the app's own surface. The frame now floors to the
+  viewport on <em>every</em> route, and its padded content region carries the new
+  <a href="./design-system.html">Box <code>grow</code></a> variant so that region — not the page
+  behind it — absorbs the slack; <code>fullBleed</code> still governs only whether the content
+  padding is dropped.
+</aside>
+
 <p>
   A route-level <strong>error boundary</strong> catches any thrown render/loader failure and
   branches on the typed errors above: a <code>401 HttpError</code> resets the session to

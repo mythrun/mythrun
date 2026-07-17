@@ -494,7 +494,13 @@
     pixels rather than a <code>SpaceToken</code> (the space scale caps well below a card width), the
     fluid shelf mechanism the <a href="./campaign-hub.html">campaign hub</a> packs cover cards on —
     and a <code>tone="ink"</code> <code>Divider</code>, a deliberate structural cut dark in both
-    themes, the seam between a cover card's cover art and its body.)
+    themes, the seam between a cover card's cover art and its body. MYT-102 added a boolean
+    <code>grow</code> variant to <code>Box</code> — <code>flex-1</code> to fill a parent flex track,
+    with <code>min-h-0</code> riding along so a scrollable child can still shrink-scroll — the
+    mechanism the <a href="./app-shell.html">app-frame</a>'s content region uses to floor a short
+    route to the viewport; and taught <code>Grid</code>'s <code>auto-fit</code> track to honor
+    <code>minColumnPx</code> too, closing a bug where the pixel minimum was silently ignored and the
+    path chooser's cards packed two-up at 375px.)
   </li>
   <li>
     <strong>Responsive</strong> — <code>Show</code>, a show/hide switch between two visually
@@ -616,7 +622,14 @@
   <code>CharacterSheetReveal</code>, and <code>PartyRoster</code> — are controlled/presentational
   feature components (their sequencing lives in a client-core reducer, not the component) documented
   on that page, while the reusable primitive extension it needed landed in the system as the
-  <code>Button</code> disclosure props above. The play/invite/billing wave (MYT-91/92/95) drew it
+  <code>Button</code> disclosure props above. MYT-102's staging-feedback wave added two more feature
+  composites to that surface — <code>SituationRecap</code> (the opening-scene card the player writes
+  against) and <code>GuidedRail</code> (the guided progress rail, extracted from
+  <code>GuidedBuilder</code> with a first-class grounding rung) — plus prop extensions to the
+  existing ones (a <code>stepIndicator</code> on <code>FreeformPrompt</code>, an aria-hidden
+  <code>countdownLabel</code> on <code>CharacterLoadingBeat</code>); all are documented on that page,
+  and the reusable primitive extension the wave folded back into the system was the
+  <code>Box grow</code> variant above. The play/invite/billing wave (MYT-91/92/95) drew it
   once more: the six <a href="./live-play.html">live-play</a> components
   (<code>MessageStream</code>/<code>DmMessage</code>/<code>PlayerMessage</code>/<code>SessionInput</code>/<code>SessionStartBeat</code>/<code>ThinkingIndicator</code>),
   the <a href="./invites-party.html">invite</a> pair (<code>InvitePanel</code>/<code>JoinPreview</code>),

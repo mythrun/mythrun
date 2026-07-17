@@ -26,8 +26,8 @@
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
 <!-- source: docs/superpowers/specs/2026-07-11-myt-90-character-creation-design.md -->
-<!-- source-hash: sha256:fcb69503fadc19e7806dbb133332bda0ca3a5372902d6098aa6bfb8a183df6d8 -->
-<!-- last-ticket: MYT-90 -->
+<!-- source-hash: sha256:e624894031a15289a2d1185e320fdc9182bdae719e48b9e2bd5bd57baa55adc1 -->
+<!-- last-ticket: MYT-102 -->
 
 <h1>Character creation</h1>
 
@@ -185,15 +185,40 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   MYT-90 gave the grounding prompt a <strong>grounded elicitation</strong>. Each of the three
   starting situations now carries an <code>invitation</code> — a short 2nd-person whisper the
   <a href="./world-gen.html">world-gen</a> <code>starting_situation</code> stage writes in the same
-  call as the situation's title and prose, so it names <em>that</em> hook's concrete draw ("The
-  toll-clerk's manifests don't add up, and you're the only one who noticed. What kept you
-  counting?") rather than gesturing at generic mystery. The frontend surfaces the chosen situation's
-  invitation as the second one-question step, and the player's answer becomes
-  <code>situationGroundingText</code>. The field is stored on the situation entry's JSONB, so it is
-  <em>optional</em> on read — worlds generated before MYT-90 have no invitation, and
-  <code>GET /starting-situations</code> passes the older shape through with a generic client
-  fallback rather than hard-failing Zod.
+  call as the situation's title and prose, so it names <em>that</em> hook's concrete draw rather
+  than gesturing at generic mystery ("What secrets will you uncover in this city of whispers?"). The
+  frontend surfaces the chosen situation's invitation as the second one-question step, and the
+  player's answer becomes <code>situationGroundingText</code>. The field is stored on the situation
+  entry's JSONB, so it is <em>optional</em> on read — worlds generated before MYT-90 have no
+  invitation, and <code>GET /starting-situations</code> passes the older shape through with a
+  generic client fallback rather than hard-failing Zod.
 </p>
+
+<p>
+  MYT-102 corrected the <em>shape</em> of that whisper. The first staging playtest surfaced
+  invitations that presumed a history the player's character could not have — a newcomer arriving at
+  the opening scene was asked "the toll-clerk's manifests don't add up and you're the only one who
+  noticed; what kept you counting?", a question only an established local can answer. The prompt now
+  demands an <strong>arrival-draw</strong>: it poses the hook as a rumor, a visible circumstance, or
+  a reason-to-arrive that a character who knows <em>nothing</em> about the world can answer ("What
+  brings you up the pass this late in the season, and what have you heard about the beacons going
+  dark?"). It may name places and public facts, and it may reference an NPC only as an observable
+  stranger ("the harbormaster who keeps late hours") — never as an acquaintance the character
+  already knows.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The invitation is player-facing, so its input is known-tier only (MYT-102)</strong> — the
+  <code>starting_situation</code> stage that writes the invitation reads its entity context through
+  <code>listProseByTypeForStartingSituation</code>, which filters
+  <code>entities.access_level = 'known'</code>. A secret or discoverable entity's name or prose can
+  never enter the generation context, so an invitation cannot leak a plot secret into the picker a
+  player reads before they even have a character. This is the same deterministic-leak boundary as
+  the <a href="./world-gen.html#relationship-tiering">MYT-89 relationship tiering</a>, applied to
+  the first player-facing surface world-gen produces. Worlds generated before MYT-102 keep their
+  older, untiered invitations — the entries are write-once at world gen, and regeneration is out of
+  scope.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Both fields required in v1; guided-choices deferred to its own bead</strong> — the
@@ -719,6 +744,81 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   race, class) re-roll through an admin path — there is no member-facing DELETE in v1.
 </aside>
 
+<h2>Surviving a stuck job — the resilience layer</h2>
+
+<p>
+  The first staging playtest turned up a failure the enqueue-after-commit recovery above did not
+  cover: a character-creation job that finished both Sonnet calls and then <em>hung</em> — the
+  worker task alive, its BullMQ lock renewing, no further logs — leaving the player's concept at
+  <code>'processing'</code> with no way forward. MYT-102 added three layers so a job can no longer
+  hang, strand, or brick a player, each catching a failure the others miss.
+</p>
+
+<p>
+  <strong>A per-stage watchdog.</strong> <code>raceStageWatchdog</code> wraps each stage's whole
+  execution — the LLM calls <em>and</em> the persistence — in a <code>Promise.race</code> against
+  <code>CHARACTER_CREATION_STAGE_TIMEOUT_MS</code> (5 minutes, ~5× the slowest healthy stage). On a
+  trip it throws <code>LlmTimeoutError</code> (a <code>terminal: false</code> error), so the
+  processor's existing non-terminal arm marks the <code>pipeline_runs</code> row failed, publishes
+  <code>stage-failed { willRetry: true }</code>, and rethrows — which lets BullMQ's
+  <code>attempts: 2</code> policy drive one retry. The concept stays <code>'processing'</code>
+  across the retry, because a transient hang must not terminal-fail the character.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The watchdog wraps the stage, not just the model call</strong> — the staging hang happened
+  <em>after</em> both Sonnet calls returned, somewhere inside the stage's own await chain, so
+  bounding only the LLM call would not have caught it. The abandoned stage promise's late writes are
+  harmless: persistence is idempotent and the atomic stage-claim re-arms a pending/failed row rather
+  than double-inserting, so a slow stage that finishes after the watchdog fired cannot corrupt the
+  retry.
+</aside>
+
+<p>
+  <strong>An exhausted-transient listener.</strong> A transient failure rethrows so BullMQ retries,
+  but the <em>final</em> failed attempt used to leave the concept at
+  <code>'processing'</code> forever — <code>markStageFailed</code> only ran on terminal errors, and
+  nothing produced a job-level failure. The worker now attaches
+  <code>handleCharacterCreationJobFailure</code> to the <code>campaign-setup</code> worker's
+  <code>'failed'</code> event. It acts only once BullMQ has exhausted every attempt (<code
+    >attemptsMade &gt;= attempts</code
+  >): it flips the concept to <code>'failed'</code>, publishes a terminal
+  <code>stage-failed { willRetry: false, errorCode }</code>, and logs loud. It never throws (it
+  catches and logs internally), so it can't crash BullMQ's emitter, and it skips a concept that
+  already reached <code>'completed'</code> — a late <code>'failed'</code> event must never unwind a
+  finished character.
+</p>
+
+<p>
+  <strong>An owner-triggered resume.</strong> The last gap is a concept stranded with no live job at
+  all — the "committed the seed row, then a Redis blip ate the <code>queue.add</code>" window from
+  the <a href="#lifecycle-and-late-joiners">enqueue-after-commit</a> discussion above, or a
+  transient that exhausted before the listener existed.
+  <code>POST /api/campaigns/:campaignId/resume</code>'s <code>character_creation</code> arm sweeps
+  them: <code>listStuckProcessing</code> finds every <code>'processing'</code> concept whose
+  per-player pipeline has a <code>'pending'</code> or <code>'failed'</code> stage row and
+  <em>no</em> <code>'running'</code> one (a healthy in-flight member under the watchdog is never
+  swept), and re-adds each one's <code>cc-&lt;campaignId&gt;-&lt;userId&gt;</code> job. It replies
+  <code>202</code> with the count re-enqueued, <code>409 nothing_to_resume</code> when nothing is
+  stuck, and <code>503 queue_not_ready</code> when the queue isn't wired on the deployment. It is
+  the same <a href="./world-gen.html">campaign resume endpoint</a> the world-gen recovery uses — the
+  <code>character_creation</code> phase arm is this sweep.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Every failure publish now carries <code>errorCode</code>, not <code>reason</code></strong>
+  — the character-creation processor used to publish the raw error message on a
+  <code>reason</code> field no consumer read; the <code>stage-failed</code> contract (shared with
+  world-gen and the dev-tool <a href="./pipeline-status.html">live-events panel</a>) keys on a
+  sanitized <code>errorCode</code>. MYT-102 aligned all three publish sites — the cost-cap breaker,
+  the terminal/non-terminal catch arms, and the exhausted-transient listener — onto
+  <code>errorCode</code>, so a character-creation failure renders in the status surface exactly like
+  a world-gen one. One consequence: the queue-wiring for the resume arm surfaced a latent boot gap —
+  <code>app.ts</code> forwarded only the world-gen queue to the campaigns routes, so the
+  <code>character_creation</code> resume would have answered <code>503</code> in every real
+  deployment until the character-creation queue was threaded through alongside it.
+</aside>
+
 <h2>Cross-PC integration moved to MYT-54</h2>
 
 <p>
@@ -763,6 +863,31 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   route-audit contract test (<code>backend/src/contract/__tests__/pipeline-routes.test.ts</code>)
   verifies registration drift as a side-effect of any backend type-check.
 </p>
+
+<h3>Recovering a stuck character</h3>
+<ol>
+  <li>
+    Confirm the concept is genuinely stuck: a <code>character_concepts</code> row at
+    <code>'processing'</code> whose per-player <code>pipeline_runs</code> rows are
+    <code>'pending'</code> or <code>'failed'</code> with none <code>'running'</code> (<code
+      >SELECT status, stage FROM pipeline_runs WHERE campaign_id = … AND user_id = …</code
+    >). A <code>'running'</code> row means a worker is still on it under the 5-minute watchdog — let
+    the watchdog trip rather than resuming underneath it.
+  </li>
+  <li>
+    Have the owner call <code>POST /api/campaigns/:campaignId/resume</code>. The
+    <code>character_creation</code> arm re-enqueues every stuck member's job and replies
+    <code>202 { reEnqueued }</code>; <code>409 nothing_to_resume</code> means nothing matched the
+    sweep (the concept is healthy or already terminal), and <code>503 queue_not_ready</code> means
+    the character-creation queue isn't wired on this deployment.
+  </li>
+  <li>
+    Watch the re-driven job in the
+    <a href="./pipeline-status.html#watch-a-campaign-locally">dev tool's wire-log drawer</a> — the
+    concept re-runs from its first incomplete stage (stage 3 UPDATEs an existing
+    <code>characters</code> row rather than double-inserting).
+  </li>
+</ol>
 
 <h2>Integration points</h2>
 

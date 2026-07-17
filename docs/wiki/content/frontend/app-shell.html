@@ -18,8 +18,8 @@
 <!-- source: frontend/src/routes/landing.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:95fa04b3f816c4c8bbe07523b4ded11e977f0d6012a7e25418f884923aa09bbb -->
-<!-- last-ticket: MYT-86 -->
+<!-- source-hash: sha256:10af9ab23bb3aa79187d8a3cdaa96c04a073263cb417439f34fd032e6f0e5086 -->
+<!-- last-ticket: MYT-102 -->
 
 <h1>App shell &amp; data layer</h1>
 
@@ -469,6 +469,17 @@
   shared edits</em> to <code>AppFrame</code> up front — the play work owns the content variant, the
   billing work owns the header — so two parallel worktrees never both restructured the frame's one
   composition root.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The viewport floor is unconditional now (MYT-102)</strong> — the frame used to apply its
+  <code>minHeight="screen"</code> floor only on <code>fullBleed</code> routes. A staging audit found
+  short content (the world-gen loading beat, the calm "setting up the table" holds) leaving the app
+  626px tall, exposing the page background beneath the app's own surface. The frame now floors to the
+  viewport on <em>every</em> route, and its padded content region carries the new
+  <a href="./design-system.html">Box <code>grow</code></a> variant so that region — not the page
+  behind it — absorbs the slack; <code>fullBleed</code> still governs only whether the content
+  padding is dropped.
 </aside>
 
 <p>

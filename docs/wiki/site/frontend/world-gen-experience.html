@@ -501,7 +501,9 @@
   is the
   introduction: the world's name as the title, a few paragraphs of grounding prose, and an ordered
   list of dig-deeper references, with the search field and the browse-by-kind index one scroll
-  below. There is no separate entity list — the wiki is the browse surface.
+  below, and — since MYT-102 — a closing <strong>glossary</strong> of the world's invented
+  vocabulary (mono term over serif definition), narrowed by the same search needle. There is no
+  separate entity list — the wiki is the browse surface.
 </p>
 
 <aside class="wiki-rationale">
@@ -533,12 +535,29 @@
 </p>
 
 <p>
-  Each entity opens to its own wiki page — the kind, the name, its known facts, and a RELATED footer
-  of relationship cross-links — with a back button that restores the previous page and its scroll
-  position. Selecting a node highlights its wiki page and vice-versa: one shared selection, because
-  after generation every node's identity <em>is</em> its real entity id, the same id the wiki keys
-  on, so no translation is needed.
+  Each entity opens to its own wiki page. Since MYT-102 the page <strong>leads with the entity's own
+  prose</strong> — its <a href="../runtime/world-gen.html#the-seven-stages">prose kernel</a>, the
+  paragraph that says what the thing <em>is</em> — above its known facts, then a RELATED footer of
+  relationship cross-links, with a back button that restores the previous page and its scroll
+  position. Before that, an entry could surface only an oblique fact ("wake-crows work the Ironwake
+  without a Salvage Charter") that never introduced the thing it described; the kernel body is the
+  fix. Selecting a node highlights its wiki page and vice-versa: one shared selection, because after
+  generation every node's identity <em>is</em> its real entity id, the same id the wiki keys on, so
+  no translation is needed.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The prose was always on the wire; the wiki just wasn't showing it</strong> — the
+  known-tier <a href="../runtime/world-gen.html#the-snapshot-phase-and-the-world-snapshot-endpoint"
+    >world-snapshot</a
+  >
+  already carried each entity's prose kernel and the world's vocabulary registry. MYT-102 added the
+  display-only projection (<code>proseKernels</code> per entity, a term/definition glossary) to the
+  frontend snapshot contract and rendered it — the kernel as the entity body, the glossary as the
+  home's closing section. It is a display change on the client, not new content and not a new tier
+  boundary: the server's known-tier filter still decides which kernels and glossary entries ship, so
+  nothing secret reaches the projection.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Fetching the snapshot mid-tail is enforced-ignorance-safe</strong> — the reveal fetches
@@ -829,8 +848,8 @@
       SSE-event → node/edge reducers; the canonical known-tier snapshot→graph seed adapter
       (<code>snapshotToGraph</code>, MYT-94 — shared with the
       <a href="./live-play.html#the-knowledge-layer">in-session graph tab</a>); snapshot → browsable
-      wiki model (the introduction front door, grouped entities, RELATED cross-links); the wiki
-      page-history stack.
+      wiki model (the introduction front door, grouped entities, per-entity prose bodies, the closing
+      world glossary — MYT-102 — and RELATED cross-links); the wiki page-history stack.
     </td>
   </tr>
   <tr>
@@ -925,8 +944,13 @@
     </td>
   </tr>
   <tr>
-    <td><code>routes/worldgen/reveal-wiki-panel.tsx</code></td>
-    <td>The snapshot fetch / silent-refetch model and the wiki panel the reveal composes.</td>
+    <td><code>routes/wiki-panel.tsx</code> · <code>routes/worldgen/reveal-wiki-panel.tsx</code></td>
+    <td>
+      The snapshot fetch / silent-refetch model and the wiki panel the reveal composes — promoted
+      out to the shared <code>routes/wiki-panel.tsx</code> in MYT-102 (so
+      <a href="./character-creation.html">character creation</a> can mount the same panel); the
+      <code>worldgen/</code> file is now a behavior-preserving re-export shim.
+    </td>
   </tr>
   <tr>
     <td><code>routes/worldgen/drawer-back-close.tsx</code></td>

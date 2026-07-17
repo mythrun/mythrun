@@ -759,8 +759,11 @@
   When a DM turn <strong>settles</strong>, <code>DmMessage</code> swaps its plain paragraph for
   <code>HighlightedProse</code>, which runs the cache's entity index over the text and wraps each
   recognized name in an <code>EntityMention</code> (a quiet resting underline; hover or focus reveals a
-  small leading type glyph) inside an <code>EntityPopover</code> (a terse card — the name, its type, its
-  first known fact, and an "open in wiki" action that drives the graph↔wiki bridge). The streaming path
+  small leading type glyph) inside an <code>EntityPopover</code> (a terse card — the name, its type, a
+  one-line lead, and an "open in wiki" action that drives the graph↔wiki bridge). Since MYT-102 the
+  lead prefers the entity's <strong>prose-kernel first sentence</strong> (the line that says what the
+  thing is), falling back to its lowest-id known fact only when there is no kernel — a mechanical
+  first-sentence split, no summarization. The streaming path
   is <strong>byte-unchanged</strong>: highlighting only ever applies to settled text, so nothing
   reflows mid-stream, and segmentation is memoized once per settled row rather than recomputed on every
   render.
@@ -949,7 +952,9 @@
     <td><code>entity-index.ts</code></td>
     <td>
       <code>buildEntityIndex</code> — the mechanical, names-only, Unicode-boundary longest-match matcher
-      (settled prose → text/entity segments + the terse popover card). ZFC: no model, no classification.
+      (settled prose → text/entity segments + the terse popover card); <code>buildLeadLines</code>
+      picks each popover's lead (MYT-102: the prose-kernel first sentence, else the lowest-id fact).
+      ZFC: no model, no classification.
     </td>
   </tr>
   <tr>
@@ -1067,7 +1072,8 @@
     <td><code>EntityMention</code> · <code>EntityPopover</code></td>
     <td>
       The in-prose mention (a quiet underline + a monochrome type glyph on hover/focus) and the terse
-      popover card it anchors — name, type, first known fact, "open in wiki".
+      popover card it anchors — name, type, a one-line lead (prose-kernel first sentence, else first
+      known fact), "open in wiki".
     </td>
   </tr>
   <tr>
