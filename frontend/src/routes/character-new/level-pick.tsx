@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Stack, Heading, Text, Grid, Button, LevelCard } from '@mythrun/ui'
 import {
-  setStartingLevel as setStartingLevelApi,
   getMyCampaigns,
+  getStartingSituations,
   isHttpError,
-  useApiContext,
+  setStartingLevel as setStartingLevelApi,
   type ApiContext,
   type CampaignSummary,
+  useApiContext,
 } from '@mythrun/client-core'
 import type { CharacterLevel } from '@mythrun/client-core/contract'
 import { useTranslation } from 'react-i18next'
@@ -31,6 +32,13 @@ type SetStartingLevel = (ctx: ApiContext, campaignId: string, level: number) => 
 /** The campaigns source (the role probe) — defaults to `/api/campaigns/mine`; tests
  *  substitute it. Same shape + wiring the situation pick uses to read a world's role. */
 type FetchCampaigns = (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
+type FetchStartingLevel = (ctx: ApiContext, campaignId: string) => Promise<number | null>
+
+/** Read the persisted party starting level (from the situations projection). The
+ *  picker seeds its pre-selection from this so Back → re-confirm can't silently
+ *  clobber a chosen level with the default (MYT-102 QA M1). */
+const defaultFetchStartingLevel: FetchStartingLevel = (ctx, campaignId) =>
+  getStartingSituations(ctx, campaignId).then((r) => r.startingLevel)
 
 const defaultFetchCampaigns: FetchCampaigns = (ctx) =>
   getMyCampaigns(undefined, ctx).then((r) => r.campaigns)
@@ -119,11 +127,15 @@ export interface LevelPickRouteProps {
   /** The role probe — defaults to the real `/api/campaigns/mine` endpoint; tests
    *  substitute it to render the owner picker vs. the member hold. */
   fetchCampaigns?: FetchCampaigns
+  /** The persisted-level probe — seeds the pre-selection so a re-confirm never
+   *  silently downgrades a stored level (MYT-102 QA M1). */
+  fetchStartingLevel?: FetchStartingLevel
 }
 
 export function LevelPickRoute({
   setStartingLevel = setStartingLevelApi,
   fetchCampaigns = defaultFetchCampaigns,
+  fetchStartingLevel = defaultFetchStartingLevel,
 }: LevelPickRouteProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
@@ -133,6 +145,23 @@ export function LevelPickRoute({
   const role = useOwnerRole(id, ctx, fetchCampaigns)
   const choices = useLevelChoices()
   const [selected, setSelected] = useState<CharacterLevel>(DEFAULT_LEVEL)
+  // Seed the pre-selection from the persisted level (owner only) so the picker
+  // reflects a prior choice instead of always showing DEFAULT_LEVEL — otherwise
+  // Back → re-confirm silently overwrites e.g. 5 with 3 (MYT-102 QA M1).
+  useEffect(() => {
+    if (role !== 'owner') return
+    let active = true
+    void fetchStartingLevel(ctx, id)
+      .then((lvl) => {
+        if (active && lvl !== null && lvl >= 1 && lvl <= 5) setSelected(lvl as CharacterLevel)
+      })
+      .catch(() => {
+        // Calm: a failed probe just leaves the default pre-selection.
+      })
+    return () => {
+      active = false
+    }
+  }, [role, ctx, id, fetchStartingLevel])
   const [submitFailed, setSubmitFailed] = useState(false)
 
   const handleConfirm = (): void => {

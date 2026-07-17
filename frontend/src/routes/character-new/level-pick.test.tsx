@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -100,6 +100,7 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
 interface Overrides {
   setStartingLevel?: (ctx: ApiContext, campaignId: string, level: number) => Promise<void>
   fetchCampaigns?: (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
+  fetchStartingLevel?: (ctx: ApiContext, campaignId: string) => Promise<number | null>
 }
 
 function renderPick(overrides: Overrides = {}): {
@@ -110,11 +111,21 @@ function renderPick(overrides: Overrides = {}): {
   // cases override with a non-null creator / a rejection / a pending probe.
   const fetchCampaigns =
     overrides.fetchCampaigns ?? vi.fn().mockResolvedValue([makeCampaign()])
+  // Default the persisted-level probe to null so existing cases keep the
+  // DEFAULT_LEVEL pre-selection (and never hit the real endpoint).
+  const fetchStartingLevel =
+    overrides.fetchStartingLevel ?? vi.fn().mockResolvedValue(null)
   const router = createMemoryRouter(
     [
       {
         path: '/campaigns/:id/level',
-        element: <LevelPickRoute setStartingLevel={setLevel} fetchCampaigns={fetchCampaigns} />,
+        element: (
+          <LevelPickRoute
+            setStartingLevel={setLevel}
+            fetchCampaigns={fetchCampaigns}
+            fetchStartingLevel={fetchStartingLevel}
+          />
+        ),
       },
       // The CREATE landing (D3) — a bare probe: its presence proves the post-confirm
       // navigation resolved to `/campaigns/:id/character/new`.
@@ -187,6 +198,22 @@ describe('LevelPickRoute — selecting a level hands off to character creation',
     // Handed off to the create beat, having posted level 5 for this campaign.
     await screen.findByTestId('character-new')
     expect(setLevel).toHaveBeenCalledWith(expect.anything(), CAMPAIGN_ID, 5)
+  })
+
+  it('pre-selects the PERSISTED level so a re-confirm cannot silently downgrade it (MYT-102 QA M1)', async () => {
+    const { setStartingLevel: setLevel } = renderPick({
+      fetchStartingLevel: vi.fn().mockResolvedValue(5),
+    })
+    // Wait for the picker + the persisted-level seed to resolve.
+    await screen.findByTestId('level-pick-confirm')
+    await waitFor(() => {
+      expect(screen.getByTestId('level-pick-confirm').textContent).toContain('5')
+    })
+    // Confirming WITHOUT touching a card re-affirms 5 — never the default 3.
+    fireEvent.click(screen.getByTestId('level-pick-confirm'))
+    await waitFor(() => {
+      expect(setLevel).toHaveBeenCalledWith(expect.anything(), CAMPAIGN_ID, 5)
+    })
   })
 
   it('confirms the default level when the owner does not change the pick', async () => {
