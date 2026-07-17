@@ -228,16 +228,11 @@ describe('GET /api/dev/campaigns/:campaignId/prep-prose (MYT-62 T5)', () => {
           //
           // mythrunEnv='production' makes this a FAITHFUL full-production config, so
           // the broad `not.toContain('/api/dev/')` assertion below is a true
-          // prod-absence invariant. Two independent dev-route gates key off two
-          // different fields: the prep-prose route (this test's real subject) is gated
-          // on authMode==='bypass', while the MYT-90 dev cost-ticker route
-          // (GET /api/dev/api-cost) is gated on mythrunEnv!=='production'. A prod boot
-          // is real + production, so BOTH gates close and NO /api/dev/ route registers.
-          // Pinning only authMode='real' (leaving the default mythrunEnv='development')
-          // would leave the ticker registered and make the broad assertion a
-          // false-negative — hence production here. buildApp does not re-validate env
-          // (that is loadEnv's job) and reads mythrunEnv only at the ticker gate, so
-          // production does not throw.
+          // prod-absence invariant. Since MYT-102, EVERY /api/dev route — including
+          // the cost-ticker (GET /api/dev/api-cost), which used to carry its own
+          // mythrunEnv gate — registers under the single authMode==='bypass' gate,
+          // so authMode='real' alone closes the whole /api/dev surface; the
+          // production env here keeps the config faithful rather than load-bearing.
           env: makeStubEnv({
             frontendBaseUrl: FRONTEND_BASE_URL,
             authMode: 'real',

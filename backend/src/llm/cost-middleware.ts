@@ -16,7 +16,7 @@
 // have their own, much cheaper, rates). See model-pricing.ts.
 //
 // Accumulation runs in ALL environments (a cheap counter); only the exposure
-// (GET /api/dev/api-cost) is gated to non-production. An unknown/unpriced model
+// (GET /api/dev/api-cost) is gated to AUTH_MODE=bypass (dev-only since MYT-102). An unknown/unpriced model
 // id is skipped gracefully, and computeCostUsd is wrapped so cost accounting can
 // never throw out of an LLM call.
 
