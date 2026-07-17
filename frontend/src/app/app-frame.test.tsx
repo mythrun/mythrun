@@ -40,6 +40,11 @@ function renderFrame(childHandle?: { readonly fullBleed: true }): void {
 afterEach(cleanup)
 
 describe('AppFrame — the content inset ↔ FullBleedStage coupling (MYT-89 audit v2)', () => {
+  it('the frame floors at the viewport on EVERY route — short content never exposes the page background (MYT-102 audit)', () => {
+    renderFrame()
+    expect(screen.getByTestId('app-frame').className).toContain('min-h-dvh')
+  })
+
   it('pads the content box with --space-6 — the step the generating stage bleeds', () => {
     renderFrame()
     expect(screen.getByTestId('app-frame-content').className).toContain('p-[var(--space-6)]')

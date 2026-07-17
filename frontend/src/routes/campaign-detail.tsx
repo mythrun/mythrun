@@ -229,6 +229,13 @@ export function CampaignDetailRoute({
     </RevealTransition>
   )
 
+  // The CONNECTING window (MYT-102 audit): before the stream's first snapshot
+  // frame, `phase` is null and the coarse status defaults to 'generating' — a
+  // COMPLETED campaign's fresh load flashed the generating flavor screen for a
+  // beat before swapping to the reveal/page. The settling line is the designed
+  // cover for exactly this ambiguity; render it until the first frame decides.
+  if (phase === null) return <SettlingView />
+
   if (generating) {
     if (revealDuringGen) return reveal
     return (

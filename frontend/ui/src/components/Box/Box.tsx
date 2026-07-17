@@ -42,15 +42,23 @@ const box = cva('', {
     minHeight: {
       screen: 'min-h-dvh',
     },
+    // Fill the parent flex track. min-h-0 rides along so a scrollable child
+    // inside the grown box can actually shrink-scroll (the standing flex-scroll
+    // unblocker); inert outside a flex parent.
+    grow: {
+      true: 'flex-1 min-h-0',
+      false: '',
+    },
   },
   defaultVariants: {
     surface: 'base',
     border: false,
+    grow: false,
   },
 })
 
 export const Box = forwardRef<HTMLElement, BoxProps>(function Box(
-  { padding, surface = 'base', border = false, minHeight, as = 'div', children, ...rest },
+  { padding, surface = 'base', border = false, minHeight, grow = false, as = 'div', children, ...rest },
   ref,
 ) {
   return createElement(
@@ -58,7 +66,7 @@ export const Box = forwardRef<HTMLElement, BoxProps>(function Box(
     {
       ref,
       className: cn(
-        box({ surface, border, ...(minHeight !== undefined && { minHeight }) }),
+        box({ surface, border, grow, ...(minHeight !== undefined && { minHeight }) }),
         padding !== undefined && PADDING_CLASS[padding],
       ),
       ...rest,

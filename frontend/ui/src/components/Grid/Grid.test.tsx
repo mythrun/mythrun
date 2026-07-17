@@ -121,3 +121,16 @@ describe('Grid', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 })
+
+describe('auto-fit + minColumnPx (MYT-102 audit)', () => {
+  it('honors the pixel escape hatch inline and drops the token class', () => {
+    const { getByTestId } = render(
+      <Grid columns="auto-fit" minColumnPx={260} data-testid="g">
+        <span />
+      </Grid>,
+    )
+    const el = getByTestId('g')
+    expect(el.style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(min(260px, 100%), 1fr))')
+    expect(el.className).not.toMatch(/auto-fit/)
+  })
+})

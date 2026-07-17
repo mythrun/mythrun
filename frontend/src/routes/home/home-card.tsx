@@ -117,11 +117,16 @@ export function CampaignCard({
             {name}
           </Heading>
           {/* World · creator — italic, muted narrative sub-line. The creator credit
-              shows ONLY on a joined (not-own) world. */}
-          <Text role="subtitle" data-testid="card-world">
-            {worldName}
-            {creator !== null ? t('home.card.byCreator', { creator }) : null}
-          </Text>
+              shows ONLY on a joined (not-own) world. Suppressed entirely when it
+              would only echo the title: campaign names default to the world name,
+              so an identical sub-line is pure noise (MYT-102 audit) — it returns
+              the moment a rename or a creator credit gives it something to say. */}
+          {worldName !== name || creator !== null ? (
+            <Text role="subtitle" data-testid="card-world">
+              {worldName !== name ? worldName : null}
+              {creator !== null ? t('home.card.byCreator', { creator }) : null}
+            </Text>
+          ) : null}
         </Stack>
       </CoverCard>
     </Link>

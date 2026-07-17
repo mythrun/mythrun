@@ -73,3 +73,10 @@ describe('CampaignIndexRow', () => {
     expect(within(link).getByTestId('row-state')).toBeDefined()
   })
 })
+
+describe('CampaignIndexRow — sub-line echo suppression (MYT-102 audit)', () => {
+  it('suppresses the world sub-line when it only echoes the title', () => {
+    renderRow(makeCampaign({ name: 'Aerth', worldName: 'Aerth', creator: null }))
+    expect(screen.queryByTestId('row-world')).toBeNull()
+  })
+})

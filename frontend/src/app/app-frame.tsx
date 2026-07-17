@@ -51,7 +51,11 @@ export function AppFrame(): React.JSX.Element {
     void navigate(SETTINGS_PATH)
   }
   return (
-    <Stack {...(fullBleed ? { minHeight: 'screen' as const } : {})} data-testid="app-frame">
+    // The viewport floor is UNCONDITIONAL: short content (act-one worldgen, calm
+    // holds) must never expose the page background beneath the app's own (the
+    // 626px-tall-app seam found in the MYT-102 audit). fullBleed still governs
+    // only the content-region layout below.
+    <Stack minHeight="screen" data-testid="app-frame">
       <Box padding={4} surface="base" border data-testid="app-frame-header">
         <Stack direction="row" justify="between" align="center" gap={5}>
           {/* The wordmark — the frame's quiet anchor (left). Fixed: it holds its
@@ -103,7 +107,7 @@ export function AppFrame(): React.JSX.Element {
           <Outlet />
         </div>
       ) : (
-        <Box padding={6} data-testid="app-frame-content">
+        <Box padding={6} grow data-testid="app-frame-content">
           <Outlet />
         </Box>
       )}

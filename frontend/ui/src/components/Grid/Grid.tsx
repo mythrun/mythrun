@@ -36,7 +36,14 @@ const trackStyle = (
   minPx: number | undefined,
   min: SpaceToken,
 ): CSSProperties | undefined => {
-  if (columns === 'auto-fit') return undefined
+  // auto-fit honors the PIXEL escape hatch too (MYT-102 audit): the class
+  // lookup only covers --space-token minimums, so a minColumnPx paired with
+  // auto-fit was silently IGNORED — the chooser's 260px cards packed two-up
+  // at 375px. With minPx present, build the track inline like auto-fill.
+  if (columns === 'auto-fit') {
+    if (minPx === undefined) return undefined
+    return { gridTemplateColumns: `repeat(auto-fit, minmax(min(${String(minPx)}px, 100%), 1fr))` }
+  }
   if (columns === 'auto-fill') return autoFillColumns(minPx, min)
   return fixedColumns(columns)
 }
@@ -46,7 +53,7 @@ export const Grid = forwardRef<HTMLDivElement, GridProps>(function Grid(
   ref,
 ) {
   const min = minColumnWidth ?? DEFAULT_AUTO_MIN
-  const trackClass = columns === 'auto-fit' ? AUTO_FIT_CLASS[min] : undefined
+  const trackClass = columns === 'auto-fit' && minColumnPx === undefined ? AUTO_FIT_CLASS[min] : undefined
   const style = trackStyle(columns, minColumnPx, min)
   return (
     <div

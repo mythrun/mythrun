@@ -45,12 +45,15 @@ export function CampaignIndexRow({ campaign }: { campaign: CampaignSummary }): R
           <Text role="prose-body" truncate data-testid="row-title">
             {name}
           </Text>
-          {/* World · creator — the italic muted sub-line. The creator credit shows
-              ONLY on a joined (not-own) world, mirroring the cover card. */}
-          <Text role="subtitle" truncate data-testid="row-world">
-            {worldName}
-            {creator !== null ? t('home.card.byCreator', { creator }) : null}
-          </Text>
+          {/* World · creator — the italic muted sub-line, suppressed when it would
+              only echo the title (names default to the world name — MYT-102 audit),
+              mirroring the cover card's rule. */}
+          {worldName !== name || creator !== null ? (
+            <Text role="subtitle" truncate data-testid="row-world">
+              {worldName !== name ? worldName : null}
+              {creator !== null ? t('home.card.byCreator', { creator }) : null}
+            </Text>
+          ) : null}
           {/* Mono ledger line — the record/state, carried as plain text (the register
               forbids a dot/badge/chip); truncated to keep every row the same height. */}
           <Text role="meta" truncate data-testid="row-state">

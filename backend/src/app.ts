@@ -319,6 +319,15 @@ export const buildApp = async (
       }),
       frontendBaseUrl: config.frontendBaseUrl,
     })
+  } else {
+    // Bypass mode (MYT-102 audit): the SPA's on-load session probe still fires,
+    // and a 404 paints a red console line on every dev page load. Answer the
+    // Response200 way — 200 with a null body, the same "no session" shape the
+    // real route gives an anonymous visitor. Probe-only; every other auth
+    // endpoint stays real-mode-only.
+    app.post('/api/auth/refresh', { config: { auth: 'public' } }, (_request, reply) =>
+      reply.code(200).send(null),
+    )
   }
 
   // Webhook plugin (MYT-42 Task 15). Registered BEFORE any sibling JSON

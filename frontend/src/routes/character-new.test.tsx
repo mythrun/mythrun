@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -21,7 +21,7 @@ import { CharacterNewRoute } from './character-new.tsx'
 // `useParams` resolves `:id`), and assert: the chooser shows both paths; picking
 // freeform reveals the "Who are you?" concept prompt; the second prompt's whisper
 // is the chosen situation's invitation; a full submit sends BOTH concept +
-// grounding text and lands on the processing seam (Track B's placeholder); a
+// grounding text and hands off to the campaign surface (the real loading beat); a
 // too-short answer is blocked with a calm notice at each step; a failed submit
 // stays on the freeform path with a calm notice; picking guided opens the guided
 // builder (the builder's own flow is covered in guided-path.test.tsx). The
@@ -172,6 +172,8 @@ function renderRoute(overrides: Overrides = {}): {
           />
         ),
       },
+      // The post-submit handoff target (MYT-102): the campaign surface.
+      { path: '/campaigns/:id', element: <p data-testid="campaign-surface-probe" /> },
     ],
     { initialEntries: [`/campaigns/${CAMPAIGN_ID}/character/new`] },
   )
@@ -240,15 +242,15 @@ describe('CharacterNewRoute — the freeform path', () => {
     ).toBeDefined()
   })
 
-  it('submits BOTH conceptText and situationGroundingText, then lands on the processing seam', async () => {
+  it('submits BOTH conceptText and situationGroundingText, then hands off to the campaign surface', async () => {
     const { submit } = renderRoute()
     pickFreeform()
     answerAndContinue(CONCEPT)
     await screen.findByText(CHOSEN_INVITATION)
     answerAndContinue(GROUNDING)
-    // On success the machine advances to `processing` — Track B's post-submit seam
-    // (the committed placeholder line until the D5 loading beat lands there).
-    expect(await screen.findByTestId('character-processing')).toBeDefined()
+    // On success the machine advances to `processing`, which redirects to the
+    // campaign surface — its routing table mounts the REAL loading beat (MYT-102).
+    expect(await screen.findByTestId('campaign-surface-probe')).toBeDefined()
     expect(submit).toHaveBeenCalledTimes(1)
     expect(submit).toHaveBeenCalledWith(testCtx, CAMPAIGN_ID, {
       conceptText: CONCEPT,
@@ -382,5 +384,41 @@ describe('CharacterNewRoute — the world wiki during creation (MYT-102)', () =>
     const fetchSnapshot = vi.fn().mockRejectedValue(new HttpError(403, 'Forbidden', 'not_member'))
     renderRoute({ fetchSnapshot })
     expect(await screen.findByText(i18n.t('worldReveal.unavailable'))).toBeDefined()
+  })
+})
+
+describe('deep-link guard (MYT-102 audit)', () => {
+  it('routes back to the campaign surface when the situation/level picks are missing', async () => {
+    const fetchSituations = vi
+      .fn()
+      .mockResolvedValue({ situations: [], chosenIndex: null, startingLevel: null })
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/campaigns/:id/character/new',
+          element: (
+            <CharacterNewRoute
+              fetchSituations={fetchSituations}
+              submit={vi.fn().mockResolvedValue(SUBMIT_OK)}
+              fetchSnapshot={vi.fn().mockResolvedValue(WIKI_SNAPSHOT)}
+            />
+          ),
+        },
+        { path: '/campaigns/:id', element: <p data-testid="campaign-page-probe" /> },
+      ],
+      { initialEntries: [`/campaigns/${CAMPAIGN_ID}/character/new`] },
+    )
+    render(
+      <ThemeProvider>
+        <ApiClientProvider value={testCtx}>
+          <I18nextProvider i18n={i18n}>
+            <RouterProvider router={router} />
+          </I18nextProvider>
+        </ApiClientProvider>
+      </ThemeProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('campaign-page-probe')).toBeDefined()
+    })
   })
 })

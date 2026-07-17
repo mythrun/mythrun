@@ -74,7 +74,9 @@ function WorldIdentity({
         <Heading level={1} role="title" data-testid="campaign-world-name">
           {worldName}
         </Heading>
-        <Text role="subtitle">{name}</Text>
+        {/* Campaign names default to the world name — the subtitle renders only
+            when a rename gives it something to add (MYT-102 audit, the hub rule). */}
+        {name !== worldName ? <Text role="subtitle">{name}</Text> : null}
       </Stack>
     </Stack>
   )

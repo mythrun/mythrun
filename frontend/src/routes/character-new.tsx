@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Box, Drawer, Heading, IconButton, Stack, Text, useViewportBelowLg } from '@mythrun/ui'
+import { Box, Drawer, Heading, IconButton, Stack, useViewportBelowLg } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import {
   getStartingSituations,
   getWorldSnapshot,
@@ -92,7 +92,16 @@ function useStartingContext(
   campaignId: string,
   ctx: ApiContext,
   fetchSituations: FetchSituations,
-): { situation: StartingSituation | undefined; startingLevel: number | null } {
+): {
+  situation: StartingSituation | undefined
+  startingLevel: number | null
+  /** True once the fetch RESOLVED with the owner's prerequisites still unset
+   *  (no chosen situation or no level) — the deep-link guard (MYT-102 audit):
+   *  /character/new reached by URL before the picks routes back to the campaign
+   *  surface, whose routing table owns the situation/level/hold screens. Stays
+   *  false while loading and on fetch failure (calm degradation keeps winning). */
+  prerequisitesMissing: boolean
+} {
   const [response, setResponse] = useState<StartingSituationsResponse | null>(null)
   useEffect(() => {
     let active = true
@@ -107,7 +116,12 @@ function useStartingContext(
       active = false
     }
   }, [campaignId, ctx, fetchSituations])
-  return { situation: chosenSituation(response), startingLevel: response?.startingLevel ?? null }
+  return {
+    situation: chosenSituation(response),
+    startingLevel: response?.startingLevel ?? null,
+    prerequisitesMissing:
+      response !== null && (response.chosenIndex === null || response.startingLevel === null),
+  }
 }
 
 /** Selection has no consumer on this route — there is no graph to keep in step
@@ -204,6 +218,7 @@ function CreationWiki({
       </Drawer>
     )
   }
+
   return (
     <WikiRail open={railOpen} onToggle={onToggleRail} t={t}>
       {children}
@@ -235,7 +250,9 @@ export function CharacterNewRoute({
     setFlow((state) => createMachine.transition(state, event))
   }
 
-  const { situation, startingLevel } = useStartingContext(id, ctx, fetchSituations)
+  const { situation, startingLevel, prerequisitesMissing } = useStartingContext(id, ctx, fetchSituations)
+
+
   const groundingWhisper = situation?.invitation ?? t('characterCreate.freeform.groundingWhisperFallback')
 
   // The wiki model lives at the ROUTE, so collapsing the rail unmounts only the
@@ -247,6 +264,14 @@ export function CharacterNewRoute({
   const [railOpen, setRailOpen] = useState(true) // desktop default OPEN (UX §9)
   const [drawerOpen, setDrawerOpen] = useState(false) // narrow default closed (the prompts own the glass)
   const belowLg = useViewportBelowLg()
+
+  // Deep-link guard (MYT-102): /character/new reached before the owner picked a
+  // situation + level routes back to the campaign surface — its routing table
+  // owns the situation/level/hold screens; the backend 409-gates submits anyway,
+  // this just keeps the player off a screen that cannot succeed.
+  if (prerequisitesMissing) {
+    return <Navigate to={`/campaigns/${id}`} replace />
+  }
 
   const submitBoth = (conceptText: string, situationGroundingText: string): Promise<void> =>
     submit(ctx, id, { conceptText, situationGroundingText }).then(() => undefined)
@@ -289,15 +314,12 @@ export function CharacterNewRoute({
       />
     )
   } else if (flow === 'processing') {
-    // The post-submit seam — OWNED BY TRACK B (not MYT-102 Track C). D5 swaps this
-    // placeholder for <CharacterLoadingBeat> driven by useCharacterCreationStream.
-    // The machine reaches here on a successful submit; left as the committed
-    // placeholder so Track B's inline loading-beat mount lands cleanly.
-    screen = (
-      <Text role="ui-caption" as="p" data-testid="character-processing">
-        {t('characterCreate.processing')}
-      </Text>
-    )
+    // The post-submit HANDOFF (MYT-102): a successful submit routes straight to
+    // the campaign surface, whose routing table resolves conceptStatus
+    // 'processing' to the REAL loading beat (countdown, seeded stages, stall
+    // notice) — the durable, refresh-safe state machine. Nobody waits on a dead
+    // placeholder here again.
+    screen = <Navigate to={`/campaigns/${id}`} replace data-testid="character-processing-handoff" />
   } else {
     // freeform (`reveal`/`staging` are D6 — unreachable until `ready`/`confirm` fire).
     screen = (

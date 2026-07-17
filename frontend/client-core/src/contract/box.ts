@@ -40,4 +40,8 @@ export interface BoxProps extends BaseProps {
    * the surface must fill the viewport with no other surface showing below it.
    */
   minHeight?: 'screen'
+  /** Grow to fill the parent flex track (flex-1 + min-h-0 so inner scroll still
+   *  works). The app shell's padded content region uses it so short routes never
+   *  expose the page background beneath the surface (MYT-102 audit). */
+  grow?: boolean
 }

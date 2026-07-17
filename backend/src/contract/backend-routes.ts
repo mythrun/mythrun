@@ -128,6 +128,12 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // (the dev block is gated on authMode === 'bypass').
   { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
 
+  // Bypass-mode session-probe stub (MYT-102): the SPA's on-load /refresh probe
+  // answers 200-null in dev so it never paints a console 404. The REAL auth
+  // routes (session/refresh/logout/callback) are authMode=real-only and the
+  // drift test boots bypass, so only this stub enumerates here.
+  { method: 'POST', path: '/api/auth/refresh' },
+
   // Dev prep-prose SSE (AUTH_MODE=bypass only). MYT-62 T5 — the structural
   // enforced-ignorance control: the only route that streams sd_playbook
   // prose (off the separate prep:campaign: channel), and it is absent in

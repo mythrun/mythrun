@@ -119,6 +119,18 @@ describe('CampaignCard — world · creator line', () => {
     renderCard(makeCampaign({ worldName: 'Aerth', creator: null }))
     expect(screen.getByTestId('card-world').textContent).toBe('Aerth')
   })
+
+  it('suppresses the sub-line entirely when it would only echo the title (MYT-102 audit)', () => {
+    renderCard(makeCampaign({ name: 'Aerth', worldName: 'Aerth', creator: null }))
+    expect(screen.queryByTestId('card-world')).toBeNull()
+  })
+
+  it('keeps the creator credit even when the names match (renamed-free joined world)', () => {
+    renderCard(makeCampaign({ name: 'Aerth', worldName: 'Aerth', creator: 'Brennan' }))
+    const world = screen.getByTestId('card-world').textContent ?? ''
+    expect(world).toContain('Brennan')
+    expect(world.startsWith('Aerth')).toBe(false)
+  })
 })
 
 describe('CampaignCard — party seals + click target', () => {
