@@ -22,6 +22,9 @@ export interface TextAreaProps extends BaseProps {
   placeholder?: string
   /** Form field name (submitted with the form). */
   name?: string
+  /** Native character cap — hard-limits typing AND paste (the chat-composer
+   *  server-cap mirror; MYT-102 QA F1). */
+  maxLength?: number
   /** Element id — lets a consumer-supplied `<label htmlFor>` bind to it. */
   id?: string
   /**

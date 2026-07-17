@@ -30,9 +30,14 @@ export function SessionInput({
   placeholder,
   summonLabel,
   sendLabel,
+  maxLength,
 }: SessionInputProps) {
   const fieldId = useId()
   const fieldRef = useRef<HTMLTextAreaElement>(null)
+  // The native maxLength on the textarea hard-caps typing AND paste, so a message
+  // longer than the server accepts can't be composed; overCap is the belt that
+  // also blocks send for a programmatically-set over-cap value.
+  const overCap = maxLength !== undefined && value.length > maxLength
 
   // Enter-to-send / Shift+Enter-newline. The keydown lives on the interactive
   // <textarea> itself (attached to the forwarded ref), NOT a wrapper element — a
@@ -44,7 +49,7 @@ export function SessionInput({
     const el = fieldRef.current
     if (!el) return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (disabled) return
+      if (disabled || overCap) return
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault()
         onSend()
@@ -54,7 +59,7 @@ export function SessionInput({
     return () => {
       el.removeEventListener('keydown', onKeyDown)
     }
-  }, [disabled, onSend])
+  }, [disabled, onSend, overCap])
 
   return (
     <div className={cn('flex flex-col gap-[var(--space-2)]')}>
@@ -75,12 +80,13 @@ export function SessionInput({
         autoSize
         minRows={1}
         maxRows={6}
+        {...(maxLength !== undefined ? { maxLength } : {})}
       />
       <div className={cn('flex items-center justify-between gap-[var(--space-2)]')}>
         <Button variant="secondary" onPress={onSummonDm} disabled={disabled}>
           {summonLabel}
         </Button>
-        <Button variant="primary" onPress={onSend} disabled={disabled}>
+        <Button variant="primary" onPress={onSend} disabled={disabled || overCap}>
           {sendLabel}
         </Button>
       </div>

@@ -24,4 +24,9 @@ export interface SessionInputProps {
   summonLabel: string
   /** Resolved [ph:] label for the Send affordance. */
   sendLabel: string
+  /** Hard character cap on the composed message — mirrors the server's
+   *  MAX_MESSAGE_TEXT_LEN so an over-long message can't be optimistically
+   *  rendered, silently dropped, and (past the WS payload cap) trigger a
+   *  reconnect storm (MYT-102 QA F1). Optional; unset = no cap. */
+  maxLength?: number
 }

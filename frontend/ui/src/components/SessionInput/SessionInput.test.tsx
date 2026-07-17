@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useState } from 'react'
-import { render } from '@testing-library/react'
+import { render, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import { SessionInput } from './SessionInput.tsx'
@@ -26,8 +26,9 @@ function ControlledSessionInput(props: {
   onChange?: (v: string) => void
   disabled?: boolean
   initial?: string
+  maxLength?: number
 }) {
-  const { onSend = vi.fn(), onSummonDm = vi.fn(), onChange, disabled = false, initial = '' } = props
+  const { onSend = vi.fn(), onSummonDm = vi.fn(), onChange, disabled = false, initial = '', maxLength } = props
   const [v, setV] = useState(initial)
   return (
     <SessionInput
@@ -42,6 +43,7 @@ function ControlledSessionInput(props: {
       placeholder={LABELS.placeholder}
       summonLabel={LABELS.summonLabel}
       sendLabel={LABELS.sendLabel}
+      {...(maxLength !== undefined ? { maxLength } : {})}
     />
   )
 }
@@ -152,5 +154,27 @@ describe('SessionInput', () => {
       </div>,
     )
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+
+describe('SessionInput — message length cap (MYT-102 QA F1)', () => {
+  it('caps the native textarea at maxLength (blocks over-long typing/paste)', () => {
+    const { getByRole } = render(<ControlledSessionInput maxLength={4000} />)
+    const ta = getByRole('textbox') as HTMLTextAreaElement
+    expect(ta.maxLength).toBe(4000)
+  })
+
+  it('disables Send and Enter-to-send when the value exceeds the cap', () => {
+    const onSend = vi.fn()
+    const { getByRole } = render(
+      <ControlledSessionInput maxLength={10} initial={'x'.repeat(11)} onSend={onSend} />,
+    )
+    const send = getByRole('button', { name: LABELS.sendLabel })
+    expect((send as HTMLButtonElement).disabled).toBe(true)
+    const ta = getByRole('textbox')
+    ta.focus()
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
   })
 })

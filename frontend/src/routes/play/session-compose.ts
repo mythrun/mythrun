@@ -14,6 +14,14 @@ import type { ConnectionStatus } from '@mythrun/client-core'
  *  user copy, so it is not an i18n key. */
 export const DM_TOKEN = '@dm'
 
+/** Client mirror of the server's MAX_MESSAGE_TEXT_LEN (backend
+ *  routes/ws-session.ts). The composer hard-caps at this so an over-long
+ *  message can't be optimistically rendered then silently dropped by the server
+ *  — and can't exceed the WS payload cap and trigger a reconnect storm (MYT-102
+ *  QA F1). A backend bump must mirror here (there's no shared runtime constant
+ *  across the API/client boundary; pinned by intent, not import). */
+export const MAX_PLAYER_MESSAGE_LEN = 4_000
+
 /** Compose the @DM summon message: the token, then the player's typed text (if
  *  any). An empty field summons with the bare token. */
 export function composeSummon(value: string): string {

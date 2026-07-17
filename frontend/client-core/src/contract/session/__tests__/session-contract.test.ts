@@ -144,6 +144,7 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       placeholder: string
       summonLabel: string
       sendLabel: string
+      maxLength?: number
     }>()
   })
 

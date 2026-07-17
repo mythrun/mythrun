@@ -26,7 +26,7 @@ import {
   usePlayKnowledge,
   type PlayKnowledgeHooks,
 } from './knowledge-panel.tsx'
-import { composeSummon, connectionLineStatus, resolveTypingNames } from './session-compose.ts'
+import { MAX_PLAYER_MESSAGE_LEN, composeSummon, connectionLineStatus, resolveTypingNames } from './session-compose.ts'
 
 // The live session shell (MYT-92 T16) — the `ready` phase: the streamed multiplayer
 // transcript over the WS transport view-model (`useSession`). It composes the six
@@ -216,6 +216,7 @@ export function SessionShell({
           placeholder={t('play.input.placeholder')}
           summonLabel={t('play.input.summon')}
           sendLabel={t('play.input.send')}
+          maxLength={MAX_PLAYER_MESSAGE_LEN}
         />
       </div>
       {/* The knowledge sidebar (MYT-94) — fills MYT-92's placeholder seam: the
