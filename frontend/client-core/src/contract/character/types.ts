@@ -35,9 +35,12 @@ export interface GuidedOption {
 }
 
 /** One rung of the guided builder's progress rail: the step, its resolved label,
- *  the chosen value (once picked), and where it sits relative to the cursor. */
+ *  the chosen value (once picked), and where it sits relative to the cursor.
+ *  `grounding` (MYT-102) is the rail-only final rung — the grounding screen after
+ *  the builder completes. It is never a reducer step (back/advance skip it); the
+ *  rail models it so the journey signposts continuously through the last screen. */
 export interface RailStep {
-  step: GuidedStep
+  step: GuidedStep | 'grounding'
   label: string
   chosen?: string
   state: 'done' | 'now' | 'todo'

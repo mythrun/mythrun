@@ -5,6 +5,10 @@
 
 /** Props for the freeform character-concept prompt. */
 export interface FreeformPromptProps {
+  /** Optional resolved step signpost shown quietly above the prompt (e.g. the
+   *  freeform path's "1 of 2" — so the player knows a second question follows
+   *  and doesn't front-load their whole answer into the first). MYT-102. */
+  stepIndicator?: string
   /** The resolved question shown as the seamless field's label. */
   prompt: string
   /** The quiet sub-line under the prompt (the "whisper" of guidance). */

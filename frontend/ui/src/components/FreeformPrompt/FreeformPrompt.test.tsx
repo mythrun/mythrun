@@ -97,6 +97,26 @@ describe('FreeformPrompt', () => {
     expect(getByTestId('freeform-prompt')).toBeInTheDocument()
   })
 
+  it('renders the resolved step signpost above the prompt when given (MYT-102)', () => {
+    const { getByTestId } = render(<FreeformPrompt {...props({ stepIndicator: '1 of 2' })} />)
+    const signpost = getByTestId('freeform-step-indicator')
+    expect(signpost.textContent).toBe('1 of 2')
+    // Above the prompt: the signpost precedes the field's label in the document.
+    const label = getByTestId('freeform-prompt').querySelector('label')
+    expect(label).not.toBeNull()
+    expect(signpost.compareDocumentPosition(label as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('omits the step signpost when the prop is absent', () => {
+    const { queryByTestId } = render(<FreeformPrompt {...props()} />)
+    expect(queryByTestId('freeform-step-indicator')).toBeNull()
+  })
+
+  it('has no a11y violations with the step indicator present', async () => {
+    const { container } = render(<FreeformPrompt {...props({ stepIndicator: '1 of 2' })} />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('forwards the ref to the container element', () => {
     const ref = createRef<HTMLDivElement>()
     render(<FreeformPrompt ref={ref} {...props()} />)

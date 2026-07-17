@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { Stack, Text, GuidedBuilder, FreeformPrompt } from '@mythrun/ui'
+import { Stack, Text, GuidedBuilder, GuidedRail, FreeformPrompt, SituationRecap } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   initialGuidedState,
   guidedReducer,
@@ -10,7 +11,8 @@ import {
   type GuidedChoiceDraft,
 } from '@mythrun/client-core/character'
 import { CLASS_OPTIONS, SPECIES, BACKGROUNDS } from '@mythrun/client-core/srd'
-import type { GuidedOption, GuidedStep } from '@mythrun/client-core/contract'
+import type { GuidedOption, GuidedStep, RailStep } from '@mythrun/client-core/contract'
+import type { SituationRecapData } from './freeform-path.tsx'
 
 // The GUIDED PATH (MYT-90, D4) — the "answer a few questions" fork. A controlled
 // driver around the presentational @mythrun/ui <GuidedBuilder>, wired to the
@@ -26,6 +28,15 @@ import type { GuidedOption, GuidedStep } from '@mythrun/client-core/contract'
 // the freeform path does — the grounding whisper (the chosen situation's invitation).
 // A completed run submits BOTH the flattened conceptText AND situationGroundingText
 // via the route-injected `submit`; `onSkipToFreeform` abandons to the freeform fork.
+//
+// MYT-102 signposting + grounding: the builder-less free-text screens keep the
+// journey's progress rail — the standalone <GuidedRail> renders the same
+// `guidedRail(state)` rungs the builder shows (Notes `now` on the coda; every pick
+// `done` + the rail-only Grounding rung `now` once the flow completes) — so the
+// signposting never disappears at the exact moment the option grids do. The
+// grounding screen additionally keeps the chosen situation's RECAP (LLM DATA) in
+// view above the prompt, so "how do you come to be here?" is answered against the
+// actual opening scene.
 //
 // Options map SRD → cards: each option's `id` is the value the reducer commits (the
 // class ID for `class`; the canonical English SRD name for the rest — the locale-
@@ -116,6 +127,58 @@ function draftValueForStep(step: GuidedStep, choice: GuidedChoiceDraft): string 
  *  retry, or none. */
 type Notice = 'tooShort' | 'error' | null
 
+/** The post-complete GROUNDING screen — the second required field, collected
+ *  exactly as the freeform path does, with the journey rail (every pick done,
+ *  Grounding `now`) and the opening-scene recap kept in view above the prompt
+ *  (MYT-102). */
+function GroundingScreen({
+  rail,
+  situation,
+  groundingWhisper,
+  value,
+  onChange,
+  onSubmit,
+  notice,
+  t,
+}: {
+  rail: RailStep[]
+  situation?: SituationRecapData
+  groundingWhisper: string
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  notice: Notice
+  t: TFunction
+}): React.JSX.Element {
+  return (
+    <>
+      <GuidedRail rail={rail} />
+      {situation !== undefined && (
+        <SituationRecap
+          eyebrow={t('characterCreate.recap.eyebrow')}
+          title={situation.title}
+          locationName={situation.locationName}
+          prose={situation.prose}
+        />
+      )}
+      <FreeformPrompt
+        prompt={t('characterCreate.freeform.groundingPrompt')}
+        whisper={groundingWhisper}
+        value={value}
+        onChange={onChange}
+        onSubmit={onSubmit}
+      />
+      {notice !== null ? (
+        <Text role="ui-caption" as="p" data-testid="guided-notice">
+          {notice === 'tooShort'
+            ? t('characterCreate.freeform.tooShort')
+            : t('characterCreate.freeform.error')}
+        </Text>
+      ) : null}
+    </>
+  )
+}
+
 export interface GuidedPathProps {
   /** The party's starting level — gates the conditional Subclass step (the reducer
    *  skips it when the chosen class gains no subclass at this level). */
@@ -123,6 +186,9 @@ export interface GuidedPathProps {
   /** The grounding step's whisper — the chosen situation's invitation (or the route's
    *  generic fallback), exactly as the freeform path uses it. */
   groundingWhisper: string
+  /** The chosen situation's recap (MYT-102) — shown above the grounding prompt;
+   *  undefined (pending fetch / legacy world) renders the prompt without it. */
+  situation?: SituationRecapData
   /** Commit both fields (the route binds ctx + campaignId + the real endpoint). */
   submit: (conceptText: string, situationGroundingText: string) => Promise<void>
   /** A successful submit — the route advances the create-machine to `processing`. */
@@ -135,6 +201,7 @@ export interface GuidedPathProps {
 export function GuidedPath({
   startingLevel,
   groundingWhisper,
+  situation,
   submit,
   onSubmitted,
   onSkipToFreeform,
@@ -199,35 +266,32 @@ export function GuidedPath({
   const step = state.step
   let screen: React.JSX.Element
   if (state.complete) {
-    // Grounding — the second required field, collected exactly as the freeform path does.
     screen = (
-      <>
-        <FreeformPrompt
-          prompt={t('characterCreate.freeform.groundingPrompt')}
-          whisper={groundingWhisper}
-          value={groundingText}
-          onChange={setGroundingText}
-          onSubmit={handleGrounding}
-        />
-        {notice !== null ? (
-          <Text role="ui-caption" as="p" data-testid="guided-notice">
-            {notice === 'tooShort'
-              ? t('characterCreate.freeform.tooShort')
-              : t('characterCreate.freeform.error')}
-          </Text>
-        ) : null}
-      </>
+      <GroundingScreen
+        rail={guidedRail(state)}
+        {...(situation !== undefined ? { situation } : {})}
+        groundingWhisper={groundingWhisper}
+        value={groundingText}
+        onChange={setGroundingText}
+        onSubmit={handleGrounding}
+        notice={notice}
+        t={t}
+      />
     )
   } else if (step === 'notes') {
-    // The optional free-text coda — a FreeformPrompt, not an option grid.
+    // The optional free-text coda — a FreeformPrompt, not an option grid; the
+    // rail persists above it (Notes `now`) so the journey stays signposted.
     screen = (
-      <FreeformPrompt
-        prompt={t('characterCreate.guided.notes.prompt')}
-        whisper={t('characterCreate.guided.notes.whisper')}
-        value={notesText}
-        onChange={setNotesText}
-        onSubmit={continueNotes}
-      />
+      <>
+        <GuidedRail rail={guidedRail(state)} />
+        <FreeformPrompt
+          prompt={t('characterCreate.guided.notes.prompt')}
+          whisper={t('characterCreate.guided.notes.whisper')}
+          value={notesText}
+          onChange={setNotesText}
+          onSubmit={continueNotes}
+        />
+      </>
     )
   } else {
     // An option step (class / subclass / species / background).

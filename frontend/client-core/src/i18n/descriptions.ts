@@ -183,6 +183,8 @@ export const descriptions: Record<string, string> = {
   'worldGen.stage.random_tables': 'Friendly world-gen stage label (status card): the pipeline is seeding the world\'s random/encounter tables. Terse, ~2-4 words, present continuous.',
   'worldGen.stage.coherence_pass': 'Friendly world-gen stage label (status card): the pipeline is doing a final coherence pass reconciling the whole world. Terse, ~2-4 words, present continuous.',
   'worldGen.stage.embed_world': 'Friendly world-gen stage label (status card): the pipeline is embedding/committing the finished world to memory (vector store). Terse, ~2-4 words, present continuous.',
+  'worldReveal.wikiGlossary':
+    'Quiet mono section label over the world-glossary rows (mono term over serif definition) closing the wiki home index — the world’ invented vocabulary. ~1 word.',
   'worldReveal.title': 'Headline on the world-reveal screen shown after world-gen completes — the settled graph beside the browsable wiki. Terse, brand-voiced, ~2-3 words, e.g. "Your world".',
   'worldReveal.explorePrompt': 'Quiet invitation under the reveal: wander/explore the newly-made world, and continue when ready. Calm, unhurried, ~1 short sentence.',
   'worldReveal.continue': 'Label on the Continue affordance that leads from the reveal to the starting-situation pick. ~1 word, e.g. "Continue".',
@@ -251,6 +253,14 @@ export const descriptions: Record<string, string> = {
   'characterCreate.freeform.conceptWhisper': 'Quiet sub-line (whisper of guidance) under the "who are you?" concept prompt — nudges the player toward what matters (a name, a calling, a wound). Calm, ~1 short line.',
   'characterCreate.freeform.groundingPrompt': 'The second freeform question (the seamless field\'s label) — asks how the character comes to be at the chosen opening. The grounding text. Evocative and short, ~4-6 words.',
   'characterCreate.freeform.groundingWhisperFallback': 'Fallback whisper under the grounding prompt used only when no starting situation is chosen yet (the normal whisper is the chosen situation\'s LLM-authored invitation). Generic grounding nudge, ~1 short line.',
+  'characterCreate.freeform.stepIndicator':
+    'Quiet step signpost above the freeform prompts, interpolating current/total so players know a follow-up question is coming.',
+  'characterCreate.recap.eyebrow':
+    'Mono eyebrow over the starting-situation recap card shown during character creation.',
+  'characterCreate.loading.countdown':
+    'The per-second ~M:SS remaining-wait countdown under the character-creation loading beat (world-gen waiting register). Interpolates {{time}}, a pre-formatted M:SS string; keep the ~ — an estimate that may hold at 0:00 on overrun and jump when a stage lands. Mirrors worldGen.countdown.',
+  'characterCreate.loading.stalled':
+    'A calm reassurance line under the character-creation loading beat when the wait exhausts 3x its estimate (or 5 minutes with no history) without completion. No blame, no retry ask, unhurried — the pipeline retries on its own.',
   'characterCreate.freeform.tooShort': 'Calm inline notice shown when a freeform answer is below the minimum length — a gentle nudge to write a little more, never a red error. Terse, ~3-5 words.',
   'characterCreate.freeform.error': 'Calm inline notice shown when submitting the character concept fails — a quiet, retryable note, not an apology. Terse, ~3-5 words.',
   'characterCreate.guided.class.question': "Headline question on the CLASS step of the guided character builder — asks what the character's calling/class is, over the twelve class cards. Calm, ~3-5 words.",

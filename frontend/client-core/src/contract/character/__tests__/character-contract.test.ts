@@ -22,6 +22,8 @@ import type {
   LevelCardProps,
   FreeformPromptProps,
   GuidedBuilderProps,
+  GuidedRailProps,
+  SituationRecapProps,
   CharacterLoadingBeatProps,
   CharacterSheetRevealProps,
   PartyRosterProps,
@@ -74,9 +76,9 @@ describe('shared data + view-model shapes', () => {
     }>()
   })
 
-  it('RailStep carries the step, label, optional chosen value, and progress state', () => {
+  it('RailStep carries the step (builder steps + the rail-only grounding rung), label, optional chosen value, and progress state', () => {
     expectTypeOf<RailStep>().toEqualTypeOf<{
-      step: GuidedStep
+      step: GuidedStep | 'grounding'
       label: string
       chosen?: string
       state: 'done' | 'now' | 'todo'
@@ -174,6 +176,9 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
 
   it('FreeformPromptProps — neutral onChange(value)/onSubmit, optional placeholder', () => {
     expectTypeOf<FreeformPromptProps>().toEqualTypeOf<{
+      // MYT-102: the optional resolved step signpost ("1 of 2") shown quietly
+      // above the prompt so the player knows a second question follows.
+      stepIndicator?: string
       prompt: string
       whisper: string
       value: string
@@ -196,10 +201,30 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
     }>()
   })
 
+  it('GuidedRailProps — pure rail data, no callbacks (a status display, never interactive)', () => {
+    expectTypeOf<GuidedRailProps>().toEqualTypeOf<{
+      rail: RailStep[]
+      'data-testid'?: string
+    }>()
+  })
+
+  it('SituationRecapProps — resolved eyebrow chrome + verbatim LLM situation data, no callbacks', () => {
+    expectTypeOf<SituationRecapProps>().toEqualTypeOf<{
+      eyebrow: string
+      title: string
+      locationName: string
+      prose: string
+    }>()
+  })
+
   it('CharacterLoadingBeatProps', () => {
     expectTypeOf<CharacterLoadingBeatProps>().toEqualTypeOf<{
       beats: LoadingBeat[]
       reducedMotion: boolean
+      // MYT-102: the ticking `~M:SS` wait estimate — OPTIONAL (omitted, not
+      // empty, when there is no usable history; the beat then shows no
+      // countdown rather than a fake one).
+      countdownLabel?: string
     }>()
   })
 

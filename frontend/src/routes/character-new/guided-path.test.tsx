@@ -61,9 +61,19 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+// The chosen situation's recap slice — LLM DATA the recap card renders verbatim
+// (MYT-102): the grounding step keeps the opening scene in view while the player
+// writes how they come to be in it.
+const SITUATION = {
+  title: 'A debt come due',
+  locationName: 'The Salt Ledger',
+  prose: 'The counting-house wants paying.',
+}
+
 interface Overrides {
   startingLevel?: number
   submit?: (conceptText: string, situationGroundingText: string) => Promise<void>
+  situation?: typeof SITUATION
 }
 
 function renderGuided(overrides: Overrides = {}): {
@@ -84,6 +94,7 @@ function renderGuided(overrides: Overrides = {}): {
           submit={submit}
           onSubmitted={onSubmitted}
           onSkipToFreeform={onSkipToFreeform}
+          {...(overrides.situation !== undefined ? { situation: overrides.situation } : {})}
         />
       </I18nextProvider>
     </ThemeProvider>,
@@ -256,6 +267,75 @@ describe('GuidedPath — grounding + submit', () => {
     expect(await screen.findByTestId('guided-notice')).toBeDefined()
     // Still on grounding — the freeform prompt is still mounted.
     expect(screen.getByText(q('characterCreate.freeform.groundingPrompt'))).toBeDefined()
+  })
+})
+
+describe('GuidedPath — journey signposting + situation recap (MYT-102)', () => {
+  /** Drive the level-3 Fighter builder to the NOTES step (the first builder-less
+   *  screen of the journey). */
+  function buildToNotes(container: HTMLElement): void {
+    pickOption(container, 'fighter')
+    next()
+    pickOption(container, 'Champion')
+    next()
+    pickOption(container, 'Human')
+    next()
+    pickOption(container, 'Soldier')
+    next()
+  }
+
+  it('keeps the rail above the notes prompt (builder gone, Notes now, Grounding todo)', () => {
+    const { container } = renderGuided({ startingLevel: 3 })
+    buildToNotes(container)
+
+    expect(screen.queryByTestId('guided-builder')).toBeNull()
+    const rail = within(screen.getByTestId('guided-rail'))
+    expect(rail.getByText('Notes').closest('[data-state]')?.getAttribute('data-state')).toBe('now')
+    expect(rail.getByText('Grounding').closest('[data-state]')?.getAttribute('data-state')).toBe('todo')
+  })
+
+  it('keeps the rail above the grounding prompt (every pick done + carried, Grounding now)', () => {
+    const { container } = renderGuided({ startingLevel: 3 })
+    buildToNotes(container)
+    answerAndContinue('')
+
+    // On grounding — the picks ride their done rungs (canonical values are DATA).
+    const rail = within(screen.getByTestId('guided-rail'))
+    expect(rail.getByText('Fighter')).toBeDefined()
+    expect(rail.getByText('Champion')).toBeDefined()
+    expect(rail.getByText('Human')).toBeDefined()
+    expect(rail.getByText('Soldier')).toBeDefined()
+    expect(rail.getByText('Grounding').closest('[data-state]')?.getAttribute('data-state')).toBe('now')
+  })
+
+  it('renders the situation recap above the grounding prompt when a situation is supplied', () => {
+    const { container } = renderGuided({ startingLevel: 3, situation: SITUATION })
+    buildToNotes(container)
+    answerAndContinue('')
+
+    const recap = screen.getByTestId('situation-recap')
+    expect(recap.textContent).toContain('A debt come due')
+    expect(recap.textContent).toContain('The Salt Ledger')
+    expect(recap.textContent).toContain('The counting-house wants paying.')
+    // Above the prompt: the recap precedes the grounding FreeformPrompt.
+    const prompt = screen.getByTestId('freeform-prompt')
+    expect(recap.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('renders no recap on the option steps or without a chosen situation', () => {
+    const { container } = renderGuided({ startingLevel: 3, situation: SITUATION })
+    // Option step: the builder owns the screen — no recap.
+    expect(screen.queryByTestId('situation-recap')).toBeNull()
+    buildToNotes(container)
+    answerAndContinue('')
+    cleanup()
+
+    // Grounding without a situation (legacy world / failed fetch): no recap.
+    const bare = renderGuided({ startingLevel: 3 })
+    buildToNotes(bare.container)
+    answerAndContinue('')
+    expect(screen.getByText(q('characterCreate.freeform.groundingPrompt'))).toBeDefined()
+    expect(screen.queryByTestId('situation-recap')).toBeNull()
   })
 })
 

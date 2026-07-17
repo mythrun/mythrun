@@ -252,6 +252,8 @@ export type {
   FreeformPromptProps,
   GuidedBuilderProps,
   CharacterLoadingBeatProps,
+  GuidedRailProps,
+  SituationRecapProps,
   CharacterSheetRevealProps,
   PartyRosterProps,
 } from './character/index.ts'

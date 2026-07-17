@@ -124,18 +124,33 @@ function chosenFor(step: GuidedStep, choice: GuidedChoiceDraft): string | undefi
   }
 }
 
+/** The grounding rung's fixed label — the same brain-side chrome register as
+ *  STEP_LABELS (resolved copy is a later web-layer concern for all of them). */
+const GROUNDING_LABEL = 'Grounding'
+
 /** The progress rail: one rung per step in the actual path, each marked done / now /
- *  todo relative to the cursor (all done once the flow is complete). */
+ *  todo relative to the cursor (all done once the flow is complete) — PLUS the final
+ *  grounding rung (MYT-102). Grounding is the screen after the builder (the route's
+ *  `complete` branch), not a reducer step, but it IS the last leg of the same journey:
+ *  the rail carries it as `todo` while the builder runs and `now` once the flow
+ *  completes, so the player stays oriented at the exact moment the builder chrome
+ *  disappears. It is never `done` — a successful submit unmounts the flow. */
 export function guidedRail(state: GuidedState): RailStep[] {
   const sequence = stepSequence(state.choice.className, state.level)
   const cursor = state.complete ? sequence.length : sequence.indexOf(state.step)
-  return sequence.map((step, index) => {
+  const rungs: RailStep[] = sequence.map((step, index) => {
     const progress: RailStep['state'] = index < cursor ? 'done' : index === cursor ? 'now' : 'todo'
     const chosen = chosenFor(step, state.choice)
     return chosen === undefined
       ? { step, label: STEP_LABELS[step], state: progress }
       : { step, label: STEP_LABELS[step], chosen, state: progress }
   })
+  rungs.push({
+    step: 'grounding',
+    label: GROUNDING_LABEL,
+    state: state.complete ? 'now' : 'todo',
+  })
+  return rungs
 }
 
 /** The accumulated picks folded into a complete {@link GuidedChoice}, or null until

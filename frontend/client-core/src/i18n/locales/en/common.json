@@ -157,7 +157,8 @@
       "error": "[ph: something went wrong — try again]",
       "groundingPrompt": "[ph: and how do you come to be here?]",
       "groundingWhisperFallback": "[ph: what brought your character to this place?]",
-      "tooShort": "[ph: tell us a little more]"
+      "tooShort": "[ph: tell us a little more]",
+      "stepIndicator": "[ph: {{current}} of {{total}}]"
     },
     "guided": {
       "background": {
@@ -331,7 +332,9 @@
       "retry": "[ph: try again]"
     },
     "loading": {
-      "title": "[ph: making your character]"
+      "title": "[ph: making your character]",
+      "countdown": "[ph: ~{{time}} left]",
+      "stalled": "[ph: taking longer than usual]"
     },
     "processing": "[ph: bringing your character to life…]",
     "reveal": {
@@ -347,6 +350,9 @@
       "loading": "[ph: gathering your party…]",
       "retry": "[ph: try again]",
       "title": "[ph: ready to begin?]"
+    },
+    "recap": {
+      "eyebrow": "[ph: your opening scene]"
     }
   },
   "devTransport": {
@@ -666,6 +672,7 @@
     "wikiOpen": "[ph: open the world wiki]",
     "wikiRelated": "[ph: connected across your world]",
     "wikiSearchLabel": "[ph: search your world]",
-    "wikiSearchPlaceholder": "[ph: search]"
+    "wikiSearchPlaceholder": "[ph: search]",
+    "wikiGlossary": "[ph: glossary]"
   }
 }

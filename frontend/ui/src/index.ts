@@ -46,6 +46,8 @@ export { KnowledgeSidebar } from './components/KnowledgeSidebar/KnowledgeSidebar
 export { LevelCard } from './components/LevelCard/LevelCard.tsx'
 export { FreeformPrompt } from './components/FreeformPrompt/FreeformPrompt.tsx'
 export { GuidedBuilder } from './components/GuidedBuilder/GuidedBuilder.tsx'
+export { GuidedRail } from './components/GuidedBuilder/GuidedRail.tsx'
+export { SituationRecap } from './components/SituationRecap/SituationRecap.tsx'
 export { CharacterLoadingBeat } from './components/CharacterLoadingBeat/CharacterLoadingBeat.tsx'
 export { PartyRoster } from './components/PartyRoster/PartyRoster.tsx'
 // Invite & party (MYT-91).

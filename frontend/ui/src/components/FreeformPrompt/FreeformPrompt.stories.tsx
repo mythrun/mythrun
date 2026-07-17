@@ -34,7 +34,13 @@ const FILLED =
 
 // A tiny stateful harness so the specimen behaves like the real screen: typing
 // updates the field, and the submit control is a live (no-op) commit.
-function Live({ initial = '' }: { initial?: string }): React.JSX.Element {
+function Live({
+  initial = '',
+  stepIndicator,
+}: {
+  initial?: string
+  stepIndicator?: string
+}): React.JSX.Element {
   const [value, setValue] = useState(initial)
   return (
     <FreeformPrompt
@@ -44,6 +50,7 @@ function Live({ initial = '' }: { initial?: string }): React.JSX.Element {
       onChange={setValue}
       onSubmit={() => undefined}
       placeholder={PLACEHOLDER}
+      {...(stepIndicator !== undefined && { stepIndicator })}
     />
   )
 }
@@ -68,12 +75,24 @@ export const Filled: Story = {
   ),
 }
 
-// Mobile — the same composition in a single column at ~375px.
+// The step signpost (MYT-102) — the quiet mono "1 of 2" eyebrow above the
+// prompt, so the player knows a second question follows and doesn't front-load
+// their whole answer into the first.
+export const WithStepIndicator: Story = {
+  name: 'With step indicator (1 of 2)',
+  render: () => (
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
+      <Live stepIndicator="1 of 2" />
+    </div>
+  ),
+}
+
+// Mobile — the same composition in a single column at ~375px (signpost included).
 export const Phone: Story = {
   name: 'Phone (~375px)',
   render: () => (
     <div className="mx-auto max-w-[375px] bg-bg p-[var(--space-4)]">
-      <Live />
+      <Live stepIndicator="1 of 2" />
     </div>
   ),
 }

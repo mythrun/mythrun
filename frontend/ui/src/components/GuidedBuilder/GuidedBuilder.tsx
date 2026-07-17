@@ -1,9 +1,10 @@
 import { forwardRef } from 'react'
-import type { GuidedBuilderProps, RailStep } from '@mythrun/client-core/contract'
+import type { GuidedBuilderProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { Stack } from '../Stack/Stack.tsx'
 import { Heading } from '../Heading/Heading.tsx'
 import { Button } from '../Button/Button.tsx'
+import { GuidedRail } from './GuidedRail.tsx'
 
 // GuidedBuilder (MYT-90) — the one-question-at-a-time character builder (Calling →
 // Practice → Origin → Background → …). FULLY CONTROLLED and purely presentational:
@@ -37,26 +38,9 @@ const NEXT_LABEL = 'Next'
 const BACK_LABEL = 'Back'
 const SKIP_LABEL = 'Describe them instead'
 
-// One rung of the progress rail. NON-interactive (the rail is a status display; the
-// contract carries no per-rung callback) — a bordered square showing the step label
-// and, once chosen, its picked value. State recolors the edge: `now` ember, `done`
-// ink, `todo` muted.
-const NODE_BASE = cn(
-  'inline-flex items-center gap-[var(--space-2)] rounded-none border',
-  'px-[var(--space-3)] py-[var(--space-1)]',
-)
-const NODE_STATE: Record<RailStep['state'], string> = {
-  done: 'border-ink bg-surface text-ink-secondary',
-  now: 'border-accent bg-surface text-accent-fg',
-  todo: 'border-border bg-bg text-ink-tertiary',
-}
-// The rung's step label — the small mono/machine register.
-const NODE_LABEL = 'font-ui text-xs font-medium uppercase tracking-wide'
-// The picked value carried on a completed rung — serif, strong ink so it pops past
-// the muted label.
-const NODE_CHOSEN = 'font-body text-sm font-semibold text-ink'
-// The directional separator between rungs — decorative, so it is aria-hidden.
-const SEP = 'font-ui text-xs text-ink-tertiary'
+// The progress rail's rung markup lives in GuidedRail.tsx (extracted in MYT-102
+// so the builder-less notes/grounding screens keep the same signposting); the
+// builder composes it below under its historical `guided-builder-rail` testid.
 
 // One selectable option card — a REAL <button> (native click AND keyboard fire
 // `onSelect`). Mirrors LevelCard: `--border-strong` edge + `--surface` fill, neutral
@@ -99,26 +83,10 @@ export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(func
   const isFirstStep = !rail.some((rung) => rung.state === 'done')
   return (
     <Stack ref={ref} data-testid="guided-builder" gap={6}>
-      {/* Progress rail — a semantic ordered list of rungs. Self-describing (label +
-          chosen value), so it needs no landmark label. */}
-      <ol
-        data-testid="guided-builder-rail"
-        className="flex list-none flex-wrap items-center gap-[var(--space-2)] p-0"
-      >
-        {rail.map((rung, index) => (
-          <li key={rung.step} className="flex items-center gap-[var(--space-2)]">
-            {index > 0 && (
-              <span aria-hidden="true" className={SEP}>
-                →
-              </span>
-            )}
-            <span data-state={rung.state} className={cn(NODE_BASE, NODE_STATE[rung.state])}>
-              <span className={NODE_LABEL}>{rung.label}</span>
-              {rung.chosen !== undefined && <span className={NODE_CHOSEN}>{rung.chosen}</span>}
-            </span>
-          </li>
-        ))}
-      </ol>
+      {/* Progress rail — the extracted GuidedRail (a semantic ordered list of
+          rungs), under the builder's historical testid so the composition renders
+          identically to the pre-extraction markup. */}
+      <GuidedRail rail={rail} data-testid="guided-builder-rail" />
 
       {/* The step's question — the large serif hero. */}
       <Heading level={2} role="display">

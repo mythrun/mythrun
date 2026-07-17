@@ -33,6 +33,11 @@ import { Button } from '../Button/Button.tsx'
 // grow a submit-label prop.
 const SUBMIT_LABEL = 'Continue'
 
+// The optional step signpost (MYT-102): a quiet mono eyebrow above the prompt —
+// the "1 of 2" that tells the player another question follows so they don't
+// front-load their whole answer. Muted machine register — tertiary ink, never
+// ember: it orients, it does not call attention.
+const STEP_INDICATOR_CLASS = 'font-ui text-xs font-medium uppercase tracking-wide text-ink-tertiary'
 // The prompt: a large serif heading that is ALSO the field's <label>. `text-ink`
 // (the darkest ink) + block so it stacks above the field.
 const PROMPT_CLASS = 'block font-body text-[1.25rem] font-semibold leading-[1.3] text-ink'
@@ -41,7 +46,7 @@ const PROMPT_CLASS = 'block font-body text-[1.25rem] font-semibold leading-[1.3]
 const WHISPER_CLASS = 'font-body text-sm font-normal italic leading-[1.4] text-ink-secondary'
 
 export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(function FreeformPrompt(
-  { prompt, whisper, value, onChange, onSubmit, placeholder },
+  { stepIndicator, prompt, whisper, value, onChange, onSubmit, placeholder },
   ref,
 ) {
   // Stable ids wire the question ↔ field (accessible name) and the whisper ↔
@@ -51,8 +56,14 @@ export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(fu
   return (
     <Stack ref={ref} data-testid="freeform-prompt" gap={5}>
       {/* Prompt + whisper cluster — tight rhythm so the whisper reads as the
-          prompt's sub-line, not a separate block. */}
+          prompt's sub-line, not a separate block. The optional step signpost
+          rides the same cluster, sitting as the prompt's quiet eyebrow. */}
       <Stack gap={2}>
+        {stepIndicator !== undefined && (
+          <p data-testid="freeform-step-indicator" className={STEP_INDICATOR_CLASS}>
+            {stepIndicator}
+          </p>
+        )}
         <label htmlFor={fieldId} className={PROMPT_CLASS}>
           {prompt}
         </label>
