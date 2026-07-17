@@ -174,6 +174,13 @@ describe('worker.main()', () => {
     // The session-analysis worker (MYT-74b T14) is on QUEUE_SESSION_ANALYSIS
     // ('session-analysis').
     expect(workerInstances.map((w) => w.name)).toContain('session-analysis')
+    // MYT-102 A2: the campaign-setup worker attaches the 'failed' listener
+    // that surfaces attempts-exhausted character-creation jobs (flips the
+    // concept to 'failed' + publishes a terminal stage-failed). Without it,
+    // an exhausted transient leaves the concept at 'processing' forever.
+    const campaignSetup = workerInstances.find((w) => w.name === 'campaign-setup')
+    expect(campaignSetup).toBeDefined()
+    expect(campaignSetup?.on).toHaveBeenCalledWith('failed', expect.any(Function))
     // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12) — one
     // QueueEvents on a duplicate()d blocking connection.
     expect(queueEventsInstances).toHaveLength(1)

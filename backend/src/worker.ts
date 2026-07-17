@@ -21,6 +21,7 @@ import { readCostCap, readCharacterCreationCostCap } from './llm/prep/cost-cap.j
 import { createWorldGenProcessor } from './llm/prep/world-gen-processor.js'
 import {
   createCharacterCreationProcessor,
+  handleCharacterCreationJobFailure,
   type CharacterCreationJobPayload,
 } from './llm/prep/character-creation-processor.js'
 import {
@@ -151,6 +152,18 @@ export async function main(): Promise<void> {
   const campaignSetupWorker = new BullmqWorker(QUEUE_CAMPAIGN_SETUP, campaignSetupRouter, {
     connection: redisBatch,
     concurrency: CONCURRENCY_CAMPAIGN_SETUP,
+  })
+
+  // MYT-102 A2: exhausted-transient surfacing. A transient stage failure
+  // rethrows so BullMQ retries (attempts:2) — but the FINAL failed attempt
+  // used to leave character_concepts at 'processing' forever (markFailed only
+  // ran on terminal errors; no producer existed for a job-level failure).
+  // The handler acts only when attemptsMade >= attempts: it flips the concept
+  // to 'failed', publishes a terminal stage-failed (errorCode, willRetry:false)
+  // on the pipeline channel, and logs loud. It never throws (internal
+  // catch-and-log), so the bare `void` here is safe for BullMQ's emitter.
+  campaignSetupWorker.on('failed', (job, err) => {
+    void handleCharacterCreationJobFailure({ pool: pg, publishEvent, logger }, job, err)
   })
 
   // Session-prep (MYT-61) — one job per (campaign, session_number), enqueued

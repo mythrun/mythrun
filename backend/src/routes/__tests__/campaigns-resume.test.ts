@@ -26,7 +26,11 @@ import { requireOnboarded } from '../../auth/require-onboarded.js'
 import { campaignsRoutes } from '../campaigns.js'
 import type { PipelineSubscriber } from '../../sse/pipeline-subscriber.js'
 import type { ConnectionCounter } from '../../sse/connection-counter.js'
-import type { WorldGenQueueLike, WorldGenJobLike } from '../campaigns.js'
+import type {
+  WorldGenQueueLike,
+  WorldGenJobLike,
+  CharacterCreationResumeQueueLike,
+} from '../campaigns.js'
 import {
   cleanupTestScope,
   makeTestScope,
@@ -95,6 +99,18 @@ function createQueueSpy(): QueueSpy {
       nextJob = job
     },
   }
+}
+
+// MYT-102 A3: character-creation queue spy for the resume arm — the handler
+// only calls .add() on it.
+interface CcQueueSpy {
+  readonly queue: CharacterCreationResumeQueueLike
+  readonly add: ReturnType<typeof vi.fn>
+}
+
+function createCcQueueSpy(): CcQueueSpy {
+  const add = vi.fn().mockResolvedValue({ id: 'stub-cc-job' })
+  return { queue: { add }, add }
 }
 
 // --- Seed helpers ---------------------------------------------------------
@@ -177,6 +193,7 @@ async function buildTestApp(
   pool: Pool,
   redis: Redis,
   queueSpy: QueueSpy,
+  ccQueue?: CharacterCreationResumeQueueLike,
 ): Promise<FastifyInstance> {
   globalThis.fetch = (): Promise<Response> => Promise.reject(new Error('ECONNREFUSED'))
   const app = Fastify({ logger: false, trustProxy: 1 })
@@ -191,6 +208,8 @@ async function buildTestApp(
     redis,
     redisKeyPrefix: REDIS_KEY_PREFIX,
     worldGenQueue: queueSpy.queue,
+    // exactOptionalPropertyTypes: only spread the key in when present.
+    ...(ccQueue !== undefined ? { characterCreationQueue: ccQueue } : {}),
   })
   await app.ready()
   return app
@@ -202,6 +221,7 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
   let pool: Pool
   let redis: Redis
   let queueSpy: QueueSpy
+  let ccQueueSpy: CcQueueSpy
   let app: FastifyInstance
   let scope: TestScope
 
@@ -221,9 +241,10 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
     vi.stubEnv('NODE_ENV', 'test')
     redis = new IoredisMock()
     queueSpy = createQueueSpy()
+    ccQueueSpy = createCcQueueSpy()
     // myth-5jdo: scoped cleanup replaces blanket DELETEs.
     await cleanupTestScope(pool, scope)
-    app = await buildTestApp(pool, redis, queueSpy)
+    app = await buildTestApp(pool, redis, queueSpy, ccQueueSpy.queue)
   })
 
   afterEach(async () => {
@@ -369,10 +390,44 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
   // phase = character_creation
   // -----------------------------------------------------------------------
 
+  // MYT-102 A3: the arm is implemented — it sweeps concepts stuck at
+  // 'processing' with owed pipeline work (a pending/failed character-stage
+  // run and no active running one) and re-adds their cc-<campaignId>-<userId>
+  // jobs. removeOnComplete/Fail {count:0} on the campaign-setup queue means a
+  // dead job's id is free, so the deterministic re-add lands.
   describe('phase=character_creation', () => {
-    it('422 phase_resume_not_yet_implemented (downstream ticket NOT in body)', async () => {
+    async function insertConcept(
+      campaignId: string,
+      userId: string,
+      status: 'submitted' | 'processing' | 'completed' | 'failed',
+    ): Promise<void> {
+      await pool.query(
+        `INSERT INTO character_concepts (
+           id, campaign_id, user_id, concept_text, situation_grounding_text,
+           guided_choices, status
+         )
+         VALUES ($1, $2, $3, 'A road-weary cleric searching for an old companion',
+                 'arrived at the tavern as the storm broke', '{}'::jsonb, $4)`,
+        [uuidv7(), campaignId, userId, status],
+      )
+    }
+
+    async function addMember(campaignId: string, n: number): Promise<{ userId: string }> {
+      const userId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [userId, scope.userSub(n), scope.displayName(n), scope.username(n)],
+      )
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'player', true)`,
+        [uuidv7(), campaignId, userId],
+      )
+      return { userId }
+    }
+
+    async function seedCharCreationCampaign(): Promise<SeededCampaign> {
       const seed = await seedCampaign(pool, scope, { worldStatus: 'complete' })
-      // World ready → a charcreation stage running puts us in 'character_creation'.
       await insertRun(pool, {
         worldId: seed.worldId,
         stage: 'concept_intake',
@@ -380,6 +435,92 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
         startedAt: new Date(Date.now() - 2000),
         completedAt: new Date(Date.now() - 1000),
       })
+      return seed
+    }
+
+    it('202 re-enqueues a lost-enqueue orphan (processing concept + pending seed row)', async () => {
+      const seed = await seedCharCreationCampaign()
+      await insertConcept(seed.campaignId, seed.userId, 'processing')
+      // The POST /characters tx seeded a pending character_concept row, but
+      // the enqueue after COMMIT was lost (Redis blip) — scout shape 1.
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'pending',
+        userId: seed.userId,
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(202)
+      expect(res.json()).toEqual({
+        campaignId: seed.campaignId,
+        action: 'character-creation-re-enqueued',
+        reEnqueued: 1,
+      })
+      expect(ccQueueSpy.add).toHaveBeenCalledTimes(1)
+      expect(ccQueueSpy.add).toHaveBeenCalledWith(
+        'character-creation',
+        { campaignId: seed.campaignId, userId: seed.userId },
+        { jobId: `cc-${seed.campaignId}-${seed.userId}` },
+      )
+      expect(queueSpy.add).not.toHaveBeenCalled()
+    })
+
+    it('202 re-enqueues only the stuck member, not a healthy in-flight one (failed run + pending seed)', async () => {
+      const seed = await seedCharCreationCampaign()
+      // Member A: location_selection failed (transient exhausted pre-fix) +
+      // the character_concept seed still pending — scout shape 2.
+      await insertConcept(seed.campaignId, seed.userId, 'processing')
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'location_selection',
+        status: 'failed',
+        userId: seed.userId,
+        error: 'llm_rate_limited',
+        startedAt: new Date(Date.now() - 60_000),
+        completedAt: new Date(Date.now() - 59_000),
+      })
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'pending',
+        userId: seed.userId,
+      })
+      // Member B: a worker is actively on their stage — must NOT be swept.
+      const memberB = await addMember(seed.campaignId, 5)
+      await insertConcept(seed.campaignId, memberB.userId, 'processing')
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'running',
+        userId: memberB.userId,
+        startedAt: new Date(),
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(202)
+      expect(res.json()).toEqual({
+        campaignId: seed.campaignId,
+        action: 'character-creation-re-enqueued',
+        reEnqueued: 1,
+      })
+      expect(ccQueueSpy.add).toHaveBeenCalledTimes(1)
+      expect(ccQueueSpy.add).toHaveBeenCalledWith(
+        'character-creation',
+        { campaignId: seed.campaignId, userId: seed.userId },
+        { jobId: `cc-${seed.campaignId}-${seed.userId}` },
+      )
+    })
+
+    it('409 nothing_to_resume when every processing concept has an active run (healthy no-op)', async () => {
+      const seed = await seedCharCreationCampaign()
+      await insertConcept(seed.campaignId, seed.userId, 'processing')
       await insertRun(pool, {
         campaignId: seed.campaignId,
         stage: 'character_concept',
@@ -392,13 +533,32 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
         url: `/api/campaigns/${seed.campaignId}/resume`,
         headers: { 'x-mythrun-dev-sub': seed.devSub },
       })
-      expect(res.statusCode).toBe(422)
-      const body = res.json<{ code: string; phase: string; downstreamTicket?: string }>()
-      expect(body.code).toBe('phase_resume_not_yet_implemented')
-      expect(body.phase).toBe('character_creation')
-      // Roc-Imp6: downstream ticket NOT in response.
-      expect(body.downstreamTicket).toBeUndefined()
-      expect(queueSpy.add).not.toHaveBeenCalled()
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ code: 'nothing_to_resume' })
+      expect(ccQueueSpy.add).not.toHaveBeenCalled()
+    })
+
+    it('503 queue_not_ready when the character-creation queue is not wired', async () => {
+      const seed = await seedCharCreationCampaign()
+      await insertConcept(seed.campaignId, seed.userId, 'processing')
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'pending',
+        userId: seed.userId,
+      })
+      const bareApp = await buildTestApp(pool, redis, queueSpy)
+      try {
+        const res = await bareApp.inject({
+          method: 'POST',
+          url: `/api/campaigns/${seed.campaignId}/resume`,
+          headers: { 'x-mythrun-dev-sub': seed.devSub },
+        })
+        expect(res.statusCode).toBe(503)
+        expect(res.json()).toEqual({ code: 'queue_not_ready' })
+      } finally {
+        await bareApp.close()
+      }
     })
   })
 

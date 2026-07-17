@@ -248,6 +248,49 @@ export function characterConceptsNs(c: ClientLike) {
       )
     },
 
+    /**
+     * MYT-102 A3: the resume route's stuck-concept sweep. A concept is STUCK
+     * when it sits at 'processing' but no worker is (or will be) driving it:
+     * some character-stage pipeline_runs row for the (campaign, user) is
+     * 'pending' (lost enqueue — the POST /characters seed row was committed
+     * but the queue.add after COMMIT never landed) or 'failed' (a transient
+     * retry exhausted before MYT-102's exhausted-'failed' listener existed),
+     * AND no character-stage row is 'running' (an active worker holds the
+     * stage; the per-stage watchdog bounds how long that can last, so resume
+     * must not double-enqueue under it).
+     *
+     * The stage list mirrors STAGES_IN_ORDER in
+     * character-creation-processor.ts (the per-player pipeline; the
+     * campaign-scoped 'character_integration' has its own recovery path).
+     */
+    listStuckProcessing: async (
+      campaignId: string,
+    ): Promise<readonly { user_id: string }[]> => {
+      const result = await c.query<{ user_id: string }>(
+        `SELECT cc.user_id
+           FROM character_concepts cc
+          WHERE cc.campaign_id = $1
+            AND cc.status = 'processing'
+            AND EXISTS (
+              SELECT 1 FROM pipeline_runs pr
+               WHERE pr.campaign_id = cc.campaign_id
+                 AND pr.user_id = cc.user_id
+                 AND pr.stage IN ('location_selection', 'character_concept', 'character_sheet')
+                 AND pr.status IN ('pending', 'failed')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM pipeline_runs pr
+               WHERE pr.campaign_id = cc.campaign_id
+                 AND pr.user_id = cc.user_id
+                 AND pr.stage IN ('location_selection', 'character_concept', 'character_sheet')
+                 AND pr.status = 'running'
+            )
+          ORDER BY cc.submitted_at ASC`,
+        [campaignId],
+      )
+      return result.rows
+    },
+
     listSubmittedByCampaign: async (
       campaignId: string,
     ): Promise<readonly CharacterConcept[]> => {

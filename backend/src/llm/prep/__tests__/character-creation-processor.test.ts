@@ -38,11 +38,12 @@ import { createTestPool } from '../../../repo/__tests__/_helpers/test-pool.js'
 import {
   runCharacterCreationJob,
   createCharacterCreationProcessor,
+  handleCharacterCreationJobFailure,
   type CharacterCreationJobPayload,
   type CharacterCreationDeps,
   type CreateCharacterCreationProcessorDeps,
 } from '../character-creation-processor.js'
-import { LlmStructuredOutputError } from '../../errors.js'
+import { LlmStructuredOutputError, LlmRateLimitedError } from '../../errors.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -161,6 +162,7 @@ function makeJob(
 interface MakeDepsOverrides {
   readonly costCapUsd?: number
   readonly publishEvent?: CharacterCreationDeps['publishEvent']
+  readonly stageTimeoutMs?: number
 }
 
 // Default cap matches migration 016's seeded $5.00. Tests exercising the
@@ -170,6 +172,9 @@ function makeDeps(pool: Pool, overrides: MakeDepsOverrides = {}): CharacterCreat
     pool,
     costCapUsd: overrides.costCapUsd ?? 5.0,
     publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
+    ...(overrides.stageTimeoutMs !== undefined
+      ? { stageTimeoutMs: overrides.stageTimeoutMs }
+      : {}),
   }
 }
 
@@ -533,10 +538,15 @@ describe('runCharacterCreationJob', () => {
     )
     expect(characters.rowCount).toBe(0)
 
-    // stage-failed event published with willRetry: false.
+    // stage-failed event published with willRetry: false. MYT-102 A4: the
+    // failure identifier rides `errorCode` (the PipelineEvent contract field —
+    // what world-gen and the dev-tool live-events panel already use), NOT the
+    // drifted `reason` the processor used to emit.
     const stageFailed = events.find((e) => e.type === 'stage-failed')
     expect(stageFailed).toBeDefined()
     expect(stageFailed?.willRetry).toBe(false)
+    expect(stageFailed?.errorCode).toBe('llm_structured_output_failed')
+    expect(stageFailed?.reason).toBeUndefined()
   })
 
   it('aborts the job when cost-cap is exceeded before the first stage', async () => {
@@ -606,13 +616,15 @@ describe('runCharacterCreationJob', () => {
     )
     expect(characters.rowCount).toBe(0)
 
-    // stage-failed event for the cap.
+    // stage-failed event for the cap — identifier on `errorCode` (contract
+    // field), not the drifted `reason` (MYT-102 A4).
     const capFailed = events.find(
       (e) =>
         e.type === 'stage-failed' &&
-        e.reason === 'character_creation_cost_cap_exceeded',
+        e.errorCode === 'character_creation_cost_cap_exceeded',
     )
     expect(capFailed).toBeDefined()
+    expect(capFailed?.reason).toBeUndefined()
   })
 
   it('idempotent re-entry: re-running picks up where it left off', async () => {
@@ -751,12 +763,16 @@ describe('runCharacterCreationJob', () => {
     expect(sheetRow.rows[0]?.status).toBe('failed')
     expect(sheetRow.rows[0]?.error).toMatch(/re-entry without ctx.conceptOutput/)
     // The non-terminal rethrow path emits a stage-failed event with
-    // willRetry:true (BullMQ would re-attempt).
+    // willRetry:true (BullMQ would re-attempt). Identifier on `errorCode`
+    // (MYT-102 A4): a plain Error carries no `.code`, so sanitizeError's
+    // 'stage_failed' fallback surfaces.
     const stageFailed = events.find(
       (e) => e.type === 'stage-failed' && e.stage === 'character_sheet',
     )
     expect(stageFailed).toBeDefined()
     expect(stageFailed?.willRetry).toBe(true)
+    expect(stageFailed?.errorCode).toBe('stage_failed')
+    expect(stageFailed?.reason).toBeUndefined()
   })
 
   // MYT-54 T3 removed the per-player 'character_integration' stage. The
@@ -765,4 +781,410 @@ describe('runCharacterCreationJob', () => {
   // dispatch branch; both the stage and the guard moved to MYT-54's
   // campaign-scoped character-integration-processor, so the equivalent
   // re-entry test belongs there (added in T10).
+
+  // -------------------------------------------------------------------------
+  // MYT-102 A1: per-stage watchdog. Staging evidence: a job completed two
+  // Sonnet calls then awaited SOMETHING forever — worker task alive, BullMQ
+  // lock renewing, zero further logs. The watchdog bounds every stage
+  // execution with a wall-clock timeout that throws a TRANSIENT error, so
+  // BullMQ's attempts:2 policy gets a retry instead of an unbounded hang.
+  // -------------------------------------------------------------------------
+
+  it('watchdog: a never-resolving stage fails transient (willRetry:true rethrow) instead of hanging', async () => {
+    const { userId, campaignId } = await seed()
+    // Stage 2's Sonnet call never settles — models the staging hang.
+    mockGenerateText.mockReturnValueOnce(new Promise(() => undefined) as never)
+
+    const events: Record<string, unknown>[] = []
+    await expect(
+      runCharacterCreationJob(
+        makeDeps(pool, {
+          stageTimeoutMs: 50,
+          publishEvent: (cid, e) => {
+            events.push({ campaignId: cid, ...e })
+            return Promise.resolve()
+          },
+        }),
+        makeJob(campaignId, userId),
+      ),
+    ).rejects.toThrow(/watchdog/)
+
+    // The hung stage's pipeline_runs row is marked failed (the retry's claim
+    // re-arms it), and the failure is TRANSIENT: stage-failed carries
+    // willRetry:true + the llm_timeout code (LlmTimeoutError.terminal=false).
+    const run = await pool.query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM pipeline_runs
+        WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_concept'`,
+      [campaignId, userId],
+    )
+    expect(run.rows[0]?.status).toBe('failed')
+    expect(run.rows[0]?.error).toMatch(/watchdog/)
+
+    const stageFailed = events.find(
+      (e) => e.type === 'stage-failed' && e.stage === 'character_concept',
+    )
+    expect(stageFailed).toBeDefined()
+    expect(stageFailed?.willRetry).toBe(true)
+    expect(stageFailed?.errorCode).toBe('llm_timeout')
+
+    // The concept row must NOT be terminally failed by a transient watchdog
+    // trip — BullMQ owns the retry; only exhaustion flips the concept.
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('processing')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MYT-102 A2: exhausted-transient surfacing. A transient stage failure
+// rethrows so BullMQ retries (attempts:2) — but when the LAST attempt fails,
+// nothing used to flip the concept off 'processing', stranding the player
+// forever. The worker's 'failed' listener calls
+// handleCharacterCreationJobFailure, which (only on exhaustion) marks the
+// concept failed + publishes a terminal stage-failed.
+// ---------------------------------------------------------------------------
+
+describe('handleCharacterCreationJobFailure', () => {
+  let pool: Pool
+  let scope: TestScope
+  let userCounter: number
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createTestPool(databaseUrl)
+    await runMigrations({
+      pool,
+      migrationsDir: REAL_MIGRATIONS_DIR,
+      logger: silentLogger(),
+    })
+    scope = makeTestScope('charccfail')
+    userCounter = 0
+  })
+
+  afterAll(async () => {
+    await cleanupTestScope(pool, scope)
+    await pool.end()
+  })
+
+  async function seedConcept(): Promise<{ userId: string; campaignId: string }> {
+    const userId = uuidv7()
+    const worldId = uuidv7()
+    const campaignId = uuidv7()
+    const n = userCounter++
+    await pool.query(
+      `INSERT INTO users (id, cognito_sub, display_name, username)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, scope.userSub(n), scope.displayName(n), scope.username(n)],
+    )
+    await pool.query(
+      `INSERT INTO worlds (id, created_by, name, concept, status)
+       VALUES ($1, $2, $3, 'A test concept', 'complete')`,
+      [worldId, userId, scope.worldName(n)],
+    )
+    await pool.query(
+      `INSERT INTO campaigns (id, world_id, created_by, name, starting_level)
+       VALUES ($1, $2, $3, $4, 1)`,
+      [campaignId, worldId, userId, scope.campaignName(n)],
+    )
+    // character_concepts FKs (campaign_id, user_id) → campaign_members.
+    await pool.query(
+      `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+       VALUES ($1, $2, $3, 'owner', true)`,
+      [uuidv7(), campaignId, userId],
+    )
+    await pool.query(
+      `INSERT INTO character_concepts (
+         id, campaign_id, user_id, concept_text, situation_grounding_text,
+         guided_choices, status
+       )
+       VALUES ($1, $2, $3, 'A road-weary cleric searching for an old companion',
+               'arrived at the tavern as the storm broke', '{}'::jsonb, 'processing')`,
+      [uuidv7(), campaignId, userId],
+    )
+    return { userId, campaignId }
+  }
+
+  interface FailedJobOverrides {
+    readonly name?: string
+    readonly attemptsMade?: number
+    readonly attempts?: number
+    readonly data?: unknown
+    readonly progress?: unknown
+  }
+
+  function failedJob(
+    campaignId: string,
+    userId: string,
+    over: FailedJobOverrides = {},
+  ): {
+    name: string
+    data: unknown
+    attemptsMade: number
+    opts: { attempts?: number }
+    progress: unknown
+  } {
+    return {
+      name: over.name ?? 'character-creation',
+      data: over.data ?? { campaignId, userId },
+      attemptsMade: over.attemptsMade ?? 2,
+      opts: { attempts: over.attempts ?? 2 },
+      // `in` (not ??) so an explicit `progress: null` override survives.
+      progress: 'progress' in over ? over.progress : { stage: 'character_concept', userId },
+    }
+  }
+
+  function makeFailureDeps(): {
+    deps: Parameters<typeof handleCharacterCreationJobFailure>[0]
+    events: Record<string, unknown>[]
+    errorLog: ReturnType<typeof vi.fn>
+  } {
+    const events: Record<string, unknown>[] = []
+    const errorLog = vi.fn()
+    return {
+      deps: {
+        pool,
+        publishEvent: (cid: string, e: Record<string, unknown>) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+        logger: { error: errorLog },
+      },
+      events,
+      errorLog,
+    }
+  }
+
+  it('marks the concept failed + publishes terminal stage-failed when attempts are exhausted', async () => {
+    const { userId, campaignId } = await seedConcept()
+    const { deps, events, errorLog } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    const concept = await pool.query<{ status: string; error: { code?: string } | null }>(
+      `SELECT status, error FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+    expect(concept.rows[0]?.error?.code).toBe('llm_rate_limited')
+
+    // Terminal stage-failed on the pipeline channel, errorCode field (contract).
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      campaignId,
+      type: 'stage-failed',
+      stage: 'character_concept',
+      userId,
+      willRetry: false,
+      errorCode: 'llm_rate_limited',
+    })
+
+    // Loud log so the exhaustion is grep-able from worker logs.
+    expect(errorLog).toHaveBeenCalledTimes(1)
+  })
+
+  it('no-ops while BullMQ retries remain (attemptsMade < attempts)', async () => {
+    const { userId, campaignId } = await seedConcept()
+    const { deps, events } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId, { attemptsMade: 1, attempts: 2 }),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('processing')
+    expect(events).toHaveLength(0)
+  })
+
+  it('ignores character-integration jobs and undefined jobs', async () => {
+    const { userId, campaignId } = await seedConcept()
+    const { deps, events } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId, { name: 'character-integration' }),
+      new Error('integration exhausted'),
+    )
+    await handleCharacterCreationJobFailure(deps, undefined, new Error('no job'))
+
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('processing')
+    expect(events).toHaveLength(0)
+  })
+
+  it('is idempotent when the concept row is already failed', async () => {
+    const { userId, campaignId } = await seedConcept()
+    await pool.query(
+      `UPDATE character_concepts SET status = 'failed', error = '{"code":"prior"}'::jsonb
+        WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    const { deps, events } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+    // Still publishes (SSE consumers may have missed the first) — the row
+    // write is the idempotent part.
+    expect(events).toHaveLength(1)
+  })
+
+  it('never unwinds a completed concept (stale failed event after a successful re-run)', async () => {
+    const { userId, campaignId } = await seedConcept()
+    await pool.query(
+      `UPDATE character_concepts SET status = 'completed', error = NULL
+        WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    const { deps, events } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('completed')
+    expect(events).toHaveLength(0)
+  })
+
+  it('falls back to a job-level stage label when progress carries no stage', async () => {
+    const { userId, campaignId } = await seedConcept()
+    const { deps, events } = makeFailureDeps()
+
+    // BullMQ default progress is 0 (never updated) — e.g. a job that failed
+    // before the first stage claim. A null progress (defensive) falls back the
+    // same way.
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId, { progress: 0 }),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(campaignId, userId, { progress: null }),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    expect(events).toHaveLength(2)
+    expect(events[0]?.stage).toBe('character_creation')
+    expect(events[1]?.stage).toBe('character_creation')
+  })
+
+  it('skips silently when no concept row exists for the payload ids', async () => {
+    const { deps, events, errorLog } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      failedJob(uuidv7(), uuidv7()),
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    expect(events).toHaveLength(0)
+    expect(errorLog).not.toHaveBeenCalled()
+  })
+
+  it('applies BullMQ’s default attempts:1 when opts carries no attempts', async () => {
+    const { userId, campaignId } = await seedConcept()
+    const { deps, events } = makeFailureDeps()
+
+    await handleCharacterCreationJobFailure(
+      deps,
+      {
+        name: 'character-creation',
+        data: { campaignId, userId },
+        attemptsMade: 1,
+        opts: {},
+        progress: { stage: 'character_concept', userId },
+      },
+      new LlmRateLimitedError('upstream rate limited: 429'),
+    )
+
+    // attempts defaults to 1 → attemptsMade:1 is exhaustion.
+    expect(events).toHaveLength(1)
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+  })
+
+  it('never throws on a malformed payload — logs and returns', async () => {
+    const { deps, events, errorLog } = makeFailureDeps()
+
+    // Non-string campaignId (data null) and non-string userId each hit the
+    // bad-payload log-and-return.
+    await expect(
+      handleCharacterCreationJobFailure(
+        deps,
+        failedJob('x', 'y', { data: null }),
+        new Error('boom'),
+      ),
+    ).resolves.toBeUndefined()
+    await expect(
+      handleCharacterCreationJobFailure(
+        deps,
+        failedJob('x', 'y', { data: { campaignId: uuidv7(), userId: 42 } }),
+        new Error('boom'),
+      ),
+    ).resolves.toBeUndefined()
+
+    expect(events).toHaveLength(0)
+    expect(errorLog).toHaveBeenCalledTimes(2)
+  })
+
+  it('never throws when a dep fails mid-surfacing — catches and logs', async () => {
+    const { userId, campaignId } = await seedConcept()
+    const errorLog = vi.fn()
+    const deps = {
+      pool,
+      publishEvent: () => Promise.reject(new Error('redis down')),
+      logger: { error: errorLog },
+    }
+
+    await expect(
+      handleCharacterCreationJobFailure(
+        deps,
+        failedJob(campaignId, userId),
+        new LlmRateLimitedError('upstream rate limited: 429'),
+      ),
+    ).resolves.toBeUndefined()
+
+    // The markFailed write landed before the publish blew up; the handler
+    // logged the surfacing failure instead of throwing into the emitter.
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'character_creation.job_failed_handler_error' }),
+      expect.any(String),
+    )
+  })
 })

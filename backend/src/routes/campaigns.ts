@@ -30,6 +30,7 @@ import { WorldColorPairSchema } from '@mythrun/contract/rest'
 import { createRepo, type Repo } from '../repo/index.js'
 import type { HubCardRow } from '../repo/campaigns.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
+import type { CharacterConceptsRepo } from '../repo/character-concepts.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 import { requireUser } from '../auth/require-user.js'
@@ -74,6 +75,20 @@ export interface WorldGenQueueLike {
   getJob(jobId: string): Promise<WorldGenJobLike | null | undefined>
 }
 
+// MYT-102 A3: minimal slice of the campaign-setup queue the resume route's
+// character_creation arm needs — one .add() per stuck member. Declared here
+// (not imported from campaign-characters.ts) for the same decoupling reason
+// as WorldGenQueueLike; the real CharacterCreationQueueLike adapter from
+// server-queues.ts satisfies it structurally (its `name` union parameter
+// accepts the narrower 'character-creation' literal contravariantly).
+export interface CharacterCreationResumeQueueLike {
+  add(
+    name: 'character-creation',
+    data: { campaignId: string; userId: string },
+    opts?: { jobId?: string },
+  ): Promise<unknown>
+}
+
 export interface Opts {
   readonly pool: Pool
   readonly subscriber: PipelineSubscriber
@@ -96,6 +111,16 @@ export interface Opts {
   readonly redisKeyPrefix?: string
   /** BullMQ queue handle for `world-gen-non-streaming`. Required by POST. */
   readonly worldGenQueue?: WorldGenQueueLike
+  /** MYT-102 A3: campaign-setup queue handle for POST /resume's
+   *  character_creation arm. Optional so thin deployments (and the
+   *  boot-gate-disabled fallback) still boot; the arm answers 503
+   *  queue_not_ready when absent, mirroring POST /characters. The value is
+   *  additionally typed `| undefined` (not a bare `?:`) so app.ts can forward
+   *  the optional `deps.characterCreationQueue` unconditionally under
+   *  exactOptionalPropertyTypes — mirroring the campaign-characters.ts Opts
+   *  precedent and the sibling POST /characters registration, rather than
+   *  forcing a lone conditional-spread branch here. */
+  readonly characterCreationQueue?: CharacterCreationResumeQueueLike | undefined
 }
 
 interface Params {
@@ -974,7 +999,9 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         campaignId,
         worldId: campaign.worldId,
         queue: resumeDeps.worldGenQueue,
+        characterCreationQueue: opts.characterCreationQueue,
         pipelineRunsRepo,
+        characterConcepts: repo.characterConcepts,
         logger: request.log as PinoLogger,
       })
     },
@@ -1233,7 +1260,12 @@ interface ResumeContext {
   campaignId: string
   worldId: string
   queue: WorldGenQueueLike
+  // MYT-102 A3: undefined when the boot wiring omits the campaign-setup
+  // queue (thin deployment / boot-gate fallback) — the character_creation
+  // arm answers 503 queue_not_ready in that state.
+  characterCreationQueue: CharacterCreationResumeQueueLike | undefined
   pipelineRunsRepo: PipelineRunsRepo
+  characterConcepts: CharacterConceptsRepo
   logger: PinoLogger
 }
 
@@ -1270,21 +1302,10 @@ async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
     case 'world_ready':
       return ctx.reply.code(409).send({ code: 'nothing_to_resume' })
     case 'character_creation':
-      // Phoenix-Imp3: 422 (not 501). Downstream ticket ID logged
-      // server-side, NOT in the response (Roc-Imp6).
-      ctx.logger.info(
-        {
-          event: 'resume_phase_not_yet_implemented',
-          phase: 'character_creation',
-          downstreamTicket: 'MYT-52',
-          campaignId: ctx.campaignId,
-        },
-        'resume requested for not-yet-implemented phase',
-      )
-      return ctx.reply.code(422).send({
-        code: 'phase_resume_not_yet_implemented',
-        phase: 'character_creation',
-      })
+      // MYT-102 A3: re-enqueue every stuck per-player character-creation
+      // job (lost enqueue / exhausted transient). See
+      // resumeFromCharacterCreation below.
+      return resumeFromCharacterCreation(ctx)
     case 'post_creation':
       ctx.logger.info(
         {
@@ -1309,6 +1330,55 @@ async function dispatchResume(ctx: ResumeContext): Promise<FastifyReply> {
     default:
       return assertNever(ctx.phase)
   }
+}
+
+/**
+ * `character_creation` arm (MYT-102 A3).
+ *
+ * Sweeps concepts stuck at 'processing' with owed pipeline work — a
+ * pending/failed character-stage pipeline_runs row and no active 'running'
+ * one (repo.characterConcepts.listStuckProcessing) — and re-adds each
+ * member's deterministic `cc-<campaignId>-<userId>` job. The campaign-setup
+ * queue prunes terminal jobs (removeOnComplete/Fail {count:0}), so a dead
+ * job's id is free and the re-add lands; if a live job somehow still holds
+ * the id, BullMQ's jobId dedup makes the re-add a harmless no-op. The worker
+ * side is already re-entrant: atomicClaimStage skips completed stages and
+ * re-arms pending/failed rows to 'running'.
+ *
+ * Healthy members (a worker actively on their stage — bounded by the
+ * MYT-102 A1 watchdog) are never swept, so a resume during normal progress
+ * cannot double-drive a player's pipeline.
+ */
+async function resumeFromCharacterCreation(ctx: ResumeContext): Promise<FastifyReply> {
+  if (ctx.characterCreationQueue === undefined) {
+    // Mirrors POST /characters' queue gate (character-concept-routes.ts).
+    return ctx.reply.code(503).send({ code: 'queue_not_ready' })
+  }
+  const stuck = await ctx.characterConcepts.listStuckProcessing(ctx.campaignId)
+  if (stuck.length === 0) {
+    return ctx.reply.code(409).send({ code: 'nothing_to_resume' })
+  }
+  for (const row of stuck) {
+    await ctx.characterCreationQueue.add(
+      'character-creation',
+      { campaignId: ctx.campaignId, userId: row.user_id },
+      { jobId: `cc-${ctx.campaignId}-${row.user_id}` },
+    )
+  }
+  ctx.logger.info(
+    {
+      event: 'resume_character_creation_re_enqueued',
+      campaignId: ctx.campaignId,
+      userIds: stuck.map((r) => r.user_id),
+      reEnqueued: stuck.length,
+    },
+    'resume re-enqueued stuck character-creation jobs',
+  )
+  return ctx.reply.code(202).send({
+    campaignId: ctx.campaignId,
+    action: 'character-creation-re-enqueued',
+    reEnqueued: stuck.length,
+  })
 }
 
 /**

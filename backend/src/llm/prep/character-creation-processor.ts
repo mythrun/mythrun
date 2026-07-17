@@ -25,8 +25,8 @@
 
 import type { Job } from 'bullmq'
 import type { Pool } from 'pg'
-import { isTerminalError } from '../errors.js'
-import { atomicClaimStage } from './world-gen-processor.js'
+import { isTerminalError, LlmTimeoutError } from '../errors.js'
+import { atomicClaimStage, sanitizeError } from './world-gen-processor.js'
 import { sumCharacterCreationStageCosts } from './cost-cap.js'
 import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
@@ -59,6 +59,19 @@ export const STAGES_IN_ORDER: readonly CharacterCreationStage[] = [
   'character_sheet',
 ]
 
+// MYT-102 A1: hard wall-clock cap on ONE stage execution. Staging evidence
+// (2026-07): a character-creation job completed both Sonnet calls and then
+// awaited SOMETHING forever — worker task alive, BullMQ lock renewing, zero
+// further logs — stranding the player's concept at 'processing' indefinitely.
+// 5 minutes is ~5x the slowest observed stage (concept + sheet each finish
+// well under a minute including the structured-output repair chain), so a
+// trip is overwhelmingly a genuine hang, not a slow-but-healthy call. On
+// trip the watchdog throws LlmTimeoutError (terminal:false → the standard
+// non-terminal path rethrows), so BullMQ's attempts:2 policy
+// (server-queues.ts buildCharacterCreationQueue) drives one retry and the
+// exhausted-'failed' listener surfaces the failure if the retry hangs too.
+export const CHARACTER_CREATION_STAGE_TIMEOUT_MS = 5 * 60_000
+
 export interface CharacterCreationDeps {
   readonly pool: Pool
   readonly publishEvent: (
@@ -70,6 +83,9 @@ export interface CharacterCreationDeps {
    *  global config; operators changing settings need a worker restart
    *  to take effect. */
   readonly costCapUsd: number
+  /** Watchdog override for tests. Production callers omit it and get
+   *  CHARACTER_CREATION_STAGE_TIMEOUT_MS. */
+  readonly stageTimeoutMs?: number
 }
 
 export type CharacterCreationJobLike = Pick<
@@ -113,7 +129,9 @@ export async function runCharacterCreationJob(
       stage: 'cost_cap',
       userId,
       willRetry: false,
-      reason: 'character_creation_cost_cap_exceeded',
+      // MYT-102 A4: `errorCode` per the PipelineEvent contract (was a
+      // drifted `reason` field no consumer read).
+      errorCode: 'character_creation_cost_cap_exceeded',
     })
     return
   }
@@ -175,13 +193,23 @@ export async function runCharacterCreationJob(
 
     const startedAt = Date.now()
     try {
-      const result = await runStage(repo, deps, stage, {
-        campaignId,
-        userId,
-        worldId,
-        conceptOutput,
-        characterId,
-      })
+      // MYT-102 A1: the watchdog bounds the WHOLE stage execution (LLM calls
+      // + stage persistence), because the staging hang happened after the
+      // Sonnet calls completed — inside the stage, not inside the model call.
+      // (Explicit annotation: the generic would otherwise infer through
+      // conceptOutput/characterId, which are assigned from `result` below —
+      // a circular-inference TS7022.)
+      const result: RunStageResult = await raceStageWatchdog(
+        stage,
+        deps.stageTimeoutMs ?? CHARACTER_CREATION_STAGE_TIMEOUT_MS,
+        runStage(repo, deps, stage, {
+          campaignId,
+          userId,
+          worldId,
+          conceptOutput,
+          characterId,
+        }),
+      )
       // Thread fresh state forward for the next stage; the runStage
       // dispatcher reloads from persisted state if these are null on
       // re-entry, so it's safe to only set them on a fresh claim path.
@@ -227,6 +255,12 @@ export async function runCharacterCreationJob(
       // subclasses (LlmStructuredOutputError, pg errors, etc.).
       /* c8 ignore next */
       const message = err instanceof Error ? err.message : String(err)
+      // MYT-102 A4: the SSE identifier is the sanitized `.code` on the
+      // `errorCode` field — the PipelineEvent contract shape world-gen and
+      // the dev-tool live-events panel already speak. The processor used to
+      // publish the raw message on a drifted `reason` field, which no
+      // consumer read.
+      const errorCode = sanitizeError(err).code
       await repo.pipelineRuns.markStageFailed({
         kind: 'campaign-user',
         campaignId,
@@ -241,22 +275,22 @@ export async function runCharacterCreationJob(
           stage,
           userId,
           willRetry: false,
-          reason: message,
+          errorCode,
         })
         return
       }
-      /* c8 ignore start — non-terminal rethrow path: BullMQ retries
-       * are exercised at integration boundaries (T16 smoke), not in the
-       * unit suite. */
+      // Non-terminal: publish willRetry:true and rethrow so BullMQ's
+      // attempts:2 policy fires. Exercised by the watchdog test (a hung
+      // stage trips LlmTimeoutError, terminal:false) and the stage-3
+      // re-entry test.
       await deps.publishEvent(campaignId, {
         type: 'stage-failed',
         stage,
         userId,
         willRetry: true,
-        reason: message,
+        errorCode,
       })
       throw err
-      /* c8 ignore stop */
     }
   }
 
@@ -428,5 +462,157 @@ export function createCharacterCreationProcessor(
 ): (job: Job<CharacterCreationJobPayload>) => Promise<void> {
   return async (job) => {
     await runCharacterCreationJob(deps, job)
+  }
+}
+
+// -- per-stage watchdog (MYT-102 A1) ----------------------------------------
+
+/** Race one stage execution against a hard wall-clock timeout. On trip,
+ *  throws LlmTimeoutError (terminal:false) so the caller's non-terminal
+ *  path marks the pipeline_runs row failed, publishes willRetry:true, and
+ *  rethrows for BullMQ's retry policy. The abandoned stage promise keeps
+ *  running in the background (Node can't cancel an in-flight await); its
+ *  late writes are harmless — the retry's atomicClaimStage re-arms the
+ *  failed row, and stage persistence is idempotent per (campaign, user). */
+async function raceStageWatchdog<T>(
+  stage: CharacterCreationStage,
+  timeoutMs: number,
+  work: Promise<T>,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new LlmTimeoutError(
+              `character-creation stage '${stage}' exceeded the ${String(timeoutMs)}ms watchdog`,
+            ),
+          )
+        }, timeoutMs)
+      }),
+    ])
+  } finally {
+    // The executor above runs synchronously, so timer is always set here;
+    // clearTimeout tolerates undefined anyway (no dead branch).
+    clearTimeout(timer)
+  }
+}
+
+// -- exhausted-transient surfacing (MYT-102 A2) -----------------------------
+//
+// A transient stage failure rethrows so BullMQ retries (attempts:2 on the
+// campaign-setup queue). Before MYT-102, the FINAL failed attempt left the
+// character_concepts row at 'processing' forever: markFailed only ran on
+// terminal errors, and no producer existed for a job-level failure event.
+// The worker's `on('failed')` listener routes into this handler, which acts
+// ONLY on exhaustion (attemptsMade >= attempts): flip the concept to
+// 'failed', publish a terminal stage-failed on the pipeline channel, and log
+// loud. Retry-pending failures (attemptsMade < attempts) already published
+// willRetry:true from the processor's catch block, so they are skipped here.
+
+/** Structural slice of BullMQ's Job that the failure handler reads.
+ *  `Job<any>` satisfies it, so worker.ts passes the listener arg straight
+ *  through; tests hand-roll the shape. */
+export interface CharacterCreationFailedJobLike {
+  readonly name: string
+  readonly data: unknown
+  readonly attemptsMade: number
+  readonly opts: { readonly attempts?: number | undefined }
+  readonly progress: unknown
+}
+
+export interface CharacterCreationFailureDeps {
+  readonly pool: Pool
+  readonly publishEvent: (
+    campaignId: string,
+    event: Record<string, unknown>,
+  ) => Promise<void>
+  /** Structural pino slice — the handler only logs at error level. */
+  readonly logger: { error: (obj: Record<string, unknown>, msg?: string) => void }
+}
+
+/** Stage label for the terminal event when the job died before the first
+ *  updateProgress call (BullMQ default progress is 0, not an object). */
+const JOB_LEVEL_STAGE_LABEL = 'character_creation'
+
+export async function handleCharacterCreationJobFailure(
+  deps: CharacterCreationFailureDeps,
+  job: CharacterCreationFailedJobLike | undefined,
+  err: unknown,
+): Promise<void> {
+  // The campaign-setup queue is a router: 'character-integration' jobs have
+  // their own campaign-scoped failure semantics (MYT-56) — not ours. An
+  // undefined job (BullMQ can emit 'failed' with no job) also exits here.
+  if (job?.name !== 'character-creation') return
+  // BullMQ's worker-level 'failed' event fires on EVERY failed attempt; a
+  // retry is still pending while attemptsMade < attempts. Only exhaustion
+  // is terminal for the concept.
+  const attempts = job.opts.attempts ?? 1
+  if (job.attemptsMade < attempts) return
+
+  const sanitized = sanitizeError(err)
+  try {
+    const data = job.data as { campaignId?: unknown; userId?: unknown } | null
+    const campaignId = data?.campaignId
+    const userId = data?.userId
+    if (typeof campaignId !== 'string' || typeof userId !== 'string') {
+      deps.logger.error(
+        { event: 'character_creation.job_failed_bad_payload', data: job.data },
+        'character-creation job exhausted retries but its payload is malformed; cannot mark the concept failed',
+      )
+      return
+    }
+    // BullMQ default progress is 0 (a number); the processor's updateProgress
+    // writes { stage, userId }. A runtime number safely yields undefined via
+    // the optional chain (primitive property access autoboxes).
+    const progress = job.progress as { stage?: unknown } | null
+    const stage =
+      typeof progress?.stage === 'string' ? progress.stage : JOB_LEVEL_STAGE_LABEL
+
+    const repo = createRepo(deps.pool)
+    // Never unwind a 'completed' concept: a stale failure event (e.g. a
+    // zombie attempt racing a successful resume-driven re-run) must not
+    // clobber a player's finished character. Flipping an already-'failed'
+    // row again is the idempotent no-op case.
+    const concept = await repo.characterConcepts.getByCampaignAndUser(campaignId, userId)
+    if (concept === null || concept.status === 'completed') return
+
+    await repo.characterConcepts.markFailed(campaignId, userId, {
+      stage,
+      code: sanitized.code,
+      message: sanitized.message,
+      attemptsMade: job.attemptsMade,
+    })
+    await deps.publishEvent(campaignId, {
+      type: 'stage-failed',
+      stage,
+      userId,
+      willRetry: false,
+      errorCode: sanitized.code,
+    })
+    deps.logger.error(
+      {
+        event: 'character_creation.job_exhausted',
+        campaignId,
+        userId,
+        stage,
+        errorCode: sanitized.code,
+        attemptsMade: job.attemptsMade,
+      },
+      'character-creation job exhausted BullMQ retries; concept marked failed',
+    )
+  } catch (handlerErr) {
+    // The listener must never throw into BullMQ's event emitter — a broken
+    // surfacing path should be loud in logs, not crash the worker.
+    deps.logger.error(
+      {
+        event: 'character_creation.job_failed_handler_error',
+        err: handlerErr,
+        originalErrorCode: sanitized.code,
+      },
+      'failed to surface an exhausted character-creation job',
+    )
   }
 }
