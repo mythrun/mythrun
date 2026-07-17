@@ -214,6 +214,19 @@ async function appendMsg(
   })
 }
 
+// MYT-102: captures the session-prep enqueue /start fires on prep_not_ready.
+const prepEnqueues: { data: { campaignId: string; sessionNumber: number }; jobId?: string }[] = []
+const fakeSessionPrepQueue = {
+  add: (
+    _name: 'session-prep',
+    data: { campaignId: string; sessionNumber: number },
+    opts?: { jobId?: string },
+  ) => {
+    prepEnqueues.push({ data, ...(opts?.jobId !== undefined ? { jobId: opts.jobId } : {}) })
+    return Promise.resolve()
+  },
+}
+
 async function buildTestApp(pool: Pool, redis: Redis): Promise<FastifyInstance> {
   globalThis.fetch = (): Promise<Response> => Promise.reject(new Error('ECONNREFUSED'))
   const app = Fastify({ logger: false, trustProxy: 1 })
@@ -224,6 +237,7 @@ async function buildTestApp(pool: Pool, redis: Redis): Promise<FastifyInstance> 
     pool,
     redisRealtime: redis,
     redisKeyPrefix: KEY_PREFIX,
+    sessionPrepQueue: fakeSessionPrepQueue,
   })
   await app.ready()
   return app
@@ -483,15 +497,29 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(await sessionBalance(pool, owner.userId)).toBe(3)
     })
 
-    it('no session prep for the next session number → 409', async () => {
+    it('no session prep for the next session number → 409 AND enqueues the prep on demand (MYT-102)', async () => {
       const owner = await seedUser(pool, scope, 0)
       await grantSessionCredits(pool, owner.userId, 3)
       const campaignId = await seedActiveCampaign(pool, scope, owner, 0)
+      prepEnqueues.length = 0
       // No prep seeded.
       const res = await postStart(app, campaignId, owner.devSub)
       expect(res.statusCode).toBe(409)
       expect(res.json<{ code: string }>().code).toBe('prep_not_ready')
       expect(await sessionBalance(pool, owner.userId)).toBe(3)
+      // The showstopper fix: /start kicks off the missing prep so the watching
+      // UI resolves instead of waiting forever. Idempotent jobId per (campaign,n).
+      expect(prepEnqueues).toHaveLength(1)
+      expect(prepEnqueues[0]?.data).toEqual({ campaignId, sessionNumber: 1 })
+      expect(prepEnqueues[0]?.jobId).toBe(`sp-${campaignId}-1`)
+    })
+
+    it('a prep that already exists does NOT re-enqueue (MYT-102)', async () => {
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      prepEnqueues.length = 0
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(200)
+      expect(prepEnqueues).toHaveLength(0)
     })
 
     it('owner has no session credits → 402; no session row left behind', async () => {

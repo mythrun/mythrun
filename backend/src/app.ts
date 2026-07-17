@@ -350,6 +350,8 @@ export const buildApp = async (
     pool: deps.pg,
     redisRealtime: deps.redisRealtime,
     redisKeyPrefix: deps.redisKeyPrefix,
+    // MYT-102: /start self-heals a missing session prep by enqueuing it.
+    sessionPrepQueue: deps.sessionPrepQueue,
   })
 
   // MYT-65 Task 11: the multiplayer WebSocket transport.

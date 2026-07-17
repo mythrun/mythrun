@@ -26,6 +26,7 @@ import type {
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import { createRepo, type Repo } from '../repo/index.js'
+import type { SessionPrepQueueLike } from './session-preps.js'
 import { requireDbUser } from '../auth/require-db-user.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { mintWsTicket } from '../auth/ws-ticket.js'
@@ -35,6 +36,10 @@ import { uuidv7 } from '../repo/uuidv7.js'
 
 interface Opts {
   readonly pool: Pool
+  /** MYT-102: the session-prep producer queue. `/start` enqueues the prep on
+   *  demand when it's missing (idempotent jobId) so the play flow's prep wait
+   *  resolves instead of hanging forever — nothing else triggers session 1's prep. */
+  readonly sessionPrepQueue?: SessionPrepQueueLike
   readonly redisRealtime: Redis
   /** The BARE per-environment+region prefix, trailing colon, e.g.
    *  "production:use1:" (config/env.ts `redisKeyPrefix`). Per-feature
@@ -144,7 +149,15 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
     (request, reply) =>
       handleSessionStart(
-        { repo, sessionState, triggerState, log: request.log },
+        {
+          repo,
+          sessionState,
+          triggerState,
+          log: request.log,
+          ...(opts.sessionPrepQueue !== undefined
+            ? { sessionPrepQueue: opts.sessionPrepQueue }
+            : {}),
+        },
         request.params.campaignId,
         reply,
       ),
@@ -224,6 +237,8 @@ interface SessionStartDeps {
   readonly sessionState: SessionState
   readonly triggerState: TriggerState
   readonly log: FastifyBaseLogger
+  /** MYT-102: the session-prep producer; `/start` self-heals a missing prep. */
+  readonly sessionPrepQueue?: SessionPrepQueueLike
 }
 
 /**
@@ -237,7 +252,7 @@ async function handleSessionStart(
   campaignId: string,
   reply: FastifyReply,
 ): Promise<FastifyReply> {
-  const { repo, sessionState, triggerState, log } = deps
+  const { repo, sessionState, triggerState, log, sessionPrepQueue } = deps
   // Precondition 1: the campaign is active.
   const campaign = await repo.campaigns.getById(campaignId)
   /* c8 ignore start — requireCampaignMember already 403s for a campaign with no
@@ -267,8 +282,27 @@ async function handleSessionStart(
   // session-prep pipeline numbers preps.
   const sessionNumber = (await repo.sessions.maxSessionNumber(campaignId)) + 1
 
-  // Precondition 3: a session prep exists for that number.
+  // Precondition 3: a session prep exists for that number. If it does NOT,
+  // enqueue it on demand (MYT-102 showstopper fix) before answering
+  // prep_not_ready — nothing else in the player flow triggers session 1's prep,
+  // so without this the "the DM is preparing tonight's session" beat waits
+  // forever. Idempotent: the jobId `sp-<campaign>-<n>` dedups against a job the
+  // manual dev route or a prior /start already queued, and existsFor short-
+  // circuits once the worker has written the row. The watching UI's prep SSE
+  // flips to ready and re-calls /start when the worker completes.
   if (!(await repo.sessionPreps.existsFor(campaignId, sessionNumber))) {
+    if (sessionPrepQueue !== undefined) {
+      await sessionPrepQueue.add(
+        'session-prep',
+        { campaignId, sessionNumber },
+        { jobId: `sp-${campaignId}-${String(sessionNumber)}` },
+      )
+    } else {
+      log.warn(
+        { campaignId, sessionNumber },
+        'session_start.prep_queue_absent — cannot self-heal a missing prep',
+      )
+    }
     return reply.code(409).send({ code: 'prep_not_ready' })
   }
 
