@@ -8,13 +8,15 @@ import { buildEntityIndex } from '../entity-index.ts'
 
 type Entity = WorldGenSnapshot['entities'][number]
 type Fact = WorldGenSnapshot['facts'][number]
+type Kernel = NonNullable<WorldGenSnapshot['proseKernels']>[number]
 
-function snap(parts: { entities?: Entity[]; facts?: Fact[] }): WorldGenSnapshot {
+function snap(parts: { entities?: Entity[]; facts?: Fact[]; proseKernels?: Kernel[] }): WorldGenSnapshot {
   return {
     entities: parts.entities ?? [],
     facts: parts.facts ?? [],
     entityHierarchy: [],
     relationships: [],
+    ...(parts.proseKernels !== undefined ? { proseKernels: parts.proseKernels } : {}),
   }
 }
 
@@ -214,5 +216,67 @@ describe('buildEntityIndex — card', () => {
   it('returns null for an unknown id', () => {
     const index = buildEntityIndex(snap({ entities: [{ id: 'e1', entityType: 'npc', name: 'Elenya' }] }))
     expect(index.card('missing')).toBeNull()
+  })
+})
+
+// MYT-102 Track E: the popover lead line prefers the entity's prose kernel —
+// its actual description — over the oblique lowest-id fact. The first sentence
+// is a MECHANICAL '. ' split (ZFC — no summarization), capped at the kernel's
+// first line so a multi-paragraph kernel never leaks a wall into the popover.
+describe('buildEntityIndex — card lead line from prose kernel (MYT-102)', () => {
+  it('prefers the kernel FIRST SENTENCE over the lowest-id fact', () => {
+    const index = buildEntityIndex(
+      snap({
+        entities: [{ id: 'e1', entityType: 'npc', name: 'Elenya' }],
+        facts: [{ id: 'f1', entityId: 'e1', topic: 'note', content: 'Wary of strangers.' }],
+        proseKernels: [
+          { entityId: 'e1', content: 'A ranger of the northern watch. She rarely comes south.' },
+        ],
+      }),
+    )
+    expect(index.card('e1')?.leadLine).toBe('A ranger of the northern watch.')
+  })
+
+  it('uses the whole kernel when it holds a single sentence (no ". " to split on)', () => {
+    const index = buildEntityIndex(
+      snap({
+        entities: [{ id: 'e1', entityType: 'npc', name: 'Elenya' }],
+        proseKernels: [{ entityId: 'e1', content: 'A ranger of the northern watch.' }],
+      }),
+    )
+    expect(index.card('e1')?.leadLine).toBe('A ranger of the northern watch.')
+  })
+
+  it('caps at the first line of a multi-paragraph kernel', () => {
+    const index = buildEntityIndex(
+      snap({
+        entities: [{ id: 'l1', entityType: 'location', name: 'Highreach' }],
+        proseKernels: [
+          { entityId: 'l1', content: 'A cliff city without a period yet\n\nSecond paragraph. More prose.' },
+        ],
+      }),
+    )
+    expect(index.card('l1')?.leadLine).toBe('A cliff city without a period yet')
+  })
+
+  it('gives a kernel-bearing, fact-less entity a lead line (no more empty popover)', () => {
+    const index = buildEntityIndex(
+      snap({
+        entities: [{ id: 'l1', entityType: 'location', name: 'Highreach' }],
+        proseKernels: [{ entityId: 'l1', content: 'The watch-city on the cliffs. Cold all year.' }],
+      }),
+    )
+    expect(index.card('l1')?.leadLine).toBe('The watch-city on the cliffs.')
+  })
+
+  it('falls back to the lowest-id fact when the kernel is whitespace-only', () => {
+    const index = buildEntityIndex(
+      snap({
+        entities: [{ id: 'e1', entityType: 'npc', name: 'Elenya' }],
+        facts: [{ id: 'f1', entityId: 'e1', topic: 'note', content: 'Wary of strangers.' }],
+        proseKernels: [{ entityId: 'e1', content: '   \n ' }],
+      }),
+    )
+    expect(index.card('e1')?.leadLine).toBe('Wary of strangers.')
   })
 })

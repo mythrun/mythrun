@@ -3,9 +3,11 @@ import { WikiPage } from './WikiPage.tsx'
 import { wikiFixtureEntity } from './wiki-fixture.ts'
 
 // WikiPage — one entity as a field-guide plate: the mono kind tag over the
-// serif name, the composed fact body (topic over content), the RELATED footer
-// carrying cross-navigation, and the quiet pinned back button. The empty-body
-// variant shows the calm honest note a fact-less entity gets — no fake prose.
+// serif name, the prose KERNEL (the entity's actual description, MYT-102) as
+// serif paragraphs, the composed fact body below (topic over content), the
+// RELATED footer carrying cross-navigation, and the quiet pinned back button.
+// The empty-body variant shows the calm honest note an undescribed entity gets
+// — no fake prose.
 
 const meta: Meta<typeof WikiPage> = {
   title: 'Patterns/WorldWiki/WikiPage',
@@ -35,7 +37,8 @@ export default meta
 
 type Story = StoryObj<typeof WikiPage>
 
-// A populated page: two facts of body and three RELATED links (the fixture's
+// A populated page: the guild's two-paragraph kernel description FIRST, then
+// two fact passages, then four RELATED links (the fixture's
 // relationship-bearing guild).
 export const Populated: Story = {
   args: {
@@ -44,8 +47,18 @@ export const Populated: Story = {
   },
 }
 
-// The empty-body page: the world recorded no facts here (yet) — a calm note,
-// and the related reading still carries the reader onward.
+// The kernel-only page (MYT-102): a described entity whose world recorded no
+// facts yet — the prose description carries the page alone, no topic labels,
+// no empty note.
+export const KernelOnly: Story = {
+  args: {
+    entity: wikiFixtureEntity('l-mill'),
+    kindLabel: '[placeholder for Locations]',
+  },
+}
+
+// The empty-body page: no kernel AND no facts — a calm note, and the related
+// reading still carries the reader onward.
 export const EmptyBody: Story = {
   args: {
     entity: wikiFixtureEntity('l-spire'),

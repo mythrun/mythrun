@@ -152,11 +152,35 @@ describe('getWorldSnapshot', () => {
       http.get(`${BASE_URL}/api/campaigns/c-9/world-snapshot`, () =>
         HttpResponse.json({
           // The full payload the endpoint returns. The widened schema keeps
-          // entities + relationships (graph) AND facts + entityHierarchy (wiki),
-          // each narrowed to their display fields; the world summary, prose
-          // kernels, stat blocks and per-row extras all strip away.
-          world: { id: 'w-9', keyTensions: ['SECRET'] },
-          proseKernels: [{ id: 'pk-1', body: 'ignored' }],
+          // entities + relationships (graph), facts + entityHierarchy (wiki),
+          // and — since MYT-102 — the prose kernels + the world's glossary,
+          // each narrowed to their display fields; the world's other columns,
+          // stat blocks and per-row extras all strip away.
+          world: {
+            id: 'w-9',
+            name: 'The Reach',
+            keyTensions: ['SECRET'],
+            vocabularyRegistry: {
+              entries: [
+                {
+                  term: 'harbourwatch',
+                  definition: 'The spymaster’s pier-side informants.',
+                  source: 'stage_1_5',
+                  access_level: 'known',
+                },
+              ],
+              adjacent_franchises: ['A Real Franchise'],
+            },
+          },
+          proseKernels: [
+            {
+              id: 'pk-1',
+              entityId: 'ent-1',
+              content: 'The harbour’s quiet fixer.',
+              createdAt: '2026-07-01T00:00:00Z',
+              updatedAt: '2026-07-01T00:00:00Z',
+            },
+          ],
           statBlocks: [{ id: 'sb-1' }],
           entities: [
             { id: 'ent-1', entityType: 'npc', name: 'The Spymaster', accessLevel: 'known' },
@@ -199,6 +223,17 @@ describe('getWorldSnapshot', () => {
       relationships: [
         { sourceEntityId: 'ent-1', targetEntityId: 'ent-2', relationshipType: 'serves' },
       ],
+      // MYT-102: the display projections survive — kernel rows narrowed to
+      // {entityId, content}; glossary entries narrowed to {term, definition}
+      // (never access_level/source, NEVER adjacent_franchises).
+      proseKernels: [{ entityId: 'ent-1', content: 'The harbour’s quiet fixer.' }],
+      world: {
+        vocabularyRegistry: {
+          entries: [
+            { term: 'harbourwatch', definition: 'The spymaster’s pier-side informants.' },
+          ],
+        },
+      },
     })
   })
 })

@@ -34,7 +34,17 @@ import { resolveKindLabel } from './kind-label.ts'
 // falls back to rendering home — pure render fallback, no state surgery; the
 // stack self-heals on the next navigation.
 
-export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function WorldWiki(
+/** `WorldWikiProps` + the MYT-102 glossary section label. Declared LOCALLY
+ *  pending its one-line migration into the contract's `WorldWikiProps`
+ *  (`client-core/src/contract/world-wiki.ts` — a shared surface this change
+ *  set doesn't own); an identical optional member there stays compatible. */
+export interface WorldWikiPropsWithGlossary extends WorldWikiProps {
+  /** Section label over the world-glossary rows closing the home index — an
+   *  i18n key the consumer resolves. Defaults to a `[ph: …]` placeholder. */
+  glossaryLabel?: string
+}
+
+export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiPropsWithGlossary>(function WorldWiki(
   {
     model,
     selectedId,
@@ -50,6 +60,7 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
     emptyBodyLabel = '[ph: nothing recorded here yet]',
     referencesLabel = '[ph: dig deeper]',
     indexLabel = '[ph: index]',
+    glossaryLabel = '[ph: glossary]',
     'data-testid': dataTestId,
   },
   ref,
@@ -144,6 +155,7 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
           emptyLabel={emptyLabel}
           referencesLabel={referencesLabel}
           indexLabel={indexLabel}
+          glossaryLabel={glossaryLabel}
           scroll={homeScroll.current}
           scrollRef={scrollRef}
         />

@@ -42,11 +42,14 @@ export interface WikiRelatedLink {
 /** One browsable entity. `children` is present only for a location that
  *  contains nested locations (omitted for leaves and non-location kinds).
  *  `related` are the tiered relationship cross-links (both directions);
- *  `hasBody` flags whether the composed known-tier facts are non-empty (the
- *  wiki renders an empty-body entity as a bare page). */
+ *  `body` is the entity's prose kernel (MYT-102) — the actual description of
+ *  what it is, rendered ABOVE the fact passages; absent when the snapshot
+ *  carries none. `hasBody` flags whether ANY body content exists (kernel or
+ *  facts — the wiki renders an empty-body entity as a bare page). */
 export interface WikiEntity {
   readonly id: string
   readonly name: string
+  readonly body?: string
   readonly facts: readonly WikiFact[]
   readonly related: readonly WikiRelatedLink[]
   readonly hasBody: boolean
@@ -79,8 +82,19 @@ export interface WikiIntroduction {
   readonly references: readonly WikiIntroReference[]
 }
 
+/** One world-glossary row (MYT-102): the world's invented vocabulary as the
+ *  wiki shows it — the contract already narrowed entries to the display pair
+ *  (no tier/authoring metadata, never `adjacent_franchises`). */
+export interface WikiGlossaryEntry {
+  readonly term: string
+  readonly definition: string
+}
+
 export interface WikiViewModel {
   readonly groups: readonly WikiGroup[]
+  /** The world's vocabulary, term-sorted. Empty for a snapshot that carries no
+   *  `world` (a narrower/pre-MYT-102 source) — never absent. */
+  readonly glossary: readonly WikiGlossaryEntry[]
   /** Absent for a pre-migration world (no `introduction` on the snapshot) —
    *  the wiki then opens on the browse home instead. */
   readonly introduction?: WikiIntroduction
@@ -132,6 +146,29 @@ function indexFactsByEntity(snapshot: WorldSnapshot): Map<string, readonly WikiF
     bucket.sort((a, b) => a.id.localeCompare(b.id))
   }
   return byEntity
+}
+
+/** entityId → its prose kernel content (MYT-102). A whitespace-only kernel is
+ *  treated as absent (defensive floor — the pipeline never writes one, but an
+ *  empty body must not flip `hasBody`). The backend's UNIQUE(entity_id) means
+ *  at most one kernel per entity; a duplicate would simply last-write-win. */
+function indexKernelsByEntity(snapshot: WorldSnapshot): Map<string, string> {
+  const byEntity = new Map<string, string>()
+  for (const kernel of snapshot.proseKernels ?? []) {
+    if (kernel.content.trim() === '') continue
+    byEntity.set(kernel.entityId, kernel.content)
+  }
+  return byEntity
+}
+
+/** The glossary rows, term-sorted (id as no tiebreak exists — a duplicate term
+ *  keeps wire order under the stable sort). Empty when the snapshot carries no
+ *  `world` — the defensive posture every optional collection here follows. */
+function toGlossary(snapshot: WorldSnapshot): readonly WikiGlossaryEntry[] {
+  const entries = snapshot.world?.vocabularyRegistry.entries ?? []
+  return entries
+    .map((e) => ({ term: e.term, definition: e.definition }))
+    .sort((a, b) => a.term.localeCompare(b.term))
 }
 
 /** De-snake a snake_case relationship type into a display label: underscores →
@@ -223,24 +260,29 @@ function layOut(snapshot: WorldSnapshot): Layout {
   return { rootsByKind, childrenByParent }
 }
 
+/** The per-entity lookups `toEntityNode` reads — bundled so the recursion
+ *  threads one argument, not three parallel maps. */
+interface EntityIndexes {
+  readonly factsByEntity: ReadonlyMap<string, readonly WikiFact[]>
+  readonly relatedByEntity: ReadonlyMap<string, readonly WikiRelatedLink[]>
+  readonly kernelByEntity: ReadonlyMap<string, string>
+}
+
 /** Build one entity node, recursing into its nested-location children. */
-function toEntityNode(
-  entity: WorldSnapshotEntity,
-  layout: Layout,
-  factsByEntity: ReadonlyMap<string, readonly WikiFact[]>,
-  relatedByEntity: ReadonlyMap<string, readonly WikiRelatedLink[]>,
-): WikiEntity {
-  const facts = factsByEntity.get(entity.id) ?? []
+function toEntityNode(entity: WorldSnapshotEntity, layout: Layout, indexes: EntityIndexes): WikiEntity {
+  const facts = indexes.factsByEntity.get(entity.id) ?? []
+  const body = indexes.kernelByEntity.get(entity.id)
   const base: WikiEntity = {
     id: entity.id,
     name: entity.name,
+    ...(body !== undefined ? { body } : {}),
     facts,
-    related: relatedByEntity.get(entity.id) ?? [],
-    hasBody: facts.length > 0,
+    related: indexes.relatedByEntity.get(entity.id) ?? [],
+    hasBody: facts.length > 0 || body !== undefined,
   }
   const kids = layout.childrenByParent.get(entity.id) ?? []
   if (kids.length === 0) return base
-  return { ...base, children: kids.map((k) => toEntityNode(k, layout, factsByEntity, relatedByEntity)) }
+  return { ...base, children: kids.map((k) => toEntityNode(k, layout, indexes)) }
 }
 
 /**
@@ -279,9 +321,11 @@ function toIntroduction(
  * — see the enforced-ignorance note at the top of this module.
  */
 export function toWikiViewModel(snapshot: WikiSnapshot): WikiViewModel {
-  const factsByEntity = indexFactsByEntity(snapshot)
-  const nameById = new Map(snapshot.entities.map((e) => [e.id, e.name]))
-  const relatedByEntity = indexRelatedByEntity(snapshot, nameById)
+  const indexes: EntityIndexes = {
+    factsByEntity: indexFactsByEntity(snapshot),
+    relatedByEntity: indexRelatedByEntity(snapshot, new Map(snapshot.entities.map((e) => [e.id, e.name]))),
+    kernelByEntity: indexKernelsByEntity(snapshot),
+  }
   const layout = layOut(snapshot)
   const groups: WikiGroup[] = []
   for (const kind of KIND_ORDER) {
@@ -289,10 +333,11 @@ export function toWikiViewModel(snapshot: WikiSnapshot): WikiViewModel {
     if (roots.length === 0) continue
     groups.push({
       kind,
-      entities: roots.map((e) => toEntityNode(e, layout, factsByEntity, relatedByEntity)),
+      entities: roots.map((e) => toEntityNode(e, layout, indexes)),
     })
   }
-  if (snapshot.introduction === undefined) return { groups }
+  const glossary = toGlossary(snapshot)
+  if (snapshot.introduction === undefined) return { groups, glossary }
   const kindById = new Map(snapshot.entities.map((e) => [e.id, e.entityType]))
-  return { groups, introduction: toIntroduction(snapshot.introduction, kindById) }
+  return { groups, glossary, introduction: toIntroduction(snapshot.introduction, kindById) }
 }

@@ -2,9 +2,10 @@
 // (`GET /api/campaigns/:campaignId/world-snapshot`). A FOCUSED projection of
 // the backend `WorldSnapshot` (backend/src/repo/world-snapshot-view.ts): the
 // runtime handler `reply.send()`s the full composition (world summary,
-// relationships, prose kernels, stat blocks, …), but the wiki view model only
-// consumes three collections — entities, their `known`-tier facts, and the
-// location hierarchy. `z.object()` strips the unmodeled keys (same
+// relationships, prose kernels, stat blocks, …), but the wiki view model
+// consumes only the display collections — entities, their `known`-tier facts,
+// the location hierarchy, the entities' prose kernels, and the world's
+// glossary (MYT-102). `z.object()` strips the unmodeled keys (same
 // focused-projection pattern as `WorldGenSnapshotSchema` in
 // client-core/api/campaigns.ts), so the richer payload validates and the extra
 // columns fall away without a schema churn each time the backend view grows.
@@ -72,6 +73,39 @@ export const WorldSnapshotIntroductionSchema = z.object({
 })
 export type WorldSnapshotIntroduction = z.infer<typeof WorldSnapshotIntroductionSchema>
 
+// MYT-102 Track E: one entity's prose kernel — the actual DESCRIPTION of what
+// the entity is, keyed onto its entity (backend `ProseKernelRow`, narrowed to
+// the display pair; `id` / timestamps strip away). The server serves kernels
+// for the known-tier entity set only (worldSnapshotView scopes the query to the
+// tier-filtered entities) — the client does ZERO tier logic.
+export const WorldSnapshotProseKernelSchema = z.object({
+  entityId: z.string(),
+  content: z.string(),
+})
+export type WorldSnapshotProseKernel = z.infer<typeof WorldSnapshotProseKernelSchema>
+
+// One glossary row: the world's invented vocabulary as the wiki shows it.
+// DISPLAY FIELDS ONLY — the stored entry's `access_level` / `source` / `avoids`
+// / `usage_notes` are authoring metadata and strip at this boundary. The server
+// already tier-filters entries to `known` for a member read.
+export const WorldSnapshotGlossaryEntrySchema = z.object({
+  term: z.string(),
+  definition: z.string(),
+})
+export type WorldSnapshotGlossaryEntry = z.infer<typeof WorldSnapshotGlossaryEntrySchema>
+
+// The world column of the snapshot, narrowed to the ONE field the wiki renders:
+// the vocabulary registry's display entries. `adjacent_franchises` (real-world
+// IP names) is DELIBERATELY unmodeled — z.object() strips it, so a franchise
+// name can structurally never reach a render surface. The summary's other
+// columns (id/name/tone/themes/era) strip the same way.
+export const WorldSnapshotWorldSchema = z.object({
+  vocabularyRegistry: z.object({
+    entries: z.array(WorldSnapshotGlossaryEntrySchema),
+  }),
+})
+export type WorldSnapshotWorld = z.infer<typeof WorldSnapshotWorldSchema>
+
 export const WorldSnapshotSchema = z.object({
   // Optional at the contract layer even though a 200 response ALWAYS carries it
   // (the endpoint 409s until `world_introduction` commits, and the backend view
@@ -82,5 +116,11 @@ export const WorldSnapshotSchema = z.object({
   entities: z.array(WorldSnapshotEntitySchema),
   facts: z.array(WorldSnapshotFactSchema),
   entityHierarchy: z.array(WorldSnapshotHierarchyEdgeSchema),
+  // MYT-102: both optional at the contract layer even though a real 200 always
+  // carries them (the backend view always composes proseKernels + world) — the
+  // same fixture back-compat posture as `introduction`: pre-existing bare
+  // snapshot fixtures keep validating; consumers read both defensively.
+  proseKernels: z.array(WorldSnapshotProseKernelSchema).optional(),
+  world: WorldSnapshotWorldSchema.optional(),
 })
 export type WorldSnapshot = z.infer<typeof WorldSnapshotSchema>

@@ -56,6 +56,29 @@ describe('WikiPage — title + body', () => {
     expect(getByText('Nothing recorded here yet')).toBeInTheDocument()
     expect(queryByText(/placeholder for/)).toBeNull()
   })
+
+  it('renders the prose kernel as PARAGRAPHS above the fact passages (MYT-102)', () => {
+    const { getByRole, getByText } = renderPage()
+    const article = getByRole('article')
+    // Two kernel paragraphs — separate <p>s, never a wall.
+    const kernelParagraphs = Array.from(article.querySelectorAll('p')).filter((p) =>
+      p.textContent.includes('kernel paragraph'),
+    )
+    expect(kernelParagraphs).toHaveLength(2)
+    // The description reads FIRST: the kernel precedes the first fact topic.
+    const firstKernel = kernelParagraphs[0] as HTMLElement
+    const firstTopic = getByText('Purpose')
+    expect(firstKernel.compareDocumentPosition(firstTopic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('renders a kernel-ONLY page: the description, no fact topics, no empty note', () => {
+    const { getByText, queryByText } = renderPage({
+      entity: wikiFixtureEntity('l-mill'),
+      kindLabel: 'Location',
+    })
+    expect(getByText(/mill described in prose/)).toBeInTheDocument()
+    expect(queryByText('Nothing recorded here yet')).toBeNull()
+  })
 })
 
 describe('WikiPage — related + back', () => {

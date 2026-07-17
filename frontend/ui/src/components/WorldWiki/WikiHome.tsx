@@ -27,6 +27,13 @@ import { resolveKindLabel } from './kind-label.ts'
 // sections; the graph-selected entity's row is marked with a quiet surface
 // token-swap.
 //
+// THE GLOSSARY (MYT-102): the world's invented vocabulary closes the index —
+// a <dl> of mono terms over serif definitions under the same quiet mono
+// section label, searchable through the SAME query (term match, the parity of
+// the entities' name match). A world without one gets no section at all (the
+// graceful absence); the empty note shows only when NEITHER entities nor
+// glossary rows survive the filter.
+//
 // SCROLL MEMORY (the shell's home side): whichever variant renders, the scroll
 // container carries the shared `scrollRef` so the shell can read `scrollTop`
 // at push-away time, and `scroll` re-seats the reader on mount (layout-effect,
@@ -97,10 +104,34 @@ interface HomeGroupsProps {
   onOpen: (entityId: string) => void
   groupLabels?: WorldWikiProps['groupLabels']
   emptyLabel: string
+  glossaryLabel: string
 }
 
-/** The browse-by-kind groups, query-filtered — the shared index body of both
- *  home variants. */
+/** The world glossary as a definition list: the mono term over the serif
+ *  definition, one quiet row per entry (term-sorted by the view model). */
+function GlossaryList({ glossary }: { glossary: WikiViewModel['glossary'] }): React.JSX.Element {
+  return (
+    <dl className="flex min-w-0 flex-col gap-[var(--space-3)] px-[var(--space-3)] pt-[var(--space-2)]">
+      {glossary.map((entry, index) => (
+        // Index keys are safe here (the list is static per render) and, unlike
+        // term keys, two same-termed rows can't collide and drop one.
+        <div key={index} className="min-w-0">
+          <dt>
+            <Text role="data">{entry.term}</Text>
+          </dt>
+          <dd>
+            <Text role="prose-body" as="p">
+              {entry.definition}
+            </Text>
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+/** The browse-by-kind groups + the closing glossary, query-filtered — the
+ *  shared index body of both home variants. */
 function HomeGroups({
   model,
   query,
@@ -108,9 +139,10 @@ function HomeGroups({
   onOpen,
   groupLabels,
   emptyLabel,
+  glossaryLabel,
 }: HomeGroupsProps): React.JSX.Element {
   const filtered = filterWikiModel(model, query)
-  if (filtered.groups.length === 0) {
+  if (filtered.groups.length === 0 && filtered.glossary.length === 0) {
     return (
       <Text role="prose-body" as="p">
         {emptyLabel}
@@ -132,6 +164,13 @@ function HomeGroups({
           </ul>
         </section>
       ))}
+      {filtered.glossary.length > 0 && (
+        <section className="flex min-w-0 flex-col gap-[var(--space-2)]">
+          {filtered.groups.length > 0 && <Divider tone="border" />}
+          <p className={cn(INDEX_LABEL_CLASS, 'px-[var(--space-3)]')}>{glossaryLabel}</p>
+          <GlossaryList glossary={filtered.glossary} />
+        </section>
+      )}
     </>
   )
 }
@@ -194,6 +233,8 @@ export interface WikiHomeProps {
   emptyLabel: string
   referencesLabel: string
   indexLabel: string
+  /** Section label over the world-glossary rows closing the index (MYT-102). */
+  glossaryLabel: string
   /** The retained scroll offset (px) to seat the reader at on mount — the
    *  shell's home scroll memory. */
   scroll?: number
@@ -214,6 +255,7 @@ export function WikiHome({
   emptyLabel,
   referencesLabel,
   indexLabel,
+  glossaryLabel,
   scroll = 0,
   scrollRef,
 }: WikiHomeProps): React.JSX.Element {
@@ -230,7 +272,7 @@ export function WikiHome({
   }, [scroll, containerRef])
 
   const introduction = model.introduction
-  const groupsProps = { model, query, selectedId, onOpen, emptyLabel } as const
+  const groupsProps = { model, query, selectedId, onOpen, emptyLabel, glossaryLabel } as const
   const searchField = (
     <SeamlessInput label={searchLabel} value={query} onChange={onQuery} placeholder={searchPlaceholder} />
   )

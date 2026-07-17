@@ -6,9 +6,11 @@ import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
 // WikiHome — the wiki's landing. With an introduction on the model it is the
 // world's front door: the serif world-name title, the grounding prose as
 // paragraphs, the dig-deeper references, then the mono INDEX label over the
-// search + browse-by-kind groups — one scrolling field-guide surface. Without
-// one (a pre-migration world) it is the browse landing alone. Flat 1-bit
-// paper register: hairline rules between sections, no boxes or chips.
+// search + browse-by-kind groups, closed by the world GLOSSARY (MYT-102) —
+// mono terms over serif definitions — one scrolling field-guide surface.
+// Without an introduction (a pre-migration world) it is the browse landing
+// alone. Flat 1-bit paper register: hairline rules between sections, no boxes
+// or chips.
 
 const meta: Meta<typeof WikiHome> = {
   title: 'Patterns/WorldWiki/WikiHome',
@@ -28,6 +30,7 @@ const LABELS = {
   emptyLabel: '[placeholder for the empty-results note]',
   referencesLabel: '[placeholder for dig deeper]',
   indexLabel: '[placeholder for index]',
+  glossaryLabel: '[placeholder for glossary]',
   groupLabels: {
     faction: '[placeholder for Factions]',
     location: '[placeholder for Locations]',
@@ -79,4 +82,11 @@ export const BrowseOnly: Story = {
 // the full browse view.
 export const Filtered: Story = {
   render: () => <HomeDemo initialQuery="ward" />,
+}
+
+// The search narrowed to the GLOSSARY alone (MYT-102): 'lampblack' names no
+// entity, only a vocabulary term — the groups vanish, the matching row stays,
+// and no false empty note appears.
+export const FilteredToGlossary: Story = {
+  render: () => <HomeDemo initialQuery="lampblack" />,
 }

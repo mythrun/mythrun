@@ -20,6 +20,7 @@ const LABELS = {
   emptyLabel: 'Nothing here',
   referencesLabel: 'Dig deeper',
   indexLabel: 'Index',
+  glossaryLabel: 'Glossary',
   groupLabels: { faction: 'Factions', location: 'Locations', npc: 'People', item: 'Items' },
 } as const
 
@@ -108,6 +109,47 @@ describe('WikiHome — search + browse-by-kind', () => {
   it('shows the empty-state note when the query matches nothing', () => {
     const { getByText } = renderHome({ query: 'zzzznomatch' })
     expect(getByText('Nothing here')).toBeInTheDocument()
+  })
+})
+
+describe('WikiHome — the glossary (MYT-102)', () => {
+  it('renders the glossary rows — term + definition — under their section label', () => {
+    const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL })
+    expect(getByText('Glossary')).toBeInTheDocument()
+    // Term-sorted by the view model: ashfen < lampblack < tallow-run.
+    for (const term of ['ashfen', 'lampblack', 'tallow-run']) {
+      expect(getByText(term)).toBeInTheDocument()
+    }
+    expect(getByText(/what lampblack means here/)).toBeInTheDocument()
+  })
+
+  it('omits the glossary section entirely for a world without one', () => {
+    const { queryByText } = renderHome()
+    expect(queryByText('Glossary')).toBeNull()
+  })
+
+  it('narrows to glossary rows through the same search — no false empty note', () => {
+    // 'lampblack' matches no entity name, only a glossary term: the groups
+    // vanish, the matching row stays, and the empty note must NOT show. An
+    // intro-less model — the introduction article renders its references
+    // regardless of the query, so a browse-only model isolates the filter.
+    const glossaryOnlyHome = { groups: WIKI_FIXTURE_MODEL.groups, glossary: WIKI_FIXTURE_MODEL.glossary }
+    const { getByText, queryByText } = renderHome({ model: glossaryOnlyHome, query: 'lampblack' })
+    expect(getByText('lampblack')).toBeInTheDocument()
+    expect(queryByText('ashfen')).toBeNull()
+    expect(queryByText('The Tallow Guild')).toBeNull()
+    expect(queryByText('Factions')).toBeNull()
+    expect(queryByText('Nothing here')).toBeNull()
+  })
+
+  it('shows the empty note only when neither entities nor glossary match', () => {
+    const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, query: 'zzzznomatch' })
+    expect(getByText('Nothing here')).toBeInTheDocument()
+  })
+
+  it('filters glossary terms case-insensitively', () => {
+    const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, query: 'LAMP' })
+    expect(getByText('lampblack')).toBeInTheDocument()
   })
 })
 

@@ -111,8 +111,11 @@ describe('toWikiViewModel', () => {
     expect(vm.groups.map((g) => g.kind)).toEqual(['faction', 'npc'])
   })
 
-  it('returns no groups for an empty snapshot', () => {
-    expect(toWikiViewModel({ entities: [], facts: [], entityHierarchy: [] })).toEqual({ groups: [] })
+  it('returns no groups and an empty glossary for an empty snapshot', () => {
+    expect(toWikiViewModel({ entities: [], facts: [], entityHierarchy: [] })).toEqual({
+      groups: [],
+      glossary: [],
+    })
   })
 
   it('builds RELATED links from relationships — de-snaked label, resolved name, both directions', () => {
@@ -251,6 +254,88 @@ describe('toWikiViewModel', () => {
     const vm = toWikiViewModel(world)
     expect(vm.introduction).toBeUndefined()
     expect('introduction' in vm).toBe(false)
+  })
+
+  it('attaches each entity its prose kernel as `body` (MYT-102)', () => {
+    // Kernels key onto entities the same way facts do; an entity without one
+    // carries no `body` key at all (absent, not empty).
+    const withKernels: WikiSnapshot = {
+      entities: [
+        { id: 'n1', entityType: 'npc', name: 'Mira' },
+        { id: 'l1', entityType: 'location', name: 'Saltmarsh' },
+      ],
+      facts: [],
+      entityHierarchy: [],
+      proseKernels: [{ entityId: 'n1', content: 'The harbormaster of Saltmarsh. She keeps the ledgers.' }],
+    }
+    const vm = toWikiViewModel(withKernels)
+    const mira = vm.groups.find((g) => g.kind === 'npc')?.entities[0]
+    const saltmarsh = vm.groups.find((g) => g.kind === 'location')?.entities[0]
+    expect(mira?.body).toBe('The harbormaster of Saltmarsh. She keeps the ledgers.')
+    expect(saltmarsh?.body).toBeUndefined()
+    expect(saltmarsh !== undefined && 'body' in saltmarsh).toBe(false)
+  })
+
+  it('sets hasBody for a kernel-bearing entity even with zero facts (MYT-102)', () => {
+    const kernelOnly: WikiSnapshot = {
+      entities: [{ id: 'n1', entityType: 'npc', name: 'Mira' }],
+      facts: [],
+      entityHierarchy: [],
+      proseKernels: [{ entityId: 'n1', content: 'A quiet harbormaster.' }],
+    }
+    expect(toWikiViewModel(kernelOnly).groups[0]?.entities[0]?.hasBody).toBe(true)
+  })
+
+  it('treats a whitespace-only kernel as absent (defensive floor)', () => {
+    const blankKernel: WikiSnapshot = {
+      entities: [{ id: 'n1', entityType: 'npc', name: 'Mira' }],
+      facts: [],
+      entityHierarchy: [],
+      proseKernels: [{ entityId: 'n1', content: '   \n  ' }],
+    }
+    const entity = toWikiViewModel(blankKernel).groups[0]?.entities[0]
+    expect(entity?.body).toBeUndefined()
+    expect(entity?.hasBody).toBe(false)
+  })
+
+  it('attaches kernels to NESTED entities too (the recursion carries them)', () => {
+    const nestedKernel: WikiSnapshot = {
+      entities: [
+        { id: 'l1', entityType: 'location', name: 'Saltmarsh' },
+        { id: 'l2', entityType: 'location', name: 'The Tidewatch' },
+      ],
+      facts: [],
+      entityHierarchy: [{ parentEntityId: 'l1', childEntityId: 'l2' }],
+      proseKernels: [{ entityId: 'l2', content: 'A stone watchtower over the bay.' }],
+    }
+    const vm = toWikiViewModel(nestedKernel)
+    const child = vm.groups[0]?.entities[0]?.children?.[0]
+    expect(child?.body).toBe('A stone watchtower over the bay.')
+    expect(child?.hasBody).toBe(true)
+  })
+
+  it('projects the world glossary sorted by term (MYT-102)', () => {
+    const withGlossary: WikiSnapshot = {
+      entities: [],
+      facts: [],
+      entityHierarchy: [],
+      world: {
+        vocabularyRegistry: {
+          entries: [
+            { term: 'tideglass', definition: 'Sea-cast glass the lamplighters prize.' },
+            { term: 'roadwarden', definition: 'A sworn keeper of the gate roads.' },
+          ],
+        },
+      },
+    }
+    expect(toWikiViewModel(withGlossary).glossary).toEqual([
+      { term: 'roadwarden', definition: 'A sworn keeper of the gate roads.' },
+      { term: 'tideglass', definition: 'Sea-cast glass the lamplighters prize.' },
+    ])
+  })
+
+  it('returns an empty glossary when the snapshot carries no world (back-compat)', () => {
+    expect(toWikiViewModel(world).glossary).toEqual([])
   })
 
   it('orders RELATED links deterministically by name, then id, then label', () => {

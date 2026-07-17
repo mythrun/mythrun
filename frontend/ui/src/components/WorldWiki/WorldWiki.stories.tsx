@@ -34,6 +34,7 @@ const LABELS = {
   emptyBodyLabel: '[placeholder for the empty-page note]',
   referencesLabel: '[placeholder for dig deeper]',
   indexLabel: '[placeholder for index]',
+  glossaryLabel: '[placeholder for glossary]',
   groupLabels: {
     faction: '[placeholder for Factions]',
     location: '[placeholder for Locations]',

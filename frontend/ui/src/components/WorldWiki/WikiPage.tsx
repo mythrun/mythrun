@@ -6,11 +6,14 @@ import { Text } from '../Text/Text.tsx'
 import { Heading } from '../Heading/Heading.tsx'
 import { RelatedFooter } from './RelatedFooter.tsx'
 
-// WikiPage (MYT-89 D4) — one entity as a PLACE, a field-guide plate: the mono
-// kind tag over the serif name, the composed known-tier fact body (topic over
-// content, one fact per passage) or a calm empty note when the world recorded
-// nothing, then the RELATED footer. A quiet mono back button sits PINNED above
-// the scrolling <article> so a deep reader always has the way out in reach.
+// WikiPage (MYT-89 D4; MYT-102 entity bodies) — one entity as a PLACE, a
+// field-guide plate: the mono kind tag over the serif name, then the entity's
+// prose KERNEL — its actual description of what it is — as serif paragraphs
+// (split on newline runs, the introduction idiom), then the composed known-tier
+// fact passages (topic over content, one fact per passage) below, or a calm
+// empty note when the world recorded nothing at all, then the RELATED footer.
+// A quiet mono back button sits PINNED above the scrolling <article> so a deep
+// reader always has the way out in reach.
 //
 // SCROLL MEMORY (the D3 contract's consumer side): the <article> is THE scroll
 // container. The shell reads its `scrollTop` into the navigation stack right
@@ -75,6 +78,16 @@ export function WikiPage({
     if (el !== null) el.scrollTop = scroll
   }, [entityId, scroll, articleRef])
 
+  // The kernel as paragraphs — split on newline runs, blanks dropped (the
+  // introduction idiom; mechanical string work, ZFC-safe).
+  const bodyParagraphs =
+    entity.body === undefined
+      ? []
+      : entity.body
+          .split(/\n+/)
+          .map((p) => p.trim())
+          .filter((p) => p !== '')
+
   return (
     <div className="flex max-h-full min-h-0 min-w-0 flex-col">
       <button type="button" onClick={onBack} className={BACK_CLASS}>
@@ -93,6 +106,18 @@ export function WikiPage({
         </header>
         {entity.hasBody ? (
           <div className="flex flex-col gap-[var(--space-4)]">
+            {bodyParagraphs.length > 0 && (
+              <div className="flex flex-col gap-[var(--space-3)]">
+                {bodyParagraphs.map((paragraph, index) => (
+                  // Index keys are safe here (the list is static per render)
+                  // and, unlike text keys, two byte-identical paragraphs can't
+                  // collide and drop one — the WikiHome introduction idiom.
+                  <Text key={index} role="prose-body" as="p">
+                    {paragraph}
+                  </Text>
+                ))}
+              </div>
+            )}
             {entity.facts.map((fact) => (
               <div key={fact.id}>
                 <Text role="ui-caption" as="p">

@@ -16,10 +16,11 @@ describe('RelatedFooter', () => {
       <RelatedFooter related={GUILD_RELATED} label="Related" onOpen={vi.fn()} />,
     )
     expect(getByText('Related')).toBeInTheDocument()
-    expect(getAllByRole('listitem')).toHaveLength(3)
+    expect(getAllByRole('listitem')).toHaveLength(4)
     for (const [name, label] of [
       ['Maeris Vale', 'sworn to'],
       ['Sunspire', 'watched by'],
+      ['The Cinder Mill', 'held by'],
       ['The Drowned Ward', 'seated at'],
     ] as const) {
       expect(getByText(name)).toBeInTheDocument()

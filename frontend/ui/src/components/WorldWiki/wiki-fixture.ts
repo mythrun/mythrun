@@ -7,10 +7,17 @@ import type { WikiEntity, WikiViewModel } from '@mythrun/client-core/contract'
 // always renders REAL links. An empty-relationships fixture would silently
 // exercise nothing (the D2 fixture-honesty rule), so the relationships below
 // are load-bearing: every page in the fixture has related reading, and
-// Sunspire is the deliberate empty-body specimen (no facts, one relationship).
-// The `introduction` (myth-b9bap) mirrors what every post-migration world
-// carries — its two-paragraph prose is load-bearing too (it proves the
-// paragraph split renders paragraphs, not a wall).
+// Sunspire is the deliberate empty-body specimen (no facts, no kernel, one
+// relationship). The `introduction` (myth-b9bap) mirrors what every
+// post-migration world carries — its two-paragraph prose is load-bearing too
+// (it proves the paragraph split renders paragraphs, not a wall).
+//
+// MYT-102 specimens: the guild carries a TWO-paragraph prose kernel (proves
+// the body paragraph split + kernel-above-facts order); The Cinder Mill is the
+// kernel-ONLY page (a described entity with zero recorded facts — body without
+// topics, no empty note); the `world.vocabularyRegistry` entries (deliberately
+// unsorted on the wire) are the glossary rows, 'lampblack' matching no entity
+// name so the search can narrow to glossary alone.
 
 type WikiSnapshotInput = Parameters<typeof toWikiViewModel>[0]
 
@@ -30,6 +37,7 @@ const SNAPSHOT: WikiSnapshotInput = {
     { id: 'l-reach', entityType: 'location', name: 'Ashfen Reach' },
     { id: 'l-ward', entityType: 'location', name: 'The Drowned Ward' },
     { id: 'l-spire', entityType: 'location', name: 'Sunspire' },
+    { id: 'l-mill', entityType: 'location', name: 'The Cinder Mill' },
     { id: 'n-vale', entityType: 'npc', name: 'Maeris Vale' },
     { id: 'i-ledger', entityType: 'item', name: 'The Salt Ledger' },
   ],
@@ -78,14 +86,40 @@ const SNAPSHOT: WikiSnapshotInput = {
     { sourceEntityId: 'n-vale', targetEntityId: 'f-guild', relationshipType: 'sworn_to' },
     { sourceEntityId: 'i-ledger', targetEntityId: 'n-vale', relationshipType: 'kept_by' },
     { sourceEntityId: 'l-spire', targetEntityId: 'f-guild', relationshipType: 'watched_by' },
+    { sourceEntityId: 'l-mill', targetEntityId: 'f-guild', relationshipType: 'held_by' },
   ],
+  proseKernels: [
+    {
+      entityId: 'f-guild',
+      content:
+        '[placeholder for the guild described in prose — the first kernel paragraph, long enough to wrap at phone width and show the prose measure]\n\n[placeholder for the second kernel paragraph — how the guild moves through the reach]',
+    },
+    {
+      entityId: 'l-mill',
+      content:
+        '[placeholder for the mill described in prose — a kernel-only page whose world recorded no facts yet]',
+    },
+  ],
+  world: {
+    vocabularyRegistry: {
+      entries: [
+        { term: 'tallow-run', definition: '[placeholder for what a tallow-run is in the reach]' },
+        { term: 'ashfen', definition: '[placeholder for what the ashfen itself is]' },
+        { term: 'lampblack', definition: '[placeholder for what lampblack means here]' },
+      ],
+    },
+  },
 }
 
 export const WIKI_FIXTURE_MODEL: WikiViewModel = toWikiViewModel(SNAPSHOT)
 
-/** The same world WITHOUT an introduction — a pre-migration snapshot. The
- *  old-world specimen: the wiki must open on the browse home, gracefully. */
-export const WIKI_FIXTURE_MODEL_BARE: WikiViewModel = { groups: WIKI_FIXTURE_MODEL.groups }
+/** The same world WITHOUT an introduction or glossary — a pre-migration
+ *  snapshot. The old-world specimen: the wiki must open on the browse home,
+ *  gracefully, with no glossary section. */
+export const WIKI_FIXTURE_MODEL_BARE: WikiViewModel = {
+  groups: WIKI_FIXTURE_MODEL.groups,
+  glossary: [],
+}
 
 /** Look a fixture entity up by id (nested children included). Throws on a miss
  *  so a typo'd id fails the test loudly instead of feeding it `undefined`. */

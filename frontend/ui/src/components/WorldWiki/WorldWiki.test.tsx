@@ -24,6 +24,7 @@ const LABELS = {
   emptyBodyLabel: 'Nothing recorded here yet',
   referencesLabel: 'Dig deeper',
   indexLabel: 'Index',
+  glossaryLabel: 'Glossary',
   groupLabels: { faction: 'Factions', location: 'Locations', npc: 'People', item: 'Items' },
 } as const
 
@@ -196,12 +197,21 @@ describe('WorldWiki — the introduction as home (myth-b9bap)', () => {
   })
 })
 
+describe('WorldWiki — the glossary pass-through (MYT-102)', () => {
+  it('renders the home glossary under the shell-resolved section label', () => {
+    const { getByText } = renderWiki()
+    expect(getByText('Glossary')).toBeInTheDocument()
+    expect(getByText('lampblack')).toBeInTheDocument()
+  })
+})
+
 describe('WorldWiki — silent-refetch resilience', () => {
   it('falls back to home when the current entity leaves the model', () => {
     const { rerender, getByRole } = renderWiki({ selectedId: 'n-vale' })
     expect(getByRole('heading', { name: 'Maeris Vale' })).toBeInTheDocument()
     const shrunk: WikiViewModel = {
       groups: WIKI_FIXTURE_MODEL.groups.filter((group) => group.kind !== 'npc'),
+      glossary: WIKI_FIXTURE_MODEL.glossary,
     }
     rerender(
       <WorldWiki model={shrunk} selectedId="n-vale" onSelect={vi.fn()} onQuery={vi.fn()} {...LABELS} />,

@@ -39,8 +39,9 @@ export type ProseSegment =
   | { readonly kind: 'entity'; readonly text: string; readonly entityId: string; readonly glyph: EntityGlyph }
 
 /** The terse popover card — the one-tap knowledge surface. `leadLine` is the
- *  entity's first known fact content (there is NO per-entity prose kernel on the
- *  wire); empty when the entity has no known facts. */
+ *  first sentence of the entity's prose kernel (MYT-102 put kernels on the
+ *  known-tier wire), falling back to the entity's first known fact content;
+ *  empty when it has neither. */
 export interface EntityCard {
   readonly entityId: string
   readonly name: string
@@ -82,9 +83,27 @@ function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** entityId → its lead line: the content of its lowest-id fact ('' when none),
- *  matching the id-ordered fact grouping the wiki view model uses. */
+/** The MECHANICAL first sentence of a prose kernel (ZFC — a '. ' split, no
+ *  summarization), capped at the first line so a multi-paragraph kernel never
+ *  leaks a wall into the popover. '' for whitespace-only input. */
+function firstSentence(prose: string): string {
+  const text = prose.trim()
+  const newline = text.indexOf('\n')
+  const firstLine = newline === -1 ? text : text.slice(0, newline)
+  const stop = firstLine.indexOf('. ')
+  return (stop === -1 ? firstLine : firstLine.slice(0, stop + 1)).trim()
+}
+
+/** entityId → its lead line: the first sentence of its prose kernel (MYT-102 —
+ *  the entity's actual description), falling back to the content of its
+ *  lowest-id fact (matching the id-ordered fact grouping the wiki view model
+ *  uses), '' when it has neither. */
 function buildLeadLines(snapshot: WorldGenSnapshot): Map<string, string> {
+  const leadLines = new Map<string, string>()
+  for (const kernel of snapshot.proseKernels ?? []) {
+    const lead = firstSentence(kernel.content)
+    if (lead !== '') leadLines.set(kernel.entityId, lead)
+  }
   const bestFact = new Map<string, { id: string; content: string }>()
   for (const fact of snapshot.facts) {
     const current = bestFact.get(fact.entityId)
@@ -92,8 +111,9 @@ function buildLeadLines(snapshot: WorldGenSnapshot): Map<string, string> {
       bestFact.set(fact.entityId, { id: fact.id, content: fact.content })
     }
   }
-  const leadLines = new Map<string, string>()
-  for (const [entityId, fact] of bestFact) leadLines.set(entityId, fact.content)
+  for (const [entityId, fact] of bestFact) {
+    if (!leadLines.has(entityId)) leadLines.set(entityId, fact.content)
+  }
   return leadLines
 }
 
