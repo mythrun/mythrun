@@ -174,6 +174,11 @@ export interface PageRegistration {
  * a panel can't / shouldn't exist — the default is to author a panel.
  */
 export const EXEMPT_ROUTES: readonly BackendRoute[] = [
+  // POST /api/auth/refresh (MYT-102): under AUTH_MODE=bypass this is a 200-null
+  // session-probe STUB (the real cookie/refresh route is authMode=real-only) —
+  // it exists only so the SPA's on-load probe never paints a console 404. No
+  // dev-tool panel drives it; it is not a mutation surface.
+  { method: 'POST', path: '/api/auth/refresh' },
   // POST /api/campaigns/synthesize-preview/stream (myth-umggn): the one-shot
   // SSE variant of synthesize-preview consumed by the WEB guided flow (the
   // brief streams in live). The campaign-create panel drives the synchronous
