@@ -704,6 +704,44 @@ class PartsAssembler {
 
 // ── The tier ─────────────────────────────────────────────────────────────────
 
+/** myth-ph544 — strip a leading "<PC name>:" from the FT's first text part.
+ *  The FT's output is DM narration; a line that opens with a player character's
+ *  name + colon is the players' INPUT format leaking into the DM prose (the
+ *  seq-30 signature). We normalize it out of the DURABLE message before persist
+ *  + Scribe so it never re-enters the FT's own context next turn — breaking the
+ *  contamination cycle. Only the very START of the first text part is touched;
+ *  a PC name appearing mid-prose is untouched, and DM prose never legitimately
+ *  opens with "Name:". */
+export function stripLeadingPcPrefix(text: string, participants: readonly string[]): string {
+  const lead = /^\s*/.exec(text)?.[0] ?? ''
+  const rest = text.slice(lead.length)
+  for (const name of participants) {
+    if (name === '') continue
+    const prefix = `${name}:`
+    if (rest.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()) {
+      return rest.slice(prefix.length).replace(/^[ \t]+/, '')
+    }
+  }
+  return text
+}
+
+/** Apply `stripLeadingPcPrefix` to the FIRST text part of an assembled turn. A
+ *  part left empty after stripping is dropped. */
+export function stripPcPrefixFromParts(
+  parts: readonly ContentPart[],
+  participants: readonly string[],
+): ContentPart[] {
+  const idx = parts.findIndex((p) => p.kind === 'text')
+  const target = idx === -1 ? undefined : parts[idx]
+  if (target?.kind !== 'text') return [...parts]
+  const stripped = stripLeadingPcPrefix(target.text, participants)
+  if (stripped === target.text) return [...parts]
+  const out = [...parts]
+  if (stripped.trim() === '') out.splice(idx, 1)
+  else out[idx] = { kind: 'text', text: stripped }
+  return out
+}
+
 export class SonnetFastThinker implements FastThinker {
   private readonly tools: ToolSet
   private readonly logger: { warn: (o: Record<string, unknown>, m: string) => void } | undefined
@@ -787,7 +825,10 @@ export class SonnetFastThinker implements FastThinker {
 
     const totalUsage = await stream.totalUsage
     const usage = mapUsage(totalUsage)
-    const parts = assembler.finalize(this.logger)
+    // myth-ph544: normalize a leaked "<PC name>:" prefix out of the durable turn
+    // so the players' input format never enters the persisted transcript / the
+    // FT's own context next turn.
+    const parts = stripPcPrefixFromParts(assembler.finalize(this.logger), ctx.participants)
     const worldDelta = deltaGuard.parse(this.logger)
     return worldDelta === undefined
       ? { role: 'assistant', parts, usage }

@@ -36,7 +36,14 @@ vi.mock('ai', async (importOriginal) => {
   }
 })
 
-const { SonnetFastThinker, buildModelMessages, formatPartyLedger, buildKmpFailure } = await import(
+const {
+  SonnetFastThinker,
+  buildModelMessages,
+  formatPartyLedger,
+  buildKmpFailure,
+  stripLeadingPcPrefix,
+  stripPcPrefixFromParts,
+} = await import(
   '../fast-thinker.js'
 )
 
@@ -1742,6 +1749,50 @@ describe('buildModelMessages', () => {
     // An empty roster snapshot renders no tail (no characters to show).
     expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
     expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[Party ledger:'))).toBe(false)
+  })
+})
+
+describe('myth-ph544 — stripLeadingPcPrefix', () => {
+  const PCS = ['Brenna Kell', 'Onwe Tass']
+
+  it('strips a leaked "<PC name>:" prefix at the very start', () => {
+    expect(stripLeadingPcPrefix('Onwe Tass: The floor belongs to Onwe.', PCS)).toBe(
+      'The floor belongs to Onwe.',
+    )
+  })
+
+  it('is case-insensitive and tolerates leading whitespace', () => {
+    expect(stripLeadingPcPrefix('  onwe tass:   The lane is cold.', PCS)).toBe('The lane is cold.')
+  })
+
+  it('leaves prose that does not open with a PC name untouched', () => {
+    const t = 'The warden waits, still watching Onwe Tass: the notary says nothing.'
+    expect(stripLeadingPcPrefix(t, PCS)).toBe(t)
+  })
+
+  it('does not strip an NPC name it was not given', () => {
+    const t = 'Bel: I pour oil, I do not stamp it.'
+    expect(stripLeadingPcPrefix(t, PCS)).toBe(t)
+  })
+
+  it('stripPcPrefixFromParts drops a first text part that is only the prefix', () => {
+    const parts = [
+      { kind: 'text' as const, text: 'Onwe Tass:' },
+      { kind: 'tool_call' as const, toolCallId: 'c1', toolName: 'roll_dice', input: {} },
+    ]
+    const out = stripPcPrefixFromParts(parts, PCS)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.kind).toBe('tool_call')
+  })
+
+  it('stripPcPrefixFromParts only touches the FIRST text part', () => {
+    const parts = [
+      { kind: 'text' as const, text: 'Brenna Kell: she waits.' },
+      { kind: 'text' as const, text: 'Onwe Tass: still here.' },
+    ]
+    const out = stripPcPrefixFromParts(parts, PCS)
+    expect(out[0]).toEqual({ kind: 'text', text: 'she waits.' })
+    expect(out[1]).toEqual({ kind: 'text', text: 'Onwe Tass: still here.' })
   })
 })
 
