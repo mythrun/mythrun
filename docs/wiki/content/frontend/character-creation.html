@@ -16,7 +16,7 @@
 <!-- source: frontend/ui/src/components/CharacterLoadingBeat/ -->
 <!-- source: frontend/ui/src/components/CharacterSheetReveal/ -->
 <!-- source: frontend/ui/src/components/PartyRoster/ -->
-<!-- source-hash: sha256:982d2554c7f56e8e59067e3ec04862a10cefa455a013c4152c8aaaf8e72e9f9a -->
+<!-- source-hash: sha256:66db87295fc1402dc7e03ad9f2617b5805cf677eb88676489f64dfc8e213a2fb -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Character-creation experience</h1>
@@ -211,8 +211,10 @@
   carries an LLM-authored <code>invitation</code> whisper generated with it; the situation pick keeps
   it in the response and character creation consumes it later as the grounding prompt. The
   <strong>level pick</strong> offers five <code>LevelCard</code>s (1–5), each with a plain, hedged
-  one-line gloss of what the level grants, defaulting to level 3; confirming locks the party's shared
-  starting level and hands off to create.
+  one-line gloss of what the level grants. It <strong>pre-selects the party's already-persisted
+  starting level</strong> when one exists — the owner arriving back via <em>Back</em> — and falls
+  back to level 3 only on a first visit, so a re-confirm can never silently downgrade a chosen level
+  (MYT-102 QA M1); confirming locks the party's shared starting level and hands off to create.
 </p>
 
 <aside class="wiki-rationale">

@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:003e7f524c486ed6b3338f450a289dc9ee117cfd728fe138099105c34d00af3a -->
+<!-- source-hash: sha256:23da7f8ba990bb1fb247d168c7650d32070e00eb2476131f696f01dc148aabec -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>Backend</h1>
@@ -143,6 +143,22 @@
   <code>requireOnboarded</code> reads it; <code>requireOnboarded</code> attaches
   <code>request.dbUser</code> before the access-control middleware reads it; the webhook plugin
   registers before the JSON-using routes so its encapsulated parser doesn't escape its child scope.
+</p>
+
+<p>
+  Past the route registrations, a global typed error handler (<code>app.setErrorHandler</code>, in
+  <code>error-handler.ts</code>) is the last line: it maps known upstream and database error
+  signatures onto clean contract responses rather than leaking a raw 500. An LLM-upstream fault
+  (auth, rate-limit, overload, timeout, a structured-output miss) becomes a
+  <code>503 llm_upstream_unavailable</code> carrying a <code>Retry-After</code>; a content-policy
+  rejection becomes a terminal <code>422 content_filtered</code>; and (MYT-102) a Postgres
+  <code>22P02</code> — a malformed-UUID path param typed straight into a
+  <code>:campaignId</code>/<code>:id</code> URL — maps to a terminal <code>404 not_found</code>, so
+  the raw SQLSTATE and query text never reach the client and a bad deep-link's
+  <a href="../frontend/realtime-transport.html">SSE status client</a> stops retrying instead of
+  hammering the backend in a reconnect loop. Anything unrecognized still falls through to Fastify's
+  default 500, and route-specific typed errors (insufficient credits, and the like) stay inline in
+  their handlers where the payload shape is theirs to compose.
 </p>
 
 <aside class="wiki-rationale">

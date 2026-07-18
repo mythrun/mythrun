@@ -8,7 +8,7 @@
 <!-- source: frontend/src/routes/campaign-new/ -->
 <!-- source: frontend/client-core/src/api/synthesize-stream.ts -->
 <!-- source: frontend/contract/src/events/synthesize-stream.ts -->
-<!-- source-hash: sha256:1289271c6f838650f575bd7899df643b76d0945300cd414b2339b3b972045de3 -->
+<!-- source-hash: sha256:d127b9ce875eeccbdfa4e247990cd5b6afebb1ef10bceb6cf6803b2d786aca0f -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>Guided create</h1>
@@ -40,6 +40,16 @@
   gives the player a concept to read <em>before</em> they spend anything: synthesize, look, change
   their mind once, and only then commit. The whole preview loop is deliberately cheap enough to
   abandon.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Begin is double-submit-guarded, because it is the one charging click (MYT-102)</strong> —
+  pressing Begin is the only action in the whole flow that spends a credit, and
+  <code>busy</code>/<code>disabled</code> are async React state: two clicks in the same tick both
+  pass the disabled check and fire two <code>createCampaign</code> calls — two campaigns and two
+  <code>world_gen</code> debits off one impatient double-tap. The Begin CTA closes that with a
+  synchronous <code>useRef</code> latch set <em>before</em> the async state flips, so the second
+  click returns immediately (the same guard the character-creation submit uses).
 </aside>
 
 <h3>The screen state machine</h3>

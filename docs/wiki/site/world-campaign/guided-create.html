@@ -292,6 +292,16 @@
   abandon.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>Begin is double-submit-guarded, because it is the one charging click (MYT-102)</strong> —
+  pressing Begin is the only action in the whole flow that spends a credit, and
+  <code>busy</code>/<code>disabled</code> are async React state: two clicks in the same tick both
+  pass the disabled check and fire two <code>createCampaign</code> calls — two campaigns and two
+  <code>world_gen</code> debits off one impatient double-tap. The Begin CTA closes that with a
+  synchronous <code>useRef</code> latch set <em>before</em> the async state flips, so the second
+  click returns immediately (the same guard the character-creation submit uses).
+</aside>
+
 <h3 id="the-screen-state-machine">The screen state machine</h3>
 
 <p>

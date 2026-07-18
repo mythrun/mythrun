@@ -35,7 +35,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:9e014c8e34352d2f41ca83a0fe1bd2c8f8a1670090f31306571dc71f7bb0cd97 -->
+<!-- source-hash: sha256:109920a86843582c38209829eb201fbde0e3c4e4e7feb83b6593927de02d57e3 -->
 <!-- last-ticket: MYT-66 -->
 
 <h1>Dev tool</h1>
@@ -501,15 +501,25 @@
   <code>backend/dev-tool/verify-registry.ts</code>, enforced by the vitest test). The pipeline
   contracts' exempt object is now empty: every route, event, and job has a real coverage entry. (The
   <code>session-prep</code> job left it when MYT-62 shipped its prose-pane driver.) The verifier's
-  <code>EXEMPT_ROUTES</code> currently lists six entries:
-  <code>POST /webhooks/stripe</code> (signature-verified consumer, no human UI),
-  <code>POST /api/users/register</code> (probe-helper embedded inside the USERS / Me panel + the dev
-  tool's self-bootstrap), <code>GET /api/users/check-username</code> (same shape, embedded in the
-  register probe-helper), <code>GET /api/dev/campaigns/:campaignId/prep-prose</code> and
-  <code>GET /api/campaigns/:campaignId/prep-status</code> (the two live prep SSE streams — consumed
-  by the wire-log drawer, which is header chrome rather than a JSDOM-mountable page panel), and
-  <code>GET /ws/session/:sessionId</code> (a raw WebSocket upgrade, which none of the three
-  fetch-based panel patterns can model).
+  <code>EXEMPT_ROUTES</code> is a small, reasoned set — every entry carries a &ge;20-character
+  justification the invariant enforces — and it falls into a few recurring shapes rather than an
+  arbitrary allowlist. Some routes have no human-drivable surface at all:
+  <code>POST /webhooks/stripe</code> is a signature-verified consumer, so an HMAC over the raw body
+  rejects anything a panel could send. Some are live SSE streams the wire-log drawer or the player
+  UI consumes rather than a JSDOM-mountable page panel — the two prep streams
+  (<code>prep-prose</code>, <code>prep-status</code>) and the guided-create
+  <code>synthesize-preview/stream</code>. Some are probe-helpers embedded in another panel or the
+  dev tool's own bootstrap (<code>POST /api/users/register</code>,
+  <code>GET /api/users/check-username</code>). And a growing set are genuinely player-facing routes
+  owned by the web app — a Frontend ticket, not a dev-tool inspector — that therefore have no panel
+  here: the campaign wiki and transcript search, the owner starting-level and character
+  reset/confirm reveal actions, and the main-app dev widgets' API-cost and stage-timing tickers.
+  MYT-102 added one more shape — <code>POST /api/auth/refresh</code>, which under
+  <code>AUTH_MODE=bypass</code> is a 200-null session-probe stub (the real cookie/refresh route is
+  real-mode-only) so the SPA's on-load probe never paints a console 404: no panel drives it and it
+  mutates nothing. The authoritative list, each entry's reason inline, lives in
+  <code>verify-registry.ts</code>; the raw WebSocket upgrade is deliberately <em>not</em> here as of
+  MYT-75, having earned a real combat-inspector panel.
 </p>
 
 <aside class="wiki-rationale">

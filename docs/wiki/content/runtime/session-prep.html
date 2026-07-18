@@ -14,7 +14,7 @@
 <!-- source: backend/migrations/034_session_opening.sql -->
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/worker/bullmq-config.ts -->
-<!-- source-hash: sha256:dc03f653c6beb6e173e7407c73a306c262756fe51dbba264497460c9e0b45e10 -->
+<!-- source-hash: sha256:b28a4d8cd65824a891d2ca81004aa0b7af2285df071104656e2d842addfa600b -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Session prep</h1>
@@ -56,7 +56,14 @@
   <code>jobId = sp-&#123;campaignId&#125;-&#123;sessionNumber&#125;</code>; the job carries a
   two-field payload, <code>campaignId</code> and <code>sessionNumber</code>. The worker is the
   consumer end, and the queue's lifecycle (created at boot, drained at shutdown) lives in
-  <code>server-queues.ts</code>.
+  <code>server-queues.ts</code>. As of MYT-102 the HTTP trigger is no longer the only producer: the
+  <a href="./session-transport.html#starting-a-session-the-atomicity-critical-ordering"
+    ><code>/start</code> route</a
+  >
+  self-heals a missing session-1 prep by enqueuing this same job on demand — nothing else in the
+  player flow triggered it, so first sessions used to hang on the prep beat forever. Both producers
+  share the idempotent <code>jobId</code>, so a second enqueue is a dedup or a resume against the
+  atomic claim below, never a duplicate.
 </p>
 
 <h3>The dedicated queue and worker</h3>

@@ -16,7 +16,7 @@
 <!-- source: frontend/ui/src/components/SessionSheet/ -->
 <!-- source: frontend/ui/src/components/KnowledgeSidebar/ -->
 <!-- source: frontend/client-core/src/contract/session-knowledge.ts -->
-<!-- source-hash: sha256:62e2299b26680aa703fa3562c07e3d4864a3bd2b64bf2e75bb4af38afe0381c0 -->
+<!-- source-hash: sha256:84cd0df4746a686303de51aeb15ede17ae9393916eae8c7d1cf60dc7c849b778 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Live play</h1>
@@ -357,7 +357,14 @@
     summon. The summon uses the <strong>explicit-text path</strong>: it composes the visible
     <code>@dm</code> token into the sent message, which persists and broadcasts as an ordinary
     <code>player_message</code> the backend's explicit-trigger path recognizes — so the whole table
-    sees the summon. The invisible <code>dm_invoke</code> frame is deliberately not used.
+    sees the summon. The invisible <code>dm_invoke</code> frame is deliberately not used. Since
+    MYT-102 the composer also hard-caps its length at a client mirror of the server's
+    <code>MAX_MESSAGE_TEXT_LEN</code> (a native <code>maxLength</code> that blocks typing and paste
+    past the cap, plus a send guard for a programmatically over-cap value), so an over-long message
+    can't optimistically render and then be silently dropped by the server — or exceed the WS payload
+    cap and trigger a reconnect storm. The <a href="../runtime/session-transport.html">transport</a>
+    enforces the same 4&nbsp;KB bound server-side; the client cap keeps the failure from ever reaching
+    the wire.
   </li>
   <li>
     <strong><code>SessionStartBeat</code></strong> — the 1-bit loading-beat family, with two labeled
@@ -801,7 +808,10 @@
   </tr>
   <tr>
     <td><code>SessionInput</code></td>
-    <td>Compose + send + the visible <code>@DM</code> explicit-text summon.</td>
+    <td>
+      Compose + send + the visible <code>@DM</code> explicit-text summon; a server-mirrored
+      <code>maxLength</code> cap (MYT-102) blocks an over-long message at the composer.
+    </td>
   </tr>
   <tr>
     <td><code>SessionStartBeat</code></td>

@@ -12,7 +12,7 @@
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
 <!-- source: backend/migrations/035_session_opening_trigger_kind.sql -->
-<!-- source-hash: sha256:5b0a6c518eef02a69381eb2a9f53b549c7ef52a4ac0fc7ae352282d41329a686 -->
+<!-- source-hash: sha256:10098dc316ae8e0a148b70a98514b23a7ae1dccd7747241d0e01e48828f0b372 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Session transport</h1>
@@ -63,9 +63,9 @@
 <p>
   <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
   five preconditions (campaign is active, no session already active, a session prep exists for the
-  next session number, — MYT-74a — the campaign's prior session is fully reconciled, and — MYT-74b —
-  no session-end is mid-flight), the handler runs a fixed five-step sequence whose ordering is
-  load-bearing:
+  next session number — <em>enqueued on demand</em> if it doesn't, below, — MYT-74a — the campaign's
+  prior session is fully reconciled, and — MYT-74b — no session-end is mid-flight), the handler runs
+  a fixed five-step sequence whose ordering is load-bearing:
 </p>
 
 <aside class="wiki-rationale">
@@ -82,6 +82,28 @@
   <a href="../frontend/live-play.html">play screen</a>'s start flow depends on this discrimination:
   it drives the prep beat only on a real <code>prep_not_ready</code>, and the join path only on
   <code>session_already_active</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >A missing prep self-heals — <code>/start</code> enqueues it before answering
+    <code>prep_not_ready</code> (MYT-102)</strong
+  >
+  — the prep precondition does more than gate. When no prep row exists for the next session number,
+  the handler <em>enqueues</em> the <a href="./session-prep.html">session-prep</a> job on demand and
+  only then returns <code>409 prep_not_ready</code>. This closes the first-session showstopper:
+  nothing else in the player flow triggered session&nbsp;1's prep (only the manual dev route did),
+  so a first <code>/start</code> used to leave the player on the atmospheric "the DM is preparing
+  tonight's session" beat forever. The enqueue is idempotent — the fixed
+  <code>jobId&nbsp;sp-&#123;campaignId&#125;-&#123;n&#125;</code> dedups against a job a prior
+  <code>/start</code> (or the dev route) already queued, and <code>existsFor</code> short-circuits
+  the instant the worker lands the row — so the
+  <a href="../frontend/live-play.html">play screen</a>'s prep SSE flips to ready on
+  <code>prep-ready</code> and re-attempts <code>/start</code>, which now finds the row and proceeds.
+  The producer handle is <em>optional</em> on the route: a deployment that wired no
+  <code>sessionPrepQueue</code> logs a loud <code>prep_queue_absent</code> warn and still returns
+  the 409 rather than throwing, so the self-heal degrades to the old wait-for-a-trigger behavior
+  instead of a 500.
 </aside>
 
 <aside class="wiki-rationale">
