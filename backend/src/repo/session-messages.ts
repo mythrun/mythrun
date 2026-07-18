@@ -4,6 +4,21 @@ import { toSessionMessage, type SessionMessageDbRow } from './mappers.js'
 import type { AppendMessageInput, SessionMessage } from './types.js'
 import type { ClientLike } from './_types.js'
 
+/** True when `err` is a Postgres unique violation on the (session_id, seq)
+ *  index — the signal that a caller-allocated seq collided with a persisted
+ *  row (a reseed race, or the Redis `:seq` counter fell behind the durable
+ *  rows after key expiry — myth-rf5rn). Colocated with the repo that owns the
+ *  constraint; both seq writers (ws-session's persistMessage and the
+ *  SessionController's persistTurn) branch on it to run the reseed heal. */
+export function isSeqUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: string }).code === '23505' &&
+    (err as { constraint?: string }).constraint === 'idx_session_messages_session_seq_unique'
+  )
+}
+
 // Composable binder — see sessionsNs for the pattern rationale. Each method
 // captures the ClientLike `c` so the body serves `repo.sessionMessages.X` and
 // `tx.sessionMessages.X`.

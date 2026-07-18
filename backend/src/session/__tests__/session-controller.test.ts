@@ -110,6 +110,7 @@ function fakeTranscript(
   capture: { listArgs?: { sessionId: string; maxPlayerSeq: number }; append?: AppendCapture },
 ): TranscriptStore {
   return {
+    maxSeq: vi.fn().mockResolvedValue(0),
     listFtContextRows: vi.fn((sessionId: string, maxPlayerSeq: number): Promise<SessionMessage[]> => {
       capture.listArgs = { sessionId, maxPlayerSeq }
       return Promise.resolve([...rows])
@@ -285,6 +286,7 @@ function build(opts: BuildOpts = {}): {
     actingCharacters: new Set<string>(),
     ftContext: opts.ftContext ?? FT_CONTEXT,
     allocSeq: scriptedAllocSeq(opts.allocStart ?? 100),
+    reseedSeq: vi.fn().mockResolvedValue(undefined),
     // §6 worker-resolved direction deps (conditionally spread —
     // exactOptionalPropertyTypes: a missing dep is ABSENT, never `undefined`).
     ...(opts.pendingDirection !== undefined ? { pendingDirection: opts.pendingDirection } : {}),
@@ -526,6 +528,49 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     // The key must be ABSENT on the appendDmTurn input, not present-with-undefined.
     expect(transcriptCapture.append).toBeDefined()
     expect('triggerKind' in (transcriptCapture.append ?? {})).toBe(false)
+  })
+
+  it('persistTurn heals a seq collision (myth-rf5rn): reseed from the durable MAX, re-allocate the whole block, retry once', async () => {
+    // The Redis :seq counter fell behind the durable rows (key expiry after a
+    // >2h idle stretch): the first append collides. The heal reseeds to
+    // MAX(seq)=23, re-allocates ALL seqs (turn_ordinal mirrors allocation
+    // order), and the retry lands the full turn instead of dying terminal.
+    const { controller, transcriptCapture, deps } = build({ allocStart: 100 })
+    const uniqueErr = Object.assign(new Error('dup'), {
+      code: '23505',
+      constraint: 'idx_session_messages_session_seq_unique',
+    })
+    // The fakeTranscript members ARE vi.fn()s; view them as such (the interface
+    // types them as method signatures, which the unbound-method rule protects).
+    const transcript = deps.transcript as unknown as Record<'maxSeq' | 'appendDmTurn', ReturnType<typeof vi.fn>>
+    transcript.maxSeq.mockResolvedValue(23)
+    transcript.appendDmTurn
+      .mockRejectedValueOnce(uniqueErr)
+      .mockImplementationOnce((input: AppendCapture) => {
+        transcriptCapture.append = input
+        return Promise.resolve()
+      })
+
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.persistTurn()
+
+    expect(transcript.maxSeq).toHaveBeenCalledWith(SESSION)
+    expect(deps.reseedSeq).toHaveBeenCalledWith(23)
+    // The retry re-allocated a FRESH seq for the row (the scripted allocator
+    // advanced past the failed attempt's number) — never a reuse.
+    expect(transcriptCapture.append?.seqs).toEqual([101])
+  })
+
+  it('persistTurn propagates a NON-collision append error without reseeding', async () => {
+    const { controller, deps } = build()
+    const transcript = deps.transcript as unknown as Record<'appendDmTurn', ReturnType<typeof vi.fn>>
+    transcript.appendDmTurn.mockRejectedValueOnce(new Error('connection reset'))
+
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await expect(controller.persistTurn()).rejects.toThrow('connection reset')
+    expect(deps.reseedSeq).not.toHaveBeenCalled()
   })
 
   it('persistTurn is a no-op when the assistant produced no rows (empty parts)', async () => {

@@ -50,6 +50,7 @@ import type {
 } from 'fastify'
 import type { Redis } from 'ioredis'
 import type { Repo } from '../repo/index.js'
+import { isSeqUniqueViolation } from '../repo/session-messages.js'
 import type { SessionMessage } from '../repo/types.js'
 import type { CombatStateBlob, SessionState } from '../redis/session-state.js'
 import type { SessionHub } from '../ws/session-hub.js'
@@ -1076,7 +1077,16 @@ async function persistMessage(
     return seq
   } catch (err) {
     if (!isSeqUniqueViolation(err)) throw err
-    // Reseed race: take a fresh number and try once more.
+    // myth-rf5rn — a collision means the Redis counter is BEHIND the durable
+    // rows. Two ways that happens: a one-off reseed race (another writer took
+    // our number) or the `:seq` key EXPIRING after a >2h idle stretch, which
+    // restarts INCR at 1 and makes every blind re-INCR collide again — the
+    // old retry silently ate every message until the counter crawled past the
+    // durable MAX. Heal exactly: raise the counter to MAX(seq) (reseedSeq
+    // never lowers a live counter, so the race case degrades to a no-op),
+    // then take the next number. A second collision after the heal is
+    // pathological and propagates to the caller's drop-and-log path.
+    await sessionState.reseedSeq(campaignId, await repo.sessionMessages.maxSeq(sessionId))
     const retrySeq = await sessionState.nextSeq(campaignId)
     await append(retrySeq)
     return retrySeq
@@ -1193,13 +1203,5 @@ export function parseClientFrame(raw: WsRawData, log: FastifyBaseLogger): Client
   return parsed as ClientFrame
 }
 
-/** True when `err` is the 23505 unique-violation on the (session_id, seq)
- *  unique index (`idx_session_messages_session_seq_unique`, migration 023). */
-function isSeqUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as { code?: string }).code === '23505' &&
-    (err as { constraint?: string }).constraint === 'idx_session_messages_session_seq_unique'
-  )
-}
+// isSeqUniqueViolation moved to repo/session-messages.ts (myth-rf5rn) — shared
+// with the SessionController's persistTurn heal.

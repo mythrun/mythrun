@@ -35,6 +35,7 @@
 // durably land.
 
 import type { SessionMessage } from '../repo/types.js'
+import { isSeqUniqueViolation } from '../repo/session-messages.js'
 import type { SessionState } from '../redis/session-state.js'
 import { assistantToRows, rowsToConversation } from './transcript-codec.js'
 import { enqueueScribe, type ScribeQueueLike } from './scribe-queue.js'
@@ -64,6 +65,9 @@ export interface TranscriptStore {
   /** §3.7 single-piece context read: player rows ≤ the consumed watermark ∪ ALL
    *  DM rows, seq ASC. Returns the WHOLE FT context — there is no separate batch. */
   listFtContextRows(sessionId: string, maxPlayerSeq: number): Promise<SessionMessage[]>
+  /** The DURABLE max seq (0 when no rows). persistTurn's myth-rf5rn heal reads
+   *  it to raise an evicted/behind Redis `:seq` counter before its one retry. */
+  maxSeq(sessionId: string): Promise<number>
   /** §3.7 atomic per-turn DM append (one multi-VALUES INSERT, idempotent on
    *  (turn_id, turn_ordinal)). Seqs are caller-allocated, in row order. */
   appendDmTurn(input: {
@@ -143,6 +147,11 @@ export interface SessionControllerDeps {
   readonly triggerKind?: string
   /** Allocates the next server-ordered seq (bound to `sessionState.nextSeq`). */
   readonly allocSeq: () => Promise<number>
+  /** myth-rf5rn heal: raises the Redis `:seq` counter to `max` (never lowers a
+   *  live counter; bound to `sessionState.reseedSeq`). persistTurn calls it on
+   *  a (session_id, seq) unique violation — the signal that the counter fell
+   *  behind the durable rows (key expiry after >2h idle) — then re-allocates. */
+  readonly reseedSeq: (max: number) => Promise<void>
   readonly logger?: MinimalLogger
 }
 
@@ -273,21 +282,45 @@ export class SessionController {
     // INCR is the server's ordering authority, and the rows' turn_ordinal
     // mirrors this allocation order. (A `while` rather than an index loop: the
     // body never reads the index, and `prefer-for-of` rejects the index form.)
-    const seqs: number[] = []
-    while (seqs.length < rows.length) {
-      seqs.push(await this.deps.allocSeq())
+    const allocate = async (): Promise<number[]> => {
+      const seqs: number[] = []
+      while (seqs.length < rows.length) {
+        seqs.push(await this.deps.allocSeq())
+      }
+      return seqs
     }
+    const append = (seqs: readonly number[]): Promise<void> =>
+      this.deps.transcript.appendDmTurn({
+        sessionId: this.sessionId,
+        turnId: this.turnId,
+        rows,
+        seqs,
+        // §5 — thread the worker-resolved trigger kind onto every row.
+        // exactOptionalPropertyTypes: conditionally spread so the key is ABSENT
+        // when no trigger kind was resolved, never present-with-undefined.
+        ...(this.deps.triggerKind !== undefined ? { triggerKind: this.deps.triggerKind } : {}),
+      })
 
-    await this.deps.transcript.appendDmTurn({
-      sessionId: this.sessionId,
-      turnId: this.turnId,
-      rows,
-      seqs,
-      // §5 — thread the worker-resolved trigger kind onto every row.
-      // exactOptionalPropertyTypes: conditionally spread so the key is ABSENT
-      // when no trigger kind was resolved, never present-with-undefined.
-      ...(this.deps.triggerKind !== undefined ? { triggerKind: this.deps.triggerKind } : {}),
-    })
+    try {
+      await append(await allocate())
+    } catch (err) {
+      if (!isSeqUniqueViolation(err)) throw err
+      // myth-rf5rn — the Redis `:seq` counter fell behind the durable rows (key
+      // expiry after a >2h idle stretch; INCR restarted low). Before this heal
+      // the collision failed the whole turn: attempt 1 had already streamed
+      // frames, so the BullMQ retry hit the wasTurnEmitted arm and the turn
+      // died terminal ("streamed frames but never committed"). Heal exactly:
+      // raise the counter to the durable MAX, re-allocate the WHOLE seq block
+      // (turn_ordinal keeps mirroring allocation order), retry ONCE. The
+      // multi-VALUES INSERT is atomic, so the failed attempt left no rows and
+      // the retry re-inserts the full turn. A post-heal collision propagates.
+      this.deps.logger?.warn(
+        { campaignId: this.campaignId, turnId: this.turnId },
+        'persistTurn seq collision — reseeding the counter from the durable max and retrying',
+      )
+      await this.deps.reseedSeq(await this.deps.transcript.maxSeq(this.sessionId))
+      await append(await allocate())
+    }
   }
 
   /** Flush the small in-memory turn state back to Redis: {usage} only (MYT-69

@@ -571,6 +571,7 @@ export async function processTurnJob(
         ...(pendingDirection !== null ? { pendingDirection } : {}),
         ...(standingDirective !== null ? { standingDirective } : {}),
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
+        reseedSeq: (max) => deps.sessionState.reseedSeq(campaignId, max),
         logger: deps.logger,
       },
       campaignId,

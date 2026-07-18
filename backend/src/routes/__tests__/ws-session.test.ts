@@ -1727,11 +1727,16 @@ function makeStubHub(): {
  *  overrides the ones it needs; defaults model a clean single-member session. */
 function makeStubRepo(over: Record<string, unknown> = {}): {
   repo: WsSessionDeps['repo']
-  sessionMessages: { append: ReturnType<typeof vi.fn>; listAfterSeq: ReturnType<typeof vi.fn> }
+  sessionMessages: {
+    append: ReturnType<typeof vi.fn>
+    listAfterSeq: ReturnType<typeof vi.fn>
+    maxSeq: ReturnType<typeof vi.fn>
+  }
 } {
   const sessionMessages = {
     append: vi.fn().mockResolvedValue(undefined),
     listAfterSeq: vi.fn().mockResolvedValue([]),
+    maxSeq: vi.fn().mockResolvedValue(0),
   }
   const repo = {
     sessionParticipants: {
@@ -1926,10 +1931,11 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     socket.emit('close')
   })
 
-  it('persistMessage: a seq-unique violation triggers ONE re-INCR + retry', async () => {
+  it('persistMessage: a seq-unique violation reseeds from the durable MAX, then retries', async () => {
     const sessionState = makeStubSessionState()
     sessionState.nextSeq.mockResolvedValueOnce(5).mockResolvedValueOnce(6)
     const { repo, sessionMessages } = makeStubRepo()
+    sessionMessages.maxSeq.mockResolvedValue(5)
     const uniqueErr = Object.assign(new Error('dup'), {
       code: '23505',
       constraint: 'idx_session_messages_session_seq_unique',
@@ -1946,12 +1952,46 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     socket.emit('message', Buffer.from(JSON.stringify({ type: 'player_message', text: 'hi' })))
     await flush()
 
+    // Heal order: reseed(campaignId, MAX(seq)) BEFORE the re-INCR.
+    expect(sessionMessages.maxSeq).toHaveBeenCalledWith('sess-1')
+    expect(sessionState.reseedSeq).toHaveBeenCalledWith('c-1', 5)
     expect(sessionState.nextSeq).toHaveBeenCalledTimes(2)
     expect(sessionMessages.append).toHaveBeenCalledTimes(2)
     // The broadcast carried the RETRY seq (6).
     expect(hub.publish).toHaveBeenCalledWith(
       'c-1',
       expect.objectContaining({ type: 'player_message', seq: 6, text: 'hi' }),
+    )
+  })
+
+  it('persistMessage: an EVICTED counter (myth-rf5rn) heals to MAX+1 — the message is not lost', async () => {
+    // The :seq key expired after a >2h idle stretch: INCR restarts at 1 while the
+    // durable transcript sits at seq 23. The old blind re-INCR would collide
+    // forever (2/attempt), silently eating every message. The heal reseeds the
+    // counter to the durable MAX, so the retry lands at 24 and the message
+    // persists.
+    const sessionState = makeStubSessionState()
+    sessionState.nextSeq.mockResolvedValueOnce(1).mockResolvedValueOnce(24)
+    const { repo, sessionMessages } = makeStubRepo()
+    sessionMessages.maxSeq.mockResolvedValue(23)
+    const uniqueErr = Object.assign(new Error('dup'), {
+      code: '23505',
+      constraint: 'idx_session_messages_session_seq_unique',
+    })
+    sessionMessages.append.mockRejectedValueOnce(uniqueErr).mockResolvedValueOnce(undefined)
+    const hub = makeStubHub()
+    const { handler } = await captureHandler(makeUnitDeps({ repo, sessionState, hub }))
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'player_message', text: 'home' })))
+    await flush()
+
+    expect(sessionState.reseedSeq).toHaveBeenCalledWith('c-1', 23)
+    expect(hub.publish).toHaveBeenCalledWith(
+      'c-1',
+      expect.objectContaining({ type: 'player_message', seq: 24, text: 'home' }),
     )
   })
 

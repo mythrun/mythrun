@@ -75,6 +75,7 @@ const e2eRepo: TurnWorkerRepo = {
     turnRowsExist: () => Promise.resolve(false),
     listFtContextRows: () => Promise.resolve([]),
     appendDmTurn: () => Promise.resolve(),
+    maxSeq: () => Promise.resolve(0),
     // No trailing rows → the post-turn re-mature never re-arms in this flow.
     listAfterSeq: () => Promise.resolve([]),
   },

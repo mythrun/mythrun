@@ -310,6 +310,7 @@ function fakeRepo(overrides?: {
       turnRowsExist: () => Promise.resolve(overrides?.turnRowsExist ?? false),
       listFtContextRows: () => Promise.resolve([]),
       appendDmTurn: overrides?.appendDmTurn ?? ((): Promise<void> => Promise.resolve()),
+      maxSeq: () => Promise.resolve(0),
       listAfterSeq: () =>
         overrides?.listAfterSeqRejects
           ? Promise.reject(overrides.listAfterSeqRejects)
