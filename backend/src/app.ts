@@ -460,11 +460,10 @@ export const buildApp = async (
     worldGenQueue: deps.worldGenQueue,
     // MYT-102: POST /resume's character_creation arm re-enqueues stuck
     // cc-<campaignId>-<userId> jobs — without this thread the arm answers
-    // 503 queue_not_ready in every real deployment. Conditional spread per
-    // exactOptionalPropertyTypes (matches the campaignCharactersPlugin idiom).
-    ...(deps.characterCreationQueue !== undefined
-      ? { characterCreationQueue: deps.characterCreationQueue }
-      : {}),
+    // 503 queue_not_ready in every real deployment. Forwarded UNCONDITIONALLY:
+    // the campaigns Opts types it `| undefined` (like campaignCharactersPlugin)
+    // exactly so this needs no conditional spread.
+    characterCreationQueue: deps.characterCreationQueue,
   })
 
   // MYT-89 A3: guided world-creation preview. POST

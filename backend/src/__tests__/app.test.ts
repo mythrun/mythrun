@@ -220,6 +220,15 @@ describe('buildApp', () => {
     expect(res.json()).toEqual({ error: 'Not Found' })
   })
 
+  it('registers the bypass /api/auth/refresh probe stub → 200 null (MYT-102)', async () => {
+    // The real auth routes are authMode=real-only; under bypass a 200-null
+    // /refresh stub answers the SPA's on-load session probe so it never 404s.
+    app = await buildApp(makeStubDeps(), { mode: 'bypass' }, stubConfig())
+    const res = await app.inject({ method: 'POST', url: '/api/auth/refresh' })
+    expect(res.statusCode).toBe(200)
+    expect(res.body).toBe('null')
+  })
+
   it('skips devCreditsRoutes when authMode !== "bypass"', async () => {
     // Exercises the `if (config.env.authMode === 'bypass')` gate at
     // app.ts:297. With authMode='real' the route block is skipped —

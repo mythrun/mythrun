@@ -514,6 +514,32 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(prepEnqueues[0]?.jobId).toBe(`sp-${campaignId}-1`)
     })
 
+    it('with NO session-prep queue wired, a missing prep still 409s prep_not_ready (fail-soft warn, MYT-102)', async () => {
+      const bare = Fastify({ logger: false, trustProxy: 1 })
+      await bare.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' })
+      await bare.register(bypassPlugin)
+      await bare.register(requireOnboarded, { pool })
+      await bare.register(sessionsRoutes, { pool, redisRealtime: redis, redisKeyPrefix: KEY_PREFIX })
+      await bare.ready()
+      try {
+        const owner = await seedUser(pool, scope, 9)
+        await grantSessionCredits(pool, owner.userId, 3)
+        const campaignId = await seedActiveCampaign(pool, scope, owner, 9)
+        prepEnqueues.length = 0
+        const res = await bare.inject({
+          method: 'POST',
+          url: `/api/sessions/${campaignId}/start`,
+          headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+          payload: {},
+        })
+        expect(res.statusCode).toBe(409)
+        expect(res.json<{ code: string }>().code).toBe('prep_not_ready')
+        expect(prepEnqueues).toHaveLength(0)
+      } finally {
+        await bare.close()
+      }
+    })
+
     it('a prep that already exists does NOT re-enqueue (MYT-102)', async () => {
       const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
       prepEnqueues.length = 0
