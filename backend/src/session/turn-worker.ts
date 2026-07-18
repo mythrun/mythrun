@@ -571,6 +571,9 @@ export async function processTurnJob(
         ...(pendingDirection !== null ? { pendingDirection } : {}),
         ...(standingDirective !== null ? { standingDirective } : {}),
         allocSeq: () => deps.sessionState.nextSeq(campaignId),
+        // myth-rf5rn passthrough — fires only on a live seq collision (the heal
+        // itself is unit-tested in the controller suite against fakes).
+        /* c8 ignore next */
         reseedSeq: (max) => deps.sessionState.reseedSeq(campaignId, max),
         logger: deps.logger,
       },

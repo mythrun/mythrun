@@ -536,7 +536,8 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     // >2h idle stretch): the first append collides. The heal reseeds to
     // MAX(seq)=23, re-allocates ALL seqs (turn_ordinal mirrors allocation
     // order), and the retry lands the full turn instead of dying terminal.
-    const { controller, transcriptCapture, deps } = build({ allocStart: 100 })
+    const logger = { warn: vi.fn() }
+    const { controller, transcriptCapture, deps } = build({ allocStart: 100, logger })
     const uniqueErr = Object.assign(new Error('dup'), {
       code: '23505',
       constraint: 'idx_session_messages_session_seq_unique',
@@ -561,6 +562,10 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     // The retry re-allocated a FRESH seq for the row (the scripted allocator
     // advanced past the failed attempt's number) — never a reuse.
     expect(transcriptCapture.append?.seqs).toEqual([101])
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ turnId: TURN }),
+      expect.stringContaining('reseeding'),
+    )
   })
 
   it('persistTurn propagates a NON-collision append error without reseeding', async () => {
