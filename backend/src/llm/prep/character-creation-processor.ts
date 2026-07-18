@@ -362,8 +362,17 @@ async function runStage(
   // backend/src/llm/prep/character-integration-processor.ts (to be created
   // in T11). It does NOT appear in this per-player switch.
   if (ctx.conceptOutput === null) {
-    throw new Error(
-      'character_sheet: re-entry without ctx.conceptOutput; stage 2 output cannot be recovered. Player must resubmit.',
+    // TERMINAL, not transient: stage-2 output is unrecoverable, so retrying
+    // the job only re-hits this same guard while the concept sits 'processing'
+    // forever (a character stuck on the loading beat — found live in a
+    // 3-player playtest 2026-07-18). Flag `.terminal` so isTerminalError routes
+    // it to the inline markFailed → the concept flips to 'failed' and the
+    // player can resubmit, instead of a futile BullMQ retry loop.
+    throw Object.assign(
+      new Error(
+        'character_sheet: re-entry without ctx.conceptOutput; stage 2 output cannot be recovered. Player must resubmit.',
+      ),
+      { terminal: true },
     )
   }
   const narrative = ctx.conceptOutput

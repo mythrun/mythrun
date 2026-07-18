@@ -731,10 +731,17 @@ describe('runCharacterCreationJob', () => {
     expect(concept.rows[0]?.status).toBe('completed')
   })
 
-  it('throws on stage 3 re-entry without ctx.conceptOutput (mid-job worker crash recovery)', async () => {
+  it('stage-3 re-entry without ctx.conceptOutput is TERMINAL: flips the concept to failed, no futile retry (playtest 2026-07-18)', async () => {
     // Setup: pre-insert pipeline_runs for stage 2 as 'completed'. On
     // re-entry, atomicClaimStage skips stage 2; ctx.conceptOutput stays
-    // null; stage 3's re-entry guard throws + marks failed.
+    // null; stage 3's re-entry guard fires. The output is UNRECOVERABLE —
+    // "player must resubmit" is definitionally terminal, so it must NOT be
+    // retried futilely: it flips the CONCEPT to 'failed' (so the player sees
+    // the failed state + can resubmit) and returns cleanly (no rethrow).
+    // Regression: this path shipped mis-classified as non-terminal — it
+    // rethrew, BullMQ retried the unrecoverable job, and the concept stayed
+    // 'processing' FOREVER (a character stuck on the loading beat with no
+    // recovery; found live in a 3-player playtest).
     const { userId, campaignId } = await seed()
     await pool.query(
       `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, user_id, cost_usd, input_tokens, output_tokens)
@@ -742,19 +749,17 @@ describe('runCharacterCreationJob', () => {
       [uuidv7(), campaignId, userId],
     )
     const events: Record<string, unknown>[] = []
-    // Non-terminal error → BullMQ retry path: markStageFailed + publish
-    // event + rethrow. We catch the throw, then verify the side effects.
-    await expect(
-      runCharacterCreationJob(
-        makeDeps(pool, {
-          publishEvent: (cid, e) => {
-            events.push({ campaignId: cid, ...e })
-            return Promise.resolve()
-          },
-        }),
-        makeJob(campaignId, userId),
-      ),
-    ).rejects.toThrow(/re-entry without ctx.conceptOutput/)
+    // Terminal → returns cleanly (BullMQ sees success; no retry of the
+    // unrecoverable job).
+    await runCharacterCreationJob(
+      makeDeps(pool, {
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      }),
+      makeJob(campaignId, userId),
+    )
     const sheetRow = await pool.query<{ status: string; error: string | null }>(
       `SELECT status, error FROM pipeline_runs
        WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_sheet'`,
@@ -762,17 +767,20 @@ describe('runCharacterCreationJob', () => {
     )
     expect(sheetRow.rows[0]?.status).toBe('failed')
     expect(sheetRow.rows[0]?.error).toMatch(/re-entry without ctx.conceptOutput/)
-    // The non-terminal rethrow path emits a stage-failed event with
-    // willRetry:true (BullMQ would re-attempt). Identifier on `errorCode`
-    // (MYT-102 A4): a plain Error carries no `.code`, so sanitizeError's
-    // 'stage_failed' fallback surfaces.
+    // THE FIX: the CONCEPT flips to 'failed' so the player can resubmit
+    // (previously it stayed 'processing' forever).
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+    // Terminal stage-failed: willRetry:false (the job is not re-attempted).
     const stageFailed = events.find(
       (e) => e.type === 'stage-failed' && e.stage === 'character_sheet',
     )
     expect(stageFailed).toBeDefined()
-    expect(stageFailed?.willRetry).toBe(true)
+    expect(stageFailed?.willRetry).toBe(false)
     expect(stageFailed?.errorCode).toBe('stage_failed')
-    expect(stageFailed?.reason).toBeUndefined()
   })
 
   // MYT-54 T3 removed the per-player 'character_integration' stage. The
