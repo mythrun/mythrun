@@ -20,8 +20,8 @@
 <!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:3f6e8436f5858d649eaabf5bbbedb7448a0ef9665ccc0c4886d2e4aa86061e7b -->
-<!-- last-ticket: MYT-72 -->
+<!-- source-hash: sha256:5334b544ffdef715fa31cfcbbe573a5a23fda407b947b8ea1e391657e62feea3 -->
+<!-- last-ticket: myth-ph544 -->
 
 <h1>Fast Thinker</h1>
 
@@ -344,6 +344,64 @@
   or recovery. Removing it from the FT's context type is what makes "secrets have nowhere to live"
   structural rather than a convention.
 </aside>
+
+<h2 id="player-agency">Player agency: the FT never plays another player's character</h2>
+
+<p>
+  In multiplayer the FT voices the world — NPCs, environment, consequences — and never a player
+  character. When one character addresses another (Brenna asks Onwe a question), or an NPC
+  challenges a PC whose player has not yet answered, the FT <strong>holds the floor</strong>: it
+  narrates only what the world does in response — the NPC waits, presses, the room holds its breath
+  — and leaves the reply to that character's player. A pause the players fill is correct; a line the
+  FT wrote for a silent character is a bug. The <code>ft-system.txt</code>
+  <strong>Player Characters Belong to Their Players</strong> section spells the boundary out: never
+  author another PC's speech, decision, movement, or equipment, never roll a check for an action a
+  player did not declare, and never emit the players' own <code>CharacterName:</code> input format.
+  It holds even when a question seems to demand a particular character's expertise ("you're the
+  notary, what does the seal mean?") — the expert read belongs to that player, not the DM.
+</p>
+
+<p>
+  A prompt alone cannot guarantee that, so the tool layer enforces it structurally.
+  <code>ft-tools.ts</code> wraps <code>roll_skill_check</code> and <code>search_lore</code> in a
+  deterministic <strong>player-agency gate</strong>: a call whose character — or lore
+  <em>asker</em> — is a session participant who did <em>not</em> act this turn is refused with a
+  soft in-fiction error, so the FT cannot roll dice or recall knowledge on a silent player's behalf.
+  The gate reads two new <code>FtToolDeps</code> fields: <code>participantNames</code>, the PC
+  roster, used to tell a player character from an NPC (an NPC asker is never gated — an NPC has no
+  player to defer to); and <code>actingCharacters</code>, the set of PCs who acted this turn. The
+  <a href="./session-turn.html">conductor</a> fills that set — normalized — before it renders, from
+  the batch's trailing run of player messages after the last DM turn. A player-less turn (a
+  correction, a farewell, a proactive beat) leaves the set empty, so every PC-attributed skill or
+  lore call is refused: no player acted, so the FT speaks only for the world.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The gate is structural because the prompt could not guarantee it</strong> — authoring a
+  silent player's turn (voicing their dialogue, deciding their actions, moving them, even rolling
+  their checks) was the single most quality-damaging FT behavior, found in live multiplayer
+  playtests. The <a href="./dm-trigger.html">DM-trigger classifier</a> is not at fault: it correctly
+  sits back on a PC-to-PC address. The FT is the actor, and a strongly-worded prompt still slipped —
+  the model would reach for a dice or lore tool "on behalf of" the addressed character. So the tool
+  boundary refuses the call outright. This is a Zero-Framework-Cognition exception of the sanctioned
+  kind: mechanical policy enforcement (is this name a participant, and did they act?), not model
+  judgment — the same category as a rate limit or a schema check. Single-player is immune for free:
+  it runs the <code>solo</code> trigger kind (the classifier is bypassed) and has no second PC to
+  puppet.
+</aside>
+
+<p>
+  One residual leaked past both layers. On a forced turn the FT could still open its prose with a
+  player character's <code>Name:</code> prefix — the players' input format bleeding into the DM's
+  narration. Left alone, that line persists into the transcript and re-enters the FT's own context
+  next turn, teaching it to keep writing in the attributed format: a contamination cycle. So after
+  the turn is assembled, <code>stripLeadingPcPrefix</code> (applied by
+  <code>stripPcPrefixFromParts</code>) normalizes a leading <code>&lt;PC name&gt;:</code> off the
+  <em>first</em> text part of the durable message, before persist and before the
+  <a href="./scribe.html">Scribe</a> reads it. Only the very start of the first part is touched — a
+  PC name mid-prose, or an NPC's name, is left alone — so the players' input format never enters the
+  durable transcript or the FT's own next-turn context, breaking the cycle at its source.
+</p>
 
 <h2>The world delta: the FT proposes its own facts</h2>
 
@@ -758,10 +816,13 @@
       <td><code>src/session/tiers/fast-thinker.ts</code></td>
       <td>
         <code>SonnetFastThinker</code> (the tier), <code>buildModelMessages</code> (the
-        deterministic prompt assembly with cache breakpoints), and the MYT-73
+        deterministic prompt assembly with cache breakpoints), the MYT-73
         <code>WorldDeltaGuard</code> — the dual-sink delimiter filter that strips the
         <code>[[WORLD_DELTA]]</code> <a href="./scribe.html">fact-delta</a> from both the player
-        stream and the transcript (+ <code>buildKmpFailure</code>).
+        stream and the transcript (+ <code>buildKmpFailure</code>) — and the myth-ph544
+        <code>stripLeadingPcPrefix</code> / <code>stripPcPrefixFromParts</code>: the
+        <a href="#player-agency">durable-message</a> normalizer that removes a leaked
+        <code>&lt;PC name&gt;:</code> input-format prefix from the first text part.
       </td>
     </tr>
     <tr>
@@ -772,9 +833,12 @@
         <a href="./character-ledger.html">ledger tools</a> (MYT-70), and the three world-knowledge
         lookups <code>search_lore</code> / <code>characters_known_to</code> /
         <code>faction_tree</code> (MYT-72). Also the <code>FtToolDeps</code> surface — including the
-        opaque <code>vet</code> closure (no <code>sdPlaybook</code> field) and the MYT-73
+        opaque <code>vet</code> closure (no <code>sdPlaybook</code> field), the MYT-73
         <a href="./scribe.html">working-set</a> read-merge (<code>workingSet</code> /
-        <code>cosine</code> thunks) + the <code>recordInjection</code> sink.
+        <code>cosine</code> thunks) + the <code>recordInjection</code> sink, and the myth-ph544
+        <a href="#player-agency">player-agency gate</a> (<code>participantNames</code> +
+        <code>actingCharacters</code>) that refuses <code>roll_skill_check</code> /
+        <code>search_lore</code> for a PC who did not act this turn.
       </td>
     </tr>
     <tr>
@@ -857,8 +921,10 @@
       <td><code>src/llm/prompts/session/ft-system.txt</code></td>
       <td>
         The multiplayer FT system prompt (roster, attribution, tool protocol, enforced ignorance,
-        the MYT-70 Resources &amp; The Ledger guidance, and the MYT-73 World Delta section + the
-        <code>[[DM CORRECTION: …]]</code> open-delivery exception to silent-consume).
+        the MYT-70 Resources &amp; The Ledger guidance, the MYT-73 World Delta section + the
+        <code>[[DM CORRECTION: …]]</code> open-delivery exception to silent-consume, and the
+        myth-ph544 <a href="#player-agency">Player Characters Belong to Their Players</a> section —
+        hold the floor, never voice/decide/move/re-equip or roll for another PC).
       </td>
     </tr>
     <tr>

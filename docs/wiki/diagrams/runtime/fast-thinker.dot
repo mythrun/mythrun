@@ -11,7 +11,10 @@ digraph fast_thinker {
   // (crypto.randomInt) → matched outcome tier as the constraint. The
   // world-knowledge lookups run gate → resolve → ST-vet → relay: the secret
   // sd_playbook is captured INSIDE the opaque vet closure and never crosses
-  // back to the FT. The resolve step also merges the in-session working set
+  // back to the FT. A structural player-agency gate (myth-ph544) refuses
+  // roll_skill_check / search_lore for a PLAYER CHARACTER not in the turn's
+  // acting set, so the FT never rolls or recalls for a silent player. The
+  // resolve step also merges the in-session working set
   // (MYT-73 read-after-write) and a relay/invent records an injection back into
   // it. After its prose the FT appends a [[WORLD_DELTA]] fact-delta a dual-sink
   // guard strips from BOTH the player stream AND the transcript. The cap stops
@@ -36,7 +39,7 @@ digraph fast_thinker {
   }
 
   subgraph cluster_tools {
-    label="ft-tools.ts  —  pure resolvers (data only, never emit)";
+    label="ft-tools.ts  —  pure resolvers (data only, never emit)\nplayer-agency gate: refuse skill/lore for a PC not in the turn's acting set";
     style="dotted";
     dice  [label="roll_dice\nrollDice(count, sides)\n(crypto.randomInt — Principle #4)"];
     skill [label="roll_skill_check → skill-check.ts\nresolve roller (session_participants)\n→ modifier (per-skill level, expertise)\n→ Haiku DC table → d20 → tier"];

@@ -481,6 +481,15 @@
     in-memory multi-part history.
   </li>
   <li>
+    <strong>Compute the acting set</strong> — walk the reconstructed history back over the trailing
+    run of player messages after the last DM turn, and record their (normalized) character names in
+    the shared, mutable <code>actingCharacters</code> set. These are the PCs whose actions this turn
+    answers; the set feeds the
+    <a href="./fast-thinker.html#player-agency">Fast Thinker's player-agency gate</a> (myth-ph544),
+    which refuses to roll or recall for a session participant who did not act. A player-less turn
+    (correction / farewell) leaves it empty, so every PC-attributed skill or lore call is refused.
+  </li>
+  <li>
     <strong>Fuse the pending one-shot</strong> — when the worker resolved a one-shot direction
     (<code>deps.pendingDirection</code>), it is fused onto the <em>last</em> user message in the
     reconstructed history as a bracketed <code>[DM direction: …]</code> constraint, in-memory only.

@@ -10,8 +10,8 @@
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:ed32c92161d5377abab63d8e1cc7601da74f34e3b9dc6bc01950863f51de39e2 -->
-<!-- last-ticket: MYT-74b -->
+<!-- source-hash: sha256:0628ccc077376cc6ff092798cb22a41b24f2a2cdfdb3c56d09e83a9ed0f528bb -->
+<!-- last-ticket: myth-ph544 -->
 
 <h1>Session turn</h1>
 
@@ -199,6 +199,15 @@
   <li>
     <strong>Reconstruct the history</strong> from <code>session_messages</code> (above) into the
     in-memory multi-part history.
+  </li>
+  <li>
+    <strong>Compute the acting set</strong> — walk the reconstructed history back over the trailing
+    run of player messages after the last DM turn, and record their (normalized) character names in
+    the shared, mutable <code>actingCharacters</code> set. These are the PCs whose actions this turn
+    answers; the set feeds the
+    <a href="./fast-thinker.html#player-agency">Fast Thinker's player-agency gate</a> (myth-ph544),
+    which refuses to roll or recall for a session participant who did not act. A player-less turn
+    (correction / farewell) leaves it empty, so every PC-attributed skill or lore call is refused.
   </li>
   <li>
     <strong>Fuse the pending one-shot</strong> — when the worker resolved a one-shot direction
