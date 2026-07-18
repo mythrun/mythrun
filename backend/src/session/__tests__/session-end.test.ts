@@ -161,6 +161,7 @@ function makeFakePublish(): {
 interface FinalizeHarness {
   deps: FinalizeEndedSessionDeps
   markEnded: ReturnType<typeof vi.fn>
+  clearEnding: ReturnType<typeof vi.fn>
   reconcileAdds: { name: string; payload: unknown; opts: { jobId?: string } }[]
   analysisAdds: { name: string; payload: unknown; opts: { jobId?: string } }[]
   publishes: { campaignId: string; frame: { type?: string; reason?: string } }[]
@@ -172,14 +173,16 @@ function makeFinalizeHarness(markEndedRows: number): FinalizeHarness {
   const { analysisQueue, adds: analysisAdds } = makeFakeAnalysisQueue()
   const { publish, publishes } = makeFakePublish()
 
+  const clearEnding = vi.fn(() => Promise.resolve())
   const deps: FinalizeEndedSessionDeps = {
     sessions: { markEnded },
     reconcileQueue,
     analysisQueue,
     publish,
+    clearEnding,
     logger: makeLogger(),
   }
-  return { deps, markEnded, reconcileAdds, analysisAdds, publishes }
+  return { deps, markEnded, clearEnding, reconcileAdds, analysisAdds, publishes }
 }
 
 describe('endSession (begin)', () => {
@@ -269,6 +272,10 @@ describe('finalizeEndedSession (complete)', () => {
     expect(h.publishes[0]?.campaignId).toBe(CAMPAIGN)
     expect(h.publishes[0]?.frame.type).toBe('session_end')
     expect(h.publishes[0]?.frame.reason).toBe('normal')
+
+    // myth-x4ca4: the winning finalize releases the `:ending` fence — without
+    // this the 1h TTL blocked the campaign's next /start after every clean end.
+    expect(h.clearEnding).toHaveBeenCalledWith(CAMPAIGN)
   })
 
   it('markEnded → 0 (a prior finalize already flipped): STILL enqueues reconcile + analysis but does NOT broadcast', async () => {
@@ -291,6 +298,10 @@ describe('finalizeEndedSession (complete)', () => {
     // But the broadcast did NOT fire (the flip lost → another finalize already
     // broadcast).
     expect(h.publishes).toHaveLength(0)
+
+    // myth-x4ca4: the noop arm STILL releases the fence (idempotent DEL — a
+    // backstop finalize must clear a fence its crashed winner never released).
+    expect(h.clearEnding).toHaveBeenCalledWith(CAMPAIGN)
   })
 })
 

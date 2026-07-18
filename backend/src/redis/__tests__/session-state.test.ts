@@ -440,6 +440,19 @@ describe('makeSessionState — ending flag (MYT-74a T11)', () => {
     expect(await ss.isEnding(cId)).toBe(true)
   })
 
+  it('clearEnding releases the fence (myth-x4ca4): isEnding false again, and a NEW end can claim it', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.tryMarkEnding(cId)
+    await ss.clearEnding(cId)
+    expect(await ss.isEnding(cId)).toBe(false)
+    // The next session's end can claim the fence anew.
+    expect(await ss.tryMarkEnding(cId)).toBe(true)
+    // Idempotent on a missing key.
+    await ss.clearEnding(cId)
+    await ss.clearEnding(cId)
+    expect(await ss.isEnding(cId)).toBe(false)
+  })
+
   it('per-campaign isolation: ending one campaign leaves another unended', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
     expect(await ss.tryMarkEnding('c-A')).toBe(true)

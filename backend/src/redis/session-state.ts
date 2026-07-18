@@ -251,6 +251,13 @@ export interface SessionState {
    *  an end has begun). A missing key (never ended, or the TTL reaped a stale
    *  flag) reads `false`. */
   isEnding(campaignId: string): Promise<boolean>
+  /** myth-x4ca4 — release the `:ending` fence at finalize. The flag's two jobs
+   *  (fence the in-process end orchestration; drop inbound frames while the row
+   *  is still 'active') both expire when `markEnded` flips the row — from then
+   *  on /start's active-session + reconcile_pending preconditions own every
+   *  window. Without this DEL the 1h TTL blocked the campaign's NEXT /start for
+   *  up to an hour after every clean end. Idempotent (DEL of a missing key). */
+  clearEnding(campaignId: string): Promise<void>
   /** MYT-75 — read the `:combat` blob, or null if unset / corrupt. The session
    *  is in combat mode (the `:state` blob's `mode`) iff this returns non-null. */
   getCombatState(campaignId: string): Promise<CombatStateBlob | null>
@@ -463,6 +470,11 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
     isEnding: async (campaignId) => {
       // EXISTS is 1 when the flag is set, 0 when unset / TTL-reaped.
       return (await redis.exists(endingKey(campaignId))) === 1
+    },
+
+    clearEnding: async (campaignId) => {
+      // myth-x4ca4: idempotent release at finalize — see the interface doc.
+      await redis.del(endingKey(campaignId))
     },
 
     getCombatState: async (campaignId) => {

@@ -1013,6 +1013,10 @@ export function buildSessionTurnWorker(
       await redisRealtime.publish(sessionChannel(redisKeyPrefix, campaignId), JSON.stringify(frame))
     },
     /* c8 ignore stop */
+    // myth-x4ca4 — release the `:ending` fence at finalize (same SessionState
+    // instance the processor shares; the fence lives on realtime Redis).
+    /* c8 ignore next — exercised on the real farewell finalize path only */
+    clearEnding: (campaignId) => sessionState.clearEnding(campaignId),
     logger: bindFinalizeLogger(logger),
   }
 

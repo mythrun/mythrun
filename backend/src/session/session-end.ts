@@ -161,6 +161,12 @@ export interface FinalizeEndedSessionDeps {
    *  fan-out). The caller wires this to the turn publisher's redis + the session
    *  channel; the orchestration stays frame-shape-agnostic at the seam. */
   readonly publish: (campaignId: string, frame: unknown) => Promise<void>
+  /** myth-x4ca4 — the `:ending` fence release (SessionState.clearEnding). The
+   *  fence's jobs end at the row flip; without this DEL its 1h TTL blocked the
+   *  campaign's next /start for up to an hour after every clean end. Called on
+   *  BOTH finalize arms (idempotent DEL — the noop arm's caller may be the
+   *  backstop finishing a crashed winner's cleanup). */
+  readonly clearEnding: (campaignId: string) => Promise<void>
   readonly logger: MinimalLogger
 }
 
@@ -198,4 +204,12 @@ export async function finalizeEndedSession(
   } else {
     deps.logger.info({ campaignId, sessionId }, 'session_finalize_noop')
   }
+
+  // myth-x4ca4 — release the `:ending` fence now that the row is durably
+  // 'ended' (this call or a prior one flipped it): /start's active-session +
+  // reconcile_pending preconditions own every later window, so holding the
+  // fence only blocks the campaign's NEXT session (its 1h TTL did exactly
+  // that). Runs on BOTH arms — the DEL is idempotent, and a backstop finalize
+  // must release a fence its crashed winner never got to.
+  await deps.clearEnding(campaignId)
 }

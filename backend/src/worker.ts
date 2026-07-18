@@ -42,6 +42,7 @@ import {
   QUEUE_SESSION_ANALYSIS,
 } from './session/post-session-analysis.js'
 import { finalizeEndedSession, type FinalizeEndedSessionDeps } from './session/session-end.js'
+import { makeSessionState } from './redis/session-state.js'
 import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
 import { buildSessionReconcileQueue, buildSessionAnalysisQueue } from './server-queues.js'
 import { createRepo } from './repo/index.js'
@@ -281,6 +282,9 @@ export async function main(): Promise<void> {
     buildSessionReconcileQueue(redisBatch)
   const { bullmqQueue: finalizeAnalysisBullQueue, sessionAnalysisQueue: finalizeAnalysisQueue } =
     buildSessionAnalysisQueue(redisBatch)
+  // myth-x4ca4 — the finalize needs the `:ending` fence release; bind a
+  // SessionState on the realtime client (the fence lives there).
+  const finalizeSessionState = makeSessionState(redisRealtime, env.redisKeyPrefix)
   const finalizeDeps: FinalizeEndedSessionDeps = {
     sessions: repoForFinalize.sessions,
     reconcileQueue: finalizeReconcileQueue,
@@ -291,6 +295,7 @@ export async function main(): Promise<void> {
         JSON.stringify(frame),
       )
     },
+    clearEnding: (campaignId) => finalizeSessionState.clearEnding(campaignId),
     logger,
   }
 

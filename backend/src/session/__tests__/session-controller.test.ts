@@ -190,6 +190,7 @@ function fakeSessionState(opts: {
     getState: unused('getState'),
     nextSeq: unused('nextSeq'),
     reseedSeq: unused('reseedSeq'),
+    clearEnding: unused('clearEnding'),
     addPresence: unused('addPresence'),
     dropPresence: unused('dropPresence'),
     countPresence: unused('countPresence'),
