@@ -15,7 +15,7 @@
 <!-- source: backend/src/session/session-reconcile.ts -->
 <!-- source: backend/src/session/post-session-analysis.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
-<!-- source-hash: sha256:15e71b585f96f30f3e0b6f0e9d65f957cf418eddf7a5ff02debcb0bb809b0216 -->
+<!-- source-hash: sha256:cfb1243346d020bb9032e83fac858d7159b47b26f99cc1c07c991b2c032a268b -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Worker</h1>
@@ -179,9 +179,11 @@
 <p>
   <code>worker.ts</code> also wires the MYT-74b <strong>finalize backstop</strong>: it constructs a
   <code>finalizeEndedSession</code> closure (over its own repo + reconcile/analysis producers built
-  through the policy queue builders, so the backstop's enqueues carry the same retry policy) and
-  passes it into the <code>QueueEvents('session-turn')</code> subscriber. That subscriber runs the
-  finalize from the broker side when a <code>farewell</code> turn fails terminally
+  through the policy queue builders, so the backstop's enqueues carry the same retry policy — plus,
+  myth-x4ca4, a realtime-side <code>SessionState</code> so the finalize can release the session's
+  <code>:ending</code> fence: a backstop finalize must clear a fence its crashed winner never got
+  to) and passes it into the <code>QueueEvents('session-turn')</code> subscriber. That subscriber
+  runs the finalize from the broker side when a <code>farewell</code> turn fails terminally
   (<code>maxStalledCount</code>-exhaustion) — the path the in-worker <code>finally</code> can't
   cover. Those two backstop producer handles are distinct <code>Queue</code> objects, so they're
   closed explicitly at shutdown (after the workers drain) — <code>redisBatch.quit()</code> doesn't

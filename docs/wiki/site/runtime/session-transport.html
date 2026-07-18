@@ -780,12 +780,30 @@
 <aside class="wiki-rationale">
   <strong>Persist before broadcast, and a unique index that fails loud</strong> — the durable
   transcript is the source of truth for replay, so a message is written before it's fanned out.
-  Migration 023 adds <code>UNIQUE(session_id, seq)</code>: a re-used number (a reseed race after a
-  crash-recovery counter bump) raises a 23505 rather than silently corrupting the ordering. The
-  route catches that one violation, re-INCRs once, and retries; a second collision re-throws as the
-  pathological state it is. If the broadcast throws <em>after</em> the append succeeds, the message
-  is still durable — the client gap-detects the missing seq and REST-backfills via
-  <code>GET …/messages</code>.
+  Migration 023 adds <code>UNIQUE(session_id, seq)</code>: a re-used number raises a 23505 rather
+  than silently corrupting the ordering. A collision means the Redis counter fell
+  <em>behind</em> the durable rows — a one-off reseed race, or (myth-rf5rn) the
+  <code>:seq</code> key expiring after a &gt;2h idle stretch, which restarts <code>INCR</code> at 1
+  and makes every blind retry collide again. So the route heals on the collision signal: it reseeds
+  the counter to the durable <code>MAX(seq)</code> (<code>reseedSeq</code> never lowers a live
+  counter, so the benign race case degrades to a no-op), takes a fresh number, and retries once —
+  the message lands at <code>MAX+1</code> instead of being dropped. A second collision after the
+  heal re-throws as the pathological state it is. If the broadcast throws <em>after</em> the append
+  succeeds, the message is still durable — the client gap-detects the missing seq and REST-backfills
+  via <code>GET …/messages</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Heal on the collision, not proactively on connect</strong> — the alternative was a
+  defensive reseed on every reconnect, or pinning the key's TTL alive forever. But the unique
+  violation <em>is</em> the exact signal that the counter is behind — no probe detects the state
+  more precisely — and healing there means the healthy path pays nothing. Before this fix the
+  purpose-built <code>reseedSeq</code> API had zero callers, and an idle-past-TTL session silently
+  ate every player message (socket alive, the client showed it as sent) while the DM turn's
+  identical collision failed the turn terminally. The
+  <a href="./session-turn.html">turn worker's <code>persistTurn</code></a> runs the same heal on its
+  seq-block allocation; both writers branch on the shared
+  <code>isSeqUniqueViolation</code> classifier, colocated with the repo that owns the constraint.
 </aside>
 
 <aside class="wiki-rationale">
@@ -1266,7 +1284,11 @@
   <tbody>
     <tr>
       <td><code>session:{campaignId}:seq</code></td>
-      <td>Monotonic <code>INCR</code> counter; first <code>nextSeq</code> → 1. ~2h TTL.</td>
+      <td>
+        Monotonic <code>INCR</code> counter; first <code>nextSeq</code> → 1. ~2h TTL — an
+        idle-past-TTL eviction is healed on the next append (reseed to the durable
+        <code>MAX(seq)</code>, myth-rf5rn).
+      </td>
     </tr>
     <tr>
       <td><code>session:{campaignId}:conn:{containerId}:{userId}</code></td>
@@ -1289,7 +1311,8 @@
         Once-only end-flag (<code>SET … NX</code>); the <code>end_session</code> flow claims it
         (MYT-74a). It gates the inbound handler as the post-end drop-gate, the turn worker's
         post-turn re-engagement, and — MYT-74b — the <code>/start</code>
-        <code>session_ending</code> 409 while a session-end is mid-flight.
+        <code>session_ending</code> 409 while a session-end is mid-flight. Released by the finalize
+        (<code>clearEnding</code>, myth-x4ca4); its 1h TTL is only the crash backstop.
       </td>
     </tr>
     <tr>
@@ -1339,13 +1362,14 @@
       <td><code>src/redis/session-state.ts</code></td>
       <td>
         <code>makeSessionState</code> — <code>nextSeq</code> / <code>reseedSeq</code> / presence /
-        <code>:state</code> / <code>checkpoint</code>; the LLM-tier turn-state surface (<code
-          >flushTurnState</code
+        <code>:state</code> / <code>checkpoint</code>; the <code>:ending</code> fence surface (<code
+          >tryMarkEnding</code
         >
-        usage-only, <code>setRunningSummary</code> / <code>incrUsageSt</code> /
-        <code>totalUsageTokens</code> / <code>resetSessionSpend</code> — MYT-69);
-        <code>PRESENCE_TTL</code>, <code>SessionMode</code> / <code>SessionStateBlob</code> /
-        <code>CheckpointStore</code> types.
+        / <code>isEnding</code> / the myth-x4ca4 <code>clearEnding</code> release); the LLM-tier
+        turn-state surface (<code>flushTurnState</code> usage-only, <code>setRunningSummary</code> /
+        <code>incrUsageSt</code> / <code>totalUsageTokens</code> / <code>resetSessionSpend</code> —
+        MYT-69); <code>PRESENCE_TTL</code>, <code>SessionMode</code> /
+        <code>SessionStateBlob</code> / <code>CheckpointStore</code> types.
       </td>
     </tr>
     <tr>
@@ -1397,7 +1421,9 @@
         (<code>listFtContextRows</code>, whose <code>message_type</code> IN-list MYT-70 widened to
         carry the six ledger-tool rows / <code>turnRowsExist</code> / <code>appendDmTurn</code>),
         and <code>join</code> (server-side character resolution) / <code>leave</code> /
-        <code>list</code>; <code>NoCharacterForParticipantError</code>.
+        <code>list</code>; <code>NoCharacterForParticipantError</code>;
+        <code>isSeqUniqueViolation</code> (the (session_id, seq) 23505 classifier both seq writers
+        heal on — myth-rf5rn).
       </td>
     </tr>
     <tr>

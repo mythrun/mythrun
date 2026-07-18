@@ -21,8 +21,8 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:e8210b0f1d5b74094af17a69ca78fbb58e5715aec8670fc5a509ffcb8009d143 -->
-<!-- last-ticket: MYT-74c -->
+<!-- source-hash: sha256:562e88583ca23e839905b191b44989d6aa37f94cd3a03832d16fb1e510de0ba8 -->
+<!-- last-ticket: myth-x4ca4 -->
 
 <h1>End-of-session reconciliation</h1>
 
@@ -167,7 +167,7 @@
   <code>finalizeEndedSession</code> is the complete phase, run from the farewell turn's
   <code>finally</code> <em>after</em> the render — so the table sees the DM's send-off, then the
   <code>session_end</code> frame. <code>finally</code> always runs, so a thrown farewell render
-  still finalizes: a session always ends. It does three things:
+  still finalizes: a session always ends. It does four things:
 </p>
 
 <ol>
@@ -188,6 +188,12 @@
     <strong>Broadcast, once.</strong> Only the finalize that won the flip (rowCount 1) broadcasts
     the structural <code>session_end</code> frame; a later finalize (rowCount 0) skips it.
   </li>
+  <li>
+    <strong>Release the <code>ending</code> fence.</strong> <code>clearEnding</code> — an idempotent
+    DEL, run on <em>both</em> arms — drops the <code>session:{cId}:ending</code> flag now that the
+    row is durably <code>ended</code>: from here the <code>/start</code> active-session and
+    <code>reconcile_pending</code> preconditions own every later window.
+  </li>
 </ol>
 
 <aside class="wiki-rationale">
@@ -197,6 +203,20 @@
   idempotent function. The reconcile and analysis enqueues collapse on their jobIds, but the
   broadcast would double-fire without a gate — so <code>markEnded</code> returns the rowCount and
   only the winner broadcasts. A second finalize is otherwise harmless.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The fence is released at finalize; its TTL is only the crash backstop (myth-x4ca4)</strong
+  >
+  — the <code>ending</code> flag's two jobs (fence the end orchestration; drop inbound frames while
+  the row is still <code>active</code>) both expire the moment <code>markEnded</code> flips the row.
+  Nothing originally cleared it, so after every <em>clean</em> end the campaign's next
+  <code>/start</code> answered <code>409 session_ending</code> until the full 1h TTL reaped the flag
+  — "session over, come back in an hour," found live with session-2 prep ready and 40 minutes left
+  on the fence. The DEL runs on both finalize arms because the noop arm's caller may be the
+  <code>QueueEvents</code> backstop finishing a crashed winner's cleanup — a fence its winner never
+  got to release. The TTL remains as the last resort for a session whose finalize never runs at all.
 </aside>
 
 <aside class="wiki-rationale">
@@ -260,8 +280,10 @@
   is still <code>status='active'</code> with <code>ended_at</code> NULL, so the
   <code>reconcile_pending</code> interlock (which reads <code>ended_at</code>) can't see the end
   yet. The <code>ending</code> flag is set at the very start of the begin phase, so the second guard
-  fences the whole window from begin-of-end through finalize. Reconcile is fast (seconds to tens of
-  seconds), so the combined block is brief in the happy path.
+  fences the whole window from begin-of-end through finalize — and the finalize releases it
+  (<code>clearEnding</code>, myth-x4ca4), so the guard covers exactly that window, never the hour
+  its TTL would imply. Reconcile is fast (seconds to tens of seconds), so the combined block is
+  brief in the happy path.
 </aside>
 
 <aside class="wiki-rationale">

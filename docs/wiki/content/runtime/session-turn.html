@@ -10,8 +10,8 @@
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:0628ccc077376cc6ff092798cb22a41b24f2a2cdfdb3c56d09e83a9ed0f528bb -->
-<!-- last-ticket: myth-ph544 -->
+<!-- source-hash: sha256:985e70782bef332d909a2b1524404f82dc853c1b52c8ec8caf5c2d6e2f291723 -->
+<!-- last-ticket: myth-rf5rn -->
 
 <h1>Session turn</h1>
 
@@ -106,6 +106,24 @@
   durable, and the re-run converges to completion rather than re-rendering (the §5 decision order
   below). Streamed frames are <em>not</em> durable state — they are transport, deduplicated
   client-side by <code>turnId</code>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>persistTurn</code> heals an evicted seq counter before failing the turn
+    (myth-rf5rn)</strong
+  >
+  — the append allocates its seqs from the Redis <code>:seq</code> counter, and that key carries a
+  ~2h TTL: a session idle past it restarts <code>INCR</code> low, so the allocated block collides
+  with persisted rows and the append raises the migration-023 unique violation. Before the heal that
+  collision killed the turn terminally — attempt 1 had already streamed frames, so the BullMQ retry
+  hit the streamed-but-uncommitted arm below. Now the controller treats the violation as the exact
+  signal it is: reseed the counter to the durable <code>MAX(seq)</code>, re-allocate the
+  <em>whole</em> seq block (so <code>turn_ordinal</code> keeps mirroring allocation order — the
+  atomic multi-VALUES INSERT left no rows behind), and retry once. A post-heal collision propagates.
+  The <a href="./session-transport.html">transport</a>'s player-message persist runs the same heal;
+  both branch on the shared <code>isSeqUniqueViolation</code> classifier, colocated with the repo
+  that owns the constraint.
 </aside>
 
 <aside class="wiki-rationale">
@@ -945,7 +963,9 @@
     <tr>
       <td><code>session:{campaignId}:seq</code></td>
       <td>
-        Server-ordered seq counter (<code>INCR</code>); one per persisted message, player and DM.
+        Server-ordered seq counter (<code>INCR</code>); one per persisted message, player and DM. An
+        evicted counter heals on collision — reseed to the durable <code>MAX(seq)</code>, one retry
+        (myth-rf5rn).
       </td>
     </tr>
     <tr>
