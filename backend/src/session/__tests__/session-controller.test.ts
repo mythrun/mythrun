@@ -282,6 +282,7 @@ function build(opts: BuildOpts = {}): {
     // MYT-68: the FT prompt roster is now a per-turn dep (worker-resolved from
     // session_participants), not a getState read. Default to [].
     participants: opts.participants ?? [],
+    actingCharacters: new Set<string>(),
     ftContext: opts.ftContext ?? FT_CONTEXT,
     allocSeq: scriptedAllocSeq(opts.allocStart ?? 100),
     // §6 worker-resolved direction deps (conditionally spread —

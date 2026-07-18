@@ -229,6 +229,8 @@ function makeTiersFactory(
             combatParty,
             recordCombat: (e) => combatEvents.push(e),
             pendingInitiate,
+            participantNames: [],
+            actingCharacters: new Set<string>(),
           },
           undefined,
         ),

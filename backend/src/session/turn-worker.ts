@@ -210,6 +210,14 @@ export interface TierTurnArgs {
    *  fresh-run arm). The combat tools' `combatParty` dep projects it to
    *  `CombatPartyMember[]` (id + name + level + current/max HP). */
   readonly partyLedger: PartyLedgerSnapshot
+  /** myth-ph544: the PC roster (session-participant character names), so the
+   *  FT tools can tell a player character from an NPC. */
+  readonly participantNames: readonly string[]
+  /** myth-ph544: the shared, mutable set of PCs who acted this turn (normalized).
+   *  Empty at construction; the SessionController fills it from the batch before
+   *  render. The FT skill-check/lore tools read it to refuse acting for a silent
+   *  player character. */
+  readonly actingCharacters: Set<string>
 }
 
 export interface TurnProcessorDeps {
@@ -526,6 +534,11 @@ export async function processTurnJob(
     // array onto the post-turn Scribe job payload (`enqueueScribeJob`).
     const injections: WorkingSetProposal[] = []
 
+    // myth-ph544: the shared player-agency gate state. Created here, filled by
+    // the controller from the batch before render, read by the FT tools at
+    // execute time to refuse rolling/recalling for a silent player character.
+    const actingCharacters = new Set<string>()
+
     const tiers = deps.makeTiers({
       sessionId,
       turnId,
@@ -536,6 +549,8 @@ export async function processTurnJob(
       recentNarrative,
       recordInjection: (p) => injections.push(p),
       partyLedger,
+      participantNames: participants,
+      actingCharacters,
     })
 
     const controller = new SessionController(
@@ -549,6 +564,7 @@ export async function processTurnJob(
         transcript: deps.repo.sessionMessages,
         attributionNames,
         participants,
+        actingCharacters,
         ftContext,
         partyLedger,
         triggerKind: job.data.trigger.kind,
@@ -1040,6 +1056,8 @@ export function buildSessionTurnWorker(
       recentNarrative,
       recordInjection,
       partyLedger,
+      participantNames,
+      actingCharacters,
     }) => {
       const mech: MechanicalReads = {
         findSessionParticipantCharacterByName: (sid, name) =>
@@ -1114,6 +1132,8 @@ export function buildSessionTurnWorker(
               combatParty,
               recordCombat: (e) => combatEvents.push(e),
               pendingInitiate,
+              participantNames,
+              actingCharacters,
             },
             undefined,
           ),

@@ -114,3 +114,49 @@ describe('ft-system MYT-70 resource-ledger guidance', () => {
     expect(p).toMatch(/reuse them exactly/i)
   })
 })
+
+describe('ft-system player-agency in multiplayer (myth-ph544)', () => {
+  const render = (): string =>
+    loadPrompt('session', 'ft-system', { ft_context: 'FTCTX', party_roster: 'Arin, Bryn' })
+
+  it('states that each player character belongs to its own player, never the DM', () => {
+    const p = render()
+    expect(p).toMatch(/belong[s]? to (its own|their) player/i)
+    expect(p).toMatch(/never voice a player character|you never voice a player/i)
+  })
+
+  it('forbids authoring the addressed PC when one character addresses another', () => {
+    const p = render()
+    // the cross-address case must be named explicitly, not just the generic rule
+    expect(p).toMatch(/addresses another|one character addresses/i)
+    expect(p).toMatch(/hold the (beat|floor)|leave the floor/i)
+  })
+
+  it('enumerates the five things the DM must never do to another PC', () => {
+    const p = render()
+    expect(p).toMatch(/put words in a player character'?s mouth/i)
+    expect(p).toMatch(/move a player character'?s body|move .* body/i)
+    expect(p).toMatch(/equipment|possessions/i)
+    expect(p).toMatch(/roll a check for an action .* did not declare/i)
+  })
+
+  it('honors a player reclaiming/correcting a detail about their own character', () => {
+    expect(render()).toMatch(/reclaim|corrects a detail/i)
+  })
+
+  it('bars the DM from emitting the "CharacterName:" attributed input format', () => {
+    const p = render()
+    expect(p).toMatch(/how players speak to you|players'? input/i)
+    expect(p).toMatch(/never begin a line with a character'?s name|never .* attributed format/i)
+  })
+
+  it('does not weave a response to an action a silent character has not taken', () => {
+    expect(render()).toMatch(/has not acted|silent character|did not take/i)
+  })
+
+  it('holds the floor even when a question demands a PC\'s expertise, and bars tools on their behalf', () => {
+    const p = render()
+    expect(p).toMatch(/demand[s]? a particular character'?s knowledge|expert read belongs/i)
+    expect(p).toMatch(/lore tool|lore lookup|knowledge check/i)
+  })
+})

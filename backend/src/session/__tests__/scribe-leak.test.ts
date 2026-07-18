@@ -478,6 +478,9 @@ function searchLoreDeps(
     combatParty: vi.fn().mockResolvedValue([]),
     recordCombat: vi.fn(),
     pendingInitiate: vi.fn().mockReturnValue(null),
+    // myth-ph544 gate OFF (empty roster) — this suite drives lore leaks, not agency.
+    participantNames: [],
+    actingCharacters: new Set<string>(),
   }
 }
 

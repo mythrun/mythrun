@@ -110,6 +110,11 @@ export interface SessionControllerDeps {
    *  `:state` blob (two simultaneous joins lost a name to last-write-wins;
    *  caught live in the MYT-68 smoke). */
   readonly participants: readonly string[]
+  /** myth-ph544: the shared, mutable player-agency gate set. `processDmTurn`
+   *  fills it (normalized) from the batch — the PCs whose messages the DM is
+   *  now answering — before rendering. The FT skill-check/lore tools read it to
+   *  refuse rolling or recalling for a player character who did not act. */
+  readonly actingCharacters: Set<string>
   /** The enforced-ignorance-safe prep doc (session_preps.ft_context), resolved
    *  by the worker (`:state` blob → PG re-load, §3.10). */
   readonly ftContext: string
@@ -195,6 +200,21 @@ export class SessionController {
     // (crash-loud; the worker owns the terminal turn handling).
     const rows = await this.deps.transcript.listFtContextRows(this.sessionId, maxConsumedSeq)
     this.history = rowsToConversation(rows, this.deps.attributionNames)
+
+    // myth-ph544: the batch = the trailing run of player messages after the last
+    // DM turn — the characters whose actions the DM is now answering. Fill the
+    // shared gate set (normalized) so the FT tools refuse to roll or recall for
+    // a player character who did NOT act this turn. A playerless turn
+    // (correction / farewell / proactive) leaves the set empty → every PC-
+    // attributed skill/lore call is refused, which is correct.
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i]
+      if (m === undefined || m.role === 'assistant') break
+      // role is now narrowed to 'user' (the only non-assistant role).
+      if (m.characterName !== undefined && m.characterName !== '') {
+        this.deps.actingCharacters.add(m.characterName.trim().toLowerCase())
+      }
+    }
 
     // §6: fuse the one-shot onto the LAST user message BEFORE the render. The
     // fuser targets the last user message; the standing tail is appended later,

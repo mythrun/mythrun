@@ -242,6 +242,16 @@ export type FtToolDeps = Omit<SkillCheckDeps, 'abortSignal'> & {
   /** The last recorded `initiate` event this turn, or null. `resolve_combat`
    *  reads it to reconcile its deltas against the right outcome envelope. */
   readonly pendingInitiate: () => InitiateCombatEvent | null
+  // ── myth-ph544 structural player-agency gate ──
+  /** The PC roster: every session participant's character name. Used to tell a
+   *  player character apart from an NPC — NPC askers are never gated. */
+  readonly participantNames: readonly string[]
+  /** The PCs who ACTED this turn, normalized (trim + lower-case). The
+   *  skill-check and lore tools REFUSE any call attributed to a player character
+   *  in `participantNames` but NOT in this set: the FT may never roll dice or
+   *  recall knowledge on a silent player's behalf. Populated per turn (from the
+   *  batch's trailing player messages) before the FT renders. */
+  readonly actingCharacters: ReadonlySet<string>
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +670,19 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
     toolCallId,
     ...(rng !== undefined ? { rng } : {}),
   })
+  // myth-ph544 — structural player-agency gate. A dice/skill-check or lore
+  // lookup attributed to a PLAYER CHARACTER who did not act this turn is
+  // refused: the FT must never roll or recall on a silent player's behalf.
+  // NPC askers (names outside the PC roster) pass through untouched, and a PC
+  // who DID act this turn is fine. The set is read at execute time (populated
+  // before render), so the closure captures the live reference.
+  const normName = (s: string): string => s.trim().toLowerCase()
+  const pcRoster = new Set(deps.participantNames.map(normName))
+  const isSilentPc = (name: string | undefined): boolean => {
+    if (name === undefined || name === '') return false
+    const n = normName(name)
+    return pcRoster.has(n) && !deps.actingCharacters.has(n)
+  }
   return {
     roll_dice: tool({
       description:
@@ -675,6 +698,12 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         'Resolve a D&D 5e skill check for one character. Call BEFORE narrating any uncertain attempt. The returned constraint is the authoritative outcome — narrate HOW it happens, never whether.',
       inputSchema: ROLL_SKILL_CHECK_INPUT,
       execute: async (input, { abortSignal }) => {
+        // myth-ph544: never roll for a player character who did not act this turn.
+        if (isSilentPc(input.character_name)) {
+          return {
+            error: `Cannot roll for ${input.character_name} — that is another player's character and they have not acted this turn. Hold the floor and let their player decide; do not narrate a result.`,
+          }
+        }
         // exactOptionalPropertyTypes: the schema infers advantage/disadvantage
         // as `boolean | undefined`, but SkillCheckInput declares them as
         // `boolean?` (no explicit undefined). Conditional-spread the two
@@ -860,6 +889,17 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         'is conveying what they know.',
       inputSchema: SEARCH_LORE_INPUT,
       execute: (input, { abortSignal }) => {
+        // myth-ph544: never recall knowledge on behalf of a player character who
+        // did not act this turn (an Arcana/History/etc. lookup asked AS a silent
+        // PC is puppeting their knowledge check). NPC askers are unaffected.
+        const asker = input.asker_name
+        if (asker !== undefined && isSilentPc(asker)) {
+          return Promise.resolve({
+            result: `That knowledge belongs to ${asker}'s player — you cannot recall it on their behalf. Leave the floor to them; narrate only NPCs and the world.`,
+            skill_gate: null,
+            roll_hidden: false,
+          })
+        }
         const topic = input.topic
         // searchLore is TOTAL (swallows any embed/query throw to []), so it
         // CANNOT distinguish an infra-failure empty from a genuine empty: the

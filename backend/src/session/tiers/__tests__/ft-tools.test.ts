@@ -330,6 +330,10 @@ function makeDeps(
   runInTx: LedgerTxRunner = passthroughTx(ledger),
   lookup: LookupSurface = makeLookupSurface(),
   combat: CombatSurface = makeCombatSurface(),
+  // myth-ph544 gate: default OFF (empty roster ⇒ isSilentPc always false), so
+  // existing tests are unaffected; gate tests pass a roster + acting set.
+  participantNames: readonly string[] = [],
+  actingCharacters: ReadonlySet<string> = new Set<string>(),
 ): FtToolDeps {
   return {
     mech,
@@ -340,6 +344,8 @@ function makeDeps(
     turnId: 'turn-1',
     ...lookup,
     ...combat,
+    participantNames,
+    actingCharacters,
   }
 }
 
@@ -362,6 +368,61 @@ function requireExecute(
   if (exec === undefined) throw new Error(`${name}.execute missing`)
   return exec
 }
+
+describe('myth-ph544 — player-agency tool gate', () => {
+  const ROSTER = ['Brenna Kell', 'Onwe Tass']
+
+  it('roll_skill_check REFUSES a PC who did not act this turn', async () => {
+    // acting = only Brenna; the FT tries to roll for the silent Onwe.
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, undefined, undefined, ROSTER, new Set(['brenna kell']))
+    const out = (await requireExecute(buildFtTools(deps), 'roll_skill_check')(
+      { character_name: 'Onwe Tass', skill: 'Arcana', context: 'recalling seal lore' },
+      callOpts(),
+    )) as { error?: string }
+    expect(out.error).toMatch(/another player'?s character/i)
+    // gated BEFORE resolution — the Haiku DC table is never touched.
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  it('roll_skill_check ALLOWS a PC who acted this turn (proceeds to resolution)', async () => {
+    mockDcTableOnce()
+    const mech = foundMech(makeCharacter(), [{ skill_name: 'Arcana', proficiency_level: 'proficient' }])
+    const deps = makeDeps(mech, fakeLedger(), undefined, undefined, undefined, ROSTER, new Set(['onwe tass']))
+    const out = (await requireExecute(buildFtTools(deps, scriptedRng(12)), 'roll_skill_check')(
+      { character_name: 'Onwe Tass', skill: 'Arcana', context: 'recalling seal lore' },
+      callOpts(),
+    )) as { error?: string; constraint?: string }
+    expect(out.error ?? '').not.toMatch(/another player'?s character/i)
+    expect(out.constraint).toBeDefined()
+  })
+
+  it('search_lore REFUSES a knowledge lookup asked AS a silent PC', async () => {
+    const deps = makeDeps(foundMech(makeCharacter(), []), fakeLedger(), undefined, undefined, undefined, ROSTER, new Set(['brenna kell']))
+    const out = (await requireExecute(buildFtTools(deps), 'search_lore')(
+      { channel: 'dm', skill: 'arcana', asker_name: 'Onwe Tass', topic: 'forged guild seals' },
+      callOpts(),
+    )) as { result?: string }
+    expect(out.result).toMatch(/belongs to Onwe Tass'?s player|recall it on their behalf/i)
+  })
+
+  it('search_lore ALLOWS an NPC asker (name outside the PC roster)', async () => {
+    // NPC asker not in the roster → gate passes → real fail-soft resolution.
+    const deps = makeDeps(
+      foundMech(makeCharacter(), []),
+      fakeLedger(),
+      undefined,
+      makeLookupSurface({ resolveEntityId: vi.fn().mockResolvedValue(null) }),
+      undefined,
+      ROSTER,
+      new Set(),
+    )
+    const out = (await requireExecute(buildFtTools(deps), 'search_lore')(
+      { channel: 'npc', asker_name: 'Bel the keeper', topic: 'the pass road lamps' },
+      callOpts(),
+    )) as { result?: string }
+    expect(out.result ?? '').not.toMatch(/belongs to .*player/i)
+  })
+})
 
 describe('ROLL_DICE_INPUT', () => {
   it('rejects count below 1, above MAX, and non-integer', () => {
