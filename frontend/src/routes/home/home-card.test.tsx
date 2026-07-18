@@ -127,7 +127,7 @@ describe('CampaignCard — world · creator line', () => {
 
   it('keeps the creator credit even when the names match (renamed-free joined world)', () => {
     renderCard(makeCampaign({ name: 'Aerth', worldName: 'Aerth', creator: 'Brennan' }))
-    const world = screen.getByTestId('card-world').textContent ?? ''
+    const world = screen.getByTestId('card-world').textContent
     expect(world).toContain('Brennan')
     expect(world.startsWith('Aerth')).toBe(false)
   })
