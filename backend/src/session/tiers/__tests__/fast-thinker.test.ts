@@ -1775,6 +1775,10 @@ describe('myth-ph544 — stripLeadingPcPrefix', () => {
     expect(stripLeadingPcPrefix(t, PCS)).toBe(t)
   })
 
+  it('skips an empty roster entry and still matches a real name', () => {
+    expect(stripLeadingPcPrefix('Onwe Tass: x', ['', 'Onwe Tass'])).toBe('x')
+  })
+
   it('stripPcPrefixFromParts drops a first text part that is only the prefix', () => {
     const parts = [
       { kind: 'text' as const, text: 'Onwe Tass:' },

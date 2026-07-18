@@ -678,8 +678,7 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
   // before render), so the closure captures the live reference.
   const normName = (s: string): string => s.trim().toLowerCase()
   const pcRoster = new Set(deps.participantNames.map(normName))
-  const isSilentPc = (name: string | undefined): boolean => {
-    if (name === undefined || name === '') return false
+  const isSilentPc = (name: string): boolean => {
     const n = normName(name)
     return pcRoster.has(n) && !deps.actingCharacters.has(n)
   }

@@ -713,8 +713,7 @@ class PartsAssembler {
  *  a PC name appearing mid-prose is untouched, and DM prose never legitimately
  *  opens with "Name:". */
 export function stripLeadingPcPrefix(text: string, participants: readonly string[]): string {
-  const lead = /^\s*/.exec(text)?.[0] ?? ''
-  const rest = text.slice(lead.length)
+  const rest = text.trimStart()
   for (const name of participants) {
     if (name === '') continue
     const prefix = `${name}:`
