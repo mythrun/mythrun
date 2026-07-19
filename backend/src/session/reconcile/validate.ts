@@ -27,6 +27,13 @@ export interface ValidateCtx {
   readonly workingSet: readonly WorkingSetItem[]
   readonly liveCandidateEntityIds: ReadonlySet<string> // ids of canon entities the plan may 'match'
   readonly liveFactIds: ReadonlySet<string> // ids of live canon facts a supersede may target
+  /** Name-rebind heal (lowercased trimmed candidate name → id; names carried by
+   *  more than one candidate are EXCLUDED at construction). A match op whose
+   *  canonEntityId doesn't bind — Opus reliably names entities and unreliably
+   *  transcribes UUIDs — rebinds to the candidate its claimed `name` uniquely
+   *  identifies, instead of rejecting the whole plan and re-spending the Opus
+   *  call. Optional so older callers/tests keep strict behavior. */
+  readonly candidateIdsByName?: ReadonlyMap<string, string>
 }
 
 /** How a subjectName resolves for the commit: an existing canon id, or a mint. */
@@ -34,12 +41,35 @@ export type SubjectResolution =
   | { readonly kind: 'match'; readonly id: string }
   | { readonly kind: 'mint' }
 
+/** One healed match: the plan claimed `name` under a non-binding id; the
+ *  validator rebound it to the unique live candidate `to`. Surfaced so the
+ *  processor can log the heal (counts + names are not secret content). */
+export interface MatchRebind {
+  readonly subjectName: string
+  readonly name: string
+  readonly to: string
+}
+
+/** One degraded match: neither the claimed id nor the claimed name resolved a
+ *  live canon entity, so the op minted instead of rejecting the whole plan.
+ *  With the processor's canon-by-name pre-pass in front, a demotion means the
+ *  name genuinely is not in canon — i.e. the model said 'match' about a new
+ *  thing, and mint is what it meant. */
+export interface MatchDemotion {
+  readonly subjectName: string
+  readonly name: string
+}
+
 export type ValidateResult =
-  | { readonly ok: true; readonly map: ReadonlyMap<string, SubjectResolution> }
+  | {
+      readonly ok: true
+      readonly map: ReadonlyMap<string, SubjectResolution>
+      readonly rebinds: readonly MatchRebind[]
+      readonly demotions: readonly MatchDemotion[]
+    }
   | { readonly ok: false; readonly reason: ValidateRejectReason }
 
 export type ValidateRejectReason =
-  | 'dangling_match' // a match op's canonEntityId is null OR not in liveCandidateEntityIds
   | 'dangling_fact_subject' // a fact.subjectName not resolvable to an entity op
   | 'dangling_relationship_endpoint' // a relationship endpoint not resolvable to an entity op
   | 'supersede_target_not_live' // a supersedesFactId not in liveFactIds
@@ -60,14 +90,32 @@ export function validateReconcilePlan(plan: ReconcilePlan, ctx: ValidateCtx): Va
   // the tier-floor + attribution join key.
   const wsBySubject = firstBySubject(ctx.workingSet)
 
-  // 1. Entity ops -> resolution map. A match must point at a live candidate.
+  // 1. Entity ops -> resolution map. A match must point at a live candidate —
+  //    with the NAME-REBIND heal: a non-binding id (null, hallucinated, or a
+  //    mis-transcribed UUID) whose claimed `name` uniquely identifies a live
+  //    candidate rebinds to that candidate instead of rejecting the plan (each
+  //    rejection re-spends the whole Opus reconcile; three consecutive live
+  //    rejections were exactly this failure).
   const map = new Map<string, SubjectResolution>()
+  const rebinds: MatchRebind[] = []
+  const demotions: MatchDemotion[] = []
   for (const e of plan.entities) {
     if (e.op === 'match') {
-      if (e.canonEntityId === null || !ctx.liveCandidateEntityIds.has(e.canonEntityId)) {
-        return { ok: false, reason: 'dangling_match' }
+      if (e.canonEntityId !== null && ctx.liveCandidateEntityIds.has(e.canonEntityId)) {
+        map.set(e.subjectName, { kind: 'match', id: e.canonEntityId })
+        continue
       }
-      map.set(e.subjectName, { kind: 'match', id: e.canonEntityId })
+      const healed = ctx.candidateIdsByName?.get(e.name.trim().toLowerCase())
+      if (healed !== undefined) {
+        rebinds.push({ subjectName: e.subjectName, name: e.name, to: healed })
+        map.set(e.subjectName, { kind: 'match', id: healed })
+        continue
+      }
+      // Total: an unresolvable match MINTS rather than rejecting the plan (a
+      // rejection re-spends the whole Opus reconcile and, at attempts-cap,
+      // bricks the campaign at the boundary — seen live, 5/5 rejections).
+      demotions.push({ subjectName: e.subjectName, name: e.name })
+      map.set(e.subjectName, { kind: 'mint' })
     } else {
       map.set(e.subjectName, { kind: 'mint' })
     }
@@ -102,7 +150,7 @@ export function validateReconcilePlan(plan: ReconcilePlan, ctx: ValidateCtx): Va
     if (!ctx.liveFactIds.has(id)) return { ok: false, reason: 'dangling_promotion' }
   }
 
-  return { ok: true, map }
+  return { ok: true, map, rebinds, demotions }
 }
 
 /** First working-set item per subjectName (later duplicates ignored). */

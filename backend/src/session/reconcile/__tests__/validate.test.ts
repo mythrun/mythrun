@@ -93,18 +93,104 @@ describe('validateReconcilePlan', () => {
     expect(result.map.get('Mira')).toEqual({ kind: 'match', id: CANON_ALDRIC })
   })
 
-  it('rejects a match op whose canonEntityId is not a live candidate', () => {
+  it('DEGRADES a match with an unknown id and unresolvable name to a MINT (total entity ops)', () => {
     const p = plan({
-      entities: [entityOp({ op: 'match', canonEntityId: CANON_ALDRIC })],
+      entities: [entityOp({ op: 'match', subjectName: 'Aldric', name: 'Aldric', canonEntityId: CANON_ALDRIC })],
+      facts: [factOp({ subjectName: 'Aldric' })],
     })
     const result = validateReconcilePlan(p, ctx({ liveCandidateEntityIds: new Set(['some-other-id']) }))
-    expect(result).toEqual({ ok: false, reason: 'dangling_match' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.map.get('Aldric')).toEqual({ kind: 'mint' })
+    expect(result.demotions).toEqual([{ subjectName: 'Aldric', name: 'Aldric' }])
   })
 
-  it('rejects a match op with a null canonEntityId', () => {
-    const p = plan({ entities: [entityOp({ op: 'match', canonEntityId: null })] })
+  it('DEGRADES a null-id unresolvable match to a MINT the same way', () => {
+    const p = plan({
+      entities: [entityOp({ op: 'match', subjectName: 'Aldric', name: 'Aldric', canonEntityId: null })],
+      facts: [factOp({ subjectName: 'Aldric' })],
+    })
     const result = validateReconcilePlan(p, ctx({ liveCandidateEntityIds: new Set([CANON_ALDRIC]) }))
-    expect(result).toEqual({ ok: false, reason: 'dangling_match' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.map.get('Aldric')).toEqual({ kind: 'mint' })
+  })
+
+  // ── myth-<reconcile-rebind> — the name-rebind heal. A match whose id doesn't
+  // bind but whose claimed NAME uniquely identifies a live candidate rebinds to
+  // that candidate instead of rejecting (Opus reliably names entities and
+  // unreliably transcribes UUIDs; 3 consecutive live rejections were this).
+  it('HEALS a match with an unknown id when the op name uniquely resolves a candidate', () => {
+    const p = plan({
+      entities: [
+        entityOp({ subjectName: 'Old Renn', op: 'match', name: 'Old Renn', canonEntityId: '0192a000-0000-7000-8000-00000000BAD1' }),
+      ],
+      facts: [factOp({ subjectName: 'Old Renn' })],
+    })
+    const result = validateReconcilePlan(
+      p,
+      ctx({
+        liveCandidateEntityIds: new Set([CANON_ALDRIC]),
+        candidateIdsByName: new Map([['old renn', CANON_ALDRIC]]),
+      }),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.map.get('Old Renn')).toEqual({ kind: 'match', id: CANON_ALDRIC })
+    expect(result.rebinds).toEqual([
+      { subjectName: 'Old Renn', name: 'Old Renn', to: CANON_ALDRIC },
+    ])
+  })
+
+  it('HEALS a null-id match the same way (match-by-name intent)', () => {
+    const p = plan({
+      entities: [entityOp({ subjectName: 'Bel', op: 'match', name: 'Bel Harren', canonEntityId: null })],
+      facts: [factOp({ subjectName: 'Bel' })],
+    })
+    const result = validateReconcilePlan(
+      p,
+      ctx({
+        liveCandidateEntityIds: new Set([CANON_ALDRIC]),
+        candidateIdsByName: new Map([['bel harren', CANON_ALDRIC]]),
+      }),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.map.get('Bel')).toEqual({ kind: 'match', id: CANON_ALDRIC })
+  })
+
+  it('prefers the NAME REBIND over the mint-degrade when the name resolves', () => {
+    const p = plan({
+      entities: [
+        entityOp({ subjectName: 'Renn', op: 'match', name: 'Old Renn', canonEntityId: 'bad-id' }),
+        entityOp({ subjectName: 'Stranger', op: 'match', name: 'Total Stranger', canonEntityId: 'bad-id-2' }),
+      ],
+      facts: [factOp({ subjectName: 'Renn' }), factOp({ subjectName: 'Stranger' })],
+    })
+    const result = validateReconcilePlan(
+      p,
+      ctx({
+        liveCandidateEntityIds: new Set([CANON_ALDRIC]),
+        candidateIdsByName: new Map([['old renn', CANON_ALDRIC]]),
+      }),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.map.get('Renn')).toEqual({ kind: 'match', id: CANON_ALDRIC })
+    expect(result.map.get('Stranger')).toEqual({ kind: 'mint' })
+    expect(result.rebinds).toHaveLength(1)
+    expect(result.demotions).toEqual([{ subjectName: 'Stranger', name: 'Total Stranger' }])
+  })
+
+  it('valid-id matches record NO rebind (the heal is collision-path only)', () => {
+    const p = plan({
+      entities: [entityOp({ subjectName: 'Mira', op: 'match', name: 'Mira', canonEntityId: CANON_ALDRIC })],
+      facts: [factOp({ subjectName: 'Mira' })],
+    })
+    const result = validateReconcilePlan(p, ctx({ liveCandidateEntityIds: new Set([CANON_ALDRIC]) }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.rebinds).toEqual([])
   })
 
   it('rejects a fact whose subjectName is in no entity op', () => {
@@ -301,14 +387,15 @@ describe('validateReconcilePlan', () => {
     expect(r.ok).toBe(true)
   })
 
-  it('returns the first failure in entities -> facts -> relationships order', () => {
-    // a dangling match (entities) co-occurs with a dangling fact subject (facts);
-    // the entity failure must win.
+  it('returns the first REMAINING failure class (entity ops are total now): facts before relationships', () => {
+    // The old first-class entity failure (dangling_match) degrades to a mint,
+    // so the unresolvable-match entity op no longer rejects — the dangling
+    // FACT subject is the first reachable failure.
     const p = plan({
       entities: [entityOp({ op: 'match', canonEntityId: null })],
       facts: [factOp({ subjectName: 'Ghost' })],
     })
     const result = validateReconcilePlan(p, ctx())
-    expect(result).toEqual({ ok: false, reason: 'dangling_match' })
+    expect(result).toEqual({ ok: false, reason: 'dangling_fact_subject' })
   })
 })

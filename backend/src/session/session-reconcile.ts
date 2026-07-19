@@ -100,6 +100,11 @@ export interface ReconcileRepo {
   readonly worlds: {
     getSnapshotSummary(id: string): Promise<{ tone: string | null } | null>
   }
+  readonly entities: {
+    /** Canon-by-name second-chance resolve for the validator's name-rebind heal:
+     *  case/space-normalized exact name → id within the world, else null. */
+    findIdByWorldAndNormalizedName(worldId: string, name: string): Promise<string | null>
+  }
   readonly transaction: Repo['transaction']
 }
 
@@ -275,7 +280,54 @@ async function runReconcile(
   // 7. Validate (PURE, security-critical). A reject logs a STRUCTURAL code +
   //    op COUNTS only (NEVER content) and THROWS so the non-deterministic Opus
   //    call is retried; the attempts cap bounds it.
-  const v = validateReconcilePlan(plan, { workingSet: items, liveCandidateEntityIds, liveFactIds })
+  // Name-rebind heal input: candidate name → id, EXCLUDING names carried by
+  // more than one candidate (an ambiguous rebind would be a guess — reject
+  // instead). Lowercased+trimmed to match how the model echoes names.
+  const nameCounts = new Map<string, number>()
+  for (const c of candidates) {
+    const k = c.name.trim().toLowerCase()
+    nameCounts.set(k, (nameCounts.get(k) ?? 0) + 1)
+  }
+  const candidateIdsByName = new Map<string, string>()
+  for (const c of candidates) {
+    const k = c.name.trim().toLowerCase()
+    if (nameCounts.get(k) === 1) candidateIdsByName.set(k, c.entityId)
+  }
+
+  // Canon-by-name second chance: a match op whose id doesn't bind and whose
+  // name is missing from the (top-K-per-subject) candidate set may still name a
+  // REAL canon entity the retrieval simply didn't surface — seen live with
+  // 'Maret Varden', canon since session 1 but absent from a large session's
+  // candidate union. One indexed lookup per unresolved name.
+  for (const e of plan.entities) {
+    if (e.op !== 'match') continue
+    const k = e.name.trim().toLowerCase()
+    if (e.canonEntityId !== null && liveCandidateEntityIds.has(e.canonEntityId)) continue
+    if (candidateIdsByName.has(k)) continue
+    const canonId = await deps.repo.entities.findIdByWorldAndNormalizedName(worldId, e.name)
+    if (canonId !== null) {
+      candidateIdsByName.set(k, canonId)
+      liveCandidateEntityIds.add(canonId)
+    }
+  }
+
+  const v = validateReconcilePlan(plan, {
+    workingSet: items,
+    liveCandidateEntityIds,
+    liveFactIds,
+    candidateIdsByName,
+  })
+  if (v.ok && (v.rebinds.length > 0 || v.demotions.length > 0)) {
+    // Names + ids only — never fact content (enforced-ignorance log posture).
+    deps.logger.warn(
+      {
+        sessionId,
+        rebinds: v.rebinds.map((r) => ({ name: r.name, to: r.to })),
+        demotions: v.demotions.map((d) => d.name),
+      },
+      'reconcile_entity_ops_healed',
+    )
+  }
   if (!v.ok) {
     deps.logger.error(
       {

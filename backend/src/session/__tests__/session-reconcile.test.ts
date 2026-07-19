@@ -216,7 +216,8 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; re
           return Promise.resolve(knobs.liveFacts)
         },
       },
-      worlds: { getSnapshotSummary: () => Promise.resolve(knobs.worldTone === null ? null : ({ tone: knobs.worldTone } as never)) },
+      entities: { findIdByWorldAndNormalizedName: () => Promise.resolve(null) },
+    worlds: { getSnapshotSummary: () => Promise.resolve(knobs.worldTone === null ? null : ({ tone: knobs.worldTone } as never)) },
       // `transaction` is only read by applyCommit, which is injected as a fake here.
       transaction: () => Promise.reject(new Error('transaction must not be called directly')),
     },

@@ -296,7 +296,8 @@ function makeLeakDeps(): LeakDepsResult {
     repo: {
       sessions: { getById: () => Promise.resolve(session()) },
       facts: { listByEntities: () => Promise.resolve([]) },
-      worlds: { getSnapshotSummary: () => Promise.resolve({ tone: 'grim and rain-soaked' }) },
+      entities: { findIdByWorldAndNormalizedName: () => Promise.resolve(null) },
+    worlds: { getSnapshotSummary: () => Promise.resolve({ tone: 'grim and rain-soaked' }) },
       transaction: () => Promise.reject(new Error('transaction must not be called directly')),
     },
     workingSet: {
