@@ -355,6 +355,27 @@ describe('processReconcileJob — entity-op heals (myth-ejsp5)', () => {
     )
   })
 
+  it('candidate-name rebind skips the canon lookup (name already in the candidate map)', async () => {
+    // The match op's name equals the retrieved candidate's name; the pre-pass
+    // must skip the DB lookup (covered branch) and validate rebinds via the map.
+    const base = validPlan()
+    const plan = {
+      ...base,
+      entities: base.entities.map((e) => ({ ...e, canonEntityId: 'bogus-id' })),
+    }
+    const { deps, rec } = makeDeps({ plan })
+    await processReconcileJob(deps, job())
+
+    expect(rec.committedArgs).toHaveLength(1)
+    const args = rec.committedArgs[0] as { map: Map<string, { kind: string; id?: string }> }
+    // bound to the CANDIDATE's id purely by name — no canonByName knob set.
+    expect(args.map.get('the duke')?.kind).toBe('match')
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ demotions: [] }),
+      'reconcile_entity_ops_healed',
+    )
+  })
+
   it('mint-degrade: an unresolvable match commits as a MINT and warns with the demoted name', async () => {
     const base = validPlan()
     const plan = {
