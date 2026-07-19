@@ -182,6 +182,8 @@ interface Knobs {
   committed: boolean
   /** worlds.getById tone projection. */
   worldTone: string | null
+  /** canon-by-name second-chance lookup (lowercased name → id); default empty. */
+  canonByName: Record<string, string>
 }
 
 function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; rec: Recorders } {
@@ -194,6 +196,7 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; re
     plan: validPlan(),
     committed: true,
     worldTone: 'grim, low-fantasy, terse',
+    canonByName: {},
     ...over,
   }
   const rec: Recorders = {
@@ -216,7 +219,10 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; re
           return Promise.resolve(knobs.liveFacts)
         },
       },
-      entities: { findIdByWorldAndNormalizedName: () => Promise.resolve(null) },
+      entities: {
+        findIdByWorldAndNormalizedName: (_worldId, name) =>
+          Promise.resolve(knobs.canonByName[name.trim().toLowerCase()] ?? null),
+      },
     worlds: { getSnapshotSummary: () => Promise.resolve(knobs.worldTone === null ? null : ({ tone: knobs.worldTone } as never)) },
       // `transaction` is only read by applyCommit, which is injected as a fake here.
       transaction: () => Promise.reject(new Error('transaction must not be called directly')),
@@ -324,6 +330,47 @@ describe('processReconcileJob — early-outs', () => {
     expect(rec.reconcilerCalls).toHaveLength(0)
     expect(rec.released).toBe(0) // never acquired the lock
     expect(rec.cleared).toEqual([CAMPAIGN]) // defensive clear of the interlock
+  })
+})
+
+describe('processReconcileJob — entity-op heals (myth-ejsp5)', () => {
+  it('canon-by-name pre-pass: an unknown-id match whose name lives in canon (not candidates) heals and commits', async () => {
+    // plan matches 'Old Renn' with a bogus id; candidates don't carry that name;
+    // the canon lookup does — the commit must receive the healed binding and the
+    // heal warn must fire with names/ids only.
+    const base = validPlan()
+    const plan = {
+      ...base,
+      entities: base.entities.map((e) => ({ ...e, name: 'Old Renn', canonEntityId: 'bogus-id' })),
+    }
+    const { deps, rec } = makeDeps({ plan, canonByName: { 'old renn': 'e-renn-canon' } })
+    await processReconcileJob(deps, job())
+
+    expect(rec.committedArgs).toHaveLength(1)
+    const args = rec.committedArgs[0] as { map: Map<string, { kind: string; id?: string }> }
+    expect(args.map.get('the duke')).toEqual({ kind: 'match', id: 'e-renn-canon' })
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ rebinds: [{ name: 'Old Renn', to: 'e-renn-canon' }] }),
+      'reconcile_entity_ops_healed',
+    )
+  })
+
+  it('mint-degrade: an unresolvable match commits as a MINT and warns with the demoted name', async () => {
+    const base = validPlan()
+    const plan = {
+      ...base,
+      entities: base.entities.map((e) => ({ ...e, name: 'Total Stranger', canonEntityId: null })),
+    }
+    const { deps, rec } = makeDeps({ plan })
+    await processReconcileJob(deps, job())
+
+    expect(rec.committedArgs).toHaveLength(1)
+    const args = rec.committedArgs[0] as { map: Map<string, { kind: string }> }
+    expect(args.map.get('the duke')).toEqual({ kind: 'mint' })
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ demotions: ['Total Stranger'] }),
+      'reconcile_entity_ops_healed',
+    )
   })
 })
 
