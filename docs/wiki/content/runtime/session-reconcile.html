@@ -21,8 +21,8 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:562e88583ca23e839905b191b44989d6aa37f94cd3a03832d16fb1e510de0ba8 -->
-<!-- last-ticket: myth-x4ca4 -->
+<!-- source-hash: sha256:6160647f6aa3d8153fc07b7c6fa91517dbd790a57488e8ff5e1f49b5fb873ed2 -->
+<!-- last-ticket: myth-ejsp5 -->
 
 <h1>End-of-session reconciliation</h1>
 
@@ -386,12 +386,50 @@
 <p>
   <code>session/reconcile/validate.ts</code> is pure (no I/O) and security-critical. It builds the
   load-bearing <strong>subject-name → entity-id map</strong> (matched canon ids plus minted ids) and
-  resolves every fact and relationship op through it. The arms: every <code>match</code> points at a
-  live candidate; every minted type is legal (<code>npc | location | faction | item</code>); every
-  fact subject and every relationship endpoint resolves to an entity op (else it is a dangling ref →
-  reject); a supersede target is a live fact; and — MYT-74c — every <code>promotions</code> id is a
-  live candidate fact (<code>dangling_promotion</code> otherwise). There is no semantic re-judgment
-  here — the validator enforces structure and policy, not meaning.
+  resolves every fact and relationship op through it. Entity-op resolution is
+  <strong>total</strong> — every <code>match</code> op lands in the map, through a resolution chain
+  that heals rather than rejects. <strong>Id-bind</strong>: the claimed
+  <code>canonEntityId</code> is a live candidate → bind as claimed. <strong>Name-rebind</strong>: a
+  non-binding id (null, hallucinated, or a mis-transcribed UUID) whose claimed
+  <code>name</code> uniquely identifies one live candidate → rebind to that candidate. A name
+  carried by more than one candidate is excluded from the rebind map at construction — an ambiguous
+  rebind would be a guess. <strong>Mint-degrade</strong> is the floor: a match that neither binds
+  nor rebinds mints a new entity instead of failing the plan. Heals surface on the ok result as
+  <code>rebinds</code> and <code>demotions</code>, and the worker warn-logs them
+  (<code>reconcile_entity_ops_healed</code>) as entity names and ids only — never fact prose.
+</p>
+
+<p>
+  Between the Opus call and the validator, the worker runs a
+  <strong>canon-by-name pre-pass</strong>: for each match op that would neither id-bind nor
+  name-rebind, one indexed <code>entities.findIdByWorldAndNormalizedName</code> lookup asks whether
+  the claimed name is real canon the top-K-per-subject retrieval simply never surfaced. A hit joins
+  the rebind map and the live-candidate set, so the validator heals it as a rebind rather than
+  demoting a genuinely canonical entity to a duplicate mint.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Entity ops heal or mint — they never reject (myth-ejsp5)</strong> — the original posture
+  rejected the whole plan when a <code>match</code>'s <code>canonEntityId</code> didn't bind
+  (<code>dangling_match</code>). Live, that was a brick: Opus reliably names entities and unreliably
+  transcribes UUIDs, and it emitted match-with-null-id in two shapes — naming <em>real</em> canon
+  the per-subject candidate retrieval never surfaced ("Maret Varden", canon since session 1), and
+  match-where-mint-was-meant for genuinely new entities. Five consecutive plans rejected (each
+  rejection re-spends the whole Opus reconcile, ~$0.50), the exhausted job vanished
+  (<code>removeOnFail</code>), and the campaign stuck at <code>reconcile_pending</code> forever.
+  Each entity op is independently healable, so failing the whole plan bought nothing — and
+  mint-degrade is a safe floor <em>because</em> the canon-by-name pre-pass sits in front of it: a
+  wrong mint now requires a name genuinely absent from canon, and a near-duplicate entity is a wart
+  a later reconcile can match against, where a bricked campaign is an outage.
+  <code>dangling_match</code> left the reject union entirely — it is unreachable.
+</aside>
+
+<p>
+  The remaining arms still reject: every fact subject and every relationship endpoint resolves to an
+  entity op (else it is a dangling ref → reject); a supersede target is a live fact; and — MYT-74c —
+  every <code>promotions</code> id is a live candidate fact (<code>dangling_promotion</code>
+  otherwise). There is no semantic re-judgment here — the validator enforces structure and policy,
+  not meaning.
 </p>
 
 <aside class="wiki-rationale">
@@ -405,11 +443,14 @@
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Reject the plan, don't silently fix it</strong> — a dangling reference or a tier downgrade
-  is a model bug worth surfacing. The validator returns the first failure as a structural reason
-  code and the worker throws, so the non-deterministic Opus call is retried (the attempts cap bounds
-  a persistently-failing one). A partial commit never happens — validation runs entirely before the
-  transaction opens.
+  <strong>The remaining arms reject, not silently fix</strong> — a dangling fact subject, a dead
+  supersede target, a tier downgrade, or a dropped attribution is a model bug worth surfacing, and
+  unlike an entity-op miss none of them has a deterministic heal that preserves meaning: rebinding a
+  fact to a guessed subject would hang prose on the wrong entity, and auto-raising a downgraded tier
+  would paper over a policy violation the retry usually fixes. The validator returns the first
+  failure as a structural reason code and the worker throws, so the non-deterministic Opus call is
+  retried (the attempts cap bounds a persistently-failing one). A partial commit never happens —
+  validation runs entirely before the transaction opens.
 </aside>
 
 <h3>4. Commit (deterministic, transactional)</h3>
@@ -740,9 +781,12 @@
   it), and every alert payload — a validator reject, a terminal failure — carries
   <strong>structural facts only</strong>: op counts, a reject reason code, ids,
   <code>sessionId</code>, never <code>content</code> prose or the working-set snapshot. A reject
-  reason is a structural code (<code>dangling_match</code>, <code>tier_downgrade</code>,
-  <code>dangling_promotion</code>, …), never a string that echoes a fact. The success and reject
-  logs carry <code>promotions.length</code> as a count — never the promoted fact ids or content.
+  reason is a structural code (<code>tier_downgrade</code>, <code>dangling_promotion</code>, …),
+  never a string that echoes a fact. The entity-op heal warn
+  (<code>reconcile_entity_ops_healed</code>) carries rebound and demoted entity
+  <em>names and ids</em> only — an entity's name is the least-secret thing about it; its facts are
+  the secret — never working-set or fact prose. The success and reject logs carry
+  <code>promotions.length</code> as a count — never the promoted fact ids or content.
 </p>
 
 <p>
@@ -805,7 +849,10 @@
   <li>
     Confirm the worker exhausted its retries: look for a <code>reconcile_plan_rejected</code> or a
     transient-failure log line for that <code>sessionId</code> in the
-    <a href="./worker.html">worker</a> service logs (structural fields only — no plan content).
+    <a href="./worker.html">worker</a> service logs (structural fields only — no plan content). A
+    <code>reconcile_entity_ops_healed</code> warn is a benign heal (rebinds/demotions), not a
+    failure — since myth-ejsp5 entity ops cannot reject a plan, so a persistent rejection points at
+    a fact, relationship, or policy arm.
   </li>
   <li>
     The working set is not lost — it survives on the durable 5-minute Postgres checkpoint. The
@@ -954,6 +1001,11 @@
 </table>
 
 <h3>Validator reject reasons (structural codes)</h3>
+<p>
+  Entity-op resolution is total and never rejects — <code>dangling_match</code> left the union
+  (myth-ejsp5, unreachable). A non-binding match heals (name-rebind) or mints, surfaced as
+  <code>rebinds</code> / <code>demotions</code> and warn-logged.
+</p>
 <table>
   <thead>
     <tr>
@@ -962,10 +1014,6 @@
     </tr>
   </thead>
   <tbody>
-    <tr>
-      <td><code>dangling_match</code></td>
-      <td>A match op's <code>canonEntityId</code> is null or not a live candidate.</td>
-    </tr>
     <tr>
       <td><code>dangling_fact_subject</code></td>
       <td>A fact's <code>subjectName</code> resolves to no entity op.</td>
