@@ -314,6 +314,15 @@ export function buildModelMessages(ctx: FtTurnContext): ModelMessage[] {
     messages.push({ role: 'user', content: `[DM direction: ${ctx.standingDirective}]` })
   }
 
+  // myth-d6knq §turn-audit RETRY: a corrective instruction the audit gate
+  // injects when the FIRST render tripped a boundary violation. Appended LAST —
+  // closest to generation, the most urgent instruction — as a raw, uncached
+  // `[System correction: …]` tail. Render-only (never persisted, never pushed
+  // into ftHistory); absent on a normal first-attempt render.
+  if (ctx.correctiveInstruction !== undefined && ctx.correctiveInstruction !== '') {
+    messages.push({ role: 'user', content: `[System correction: ${ctx.correctiveInstruction}]` })
+  }
+
   return messages
 }
 
@@ -850,6 +859,13 @@ export class SonnetFastThinker implements FastThinker {
     }
     if (toolName === 'roll_dice') {
       await emit.emitDiceRoll(toDiceRollFrame(out, callInput))
+      return
+    }
+    // myth-d6knq §correction-channel — issue_correction echoes its correction
+    // text as data; emit it as a structured dm_correction frame (the publisher
+    // renders the wire frame). Never inline prose.
+    if (toolName === 'issue_correction') {
+      await emit.emitCorrection({ text: String(out.text) })
       return
     }
     // MYT-75 §combat L1 — initiate_combat: flip the session into combat mode,

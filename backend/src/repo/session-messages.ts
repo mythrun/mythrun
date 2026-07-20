@@ -77,11 +77,24 @@ export function sessionMessagesNs(c: ClientLike) {
 
     /** §3.7 single-piece context read: player rows up to the consumed
      *  watermark + ALL DM rows (their seqs can exceed an early next-batch
-     *  player seq when chat raced the prior turn's end), seq ASC. */
+     *  player seq when chat raced the prior turn's end), seq ASC.
+     *
+     *  myth-n98pc: `farewell`-turn rows are EXCLUDED. A prior in-fiction
+     *  session's real end-of-session send-off (trigger_kind='farewell', ending
+     *  e.g. "— End of Session One —") is teardown, not scene state; leaving it
+     *  in the FT's reconstructed context taught the model "dramatic close →
+     *  emit the marker," and it self-authored a fake "— End of Session Two —"
+     *  in an ordinary 'auto' turn while the session stayed live. Player rows and
+     *  every other DM trigger kind (incl. openly-delivered `correction` retcons)
+     *  carry a NULL-or-non-'farewell' trigger_kind, so `IS DISTINCT FROM` keeps
+     *  them (NULL IS DISTINCT FROM 'farewell' → true). This filter is the FT
+     *  context read ONLY — the post-session analysis read (`listForAnalysis`)
+     *  still surfaces farewell rows with their trigger_kind for its own path. */
     listFtContextRows: async (sessionId: string, maxPlayerSeq: number): Promise<SessionMessage[]> => {
       const result = await c.query<SessionMessageDbRow>(
         `SELECT * FROM session_messages
           WHERE session_id = $1
+            AND trigger_kind IS DISTINCT FROM 'farewell'
             AND ((message_type = 'player_message' AND seq <= $2)
                  OR message_type IN (
                    'dm_text','skill_check','dice_roll',
@@ -89,7 +102,12 @@ export function sessionMessagesNs(c: ClientLike) {
                    -- FT-context rebuild, or the FT loses its own mutation
                    -- record mid-session (a coherence break).
                    'cast_spell','spend_resource','acquire_resource',
-                   'adjust_hp','update_condition','take_rest'
+                   'adjust_hp','update_condition','take_rest',
+                   -- myth-d6knq correction channel: a correction the FT issued
+                   -- must re-enter its own context (codec decodes it back into
+                   -- the issue_correction tool exchange), or the FT can
+                   -- re-assert the very fact it just amended next turn.
+                   'dm_correction'
                  ))
           ORDER BY seq ASC`,
         [sessionId, maxPlayerSeq],
@@ -174,6 +192,27 @@ export function sessionMessagesNs(c: ClientLike) {
         content: r.content,
         triggerKind: r.trigger_kind,
       }))
+    },
+
+    /** myth-8mom0 — the FAREWELL turn's closing narration: the `dm_text` prose
+     *  rows the end-of-session send-off turn wrote (`trigger_kind='farewell'`),
+     *  in seq order. The farewell turn is player-less, so the post-turn Scribe
+     *  NEVER runs on it — its facts (an NPC's departure, an object's finished
+     *  form, where the party settled) never reach the working set, so the
+     *  end-of-session reconcile / post-session analysis would otherwise fold the
+     *  session's PRE-farewell state into canon + the next session's prep. The
+     *  reconcile + analysis workers read this durable prose (persisted at
+     *  `persistTurn`, BEFORE finalize enqueues them — race-free) and fold the
+     *  closing beats. Empty when the session had no farewell (a crash before its
+     *  render). */
+    listFarewellNarration: async (sessionId: string): Promise<readonly string[]> => {
+      const result = await c.query<{ content: string }>(
+        `SELECT content FROM session_messages
+          WHERE session_id = $1 AND trigger_kind = 'farewell' AND message_type = 'dm_text'
+          ORDER BY seq ASC`,
+        [sessionId],
+      )
+      return result.rows.map((r) => r.content)
     },
   }
 }

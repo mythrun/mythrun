@@ -114,6 +114,35 @@ describe('ledger tools (MYT-70 §8)', () => {
     })
   }
 
+  it('issue_correction (myth-d6knq) persists as a dm_correction row and round-trips', () => {
+    // The FT tool MUST be registered in DM_MESSAGE_TYPES + TOOL_TO_KIND or the
+    // turn crashes — assert both the row kind and the reconstruction.
+    expect(DM_MESSAGE_TYPES).toContain('dm_correction')
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'tool_call', toolCallId: 'k1', toolName: 'issue_correction', input: { text: 'Earlier I named the ferryman Coss; it is Trask.' } },
+        { kind: 'tool_result', toolCallId: 'k1', toolName: 'issue_correction', output: { text: 'Earlier I named the ferryman Coss; it is Trask.' } },
+      ],
+    }
+    const turnRows = assistantToRows(assistant)
+    expect(turnRows).toEqual([
+      {
+        kind: 'dm_correction',
+        content: JSON.stringify({
+          toolCallId: 'k1',
+          input: { text: 'Earlier I named the ferryman Coss; it is Trask.' },
+          output: { text: 'Earlier I named the ferryman Coss; it is Trask.' },
+        }),
+      },
+    ])
+    const rows = turnRows.map((r, i) =>
+      row({ messageType: r.kind, content: r.content, seq: 20 + i, turnOrdinal: i, turnId: 'tC' }),
+    )
+    const conv = rowsToConversation(rows, names)
+    expect(conv).toEqual([{ v: 1, role: 'assistant', parts: assistant.parts }])
+  })
+
   it('an ok:false (rejection) output persists and round-trips like any roll row', () => {
     const assistant: AssistantMessage = {
       role: 'assistant',
@@ -402,5 +431,6 @@ it('DM_MESSAGE_TYPES is the closed kind set', () => {
     'world_fact_lookup',
     'combat_initiate',
     'combat_resolve',
+    'dm_correction',
   ])
 })

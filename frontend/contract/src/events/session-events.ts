@@ -100,6 +100,15 @@ export const SERVER_FRAME_TYPES = [
   'mode_change',
   'combat_started',
   'combat_resolved',
+  // The DM CORRECTION channel: a rare, legitimate errata frame — the DM amends
+  // something previously narrated ("what was said before is corrected"). Same
+  // live-then-replayed lifecycle as the mechanical frames (streamed during a
+  // turn with no seq; replayed from the persisted `dm_correction`
+  // session_messages row on reconnect, carrying that row's seq). It is NOT DM
+  // narration: the client renders it as a set-apart errata slip in the
+  // transcript, never as story prose (so a correction can never masquerade as
+  // the fiction it corrects).
+  'dm_correction',
 ] as const
 
 // Snapshot of a connected participant, used in the reconnect replay payload.
@@ -202,6 +211,13 @@ export type ServerFrame =
     }
   // Replay-only: one consolidated DM prose row (live prose = text_delta).
   | { type: 'dm_message'; seq: number; turnId: string; text: string }
+  // myth-d6knq §correction-channel — a structured DM correction from the FT's
+  // `issue_correction` tool (never inline prose). Live-streamed during a turn
+  // (no seq) and replayed from the persisted dm_correction row on reconnect
+  // (then carrying the row's seq), same lifecycle as the mechanical frames.
+  // SHARED CONTRACT with the frontend rendering: the live frame is exactly
+  // `{ type: 'dm_correction', turnId, text }`.
+  | { type: 'dm_correction'; turnId: string; seq?: number; text: string }
   // MYT-70 character-sheet delta. Live-streamed during a turn (no seq) and
   // replayed from session_messages rows on reconnect (carrying the row's seq),
   // same lifecycle as skill_check/dice_roll above. ONE flat member: `kind`

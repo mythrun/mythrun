@@ -24,6 +24,7 @@ import type {
   CombatResolvedFramePayload,
   CombatStartedFramePayload,
   DiceRollFramePayload,
+  DmCorrectionFramePayload,
   LedgerUpdatePayload,
   ModeChangeFramePayload,
   SkillCheckFramePayload,
@@ -46,6 +47,7 @@ export interface TurnPublisher {
   modeChange(campaignId: string, turnId: string, p: ModeChangeFramePayload): Promise<void>
   combatStarted(campaignId: string, turnId: string, p: CombatStartedFramePayload): Promise<void>
   combatResolved(campaignId: string, turnId: string, p: CombatResolvedFramePayload): Promise<void>
+  dmCorrection(campaignId: string, turnId: string, p: DmCorrectionFramePayload): Promise<void>
   turnEnd(campaignId: string, turnId: string): Promise<void>
   turnError(campaignId: string, turnId: string, message: string): Promise<void>
   /** A frame emitter bound to one (campaign, turn) for the Fast Thinker. */
@@ -180,6 +182,18 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     })
   }
 
+  // myth-d6knq §correction-channel — a structured DM correction. SHARED CONTRACT
+  // with the frontend rendering: the wire frame is exactly
+  // `{ type: 'dm_correction', turnId, text }` (a live frame carries NO seq — the
+  // seq rides only the persisted dm_correction replay row).
+  async function dmCorrection(
+    campaignId: string,
+    turnId: string,
+    p: DmCorrectionFramePayload,
+  ): Promise<void> {
+    await publish(campaignId, { type: 'dm_correction', turnId, text: p.text })
+  }
+
   async function textDelta(campaignId: string, turnId: string, text: string): Promise<void> {
     await publish(campaignId, { type: 'text_delta', turnId, text })
   }
@@ -195,6 +209,7 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     modeChange,
     combatStarted,
     combatResolved,
+    dmCorrection,
     async turnEnd(campaignId, turnId): Promise<void> {
       await publish(campaignId, { type: 'turn_end', turnId })
     },
@@ -215,6 +230,8 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
           combatStarted(campaignId, turnId, p),
         emitCombatResolved: (p: CombatResolvedFramePayload): Promise<void> =>
           combatResolved(campaignId, turnId, p),
+        emitCorrection: (p: DmCorrectionFramePayload): Promise<void> =>
+          dmCorrection(campaignId, turnId, p),
       }
     },
   }

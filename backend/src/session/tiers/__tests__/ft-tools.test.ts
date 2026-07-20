@@ -32,6 +32,7 @@ import {
   FACTION_TREE_INPUT,
   INITIATE_COMBAT_INPUT,
   RESOLVE_COMBAT_INPUT,
+  ISSUE_CORRECTION_INPUT,
   type FtToolDeps,
 } from '../ft-tools.js'
 import { STANDARD_DICE } from '../../dice/engine.js'
@@ -497,6 +498,27 @@ describe('roll_dice tool', () => {
       expect(['description', 'inputSchema', 'execute', 'type']).toContain(k)
     }
     expect(typeof rollDiceTool.execute).toBe('function')
+  })
+})
+
+describe('issue_correction tool (myth-d6knq §correction-channel)', () => {
+  it('is a pure resolver that echoes the correction text as data (no emit surface)', async () => {
+    const tools = buildFtTools(makeDeps(foundMech(makeCharacter(), [])))
+    const correctionTool = tools.issue_correction
+    if (correctionTool === undefined) throw new Error('issue_correction missing')
+    for (const k of Object.keys(correctionTool)) {
+      expect(['description', 'inputSchema', 'execute', 'type']).toContain(k)
+    }
+    const out = await requireExecute(tools, 'issue_correction')(
+      { text: 'Earlier I named the ferryman Coss; it is Trask.' },
+      callOpts(),
+    )
+    expect(out).toEqual({ text: 'Earlier I named the ferryman Coss; it is Trask.' })
+  })
+
+  it('ISSUE_CORRECTION_INPUT rejects empty text', () => {
+    expect(ISSUE_CORRECTION_INPUT.safeParse({ text: '' }).success).toBe(false)
+    expect(ISSUE_CORRECTION_INPUT.safeParse({ text: 'ok' }).success).toBe(true)
   })
 })
 

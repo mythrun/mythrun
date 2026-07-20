@@ -251,9 +251,21 @@ export class SessionController {
    *  Best-effort: the caller wraps it; this assembles + enqueues. */
   async enqueueScribeJob(): Promise<void> {
     if (this.assistant === null) return
+    // Corrections ride the issue_correction tool channel (myth-d6knq), not
+    // text parts — but the Scribe must still see them, or a fact the FT just
+    // amended survives in the working set in its WRONG form and reconcile
+    // canonizes it. Fold correction text into the prose, framed so the
+    // extractor reads it as an amendment of earlier narration.
     const prose = this.assistant.parts
-      .filter((p): p is Extract<ContentPart, { kind: 'text' }> => p.kind === 'text')
-      .map((p) => p.text)
+      .filter(
+        (p): p is Exclude<ContentPart, { kind: 'tool_result' }> =>
+          p.kind === 'text' || (p.kind === 'tool_call' && p.toolName === 'issue_correction'),
+      )
+      .map((p) =>
+        p.kind === 'text'
+          ? p.text
+          : `[Correction to earlier narration: ${String((p.input as { text?: unknown } | null)?.text ?? '')}]`,
+      )
       .join('\n\n')
     await enqueueScribe(this.deps.scribeQueue, {
       campaignId: this.campaignId,

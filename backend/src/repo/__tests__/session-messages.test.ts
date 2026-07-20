@@ -376,4 +376,143 @@ describe('repo.sessionMessages (integration)', () => {
     const rows = await repo.sessionMessages.listFtContextRows(sessionId, 10)
     expect(rows.map((r) => r.content)).toEqual(['mine'])
   })
+
+  // myth-n98pc: a prior farewell's closing marker in the FT's reconstructed
+  // context primes the model to self-author a fake session-end marker in an
+  // ordinary turn. listFtContextRows must exclude trigger_kind='farewell' rows.
+  it('listFtContextRows excludes farewell-turn rows while regular rows still flow', async () => {
+    const repo = createRepo(pool)
+
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'p1' })
+    // a normal DM turn (auto) — kept
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-4444-7000-8000-000000000001',
+      rows: [{ kind: 'dm_text', content: 'dm normal' }],
+      seqs: [2],
+      triggerKind: 'auto',
+    })
+    // a REAL farewell turn — must be excluded from the FT read
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-4444-7000-8000-000000000002',
+      rows: [{ kind: 'dm_text', content: '— End of Session One —' }],
+      seqs: [3],
+      triggerKind: 'farewell',
+    })
+    // an openly-delivered correction turn — kept (only farewell is excluded)
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-4444-7000-8000-000000000003',
+      rows: [{ kind: 'dm_text', content: 'dm correction' }],
+      seqs: [4],
+      triggerKind: 'correction',
+    })
+    await repo.sessionMessages.append({ sessionId, seq: 5, userId, messageType: 'player_message', content: 'p5' })
+
+    const rows = await repo.sessionMessages.listFtContextRows(sessionId, 10)
+    expect(rows.map((r) => r.content)).toEqual(['p1', 'dm normal', 'dm correction', 'p5'])
+    expect(rows.some((r) => r.content.includes('End of Session'))).toBe(false)
+  })
+
+  // myth-d6knq follow-up: a structured correction the FT issued must re-enter
+  // its own context on the next turn's rebuild, or the FT can re-assert the
+  // very fact it just amended (the codec decodes the row back into the
+  // issue_correction tool exchange).
+  it('listFtContextRows includes dm_correction rows', async () => {
+    const repo = createRepo(pool)
+
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'p1' })
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-5555-7000-8000-000000000001',
+      rows: [
+        { kind: 'dm_text', content: 'dm prose' },
+        {
+          kind: 'dm_correction',
+          content: JSON.stringify({
+            toolCallId: 'tc-1',
+            input: { text: 'The lantern was in fact lit.' },
+            output: { text: 'The lantern was in fact lit.' },
+          }),
+        },
+      ],
+      seqs: [2, 3],
+      triggerKind: 'auto',
+    })
+
+    const rows = await repo.sessionMessages.listFtContextRows(sessionId, 10)
+    expect(rows.map((r) => r.messageType)).toEqual(['player_message', 'dm_text', 'dm_correction'])
+  })
+
+  // Read-only guard for the parallel analysis/reconcile workstream: the
+  // post-session analysis read must STILL surface farewell rows (my FT filter
+  // must not have touched this path).
+  it('listForAnalysis still returns farewell rows with their trigger_kind', async () => {
+    const repo = createRepo(pool)
+
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'p1' })
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-5555-7000-8000-000000000001',
+      rows: [{ kind: 'dm_text', content: '— End of Session One —' }],
+      seqs: [2],
+      triggerKind: 'farewell',
+    })
+
+    const rows = await repo.sessionMessages.listForAnalysis(sessionId, 100)
+    const farewell = rows.find((r) => r.content.includes('End of Session'))
+    expect(farewell).toBeDefined()
+    expect(farewell?.triggerKind).toBe('farewell')
+  })
+
+  // myth-8mom0: the farewell turn is player-less, so the Scribe never folds its
+  // closing beats into the working set. The reconcile + analysis workers read the
+  // durable farewell prose through listFarewellNarration to canonize the session's
+  // END state (an NPC's departure, an object's finished form) — otherwise the next
+  // session re-serializes the PRE-farewell canon.
+  it('listFarewellNarration returns the farewell turn dm_text prose in seq order (myth-8mom0)', async () => {
+    const repo = createRepo(pool)
+
+    await repo.sessionMessages.append({ sessionId, seq: 1, userId, messageType: 'player_message', content: 'p1' })
+    // a normal (auto) DM turn — NOT the farewell, so excluded
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-6666-7000-8000-000000000001',
+      rows: [{ kind: 'dm_text', content: 'mid-session narration' }],
+      seqs: [2],
+      triggerKind: 'auto',
+    })
+    // the farewell send-off turn — two prose beats (kept, in seq order) around a
+    // non-dm_text tool row (excluded by the message_type='dm_text' filter).
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-6666-7000-8000-000000000002',
+      rows: [
+        { kind: 'dm_text', content: 'Renn set down the finished bracket and pulled on his coat.' },
+        { kind: 'skill_check', content: JSON.stringify({ toolCallId: 'c-x', input: {}, output: {} }) },
+        { kind: 'dm_text', content: 'He was gone; his bench sat empty.' },
+      ],
+      seqs: [3, 4, 5],
+      triggerKind: 'farewell',
+    })
+
+    const narration = await repo.sessionMessages.listFarewellNarration(sessionId)
+    expect(narration).toEqual([
+      'Renn set down the finished bracket and pulled on his coat.',
+      'He was gone; his bench sat empty.',
+    ])
+  })
+
+  it('listFarewellNarration returns [] when the session had no farewell', async () => {
+    const repo = createRepo(pool)
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: '019dccef-6666-7000-8000-000000000003',
+      rows: [{ kind: 'dm_text', content: 'ordinary narration' }],
+      seqs: [1],
+      triggerKind: 'auto',
+    })
+    expect(await repo.sessionMessages.listFarewellNarration(sessionId)).toEqual([])
+  })
 })

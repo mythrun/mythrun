@@ -602,6 +602,14 @@ function rowToReplayFrame(
     case 'update_condition':
     case 'take_rest':
       return parseLedgerUpdateRow(row, log)
+    case 'dm_correction': {
+      // myth-d6knq — a persisted issue_correction row (tool-JSON content). Replay
+      // it as a dm_correction frame carrying the row's seq, so a reconnecting
+      // client (and the retry-corrected turn, which relies on the reconnect
+      // whole-turn-replace) sees the correction. Drop-graceful like its siblings.
+      const frame = parseDmCorrectionRow(row, log)
+      return frame === null ? [] : [frame]
+    }
     default:
       return []
   }
@@ -628,6 +636,24 @@ function parseDmRowContent(content: string): { input: unknown; output: unknown }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : null
+}
+
+/** myth-d6knq — reconstruct a `dm_correction` frame from a persisted
+ *  issue_correction row. The tool output carries `{ text }`; we read it the same
+ *  drop-graceful way as the other replay rows (a corrupt/missing text drops the
+ *  frame rather than failing loud). The live-published frame carries no seq; the
+ *  replay frame carries the row's seq (matching the skill_check/ledger pattern). */
+function parseDmCorrectionRow(
+  row: SessionMessage,
+  log: FastifyBaseLogger,
+): Extract<ServerFrame, { type: 'dm_correction' }> | null {
+  const parsed = parseDmRowContent(row.content)
+  const output = parsed ? asRecord(parsed.output) : null
+  if (output === null || typeof output.text !== 'string') {
+    log.warn({ seq: row.seq, turnId: row.turnId }, 'ws-session reconnect dropped corrupt dm_correction row')
+    return null
+  }
+  return { type: 'dm_correction', turnId: row.turnId ?? '', seq: row.seq, text: output.text }
 }
 
 /** Reconstruct a `skill_check` frame from a persisted row's JSON content. The

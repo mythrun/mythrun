@@ -34,6 +34,14 @@ export const DM_MESSAGE_TYPES = [
   // MYT-75 — combat L1 tools; kind === tool name, persist {toolCallId,input,output} JSON like the ledger tools.
   'combat_initiate',
   'combat_resolve',
+  // myth-d6knq §correction-channel — the FT's structured `issue_correction`
+  // tool. Persists as its own message_type so a correction is distinguishable
+  // from ordinary narration (like a roll row: {toolCallId,input,output} JSON),
+  // and the frontend/replay renders it as a dm_correction frame rather than
+  // plain DM prose. Registering the tool here is MANDATORY — an unregistered FT
+  // tool name throws TranscriptCorruptError in assistantToRows and crashes the
+  // turn.
+  'dm_correction',
 ] as const
 export type DmMessageType = (typeof DM_MESSAGE_TYPES)[number]
 
@@ -67,6 +75,8 @@ const KIND_TO_TOOL: Record<Exclude<DmMessageType, 'dm_text'>, string> = {
   // MYT-75 — combat L1 tools: kind === tool name.
   combat_initiate: 'initiate_combat',
   combat_resolve: 'resolve_combat',
+  // myth-d6knq §correction-channel: kind → the FT tool that produced it.
+  dm_correction: 'issue_correction',
 }
 
 const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
@@ -87,6 +97,8 @@ const TOOL_TO_KIND: Record<string, Exclude<DmMessageType, 'dm_text'>> = {
   // MYT-75 — combat L1 tools: tool name === kind.
   initiate_combat: 'combat_initiate',
   resolve_combat: 'combat_resolve',
+  // myth-d6knq §correction-channel: the FT's issue_correction tool → dm_correction row.
+  issue_correction: 'dm_correction',
 }
 
 const DM_TYPE_SET: ReadonlySet<string> = new Set(DM_MESSAGE_TYPES)

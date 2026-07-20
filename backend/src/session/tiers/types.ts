@@ -142,6 +142,14 @@ export interface FtTurnContext {
    *  every turn — rendering it through the cached system prefix would bust the
    *  static-payload cache, §7). Optional; absent when no characters are joined. */
   readonly partyLedger?: PartyLedgerSnapshot
+  /** myth-d6knq §turn-audit — a corrective instruction the audit gate injects on
+   *  a RETRY render after the first attempt tripped a boundary violation (e.g.
+   *  authoring another PC's speech on a scene-switch). buildModelMessages appends
+   *  it as a raw `[System correction: …]` tail message AFTER the cache
+   *  breakpoints, exactly like the standing directive — render-only, never
+   *  persisted, never pushed into ftHistory. Absent on a normal (first-attempt)
+   *  render. */
+  readonly correctiveInstruction?: string
 }
 
 /**
@@ -198,6 +206,14 @@ export interface CombatStartedFramePayload {
   readonly initiative: readonly { combatant: string; roll: number }[]
 }
 
+/** myth-d6knq §correction-channel — the dm_correction frame payload: a
+ *  structured, in-fiction DM correction delivered through the `issue_correction`
+ *  tool instead of inline prose. `text` is the correction the players see.
+ *  Public-by-construction (a DM correction is player-facing narration). */
+export interface DmCorrectionFramePayload {
+  readonly text: string
+}
+
 /** MYT-75 §combat — the combat_resolved frame payload: the close-out narration,
  *  the outcome, the casualty list, and the per-combatant HP deltas. */
 export interface CombatResolvedFramePayload {
@@ -232,6 +248,11 @@ export interface TurnEmitter {
   /** MYT-75 §combat L1 — combat ends: close-out narration, outcome, casualties,
    *  and per-combatant HP deltas. */
   emitCombatResolved(payload: CombatResolvedFramePayload): Promise<void>
+  /** myth-d6knq §correction-channel — a structured DM correction (from the
+   *  `issue_correction` tool). Emitted from the consume loop on the tool's
+   *  result like every other frame; the publisher renders it as a
+   *  `dm_correction` wire frame. */
+  emitCorrection(payload: DmCorrectionFramePayload): Promise<void>
 }
 
 export interface AssistantMessage {

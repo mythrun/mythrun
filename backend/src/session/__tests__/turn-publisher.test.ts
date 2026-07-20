@@ -89,6 +89,34 @@ describe('createTurnPublisher', () => {
     expect(msg?.frame).toEqual({ type: 'turn_end', turnId: TURN })
   })
 
+  it('dmCorrection publishes a dm_correction frame carrying turnId + text (no live seq) — myth-d6knq shared contract', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.dmCorrection(CAMPAIGN, TURN, { text: 'Earlier I named the ferryman Coss; it is Trask.' })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    const [msg] = received
+    expect(msg?.frame).toEqual({
+      type: 'dm_correction',
+      turnId: TURN,
+      text: 'Earlier I named the ferryman Coss; it is Trask.',
+    })
+  })
+
+  it('emitFor().emitCorrection publishes the dm_correction frame', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    const emit = pub.emitFor(CAMPAIGN, TURN)
+    await emit.emitCorrection({ text: 'Correction: the seal is the Tide Family crest.' })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toEqual({
+      type: 'dm_correction',
+      turnId: TURN,
+      text: 'Correction: the seal is the Tide Family crest.',
+    })
+  })
+
   it('turnError publishes a turn_error frame carrying the message', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
     await pub.turnError(CAMPAIGN, TURN, 'the weave frayed')

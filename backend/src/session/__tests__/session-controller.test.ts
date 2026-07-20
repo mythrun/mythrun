@@ -159,6 +159,7 @@ function recordingEmitter(emitted: string[]): TurnEmitter {
     emitModeChange: vi.fn((): Promise<void> => Promise.resolve()),
     emitCombatStarted: vi.fn((): Promise<void> => Promise.resolve()),
     emitCombatResolved: vi.fn((): Promise<void> => Promise.resolve()),
+    emitCorrection: vi.fn((): Promise<void> => Promise.resolve()),
   }
 }
 
@@ -660,6 +661,39 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(payload?.worldDelta).toBeNull()
     // The injections sink is threaded straight through (same array reference).
     expect(payload?.injections).toBe(injections)
+  })
+
+  it('folds issue_correction tool text into the scribe prose as a framed amendment', async () => {
+    // myth-d6knq follow-up: corrections ride the tool channel, but the Scribe
+    // must still see them or the working set keeps the WRONG version of the
+    // amended fact and reconcile canonizes it.
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'The hall empties.' },
+        {
+          kind: 'tool_call',
+          toolCallId: 'tc-corr',
+          toolName: 'issue_correction',
+          input: { text: 'The second lantern was in fact lit.' },
+        },
+        {
+          kind: 'tool_result',
+          toolCallId: 'tc-corr',
+          toolName: 'issue_correction',
+          output: { text: 'The second lantern was in fact lit.' },
+        },
+      ],
+      usage: { input: 5, output: 7 },
+    }
+    const { controller, scribePayloads } = build({ assistant })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.enqueueScribeJob()
+
+    expect(scribePayloads[0]?.prose).toBe(
+      'The hall empties.\n\n[Correction to earlier narration: The second lantern was in fact lit.]',
+    )
   })
 
   it('threads the FT render worldDelta onto the payload when present', async () => {

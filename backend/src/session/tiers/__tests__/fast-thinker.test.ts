@@ -120,6 +120,7 @@ interface Emission {
     | 'mode_change'
     | 'combat_started'
     | 'combat_resolved'
+    | 'dm_correction'
   readonly payload: unknown
 }
 function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
@@ -151,6 +152,10 @@ function makeEmitter(): { emit: TurnEmitter; seen: Emission[] } {
     },
     emitCombatResolved: (payload) => {
       seen.push({ kind: 'combat_resolved', payload })
+      return Promise.resolve()
+    },
+    emitCorrection: (payload) => {
+      seen.push({ kind: 'dm_correction', payload })
       return Promise.resolve()
     },
   }
@@ -284,6 +289,32 @@ describe('SonnetFastThinker.render', () => {
       { kind: 'tool_call', toolCallId: 'c1', toolName: 'roll_skill_check', input: { character_name: 'Arin', skill: 'Persuasion', context: 'gate' } },
       { kind: 'tool_result', toolCallId: 'c1', toolName: 'roll_skill_check', output: { error: 'check could not be resolved' } },
       { kind: 'text', text: 'open ending' },
+    ])
+  })
+
+  it('3b. issue_correction (myth-d6knq): the tool result emits a dm_correction frame carrying the text', async () => {
+    mockResult([
+      {
+        type: 'tool-call',
+        toolCallId: 'k1',
+        toolName: 'issue_correction',
+        input: { text: 'Earlier I said the ferryman was Coss; correction — it is Trask.' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'k1',
+        toolName: 'issue_correction',
+        input: { text: 'Earlier I said the ferryman was Coss; correction — it is Trask.' },
+        output: { text: 'Earlier I said the ferryman was Coss; correction — it is Trask.' },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    await ft.render(makeCtx(), emit)
+
+    expect(seen).toEqual([
+      { kind: 'dm_correction', payload: { text: 'Earlier I said the ferryman was Coss; correction — it is Trask.' } },
     ])
   })
 
@@ -1675,6 +1706,31 @@ describe('buildModelMessages', () => {
     expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
     // No tail message wrapped as a DM direction.
     expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[DM direction:'))).toBe(false)
+  })
+
+  it('15d. correctiveInstruction (myth-d6knq retry) appends a raw uncached [System correction: …] tail as the LAST message', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+      { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'reply' }] },
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'two' }], characterName: 'Bel' },
+    ]
+    const messages = buildModelMessages(
+      makeCtx({ ftHistory: history, standingDirective: 'Steer toward a close', correctiveInstruction: 'Do not author another PC.' }),
+    )
+    const last = messages[messages.length - 1]
+    // The corrective tail is LAST (after the standing directive) and uncached.
+    expect(last).toEqual({ role: 'user', content: '[System correction: Do not author another PC.]' })
+    expect(last?.providerOptions).toBeUndefined()
+  })
+
+  it('15e. no correctiveInstruction / empty string: no [System correction: …] tail', () => {
+    const history: ConversationMessage[] = [
+      { v: 1, role: 'user', parts: [{ kind: 'text', text: 'one' }], characterName: 'Arin' },
+    ]
+    const without = buildModelMessages(makeCtx({ ftHistory: history }))
+    const withEmpty = buildModelMessages(makeCtx({ ftHistory: history, correctiveInstruction: '' }))
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(without))
+    expect(without.some((m) => typeof m.content === 'string' && m.content.startsWith('[System correction:'))).toBe(false)
   })
 
   it('16. party ledger only: appends ONE raw uncached [Party ledger: …] tail as the LAST message', () => {

@@ -9,7 +9,7 @@ import {
   type SessionStateBlob,
 } from '../../redis/session-state.js'
 import type { LedgerOps } from '../../repo/characters-ledger.js'
-import type { Character } from '../../repo/types.js'
+import type { Character, SessionMessage } from '../../repo/types.js'
 import type { CombatEvent } from '../combat/events.js'
 import type { ReconciledCombat } from '../combat/apply.js'
 import type { CombatEnemy } from '../combat/outcome.js'
@@ -182,6 +182,10 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
       calls.order.push('combat_resolved')
       return Promise.resolve()
     }),
+    dmCorrection: vi.fn((): Promise<void> => {
+      calls.order.push('dm_correction')
+      return Promise.resolve()
+    }),
     turnError: vi.fn((campaignId: string, turnId: string, message: string): Promise<void> => {
       calls.order.push('turn_error')
       calls.turnErrorArgs.push({ campaignId, turnId, message })
@@ -218,6 +222,10 @@ function recordingPublisher(calls: PublisherCalls): TurnPublisher {
         },
         emitCombatResolved: (): Promise<void> => {
           calls.order.push('combat_resolved')
+          return Promise.resolve()
+        },
+        emitCorrection: (): Promise<void> => {
+          calls.order.push('dm_correction')
           return Promise.resolve()
         },
       }
@@ -300,6 +308,17 @@ function fakeRepo(overrides?: {
    *  `null` (a fresh session with no recorded usage) → 0 cumulative tokens → under
    *  budget → no auto-end. */
   budgetSummary?: { inputTokens: number; outputTokens: number } | null
+  /** myth-dwyuw: the transcript rows `augmentFtContextWithEntityCards` scans as
+   *  its name-detection haystack (also the controller's history rebuild). Default
+   *  [] → augment early-returns the base ft_context. */
+  ftContextRows?: readonly SessionMessage[]
+  /** myth-dwyuw: the KNOWN-tier canon entities `augment` loads (default []). */
+  canonEntities?: readonly { id: string; name: string; entityType: string }[]
+  /** myth-dwyuw: the KNOWN-tier facts `augment` loads per matched entity (default []). */
+  canonFacts?: readonly { entityId: string; content: string }[]
+  /** myth-dwyuw: a recorder of the worldIds `entities.listByWorld` was called
+   *  with — proves the wire-up threads the RESOLVED worldId into `augment`. */
+  augmentWorldIds?: string[]
 }): TurnWorkerRepo {
   const session = overrides?.session === undefined ? { sessionNumber: 1 } : overrides.session
   const prep = overrides?.ftContext == null ? null : { ftContext: overrides.ftContext }
@@ -308,7 +327,7 @@ function fakeRepo(overrides?: {
   return {
     sessionMessages: {
       turnRowsExist: () => Promise.resolve(overrides?.turnRowsExist ?? false),
-      listFtContextRows: () => Promise.resolve([]),
+      listFtContextRows: () => Promise.resolve([...(overrides?.ftContextRows ?? [])]),
       appendDmTurn: overrides?.appendDmTurn ?? ((): Promise<void> => Promise.resolve()),
       maxSeq: () => Promise.resolve(0),
       listAfterSeq: () =>
@@ -336,6 +355,15 @@ function fakeRepo(overrides?: {
         return Promise.resolve(overrides?.partyLedger ?? [])
       },
     },
+    // myth-dwyuw canon surface — no entities/facts by default, so
+    // augmentFtContextWithEntityCards is a clean no-op (returns base ft_context).
+    entities: {
+      listByWorld: (worldId: string) => {
+        overrides?.augmentWorldIds?.push(worldId)
+        return Promise.resolve([...(overrides?.canonEntities ?? [])])
+      },
+    },
+    facts: { listByEntities: () => Promise.resolve([...(overrides?.canonFacts ?? [])]) },
   }
 }
 
@@ -895,6 +923,80 @@ describe('processTurnJob', () => {
     expect(turnState.usage).toEqual({ input: 0, output: 0 })
     // finally still released the lock on the error path.
     expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('myth-dwyuw: augments ft_context with canon entity cards using the RESOLVED worldId, and renders with the augmented string', async () => {
+    // Proves the wire-up: the fresh-run arm calls augmentFtContextWithEntityCards
+    // with the resolved worldId ('w-fake' from campaigns.getWorldId) and threads
+    // its result into the SessionController's ftContext (→ the FT's ctx). The
+    // augment BEHAVIOUR itself is covered in turn-context.test.ts; this is the
+    // integration seam only.
+    const calls = newCalls()
+    const handle = fakeHandle({ extendReturns: true, release: vi.fn((): Promise<void> => Promise.resolve()) })
+
+    // Capture the ft_context the FT is rendered with.
+    let renderedFtContext: string | undefined
+    const ft = new StubFastThinker()
+    vi.spyOn(ft, 'render').mockImplementation((ctx: FtTurnContext) => {
+      renderedFtContext = ctx.ftContext
+      return Promise.resolve({
+        role: 'assistant' as const,
+        parts: [{ kind: 'text' as const, text: 'ok' }],
+        usage: { input: 1, output: 1 },
+      })
+    })
+
+    // A transcript row naming a canon NPC the prep doc did NOT ground → augment
+    // appends a card.
+    const namingRow: SessionMessage = {
+      id: '01900000-0000-7000-8000-00000000da01',
+      sessionId: SESSION,
+      seq: 1,
+      userId: null,
+      messageType: 'dm_text',
+      content: 'Marsen Roud waited at the quay for the tide.',
+      createdAt: new Date(0),
+      turnId: '01900000-0000-7000-8000-00000000da02',
+      turnOrdinal: 0,
+      triggerKind: null,
+    }
+    const augmentWorldIds: string[] = []
+
+    const deps: TurnProcessorDeps = {
+      lock: fakeLock(handle),
+      sessionState,
+      repo: fakeRepo({
+        ftContext: 'Base prep doc.',
+        ftContextRows: [namingRow],
+        canonEntities: [{ id: 'e-roud', name: 'Marsen Roud', entityType: 'npc' }],
+        canonFacts: [{ entityId: 'e-roud', content: 'the senior customs broker' }],
+        augmentWorldIds,
+      }),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
+      publisher: recordingPublisher(calls),
+      makeTiers: () => ({ ft, combatEvents: [] }),
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+
+    await processTurnJob(deps, payload())
+
+    // (a) augment ran with the RESOLVED worldId.
+    expect(augmentWorldIds).toContain('w-fake')
+    // (b) the controller rendered with the AUGMENTED ft_context: base preserved
+    // as a prefix, and the canon card appended.
+    expect(renderedFtContext).toBeDefined()
+    expect(renderedFtContext).toContain('Base prep doc.')
+    expect(renderedFtContext).not.toBe('Base prep doc.')
+    expect(renderedFtContext).toContain('Marsen Roud')
   })
 
   it('lock-lost: heartbeat extend()→false aborts the turn without flushing; release still called', async () => {
@@ -3747,6 +3849,7 @@ describe('makeLatchedEmitter', () => {
       emitModeChange: (): Promise<void> => Promise.resolve(),
       emitCombatStarted: (): Promise<void> => Promise.resolve(),
       emitCombatResolved: (): Promise<void> => Promise.resolve(),
+      emitCorrection: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -3776,6 +3879,7 @@ describe('makeLatchedEmitter', () => {
       emitModeChange: (): Promise<void> => Promise.resolve(),
       emitCombatStarted: (): Promise<void> => Promise.resolve(),
       emitCombatResolved: (): Promise<void> => Promise.resolve(),
+      emitCorrection: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -3807,6 +3911,7 @@ describe('makeLatchedEmitter', () => {
       emitModeChange: (): Promise<void> => Promise.resolve(),
       emitCombatStarted: (): Promise<void> => Promise.resolve(),
       emitCombatResolved: (): Promise<void> => Promise.resolve(),
+      emitCorrection: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -3858,6 +3963,7 @@ describe('makeLatchedEmitter', () => {
         seen.resolved = p
         return Promise.resolve()
       },
+      emitCorrection: (): Promise<void> => Promise.resolve(),
     }
     const mark = vi.fn((): Promise<void> => {
       order.push('mark')
@@ -4177,6 +4283,7 @@ describe('publishTerminalTurnError', () => {
       modeChange: vi.fn((): Promise<void> => Promise.resolve()),
       combatStarted: vi.fn((): Promise<void> => Promise.resolve()),
       combatResolved: vi.fn((): Promise<void> => Promise.resolve()),
+      dmCorrection: vi.fn((): Promise<void> => Promise.resolve()),
       turnEnd: vi.fn((): Promise<void> => Promise.resolve()),
       turnError: vi.fn((): Promise<void> => Promise.reject(publishErr)),
       emitFor: vi.fn(
@@ -4188,6 +4295,7 @@ describe('publishTerminalTurnError', () => {
           emitModeChange: (): Promise<void> => Promise.resolve(),
           emitCombatStarted: (): Promise<void> => Promise.resolve(),
           emitCombatResolved: (): Promise<void> => Promise.resolve(),
+          emitCorrection: (): Promise<void> => Promise.resolve(),
         }),
       ),
     }

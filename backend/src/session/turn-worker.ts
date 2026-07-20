@@ -56,16 +56,19 @@ import { makeSessionState, type SessionState } from '../redis/session-state.js'
 import { SessionController, type TranscriptStore } from './session-controller.js'
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
+import { AuditedFastThinker } from './tiers/audited-fast-thinker.js'
+import { auditTurn, TURN_AUDIT_ENABLED } from '../llm/turn-audit.js'
 import { buildFtTools } from './tiers/ft-tools.js'
 import type { CombatEvent, CombatPartyMember, InitiateCombatEvent } from './combat/events.js'
 import { applyToLedger, assembleSummary, reconcileDeltas, type ReconcilePc } from './combat/apply.js'
 import type { FastThinker, PartyLedgerSnapshot, TurnEmitter } from './tiers/types.js'
 import type { MechanicalReads } from './skill-check.js'
+import type { AccessLevel } from '../repo/facts.js'
 import type { LedgerOps } from '../repo/characters-ledger.js'
 import type { LedgerTxRunner, RulesLawyerDeps } from './rules-lawyer.js'
 import type { VoyageEmbedder } from '../llm/embed.js'
 import { buildLookupDeps } from './tiers/lookup-wiring.js'
-import { reloadFtContext, resolveWorldId } from './turn-context.js'
+import { augmentFtContextWithEntityCards, reloadFtContext, resolveWorldId } from './turn-context.js'
 import { makeTriggerState, type TriggerState } from './trigger-state.js'
 import {
   rescheduleDebounce,
@@ -179,6 +182,23 @@ export interface TurnWorkerRepo {
      *  features, spells, equipment) as of turn start. Threaded onto the FT
      *  context (public-by-construction; rendered as a non-persisted tail). */
     readPartyLedgerSnapshot(sessionId: string): Promise<PartyLedgerSnapshot>
+  }
+  // myth-dwyuw — the KNOWN-tier canon surface `augmentFtContextWithEntityCards`
+  // reads to ground mid-session-named entities in the FT context. Mirrors
+  // `turn-context.ts`'s `EntityCardRepo` so `deps.repo` satisfies it without a
+  // cast. Enforced-ignorance-safe by construction: the augment function only
+  // ever requests `accessLevels: ['known']` (never discoverable/secret).
+  readonly entities: {
+    listByWorld(
+      worldId: string,
+      opts?: { readonly accessLevels?: readonly AccessLevel[] },
+    ): Promise<readonly { readonly id: string; readonly name: string; readonly entityType: string }[]>
+  }
+  readonly facts: {
+    listByEntities(
+      entityIds: readonly string[],
+      opts: { readonly accessLevels: readonly AccessLevel[]; readonly liveOnly?: boolean },
+    ): Promise<readonly { readonly entityId: string; readonly content: string }[]>
   }
 }
 
@@ -339,6 +359,10 @@ export function makeLatchedEmitter(inner: TurnEmitter, markEmitted: () => Promis
     emitCombatResolved: async (payload) => {
       await ensureMarked()
       await inner.emitCombatResolved(payload)
+    },
+    emitCorrection: async (payload) => {
+      await ensureMarked()
+      await inner.emitCorrection(payload)
     },
   }
 }
@@ -528,6 +552,18 @@ export async function processTurnJob(
     )
     const { summary: recentNarrative } = await deps.sessionState.loadTurnState(campaignId)
 
+    // myth-dwyuw — augment the enforced-ignorance-safe ft_context with canon
+    // entity cards for the entities named in the recent transcript, so the FT
+    // narrates established NPCs/locations consistently. Fail-soft by
+    // construction: any throw (or an unresolved worldId) returns baseFtContext
+    // unchanged, so it can never brick a turn. `deps.repo` structurally
+    // satisfies EntityCardRepo.
+    const ftContextWithCanon = await augmentFtContextWithEntityCards(
+      deps.repo,
+      { worldId, sessionId, maxConsumedSeq: job.data.maxConsumedSeq, baseFtContext: ftContext },
+      deps.logger,
+    )
+
     // MYT-73 §2.4 — the per-turn injection sink: ONE array shared between the FT
     // tools' `recordInjection` (a mid-turn ST-vet relay pushes its secret-free
     // proposal here) and the SessionController, which carries the accumulated
@@ -565,7 +601,7 @@ export async function processTurnJob(
         attributionNames,
         participants,
         actingCharacters,
-        ftContext,
+        ftContext: ftContextWithCanon,
         partyLedger,
         triggerKind: job.data.trigger.kind,
         ...(pendingDirection !== null ? { pendingDirection } : {}),
@@ -1126,25 +1162,36 @@ export function buildSessionTurnWorker(
       )
 
       return {
-        ft: new SonnetFastThinker({
-          tools: buildFtTools(
-            {
-              mech,
-              ledger,
-              runInTx,
-              sessionId,
-              turnId,
-              worldTone,
-              logger,
-              ...lookup,
-              combatParty,
-              recordCombat: (e) => combatEvents.push(e),
-              pendingInitiate,
-              participantNames,
-              actingCharacters,
-            },
-            undefined,
-          ),
+        // myth-d6knq — the real FastThinker wrapped in the turn-audit gate. The
+        // decorator is the SINGLE audit chokepoint: it runs one post-render Haiku
+        // check on the FT narration and, on a pure-prose boundary violation,
+        // retries once with a corrective instruction (fail-open otherwise — a
+        // turn is never blocked on the gate). `TURN_AUDIT_ENABLED` is the config
+        // flag; flip it off to disable the gate without touching this wiring.
+        ft: new AuditedFastThinker({
+          inner: new SonnetFastThinker({
+            tools: buildFtTools(
+              {
+                mech,
+                ledger,
+                runInTx,
+                sessionId,
+                turnId,
+                worldTone,
+                logger,
+                ...lookup,
+                combatParty,
+                recordCombat: (e) => combatEvents.push(e),
+                pendingInitiate,
+                participantNames,
+                actingCharacters,
+              },
+              undefined,
+            ),
+            logger,
+          }),
+          audit: auditTurn,
+          enabled: TURN_AUDIT_ENABLED,
           logger,
         }),
         combatEvents,

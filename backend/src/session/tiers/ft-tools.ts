@@ -359,6 +359,16 @@ export const RESOLVE_COMBAT_INPUT = z.object({
     .default([]),
 })
 
+// myth-d6knq §correction-channel — the FT's structured self-correction tool.
+// A correction NEVER goes in prose (an inline "A moment — let me correct…" is a
+// boundary violation the audit gate flags); it is a distinct, in-fiction line
+// the players see rendered as a correction, not as ordinary narration. `text`
+// is the correction the DM delivers in its own voice — terse, honest, no
+// explanation of why the correction was needed.
+export const ISSUE_CORRECTION_INPUT = z.object({
+  text: z.string().min(1),
+})
+
 /** A TOTAL fail-soft tool result — the channel-appropriate in-fiction blank the
  *  model narrates from when the call is malformed or the asker can't be resolved
  *  (vet NOT called). DM and NPC voices differ so the blank reads in-fiction. */
@@ -1130,6 +1140,21 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         deps.recordCombat({ kind: 'resolve', reconciled, narration: input.narration })
         return { ok: true, narration: input.narration, outcome_kind: reconciled.outcomeKind }
       },
+    }),
+    // myth-d6knq §correction-channel — deliver a correction as STRUCTURED data,
+    // not inline prose. PURE RESOLVER like every other tool: `execute` echoes
+    // the text as data (no frame — the consume loop emits `dm_correction` from
+    // this result), and the tool_call/result pair persists as a `dm_correction`
+    // row via the transcript codec. Not player-agency-gated: the DM is
+    // correcting its OWN narration, never acting for a player character.
+    issue_correction: tool({
+      description:
+        'Correct something YOU (the DM) narrated earlier that was wrong — a mistaken name, date, or ' +
+        'detail. Deliver the correction in your own DM voice: terse, honest, in-fiction, no explanation ' +
+        'of why. NEVER correct earlier narration inline in your prose; always use this tool so the ' +
+        'correction is shown to the players as a correction. Pass text=the correction itself.',
+      inputSchema: ISSUE_CORRECTION_INPUT,
+      execute: (input) => Promise.resolve({ text: input.text }),
     }),
   }
 }

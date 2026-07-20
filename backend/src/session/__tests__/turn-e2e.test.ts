@@ -91,6 +91,9 @@ const e2eRepo: TurnWorkerRepo = {
     listSessionParticipantCharacters: () => Promise.resolve([]),
     readPartyLedgerSnapshot: () => Promise.resolve([]),
   },
+  // myth-dwyuw canon surface — empty by default (augment is a no-op here).
+  entities: { listByWorld: () => Promise.resolve([]) },
+  facts: { listByEntities: () => Promise.resolve([]) },
 }
 
 const REDIS_BATCH_URL = process.env.REDIS_BATCH_URL ?? 'redis://127.0.0.1:6380'

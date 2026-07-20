@@ -597,6 +597,42 @@ describe('ws-session route (integration)', () => {
     }
   })
 
+  it('myth-d6knq: reconnect replay reconstructs a dm_correction frame from the persisted row', async () => {
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-0000000000dc'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        {
+          kind: 'dm_correction',
+          content: JSON.stringify({
+            toolCallId: 'tc-k1',
+            input: { text: 'Earlier I named the ferryman Coss; correction — it is Trask.' },
+            output: { text: 'Earlier I named the ferryman Coss; correction — it is Trask.' },
+          }),
+        },
+      ],
+      seqs: [1],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages).toHaveLength(1)
+      expect(first.messages[0]).toMatchObject({
+        type: 'dm_correction',
+        seq: 1,
+        turnId,
+        text: 'Earlier I named the ferryman Coss; correction — it is Trask.',
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
   it('MYT-68 §3.7: a skill_check row with valid JSON but an ill-typed field is dropped, rest intact', async () => {
     const repo = createRepo(pool)
     const turnId = '01900000-0000-7000-8000-0000000000cc'
@@ -1805,6 +1841,7 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
     modeChange: vi.fn().mockResolvedValue(undefined),
     combatStarted: vi.fn().mockResolvedValue(undefined),
     combatResolved: vi.fn().mockResolvedValue(undefined),
+    dmCorrection: vi.fn().mockResolvedValue(undefined),
     turnEnd: vi.fn().mockResolvedValue(undefined),
     turnError: vi.fn().mockResolvedValue(undefined),
     emitFor: vi.fn().mockReturnValue({
@@ -1815,6 +1852,7 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
       emitModeChange: () => Promise.resolve(undefined),
       emitCombatStarted: () => Promise.resolve(undefined),
       emitCombatResolved: () => Promise.resolve(undefined),
+      emitCorrection: () => Promise.resolve(undefined),
     }),
   }
 }

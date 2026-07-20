@@ -79,6 +79,9 @@ const recoveryRepo: TurnWorkerRepo = {
     listSessionParticipantCharacters: () => Promise.resolve([]),
     readPartyLedgerSnapshot: () => Promise.resolve([]),
   },
+  // myth-dwyuw canon surface — empty by default (augment is a no-op here).
+  entities: { listByWorld: () => Promise.resolve([]) },
+  facts: { listByEntities: () => Promise.resolve([]) },
 }
 
 const REDIS_REALTIME_URL = process.env.REDIS_REALTIME_URL ?? 'redis://127.0.0.1:6379'
