@@ -153,6 +153,11 @@ describe('worker.main()', () => {
     const { main } = await import('../worker.js')
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
 
+    // myth-y2qfi: main() installs the process-level escape guard at boot. Capture
+    // the listener baseline before boot so we can assert install + teardown.
+    const baseUnhandled = process.listenerCount('unhandledRejection')
+    const baseUncaught = process.listenerCount('uncaughtException')
+
     void main() // never awaited — main blocks forever on Promise<never>
 
     // Wait for startup: workers registered, health server up. Nine workers:
@@ -162,6 +167,11 @@ describe('worker.main()', () => {
     await vi.waitFor(() => {
       expect(workerInstances).toHaveLength(9)
     })
+    // myth-y2qfi: the escape guard's unhandledRejection + uncaughtException
+    // listeners are registered at boot (the net that kept the 2026-07-19
+    // floating rejection from killing all nine queues).
+    expect(process.listenerCount('unhandledRejection')).toBe(baseUnhandled + 1)
+    expect(process.listenerCount('uncaughtException')).toBe(baseUncaught + 1)
     // The dm-trigger worker is on QUEUE_DM_TRIGGER ('dm-trigger').
     expect(workerInstances.map((w) => w.name)).toContain('dm-trigger')
     // The st-evaluation worker (MYT-69) is on QUEUE_ST_EVAL ('st-evaluation').
@@ -214,6 +224,10 @@ describe('worker.main()', () => {
     expect(pgEndMock).toHaveBeenCalledTimes(1)
     expect(batchQuitMock).toHaveBeenCalledTimes(1)
     expect(realtimeQuitMock).toHaveBeenCalledTimes(1)
+    // myth-y2qfi: graceful shutdown detaches the escape-guard listeners, so the
+    // process returns to its pre-boot listener baseline (no per-reload leak).
+    expect(process.listenerCount('unhandledRejection')).toBe(baseUnhandled)
+    expect(process.listenerCount('uncaughtException')).toBe(baseUncaught)
   })
 
   it('honors WORKER_HEALTH_PORT (local-dev escape hatch for a :3001 collision)', async () => {

@@ -11,6 +11,19 @@ import type { Pool } from 'pg'
 import { uuidv7 } from './uuidv7.js'
 import type { ClientLike } from './_types.js'
 
+// myth-3u4a0: a concept stuck at 'processing' with no live worker driving it
+// (the staging hang: two LLM calls done, then an un-timed-out await stalled and
+// the BullMQ lock renewed forever) cannot be reset by the player, because the
+// reset only unwound terminal ('completed'/'failed') rows — bricking creation.
+// A 'processing' row whose `updated_at` has not advanced for this long has no
+// live worker: it comfortably exceeds the whole-job watchdog
+// (CHARACTER_CREATION_JOB_TIMEOUT_MS, 16m) minus its longest legitimate
+// no-write gap (a single stage's LLM + persistence, ~1-2m under the 5m per-stage
+// watchdog), so a still-progressing job has always bumped `updated_at` within
+// the window. Kept just below the 16m whole-job cap so the player can self-serve
+// a recovery slightly before the backstop fails the job.
+export const STALE_PROCESSING_RESET_MS = 10 * 60_000
+
 export interface CharacterConcept {
   readonly id: string
   readonly campaignId: string
@@ -441,21 +454,37 @@ export function characterConceptsNs(c: ClientLike) {
      * the sheet and the run is live). Returns false when nothing matched → the
      * route replies 409 not_resettable.
      *
+     * myth-3u4a0: ALSO matches a STALE 'processing' row (no `updated_at` write
+     * for `staleMs`), so a player whose creation job hung — lock renewing
+     * forever, no live worker — can self-serve a reset instead of being bricked.
+     * A FRESH 'processing' row (an active worker mid-stage) stays locked. The
+     * whole-job watchdog + the exhausted-'failed' listener remain the worker-side
+     * recovery; this is the player-side one for the case where neither could flip
+     * the row (e.g. a wedged DB await).
+     *
      * Composes inside `repo.transaction` (the route wraps it) so the status flip
      * + the sheet DELETE commit atomically. Deleting the `characters` row
      * cascades the campaign_characters join + the four sub-tables + the MYT-70
      * ledger rows (all FK ON DELETE CASCADE); the not-active guard guarantees no
      * session_participants row points at it.
      */
-    resetConcept: async (campaignId: string, userId: string): Promise<boolean> => {
+    resetConcept: async (
+      campaignId: string,
+      userId: string,
+      staleMs: number = STALE_PROCESSING_RESET_MS,
+    ): Promise<boolean> => {
       const flip = await c.query<{ id: string }>(
         `UPDATE character_concepts
             SET status = 'submitted', confirmed_at = NULL, error = NULL, updated_at = now()
           WHERE campaign_id = $1 AND user_id = $2
-            AND status IN ('completed', 'failed')
+            AND (
+              status IN ('completed', 'failed')
+              OR (status = 'processing'
+                  AND updated_at < now() - ($3::double precision * interval '1 millisecond'))
+            )
             AND campaign_id IN (SELECT id FROM campaigns WHERE id = $1 AND status <> 'active')
           RETURNING id`,
-        [campaignId, userId],
+        [campaignId, userId, staleMs],
       )
       if (flip.rows.length === 0) return false
       // Clear the generated sheet so "Start over" regenerates from scratch. The

@@ -711,6 +711,16 @@ export function streamObject<T>(
     },
   )
 
+  // wrappedObject is created EAGERLY, but consumers typically read
+  // partialObjectStream first and only later (or, on a stream error path,
+  // never) await `.object`. If the repair chain rejects before any awaiter
+  // attaches, the rejection is detached and Node's unhandled-rejection
+  // policy kills the whole worker process — every queue, not just the bad
+  // job (live incident: an output-token overflow in session-prep took down
+  // all nine queues). Attach a no-op handler so the rejection is always
+  // "handled" at birth; real awaiters of `.object` still observe it.
+  wrappedObject.catch(() => {})
+
   // `sdkResult` is a class instance (DefaultStreamObjectResult) whose
   // hot fields — partialObjectStream, textStream, fullStream, warnings,
   // usage — are prototype getters. Object spread copies only own

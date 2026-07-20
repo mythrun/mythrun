@@ -791,57 +791,83 @@ describe('runCharacterCreationJob', () => {
   // re-entry test belongs there (added in T10).
 
   // -------------------------------------------------------------------------
-  // MYT-102 A1: per-stage watchdog. Staging evidence: a job completed two
-  // Sonnet calls then awaited SOMETHING forever — worker task alive, BullMQ
-  // lock renewing, zero further logs. The watchdog bounds every stage
-  // execution with a wall-clock timeout that throws a TRANSIENT error, so
-  // BullMQ's attempts:2 policy gets a retry instead of an unbounded hang.
+  // myth-3u4a0: per-stage watchdog (was MYT-102 A1, non-terminal). Staging
+  // evidence: a job completed two Sonnet calls then awaited SOMETHING forever —
+  // worker task alive, BullMQ lock renewing, zero further logs. The watchdog
+  // bounds every stage execution with a wall-clock timeout. myth-3u4a0 makes the
+  // trip TERMINAL (`{ terminal: true }`, code 'job_timeout'): the concept flips
+  // to 'failed' at once so the player resubmits, rather than waiting out a futile
+  // BullMQ retry of a hang. `withJobTimeout` is the shared timeout primitive.
   // -------------------------------------------------------------------------
 
-  it('watchdog: a never-resolving stage fails transient (willRetry:true rethrow) instead of hanging', async () => {
+  it('watchdog: a never-resolving stage fails TERMINAL (concept → failed, no futile retry) instead of hanging', async () => {
     const { userId, campaignId } = await seed()
     // Stage 2's Sonnet call never settles — models the staging hang.
     mockGenerateText.mockReturnValueOnce(new Promise(() => undefined) as never)
 
     const events: Record<string, unknown>[] = []
-    await expect(
-      runCharacterCreationJob(
-        makeDeps(pool, {
-          stageTimeoutMs: 50,
-          publishEvent: (cid, e) => {
-            events.push({ campaignId: cid, ...e })
-            return Promise.resolve()
-          },
-        }),
-        makeJob(campaignId, userId),
-      ),
-    ).rejects.toThrow(/watchdog/)
+    // Terminal → runCharacterCreationJob RESOLVES (returns cleanly after the
+    // inline markFailed); it does NOT rethrow, so BullMQ sees no retry.
+    await runCharacterCreationJob(
+      makeDeps(pool, {
+        stageTimeoutMs: 50,
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      }),
+      makeJob(campaignId, userId),
+    )
 
-    // The hung stage's pipeline_runs row is marked failed (the retry's claim
-    // re-arms it), and the failure is TRANSIENT: stage-failed carries
-    // willRetry:true + the llm_timeout code (LlmTimeoutError.terminal=false).
+    // The hung stage's pipeline_runs row is marked failed, and the failure is
+    // TERMINAL: stage-failed carries willRetry:false + the job_timeout code.
     const run = await pool.query<{ status: string; error: string | null }>(
       `SELECT status, error FROM pipeline_runs
         WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_concept'`,
       [campaignId, userId],
     )
     expect(run.rows[0]?.status).toBe('failed')
-    expect(run.rows[0]?.error).toMatch(/watchdog/)
+    expect(run.rows[0]?.error).toMatch(/character-creation stage 'character_concept' exceeded 50ms/)
 
     const stageFailed = events.find(
       (e) => e.type === 'stage-failed' && e.stage === 'character_concept',
     )
     expect(stageFailed).toBeDefined()
-    expect(stageFailed?.willRetry).toBe(true)
-    expect(stageFailed?.errorCode).toBe('llm_timeout')
+    expect(stageFailed?.willRetry).toBe(false)
+    expect(stageFailed?.errorCode).toBe('job_timeout')
 
-    // The concept row must NOT be terminally failed by a transient watchdog
-    // trip — BullMQ owns the retry; only exhaustion flips the concept.
+    // THE FIX: the concept flips to 'failed' so the player sees the failure and
+    // can resubmit — previously it stayed 'processing' waiting out a retry.
     const concept = await pool.query<{ status: string }>(
       `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
       [campaignId, userId],
     )
-    expect(concept.rows[0]?.status).toBe('processing')
+    expect(concept.rows[0]?.status).toBe('failed')
+  })
+
+  // -------------------------------------------------------------------------
+  // myth-3u4a0: whole-JOB backstop at the processor factory. The per-stage
+  // watchdog covers `runStage`; this outer cap bounds the orchestration-loop
+  // awaits it does not — so a wedge anywhere in the job can't renew the lock
+  // forever. It throws the same terminal `{ terminal: true }` shape.
+  // -------------------------------------------------------------------------
+
+  it('whole-job watchdog: the factory bounds a job that hangs on its FIRST orchestration await', async () => {
+    // A pool whose every query hangs — models a wedged DB/Redis await that is
+    // NOT inside a stage watchdog (the exact gap the whole-job cap closes). The
+    // job stalls on its first orchestration await (the cost-cap read) forever;
+    // the factory's whole-job watchdog is the only thing that can end it.
+    const hangingPool = { query: () => new Promise(() => undefined) } as unknown as Pool
+    const processor = createCharacterCreationProcessor({
+      pool: hangingPool,
+      costCapUsd: 5,
+      publishEvent: () => Promise.resolve(),
+      jobTotalTimeoutMs: 30,
+    })
+
+    await expect(
+      processor(makeJob('camp-hang', 'user-hang') as never),
+    ).rejects.toMatchObject({ terminal: true, code: 'job_timeout' })
   })
 })
 

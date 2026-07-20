@@ -49,6 +49,7 @@ import { createRepo } from './repo/index.js'
 import { sessionChannel } from './contract/session-channel.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
+import { containProcessor, createProcessEscapeGuard } from './queue/job-containment.js'
 
 /** Default worker health-server port. Overridable via WORKER_HEALTH_PORT for
  *  local dev, where :3001 can collide with an unrelated process (the env var
@@ -67,6 +68,28 @@ const WORKER_CLOSE_GRACE_MS = 100_000
 
 export async function main(): Promise<void> {
   const env = loadEnv()
+
+  // myth-y2qfi: install the process-level escape guard FIRST — before any
+  // connection, queue, or worker exists — so a FLOATING unhandled rejection from
+  // ANY job (the 2026-07-19 session-prep crash: an AI_NoObjectGeneratedError
+  // re-thrown from a detached streaming-repair `.then` chain) is contained and
+  // the process SURVIVES, keeping all nine queues alive. The crash-loop-vs-
+  // zombie decision lives in createProcessEscapeGuard: keep-alive for isolated
+  // escapes, fail-fast on a storm. `shuttingDown` is declared here (hoisted from
+  // the shutdown block below) so the guard no-ops during graceful teardown — a
+  // teardown-race rejection must not re-trigger the fail-fast exit.
+  let shuttingDown = false
+  const escapeGuard = createProcessEscapeGuard({
+    logger,
+    isShuttingDown: () => shuttingDown,
+    onStorm: () => {
+      // A storm of escapes is a systemic defect, not one bad job: exit non-zero
+      // so ECS restarts with a clean slate and the crash-loop surfaces to ops,
+      // instead of a health-green zombie that silently fails every job.
+      process.exit(1)
+    },
+  })
+  const removeEscapeGuard = escapeGuard.install()
 
   // Establish connections. Each probe is wrapped in waitFor() (200/500/
   // 1000/2000ms backoff, 5 attempts total) to mirror the API's boot
@@ -116,16 +139,25 @@ export async function main(): Promise<void> {
   // (server.ts:buildWorldGenWorker) wires the same processor; both compete
   // for jobs on the same QUEUE_WORLD_GEN. The smoke surfaced that this
   // worker.ts entrypoint was never updated alongside server.ts.
+  // myth-y2qfi: every processor constructed HERE is wrapped in containProcessor
+  // — the processor-boundary layer that turns any in-chain throw (sync or async)
+  // into a logged, contained job failure (BullMQ still fails + retries the job).
+  // It complements the process-level guard above: the boundary catches throws in
+  // the await path; the guard catches floating rejections that escape it.
   const worldGenWorker = new BullmqWorker(
     QUEUE_WORLD_GEN,
-    createWorldGenProcessor({
-      pool: pg,
-      redisRealtime,
-      redisKeyPrefix: env.redisKeyPrefix,
+    containProcessor(
+      QUEUE_WORLD_GEN,
+      createWorldGenProcessor({
+        pool: pg,
+        redisRealtime,
+        redisKeyPrefix: env.redisKeyPrefix,
+        logger,
+        costCapUsd: worldGenCostCapUsd,
+        voyageApiKey: env.voyageApiKey,
+      }),
       logger,
-      costCapUsd: worldGenCostCapUsd,
-      voyageApiKey: env.voyageApiKey,
-    }),
+    ),
     { connection: redisBatch, concurrency: CONCURRENCY_WORLD_GEN },
   )
 
@@ -150,10 +182,14 @@ export async function main(): Promise<void> {
     await characterCreationProcessor(job as Job<CharacterCreationJobPayload>)
   }
 
-  const campaignSetupWorker = new BullmqWorker(QUEUE_CAMPAIGN_SETUP, campaignSetupRouter, {
-    connection: redisBatch,
-    concurrency: CONCURRENCY_CAMPAIGN_SETUP,
-  })
+  const campaignSetupWorker = new BullmqWorker(
+    QUEUE_CAMPAIGN_SETUP,
+    containProcessor(QUEUE_CAMPAIGN_SETUP, campaignSetupRouter, logger),
+    {
+      connection: redisBatch,
+      concurrency: CONCURRENCY_CAMPAIGN_SETUP,
+    },
+  )
 
   // MYT-102 A2: exhausted-transient surfacing. A transient stage failure
   // rethrows so BullMQ retries (attempts:2) — but the FINAL failed attempt
@@ -174,7 +210,11 @@ export async function main(): Promise<void> {
   // fails the campaign. The API container (server.ts) wires the same processor.
   const sessionPrepWorker = new BullmqWorker(
     QUEUE_SESSION_PREP,
-    createSessionPrepProcessor({ pool: pg, publishEvent, publishProse }),
+    containProcessor(
+      QUEUE_SESSION_PREP,
+      createSessionPrepProcessor({ pool: pg, publishEvent, publishProse }),
+      logger,
+    ),
     { connection: redisBatch, concurrency: CONCURRENCY_SESSION_PREP },
   )
 
@@ -351,10 +391,14 @@ export async function main(): Promise<void> {
     'worker started',
   )
 
-  let shuttingDown = false
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
+    // Detach the escape guard: teardown is short and every step below has its
+    // own .catch, so we no longer need (or want) the process-level net racing
+    // the graceful exit. `isShuttingDown` already no-ops it; this removes the
+    // listeners so they don't leak across a hot-reload in tests.
+    removeEscapeGuard()
     logger.info({ event: 'worker.shutting_down', signal }, 'worker stopping')
 
     await health.close().catch((err: unknown) => {

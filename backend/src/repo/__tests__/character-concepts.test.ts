@@ -385,4 +385,59 @@ describe('character_concepts repo (integration)', () => {
       expect(row.rows[0]?.concept_output).toEqual({ summary: 'done' })
     })
   })
+
+  // myth-3u4a0: a creation job that hangs strands the concept at 'processing'
+  // with no live worker (lock renewing forever). resetConcept lets the player
+  // recover a STALE 'processing' row while keeping a FRESH one (an active
+  // worker's) locked.
+  describe('resetConcept stale-processing recovery', () => {
+    async function seedProcessing(): Promise<{ campaignId: string; userId: string }> {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await makeMember(pool, scope)
+      await repo.upsert({
+        campaignId,
+        userId,
+        conceptText: 'a road-weary cleric whose creation job will hang here',
+        situationGroundingText: 'arrived seeking word of an old companion',
+        guidedChoices: {},
+      })
+      await repo.markProcessing(campaignId, userId)
+      return { campaignId, userId }
+    }
+
+    it('resets a STALE processing concept (no update within the threshold) → submitted', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await seedProcessing()
+      // Age the row well past a 10-minute threshold — models the hung job.
+      await pool.query(
+        `UPDATE character_concepts SET updated_at = now() - interval '1 hour'
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      const didReset = await repo.resetConcept(campaignId, userId, 10 * 60_000)
+      expect(didReset).toBe(true)
+      const row = await repo.getByCampaignAndUser(campaignId, userId)
+      expect(row?.status).toBe('submitted')
+      expect(row?.error).toBeNull()
+    })
+
+    it('REFUSES a FRESH processing concept (an active worker owns it) → still processing', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await seedProcessing()
+      // updated_at is now() from markProcessing — well inside the threshold.
+      const didReset = await repo.resetConcept(campaignId, userId, 10 * 60_000)
+      expect(didReset).toBe(false)
+      const row = await repo.getByCampaignAndUser(campaignId, userId)
+      expect(row?.status).toBe('processing')
+    })
+
+    it('still resets a completed concept regardless of staleness (unchanged path)', async () => {
+      const repo = createCharacterConceptsRepo(pool)
+      const { campaignId, userId } = await seedProcessing()
+      await repo.markCompleted(campaignId, userId) // fresh updated_at, terminal state
+      const didReset = await repo.resetConcept(campaignId, userId, 10 * 60_000)
+      expect(didReset).toBe(true)
+      expect((await repo.getByCampaignAndUser(campaignId, userId))?.status).toBe('submitted')
+    })
+  })
 })

@@ -161,10 +161,12 @@ export const characterConceptRoutes: FastifyPluginAsync<Opts> = async (app, opts
   // /characters 409s concept_locked). This flips the caller's own
   // completed/failed concept back to a resubmittable 'submitted' and clears
   // the generated sheet, so Start over → create re-runs the per-player
-  // pipeline. resetConcept guards the flip transactionally (completed/failed
-  // only, campaign not 'active'); a non-match → 409 not_resettable (can't
-  // unwind an integrated character or an active game). The status flip + the
-  // sheet DELETE run in one repo.transaction so they commit atomically.
+  // pipeline. resetConcept guards the flip transactionally (completed/failed —
+  // OR a STALE 'processing' row whose creation job hung, myth-3u4a0 — campaign
+  // not 'active'); a non-match → 409 not_resettable (can't unwind an integrated
+  // character, an active game, or a FRESH 'processing' row an active worker owns).
+  // The status flip + the sheet DELETE run in one repo.transaction so they
+  // commit atomically.
   // --------------------------------------------------------------------
   app.post<{ Params: { campaignId: string } }>(
     '/api/campaigns/:campaignId/characters/reset',

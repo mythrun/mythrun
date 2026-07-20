@@ -25,7 +25,8 @@
 
 import type { Job } from 'bullmq'
 import type { Pool } from 'pg'
-import { isTerminalError, LlmTimeoutError } from '../errors.js'
+import { isTerminalError } from '../errors.js'
+import { withJobTimeout } from '../../queue/job-containment.js'
 import { atomicClaimStage, sanitizeError } from './world-gen-processor.js'
 import { sumCharacterCreationStageCosts } from './cost-cap.js'
 import { runLocationSelectionStage } from './stages/location-selection.js'
@@ -59,18 +60,36 @@ export const STAGES_IN_ORDER: readonly CharacterCreationStage[] = [
   'character_sheet',
 ]
 
-// MYT-102 A1: hard wall-clock cap on ONE stage execution. Staging evidence
-// (2026-07): a character-creation job completed both Sonnet calls and then
-// awaited SOMETHING forever — worker task alive, BullMQ lock renewing, zero
+// MYT-102 A1 / myth-3u4a0: hard wall-clock cap on ONE stage execution. Staging
+// evidence (2026-07): a character-creation job completed both Sonnet calls and
+// then awaited SOMETHING forever — worker task alive, BullMQ lock renewing, zero
 // further logs — stranding the player's concept at 'processing' indefinitely.
-// 5 minutes is ~5x the slowest observed stage (concept + sheet each finish
-// well under a minute including the structured-output repair chain), so a
-// trip is overwhelmingly a genuine hang, not a slow-but-healthy call. On
-// trip the watchdog throws LlmTimeoutError (terminal:false → the standard
-// non-terminal path rethrows), so BullMQ's attempts:2 policy
-// (server-queues.ts buildCharacterCreationQueue) drives one retry and the
-// exhausted-'failed' listener surfaces the failure if the retry hangs too.
+// 5 minutes is ~5x the slowest observed stage (concept + sheet each finish well
+// under a minute including the structured-output repair chain), so a trip is
+// overwhelmingly a genuine hang, not a slow-but-healthy call.
+//
+// myth-3u4a0 REVERSES MYT-102 A1's non-terminal choice: the trip now throws the
+// shared `{ terminal: true }` shape (via withJobTimeout), so the standard
+// terminal path flips the concept to 'failed' immediately — the player sees the
+// failure and resubmits at once, instead of waiting out a futile BullMQ retry of
+// a hang that (at a 5-minute threshold) is overwhelmingly genuine and will only
+// hang again. Retrying a hang and resubmitting after a fast fail both re-run the
+// same pipeline; failing fast is the better player experience, and it matches
+// the cross-workstream contract that an unrecoverable job error is terminal.
 export const CHARACTER_CREATION_STAGE_TIMEOUT_MS = 5 * 60_000
+
+// myth-3u4a0: whole-JOB wall-clock backstop, applied at the processor factory.
+// The per-stage watchdog above bounds each `runStage` (the LLM-bearing part),
+// but the orchestration loop has external awaits OUTSIDE runStage — atomicClaim,
+// the pipeline_runs / character_concepts writes, publishEvent — and a stall in
+// ANY of those (a wedged DB/Redis await) would still renew the BullMQ lock
+// forever. This total-job cap guarantees no await anywhere in the job can hang
+// the worker slot indefinitely. It is deliberately > 3× the per-stage cap so an
+// in-stage hang always trips the tighter per-stage watchdog FIRST (which fails
+// the concept in-loop); this backstop only fires when the SUM of otherwise
+// under-cap awaits wedges the job, in which case the stale-'processing' reset
+// (character-concepts.ts resetConcept) is the player's recovery.
+export const CHARACTER_CREATION_JOB_TIMEOUT_MS = 16 * 60_000
 
 export interface CharacterCreationDeps {
   readonly pool: Pool
@@ -193,15 +212,15 @@ export async function runCharacterCreationJob(
 
     const startedAt = Date.now()
     try {
-      // MYT-102 A1: the watchdog bounds the WHOLE stage execution (LLM calls
+      // myth-3u4a0: the watchdog bounds the WHOLE stage execution (LLM calls
       // + stage persistence), because the staging hang happened after the
       // Sonnet calls completed — inside the stage, not inside the model call.
-      // (Explicit annotation: the generic would otherwise infer through
-      // conceptOutput/characterId, which are assigned from `result` below —
-      // a circular-inference TS7022.)
-      const result: RunStageResult = await raceStageWatchdog(
-        stage,
-        deps.stageTimeoutMs ?? CHARACTER_CREATION_STAGE_TIMEOUT_MS,
+      // withJobTimeout throws the terminal `{ terminal: true }` shape on trip,
+      // so the catch below routes it to the inline markFailed (concept →
+      // 'failed', no futile BullMQ retry). (Explicit annotation: the generic
+      // would otherwise infer through conceptOutput/characterId, which are
+      // assigned from `result` below — a circular-inference TS7022.)
+      const result: RunStageResult = await withJobTimeout(
         runStage(repo, deps, stage, {
           campaignId,
           userId,
@@ -209,6 +228,8 @@ export async function runCharacterCreationJob(
           conceptOutput,
           characterId,
         }),
+        deps.stageTimeoutMs ?? CHARACTER_CREATION_STAGE_TIMEOUT_MS,
+        `character-creation stage '${stage}'`,
       )
       // Thread fresh state forward for the next stage; the runStage
       // dispatcher reloads from persisted state if these are null on
@@ -280,9 +301,9 @@ export async function runCharacterCreationJob(
         return
       }
       // Non-terminal: publish willRetry:true and rethrow so BullMQ's
-      // attempts:2 policy fires. Exercised by the watchdog test (a hung
-      // stage trips LlmTimeoutError, terminal:false) and the stage-3
-      // re-entry test.
+      // attempts:2 policy fires. Exercised by the transient-LLM-error tests
+      // (rate-limit / overload, terminal:false). A watchdog trip is now
+      // TERMINAL (myth-3u4a0), so it takes the terminal branch above, not this.
       await deps.publishEvent(campaignId, {
         type: 'stage-failed',
         stage,
@@ -464,48 +485,27 @@ export interface CreateCharacterCreationProcessorDeps {
   ) => Promise<void>
   /** Per-job cost cap (USD), read once at boot — see CharacterCreationDeps. */
   readonly costCapUsd: number
+  /** Whole-job watchdog override for tests. Production omits it and gets
+   *  CHARACTER_CREATION_JOB_TIMEOUT_MS. */
+  readonly jobTotalTimeoutMs?: number
 }
 
 export function createCharacterCreationProcessor(
   deps: CreateCharacterCreationProcessorDeps,
 ): (job: Job<CharacterCreationJobPayload>) => Promise<void> {
   return async (job) => {
-    await runCharacterCreationJob(deps, job)
-  }
-}
-
-// -- per-stage watchdog (MYT-102 A1) ----------------------------------------
-
-/** Race one stage execution against a hard wall-clock timeout. On trip,
- *  throws LlmTimeoutError (terminal:false) so the caller's non-terminal
- *  path marks the pipeline_runs row failed, publishes willRetry:true, and
- *  rethrows for BullMQ's retry policy. The abandoned stage promise keeps
- *  running in the background (Node can't cancel an in-flight await); its
- *  late writes are harmless — the retry's atomicClaimStage re-arms the
- *  failed row, and stage persistence is idempotent per (campaign, user). */
-async function raceStageWatchdog<T>(
-  stage: CharacterCreationStage,
-  timeoutMs: number,
-  work: Promise<T>,
-): Promise<T> {
-  let timer: NodeJS.Timeout | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new LlmTimeoutError(
-              `character-creation stage '${stage}' exceeded the ${String(timeoutMs)}ms watchdog`,
-            ),
-          )
-        }, timeoutMs)
-      }),
-    ])
-  } finally {
-    // The executor above runs synchronously, so timer is always set here;
-    // clearTimeout tolerates undefined anyway (no dead branch).
-    clearTimeout(timer)
+    // myth-3u4a0: the whole-job backstop. Bounds EVERY external await in the
+    // job — including the orchestration-loop DB/Redis awaits the per-stage
+    // watchdog does not cover — so no await can renew the BullMQ lock forever.
+    // On trip it throws the terminal `{ terminal: true }` shape: BullMQ's
+    // attempts:2 exhausts and the on('failed') handler flips the concept to
+    // 'failed' (handleCharacterCreationJobFailure); the stale-'processing'
+    // reset is the earlier player-side recovery.
+    await withJobTimeout(
+      runCharacterCreationJob(deps, job),
+      deps.jobTotalTimeoutMs ?? CHARACTER_CREATION_JOB_TIMEOUT_MS,
+      `character-creation job ${job.data.campaignId}/${job.data.userId}`,
+    )
   }
 }
 

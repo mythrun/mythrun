@@ -750,6 +750,43 @@ describe('streamObject', () => {
     })
   })
 
+  it('streaming: rejecting object with NO awaiter never detaches (worker-killer regression)', async () => {
+    // Live incident: prep read partialObjectStream only; the wrapped
+    // `.object` rejected after the repair chain with no awaiter attached →
+    // detached rejection → --unhandled-rejections=throw killed the worker.
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      const objErr = makeStructuredError('not json {')
+      mockStreamObject.mockReturnValueOnce(
+        fakeStreamResult<TestShape>({
+          final: { name: 'partial' },
+          objectError: objErr,
+        }),
+      )
+
+      const result = streamObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'name something',
+        callSite: 'test/stream-detached',
+      })
+
+      // Consume ONLY the partial stream — exactly the incident shape; give
+      // the rejection multiple macrotask turns to surface as unhandled.
+      for await (const p of result.partialObjectStream) void p
+      await new Promise((r) => setImmediate(r))
+      await new Promise((r) => setImmediate(r))
+      expect(unhandled).not.toHaveBeenCalled()
+
+      // A late awaiter must still observe the rejection.
+      await expect(result.object).rejects.toBe(objErr)
+    } finally {
+      process.removeListener('unhandledRejection', unhandled)
+    }
+  })
+
   it('streaming: SDK-overzealous on object — parses + Zod accepts → return repaired', async () => {
     const objErr = makeStructuredError('{"name":"Liam"}')
     mockStreamObject.mockReturnValueOnce(
