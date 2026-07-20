@@ -12,6 +12,7 @@ import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 import { Divider } from '../Divider/Divider.tsx'
 import { IconButton } from '../IconButton/IconButton.tsx'
 import { DmMessage } from '../DmMessage/DmMessage.tsx'
+import { DmCorrection } from '../DmCorrection/DmCorrection.tsx'
 import { PlayerMessage } from '../PlayerMessage/PlayerMessage.tsx'
 import { RollCard } from '../RollCard/RollCard.tsx'
 
@@ -42,10 +43,11 @@ import { RollCard } from '../RollCard/RollCard.tsx'
 
 /** The non-card mechanical subset of TranscriptItem — the four kinds that still
  *  render as a terse mono system line. dm / player have their own register
- *  components; skill_check / dice_roll became RollCards (MYT-93, spec §5). */
+ *  components; skill_check / dice_roll became RollCards (MYT-93, spec §5);
+ *  dm_correction is a set-apart errata slip (myth-d6knq), not a system line. */
 type MechanicalItem = Exclude<
   TranscriptItem,
-  { kind: 'dm' } | { kind: 'player' } | { kind: 'skill_check' } | { kind: 'dice_roll' }
+  { kind: 'dm' } | { kind: 'player' } | { kind: 'skill_check' } | { kind: 'dice_roll' } | { kind: 'dm_correction' }
 >
 
 // Slack (px) from the bottom within which the stream still counts as "at the
@@ -93,6 +95,7 @@ function renderItem(
   highlight: EntityIndex | undefined,
   onEntityOpen: ((entityId: string) => void) | undefined,
   highlightLabels: MessageStreamProps['highlightLabels'],
+  correctionLabel: string | undefined,
 ): ReactNode {
   if (item.kind === 'dm') {
     // Buffered until the turn's skill_check is continued (spec §5 prose gate).
@@ -106,6 +109,12 @@ function renderItem(
         {...(highlightLabels !== undefined ? { highlightLabels } : {})}
       />
     )
+  }
+  if (item.kind === 'dm_correction') {
+    // A set-apart errata slip (myth-d6knq) — NEVER the DM narrative register, so a
+    // correction can't read as the fiction it corrects. `correctionLabel` is the
+    // resolved [ph:] eyebrow; absent ⇒ no eyebrow (the slip still stands apart).
+    return <DmCorrection text={item.text} label={correctionLabel ?? ''} />
   }
   if (item.kind === 'player') {
     return (
@@ -151,7 +160,7 @@ function needsDivider(items: readonly TranscriptItem[], i: number): boolean {
 }
 
 export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(function MessageStream(
-  { items, connectionLine, reducedMotion, rollReveal, rollLabels, onRoll, onContinue, highlight, onEntityOpen, highlightLabels },
+  { items, connectionLine, reducedMotion, rollReveal, rollLabels, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel },
   ref,
 ) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -214,7 +223,7 @@ export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(func
         {items.map((item, i) => (
           <Fragment key={item.key}>
             {needsDivider(items, i) ? <Divider /> : null}
-            {renderItem(item, rollReveal, rollLabels, reducedMotion, onRoll, onContinue, highlight, onEntityOpen, highlightLabels)}
+            {renderItem(item, rollReveal, rollLabels, reducedMotion, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel)}
           </Fragment>
         ))}
       </div>

@@ -43,6 +43,14 @@ export type TranscriptItem =
   | { kind: 'mode_change'; key: string; turnId: string | null; frame: FrameOf<'mode_change'> }
   | { kind: 'combat_started'; key: string; turnId: string; frame: FrameOf<'combat_started'> }
   | { kind: 'combat_resolved'; key: string; turnId: string; frame: FrameOf<'combat_resolved'> }
+  // A DM CORRECTION (myth-d6knq) — the DM amending something previously narrated.
+  // Its own content kind (NOT a `dm` row): the transcript renders it as a set-apart
+  // errata slip, never as story prose, so a correction can never read as the fiction
+  // it corrects (enforced-ignorance-adjacent: the record stays honest and distinct).
+  // Carries the correction's OWN emission `turnId` (the turn the FT issued it in, per
+  // the backend row model — not the corrected turn's), so it folds through
+  // whole-turn-replace exactly like the mechanical/dm rows. `text` is DM DATA.
+  | { kind: 'dm_correction'; key: string; turnId: string; text: string }
 
 export interface TranscriptState {
   readonly items: readonly TranscriptItem[]

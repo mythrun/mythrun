@@ -19,10 +19,14 @@ export type { CardItem, RollPhase, RollRevealView } from '../../session/roll-rev
 // Prop contracts — one per @mythrun/ui play component (Tasks 9–14).
 export type { MessageStreamProps } from './message-stream-props.ts'
 export type { DmMessageProps } from './dm-message-props.ts'
+// myth-d6knq — the DM correction (errata) row prop contract.
+export type { DmCorrectionProps } from './dm-correction-props.ts'
 export type { PlayerMessageProps } from './player-message-props.ts'
 export type { SessionInputProps } from './session-input-props.ts'
 export type { ThinkingIndicatorProps } from './thinking-indicator-props.ts'
 export type { SessionStartBeatProps } from './session-start-beat-props.ts'
+// myth-ep74g — the between-sessions preparing hold prop contract.
+export type { SessionPreparingProps } from './session-preparing-props.ts'
 
 // MYT-93 dice-moment prop contracts (RollCard / DieSpin — Tasks 4/5). RollCardLabels is
 // the resolved [ph:] bundle the play route threads through MessageStream to each card.

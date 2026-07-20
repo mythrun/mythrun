@@ -454,6 +454,9 @@
       "failed": "[ph: lost the connection — trying to get you back]",
       "reconnecting": "[ph: reconnecting to the table…]"
     },
+    "correction": {
+      "label": "[ph: correction]"
+    },
     "error": {
       "body": "[ph: we couldn't open this session just now]",
       "retry": "[ph: try again]"
@@ -507,6 +510,10 @@
       "failedBody": "[ph: preparing the session was interrupted — try again]",
       "failedRetry": "[ph: try again]",
       "failedTitle": "[ph: tonight's session didn't come together]"
+    },
+    "preparing": {
+      "detail": "[ph: this can take a moment]",
+      "label": "[ph: the DM is preparing the next session…]"
     },
     "purchase": {
       "notOwner": {

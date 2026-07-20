@@ -12,6 +12,8 @@ const textDelta = (turnId: string, text: string): F<'text_delta'> => ({ type: 't
 const turnEnd = (turnId: string): F<'turn_end'> => ({ type: 'turn_end', turnId })
 const turnError = (turnId: string, message = 'boom'): F<'turn_error'> => ({ type: 'turn_error', turnId, message })
 const dmMessage = (seq: number, turnId: string, text: string): F<'dm_message'> => ({ type: 'dm_message', seq, turnId, text })
+const correctionLive = (turnId: string, text: string): F<'dm_correction'> => ({ type: 'dm_correction', turnId, text })
+const correctionRow = (seq: number, turnId: string, text: string): F<'dm_correction'> => ({ type: 'dm_correction', seq, turnId, text })
 const player = (seq: number, text: string, userId = 'u1'): F<'player_message'> => ({
   type: 'player_message', seq, userId, displayName: 'Dee', characterName: 'Cee', text,
 })
@@ -95,6 +97,32 @@ describe('reduceFrame — mechanical frames modeled first-class', () => {
       { kind: 'mode_change', turnId: 'T', frame: withTurn },
       { kind: 'mode_change', turnId: null, frame: noTurn },
     ])
+  })
+})
+
+describe('reduceFrame — DM corrections (myth-d6knq)', () => {
+  it('(c2) a live dm_correction appends a set-apart dm_correction item carrying turnId + text', () => {
+    const s = reduceFrame(emptyTranscript, correctionLive('T', 'The gate was iron, not oak.'))
+    expect(s.items).toMatchObject([{ kind: 'dm_correction', turnId: 'T', text: 'The gate was iron, not oak.' }])
+    expect(s.items[0]?.key).toEqual(expect.any(String))
+  })
+
+  it('(c2) a correction appended after DM prose renders as its own row, never folded into the dm item', () => {
+    const s = fold([textDelta('T', 'a heavy oak gate'), turnEnd('T'), correctionLive('T', 'iron, not oak')])
+    expect(s.items).toMatchObject([
+      { kind: 'dm', turnId: 'T', text: 'a heavy oak gate', streaming: false },
+      { kind: 'dm_correction', turnId: 'T', text: 'iron, not oak' },
+    ])
+  })
+
+  it('(c2) a replayed dm_correction row rebuilds the SAME set-apart item (whole-turn-replace round-trips it)', () => {
+    // Live: the turn streams prose + a correction; a reconnect replays both as seq-bearing rows.
+    const live = fold([textDelta('T', 'oak gate'), correctionLive('T', 'iron, not oak')])
+    const batch: ServerFrame[] = [dmMessage(9, 'T', 'oak gate'), correctionRow(10, 'T', 'iron, not oak')]
+    const s = reduceFrame(live, reconnect(batch))
+    const corrections = s.items.filter((i) => i.kind === 'dm_correction')
+    expect(corrections).toHaveLength(1) // pruned + re-folded, not doubled
+    expect(corrections[0]).toMatchObject({ kind: 'dm_correction', turnId: 'T', text: 'iron, not oak' })
   })
 })
 

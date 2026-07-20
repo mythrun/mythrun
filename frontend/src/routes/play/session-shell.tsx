@@ -191,6 +191,9 @@ export function SessionShell({
             rollLabels={rollLabels}
             onRoll={onRoll}
             onContinue={onContinue}
+            // The errata eyebrow for a `dm_correction` row (myth-d6knq) — resolved
+            // route-side; the DS slip is i18n-agnostic. `text` is DM DATA.
+            correctionLabel={t('play.correction.label')}
             // Settled-prose entity highlighting (MYT-94) — passed ONLY once the
             // cache index has settled; a null index leaves DM prose plain.
             {...(knowledge.highlight !== undefined

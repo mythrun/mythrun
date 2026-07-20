@@ -158,31 +158,35 @@ describe('PlayRoute — start-flow phases', () => {
     expect(beat.getAttribute('data-phase')).toBe('connecting')
   })
 
-  it('renders the prep beat and re-attempts start when prep goes ready', async () => {
-    const { hook, retry } = stubStart({ phase: 'prep' })
+  it('renders the calm preparing hold and does NOT re-attempt start when prep reports ready (the hook backoff-polls — no storm)', async () => {
+    const { hook, retry } = stubStart({ phase: 'waiting', code: 'prep_not_ready' })
     renderRoute({ useStart: hook, usePrep: stubPrep({ status: 'ready', terminal: false }) })
-    const beat = await screen.findByTestId('session-start-beat')
-    expect(beat.getAttribute('data-phase')).toBe('prep')
+    // The between-sessions interstitial shows; the SSE `ready` must NOT re-fire start()
+    // — the storm's root cause is removed (the hook owns the poll cadence).
+    expect(await screen.findByTestId('play-preparing')).toBeDefined()
+    expect(screen.getByTestId('session-preparing')).toBeDefined()
+    // Give any (removed) retry effect a chance to fire — it must not.
     await waitFor(() => {
-      expect(retry).toHaveBeenCalled()
+      expect(screen.getByTestId('session-preparing')).toBeDefined()
     })
+    expect(retry).not.toHaveBeenCalled()
   })
 
-  it('holds the prep beat (no retry) while prep is still generating', async () => {
-    const { hook, retry } = stubStart({ phase: 'prep' })
+  it('holds the preparing interstitial (no retry) while prep is still generating', async () => {
+    const { hook, retry } = stubStart({ phase: 'waiting', code: 'prep_not_ready' })
     renderRoute({ useStart: hook, usePrep: stubPrep({ status: 'generating', terminal: false }) })
-    await screen.findByTestId('play-prep')
+    await screen.findByTestId('play-preparing')
     expect(retry).not.toHaveBeenCalled()
   })
 
   it('shows the calm prep-failed hold on a terminal prep failure', async () => {
-    const { hook } = stubStart({ phase: 'prep' })
+    const { hook } = stubStart({ phase: 'waiting', code: 'prep_not_ready' })
     renderRoute({ useStart: hook, usePrep: stubPrep({ status: 'failed', terminal: true }) })
     expect(await screen.findByTestId('play-prep-failed')).toBeDefined()
   })
 
   it('renders a retry notice for a blocked start arm', async () => {
-    const { hook } = stubStart({ phase: 'blocked', code: 'session_ending' })
+    const { hook } = stubStart({ phase: 'blocked', code: 'campaign_not_active' })
     renderRoute({ useStart: hook })
     expect(await screen.findByTestId('play-blocked')).toBeDefined()
   })

@@ -71,6 +71,14 @@ function appendDm(state: TranscriptState, frame: FrameOf<'dm_message'>): Transcr
   return appendItem(state, (key) => ({ kind: 'dm', key, turnId: frame.turnId, text: frame.text, streaming: false }))
 }
 
+/** A DM correction (myth-d6knq) → a set-apart `dm_correction` item. Distinct from
+ *  `dm` so MessageStream renders it as an errata slip, never as narration. Appends
+ *  at its arrival/seq position (live: current tail; replay: seq order) — the DM
+ *  issued the amendment there, so that is where the record shows it. */
+function appendCorrection(state: TranscriptState, frame: FrameOf<'dm_correction'>): TranscriptState {
+  return appendItem(state, (key) => ({ kind: 'dm_correction', key, turnId: frame.turnId, text: frame.text }))
+}
+
 /** Wrap a mechanical frame in its matching first-class item kind. */
 function buildMechanical(frame: MechanicalFrame, key: string): TranscriptItem {
   switch (frame.type) {
@@ -148,6 +156,8 @@ export function reduceFrame(state: TranscriptState, frame: ServerFrame): Transcr
       return settleTurn(state, frame.turnId)
     case 'dm_message':
       return appendDm(state, frame)
+    case 'dm_correction':
+      return appendCorrection(state, frame)
     case 'skill_check':
     case 'dice_roll':
     case 'ledger_update':

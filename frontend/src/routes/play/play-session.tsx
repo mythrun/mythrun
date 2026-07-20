@@ -10,7 +10,7 @@ import {
 import { SessionStartBeat } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { PlayViewer } from './play-viewer.ts'
-import { PrepBeat } from './prep-beat.tsx'
+import { PreparingHold } from './preparing-hold.tsx'
 import { SessionShell } from './session-shell.tsx'
 import { PurchaseSeam } from './purchase-seam.tsx'
 import { CenteredHold, RetryNotice } from './notices.tsx'
@@ -20,11 +20,12 @@ import { CenteredHold, RetryNotice } from './notices.tsx'
 // is DATA, never an i18n key). The optimistic own-message still labels by displayName.
 const NO_CHARACTER_NAME = ''
 
-// The started-session driver (MYT-92 T16). Mounted once the viewer identity has
-// resolved (so `viewerIsOwner` is known), it owns the start flow: on mount it calls
-// `start()`, then renders by `state.phase`:
+// The started-session driver (MYT-92 T16; storm fix myth-ep74g). Mounted once the
+// viewer identity has resolved (so `viewerIsOwner` is known), it owns the start flow:
+// on mount it calls `start()`, then renders by `state.phase`:
 //   starting / idle  → the connecting beat (the short pre-session boundary)
-//   prep             → <PrepBeat> (the SSE atmospheric wait; ready → retry())
+//   waiting          → <PreparingHold> (the calm between-sessions beat; the HOOK
+//                      backoff-polls /start — no SSE-driven re-start storm)
 //   ready            → <SessionShell> (the live transcript)
 //   purchase         → <PurchaseSeam> (the MYT-95 seam; owner buy / member hold)
 //   blocked / error  → a calm retry notice (retry = start again)
@@ -106,13 +107,13 @@ function renderPhase(flow: StartFlow, args: RenderArgs): React.JSX.Element {
     case 'idle':
     case 'starting':
       return <ConnectingBeat reducedMotion={args.reducedMotion} labels={args.connectingLabels} />
-    case 'prep':
+    case 'waiting':
       return (
-        <PrepBeat
+        <PreparingHold
           ctx={args.ctx}
           campaignId={args.campaignId}
           reducedMotion={args.reducedMotion}
-          onReady={args.retry}
+          onRetry={args.retry}
           {...(args.usePrep !== undefined && { usePrep: args.usePrep })}
         />
       )

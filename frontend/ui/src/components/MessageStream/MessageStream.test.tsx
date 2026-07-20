@@ -150,6 +150,15 @@ const MECHANICAL: TranscriptItem[] = [
 // (skill_check / dice_roll are now RollCards — spec §5).
 const NON_CARD_MECHANICAL: TranscriptItem[] = [LEDGER_UPDATE, MODE_CHANGE, COMBAT_STARTED, COMBAT_RESOLVED]
 
+// A DM correction (myth-d6knq) — the errata row. Both a live-appended and a
+// replayed row reduce to this same item kind, so one fixture covers both paths.
+const DM_CORRECTION: TranscriptItem = {
+  kind: 'dm_correction',
+  key: 'corr-1',
+  turnId: 'T3',
+  text: 'The gate is iron, not oak — banded and cold.',
+}
+
 const MIXED: TranscriptItem[] = [DM_SETTLED, PLAYER_CONFIRMED, SKILL_CHECK, DM_STREAMING, PLAYER_PENDING]
 
 // ── Reveal scaffolding (MYT-93). MessageStream is presentational: the play route
@@ -214,6 +223,32 @@ describe('MessageStream', () => {
     expect(screen.getByText('Kessa Vurm')).toBeInTheDocument()
     expect(screen.getByText('Miklos')).toBeInTheDocument()
     expect(screen.getByText(/keep my hand near my blade/)).toBeInTheDocument()
+  })
+
+  it('routes a dm_correction item to the set-apart errata slip, never to a dm prose row or a mechanical line', () => {
+    const { container } = render(
+      <MessageStream {...streamProps({ items: [DM_SETTLED, DM_CORRECTION], correctionLabel: 'Correction' })} />,
+    )
+    // The errata slip renders with its own eyebrow + amendment text.
+    const slip = container.querySelector('[data-dm-correction]')
+    expect(slip).not.toBeNull()
+    expect(slip).toHaveAttribute('role', 'note')
+    expect(slip).toHaveTextContent('The gate is iron, not oak')
+    expect(slip).toHaveTextContent('Correction')
+    // It is NOT the DM narrative register, and NOT a mechanical system line.
+    expect(slip?.closest('[data-dm-message]')).toBeNull()
+    expect(container.querySelector('[data-mechanical="dm_correction"]')).toBeNull()
+    // The narration above it still rendered as its own DM prose row.
+    expect(container.querySelector('[data-dm-message]')).toHaveTextContent('The tavern door creaks open')
+  })
+
+  it('a replayed dm_correction row renders identically to a live one (same item kind → same slip)', () => {
+    // The reducer maps both the live frame and the persisted replay row to the SAME
+    // dm_correction item, so rendering is path-independent by construction.
+    const { container } = render(
+      <MessageStream {...streamProps({ items: [DM_CORRECTION], correctionLabel: 'Correction' })} />,
+    )
+    expect(container.querySelector('[data-dm-correction]')).toHaveTextContent('The gate is iron, not oak')
   })
 
   it('renders each non-card mechanical kind as a terse mono (font-ui) system line', () => {

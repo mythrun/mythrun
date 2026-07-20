@@ -62,10 +62,11 @@ describe('re-exported view-model shape', () => {
 })
 
 describe('prop contracts (exact — the U tasks build to these)', () => {
-  it('MessageStreamProps — transcript items + reveal seam (MYT-93) + highlight seam (MYT-94)', () => {
+  it('MessageStreamProps — transcript items + reveal seam (MYT-93) + highlight seam (MYT-94) + correction eyebrow (myth-d6knq)', () => {
     // EXACT-shape pin (do NOT weaken to toMatchTypeOf). MYT-93 appended the four
     // required reveal-seam fields; MYT-94 appended the three optional highlight-seam
-    // fields. The two extensions union on distinct names — this literal is the union.
+    // fields; myth-d6knq appended the optional `correctionLabel` errata eyebrow. The
+    // extensions union on distinct names — this literal is the union.
     expectTypeOf<MessageStreamProps>().toEqualTypeOf<{
       items: readonly TranscriptItem[]
       connectionLine: string | null
@@ -77,6 +78,7 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       highlight?: EntityIndex
       onEntityOpen?: (entityId: string) => void
       highlightLabels?: EntityHighlightLabels
+      correctionLabel?: string
     }>()
   })
 
