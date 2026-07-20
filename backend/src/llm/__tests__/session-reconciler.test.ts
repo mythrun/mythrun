@@ -101,6 +101,35 @@ describe('runSessionReconciler', () => {
     expect(call.prompt).toContain(baseInput.worldTone)
   })
 
+  it('threads {{closingNarration}} (the farewell end-state) into the prompt (myth-8mom0)', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: emptyPlan,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const closing = 'Renn set down the finished bracket and left; his bench sat empty.'
+
+    await runSessionReconciler({ ...baseInput, closingNarration: closing })
+
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(call.prompt).toContain(closing)
+    // The slot is never left un-substituted.
+    expect(call.prompt).not.toContain('{{closingNarration}}')
+  })
+
+  it('omitted closingNarration renders the slot empty (no leftover placeholder)', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: emptyPlan,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    await runSessionReconciler(baseInput)
+
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(call.prompt).not.toContain('{{closingNarration}}')
+  })
+
   it('round-trips a rich plan (mint entity + attributed secret fact)', async () => {
     mockGenerateText.mockResolvedValueOnce({
       output: richPlan,

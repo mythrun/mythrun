@@ -92,6 +92,15 @@ export interface AnalysisRepo {
       sessionId: string,
       limit: number,
     ): Promise<readonly { seq: number; messageType: string; content: string; triggerKind: string | null }[]>
+    /** myth-8mom0 — the farewell turn's closing narration (dm_text rows,
+     *  trigger_kind='farewell'). The farewell IS the session's final state (a
+     *  cliffhanger, an NPC's departure, where the party settled), but the
+     *  containment verifier deliberately excludes farewell lines from the
+     *  handoff's verbatim voice/atmosphere. Surfacing the closing narration to
+     *  the analyst as a distinct AUTHORITATIVE block keeps the summary + the
+     *  handoff's paraphrasable end-state fields reflecting where the session
+     *  actually ended. */
+    listFarewellNarration(sessionId: string): Promise<readonly string[]>
   }
   readonly characters: {
     listSessionParticipantCharacters(sessionId: string): Promise<readonly { name: string }[]>
@@ -148,6 +157,11 @@ export async function processPostSessionAnalysisJob(
   const sdPlaybook = prep?.sdPlaybook ?? ''
   const { summary: runningSummary } = await deps.sessionState.loadTurnState(campaignId)
   const participants = await deps.repo.characters.listSessionParticipantCharacters(sessionId)
+  // myth-8mom0 — the farewell turn's closing narration, surfaced as a distinct
+  // AUTHORITATIVE end-state block (the containment verifier still bars quoting it
+  // as voice/atmosphere; this only anchors the summary + the paraphrasable
+  // handoff end-state to where the session actually ended).
+  const farewell = await deps.repo.sessionMessages.listFarewellNarration(sessionId)
 
   // 3. Analyze (Opus). Rejects propagate → BullMQ retries.
   const { result } = await deps.runAnalysis({
@@ -155,6 +169,7 @@ export async function processPostSessionAnalysisJob(
     runningSummary,
     sdPlaybook,
     participants: participants.map((p) => p.name).join(', '),
+    closingNarration: farewell.join('\n\n'),
   })
 
   // 4. Verify the handoff's verbatim excerpts against the transcript; drop any

@@ -6,6 +6,11 @@ The party (PC roster):
 The session transcript (bounded tail — the most recent turns):
 {{transcript}}
 
+The session's CLOSING NARRATION — the narrator's end-of-session wind-down (may be empty):
+{{closingNarration}}
+
+THE CLOSING NARRATION IS THE SESSION'S FINAL STATE. It is the narrator's send-off: where each character settled, an NPC's departure or arrival, an object's finished form, the hour it ended, the cliffhanger left hanging. Your `summary`, and every end-state field of the `handoff` — the `party` positions/conditions, `timeOfDay`, each NPC's `state`, and `unresolvedThreads` — MUST reflect this CLOSING state, not an earlier mid-session moment. If the closing narration says an NPC left or a thing was finished, the handoff records it left / finished. (This does NOT relax the quoting rule below: you still must NEVER quote a wind-down line as an NPC `voice` excerpt or a location `atmosphere` snippet.)
+
 The Slow-Thinker running summary (secret-aware narrative state):
 {{runningSummary}}
 

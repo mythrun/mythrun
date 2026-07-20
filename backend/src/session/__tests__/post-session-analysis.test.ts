@@ -125,7 +125,9 @@ interface Recorders {
     runningSummary: string
     sdPlaybook: string
     participants: string
+    closingNarration: string
   }[]
+  farewellCalls: string[]
   verifyCalls: number
   writeAnalysisCalls: {
     id: string
@@ -142,6 +144,8 @@ interface Knobs {
   analysis: PostSessionAnalysis
   /** transcript rows. */
   rows: AnalysisRow[]
+  /** myth-8mom0 — farewell closing-narration rows; default none. */
+  farewell: string[]
   /** sessionPreps.getBy result. */
   prep: { sdPlaybook: string } | null
   /** loadTurnState running summary. */
@@ -161,6 +165,7 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: AnalysisProcessorDeps; rec
     session: { sessionNumber: 3, summary: null },
     analysis: analysisResult(),
     rows: rows(),
+    farewell: [],
     prep: { sdPlaybook: 'SECRET: the old woman is the cult informant.' },
     runningSummary: 'Earlier the party crossed the eastern bridge.',
     participants: [{ name: 'Mara' }, { name: 'Tobin' }],
@@ -175,6 +180,7 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: AnalysisProcessorDeps; rec
     loadTurnStateCalls: [],
     participantCalls: [],
     runAnalysisCalls: [],
+    farewellCalls: [],
     verifyCalls: 0,
     writeAnalysisCalls: [],
   }
@@ -199,6 +205,10 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: AnalysisProcessorDeps; rec
           rec.listForAnalysisCalls.push({ sessionId, limit })
           return Promise.resolve([...knobs.rows])
         },
+        listFarewellNarration: (sessionId) => {
+          rec.farewellCalls.push(sessionId)
+          return Promise.resolve([...knobs.farewell])
+        },
       },
       characters: {
         listSessionParticipantCharacters: (sessionId) => {
@@ -219,6 +229,7 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: AnalysisProcessorDeps; rec
         runningSummary: input.runningSummary,
         sdPlaybook: input.sdPlaybook,
         participants: input.participants,
+        closingNarration: input.closingNarration ?? '',
       })
       if (knobs.rejectAnalysis) return Promise.reject(new Error('opus_transient_blip'))
       return Promise.resolve(analysisOut(knobs.analysis))
@@ -320,6 +331,25 @@ describe('processPostSessionAnalysisJob — clean run', () => {
     expect(written?.emergingThreads).toEqual(['who hired the missing courier'])
     expect(written?.handoff.npcs[0]?.voice).toEqual([LOCATABLE_VOICE])
     expect(written?.handoff.npcs[0]?.voice).not.toContain(FABRICATED_VOICE)
+  })
+
+  it('myth-8mom0: surfaces the farewell closing narration to the analyst as the authoritative end-state block', async () => {
+    // The session ended with a farewell beat (an NPC's departure). The verifier
+    // bars quoting it as voice/atmosphere, but the summary + the paraphrasable
+    // handoff end-state must reflect it — so it is fed as a distinct block.
+    const FAREWELL = 'Renn shrugged on his coat and was gone; his bench sat empty, one walnut curl left behind.'
+    const { deps, rec } = makeDeps({ farewell: [FAREWELL] })
+    await processPostSessionAnalysisJob(deps, job())
+
+    expect(rec.farewellCalls).toEqual([SESSION])
+    expect(rec.runAnalysisCalls).toHaveLength(1)
+    expect(rec.runAnalysisCalls[0]?.closingNarration).toBe(FAREWELL)
+  })
+
+  it('no farewell → the closing-narration block is empty (no regression)', async () => {
+    const { deps, rec } = makeDeps()
+    await processPostSessionAnalysisJob(deps, job())
+    expect(rec.runAnalysisCalls[0]?.closingNarration).toBe('')
   })
 
   it('missing prep → sd_playbook defaults to "" (analysis still runs)', async () => {

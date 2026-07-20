@@ -29,6 +29,11 @@ export interface PostSessionAnalysisInput {
   readonly runningSummary: string
   readonly sdPlaybook: string
   readonly participants: string
+  /** myth-8mom0 — the farewell turn's closing narration (the session's final
+   *  wind-down beats). AUTHORITATIVE for where the session ENDED. Optional — ''
+   *  when the session had no farewell; the `{{closingNarration}}` slot then
+   *  renders empty. */
+  readonly closingNarration?: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -50,6 +55,7 @@ export async function runPostSessionAnalysis(
       runningSummary: input.runningSummary,
       sdPlaybook: input.sdPlaybook,
       participants: input.participants,
+      closingNarration: input.closingNarration ?? '',
     }),
     callSite: 'post-session-analysis',
     repairStrategy: 'sonnet',

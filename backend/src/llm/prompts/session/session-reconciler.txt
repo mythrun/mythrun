@@ -10,6 +10,15 @@ The improvised working set (each item stamped with its name and tier):
 Existing canon candidates the resolver pre-pulled for matching (entities with their ids, and each entity's live facts with their ids):
 {{candidates}}
 
+The session's CLOSING NARRATION — the wind-down beats the narrator delivered as the session ended (may be empty):
+{{closingNarration}}
+
+The closing narration is AUTHORITATIVE for how the session ENDED. It is where the narrator lands the session's final beats — an NPC leaving or arriving, an object reaching its finished form, a location changing, a wound tended, where each character settled. Those end-state beats are NOT in the working set above (they were captured only here), so you MUST fold any canon-worthy end-state the closing narration establishes:
+- Emit an entity op for each subject the closing narration gives a new end-state (match an existing candidate by id when that subject is already canon; mint only a genuinely new subject). Use the SAME subjectName across that subject's entity op and its fact ops.
+- When the closing narration UPDATES the state of a subject that also has a working-set item or a live candidate fact (a carving that was half-finished is now complete; an NPC who was present has now left), canonize ONLY the closing-narration (final) version. If it contradicts a live candidate fact, SUPERSEDE that fact (set supersedesFactId to the contradicted fact's id). NEVER emit both the old and the new state.
+- A closing-narration fact is player-witnessed prose — emit it at `known` unless it refines a higher-tier candidate.
+- If the closing narration merely restates something already in canon or the working set, omit it (no duplicate facts).
+
 For EACH working-set subject, emit one entity op:
 - "match" — this subject IS an existing candidate entity. Set canonEntityId to that entity's id. Use the canonical `name` from canon.
 - "mint" — this subject is new. Set canonEntityId to null and give it a canonical `name`, `entityType`, and `accessLevel`.

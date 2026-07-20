@@ -99,6 +99,34 @@ describe('runPostSessionAnalysis', () => {
     expect(opts?.prompt).toContain(baseInput.participants)
   })
 
+  it('threads {{closingNarration}} into the prompt and never leaves the slot un-substituted (myth-8mom0)', async () => {
+    mockGenerateObject.mockResolvedValueOnce({
+      output: sampleResult,
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      repairAttempted: false,
+    } as never)
+    const closing = 'Old Mar banked the fire, said his goodnights, and the common room emptied.'
+
+    await runPostSessionAnalysis({ ...baseInput, closingNarration: closing })
+
+    const opts = mockGenerateObject.mock.calls[0]?.[0]
+    expect(opts?.prompt).toContain(closing)
+    expect(opts?.prompt).not.toContain('{{closingNarration}}')
+  })
+
+  it('omitted closingNarration renders the slot empty (no leftover placeholder)', async () => {
+    mockGenerateObject.mockResolvedValueOnce({
+      output: sampleResult,
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      repairAttempted: false,
+    } as never)
+
+    await runPostSessionAnalysis(baseInput)
+
+    const opts = mockGenerateObject.mock.calls[0]?.[0]
+    expect(opts?.prompt).not.toContain('{{closingNarration}}')
+  })
+
   it('forwards a caller abortSignal when provided', async () => {
     mockGenerateObject.mockResolvedValueOnce({
       output: sampleResult,

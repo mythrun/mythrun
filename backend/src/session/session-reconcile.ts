@@ -105,6 +105,13 @@ export interface ReconcileRepo {
      *  case/space-normalized exact name → id within the world, else null. */
     findIdByWorldAndNormalizedName(worldId: string, name: string): Promise<string | null>
   }
+  readonly sessionMessages: {
+    /** myth-8mom0 — the farewell turn's durable closing narration (dm_text rows,
+     *  trigger_kind='farewell'). The farewell is player-less, so the Scribe never
+     *  folded it into the working set; reconcile reads it here to canonize the
+     *  session's closing beats. */
+    listFarewellNarration(sessionId: string): Promise<readonly string[]>
+  }
   readonly transaction: Repo['transaction']
 }
 
@@ -223,12 +230,24 @@ async function runReconcile(
 ): Promise<void> {
   const { campaignId, sessionId, worldId } = ids
 
-  // 3. Load the working set. An EMPTY working set still runs the commit with an
-  //    empty plan/map so the §4 gate fires through the SAME conditional path
-  //    (markReconciled is the commit's last in-tx statement) — keeping the
-  //    interlock consistent whether or not there was anything to fold.
+  // 3. Load the working set + the farewell turn's closing narration. The farewell
+  //    is player-less, so the post-turn Scribe never folded it into the working
+  //    set (myth-8mom0) — its closing beats (an NPC's departure, an object's
+  //    finished form, where the party settled) live ONLY in the durable dm_text
+  //    rows. Reading them here (persisted at persistTurn, BEFORE finalize enqueued
+  //    this job — race-free) lets the reconciler canonize the session's END state,
+  //    so the next session's prep doesn't re-serialize the PRE-farewell canon.
   const items = await deps.workingSet.load(campaignId)
-  if (items.length === 0) {
+  const farewell = await deps.repo.sessionMessages.listFarewellNarration(sessionId)
+  const closingNarration = farewell.join('\n\n')
+
+  // An EMPTY working set still runs the commit with an empty plan/map so the §4
+  // gate fires through the SAME conditional path (markReconciled is the commit's
+  // last in-tx statement) — keeping the interlock consistent whether or not there
+  // was anything to fold. But NOT when the farewell established closing beats: a
+  // session whose only canon-worthy facts landed in the (Scribe-skipped) farewell
+  // would otherwise be shortcut past the reconciler and lose them entirely.
+  if (items.length === 0 && closingNarration.length === 0) {
     const { committed } = await deps.applyCommit(deps.repo, {
       plan: EMPTY_PLAN,
       map: new Map(),
@@ -250,8 +269,14 @@ async function runReconcile(
   //    facts. findSimilarEntities THROWS on failure (canon write path) → the job
   //    throws → BullMQ retries.
   const subjects = [...new Set(items.map((i) => i.subjectName))]
+  // myth-8mom0 — also retrieve canon candidates SEMANTICALLY similar to the
+  // closing narration, so a subject the farewell UPDATES (e.g. Renn, whose
+  // carving is finished in the send-off) resolves onto its existing canon entity
+  // for a supersede/match instead of minting a duplicate.
+  const retrievalQueries =
+    closingNarration.length > 0 ? [...subjects, closingNarration] : subjects
   const candidateLists = await Promise.all(
-    subjects.map((s) => deps.findSimilarEntities(worldId, s, { limit: CANDIDATES_PER_SUBJECT })),
+    retrievalQueries.map((s) => deps.findSimilarEntities(worldId, s, { limit: CANDIDATES_PER_SUBJECT })),
   )
   const candidates = dedupeCandidates(candidateLists.flat())
   const liveCandidateEntityIds = new Set(candidates.map((c) => c.entityId))
@@ -270,11 +295,14 @@ async function runReconcile(
   const worldSummary = await deps.repo.worlds.getSnapshotSummary(worldId)
   const worldTone = worldSummary?.tone ?? ''
 
-  // 6. Reconcile (Opus).
+  // 6. Reconcile (Opus). The closing narration is threaded as an AUTHORITATIVE
+  //    end-state block: the reconciler folds the farewell's closing beats
+  //    (superseding a now-stale candidate fact), not just the working set.
   const { result: plan } = await deps.runReconciler({
     workingSet: wsBlock,
     candidates: candBlock,
     worldTone,
+    closingNarration,
   })
 
   // 7. Validate (PURE, security-critical). A reject logs a STRUCTURAL code +

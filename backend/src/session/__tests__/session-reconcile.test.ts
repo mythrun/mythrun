@@ -159,7 +159,7 @@ interface Recorders {
   cleared: string[]
   loaded: string[]
   embedInputs: string[][]
-  reconcilerCalls: { workingSet: string; candidates: string; worldTone: string }[]
+  reconcilerCalls: { workingSet: string; candidates: string; worldTone: string; closingNarration: string }[]
   committedArgs: unknown[]
   findCalls: { worldId: string; text: string }[]
   listCalls: number
@@ -184,6 +184,8 @@ interface Knobs {
   worldTone: string | null
   /** canon-by-name second-chance lookup (lowercased name → id); default empty. */
   canonByName: Record<string, string>
+  /** myth-8mom0 — the farewell turn's closing narration rows; default none. */
+  farewell: string[]
 }
 
 function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; rec: Recorders } {
@@ -197,6 +199,7 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; re
     committed: true,
     worldTone: 'grim, low-fantasy, terse',
     canonByName: {},
+    farewell: [],
     ...over,
   }
   const rec: Recorders = {
@@ -222,6 +225,9 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; re
       entities: {
         findIdByWorldAndNormalizedName: (_worldId, name) =>
           Promise.resolve(knobs.canonByName[name.trim().toLowerCase()] ?? null),
+      },
+      sessionMessages: {
+        listFarewellNarration: () => Promise.resolve([...knobs.farewell]),
       },
     worlds: { getSnapshotSummary: () => Promise.resolve(knobs.worldTone === null ? null : ({ tone: knobs.worldTone } as never)) },
       // `transaction` is only read by applyCommit, which is injected as a fake here.
@@ -267,6 +273,7 @@ function makeDeps(over: Partial<Knobs> = {}): { deps: ReconcileProcessorDeps; re
         workingSet: input.workingSet,
         candidates: input.candidates,
         worldTone: input.worldTone,
+        closingNarration: input.closingNarration ?? '',
       })
       return Promise.resolve(reconcilerOut(knobs.plan))
     },
@@ -477,6 +484,88 @@ describe('processReconcileJob — empty working set', () => {
     expect(rec.committedArgs).toHaveLength(1)
     expect(rec.cleared).toEqual([]) // the winner clears
     expect(rec.released).toBe(1)
+  })
+})
+
+describe('processReconcileJob — farewell closing-narration carry (myth-8mom0)', () => {
+  // The distinctive end-state beat the farewell turn landed. It exists ONLY in
+  // the durable farewell rows (the player-less farewell is Scribe-skipped, so it
+  // never entered the working set); reconcile must fold it into canon or the next
+  // session re-serializes the PRE-farewell state.
+  const FAREWELL_FACT =
+    'Renn set down the finished lamp-bracket — both curves complete now — pulled on his coat, and was gone. His bench sat empty.'
+
+  it('default clean run carries an EMPTY closing narration (no regression when there was no farewell)', async () => {
+    const { deps, rec } = makeDeps()
+    await processReconcileJob(deps, job())
+    // No farewell rows → the reconciler still runs on the working set, with an
+    // empty closing-narration block, and retrieval is unchanged.
+    expect(rec.reconcilerCalls[0]?.closingNarration).toBe('')
+    expect(rec.findCalls).toEqual([{ worldId: WORLD, text: 'the duke' }])
+  })
+
+  it('threads the farewell closing narration into the reconciler as its own block', async () => {
+    // A normal session (non-empty working set) that ended with a farewell beat.
+    const { deps, rec } = makeDeps({ farewell: [FAREWELL_FACT] })
+    await processReconcileJob(deps, job())
+
+    expect(rec.reconcilerCalls).toHaveLength(1)
+    // The closing beat reaches the canon fold as the AUTHORITATIVE end-state input.
+    expect(rec.reconcilerCalls[0]?.closingNarration).toContain('both curves complete now')
+    // It is NOT smuggled into the working-set block (that stays the Scribe's facts).
+    expect(rec.reconcilerCalls[0]?.workingSet).not.toContain('both curves complete now')
+  })
+
+  it('retrieves canon candidates SEMANTICALLY near the closing narration (so a farewell-updated subject resolves onto canon, not a duplicate)', async () => {
+    const { deps, rec } = makeDeps({ farewell: [FAREWELL_FACT] })
+    await processReconcileJob(deps, job())
+    // The working-set subject query PLUS the closing-narration query.
+    expect(rec.findCalls).toEqual([
+      { worldId: WORLD, text: 'the duke' },
+      { worldId: WORLD, text: FAREWELL_FACT },
+    ])
+  })
+
+  it('ORDERING GUARANTEE: empty working set + a farewell beat → STILL reconciles (the fold is independent of whether the Scribe ran)', async () => {
+    // Pre-fix this took the empty-working-set shortcut and committed an EMPTY plan
+    // WITHOUT calling the reconciler — dropping the farewell entirely. Because the
+    // farewell prose is read from the durable transcript (not the working set),
+    // the fold no longer depends on any Scribe→reconcile timing.
+    const { deps, rec } = makeDeps({ items: [], farewell: [FAREWELL_FACT] })
+    await processReconcileJob(deps, job())
+
+    expect(rec.reconcilerCalls).toHaveLength(1)
+    expect(rec.reconcilerCalls[0]?.closingNarration).toContain('both curves complete now')
+    expect(rec.reconcilerCalls[0]?.workingSet).toBe('') // empty working set rendered empty
+    // Candidates for a farewell-only session come solely from the closing text.
+    expect(rec.findCalls).toEqual([{ worldId: WORLD, text: FAREWELL_FACT }])
+  })
+
+  it('a farewell-derived SUPERSEDE folds into canon (the stale pre-farewell fact is corrected)', async () => {
+    // The session-1 canon says the carving is half-finished (the default live
+    // candidate fact f-live-1). The farewell finished it; the reconciler supersedes
+    // that live fact. Assert the superseding fact reaches the commit and the gate
+    // is set (validated against the REAL validator — supersede target is live).
+    const supersedePlan = validPlan({
+      facts: [
+        {
+          subjectName: 'the duke',
+          topic: 'carving',
+          content: 'The lamp-bracket carving is finished — both curves complete.',
+          accessLevel: 'known',
+          claimedBy: null,
+          supersedesFactId: 'f-live-1',
+        },
+      ],
+    })
+    const { deps, rec } = makeDeps({ farewell: [FAREWELL_FACT], plan: supersedePlan })
+    await processReconcileJob(deps, job())
+
+    expect(rec.committedArgs).toHaveLength(1)
+    const args = rec.committedArgs[0] as { plan: ReconcilePlan }
+    expect(args.plan.facts[0]?.supersedesFactId).toBe('f-live-1')
+    expect(args.plan.facts[0]?.content).toContain('both curves complete')
+    expect(rec.cleared).toEqual([CAMPAIGN]) // committed → working set cleared
   })
 })
 

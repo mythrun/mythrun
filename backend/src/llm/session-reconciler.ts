@@ -34,6 +34,12 @@ export interface SessionReconcilerInput {
   readonly candidates: string
   /** The world's tone, threaded so canonized prose stays in register. */
   readonly worldTone: string
+  /** myth-8mom0 — the farewell turn's closing narration (the end-of-session
+   *  send-off prose). AUTHORITATIVE for the session's END state, and the ONLY
+   *  place the closing beats live (the player-less farewell is Scribe-skipped, so
+   *  they never entered the working set). Optional — '' when the session had no
+   *  farewell; the `{{closingNarration}}` slot then renders empty. */
+  readonly closingNarration?: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -54,6 +60,7 @@ export async function runSessionReconciler(
       workingSet: input.workingSet,
       candidates: input.candidates,
       worldTone: input.worldTone,
+      closingNarration: input.closingNarration ?? '',
     }),
     callSite: 'session-reconciler',
     repairStrategy: 'sonnet',
