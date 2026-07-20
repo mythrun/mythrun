@@ -13,6 +13,17 @@ const SONNET_ID = 'claude-sonnet-4-6'
 // a `model-pricing.Model` pricing key.
 export const OPUS_ID = 'claude-opus-4-7'
 
+// Opus 4.7's real max-output ceiling is 128K tokens (streaming required at this
+// size — the SDK HTTP-times-out on large non-streamed outputs; the session-prep
+// call already streams via streamObject). Exposed as a config constant so the
+// prep call — whose structured output grows with accumulated campaign canon —
+// can pin its ceiling to the model max instead of a low fixed cap that becomes a
+// long-campaign scaling wall. myth-vb2ov: a 16,384 cap truncated prep mid-schema
+// around session ~10 as the omniscient world dump grew; the fix bounds the growth
+// (working-set input tiering + output-budget prompt framing) AND raises the cap so
+// the ceiling is a genuine backstop, not the routine failure mode.
+export const OPUS_MAX_OUTPUT_TOKENS = 128_000
+
 /**
  * Tier-named language model constants. Each is the underlying Anthropic
  * model wrapped with `logAndNormalizeMiddleware` so consumers get cost

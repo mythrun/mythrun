@@ -250,4 +250,85 @@ describe('serializeWorldStateForPrep', () => {
     const out = await serializeWorldStateForPrep(stubRepo(), { campaignId: 'camp1', sessionNumber: 1 })
     expect(out).not.toContain('## Where We Left Off')
   })
+
+  // myth-vb2ov — a long campaign accumulates canon, so the omniscient world dump
+  // grows unboundedly and drives prep OUTPUT past the model's cap. Above a size
+  // threshold the serializer tiers the dump: full detail for the session's
+  // WORKING SET (party + the entities the latest handoff names as in play + their
+  // 1-hop neighbors), compact one-line roster for the dormant remainder. This
+  // keeps the serialized input bounded no matter how large the world grows.
+  it('tiers the world dump for a large accumulated world: bounded input, working set in full, dormant compacted', async () => {
+    const entitiesById = new Map<
+      string,
+      { id: string; name: string; entityType: string; accessLevel: string }
+    >()
+    const proseByEntityId = new Map<string, string>()
+    const factsById = new Map<
+      string,
+      { id: string; entityId: string; content: string; topic: string; accessLevel: string }
+    >()
+    // 200 dormant entities, each carrying a heavy prose kernel + a secret fact.
+    // Rendered in full this is >200k chars — the unbounded scaling wall.
+    for (let i = 0; i < 200; i++) {
+      const id = `d${String(i)}`
+      entitiesById.set(id, { id, name: `Dormant${String(i)}`, entityType: 'npc', accessLevel: 'known' })
+      proseByEntityId.set(id, 'PROSE '.repeat(200))
+      factsById.set(`f${String(i)}`, {
+        id: `f${String(i)}`,
+        entityId: id,
+        content: `secret-of-${String(i)}`,
+        topic: 'past',
+        accessLevel: 'secret',
+      })
+    }
+    // One in-play NPC the handoff names — must render in FULL (secret included).
+    entitiesById.set('inplay', { id: 'inplay', name: 'Voss', entityType: 'npc', accessLevel: 'known' })
+    proseByEntityId.set('inplay', 'A watchful tavern-keeper.')
+    factsById.set('vf', {
+      id: 'vf',
+      entityId: 'inplay',
+      content: 'Voss was a quartermaster.',
+      topic: 'past',
+      accessLevel: 'secret',
+    })
+    const bigInv = { entitiesById, proseByEntityId, factsById, relationshipsById: new Map() }
+
+    const repo = stubRepo()
+    ;(repo as unknown as { worldInventory: { load: ReturnType<typeof vi.fn> } }).worldInventory.load =
+      vi.fn(() => Promise.resolve(bigInv))
+
+    const out = await serializeWorldStateForPrep(repo, {
+      campaignId: 'camp1',
+      sessionNumber: 10,
+      priorSessionContext: {
+        previousSummaries: [],
+        latestHandoff: {
+          party: [],
+          timeOfDay: 'dusk',
+          unresolvedThreads: [],
+          npcs: [{ name: 'Voss', state: 'wary', voice: [] }],
+          keyLocations: [],
+        },
+      },
+    })
+
+    // Bounded: the 200 heavy prose kernels never make it into the input.
+    expect(out.length).toBeLessThan(60_000)
+    // The handoff-named NPC renders in FULL — its secret fact survives.
+    expect(out).toContain('Voss was a quartermaster.')
+    // A dormant entity appears only as a compact roster line: name present,
+    // its secret fact is NOT re-emitted.
+    expect(out).toContain('Dormant0')
+    expect(out).not.toContain('secret-of-0')
+    // The roster is capped, with an overflow tally for the remainder.
+    expect(out).toContain('more dormant entities')
+  })
+
+  it('renders the full world dump unchanged for a small world (below the tiering threshold)', async () => {
+    // The default stub world has a single entity — well under the threshold, so
+    // its secret fact renders in full exactly as before (no roster section).
+    const out = await serializeWorldStateForPrep(stubRepo(), { campaignId: 'camp1', sessionNumber: 1 })
+    expect(out).toContain('Voss was a quartermaster.')
+    expect(out).not.toContain('more dormant entities')
+  })
 })

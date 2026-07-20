@@ -215,9 +215,20 @@ A single flowing introduction, written to be read aloud, in second person, 150�
 
 The opening is the party's first impression of the session — sensory, specific, unhurried. No info-dumps, no rules talk, no meta commentary, no secrets. It must read aloud in under two minutes.
 
-## Length
+## Output Budget — read this before you write
 
-The Fast Thinker Context should be approximately 2,000–3,000 words — rich enough to run the session autonomously. The Stage-Direction Playbook should be approximately 1,000–2,000 words — lean and trigger-focused — and ALWAYS shorter than the Fast Thinker Context. The Session Opening is 150–350 words. Favor punchy bullets and short paragraphs over exhaustive prose.
+Your output must NOT scale with the size of the world. A long-running campaign accumulates canon across many sessions, but any single session only ever brings a small WORKING SET of it into play. Write rich, full detail ONLY for that working set — the party, the situation, the entities the "Where We Left Off" handoff and the active threads name as in play, and the places the party can reach right now. For everything else in the world state — including the "Dormant world entities" compact roster below, if present — do NOT re-describe it: reference it in a single line at most, or leave it out entirely. In the playbook, cover a secret or NPC in depth only when THIS session can plausibly surface it; a purely-dormant NPC gets the one-line "simmering for later" entry, never a full workup.
+
+This is a hard rule, not a stylistic preference: re-emitting the whole accumulated world is exactly how prep outgrows its output limit and fails. Deliver the working set well; gesture at the rest.
+
+Length targets (a working-set-scoped session — these hold regardless of how large the world has grown):
+
+- The Fast Thinker Context should be approximately 2,000–3,000 words — rich enough to run the session autonomously.
+- The Stage-Direction Playbook should be approximately 1,000–2,000 words — lean and trigger-focused — and ALWAYS shorter than the Fast Thinker Context.
+- The Session Opening is 150–350 words.
+- Total across all three documents: stay well under 6,000 words.
+
+Favor punchy bullets and short paragraphs over exhaustive prose.
 
 ## Session Framing
 

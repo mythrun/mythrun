@@ -75,6 +75,7 @@ vi.mock('../../serialize-world-state-for-prep.js', () => ({
 // import generateSessionPrep AFTER the mocks
 import { generateSessionPrep } from '../session-prep.js'
 import { OPUS } from '../../../models.js'
+import { logger } from '../../../logger.js'
 
 function scripted(
   partials: Record<string, string>[],
@@ -238,5 +239,88 @@ describe('generateSessionPrep', () => {
       { field: 'sd_playbook', text: 'SD' },
       { field: 'ft_context', text: 'FT' },
     ])
+  })
+
+  // myth-vb2ov — the output-token cap is a long-campaign scaling wall: prep's
+  // structured output grows with accumulated canon and eventually overflows.
+  // A `finishReason: 'length'` truncates the JSON mid-schema; the stage must
+  // retry ONCE with a tighter budget, then fail as a clean TERMINAL job error.
+  function scriptedOverflow() {
+    function* empty(): Generator<Record<string, string>> {
+      /* no partials — a length-truncated stream yields nothing usable */
+    }
+    return {
+      partialObjectStream: empty(),
+      // A length-truncated object promise REJECTS (schema never completes).
+      object: Promise.reject(Object.assign(new Error('truncated'), { name: 'AI_NoObjectGeneratedError' })),
+      usage: Promise.resolve({ inputTokens: 79_913, outputTokens: 128_000, totalTokens: 207_913 }),
+      finishReason: Promise.resolve('length'),
+    } as unknown as ReturnType<typeof import('../../../ai.js').streamObject>
+  }
+
+  it('finishReason:length retries exactly once with a tighter-budget instruction, then throws terminal', async () => {
+    // Reset the shared module-level mock so the call-count assertions below count
+    // only THIS test's calls (the suite has no clearMocks).
+    streamObjectMock.mockReset()
+    streamObjectMock.mockReturnValueOnce(scriptedOverflow()).mockReturnValueOnce(scriptedOverflow())
+    const warnSpy = vi.spyOn(logger, 'warn')
+    await expect(
+      generateSessionPrep({} as never, { campaignId: 'camp-long', worldId: 'w', sessionNumber: 10 }),
+    ).rejects.toMatchObject({ terminal: true })
+    // Exactly one retry (two calls total).
+    expect(streamObjectMock).toHaveBeenCalledTimes(2)
+    // The retry prompt carries the deterministic tighter-budget instruction; the
+    // first (base) prompt does not.
+    const first = streamObjectMock.mock.calls[0]?.[0] as { prompt: string }
+    const retry = streamObjectMock.mock.calls[1]?.[0] as { prompt: string }
+    expect(first.prompt).not.toContain('OUTPUT BUDGET OVERRIDE')
+    expect(retry.prompt).toContain('OUTPUT BUDGET OVERRIDE')
+    // The wall is logged with the campaign/session + measured token counts so
+    // operators can see it coming.
+    const wallLog = warnSpy.mock.calls.find(
+      ([o]) => (o as { event?: string })?.event === 'session_prep.output_overflow',
+    )
+    expect(wallLog).toBeDefined()
+    expect((wallLog?.[0] as { outputTokens?: number }).outputTokens).toBe(128_000)
+    expect((wallLog?.[0] as { sessionNumber?: number }).sessionNumber).toBe(10)
+    warnSpy.mockRestore()
+  })
+
+  it('recovers when the tighter-budget retry fits under the cap', async () => {
+    streamObjectMock.mockReset()
+    streamObjectMock
+      .mockReturnValueOnce(scriptedOverflow())
+      .mockReturnValueOnce(
+        scripted(
+          [{ ft_context: 'x'.repeat(200) }],
+          { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100), opening: 'o'.repeat(100) },
+        ),
+      )
+    const r = await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 11,
+    })
+    expect(r.ft_context).toBe('x'.repeat(200))
+    expect(streamObjectMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('logs measured output-token usage on a successful prep (growth observability)', async () => {
+    streamObjectMock.mockReset()
+    const infoSpy = vi.spyOn(logger, 'info')
+    streamObjectMock.mockReturnValueOnce(
+      scripted(
+        [{ ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) }],
+        { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100), opening: 'o'.repeat(100) },
+      ),
+    )
+    await generateSessionPrep({} as never, { campaignId: 'c', worldId: 'w', sessionNumber: 3 })
+    const usageLog = infoSpy.mock.calls.find(
+      ([o]) => (o as { event?: string })?.event === 'session_prep.usage',
+    )
+    expect(usageLog).toBeDefined()
+    expect((usageLog?.[0] as { outputTokens?: number }).outputTokens).toBe(20)
+    expect((usageLog?.[0] as { sessionNumber?: number }).sessionNumber).toBe(3)
+    infoSpy.mockRestore()
   })
 })

@@ -63,6 +63,11 @@ export async function serializeWorldStateForPrep(repo: Repo, args: SerializeArgs
     factsByEntity.set(f.entityId, arr)
   }
 
+  // myth-vb2ov — the session's WORKING SET drives which canon renders in full
+  // vs. as a compact roster, keeping the serialized prep input bounded as the
+  // world accumulates canon across a long campaign.
+  const workingSetIds = computeWorkingSetIds(inv, pcEntityIds, args.priorSessionContext?.latestHandoff)
+
   const lines: string[] = []
   lines.push('## World Concept', `**Name:** ${world.name}`)
   if (world.tone) lines.push(`**Tone:** ${world.tone}`)
@@ -74,7 +79,7 @@ export async function serializeWorldStateForPrep(repo: Repo, args: SerializeArgs
   lines.push(
     '',
     '## World State (omniscient — all access tiers; the [access_level] markers are authoritative)',
-    renderWorldDump(inv),
+    renderWorldStateDump(inv, workingSetIds),
     '',
   )
 
@@ -121,4 +126,98 @@ export async function serializeWorldStateForPrep(repo: Repo, args: SerializeArgs
   }
 
   return lines.join('\n')
+}
+
+// Above this many entities the omniscient dump is tiered so prep input stays
+// bounded as campaign canon accumulates (myth-vb2ov). Below it, the whole world
+// renders in full — session-1 and early-campaign worlds are byte-for-byte
+// unchanged.
+const WORLD_DUMP_FULL_THRESHOLD = 40
+// Safety valve on the working set's full-detail size. A session realistically
+// touches far fewer entities than this; the cap only guards a pathological hub
+// entity whose neighborhood is enormous.
+const MAX_WORKING_SET_ENTITIES = 60
+// Compact-roster cap for dormant entities; the remainder collapses to a tally.
+const MAX_ROSTER_ENTITIES = 100
+
+/**
+ * The session's WORKING SET of entity ids = the party's world entities, the
+ * entities the latest handoff names as in play (returning NPCs, key locations,
+ * party positions — matched by name), and their 1-hop relationship neighbors.
+ *
+ * Deterministic and cheap: structural relevance only (no embeddings, no I/O),
+ * which is ZFC-safe (a mechanical graph/name selection, not a content-judgment
+ * heuristic) and side-effect-free in the offline prep path. Everything the model
+ * needs for THIS session is anchored either to the party or to what the handoff
+ * flagged as still live; the accumulated dormant tail is compacted, not dropped.
+ */
+function computeWorkingSetIds(
+  inv: WorldInventory,
+  partyEntityIds: readonly string[],
+  handoff: SessionHandoff | undefined,
+): Set<string> {
+  const named = new Set<string>()
+  if (handoff) {
+    for (const npc of handoff.npcs) named.add(npc.name.toLowerCase())
+    for (const loc of handoff.keyLocations) named.add(loc.name.toLowerCase())
+    for (const m of handoff.party) named.add(m.location.toLowerCase())
+  }
+  const seed = new Set<string>(partyEntityIds)
+  for (const [id, e] of inv.entitiesById) {
+    if (named.has(e.name.toLowerCase())) seed.add(id)
+  }
+
+  const neighbors = new Set<string>()
+  for (const r of inv.relationshipsById.values()) {
+    if (seed.has(r.sourceEntityId) && inv.entitiesById.has(r.targetEntityId)) neighbors.add(r.targetEntityId)
+    if (seed.has(r.targetEntityId) && inv.entitiesById.has(r.sourceEntityId)) neighbors.add(r.sourceEntityId)
+  }
+  const working = new Set(seed)
+  // Add neighbors in a stable id order until the safety cap is reached.
+  for (const id of [...neighbors].sort()) {
+    if (working.size >= MAX_WORKING_SET_ENTITIES) break
+    working.add(id)
+  }
+  return working
+}
+
+/** Subset an inventory to a set of entity ids so `renderWorldDump` emits full
+ *  detail for just those (facts/relationships follow their SOURCE entity). */
+function filterInventory(inv: WorldInventory, ids: ReadonlySet<string>): WorldInventory {
+  return {
+    entitiesById: new Map([...inv.entitiesById].filter(([id]) => ids.has(id))),
+    proseByEntityId: new Map([...inv.proseByEntityId].filter(([id]) => ids.has(id))),
+    factsById: new Map([...inv.factsById].filter(([, f]) => ids.has(f.entityId))),
+    relationshipsById: new Map([...inv.relationshipsById].filter(([, r]) => ids.has(r.sourceEntityId))),
+  }
+}
+
+/**
+ * Render the omniscient world dump, tiering when the world is large: full detail
+ * (prose + all facts + relationships, every access tier) for the working set,
+ * and a compact one-line roster for the dormant remainder — name + type + access
+ * tier only, NO facts, so accumulated canon is *referenced*, not re-emitted.
+ * Below the threshold the whole world renders in full via `renderWorldDump`.
+ */
+function renderWorldStateDump(inv: WorldInventory, workingSetIds: ReadonlySet<string>): string {
+  if (inv.entitiesById.size <= WORLD_DUMP_FULL_THRESHOLD) return renderWorldDump(inv)
+
+  const fullDump = renderWorldDump(filterInventory(inv, workingSetIds))
+
+  const dormant = [...inv.entitiesById.keys()].filter((id) => !workingSetIds.has(id)).sort()
+  const shown = dormant.slice(0, MAX_ROSTER_ENTITIES)
+  const roster: string[] = [
+    '',
+    "## Dormant world entities (compact roster — NOT in this session's working set)",
+    'Reference only. Do NOT re-describe these; foreground the working set above. Pull an',
+    'entity up into a document only if this session actually brings it into play.',
+    '',
+  ]
+  for (const id of shown) {
+    const e = inv.entitiesById.get(id)
+    if (e) roster.push(`- ${e.name} (${e.entityType}) [access_level: ${e.accessLevel}]`)
+  }
+  const hidden = dormant.length - shown.length
+  if (hidden > 0) roster.push(`- …and ${String(hidden)} more dormant entities not listed.`)
+  return `${fullDump}\n${roster.join('\n')}`
 }
