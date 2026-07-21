@@ -53,6 +53,18 @@ declare global {
 /** The reconnect-attempt ceiling (≈10) — see `connection.ts`. */
 const RECONNECT_CEILING = 10
 
+/** The TYPED "you have no character in this campaign" socket close (myth-mnik3).
+ *  The backend closes with this exact code + reason when a member with no
+ *  integrated character connects (NoCharacterForParticipantError). Unlike every
+ *  other close (all transient → reconnect), this is TERMINAL: reconnecting would
+ *  be rejected identically, so the client routes it to `failed{no_character}` and
+ *  the play surface shows an explicit "make a character" state instead of the
+ *  ambient reconnect line. Pinned by intent to the backend ws-session.ts close —
+ *  there is no shared runtime constant across the WS boundary (the same pattern as
+ *  MAX_PLAYER_MESSAGE_LEN in session-compose.ts); a backend change must mirror here. */
+const WS_CLOSE_NO_CHARACTER = 4404
+const WS_CLOSE_REASON_NO_CHARACTER = 'no_character'
+
 export interface WsSessionConnectOptions {
   /** Seed the dedup high-water mark so this connect sends `lastSeq=<seed>` (e.g.
    *  after a REST history-load). A truly fresh connect (no seed) omits `lastSeq`
@@ -242,15 +254,23 @@ export function createWsSessionClient(ctx: ApiContext): WsSessionClient {
     })
   }
 
-  function handleClose(gen: number, sessionId: string): void {
+  function handleClose(gen: number, sessionId: string, code?: number, reason?: string): void {
     if (gen !== connection.generation()) return // superseded / explicit close — self-ignore
     socket = null
-    // Every READABLE socket close is transient: 1006 (heartbeat terminate /
+    // The TYPED terminal close: 4404 'no_character' (myth-mnik3). A member with no
+    // integrated character can never connect — reconnecting would be rejected
+    // identically — so route it straight to `failed{no_character}` (the play
+    // surface shows a "make a character" state) rather than looping the backoff.
+    if (code === WS_CLOSE_NO_CHARACTER && reason === WS_CLOSE_REASON_NO_CHARACTER) {
+      connection.fail('no_character')
+      return
+    }
+    // Every OTHER readable socket close is transient: 1006 (heartbeat terminate /
     // abnormal — the browser's view of any non-101 upgrade too) and 1011 ANY
     // reason (`redis-resync-required` AND `connect-failed` are both transient —
     // the backend emits `connect-failed` for transient DB/Redis faults too). The
-    // terminal signals live elsewhere: a `session_end` DATA frame (routeInbound)
-    // and a ticket-POST 403/404 (openSocket's catch).
+    // remaining terminal signals live elsewhere: a `session_end` DATA frame
+    // (routeInbound) and a ticket-POST 403/404 (openSocket's catch).
     scheduleReconnect(sessionId)
   }
 
@@ -272,8 +292,8 @@ export function createWsSessionClient(ctx: ApiContext): WsSessionClient {
         const data: unknown = ev.data
         routeInbound(inboundDeps, gen, data)
       }
-      ws.onclose = () => {
-        handleClose(gen, sessionId)
+      ws.onclose = (ev: CloseEvent) => {
+        handleClose(gen, sessionId, ev.code, ev.reason)
       }
     } catch (err) {
       if (gen !== connection.generation()) return // superseded while awaiting

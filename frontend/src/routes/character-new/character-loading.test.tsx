@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { StageProgress } from '@mythrun/contract/events'
 import { ApiClientProvider, type ApiContext, type StageTiming } from '@mythrun/client-core'
 import type { LoadingBeat } from '@mythrun/client-core/contract'
-import { useCharacterCreationStream } from '@mythrun/client-core/character'
+import { useCharacterCreationStream, useCreationProgressPoll } from '@mythrun/client-core/character'
 import { i18n } from '../../i18n/config.ts'
 import { CharacterLoadingSurface } from './character-loading.tsx'
 
@@ -26,9 +26,13 @@ import { CharacterLoadingSurface } from './character-loading.tsx'
 
 vi.mock('@mythrun/client-core/character', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mythrun/client-core/character')>()
-  return { ...actual, useCharacterCreationStream: vi.fn() }
+  return { ...actual, useCharacterCreationStream: vi.fn(), useCreationProgressPoll: vi.fn() }
 })
 const mockStream = vi.mocked(useCharacterCreationStream)
+// myth-qkjdq: the durable SSE-independent poll. Both the stream AND the poll can
+// signal terminal; the surface swaps on either. Mocked so these tests drive each
+// path deterministically without a real GET/timer.
+const mockPoll = vi.mocked(useCreationProgressPoll)
 
 // jsdom has no matchMedia; install a query-aware one so the surface's
 // prefers-reduced-motion read resolves to the value under test.
@@ -88,6 +92,8 @@ interface RenderOpts {
   readonly stages?: readonly StageProgress[]
   readonly onDone?: () => void
   readonly fetchTimings?: () => Promise<readonly StageTiming[]>
+  /** The durable poll's terminal signal (myth-qkjdq) — defaults to still-waiting. */
+  readonly poll?: { done: boolean; failed: boolean }
 }
 
 function surface(onDone: () => void, fetchTimings?: RenderOpts['fetchTimings']): React.JSX.Element {
@@ -111,8 +117,10 @@ function renderSurface({
   stages = [],
   onDone = vi.fn(),
   fetchTimings,
+  poll = { done: false, failed: false },
 }: RenderOpts = {}) {
   mockStream.mockReturnValue({ beats, done, stages })
+  mockPoll.mockReturnValue(poll)
   return render(surface(onDone, fetchTimings))
 }
 
@@ -122,6 +130,12 @@ const flush = async (): Promise<void> => {
     await Promise.resolve()
   })
 }
+
+beforeEach(() => {
+  // Default the durable poll to still-waiting so a direct-render test (one that
+  // sets mockStream itself, not via renderSurface) gets a valid poll value.
+  mockPoll.mockReturnValue({ done: false, failed: false })
+})
 
 afterEach(() => {
   cleanup()
@@ -184,6 +198,27 @@ describe('CharacterLoadingSurface', () => {
     // Still done on a further re-render — the latch holds; it must not fire again.
     rerender(surface(onDone))
     expect(onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('advances via the DURABLE poll when the stream never reports done (dead SSE)', () => {
+    // The SSE-driven stream stays at `done:false` forever (a CloudFront-buffered
+    // stream never delivers the completion). The poll's durable `done` still
+    // advances the screen — the myth-qkjdq fix.
+    const onDone = vi.fn()
+    renderSurface({ done: false, poll: { done: true, failed: false }, onDone })
+    expect(onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('advances on a poll-reported FAILURE (so D8 can route to the concept-failure surface)', () => {
+    const onDone = vi.fn()
+    renderSurface({ done: false, poll: { done: false, failed: true }, onDone })
+    expect(onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not advance while both the stream and the poll are still waiting', () => {
+    const onDone = vi.fn()
+    renderSurface({ done: false, poll: { done: false, failed: false }, onDone })
+    expect(onDone).not.toHaveBeenCalled()
   })
 
   it('passes reducedMotion=true to the beat when the user prefers reduced motion', () => {

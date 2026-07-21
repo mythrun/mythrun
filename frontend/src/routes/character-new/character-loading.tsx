@@ -11,6 +11,7 @@ import {
 import {
   remainingCreationWaitMs,
   useCharacterCreationStream,
+  useCreationProgressPoll,
   type CharacterCreationStreamDeps,
 } from '@mythrun/client-core/character'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
@@ -112,17 +113,35 @@ export function CharacterLoadingSurface({
   const { t } = useTranslation()
   const ctx = useApiContext()
   const { beats, done, stages } = useCharacterCreationStream(campaignId, userId, deps)
+  // myth-qkjdq: the RELIABLE, SSE-independent advance. The SSE-driven stream above
+  // animates the beats, but its `done` depends on a live event / snapshot recheck
+  // that a CloudFront-buffered SSE may never deliver. This durable poll flips on
+  // the viewer's own terminal concept status regardless — and surfaces `failed`,
+  // which the stream hook never did — so the screen advances (to the reveal on
+  // success, to the concept-failure surface on failure) even with a dead stream.
+  // It reuses the injected progress fetch so a test that stubs one stubs both.
+  const poll = useCreationProgressPoll(
+    campaignId,
+    userId,
+    deps?.fetchProgress !== undefined ? { fetchProgress: deps.fetchProgress } : {},
+  )
   const reducedMotion = usePrefersReducedMotion()
 
-  // Fire the swap exactly once: `done` latches true in the hook and never goes
-  // back, so a ref guard collapses any repeat renders-while-done to a single call.
+  // The viewer's creation has reached a TERMINAL state — completed OR failed —
+  // from EITHER path (the live stream or the durable poll). `onDone` is the
+  // "re-evaluate routing" signal: D8 re-reads the concept row and lands the
+  // player on the reveal (completed) or the concept-failure surface (failed).
+  const resolved = done || poll.done || poll.failed
+
+  // Fire the swap exactly once: each terminal signal latches true and never goes
+  // back, so a ref guard collapses any repeat renders-while-resolved to one call.
   const swappedRef = useRef(false)
   useEffect(() => {
-    if (done && !swappedRef.current) {
+    if (resolved && !swappedRef.current) {
       swappedRef.current = true
       onDone()
     }
-  }, [done, onDone])
+  }, [resolved, onDone])
 
   // The one-time timings fetch. `null` until it resolves (or forever, on a
   // failed fetch / cold-start) → no countdown, and the stall clock falls back
@@ -143,8 +162,8 @@ export function CharacterLoadingSurface({
   }, [ctx, fetchTimings])
 
   // The tick runs for the whole wait (it also drives the stall clock, which
-  // needs no history) and stops once done — the surface swaps away right after.
-  const nowMs = useNowMs(!done)
+  // needs no history) and stops once resolved — the surface swaps away right after.
+  const nowMs = useNowMs(!resolved)
   const remainingMs = useMemo(
     () => remainingCreationWaitMs(timings, stages, nowMs),
     [timings, stages, nowMs],
@@ -165,7 +184,7 @@ export function CharacterLoadingSurface({
     initialEtaRef.current !== null && initialEtaRef.current > 0
       ? initialEtaRef.current * STALL_ETA_MULTIPLIER
       : NO_HISTORY_STALL_MS
-  const stalled = !done && nowMs - mountedAtRef.current >= stallThresholdMs
+  const stalled = !resolved && nowMs - mountedAtRef.current >= stallThresholdMs
 
   return (
     <Stack gap={5} data-testid="character-loading">

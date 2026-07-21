@@ -661,6 +661,37 @@ export function campaignsNs(c: ClientLike) {
       return result.rows
     },
 
+    /**
+     * myth-mnik3 session-start guard: the CONFIRMED members (invite_accepted =
+     * true, not suspended) who have NO integrated character in this campaign —
+     * i.e. exactly the set whose WS connect would throw
+     * NoCharacterForParticipantError and be closed 4404 'no_character'. The
+     * `character_id IS NULL` predicate mirrors `findUserCharacterForCampaign`'s
+     * existence check (the join the WS-connect resolves against), so the guard
+     * and the transport agree on "has a character" by construction. Ordered by
+     * joined_at for a stable owner-facing list. Suspended users are excluded —
+     * they cannot reach the WS connect, so listing them would block a session on
+     * a seat that could never sit down.
+     */
+    listConfirmedMembersWithoutCharacter: async (
+      campaignId: string,
+    ): Promise<readonly { user_id: string; display_name: string }[]> => {
+      const result = await c.query<{ user_id: string; display_name: string }>(
+        `SELECT cm.user_id, u.display_name
+           FROM campaign_members cm
+           JOIN users u ON u.id = cm.user_id
+           LEFT JOIN campaign_characters ch
+             ON ch.campaign_id = cm.campaign_id AND ch.user_id = cm.user_id
+          WHERE cm.campaign_id = $1
+            AND cm.invite_accepted = true
+            AND u.suspended_at IS NULL
+            AND ch.character_id IS NULL
+          ORDER BY cm.joined_at`,
+        [campaignId],
+      )
+      return result.rows
+    },
+
     listMembers: async (
       campaignId: string,
     ): Promise<

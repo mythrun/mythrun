@@ -77,6 +77,30 @@ export function RetryNotice({
   )
 }
 
+/** The no-character surface (myth-mnik3) — the live transport closed 4404
+ *  'no_character' because the viewer has no integrated character in this campaign.
+ *  A calm, explicit state (never ambient quiet): it names the gap and routes to
+ *  character creation, rather than leaving the player waiting at a silent table.
+ *  `onCreate` navigates to the create route (the shell owns the router seam). */
+export function NoCharacterNotice({ onCreate }: { onCreate: () => void }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <CenteredHold data-testid="play-no-character">
+      <Heading level={1} role="title">
+        {t('play.noCharacter.title')}
+      </Heading>
+      <Text role="ui-caption" as="p">
+        {t('play.noCharacter.body')}
+      </Text>
+      <Stack direction="row">
+        <Button variant="primary" onPress={onCreate} data-testid="play-no-character-create">
+          {t('play.noCharacter.cta')}
+        </Button>
+      </Stack>
+    </CenteredHold>
+  )
+}
+
 /** The prep dead-end — the SSE reported a `prep-failed`. A retry re-attempts the
  *  whole start (the terminal case will land back here; the calm surface covers it). */
 export function PrepFailedNotice({ onRetry }: { onRetry: () => void }): React.JSX.Element {

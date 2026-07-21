@@ -278,6 +278,30 @@ async function handleSessionStart(
     return reply.code(409).send({ code: 'session_already_active' })
   }
 
+  // Precondition 2.5 (myth-mnik3 silent-lockout guard): every CONFIRMED member
+  // must already have an integrated character. A member with none has their WS
+  // connect rejected server-side (NoCharacterForParticipantError → close 4404
+  // 'no_character'); starting a session anyway strands them in ambient quiet
+  // while the rest of the party plays. This is the spot the check CANNOT be
+  // raced around: the session's existence is decided by the INSERT further down
+  // in THIS handler, and this gate stands immediately before it, checking the
+  // EXACT predicate the transport resolves against (`findUserCharacterForCampaign`
+  // — a campaign_characters row). A finalize-time guard would instead check
+  // completed CONCEPTS, a pre-integration proxy that can't see a member who
+  // joined after finalize or whose sheet stage failed during integration; only
+  // the character rows that exist at start time are authoritative. The typed 409
+  // names each missing seat so the owner sees exactly who is holding the session
+  // back, instead of discovering the empty chair mid-play. Placed BEFORE the prep
+  // self-heal: a party that can't start shouldn't spin up a prep job; the next
+  // /start (once the seats are filled) enqueues it.
+  const missing = await repo.campaigns.listConfirmedMembersWithoutCharacter(campaignId)
+  if (missing.length > 0) {
+    return reply.code(409).send({
+      code: 'members_without_characters',
+      members: missing.map((m) => ({ userId: m.user_id, displayName: m.display_name })),
+    })
+  }
+
   // Next session number = max existing + 1 (1 when none), mirroring how the
   // session-prep pipeline numbers preps.
   const sessionNumber = (await repo.sessions.maxSessionNumber(campaignId)) + 1

@@ -18,6 +18,10 @@ const maxSessionNumberMock = vi.fn()
 const prepExistsForMock = vi.fn()
 const getActiveByCampaignMock = vi.fn()
 const getMostRecentByCampaignMock = vi.fn()
+// myth-mnik3 start guard: the confirmed-members-without-character read. Defaults
+// to [] so the happy-path fault arms below reach the debit; a guard-specific arm
+// would override it.
+const listMissingCharsMock = vi.fn()
 const sessionCreateMock = vi.fn()
 const sessionDeleteByIdMock = vi.fn()
 const tryDebitForSessionMock = vi.fn()
@@ -47,6 +51,7 @@ vi.mock('../../repo/index.js', () => ({
       getById: getCampaignByIdMock,
       getOwner: getOwnerMock,
       getWorldId: getWorldIdMock,
+      listConfirmedMembersWithoutCharacter: listMissingCharsMock,
     },
     sessions: {
       getById: getSessionByIdMock,
@@ -227,6 +232,7 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
       prepExistsForMock,
       getActiveByCampaignMock,
       getMostRecentByCampaignMock,
+      listMissingCharsMock,
       sessionCreateMock,
       sessionDeleteByIdMock,
       tryDebitForSessionMock,
@@ -248,6 +254,7 @@ describe('POST /api/sessions/:campaignId/start (mocked repo fault arms)', () => 
     prepExistsForMock.mockResolvedValue(true)
     getActiveByCampaignMock.mockResolvedValue(null)
     getMostRecentByCampaignMock.mockResolvedValue(null)
+    listMissingCharsMock.mockResolvedValue([])
     // No session-end in progress by default; the session_ending arm overrides.
     isEndingMock.mockResolvedValue(false)
     setStateMock.mockResolvedValue(undefined)

@@ -110,7 +110,11 @@ function progress(concepts: readonly Concept[]): CharacterCreationProgress {
   return { campaignId: 'c1', totalMembers: concepts.length, concepts: [...concepts], missing: [] }
 }
 
-// A never-opened SSE client so the mounted loading beat never touches the network.
+const pending = <T,>(): Promise<T> => new Promise<T>(() => undefined)
+
+// A never-opened SSE client + a never-resolving progress fetch, so the mounted
+// loading beat's stream AND its durable poll (myth-qkjdq) both hang harmlessly —
+// no real network, no live backoff timer scheduled (the first poll never settles).
 const stubLoadingDeps = {
   createClient: (ctx: ApiContext): SseStatusClient => {
     const { connectionState } = createSseStatusClient(ctx)
@@ -122,8 +126,8 @@ const stubLoadingDeps = {
       close: () => undefined,
     }
   },
+  fetchProgress: (): Promise<CharacterCreationProgress> => pending(),
 }
-const pending = <T,>(): Promise<T> => new Promise<T>(() => undefined)
 
 // A finished martial sheet — enough for the reveal to render its "Start over" action.
 const SHEET: CharacterFull = {

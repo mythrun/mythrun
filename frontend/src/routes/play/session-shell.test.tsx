@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, createMemoryRouter, RouterProvider } from 'react-router-dom'
+import type { ConnectionState } from '@mythrun/client-core'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
 import {
@@ -102,10 +103,13 @@ const REPLAYED_SKILL_CHECK: SessionView['items'][number] = {
   frame: { ...SKILL_CHECK.frame, seq: 7 },
 }
 
-function makeSession(items: SessionView['items']): SessionView {
+function makeSession(
+  items: SessionView['items'],
+  connection: ConnectionState = { status: 'connected', attempt: 0 },
+): SessionView {
   return {
     items,
-    connection: { status: 'connected', attempt: 0 },
+    connection,
     thinking: false,
     typingUserIds: [],
     ended: false,
@@ -205,6 +209,66 @@ describe('SessionShell — the dice-moment reveal wiring (MYT-93)', () => {
     expect(screen.getByText('+2 = 16')).toBeDefined()
     expect(screen.getByText(DM_TEXT)).toBeDefined()
     expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
+  })
+})
+
+/** Render the shell inside a router carrying a probe at the character-create
+ *  target, so the no-character CTA's navigation is observable. */
+function renderShellRouted(connection: ConnectionState): void {
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/campaigns/:id/play',
+        element: (
+          <SessionShell
+            ctx={testCtx}
+            campaignId={CAMPAIGN_ID}
+            sessionId={SESSION_ID}
+            viewerUserId={VIEWER_ID}
+            displayName={DISPLAY_NAME}
+            characterName=""
+            party={new Map()}
+            reducedMotion={false}
+            useLiveSession={() => makeSession([DM_PROSE], connection)}
+            knowledgeHooks={KNOWLEDGE_HOOKS}
+          />
+        ),
+      },
+      { path: '/campaigns/:id/character/new', element: <p data-testid="character-new-probe" /> },
+    ],
+    { initialEntries: [`/campaigns/${CAMPAIGN_ID}/play`] },
+  )
+  render(
+    <ThemeProvider>
+      <I18nextProvider i18n={i18n}>
+        <RouterProvider router={router} />
+      </I18nextProvider>
+    </ThemeProvider>,
+  )
+}
+
+describe('SessionShell — the no-character surface (myth-mnik3)', () => {
+  it('renders the explicit no-character notice (NOT the transcript) on a failed{no_character} close', () => {
+    renderShellRouted({ status: 'failed', attempt: 0, failedReason: 'no_character' })
+    expect(screen.getByTestId('play-no-character')).toBeDefined()
+    // The live shell + transcript are NOT mounted — the player is not left waiting
+    // at a silent table behind a disabled input.
+    expect(screen.queryByTestId('session-shell')).toBeNull()
+    expect(screen.queryByTestId('message-stream')).toBeNull()
+  })
+
+  it('the CTA routes into character creation', () => {
+    renderShellRouted({ status: 'failed', attempt: 0, failedReason: 'no_character' })
+    fireEvent.click(screen.getByTestId('play-no-character-create'))
+    expect(screen.getByTestId('character-new-probe')).toBeDefined()
+  })
+
+  it('a terminal failed{denied} still falls through to the live shell (connection line owns it)', () => {
+    // Only no_character short-circuits; denied/exhausted keep the shell (its
+    // connection line + disabled input already surface those).
+    renderShellRouted({ status: 'failed', attempt: 0, failedReason: 'denied' })
+    expect(screen.queryByTestId('play-no-character')).toBeNull()
+    expect(screen.getByTestId('session-shell')).toBeDefined()
   })
 })
 

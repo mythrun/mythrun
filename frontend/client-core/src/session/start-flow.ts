@@ -69,7 +69,7 @@ export type StartOutcome =
   | { kind: 'join' }
   | { kind: 'wait'; code: string }
   | { kind: 'purchase'; body: InsufficientCreditsBody }
-  | { kind: 'blocked'; code: string }
+  | { kind: 'blocked'; code: string; memberNames?: readonly string[] }
   | { kind: 'error' }
 
 export type StartFlowState =
@@ -81,7 +81,7 @@ export type StartFlowState =
   | { phase: 'waiting'; code: string }
   | { phase: 'ready'; sessionId: string }
   | { phase: 'purchase'; moment: PurchaseMoment }
-  | { phase: 'blocked'; code: string }
+  | { phase: 'blocked'; code: string; memberNames?: readonly string[] }
   | { phase: 'error' }
 
 export interface StartFlow {
@@ -140,6 +140,14 @@ const insufficientCreditsSchema = z.object({
   required: z.number(),
 })
 
+/** The members_without_characters 409 body (myth-mnik3 guard): the server names
+ *  every confirmed member still without an integrated character so the owner can
+ *  see exactly WHO the table is waiting on — the legibility point of the guard.
+ *  Malformed → the arm degrades to the bare blocked hold (never a crash). */
+const membersWithoutCharactersSchema = z.object({
+  members: z.array(z.object({ userId: z.string(), displayName: z.string() })),
+})
+
 /** Pure: map a caught start error to a `StartOutcome`. Keys ONLY on the
  *  contract-blessed `status`/`code`/`body` — nothing semantic. */
 export function classifyStartError(err: unknown): StartOutcome {
@@ -148,11 +156,11 @@ export function classifyStartError(err: unknown): StartOutcome {
     const parsed = insufficientCreditsSchema.safeParse(err.body)
     return parsed.success ? { kind: 'purchase', body: parsed.data } : { kind: 'error' }
   }
-  if (err.status === 409 && err.code !== undefined) return classify409(err.code)
+  if (err.status === 409 && err.code !== undefined) return classify409(err.code, err.body)
   return { kind: 'error' }
 }
 
-function classify409(code: string): StartOutcome {
+function classify409(code: string, body: unknown): StartOutcome {
   switch (code) {
     case 'session_already_active':
       return { kind: 'join' }
@@ -163,6 +171,20 @@ function classify409(code: string): StartOutcome {
     case 'reconcile_pending':
     case 'session_ending':
       return { kind: 'wait', code }
+    // The myth-mnik3 start guard: the session can't run until every confirmed
+    // member has an integrated character. Not transient (someone must finish
+    // creation), so it renders as the blocked hold — but WITH the missing
+    // members' names, so the owner knows exactly who the table waits on.
+    case 'members_without_characters': {
+      const parsed = membersWithoutCharactersSchema.safeParse(body)
+      return {
+        kind: 'blocked',
+        code,
+        ...(parsed.success
+          ? { memberNames: parsed.data.members.map((m) => m.displayName) }
+          : {}),
+      }
+    }
     // `campaign_not_active` (and any off-contract 409) is NOT transient — a manual
     // retry notice, not an auto-poll.
     default:
@@ -224,7 +246,11 @@ async function resolveOutcome(outcome: StartOutcome, args: StartArgs): Promise<S
         },
       }
     case 'blocked':
-      return { phase: 'blocked', code: outcome.code }
+      return {
+        phase: 'blocked',
+        code: outcome.code,
+        ...(outcome.memberNames !== undefined ? { memberNames: outcome.memberNames } : {}),
+      }
     case 'error':
       return { phase: 'error' }
   }

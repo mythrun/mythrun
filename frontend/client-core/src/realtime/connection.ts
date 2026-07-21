@@ -31,8 +31,11 @@ export type ConnectionStatus =
 
 /** Why a connection ended in `failed`. `denied` is terminal (a ticket 403/404 — no
  *  session / not a member). `exhausted` is re-armable (the backoff ceiling was hit;
- *  a flow MAY call the client's `connect()` again). */
-export type ConnectionFailureReason = 'denied' | 'exhausted'
+ *  a flow MAY call the client's `connect()` again). `no_character` is terminal (the
+ *  server closed the socket 4404 because the member has no integrated character —
+ *  myth-mnik3): reconnecting would just be rejected again, so the flow routes it to
+ *  an explicit "make a character" surface, not the reconnect line. */
+export type ConnectionFailureReason = 'denied' | 'exhausted' | 'no_character'
 
 export interface ConnectionState {
   status: ConnectionStatus

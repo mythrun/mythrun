@@ -79,6 +79,27 @@ describe('classifyStartError', () => {
     },
   )
 
+  it('409 members_without_characters with a well-formed body → blocked carrying the display names', () => {
+    const body = {
+      members: [
+        { userId: 'u1', displayName: 'Kessa' },
+        { userId: 'u2', displayName: 'Bram' },
+      ],
+    }
+    expect(classifyStartError(httpError(409, 'members_without_characters', body))).toEqual({
+      kind: 'blocked',
+      code: 'members_without_characters',
+      memberNames: ['Kessa', 'Bram'],
+    })
+  })
+
+  it('409 members_without_characters with a malformed body → bare blocked (degrades, never crashes)', () => {
+    expect(classifyStartError(httpError(409, 'members_without_characters', { nope: 1 }))).toEqual({
+      kind: 'blocked',
+      code: 'members_without_characters',
+    })
+  })
+
   it('402 with a well-formed body → purchase carrying the body', () => {
     const body = { code: 'insufficient_credits', available: 0, required: 1 }
     expect(classifyStartError(httpError(402, 'insufficient_credits', body))).toEqual({

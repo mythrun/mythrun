@@ -400,6 +400,33 @@ describe('createWsSessionClient — Task 6 close routing (readable signals only)
     expect(client.connectionState.getState()).toMatchObject({ status: 'reconnecting', attempt: 1 })
   })
 
+  it('routes a 4404 no_character close to TERMINAL failed{no_character} (no reconnect)', async () => {
+    // myth-mnik3: the member has no integrated character; the server closes 4404
+    // 'no_character'. Reconnecting would be rejected identically — this close is
+    // terminal, so the flow shows the explicit "make a character" surface.
+    mockTicket('s1')
+    const client = newClient(ctx)
+    const ws = await connectOpen(client)
+    ws.close(4404, 'no_character')
+    expect(client.connectionState.getState()).toEqual({
+      status: 'failed',
+      attempt: 0,
+      failedReason: 'no_character',
+    })
+    // No backoff reopen was scheduled — the socket count stays at 1.
+    expect(MockWebSocket.instances).toHaveLength(1)
+  })
+
+  it('a 4404 close with a DIFFERENT reason still reconnects (only 4404/no_character is terminal)', async () => {
+    // Guard the AND: the terminal route keys on BOTH the code and the reason, so
+    // a stray 4404 without the typed reason must not strand a recoverable socket.
+    mockTicket('s1')
+    const client = newClient(ctx)
+    const ws = await connectOpen(client)
+    ws.close(4404, 'something-else')
+    expect(client.connectionState.getState()).toMatchObject({ status: 'reconnecting', attempt: 1 })
+  })
+
   it('routes a session_end DATA frame to close() → closed (the server does NOT close the socket)', async () => {
     mockTicket('s1')
     const client = newClient(ctx)

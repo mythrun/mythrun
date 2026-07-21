@@ -69,6 +69,10 @@
       }
     },
     "eyebrow": "[ph: your campaign]",
+    "noAccess": {
+      "body": "[ph: it may not exist, or you may not have access — head back home]",
+      "title": "[ph: we couldn't open this campaign]"
+    },
     "notFound": "[ph: we couldn't find this campaign]",
     "settling": "[ph: settling your campaign]"
   },
@@ -157,8 +161,8 @@
       "error": "[ph: something went wrong — try again]",
       "groundingPrompt": "[ph: and how do you come to be here?]",
       "groundingWhisperFallback": "[ph: what brought your character to this place?]",
-      "tooShort": "[ph: tell us a little more]",
-      "stepIndicator": "[ph: {{current}} of {{total}}]"
+      "stepIndicator": "[ph: {{current}} of {{total}}]",
+      "tooShort": "[ph: tell us a little more]"
     },
     "guided": {
       "background": {
@@ -332,11 +336,14 @@
       "retry": "[ph: try again]"
     },
     "loading": {
-      "title": "[ph: making your character]",
       "countdown": "[ph: ~{{time}} left]",
-      "stalled": "[ph: taking longer than usual]"
+      "stalled": "[ph: taking longer than usual]",
+      "title": "[ph: making your character]"
     },
     "processing": "[ph: bringing your character to life…]",
+    "recap": {
+      "eyebrow": "[ph: your opening scene]"
+    },
     "reveal": {
       "actionError": "[ph: something went wrong — try again]",
       "loadError": "[ph: we couldn't bring up your character — try again]",
@@ -350,9 +357,6 @@
       "loading": "[ph: gathering your party…]",
       "retry": "[ph: try again]",
       "title": "[ph: ready to begin?]"
-    },
-    "recap": {
-      "eyebrow": "[ph: your opening scene]"
     }
   },
   "devTransport": {
@@ -444,6 +448,7 @@
   "play": {
     "blocked": {
       "body": "[ph: the table isn't ready just yet — give it a moment]",
+      "membersBody": "[ph: waiting on {{names}} to finish their characters]",
       "retry": "[ph: try again]"
     },
     "complete": {
@@ -467,45 +472,50 @@
       "summon": "[ph: ask the DM]"
     },
     "knowledge": {
-      "tabs": "[ph: table knowledge]",
-      "wikiTab": "[ph: world]",
-      "graphTab": "[ph: connections]",
-      "sheetTab": "[ph: your character]",
       "graphNodes": "[ph: browse the world by name]",
-      "wikiUnavailable": "[ph: the world guide isn't ready yet]",
+      "graphTab": "[ph: connections]",
       "graphUnavailable": "[ph: the connections map isn't ready yet]",
-      "sheetUnavailable": "[ph: your character sheet isn't ready yet]",
-      "openInWiki": "[ph: open in the world guide]",
       "mention": "[ph: {{name}}]",
+      "openInWiki": "[ph: open in the world guide]",
+      "sheet": {
+        "conditions": "[ph: recent changes]",
+        "empty": "[ph: nothing has changed yet]",
+        "hp": "[ph: current HP]"
+      },
+      "sheetTab": "[ph: your character]",
+      "sheetUnavailable": "[ph: your character sheet isn't ready yet]",
+      "tabs": "[ph: table knowledge]",
       "type": {
-        "npc": "[ph: person]",
-        "location": "[ph: place]",
         "faction": "[ph: faction]",
+        "location": "[ph: place]",
+        "npc": "[ph: person]",
         "other": "[ph: entry]"
       },
       "wiki": {
-        "search": "[ph: search the world]",
-        "searchPlaceholder": "[ph: search by name]",
-        "empty": "[ph: nothing found]",
         "back": "[ph: back]",
-        "related": "[ph: connected]",
+        "empty": "[ph: nothing found]",
         "emptyBody": "[ph: nothing known here yet]",
-        "references": "[ph: dig deeper]",
-        "index": "[ph: browse]",
         "group": {
           "faction": "[ph: factions]",
+          "item": "[ph: things]",
           "location": "[ph: places]",
-          "npc": "[ph: people]",
-          "item": "[ph: things]"
-        }
+          "npc": "[ph: people]"
+        },
+        "index": "[ph: browse]",
+        "references": "[ph: dig deeper]",
+        "related": "[ph: connected]",
+        "search": "[ph: search the world]",
+        "searchPlaceholder": "[ph: search by name]"
       },
-      "sheet": {
-        "hp": "[ph: current HP]",
-        "conditions": "[ph: recent changes]",
-        "empty": "[ph: nothing has changed yet]"
-      }
+      "wikiTab": "[ph: world]",
+      "wikiUnavailable": "[ph: the world guide isn't ready yet]"
     },
     "loading": "[ph: opening the table…]",
+    "noCharacter": {
+      "body": "[ph: you don't have a character in this campaign yet — make one to join the table]",
+      "cta": "[ph: make your character]",
+      "title": "[ph: you're not at the table yet]"
+    },
     "prep": {
       "failedBody": "[ph: preparing the session was interrupted — try again]",
       "failedRetry": "[ph: try again]",
@@ -675,11 +685,11 @@
     "wikiDigDeeper": "[ph: dig deeper]",
     "wikiEmpty": "[ph: nothing matches]",
     "wikiEmptyBody": "[ph: the world holds nothing on this yet]",
+    "wikiGlossary": "[ph: glossary]",
     "wikiIndex": "[ph: index]",
     "wikiOpen": "[ph: open the world wiki]",
     "wikiRelated": "[ph: connected across your world]",
     "wikiSearchLabel": "[ph: search your world]",
-    "wikiSearchPlaceholder": "[ph: search]",
-    "wikiGlossary": "[ph: glossary]"
+    "wikiSearchPlaceholder": "[ph: search]"
   }
 }

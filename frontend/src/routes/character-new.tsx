@@ -5,16 +5,19 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Navigate, useParams } from 'react-router-dom'
 import {
+  getCharacterCreationProgress,
   getStartingSituations,
   getWorldSnapshot,
   submitCharacter,
   useApiContext,
   type ApiContext,
+  type CharacterCreationProgress,
   type StartingSituation,
   type StartingSituationsResponse,
   type SubmitCharacterBody,
   type SubmitCharacterResponse,
 } from '@mythrun/client-core'
+import { defaultFetchMe, type FetchMe } from './character-new/viewer-signals.ts'
 import { createMachine, type CreateState, type CreateEvent } from '@mythrun/client-core/character'
 import { PathChooser } from './character-new/path-chooser.tsx'
 import { FreeformPath } from './character-new/freeform-path.tsx'
@@ -70,6 +73,45 @@ type SubmitCharacterFn = (
   campaignId: string,
   body: SubmitCharacterBody,
 ) => Promise<SubmitCharacterResponse>
+/** The progress source — defaults to the real endpoint; tests substitute it. */
+type FetchProgress = (ctx: ApiContext, campaignId: string) => Promise<CharacterCreationProgress>
+
+// myth-qkjdq: concept statuses that mean the viewer is ALREADY past "start a
+// character" — the create flow must not (re)start them. A refresh / deep-link of
+// /character/new consults the roster and hands off to the campaign surface, whose
+// routing table owns the waiting beat (`processing`), the reveal (`completed`),
+// party staging, the play entry (`integrated`), and the failure surface (`failed`).
+// `none`/`submitted` (a fresh or reset concept) stay on the create flow.
+const IN_FLIGHT_CONCEPT_STATUSES = new Set(['processing', 'completed', 'integrated', 'failed'])
+
+/** Fetch the viewer's OWN concept status for the deep-link/refresh handoff.
+ *  `undefined` while loading, on a calm fetch failure, or when the viewer has no
+ *  concept row yet — all of which keep the player on the create flow (the safe
+ *  default; the backend 409-guards a re-submit of a locked concept anyway). A
+ *  late resolve after unmount is dropped. */
+function useViewerConceptStatus(
+  campaignId: string,
+  ctx: ApiContext,
+  fetchMe: FetchMe,
+  fetchProgress: FetchProgress,
+): string | undefined {
+  const [status, setStatus] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    let active = true
+    void Promise.all([fetchMe(ctx), fetchProgress(ctx, campaignId)])
+      .then(([me, progress]) => {
+        if (!active) return
+        setStatus(progress.concepts.find((c) => c.userId === me.user.id)?.status)
+      })
+      .catch(() => {
+        // Calm: stay on the create flow (undefined → no handoff).
+      })
+    return () => {
+      active = false
+    }
+  }, [campaignId, ctx, fetchMe, fetchProgress])
+  return status
+}
 
 /** The chosen situation, or `undefined` when there is no usable pick yet (still
  *  loading, a failed fetch, no `chosenIndex`, or an index that matches no
@@ -234,12 +276,20 @@ export interface CharacterNewRouteProps {
   /** The wiki snapshot source (MYT-102) — defaults to the real member-readable
    *  endpoint; tests substitute it. */
   fetchSnapshot?: FetchSnapshot
+  /** The viewer-identity source (myth-qkjdq roster handoff) — defaults to the real
+   *  endpoint; tests substitute it. */
+  fetchMe?: FetchMe
+  /** The progress source (myth-qkjdq roster handoff) — defaults to the real
+   *  endpoint; tests substitute it. */
+  fetchProgress?: FetchProgress
 }
 
 export function CharacterNewRoute({
   fetchSituations = getStartingSituations,
   submit = submitCharacter,
   fetchSnapshot = getWorldSnapshot,
+  fetchMe = defaultFetchMe,
+  fetchProgress = getCharacterCreationProgress,
 }: CharacterNewRouteProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
@@ -251,6 +301,10 @@ export function CharacterNewRoute({
   }
 
   const { situation, startingLevel, prerequisitesMissing } = useStartingContext(id, ctx, fetchSituations)
+  // myth-qkjdq: consult the roster on entry. A refresh / deep-link that lands here
+  // while the viewer already has an in-flight or finished concept hands off to the
+  // campaign surface's routing table instead of showing the start of creation.
+  const viewerConceptStatus = useViewerConceptStatus(id, ctx, fetchMe, fetchProgress)
 
 
   const groundingWhisper = situation?.invitation ?? t('characterCreate.freeform.groundingWhisperFallback')
@@ -271,6 +325,15 @@ export function CharacterNewRoute({
   // this just keeps the player off a screen that cannot succeed.
   if (prerequisitesMissing) {
     return <Navigate to={`/campaigns/${id}`} replace />
+  }
+
+  // Roster handoff (myth-qkjdq): the viewer already has an in-flight or finished
+  // concept — a refresh mid-processing lands on the campaign surface's waiting
+  // beat, post-completion on the reveal — rather than the start of creation.
+  if (viewerConceptStatus !== undefined && IN_FLIGHT_CONCEPT_STATUSES.has(viewerConceptStatus)) {
+    return (
+      <Navigate to={`/campaigns/${id}`} replace data-testid="character-new-roster-handoff" />
+    )
   }
 
   const submitBoth = (conceptText: string, situationGroundingText: string): Promise<void> =>

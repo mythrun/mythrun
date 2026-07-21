@@ -76,11 +76,43 @@ async function sessionBalance(pool: Pool, userId: string): Promise<number> {
   return Number(rows[0]?.balance ?? 0)
 }
 
+/** Seed an integrated character for `user` in `campaignId` — a `characters`
+ *  row + the `campaign_characters` join `findUserCharacterForCampaign` resolves.
+ *  Mirrors ws-session.integration.test.ts's seed: an active campaign's members
+ *  ALL carry a character (integration ran), so the myth-mnik3 start-guard passes.
+ *  A test that wants a char-LESS confirmed member simply omits this call. */
+async function seedCharacter(
+  pool: Pool,
+  campaignId: string,
+  user: SeededUser,
+  name: string,
+): Promise<void> {
+  const characterId = uuidv7()
+  await pool.query(
+    `INSERT INTO characters
+       (id, user_id, name, level, class, species, background,
+        str, dex, con, int, wis, cha,
+        hit_points, max_hit_points, armor_class, proficiency_bonus)
+     VALUES ($1, $2, $3, 1, 'Fighter', 'Human', 'Soldier',
+             10, 10, 10, 10, 10, 10, 10, 10, 12, 2)`,
+    [characterId, user.userId, name],
+  )
+  await pool.query(
+    `INSERT INTO campaign_characters (id, campaign_id, character_id, user_id)
+     VALUES ($1, $2, $3, $4)`,
+    [uuidv7(), campaignId, characterId, user.userId],
+  )
+}
+
 async function seedActiveCampaign(
   pool: Pool,
   scope: TestScope,
   owner: SeededUser,
   index: number,
+  // The owner of a genuinely-active campaign has an integrated character (they
+  // played through integration). Default true so every existing /start test has
+  // a start-guard-passing owner; the myth-mnik3 owner-missing test opts out.
+  opts: { ownerCharacter?: boolean } = {},
 ): Promise<string> {
   const worldId = uuidv7()
   const campaignId = uuidv7()
@@ -99,6 +131,9 @@ async function seedActiveCampaign(
      VALUES ($1, $2, $3, 'owner', true)`,
     [uuidv7(), campaignId, owner.userId],
   )
+  if (opts.ownerCharacter !== false) {
+    await seedCharacter(pool, campaignId, owner, `${scope.displayName(index)}'s hero`)
+  }
   return campaignId
 }
 
@@ -249,19 +284,39 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
   let redis: Redis
   let scope: TestScope
 
+  // Characters are user-owned (migration 009 dropped characters.campaign_id), so
+  // cleanupTestScope's campaign-CASCADE doesn't reach them — they'd block the
+  // users delete on characters_user_id_fkey, and session_participants.character_id
+  // FK→characters would block the character delete. Tear down in FK order:
+  // participants → characters → cleanupTestScope. Mirrors ws-session.integration.
+  async function cleanupScope(): Promise<void> {
+    const idPrefix = `${scope.id}%`
+    await pool.query(
+      `DELETE FROM session_participants
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [idPrefix],
+    )
+    await pool.query(
+      `DELETE FROM characters
+         WHERE user_id IN (SELECT id FROM users WHERE cognito_sub LIKE $1)`,
+      [idPrefix],
+    )
+    await cleanupTestScope(pool, scope)
+  }
+
   beforeAll(async () => {
     await guardTestDatabase(databaseUrl)
     pool = createTestPool(databaseUrl)
     scope = makeTestScope('sessions-start')
   })
   afterAll(async () => {
-    await cleanupTestScope(pool, scope)
+    await cleanupScope()
     await pool.end()
   })
   beforeEach(async () => {
     process.env.AUTH_MODE = 'bypass'
     process.env.NODE_ENV = 'test'
-    await cleanupTestScope(pool, scope)
+    await cleanupScope()
     redis = new IoRedisMock()
     app = await buildTestApp(pool, redis)
   })
@@ -566,12 +621,91 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       const player = await seedUser(pool, scope, 1)
       await grantSessionCredits(pool, player.userId, 5)
       await addMember(pool, campaignId, player)
+      await seedCharacter(pool, campaignId, player, 'Player Two')
 
       const res = await postStart(app, campaignId, player.devSub)
       expect(res.statusCode).toBe(200)
       // OWNER paid (2 → 1); player UNTOUCHED (5).
       expect(await sessionBalance(pool, owner.userId)).toBe(1)
       expect(await sessionBalance(pool, player.userId)).toBe(5)
+    })
+
+    // ── myth-mnik3 silent-lockout guard ───────────────────────────────────────
+    // /start must not run a session while a CONFIRMED member has no integrated
+    // character (their WS connect would be rejected 4404 'no_character' and they
+    // would sit in ambient quiet). The typed 409 names each missing seat.
+    it('a confirmed member with no character → 409 members_without_characters (names the seat); NO debit', async () => {
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      const player = await seedUser(pool, scope, 1)
+      await addMember(pool, campaignId, player) // joined + accepted, but NO character seeded
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(409)
+      const body = res.json<{
+        code: string
+        members: { userId: string; displayName: string }[]
+      }>()
+      expect(body.code).toBe('members_without_characters')
+      expect(body.members).toEqual([
+        { userId: player.userId, displayName: scope.displayName(1) },
+      ])
+      // A precondition failure: the owner is NOT charged, no session row exists.
+      expect(await sessionBalance(pool, owner.userId)).toBe(3)
+      expect(await createRepo(pool).sessions.getActiveByCampaign(campaignId)).toBeNull()
+    })
+
+    it('the guard includes the OWNER — an owner with no character blocks their own start', async () => {
+      const owner = await seedUser(pool, scope, 2)
+      await grantSessionCredits(pool, owner.userId, 3)
+      const campaignId = await seedActiveCampaign(pool, scope, owner, 2, { ownerCharacter: false })
+      await seedPrep(pool, campaignId, 1)
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(409)
+      const body = res.json<{ code: string; members: { userId: string }[] }>()
+      expect(body.code).toBe('members_without_characters')
+      expect(body.members.map((m) => m.userId)).toEqual([owner.userId])
+      expect(await sessionBalance(pool, owner.userId)).toBe(3)
+    })
+
+    it('every confirmed member HAS a character → the guard passes (200); ONE debit', async () => {
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      const player = await seedUser(pool, scope, 1)
+      await addMember(pool, campaignId, player)
+      await seedCharacter(pool, campaignId, player, 'Player Two')
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(200)
+      expect(await sessionBalance(pool, owner.userId)).toBe(2)
+    })
+
+    it('a member with a PENDING (unaccepted) invite is NOT required to have a character', async () => {
+      // The guard keys on invite_accepted = true (the WS-connect membership
+      // predicate). A pending invitee can't join the session, so a missing
+      // character on their row must not block the start.
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      const invitee = await seedUser(pool, scope, 1)
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'player', false)`,
+        [uuidv7(), campaignId, invitee.userId],
+      )
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(200)
+    })
+
+    it('a SUSPENDED member with no character does NOT block the start', async () => {
+      // A suspended user cannot reach the WS connect, so a missing character on
+      // their row is not a lockout — the guard's `suspended_at IS NULL` filter
+      // keeps them out of the missing list rather than wedging the session.
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      const suspended = await seedUser(pool, scope, 1)
+      await addMember(pool, campaignId, suspended)
+      await pool.query(`UPDATE users SET suspended_at = now() WHERE id = $1`, [suspended.userId])
+
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(200)
     })
   })
 

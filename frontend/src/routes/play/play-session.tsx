@@ -79,7 +79,13 @@ export function PlaySession({
     reducedMotion,
     retry,
     connectingLabels: { prep: t('play.start.prep'), connecting: t('play.start.connecting') },
-    blocked: { body: t('play.blocked.body'), retry: t('play.blocked.retry') },
+    blocked: {
+      body:
+        flow.state.phase === 'blocked' && flow.state.memberNames !== undefined
+          ? t('play.blocked.membersBody', { names: flow.state.memberNames.join(', ') })
+          : t('play.blocked.body'),
+      retry: t('play.blocked.retry'),
+    },
     startError: { body: t('play.startError.body'), retry: t('play.startError.retry') },
     ...(usePrep !== undefined && { usePrep }),
     ...(useLiveSession !== undefined && { useLiveSession }),

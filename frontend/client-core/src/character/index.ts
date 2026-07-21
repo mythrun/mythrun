@@ -38,5 +38,15 @@ export type {
   CharacterCreationStream,
   CharacterCreationStreamDeps,
 } from './use-character-creation-stream.ts'
+export {
+  useCreationProgressPoll,
+  creationPollDelay,
+  DEFAULT_CREATION_POLL,
+} from './use-creation-progress-poll.ts'
+export type {
+  CreationProgressPoll,
+  CreationProgressPollDeps,
+  CreationPollConfig,
+} from './use-creation-progress-poll.ts'
 export { CHARACTER_CREATION_STAGES, remainingCreationWaitMs } from './creation-eta.ts'
 export type { CharacterCreationStage } from './creation-eta.ts'

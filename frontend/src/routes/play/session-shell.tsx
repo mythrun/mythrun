@@ -19,7 +19,7 @@ import type { RollCardLabels } from '@mythrun/client-core/contract'
 import { MessageStream, ThinkingIndicator, SessionInput } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { SessionCompleteNotice } from './notices.tsx'
+import { SessionCompleteNotice, NoCharacterNotice } from './notices.tsx'
 import {
   KnowledgePanel,
   buildHighlightLabels,
@@ -172,6 +172,22 @@ export function SessionShell({
   )
 
   if (ended) return <SessionCompleteNotice />
+
+  // myth-mnik3: the transport terminally failed because the viewer has no
+  // integrated character (server close 4404 'no_character'). Reconnecting can't
+  // help — surface an explicit "make a character" state with a route into
+  // creation, instead of a live shell whose input is disabled behind a quiet
+  // reconnect line. A terminal `failed{denied}`/`{exhausted}` still falls through
+  // to the shell (the connection line + disabled input already cover those).
+  if (connection.status === 'failed' && connection.failedReason === 'no_character') {
+    return (
+      <NoCharacterNotice
+        onCreate={() => {
+          void navigate(`/campaigns/${campaignId}/character/new`)
+        }}
+      />
+    )
+  }
 
   return (
     // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- play-stage layout row; the min-h-0 flex-scroll root is not expressible via @mythrun/ui Stack props (BaseProps bans className)
