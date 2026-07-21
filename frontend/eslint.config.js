@@ -119,6 +119,11 @@ export default [
     ignores: [
       'dist/**',
       'coverage/**',
+      // The animation-audit gallery — a standalone internal design-review tool
+      // with its own vite config + build (single-file artifact output). Not part
+      // of the web app's tsconfig project, so the type-aware projectService
+      // can't place its files; it ships nothing into the app bundle.
+      'animation-audit/**',
       'src/**/*.css',
       'index.html',
       'vite.config.ts',
