@@ -222,6 +222,24 @@ describe('useSessionStart', () => {
     })
   })
 
+  it('join race — the /active join lookup itself THROWS → error (never an unhandled rejection)', async () => {
+    const deps = makeDeps({
+      startSession: vi.fn().mockRejectedValue(httpError(409, 'session_already_active')),
+      getActiveSession: vi
+        .fn()
+        .mockResolvedValueOnce({ session: null }) // probe: nothing
+        .mockRejectedValueOnce(new Error('network tear mid-join')), // join lookup dies
+    })
+    const { result } = renderStart(deps)
+
+    act(() => {
+      result.current.start()
+    })
+    await waitFor(() => {
+      expect(result.current.state).toEqual({ phase: 'error' })
+    })
+  })
+
   it('402 → purchase with the moment (available/required from the body, viewerIsOwner threaded)', async () => {
     const body = { code: 'insufficient_credits', available: 3, required: 1 }
     const deps = makeDeps({
