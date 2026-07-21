@@ -16,6 +16,7 @@ import { uuidv7 } from '../../repo/uuidv7.js'
 import { bypassPlugin } from '../../auth/bypass-plugin.js'
 import { requireOnboarded } from '../../auth/require-onboarded.js'
 import {
+  InviteCapReachedError,
   InviteCreationError,
   InviteTimeoutError,
 } from '../../repo/invites-errors.js'
@@ -31,6 +32,7 @@ import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 // (create/acceptInvite), so we mock both so the route's `ctx.repo.invites.*`
 // calls go through our stubs and the typed-error catch-arms run.
 const stubCreate = vi.fn()
+const stubEnsurePrimary = vi.fn()
 const stubAcceptInvite = vi.fn()
 const stubGetCodePreview = vi.fn()
 const stubListForCampaign = vi.fn()
@@ -49,6 +51,7 @@ vi.mock('../../repo/invites.js', async () => {
     }),
     selfManagingInvites: () => ({
       create: stubCreate,
+      ensurePrimary: stubEnsurePrimary,
       acceptInvite: stubAcceptInvite,
     }),
   }
@@ -157,6 +160,43 @@ describe('routes/invites — error mapping', () => {
       headers: { 'x-mythrun-dev-sub': seed.ownerSub },
     })
     // Untyped rethrow → Fastify default 500.
+    expect(res.statusCode).toBe(500)
+  })
+
+  it('PUT primary: 409 invite_cap_reached when ensurePrimary throws InviteCapReachedError', async () => {
+    const seed = await seedOwnerAndCampaign(pool, scope)
+    stubEnsurePrimary.mockRejectedValueOnce(
+      new InviteCapReachedError('019dccef-0000-7000-8000-000000000001', 25),
+    )
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/campaigns/${seed.campaignId}/invites/primary`,
+      headers: { 'x-mythrun-dev-sub': seed.ownerSub },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ code: 'invite_cap_reached', activeInvites: 25 })
+  })
+
+  it('PUT primary: 500 invite_creation_error when ensurePrimary throws InviteCreationError', async () => {
+    const seed = await seedOwnerAndCampaign(pool, scope)
+    stubEnsurePrimary.mockRejectedValueOnce(new InviteCreationError(3))
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/campaigns/${seed.campaignId}/invites/primary`,
+      headers: { 'x-mythrun-dev-sub': seed.ownerSub },
+    })
+    expect(res.statusCode).toBe(500)
+    expect(res.json()).toEqual({ code: 'invite_creation_error' })
+  })
+
+  it('PUT primary: rethrows non-Mythrun errors (falls through to Fastify 500)', async () => {
+    const seed = await seedOwnerAndCampaign(pool, scope)
+    stubEnsurePrimary.mockRejectedValueOnce(new Error('some random repo failure'))
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/campaigns/${seed.campaignId}/invites/primary`,
+      headers: { 'x-mythrun-dev-sub': seed.ownerSub },
+    })
     expect(res.statusCode).toBe(500)
   })
 
