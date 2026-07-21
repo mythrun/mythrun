@@ -2,19 +2,23 @@ import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { DieSpin } from './DieSpin.tsx'
 
-// DieSpin (MYT-93, spec §5) — the flat 2D OUTLINED d20 the RollCard spins. THIS
-// STORY IS THE CANONICAL REFERENCE for the die glyph (a new brand mark — no
+// DieSpin (MYT-93, spec §5) — the flat 2D OUTLINED facet-band d20 the RollCard spins.
+// THIS STORY IS THE CANONICAL REFERENCE for the die glyph (a new brand mark — no
 // pixelarticons dice exists; Miklos directed "a 2D outline in some 1-bit register,
-// spun"). The motion is a STEPPED rotation — 8 discrete 45° steps ≈ one ~1s
-// revolution, driven by a step counter, NEVER a smooth CSS transition (the motion
-// analog of the brand's stepped Bayer dither). The landed `result` stamps the
-// numeral in the die centre in `--font-ui`; `reducedMotion` lands instantly. The
-// die is currentColor decoration (tint via a `text-*` token on the parent); the
-// result also announces via a polite live region (motion is never the only signal).
+// spun"). The glyph is a pointy-top hexagon with the icosahedron's top + bottom
+// triangular facets drawn and the EQUATORIAL BAND left open, so the stamped numeral
+// sits on clean ground — no facet stroke crosses it at any value. The motion is a
+// STEPPED rotation — eight discrete 45° jumps back to upright, NEVER a smooth CSS
+// transition (the motion analog of the brand's stepped Bayer dither) — with the DWELL
+// ramping so the die decelerates into the landing and lands with one discrete recoil
+// (a scale pop) before snapping still. The landed `result` stamps the numeral in the
+// die centre in `--font-ui`; `reducedMotion` lands instantly. The die is currentColor
+// decoration (tint via a `text-*` token on the parent); the result also announces via
+// a polite live region (motion is never the only signal).
 //
 // Do: drive `spinning` from real interaction (the RollCard's Roll press) and land
-//   the numeral on `onSpinComplete`. Don't: interpolate the rotation smoothly, or
-//   add a circle — the register is square/1-bit.
+//   the numeral on `onSpinComplete`. Don't: interpolate the rotation smoothly, add a
+//   circle (the register is square/1-bit), or draw a stroke across the numeral field.
 // Content/i18n: `resultLabel` is a resolved [ph:] SR string the consumer passes;
 //   `result` is DATA (the numeral), never an i18n key.
 
@@ -37,7 +41,7 @@ export default meta
 
 type Story = StoryObj<typeof DieSpin>
 
-// The un-rolled die: the bare outline, no numeral.
+// The un-rolled die: the bare facet-band outline, no numeral.
 export const Idle: Story = {
   args: {
     spinning: false,
@@ -47,7 +51,7 @@ export const Idle: Story = {
   },
 }
 
-// The landed die: the numeral stamped in the centre in --font-ui.
+// The landed die: the numeral stamped in the open equatorial band in --font-ui.
 export const Result: Story = {
   args: {
     spinning: false,
@@ -58,8 +62,31 @@ export const Result: Story = {
   },
 }
 
-// A self-driving demo: press Roll to flip `spinning` true; the stepped spin runs
-// (~1s) and lands the numeral on `onSpinComplete` — the RollCard's exact contract.
+// The layout-stressing values, landed side by side: single digit (1, 8), the narrow
+// two-digit (11), and the wide two-digit (17, 20). The numeral must read crisp and
+// optically centred at every one — no facet stroke touching a glyph.
+const STRESS_VALUES = [1, 8, 11, 17, 20]
+export const Stress: Story = {
+  name: 'Stress (numeral legibility)',
+  render: () => (
+    <div className="flex items-center gap-[var(--space-5)] text-ink">
+      {STRESS_VALUES.map((v) => (
+        <DieSpin
+          key={v}
+          spinning={false}
+          result={v}
+          reducedMotion={false}
+          onSpinComplete={() => undefined}
+          resultLabel={`[ph: you rolled a ${String(v)}]`}
+        />
+      ))}
+    </div>
+  ),
+}
+
+// A self-driving demo: press Roll to flip `spinning` true; the decelerating stepped
+// spin runs (~0.9s) and lands the numeral on `onSpinComplete` — the RollCard's exact
+// contract.
 function SpinDemo({ reducedMotion }: { reducedMotion: boolean }): React.JSX.Element {
   const [spinning, setSpinning] = useState(false)
   const [result, setResult] = useState<number | null>(null)
@@ -91,7 +118,7 @@ function SpinDemo({ reducedMotion }: { reducedMotion: boolean }): React.JSX.Elem
   )
 }
 
-// The stepped spin, driven end-to-end (Roll → spin → land).
+// The decelerating stepped spin, driven end-to-end (Roll → spin → recoil → land).
 export const Spinning: Story = {
   render: () => <SpinDemo reducedMotion={false} />,
 }

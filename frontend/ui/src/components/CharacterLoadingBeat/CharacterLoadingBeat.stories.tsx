@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { LoadingBeat } from '@mythrun/client-core/contract'
 import { CharacterLoadingBeat } from './CharacterLoadingBeat.tsx'
@@ -79,4 +80,37 @@ export const Narrow: Story = {
     </div>
   ),
   args: { beats: MID_BEATS, reducedMotion: false },
+}
+
+// A self-driving demo: the beats advance pending → active → done on a timer, so each
+// completion lands a decelerating quantized advance of the meter (and the active beat's
+// presence shows in the front band's liveness). It loops back to the start. Production streams
+// the beat states from the client-core view-model.
+const BEAT_SEEDS = MID_BEATS.map((b) => ({ id: b.id, label: b.label }))
+
+function beatsAt(done: number): LoadingBeat[] {
+  return BEAT_SEEDS.map((b, i) => ({
+    ...b,
+    state: i < done ? 'done' : i === done ? 'active' : 'pending',
+  }))
+}
+
+function LoadingDriver(): React.JSX.Element {
+  // `done` runs 0…total; at `total` every beat is done (the meter full), then it resets.
+  const [done, setDone] = useState(0)
+  useEffect(() => {
+    const atEnd = done >= BEAT_SEEDS.length
+    const t = setTimeout(() => {
+      setDone((n) => (n >= BEAT_SEEDS.length ? 0 : n + 1))
+    }, atEnd ? 2200 : 1400)
+    return () => {
+      clearTimeout(t)
+    }
+  }, [done])
+  return <CharacterLoadingBeat beats={beatsAt(done)} reducedMotion={false} countdownLabel="[ph: ~1:40 left]" />
+}
+
+export const Driving: Story = {
+  name: 'Driving (demo advance)',
+  render: () => <LoadingDriver />,
 }

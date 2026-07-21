@@ -9,30 +9,26 @@ import { SessionStartBeat } from './SessionStartBeat.tsx'
 const PREP_LABEL = '[ph: the DM is preparing tonight’s session…]'
 const CONNECTING_LABEL = '[ph: connecting to the table…]'
 
+function renderBeat(phase: 'prep' | 'connecting', reducedMotion = false) {
+  return render(
+    <SessionStartBeat
+      phase={phase}
+      reducedMotion={reducedMotion}
+      prepLabel={PREP_LABEL}
+      connectingLabel={CONNECTING_LABEL}
+    />,
+  )
+}
+
 describe('SessionStartBeat', () => {
   it('renders both phase labels as rows, prep then connecting', () => {
-    const { getAllByTestId } = render(
-      <SessionStartBeat
-        phase="prep"
-        reducedMotion={false}
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
-    const rows = getAllByTestId('session-start-beat-row')
+    const rows = renderBeat('prep').getAllByTestId('session-start-beat-row')
     expect(rows.map((r) => r.textContent)).toEqual([PREP_LABEL, CONNECTING_LABEL])
     expect(rows.map((r) => r.getAttribute('data-phase'))).toEqual(['prep', 'connecting'])
   })
 
   it('reflects the active phase on the root', () => {
-    const { getByTestId, rerender } = render(
-      <SessionStartBeat
-        phase="prep"
-        reducedMotion={false}
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
+    const { getByTestId, rerender } = renderBeat('prep')
     expect(getByTestId('session-start-beat')).toHaveAttribute('data-phase', 'prep')
     rerender(
       <SessionStartBeat
@@ -46,84 +42,35 @@ describe('SessionStartBeat', () => {
   })
 
   it('derives each row state from the phase (active/pending in prep; done/active in connecting)', () => {
-    const prep = within(
-      render(
-        <SessionStartBeat
-          phase="prep"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
+    const prep = within(renderBeat('prep').container)
     expect(
       prep.getAllByTestId('session-start-beat-row').map((r) => r.getAttribute('data-state')),
     ).toEqual(['active', 'pending'])
 
-    const connecting = within(
-      render(
-        <SessionStartBeat
-          phase="connecting"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
+    const connecting = within(renderBeat('connecting').container)
     expect(
       connecting.getAllByTestId('session-start-beat-row').map((r) => r.getAttribute('data-state')),
     ).toEqual(['done', 'active'])
   })
 
   it('styles the three row states distinctly, with a SOLID pending token (never a sub-AA opacity dim)', () => {
-    // In the connecting phase all three states are present at once (prep=done,
-    // connecting=active) — plus a prep render for the pending state.
-    const prep = within(
-      render(
-        <SessionStartBeat
-          phase="prep"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
-    const prepRows = prep.getAllByTestId('session-start-beat-row')
+    const prepRows = within(renderBeat('prep').container).getAllByTestId('session-start-beat-row')
     const active = prepRows[0]?.className ?? ''
     const pending = prepRows[1]?.className ?? ''
-
-    const connecting = within(
-      render(
-        <SessionStartBeat
-          phase="connecting"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
-    const done = connecting.getAllByTestId('session-start-beat-row')[0]?.className ?? ''
+    const done = within(renderBeat('connecting').container).getAllByTestId('session-start-beat-row')[0]?.className ?? ''
 
     // Distinct treatments per state.
     expect(active).not.toEqual(pending)
     expect(done).not.toEqual(pending)
-    // Active reads emphasized (ember accent); pending reads muted via the SOLID
-    // tertiary-ink token — NOT a static `opacity-NN` dim (which fell below the
-    // 4.5:1 contrast floor on paper — the CharacterLoadingBeat contrast lesson).
+    // Active reads emphasized (ember accent); pending reads muted via the SOLID tertiary-ink
+    // token — NOT a static `opacity-NN` dim (which fell below the 4.5:1 contrast floor on paper).
     expect(active).toMatch(/accent/)
     expect(pending).toMatch(/ink-tertiary/)
     expect(pending).not.toMatch(/opacity-\d/)
   })
 
   it('announces the ACTIVE phase label through an SR live region', () => {
-    const { getByTestId, rerender } = render(
-      <SessionStartBeat
-        phase="prep"
-        reducedMotion={false}
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
+    const { getByTestId, rerender } = renderBeat('prep')
     const live = getByTestId('session-start-beat-live')
     expect(live).toHaveAttribute('role', 'status')
     expect(live).toHaveAttribute('aria-live', 'polite')
@@ -140,90 +87,34 @@ describe('SessionStartBeat', () => {
     expect(getByTestId('session-start-beat-live')).toHaveTextContent(CONNECTING_LABEL)
   })
 
-  it('accelerates the fill toward completion: prep underway, connecting fully landed', () => {
-    const prep = within(
-      render(
-        <SessionStartBeat
-          phase="prep"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
-    const prepFill = prep.getByTestId('session-start-beat-fill')
-    const prepPct = Number(prepFill.getAttribute('data-fill-pct'))
+  it('drives the fill meter toward completion: prep underway, connecting fully landed', () => {
+    const prepFigure = within(renderBeat('prep').container).getByTestId('session-start-beat-figure')
+    expect(prepFigure).toHaveAttribute('data-beat-mode', 'fill')
+    const prepLevel = Number(prepFigure.getAttribute('data-beat-level'))
     // Underway, not complete.
-    expect(prepPct).toBeGreaterThan(0)
-    expect(prepPct).toBeLessThan(100)
-    expect(prepFill.style.height).toBe(`${String(prepPct)}%`)
+    expect(prepLevel).toBeGreaterThan(0)
+    expect(prepLevel).toBeLessThan(1)
 
-    const connecting = within(
-      render(
-        <SessionStartBeat
-          phase="connecting"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
-    const connectFill = connecting.getByTestId('session-start-beat-fill')
+    const connectFigure = within(renderBeat('connecting').container).getByTestId('session-start-beat-figure')
     // Landed at completion.
-    expect(connectFill).toHaveAttribute('data-fill-pct', '100')
-    expect(connectFill.style.height).toBe('100%')
+    expect(connectFigure).toHaveAttribute('data-beat-level', '1')
+    // The prep→connecting rise is the beat accelerating toward completion.
+    expect(Number(connectFigure.getAttribute('data-beat-level'))).toBeGreaterThan(prepLevel)
   })
 
   it('is aria-busy (a loading beat is busy the whole time it is mounted)', () => {
-    const { getByTestId } = render(
-      <SessionStartBeat
-        phase="prep"
-        reducedMotion={false}
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
-    expect(getByTestId('session-start-beat')).toHaveAttribute('aria-busy', 'true')
+    expect(renderBeat('prep').getByTestId('session-start-beat')).toHaveAttribute('aria-busy', 'true')
   })
 
-  it('animates the fill by default but freezes it under reduced motion (lands instantly)', () => {
-    const motion = within(
-      render(
-        <SessionStartBeat
-          phase="prep"
-          reducedMotion={false}
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
-    expect(motion.getByTestId('session-start-beat-fill').className).toMatch(/transition/)
+  it('threads reduced motion to the beat so it lands instantly (no churn)', () => {
+    const motion = within(renderBeat('prep', false).container)
     expect(motion.getByTestId('session-start-beat')).toHaveAttribute('data-reduced-motion', 'false')
-
-    const still = within(
-      render(
-        <SessionStartBeat
-          phase="prep"
-          reducedMotion
-          prepLabel={PREP_LABEL}
-          connectingLabel={CONNECTING_LABEL}
-        />,
-      ).container,
-    )
-    expect(still.getByTestId('session-start-beat-fill').className).not.toMatch(/transition/)
+    const still = within(renderBeat('prep', true).container)
     expect(still.getByTestId('session-start-beat')).toHaveAttribute('data-reduced-motion', 'true')
   })
 
   it('is flat 1-bit / square (no rounded corners)', () => {
-    const { getByTestId } = render(
-      <SessionStartBeat
-        phase="prep"
-        reducedMotion={false}
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
-    expect(getByTestId('session-start-beat').className).toContain('rounded-none')
+    expect(renderBeat('prep').getByTestId('session-start-beat').className).toContain('rounded-none')
   })
 
   it('forwards the ref to the root element', () => {
@@ -241,23 +132,7 @@ describe('SessionStartBeat', () => {
   })
 
   it('has no a11y violations (both phases)', async () => {
-    const prep = render(
-      <SessionStartBeat
-        phase="prep"
-        reducedMotion={false}
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
-    expect(await axe(prep.container)).toHaveNoViolations()
-    const connecting = render(
-      <SessionStartBeat
-        phase="connecting"
-        reducedMotion
-        prepLabel={PREP_LABEL}
-        connectingLabel={CONNECTING_LABEL}
-      />,
-    )
-    expect(await axe(connecting.container)).toHaveNoViolations()
+    expect(await axe(renderBeat('prep').container)).toHaveNoViolations()
+    expect(await axe(renderBeat('connecting', true).container)).toHaveNoViolations()
   })
 })

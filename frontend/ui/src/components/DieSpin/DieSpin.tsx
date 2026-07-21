@@ -8,35 +8,61 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // directed "a 2D outline in some 1-bit register, spun" — so authoring it here is
 // sanctioned by spec §5, distinct from the general "no hand-authored glyph" rule.
 //
-// MOTION — a STEPPED rotation: 8 discrete 45° steps ≈ one ~1s revolution, driven by
-// a setInterval step counter, NEVER a smooth CSS transform transition (the motion
-// analog of the brand's stepped Bayer dither; deliberately overrides UX §13's
-// "smooth" per the brand-overrides-UX rule). On the last step it calls
-// `onSpinComplete`. `reducedMotion` → NO spin, `onSpinComplete` fires immediately
-// (instant land). Motion is never the only signal: the landed `result` announces
-// via a polite live region carrying `resultLabel`.
+// GLYPH — a FACET-BAND d20 (end-polish pass, 2026-07-21): a pointy-top hexagon
+// silhouette with the icosahedron's top + bottom triangular facets drawn (a shallow
+// gable at each pole, split by a spoke to the point), and the EQUATORIAL BAND left
+// OPEN so the stamped numeral sits on clean ground — no facet stroke crosses the
+// numeral's field at any value (single- or two-digit). This replaced an earlier
+// centre-triangle whose edges sliced the numeral. Open geometry (not a knockout
+// plate) is deliberate: the die renders on BOTH the page --bg (standalone) and a
+// card --surface (in RollCard), so a paper-fill plate would mismatch one ground —
+// an open centre is ground-independent. Miter joins + butt caps (SVG defaults) keep
+// the sharp square/1-bit register; currentColor stroke, fill none.
+//
+// MOTION — a STEPPED rotation, NEVER a smooth CSS transition (the motion analog of
+// the brand's stepped Bayer dither; deliberately overrides UX §13's "smooth"). Eight
+// discrete 45° jumps carry the die through one full revolution back to upright, but
+// the easing lives in TIME: the DWELL ramps (see DIE_SPIN_DWELLS) so the die
+// decelerates into the landing. The final 45° lands upright with a single discrete
+// RECOIL frame — one scale pop (DIE_IMPACT_SCALE), held DIE_IMPACT_MS — then it
+// SNAPS to rest and holds still (the stillness sells the landing). One overshoot
+// frame, never two. `onSpinComplete` fires exactly ONCE, at that final rest.
+// `reducedMotion` → NO spin, `onSpinComplete` fires immediately (instant land).
+// Motion is never the only signal: the landed `result` announces via a polite live
+// region carrying `resultLabel`.
 //
 // The `result` numeral stamps in the die CENTRE in `--font-ui` (`font-ui`) once
 // landed (result present AND not spinning); it is withheld mid-spin. The die SVG is
 // aria-hidden decoration; the numeral does NOT rotate (a sibling of the spun svg),
 // so it lands upright.
-//
-// The step budget + the die geometry are STORY-TUNED constants (Spec Ambiguity #5,
-// deferred visual review): structurally correct now (stepped, 8/rev, ~1s,
-// reduced-motion instant, --font-ui numeral), eye-tuned at the end-polish pass.
 
-// 8 steps × 125ms ≈ one ~1s revolution. Pixel-honest — each step is a discrete 45°
-// jump, not a smooth interpolation.
-const STEPS_PER_REV = 8
-const STEP_MS = 125
-const SPIN_STEPS = STEPS_PER_REV // one full revolution
-
-// The authored d20 outline on the pixelarticons 24-grid (viewBox 0 0 24 24),
-// stroked in currentColor (fill none): a pointy-top hexagon silhouette + the top
-// facet triangle + three spokes down to the lower vertices — the recognisable
-// icosahedron read, left open at the centre so the stamped numeral stays legible.
+// The authored facet-band d20 on the pixelarticons 24-grid (viewBox 0 0 24 24),
+// stroked in currentColor (fill none): the pointy-top hexagon silhouette, a shallow
+// gable + pole-spoke at top and bottom (the two end facets), and an OPEN equatorial
+// band across the middle where the numeral stamps.
 const D20_OUTLINE_PATH =
-  'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z M12 6 L18 16 L6 16 Z M12 2 L12 6 M6 16 L3 17 M18 16 L21 17 M12 16 L12 22'
+  'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z M3 7 L12 5.8 L21 7 M3 17 L12 18.2 L21 17 M12 2 L12 5.8 M12 18.2 L12 22'
+
+// STEPPED motion budget (eye-tuned 2026-07-21). Eight hard 45° jumps = one full
+// revolution back to upright; the die never interpolates. Deceleration lives in the
+// dwell, not the angle: DIE_SPIN_DWELLS are the hold times (ms) for the first seven
+// steps (45°…315°) — they ramp ~50→220 so the die visibly slows as it settles. The
+// eighth step lands upright (360°) fused with the recoil: a single scale pop held
+// DIE_IMPACT_MS, then a hard snap to rest. Total ≈ 920ms (sum + impact) — under the
+// ~1s beat that keeps play snappy. Exported so the timing tests stay self-describing.
+export const DIE_SPIN_DWELLS = [50, 66, 86, 110, 142, 180, 216] as const
+export const DIE_IMPACT_MS = 70
+export const DIE_IMPACT_SCALE = 1.08
+const STEP_DEG = 45
+
+// The eight landing frames: seven decelerating spin steps (scale 1) then the recoil
+// frame — the final 45° to upright (360°) carrying the scale pop. After the recoil's
+// dwell the die snaps to REST (360°, scale 1) and `onSpinComplete` fires.
+const SPIN_FRAMES: { angle: number; scale: number; dwell: number }[] = [
+  ...DIE_SPIN_DWELLS.map((dwell, i) => ({ angle: (i + 1) * STEP_DEG, scale: 1, dwell })),
+  { angle: DIE_SPIN_DWELLS.length * STEP_DEG + STEP_DEG, scale: DIE_IMPACT_SCALE, dwell: DIE_IMPACT_MS },
+]
+const REST_FRAME = { angle: SPIN_FRAMES.length * STEP_DEG, scale: 1 }
 
 // A fixed square footprint (no circle — the square 1-bit register). The die fills
 // it; the numeral centres over it.
@@ -50,8 +76,8 @@ export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin
   { spinning, result, reducedMotion, onSpinComplete, resultLabel },
   ref,
 ) {
-  const [step, setStep] = useState(0)
-  // Hold the latest callback without restarting the stepped interval when the
+  const [frame, setFrame] = useState(REST_FRAME)
+  // Hold the latest callback without restarting the stepped schedule when the
   // parent passes a fresh closure each render.
   const doneRef = useRef(onSpinComplete)
   doneRef.current = onSpinComplete
@@ -62,22 +88,31 @@ export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin
       doneRef.current() // no churn — land instantly
       return
     }
-    let n = 0
-    setStep(0)
-    const id = window.setInterval(() => {
-      n += 1
-      setStep(n % STEPS_PER_REV)
-      if (n >= SPIN_STEPS) {
-        window.clearInterval(id)
+    const first = SPIN_FRAMES[0]
+    if (first === undefined) return // SPIN_FRAMES is always non-empty; guard for the type checker.
+    let timer = 0
+    let i = 0
+    setFrame({ angle: first.angle, scale: first.scale })
+    const tick = (): void => {
+      i += 1
+      const next = SPIN_FRAMES[i]
+      if (next !== undefined) {
+        setFrame({ angle: next.angle, scale: next.scale })
+        timer = window.setTimeout(tick, next.dwell)
+      } else {
+        // Recoil dwell elapsed → snap to final rest and fire completion exactly once.
+        setFrame(REST_FRAME)
         doneRef.current()
       }
-    }, STEP_MS)
+    }
+    timer = window.setTimeout(tick, first.dwell)
     return () => {
-      window.clearInterval(id)
+      window.clearTimeout(timer)
     }
   }, [spinning, reducedMotion])
 
-  const angle = spinning && !reducedMotion ? (step * 360) / STEPS_PER_REV : 0
+  const animating = spinning && !reducedMotion
+  const transform = animating ? `rotate(${String(frame.angle)}deg) scale(${String(frame.scale)})` : 'rotate(0deg)'
   const showResult = result !== null && !spinning
   const announced = showResult ? (resultLabel ?? '') : ''
 
@@ -99,7 +134,7 @@ export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin
         stroke="currentColor"
         strokeWidth={1.5}
         className="h-full w-full"
-        style={{ transform: `rotate(${String(angle)}deg)` }}
+        style={{ transform }}
       >
         <path d={D20_OUTLINE_PATH} />
       </svg>

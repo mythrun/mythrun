@@ -1,0 +1,212 @@
+@import 'tailwindcss';
+@import '@mythrun/ui/styles.css';
+
+/* Tailwind v4 scans only registered sources. Point it at BOTH the design-system
+   source (every utility the real components use) and this gallery's own files
+   (the chrome utilities). */
+@source '../ui/src';
+@source '.';
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Gallery chrome — deliberately NEUTRAL and quiet (the components are the
+   exhibit). The chrome does NOT use the DS `.dark` token surface: the exhibits
+   own that. Instead the chrome has its own tiny two-tone palette that follows
+   the VIEWER's theme (the artifact host stamps data-theme on <html>; a matching
+   attribute is mirrored onto the gallery root). Kept off the DS tokens so a
+   light exhibit rendered inside a dark-chrome page (or vice-versa) never has its
+   tokens hijacked by an ancestor `.dark`.
+   ────────────────────────────────────────────────────────────────────────── */
+.audit-root {
+  --chrome-bg: #f4f1ea;
+  --chrome-panel: #ffffff;
+  --chrome-ink: #26221b;
+  --chrome-ink-dim: #6b6559;
+  --chrome-line: #d8d2c4;
+  --chrome-accent: #8a5a3c;
+  min-height: 100dvh;
+  background: var(--chrome-bg);
+  color: var(--chrome-ink);
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.audit-root[data-audit-theme='dark'] {
+  --chrome-bg: #191510;
+  --chrome-panel: #221c15;
+  --chrome-ink: #e7e0d2;
+  --chrome-ink-dim: #9b9384;
+  --chrome-line: #37301f;
+  --chrome-accent: #b17f56;
+}
+
+/* The two exhibit surfaces sit inside a section, one light + one dark, always
+   both visible. The light swatch is the DS `:root` default (light tokens); the
+   dark swatch carries the DS `.dark` class in markup, so it re-establishes the
+   full dark token set regardless of any ancestor theme. Both get a definite size
+   so the canvas sims (which measure their box) have room. */
+.audit-swatch {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
+/* ── Chrome layout — plain CSS (no Tailwind spacing scale dependence) ── */
+.audit-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  background: color-mix(in srgb, var(--chrome-bg) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--chrome-line);
+}
+.audit-title {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.audit-title small {
+  color: var(--chrome-ink-dim);
+  font-weight: 400;
+  margin-left: 8px;
+}
+.audit-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.audit-ctl-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--chrome-ink-dim);
+}
+.audit-seg {
+  display: inline-flex;
+  border: 1px solid var(--chrome-line);
+}
+.audit-seg button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--chrome-ink-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.audit-seg button + button {
+  border-left: 1px solid var(--chrome-line);
+}
+.audit-seg button[aria-pressed='true'] {
+  background: var(--chrome-accent);
+  color: #fff;
+}
+.audit-main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.audit-intro {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--chrome-ink-dim);
+  max-width: 70ch;
+}
+.audit-section {
+  border: 1px solid var(--chrome-line);
+  background: var(--chrome-panel);
+}
+.audit-section__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--chrome-line);
+}
+.audit-section__name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.audit-section__path {
+  font-size: 11px;
+  color: var(--chrome-ink-dim);
+}
+.audit-section__where {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--chrome-ink-dim);
+}
+.audit-section__note {
+  flex-basis: 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--chrome-ink-dim);
+}
+.audit-replay {
+  margin-left: auto;
+  appearance: none;
+  border: 1px solid var(--chrome-line);
+  background: transparent;
+  color: var(--chrome-ink);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.audit-replay:hover {
+  border-color: var(--chrome-accent);
+  color: var(--chrome-accent);
+}
+.audit-swatches {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1px;
+  background: var(--chrome-line);
+}
+@media (min-width: 900px) {
+  .audit-swatches {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.audit-swatch-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--chrome-panel);
+}
+.audit-swatch-label {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--chrome-ink-dim);
+  padding: 6px 10px;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Motion control (CSS channel). The DS ships a blanket
+   `@media (prefers-reduced-motion: reduce)` reset in base.css; fold.mjs
+   neutralizes that media query so the OS setting never auto-reduces the audit.
+   Motion is instead driven explicitly by this class on the gallery root — the
+   same reset, on demand. (The JS channel — rAF loops, Spinner, the reducedMotion
+   prop — is driven by the matchMedia shim + the prop in the entry.)
+   ────────────────────────────────────────────────────────────────────────── */
+.audit-force-reduced *,
+.audit-force-reduced *::before,
+.audit-force-reduced *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}

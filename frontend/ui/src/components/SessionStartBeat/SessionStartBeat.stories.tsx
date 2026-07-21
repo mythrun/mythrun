@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { SessionStartBeat } from './SessionStartBeat.tsx'
 
@@ -63,4 +64,28 @@ export const Narrow: Story = {
     </div>
   ),
   args: { phase: 'prep', reducedMotion: false },
+}
+
+// A self-driving demo: the phase toggles prep → connecting on a timer so the meter's
+// decelerating quantized advance (and the settle at 100%) is visible, then it resets to prep
+// (the fill snaps back — a fill never animates backward) and repeats. Production drives the
+// phase from the real SSE / socket boundary.
+function StartDriver(): React.JSX.Element {
+  const [phase, setPhase] = useState<'prep' | 'connecting'>('prep')
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setPhase((p) => (p === 'prep' ? 'connecting' : 'prep'))
+    }, phase === 'prep' ? 2600 : 2000)
+    return () => {
+      clearTimeout(t)
+    }
+  }, [phase])
+  return (
+    <SessionStartBeat phase={phase} reducedMotion={false} prepLabel={PREP_LABEL} connectingLabel={CONNECTING_LABEL} />
+  )
+}
+
+export const Driving: Story = {
+  name: 'Driving (demo advance)',
+  render: () => <StartDriver />,
 }

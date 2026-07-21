@@ -5,8 +5,9 @@ import { ThinkingIndicator } from './ThinkingIndicator.tsx'
 // "DM is thinking…" while a DM turn is open, plus player-typing presence. Purely
 // presentational: each specimen hands it fixed booleans/names. The labels are
 // realistic [ph:] placeholders (MYT-100 owns the real copy); the names are sample
-// data (stories are lint-exempt). The DM-thinking line's square ember mark pulses
-// on the brand's sanctioned opacity fade; base.css freezes it under
+// data (stories are lint-exempt). The DM-thinking line carries the design system's
+// Spinner (the locked diagonal dither wave) as its activity mark — the same busy
+// indicator the app uses everywhere else; it self-freezes to a static dither under
 // prefers-reduced-motion (toggle your OS setting to see it hold steady).
 
 const THINKING_LABEL = '[ph: DM is thinking…]'
@@ -32,7 +33,7 @@ export default meta
 
 type Story = StoryObj<typeof ThinkingIndicator>
 
-// The DM is composing the next turn — the square ember mark pulses beside the line.
+// The DM is composing the next turn — the Spinner mark runs beside the line.
 export const Thinking: Story = {
   name: 'DM thinking',
   args: { thinking: true, typingNames: [] },

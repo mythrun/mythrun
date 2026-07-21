@@ -2,6 +2,7 @@ import { forwardRef } from 'react'
 import type { ThinkingIndicatorProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
+import { Spinner } from '../Spinner/Spinner.tsx'
 
 // ThinkingIndicator (MYT-92) — the quiet between-turns liveness line under the
 // live-play transcript: "DM is thinking…" while a DM turn is open, plus
@@ -16,23 +17,26 @@ import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 // no height.
 //
 // Register: two quiet `--font-ui` (IBM Plex Mono) `meta` lines, stacked. The
-// DM-thinking line carries a small SQUARE ember mark (no circles/dots — the paper
-// square register) that pulses on the brand's ONLY sanctioned motion (an opacity
-// fade — the same idiom as StreamingProse's caret / WorldGenStatusCard's running
-// cell); the global base.css `prefers-reduced-motion` reset freezes it, and the
-// steady prose is the non-motion signal (motion is never the only cue). The mark
-// is decorative (`aria-hidden`); the text stays full-contrast (the pulse never
-// dims the words).
+// DM-thinking line carries the design system's Spinner (the locked 12×12 diagonal
+// dither wave) as its activity mark — the SAME indeterminate-busy motion the app
+// uses everywhere else (Button/IconButton/WorldGenLoading), for one consistent
+// "working" language instead of a bespoke pulse. `xs` (12px) tracks the meta line's
+// cap height; `accent` paints the brand ember. The Spinner self-freezes to its
+// static ~40% dither under prefers-reduced-motion, and the steady prose is the
+// non-motion signal (motion is never the only cue).
+//
+// a11y of the mark: the Spinner is its own `role="status"` live region, so nesting
+// it raw inside THIS live region would double-announce (its "Loading" name AND the
+// "DM is thinking…" text). We wrap it in an `aria-hidden` span, which removes the
+// Spinner subtree — role, name, and all — from the accessibility tree. The mark is
+// then purely decorative and the ThinkingIndicator's own text is the SOLE
+// announcement, preserving the existing live-region semantics exactly.
 //
 // Platform-neutral props (§9): booleans + resolved [ph:] labels + display-name
 // DATA. `typingLabel` is the resolved presence label; the names are joined in
 // front of it (MYT-100 owns the final copy / pluralization).
 
 const LINE_CLASS = TYPE_ROLE_CLASS.meta
-// The pulsing activity mark: a small square ember chip, em-sized so it tracks the
-// line's type. Decorative. `animate-pulse` is the sanctioned opacity fade; the
-// global reduced-motion reset holds it steady.
-const PULSE_CLASS = 'inline-block h-[0.5em] w-[0.5em] flex-none bg-accent animate-pulse'
 
 export const ThinkingIndicator = forwardRef<HTMLDivElement, ThinkingIndicatorProps>(
   function ThinkingIndicator({ thinking, typingNames, thinkingLabel, typingLabel }, ref) {
@@ -50,7 +54,19 @@ export const ThinkingIndicator = forwardRef<HTMLDivElement, ThinkingIndicatorPro
             data-testid="thinking-indicator-thinking"
             className={cn(LINE_CLASS, 'flex items-center gap-[var(--space-2)]')}
           >
-            <span aria-hidden="true" data-testid="thinking-indicator-pulse" className={PULSE_CLASS} />
+            {/* The Spinner carries its own role="status"/name; aria-hidden strips
+                the whole subtree from the a11y tree so only the line's text is
+                announced (no double live region). Decorative activity mark only.
+                `inline-flex` shrink-wraps the wrapper to the 12px mark (no inherited
+                line-box leading), so `items-center` optically centers it on the
+                text instead of letting it ride low on the baseline. */}
+            <span
+              aria-hidden="true"
+              className="inline-flex flex-none"
+              data-testid="thinking-indicator-spinner"
+            >
+              <Spinner size="xs" tone="accent" />
+            </span>
             {thinkingLabel}
           </p>
         ) : null}

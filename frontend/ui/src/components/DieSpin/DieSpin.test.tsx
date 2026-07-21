@@ -2,24 +2,27 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createRef } from 'react'
 import { act, render } from '@testing-library/react'
 import { axe } from 'jest-axe'
-import { DieSpin } from './DieSpin.tsx'
+import { DieSpin, DIE_SPIN_DWELLS, DIE_IMPACT_MS, DIE_IMPACT_SCALE } from './DieSpin.tsx'
 
-// DieSpin (MYT-93, spec §5) — the flat 2D OUTLINED d20 the RollCard spins. Its
-// motion is a STEPPED rotation (8 discrete 45° steps ≈ one ~1s revolution, driven
-// by a setInterval step counter — NEVER a smooth CSS transition, the motion analog
-// of the brand's stepped Bayer dither); on the last step it calls `onSpinComplete`.
-// `result` stamps the numeral in the die centre in `--font-ui` once landed;
+// DieSpin (MYT-93, spec §5) — the flat 2D OUTLINED facet-band d20 the RollCard spins.
+// Its motion is a STEPPED rotation (eight discrete 45° jumps ≈ one revolution back to
+// upright, driven by a setTimeout schedule — NEVER a smooth CSS transition, the motion
+// analog of the brand's stepped Bayer dither). Easing lives in the DWELL: the holds
+// ramp (DIE_SPIN_DWELLS) so the die decelerates into the landing, and the final step
+// lands upright fused with ONE recoil frame (a scale pop, DIE_IMPACT_SCALE, held
+// DIE_IMPACT_MS) before snapping to rest. `onSpinComplete` fires exactly ONCE, at that
+// final rest. `result` stamps the numeral in the die centre in `--font-ui` once landed;
 // `reducedMotion` lands instantly (no spin, immediate `onSpinComplete`). The die is
-// aria-hidden decoration; the landed result announces via a polite live region
-// (motion is never the only signal). These tests pin: the idle glyph, the stamped
-// numeral + live region, the STEPPED interval (≥2 distinct rotations + one
-// completion), the reduced-motion instant land (no churn / no rotation), the
-// aria-hidden die, the no-circle register, and the unmount cleanup.
+// aria-hidden decoration; the landed result announces via a polite live region (motion
+// is never the only signal). These tests pin: the idle glyph, the stamped numeral +
+// live region, the DECELERATING stepped schedule (distinct rotations + the recoil scale
+// + a single completion at rest), the reduced-motion instant land, the aria-hidden die,
+// the no-circle register, and the unmount cleanup.
 
-// The stepped budget the component pins (8 steps × 125ms ≈ 1s). Kept here so the
-// timing walk below is self-describing.
-const SPIN_STEPS = 8
-const STEP_MS = 125
+// The full dwell walk: the seven decelerating spin holds, then the recoil hold. Each
+// entry is the time to advance to REACH the next frame — mirrors the component's
+// schedule so the timing walk below is self-describing.
+const DWELLS = [...DIE_SPIN_DWELLS, DIE_IMPACT_MS]
 
 afterEach(() => {
   vi.useRealTimers()
@@ -61,7 +64,7 @@ describe('DieSpin', () => {
     expect(getByRole('status')).toHaveTextContent('')
   })
 
-  it('runs the STEPPED rotation (≥2 distinct rotate transforms) and completes once', () => {
+  it('runs the DECELERATING stepped rotation (distinct angles + a recoil scale) and completes once at rest', () => {
     vi.useFakeTimers()
     const onSpinComplete = vi.fn()
     const { container, queryByTestId } = render(
@@ -72,16 +75,46 @@ describe('DieSpin', () => {
 
     const svg = container.querySelector('svg')
     if (svg === null) throw new Error('die glyph missing')
+
+    // The first frame shows synchronously on mount; no completion yet.
     const transforms = new Set<string>([svg.style.transform])
-    for (let i = 0; i < SPIN_STEPS; i++) {
+    expect(onSpinComplete).not.toHaveBeenCalled()
+
+    // Walk every dwell, collecting the transform after each discrete jump.
+    for (const dwell of DWELLS) {
       act(() => {
-        vi.advanceTimersByTime(STEP_MS)
+        vi.advanceTimersByTime(dwell)
       })
       transforms.add(svg.style.transform)
     }
-    // Stepped, not static — the die visits multiple discrete angles.
-    expect(transforms.size).toBeGreaterThanOrEqual(2)
-    // Exactly one completion at the last step.
+
+    const seen = [...transforms]
+    // Stepped, not static — the die visits many discrete angles across the revolution.
+    const distinctRotations = new Set(seen.map((t) => /rotate\([^)]*\)/.exec(t)?.[0]))
+    expect(distinctRotations.size).toBeGreaterThanOrEqual(2)
+    // The single recoil frame pops the scale exactly once during the walk…
+    expect(seen.some((t) => t.includes(`scale(${String(DIE_IMPACT_SCALE)})`))).toBe(true)
+    // …then the die snaps to rest: upright, scale restored.
+    expect(svg.style.transform).toBe('rotate(360deg) scale(1)')
+    // Exactly one completion, at that final rest.
+    expect(onSpinComplete).toHaveBeenCalledTimes(1)
+  })
+
+  it('fires completion only at the FINAL rest — not on any earlier step', () => {
+    vi.useFakeTimers()
+    const onSpinComplete = vi.fn()
+    render(<DieSpin spinning result={5} reducedMotion={false} onSpinComplete={onSpinComplete} />)
+    // Advance every dwell EXCEPT the last (the recoil hold): still mid-flight.
+    for (const dwell of DWELLS.slice(0, -1)) {
+      act(() => {
+        vi.advanceTimersByTime(dwell)
+      })
+      expect(onSpinComplete).not.toHaveBeenCalled()
+    }
+    // The recoil hold (the final dwell) elapses → rest → the one and only completion.
+    act(() => {
+      vi.advanceTimersByTime(DIE_IMPACT_MS)
+    })
     expect(onSpinComplete).toHaveBeenCalledTimes(1)
   })
 
@@ -95,7 +128,7 @@ describe('DieSpin', () => {
     const svg = container.querySelector('svg')
     if (svg === null) throw new Error('die glyph missing')
     expect(svg.style.transform).toBe('rotate(0deg)')
-    // No stepped interval churns afterward — the completion is a one-shot.
+    // No stepped schedule churns afterward — the completion is a one-shot.
     act(() => {
       vi.advanceTimersByTime(5000)
     })
@@ -124,17 +157,17 @@ describe('DieSpin', () => {
     expect(container.innerHTML).not.toMatch(/rounded-full/)
   })
 
-  it('clears the stepped interval on unmount (no post-unmount churn)', () => {
+  it('clears the stepped schedule on unmount (no post-unmount churn)', () => {
     vi.useFakeTimers()
-    const clearInterval = vi.spyOn(window, 'clearInterval')
+    const clearTimeout = vi.spyOn(window, 'clearTimeout')
     const { unmount } = render(
       <DieSpin spinning result={null} reducedMotion={false} onSpinComplete={vi.fn()} />,
     )
     act(() => {
-      vi.advanceTimersByTime(STEP_MS)
+      vi.advanceTimersByTime(DIE_SPIN_DWELLS[0])
     })
     unmount()
-    expect(clearInterval).toHaveBeenCalled()
+    expect(clearTimeout).toHaveBeenCalled()
   })
 
   it('forwards its ref to the wrapping element', () => {

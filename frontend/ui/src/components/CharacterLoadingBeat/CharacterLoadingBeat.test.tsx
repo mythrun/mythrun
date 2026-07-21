@@ -29,33 +29,27 @@ describe('CharacterLoadingBeat', () => {
     const { getAllByTestId } = render(<CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />)
     const rows = getAllByTestId('character-loading-beat-row')
     expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['done', 'done', 'active', 'pending'])
-    // The three states resolve to distinct treatments (assert class tokens, not pixels).
     const classByState = new Map(rows.map((r) => [r.dataset.state, r.className]))
     expect(classByState.get('active')).not.toEqual(classByState.get('pending'))
     expect(classByState.get('done')).not.toEqual(classByState.get('pending'))
-    // Pending reads muted via the solid AA tertiary-ink token — NOT a static
-    // `opacity-NN` dim (which rendered it below the 4.5:1 contrast floor). The
-    // `transition-opacity` animation class is fine (it only affects the fade, not
-    // the settled color), so guard against the static dim specifically. Active
-    // reads emphasized (ember).
+    // Pending reads muted via the solid AA tertiary-ink token — NOT a static `opacity-NN` dim.
+    // Active reads emphasized (ember).
     expect(classByState.get('pending')).toMatch(/ink-tertiary/)
     expect(classByState.get('pending')).not.toMatch(/opacity-\d/)
     expect(classByState.get('active')).toMatch(/accent/)
   })
 
-  it('sets the dither fill proportion from the done/total ratio', () => {
-    // 2 of 4 done → 50%.
+  it('sets the meter level from the done/total ratio', () => {
+    // 2 of 4 done → 0.5.
     const { getByTestId } = render(<CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />)
-    const fill = getByTestId('character-loading-beat-fill')
-    expect(fill).toHaveAttribute('data-fill-pct', '50')
-    expect(fill.style.height).toBe('50%')
+    const figure = getByTestId('character-loading-beat-figure')
+    expect(figure).toHaveAttribute('data-beat-mode', 'fill')
+    expect(figure).toHaveAttribute('data-beat-level', '0.5')
   })
 
-  it('shows a full fill when every beat is done', () => {
+  it('drives the meter to full when every beat is done', () => {
     const { getByTestId } = render(<CharacterLoadingBeat beats={ALL_DONE} reducedMotion={false} />)
-    const fill = getByTestId('character-loading-beat-fill')
-    expect(fill).toHaveAttribute('data-fill-pct', '100')
-    expect(fill.style.height).toBe('100%')
+    expect(getByTestId('character-loading-beat-figure')).toHaveAttribute('data-beat-level', '1')
   })
 
   it('is aria-busy while any beat is unfinished, and settles once all are done', () => {
@@ -74,14 +68,10 @@ describe('CharacterLoadingBeat', () => {
     expect(live).toHaveTextContent('rolling ability scores…')
   })
 
-  it('animates the fill by default but freezes it under reduced motion', () => {
-    // Two renders in one test → scope each query to its own container.
+  it('threads reduced motion to the beat so the fill lands instantly', () => {
     const motion = within(render(<CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />).container)
-    expect(motion.getByTestId('character-loading-beat-fill').className).toMatch(/transition/)
     expect(motion.getByTestId('character-loading-beat')).toHaveAttribute('data-reduced-motion', 'false')
-
     const still = within(render(<CharacterLoadingBeat beats={MID_BEATS} reducedMotion />).container)
-    expect(still.getByTestId('character-loading-beat-fill').className).not.toMatch(/transition/)
     expect(still.getByTestId('character-loading-beat')).toHaveAttribute('data-reduced-motion', 'true')
   })
 
@@ -92,31 +82,20 @@ describe('CharacterLoadingBeat', () => {
 
   it('renders the countdown label as a quiet aria-hidden tabular line when provided', () => {
     const { getByTestId } = render(
-      <CharacterLoadingBeat
-        beats={MID_BEATS}
-        reducedMotion={false}
-        countdownLabel="[ph: ~2:10 left]"
-      />,
+      <CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} countdownLabel="[ph: ~2:10 left]" />,
     )
     const countdown = getByTestId('character-loading-beat-countdown')
     expect(countdown.textContent).toBe('[ph: ~2:10 left]')
-    // aria-hidden: the SR live region stays the single AT source of truth (a
-    // per-second churn must never spam a live region).
+    // aria-hidden: the SR live region stays the single AT source of truth.
     expect(countdown).toHaveAttribute('aria-hidden', 'true')
-    // The world-gen countdown register: quiet tertiary ink, tabular digits so
-    // the ticking `M:SS` never jitters.
+    // The world-gen countdown register: quiet tertiary ink, tabular digits, wrap-safe.
     expect(countdown.className).toMatch(/tabular-nums/)
     expect(countdown.className).toMatch(/text-ink-tertiary/)
-    // Wrap-safe: an over-long label (a verbose locale; the raw-key [ph:] era)
-    // wraps inside the narrow text column instead of spilling its box at 375px
-    // (the overflow gate's intra-row check).
     expect(countdown.className).toMatch(/break-words/)
   })
 
   it('omits the countdown line entirely when no label is provided (no fake estimate)', () => {
-    const { queryByTestId } = render(
-      <CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />,
-    )
+    const { queryByTestId } = render(<CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} />)
     expect(queryByTestId('character-loading-beat-countdown')).toBeNull()
   })
 
@@ -132,11 +111,7 @@ describe('CharacterLoadingBeat', () => {
     const done = render(<CharacterLoadingBeat beats={ALL_DONE} reducedMotion />)
     expect(await axe(done.container)).toHaveNoViolations()
     const counting = render(
-      <CharacterLoadingBeat
-        beats={MID_BEATS}
-        reducedMotion={false}
-        countdownLabel="[ph: ~2:10 left]"
-      />,
+      <CharacterLoadingBeat beats={MID_BEATS} reducedMotion={false} countdownLabel="[ph: ~2:10 left]" />,
     )
     expect(await axe(counting.container)).toHaveNoViolations()
   })

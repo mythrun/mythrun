@@ -3,11 +3,12 @@ import { render, screen } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { SessionPreparing } from './SessionPreparing.tsx'
 
-// SessionPreparing (myth-ep74g) — the calm between-sessions hold. Load-bearing
-// invariants pinned here: it is `aria-busy` with the atmospheric label as the single
-// AT source of truth (a polite live region; the figure is decoration); the figure
-// BREATHES only when motion is allowed (reducedMotion → still); it is square 1-bit
-// register (no circles); and a long line wraps inside a narrow column (~375px).
+// SessionPreparing (myth-ep74g) — the calm between-sessions hold. Load-bearing invariants pinned
+// here: it is `aria-busy` with the atmospheric label as the single AT source of truth (a polite
+// live region; the figure is decoration); the figure BREATHES (an indeterminate density field)
+// unless motion is reduced; it is square 1-bit register (no circles); and a long line wraps
+// inside a narrow column (~375px). The breathing motion itself is canvas-driven and covered by
+// the BeatFigure pure-math tests — here we assert the mode + reduced-motion wiring.
 
 const LABEL = 'The DM is preparing the next session…'
 const DETAIL = 'This can take a moment.'
@@ -34,15 +35,17 @@ describe('SessionPreparing', () => {
     expect(screen.getByText(DETAIL)).toBeInTheDocument()
   })
 
-  it('the figure BREATHES when motion is allowed', () => {
+  it('renders an INDETERMINATE breathing figure (no progress) when motion is allowed', () => {
     renderPreparing({ reducedMotion: false })
-    expect(screen.getByTestId('session-preparing-figure').className).toMatch(/animate-pulse/)
+    expect(screen.getByTestId('session-preparing-figure')).toHaveAttribute('data-beat-mode', 'breathe')
+    expect(screen.getByTestId('session-preparing')).toHaveAttribute('data-reduced-motion', 'false')
   })
 
-  it('reduced motion drops the breathing pulse to a still figure', () => {
+  it('reduced motion freezes the figure to a still frame', () => {
     renderPreparing({ reducedMotion: true })
     expect(screen.getByTestId('session-preparing')).toHaveAttribute('data-reduced-motion', 'true')
-    expect(screen.getByTestId('session-preparing-figure').className).not.toMatch(/animate-pulse/)
+    // Still the breathing figure (a legible static frame under reduced motion), no progress meter.
+    expect(screen.getByTestId('session-preparing-figure')).toHaveAttribute('data-beat-mode', 'breathe')
   })
 
   it('is square register — no circles', () => {
