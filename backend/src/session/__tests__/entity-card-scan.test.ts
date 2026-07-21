@@ -83,7 +83,7 @@ describe('scanMentionedEntities', () => {
   it('caps the result and keeps the earliest-mentioned entities', () => {
     const many: ScanEntity[] = Array.from({ length: ENTITY_CARD_CAP + 3 }, (_, i) => ({
       id: `id-${String(i).padStart(2, '0')}`,
-      name: `Name${i} Surname${i}`,
+      name: `Name${String(i)} Surname${String(i)}`,
       entityType: 'npc',
     }))
     // Mention them in order; the first ENTITY_CARD_CAP (by appearance) survive.

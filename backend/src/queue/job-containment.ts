@@ -191,7 +191,7 @@ export function createProcessEscapeGuard(opts: ProcessEscapeGuardOptions): Proce
     if (isShuttingDown()) return
     const t = now()
     recent.push(t)
-    while (recent.length > 0 && recent[0]! <= t - windowMs) recent.shift()
+    while (recent[0] !== undefined && recent[0] <= t - windowMs) recent.shift()
     opts.logger.error(
       {
         component: 'worker',

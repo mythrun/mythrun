@@ -261,11 +261,11 @@ export class SessionController {
         (p): p is Exclude<ContentPart, { kind: 'tool_result' }> =>
           p.kind === 'text' || (p.kind === 'tool_call' && p.toolName === 'issue_correction'),
       )
-      .map((p) =>
-        p.kind === 'text'
-          ? p.text
-          : `[Correction to earlier narration: ${String((p.input as { text?: unknown } | null)?.text ?? '')}]`,
-      )
+      .map((p) => {
+        if (p.kind === 'text') return p.text
+        const t = (p.input as { text?: unknown } | null)?.text
+        return `[Correction to earlier narration: ${typeof t === 'string' ? t : ''}]`
+      })
       .join('\n\n')
     await enqueueScribe(this.deps.scribeQueue, {
       campaignId: this.campaignId,

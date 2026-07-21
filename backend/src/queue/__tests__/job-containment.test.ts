@@ -160,7 +160,7 @@ describe('createProcessEscapeGuard', () => {
   it('fails fast (onStorm) once the rolling-window threshold is exceeded', () => {
     const logger = collectingLogger()
     const onStorm = vi.fn()
-    let clock = 0
+    const clock = 0
     const guard = createProcessEscapeGuard({
       logger,
       onStorm,

@@ -278,7 +278,7 @@ describe('generateSessionPrep', () => {
     // The wall is logged with the campaign/session + measured token counts so
     // operators can see it coming.
     const wallLog = warnSpy.mock.calls.find(
-      ([o]) => (o as { event?: string })?.event === 'session_prep.output_overflow',
+      ([o]) => (o as { event?: string }).event === 'session_prep.output_overflow',
     )
     expect(wallLog).toBeDefined()
     expect((wallLog?.[0] as { outputTokens?: number }).outputTokens).toBe(128_000)
@@ -316,7 +316,7 @@ describe('generateSessionPrep', () => {
     )
     await generateSessionPrep({} as never, { campaignId: 'c', worldId: 'w', sessionNumber: 3 })
     const usageLog = infoSpy.mock.calls.find(
-      ([o]) => (o as { event?: string })?.event === 'session_prep.usage',
+      ([o]) => (o as { event?: string }).event === 'session_prep.usage',
     )
     expect(usageLog).toBeDefined()
     expect((usageLog?.[0] as { outputTokens?: number }).outputTokens).toBe(20)

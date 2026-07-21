@@ -54,18 +54,22 @@ const NOOP_EMITTER = {} as unknown as TurnEmitter
  *  records each render's ctx (so we can assert the retry's correctiveInstruction). */
 function makeInner(queue: AssistantMessage[]): {
   ft: FastThinker
-  renderMock: ReturnType<typeof vi.fn>
+  renderMock: ReturnType<typeof vi.fn<FastThinker['render']>>
   ctxAt: (i: number) => FtTurnContext
 } {
-  const renderMock = vi.fn((ctx: FtTurnContext, _emit: TurnEmitter) => {
+  const renderMock = vi.fn<FastThinker['render']>(() => {
     const next = queue.shift()
     if (next === undefined) throw new Error('inner render called more times than scripted')
     return Promise.resolve(next)
   })
   return {
-    ft: { render: renderMock as unknown as FastThinker['render'] },
+    ft: { render: renderMock },
     renderMock,
-    ctxAt: (i) => renderMock.mock.calls[i]?.[0] as FtTurnContext,
+    ctxAt: (i) => {
+      const ctx = renderMock.mock.calls[i]?.[0]
+      if (ctx === undefined) throw new Error(`no render call at index ${String(i)}`)
+      return ctx
+    },
   }
 }
 
@@ -127,9 +131,9 @@ describe('AuditedFastThinker', () => {
   it('(a) audit input carries the submitting message + roster (enforced-ignorance-safe)', async () => {
     const { ft } = makeInner([textAssistant('x'), textAssistant('y')])
     const captured: TurnAuditInput[] = []
-    const audit = vi.fn<TurnAuditFn>(async (input) => {
+    const audit = vi.fn<TurnAuditFn>((input) => {
       captured.push(input)
-      return PC_VIOLATION
+      return Promise.resolve(PC_VIOLATION)
     })
     const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
 

@@ -719,7 +719,7 @@ export function streamObject<T>(
   // job (live incident: an output-token overflow in session-prep took down
   // all nine queues). Attach a no-op handler so the rejection is always
   // "handled" at birth; real awaiters of `.object` still observe it.
-  wrappedObject.catch(() => {})
+  wrappedObject.catch(() => undefined)
 
   // `sdkResult` is a class instance (DefaultStreamObjectResult) whose
   // hot fields — partialObjectStream, textStream, fullStream, warnings,
