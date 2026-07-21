@@ -25,7 +25,10 @@ import { createPgPool } from '../../src/db/postgres.js'
 import { createRepo } from '../../src/repo/index.js'
 import { worldsNs } from '../../src/repo/worlds.js'
 import { worldSnapshotView } from '../../src/repo/world-snapshot-view.js'
-import { runWorldIntroductionStage } from '../../src/llm/prep/stages/world-introduction.js'
+import {
+  generateWorldIntroduction,
+  persistWorldIntroduction,
+} from '../../src/llm/prep/stages/world-introduction.js'
 
 // Default: "The Rust-Iron Marches" (35 known + 3 secret entities in mythrun_dev).
 const WORLD_ID = process.argv[2] ?? '019f4242-fa95-71ba-9f86-cc1cd23cc570'
@@ -58,7 +61,7 @@ async function main(): Promise<void> {
   console.log('\ncalling OPUS…')
 
   const t0 = Date.now()
-  const cost = await runWorldIntroductionStage(repo, {
+  const { intro, cost } = await generateWorldIntroduction(repo, {
     worldId: WORLD_ID,
     worldName: summary.name,
     tone: summary.tone ?? '',
@@ -69,6 +72,23 @@ async function main(): Promise<void> {
     `OPUS returned in ${String(Date.now() - t0)}ms — ` +
       `$${cost.costUsd.toFixed(4)} (${String(cost.inputTokens)} in / ${String(cost.outputTokens)} out)`,
   )
+
+  // 0. ASSERT-THEN-PERSIST — enforced ignorance is checked on the GENERATED
+  //    output, BEFORE anything is written. A leaking intro must never reach
+  //    worlds.introduction (the old ordering persisted first, then asserted, so a
+  //    leak polluted the DB). No secret name may appear in the prose or in a
+  //    reference name.
+  const proseLower = intro.prose.toLowerCase()
+  const refNamesLower = intro.references.map((r) => r.name.toLowerCase())
+  const leaked = secretNames.filter(
+    (n) => proseLower.includes(n.toLowerCase()) || refNamesLower.includes(n.toLowerCase()),
+  )
+  if (leaked.length > 0) {
+    fail(`ENFORCED-IGNORANCE LEAK — secret names in generated intro (NOT persisted): ${JSON.stringify(leaked)}`)
+  }
+
+  // Clean → persist, then verify the DB/compose plumbing round-trips.
+  await persistWorldIntroduction(repo, WORLD_ID, intro)
 
   // 1. Persisted round-trip.
   const persisted = await worldsNs(pool).getWorldIntroduction(WORLD_ID)
@@ -87,14 +107,6 @@ async function main(): Promise<void> {
   const dangling = snap.introduction.references.filter((r) => !servedIds.has(r.entityId))
   if (dangling.length > 0) fail(`references dangle: ${JSON.stringify(dangling)}`)
   if (snap.introduction.references.length === 0) fail('no references survived resolution')
-
-  // 4. Enforced ignorance: no secret name in prose or references.
-  const proseLower = persisted.prose.toLowerCase()
-  const refNamesLower = snap.introduction.references.map((r) => r.name.toLowerCase())
-  const leaked = secretNames.filter(
-    (n) => proseLower.includes(n.toLowerCase()) || refNamesLower.includes(n.toLowerCase()),
-  )
-  if (leaked.length > 0) fail(`ENFORCED-IGNORANCE LEAK — secret names in intro: ${JSON.stringify(leaked)}`)
 
   console.log('\n✅ all structural assertions passed:')
   console.log(`   • persisted + snapshot-composed (title = "${snap.introduction.title}")`)

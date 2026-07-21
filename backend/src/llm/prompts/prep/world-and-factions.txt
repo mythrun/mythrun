@@ -90,3 +90,18 @@ Examples:
 - BAD: A `known` faction's prose says "The Lighthouse Wardens publicly serve the queen, but secretly worship the drowned god." (The "secretly worship" reveal is plot — it belongs in a `secret` fact, NOT in the prose.)
 - GOOD: A `known` faction's prose says "The Lighthouse Wardens serve the queen, tending the great lamps along the coast." A separate `secret` fact on the faction reads: "The Wardens' founders sealed a drowned god into the lamps generations ago, and the eldest priest is the only one who still remembers the rite."
 - GOOD: A `discoverable` region's prose can hint at its hidden nature ("rarely visited, named by locals only after the spring tides") because the discoverable tier's narrative status is "findable through asking around" — the prose can carry the asking-around-level detail.
+
+NAME-REFERENTIAL DISCIPLINE (CRITICAL):
+
+Tier discipline is not only about the TRUTHS you reveal — it is about the NAMES you drop. A `known`-tier prose field or fact `content` may NAME only `known`-tier entities. It must never name a `discoverable`- or `secret`-tier entity, even in passing, and even when the sentence gives away nothing secret about it — the proper NAME itself is the leak. Surfaces built from the known-tier slice (the world's introduction page, the player-facing wiki) reproduce that name verbatim and hand the player an entity they were supposed to discover in play.
+
+The rule is a one-way ladder toward the public: only ever name UP the visibility scale, never down.
+  - A `known` fact/prose may name only `known` entities.
+  - A `discoverable` fact/prose may name `known` or `discoverable` entities.
+  - A `secret` fact/prose may name anything.
+
+When `known`-tier text genuinely needs to gesture at something hidden, refer to it OBLIQUELY — describe it without its proper name. The texture survives; the name does not, and the player learns the name when they uncover the thing.
+
+Examples:
+- BAD: a `known` fact on the harbor reads "Grain barges vanish on the run past The Drowned Reach." (The Drowned Reach is a `discoverable` region — naming it in `known` text leaks it to the intro and the wiki.)
+- GOOD: a `known` fact reads "Grain barges sometimes vanish on the drowned stretch downriver, past the last lit quay." (Same unease, no leaked name.)

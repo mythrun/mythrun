@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { CharacterConceptOutputSchema } from '../character-concept.js'
-import { CharacterSheetOutputSchema } from '../character-sheet.js'
+import { CANONICAL_SKILLS, CharacterSheetOutputSchema, skillEntrySchema } from '../character-sheet.js'
 
 const validConcept = {
   name: 'Bran of the Hollow',
@@ -176,6 +176,61 @@ describe('CharacterSheetOutputSchema', () => {
         ...validSheet,
         spells: [{ name: 'Cure Wounds', level: 1, prepared: true }],
       }).success,
+    ).toBe(false)
+  })
+
+  // --- myth-wj43: skill name constrained to the canonical 18 ---
+  it('rejects a tool proficiency used as a skill name', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        skills: [{ name: "Thieves' Tools", proficient: true, expertise: true }],
+      }).success,
+    ).toBe(false)
+  })
+})
+
+// myth-wj43: the write side pins skill names to the canonical 18-skill set so a
+// persisted proficiency always resolves against the read-side lookup
+// (session/skill-check.ts SKILL_ABILITIES, keyed on lower(trim(name))). This
+// pinned list is the write-side twin of that map — keep the two in lockstep.
+describe('skillEntrySchema canonical-skill enum', () => {
+  const EXPECTED_18 = [
+    'Acrobatics', 'Animal Handling', 'Arcana', 'Athletics', 'Deception',
+    'History', 'Insight', 'Intimidation', 'Investigation', 'Medicine',
+    'Nature', 'Perception', 'Performance', 'Persuasion', 'Religion',
+    'Sleight of Hand', 'Stealth', 'Survival',
+  ]
+
+  it('exposes exactly the 18 canonical 5e skills', () => {
+    expect([...CANONICAL_SKILLS].sort()).toEqual([...EXPECTED_18].sort())
+  })
+
+  it('accepts every canonical skill name', () => {
+    for (const name of CANONICAL_SKILLS) {
+      expect(
+        skillEntrySchema.safeParse({ name, proficient: true, expertise: false }).success,
+      ).toBe(true)
+    }
+  })
+
+  it('rejects a tool proficiency (not a skill)', () => {
+    expect(
+      skillEntrySchema.safeParse({ name: "Thieves' Tools", proficient: true, expertise: false })
+        .success,
+    ).toBe(false)
+  })
+
+  it('rejects a non-canonical / invented skill name', () => {
+    expect(
+      skillEntrySchema.safeParse({ name: 'Lockpicking', proficient: true, expertise: false })
+        .success,
+    ).toBe(false)
+  })
+
+  it('rejects a saving throw masquerading as a skill', () => {
+    expect(
+      skillEntrySchema.safeParse({ name: 'Dexterity', proficient: true, expertise: false }).success,
     ).toBe(false)
   })
 })

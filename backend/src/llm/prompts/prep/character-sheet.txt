@@ -53,8 +53,30 @@ none of the features, slots, or spells that arrive at higher levels.
   - "none"  — no leveled spell slots (most martials; also cantrip-only dabblers).
   Flavored class names ("Storm-Touched Sorcerer", "Hollow Knight") still map to
   one of these by their mechanical nature — pick the closest fit.
-- skills: every proficient skill (background + class grants), as
-  {name, proficient:true, expertise:false}.
+- skills: the character's skill proficiencies (from class + background), each as
+  {name, proficient, expertise}.
+  - name MUST be one of these 18 canonical 5e skills, spelled EXACTLY as written:
+    Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight,
+    Intimidation, Investigation, Medicine, Nature, Perception, Performance,
+    Persuasion, Religion, Sleight of Hand, Stealth, Survival.
+    Tool proficiencies (thieves' tools, an instrument, a gaming set, artisan's
+    tools) and saving throws are NOT skills — never put them in this array.
+  - proficient: true for every skill the character is proficient in.
+  - expertise: DOUBLE proficiency bonus on that skill. Grant it ONLY where 2014
+    5e RAW grants it, by THIS character's class at level {{level}}:
+    - Rogue — Expertise at level 1: choose EXACTLY TWO of the rogue's proficient
+      skills and set expertise:true on them. A rogue at levels 1–5 always has
+      exactly two expertise skills (the rogue's second Expertise pair arrives at
+      level 6, above the starting cap).
+    - Bard — Expertise at level 3: if level {{level}} is 3 or higher, choose
+      EXACTLY TWO of the bard's proficient skills and set expertise:true. A bard
+      below level 3 has none (the bard's second pair arrives at level 10).
+    - Every OTHER class — and a bard below level 3 — gets NO expertise: set
+      expertise:false on every skill.
+    A skill with expertise:true MUST also have proficient:true. Choose expertise
+    skills that suit the character (a rogue favours Stealth, Sleight of Hand,
+    Perception, Investigation, Deception, Acrobatics; a bard favours Persuasion,
+    Performance, Deception, Insight).
 - features: every class feature the character has gained THROUGH level {{level}},
   plus background features. Concretely:
   - Base class features earned at each level from 1 up to and including

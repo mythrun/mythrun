@@ -7,6 +7,7 @@ import {
   ApiClientProvider,
   HttpError,
   type ApiContext,
+  type CharacterCreationProgress,
   type StartingSituationsResponse,
   type SubmitCharacterResponse,
   type WorldGenSnapshot,
@@ -59,6 +60,31 @@ const testCtx: ApiContext = {
 }
 
 const CAMPAIGN_ID = 'c1'
+const VIEWER_ID = 'viewer-1'
+
+/** A me-fetch resolving the viewer identity (for the myth-qkjdq roster handoff). */
+const meOk = (): Promise<{ user: { id: string } }> => Promise.resolve({ user: { id: VIEWER_ID } })
+
+/** A progress response with the viewer's concept at `status` (omit → the viewer
+ *  has no concept row yet, the fresh-create case). */
+function progressWith(status?: string): CharacterCreationProgress {
+  return {
+    campaignId: CAMPAIGN_ID,
+    totalMembers: 1,
+    concepts:
+      status === undefined
+        ? []
+        : [
+            {
+              userId: VIEWER_ID,
+              displayName: 'Viewer',
+              status,
+              submittedAt: '2026-07-21T09:00:00.000Z',
+            },
+          ],
+    missing: [],
+  }
+}
 
 // The chosen situation's invitation — LLM-authored DATA the grounding step
 // renders verbatim as the second prompt's whisper.
@@ -152,6 +178,8 @@ interface Overrides {
   fetchSituations?: () => Promise<StartingSituationsResponse>
   submit?: (ctx: ApiContext, campaignId: string, body: unknown) => Promise<SubmitCharacterResponse>
   fetchSnapshot?: () => Promise<WorldGenSnapshot>
+  fetchMe?: () => Promise<{ user: { id: string } }>
+  fetchProgress?: () => Promise<CharacterCreationProgress>
 }
 
 function renderRoute(overrides: Overrides = {}): {
@@ -160,6 +188,10 @@ function renderRoute(overrides: Overrides = {}): {
   const fetchSituations = overrides.fetchSituations ?? vi.fn().mockResolvedValue(SITUATIONS)
   const submit = overrides.submit ?? vi.fn().mockResolvedValue(SUBMIT_OK)
   const fetchSnapshot = overrides.fetchSnapshot ?? vi.fn().mockResolvedValue(WIKI_SNAPSHOT)
+  // Default: the viewer has no concept yet — the fresh-create case, so the roster
+  // handoff (myth-qkjdq) stays inert and the chooser renders as before.
+  const fetchMe = overrides.fetchMe ?? vi.fn(meOk)
+  const fetchProgress = overrides.fetchProgress ?? vi.fn().mockResolvedValue(progressWith())
   const router = createMemoryRouter(
     [
       {
@@ -169,6 +201,8 @@ function renderRoute(overrides: Overrides = {}): {
             fetchSituations={fetchSituations}
             submit={submit}
             fetchSnapshot={fetchSnapshot}
+            fetchMe={fetchMe}
+            fetchProgress={fetchProgress}
           />
         ),
       },
@@ -401,6 +435,8 @@ describe('deep-link guard (MYT-102 audit)', () => {
               fetchSituations={fetchSituations}
               submit={vi.fn().mockResolvedValue(SUBMIT_OK)}
               fetchSnapshot={vi.fn().mockResolvedValue(WIKI_SNAPSHOT)}
+              fetchMe={vi.fn(meOk)}
+              fetchProgress={vi.fn().mockResolvedValue(progressWith())}
             />
           ),
         },
@@ -420,5 +456,50 @@ describe('deep-link guard (MYT-102 audit)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('campaign-page-probe')).toBeDefined()
     })
+  })
+})
+
+describe('CharacterNewRoute — the roster handoff (myth-qkjdq)', () => {
+  it('hands off to the campaign surface when the viewer is already mid-processing (refresh)', async () => {
+    // A refresh / deep-link of /character/new while the concept is processing must
+    // land on the campaign surface's waiting beat, NOT the start of creation.
+    renderRoute({ fetchProgress: vi.fn().mockResolvedValue(progressWith('processing')) })
+    expect(await screen.findByTestId('campaign-surface-probe')).toBeDefined()
+    expect(screen.queryByTestId('route-character-new')).toBeNull()
+  })
+
+  it('hands off when the viewer already has a completed concept (the reveal lives there)', async () => {
+    renderRoute({ fetchProgress: vi.fn().mockResolvedValue(progressWith('completed')) })
+    expect(await screen.findByTestId('campaign-surface-probe')).toBeDefined()
+  })
+
+  it('hands off on an integrated concept (the play entry lives there)', async () => {
+    renderRoute({ fetchProgress: vi.fn().mockResolvedValue(progressWith('integrated')) })
+    expect(await screen.findByTestId('campaign-surface-probe')).toBeDefined()
+  })
+
+  it('hands off on a failed concept (the failure surface lives there)', async () => {
+    renderRoute({ fetchProgress: vi.fn().mockResolvedValue(progressWith('failed')) })
+    expect(await screen.findByTestId('campaign-surface-probe')).toBeDefined()
+  })
+
+  it('stays on the create chooser when the viewer has no concept yet', async () => {
+    renderRoute() // default fetchProgress → no concept row
+    expect(await screen.findByTestId('chooser-freeform')).toBeDefined()
+    expect(screen.queryByTestId('campaign-surface-probe')).toBeNull()
+  })
+
+  it('stays on the create chooser for a resettable submitted concept (not yet processing)', async () => {
+    // `submitted` buckets with the create flow (deriveCharacterRoute) — a reset
+    // concept is resubmittable here, not a handoff.
+    renderRoute({ fetchProgress: vi.fn().mockResolvedValue(progressWith('submitted')) })
+    expect(await screen.findByTestId('chooser-freeform')).toBeDefined()
+    expect(screen.queryByTestId('campaign-surface-probe')).toBeNull()
+  })
+
+  it('stays on the create flow when the roster read fails (calm default)', async () => {
+    renderRoute({ fetchProgress: vi.fn().mockRejectedValue(new Error('network')) })
+    expect(await screen.findByTestId('chooser-freeform')).toBeDefined()
+    expect(screen.queryByTestId('campaign-surface-probe')).toBeNull()
   })
 })

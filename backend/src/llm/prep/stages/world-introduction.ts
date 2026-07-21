@@ -53,6 +53,14 @@ interface PersistedReference {
   readonly name: string
 }
 
+/** The generated introduction, pre-persist: the OPUS prose plus the reference
+ *  names already resolved to real {entityId, name}. This is the exact blob that
+ *  lands in worlds.introduction. */
+export interface GeneratedWorldIntroduction {
+  readonly prose: string
+  readonly references: PersistedReference[]
+}
+
 // Snapshot entity-kind → the intro's rendered section heading.
 const ENTITY_TYPE_HEADINGS: readonly { readonly type: string; readonly heading: string }[] = [
   { type: 'faction', heading: 'Factions & powers' },
@@ -61,10 +69,18 @@ const ENTITY_TYPE_HEADINGS: readonly { readonly type: string; readonly heading: 
   { type: 'item', heading: 'Things' },
 ]
 
-export async function runWorldIntroductionStage(
+/**
+ * Generate the introduction WITHOUT persisting: read the known-tier slice, call
+ * OPUS, resolve the reference names. Split out from the persist so a caller can
+ * inspect the generated prose BEFORE it reaches worlds.introduction — the
+ * constructed-state smoke asserts enforced ignorance on this output first, so a
+ * leaking intro is never written (assert-then-persist). Production composes
+ * generate + persist via `runWorldIntroductionStage` below.
+ */
+export async function generateWorldIntroduction(
   repo: Repo,
   args: WorldIntroductionArgs,
-): Promise<StageCostResult> {
+): Promise<{ readonly intro: GeneratedWorldIntroduction; readonly cost: StageCostResult }> {
   // 1. The KNOWN-tier slice — the exact projection the snapshot serves. The
   //    ['known'] filter is HERE (structural enforced ignorance); the generator
   //    can never see discoverable/secret material.
@@ -97,23 +113,40 @@ export async function runWorldIntroductionStage(
   //    intro references — so these ids stay valid.)
   const references = resolveReferences(result.output.references, entities)
 
-  // 4. Persist { prose, references }. The title is the world's name — composed at
-  //    read time, never stored in the intro blob.
-  await repo.transaction(async (tx) => {
-    await tx.worlds.setWorldIntroduction(
-      args.worldId,
-      JSON.stringify({ prose: result.output.prose, references }),
-    )
-  })
-
   /* c8 ignore next 2 — `?? 0` defensive: Anthropic populates usage on every call. */
   const inputTokens = result.usage.inputTokens ?? 0
   const outputTokens = result.usage.outputTokens ?? 0
   return {
-    costUsd: computeCostUsd(OPUS_ID, { inputTokens, outputTokens }),
-    inputTokens,
-    outputTokens,
+    intro: { prose: result.output.prose, references },
+    cost: {
+      costUsd: computeCostUsd(OPUS_ID, { inputTokens, outputTokens }),
+      inputTokens,
+      outputTokens,
+    },
   }
+}
+
+/**
+ * Persist a generated introduction to worlds.introduction. The title is the
+ * world's name — composed at read time, never stored in the blob.
+ */
+export async function persistWorldIntroduction(
+  repo: Repo,
+  worldId: string,
+  intro: GeneratedWorldIntroduction,
+): Promise<void> {
+  await repo.transaction(async (tx) => {
+    await tx.worlds.setWorldIntroduction(worldId, JSON.stringify(intro))
+  })
+}
+
+export async function runWorldIntroductionStage(
+  repo: Repo,
+  args: WorldIntroductionArgs,
+): Promise<StageCostResult> {
+  const { intro, cost } = await generateWorldIntroduction(repo, args)
+  await persistWorldIntroduction(repo, args.worldId, intro)
+  return cost
 }
 
 function resolveReferences(

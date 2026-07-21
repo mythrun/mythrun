@@ -115,6 +115,37 @@ describe('ft-system MYT-70 resource-ledger guidance', () => {
   })
 })
 
+describe('ft-system myth-b4xt tool/bookkeeping silence', () => {
+  const render = (): string =>
+    loadPrompt('session', 'ft-system', { ft_context: 'FTCTX', party_roster: 'Arin, Bryn' })
+
+  it('states that tools resolve silently — machinery is invisible to the player', () => {
+    const p = render()
+    expect(p).toMatch(/Tools Resolve Silently/i)
+    expect(p).toMatch(/invisible machinery|never the gears/i)
+  })
+
+  it('bars narrating the tool-call decision, resource bookkeeping, and rules deliberation', () => {
+    const p = render()
+    // The three leak classes observed in the MYT-69/70 smokes, verbatim-ish.
+    expect(p).toMatch(/let the scene breathe/i)
+    expect(p).toMatch(/first-level slot|spend that one/i)
+    expect(p).toMatch(/rules deliberation|difficult terrain|by the rules/i)
+  })
+
+  it('prescribes the remedy: resolve the tool, then narrate only the fiction/outcome', () => {
+    const p = render()
+    expect(p).toMatch(/write ONLY what happens in the world|narrates how it lands/i)
+    expect(p).toMatch(/let the FICTION carry it/i)
+  })
+
+  it('echoes the silence rule in the Critical Rules list', () => {
+    const p = render()
+    expect(p).toMatch(/Tools resolve silently\./)
+    expect(p).toMatch(/the fiction shows outcomes, not the machinery/i)
+  })
+})
+
 describe('ft-system player-agency in multiplayer (myth-ph544)', () => {
   const render = (): string =>
     loadPrompt('session', 'ft-system', { ft_context: 'FTCTX', party_roster: 'Arin, Bryn' })

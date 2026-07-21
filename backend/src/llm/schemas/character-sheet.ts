@@ -7,8 +7,43 @@ import { z } from 'zod'
 
 const abilityScore = z.number().int().min(3).max(20)
 
+// myth-wj43: the canonical 18 skills of 5e (SRD), spelled as the live proficiency
+// lookup expects. The write side constrains `skill.name` to this exact set so a
+// free-text name ('Sleight Of Hand', a mis-spelling, or a tool proficiency like
+// "Thieves' Tools") can never be persisted and then silently miss the read-side
+// join. The read side (session/skill-check.ts SKILL_ABILITIES) matches on
+// lower(trim(name)); these canonical spellings normalize to the same keys, so a
+// proficiency written here always resolves there. Tool proficiencies are NOT
+// skills and are deliberately excluded — they have no home on the sheet's skills
+// table. Keep in lockstep with the read-side twin SKILL_ABILITIES; the schema
+// tests pin this exact 18-name set.
+export const CANONICAL_SKILLS = [
+  'Acrobatics',
+  'Animal Handling',
+  'Arcana',
+  'Athletics',
+  'Deception',
+  'History',
+  'Insight',
+  'Intimidation',
+  'Investigation',
+  'Medicine',
+  'Nature',
+  'Perception',
+  'Performance',
+  'Persuasion',
+  'Religion',
+  'Sleight of Hand',
+  'Stealth',
+  'Survival',
+] as const
+
 export const skillEntrySchema = z.object({
-  name: z.string().min(2).max(40),
+  // myth-wj43: a native enum (not free z.string) so the provider's structured
+  // output is constrained to the canonical 18, and any drift terminal-fails the
+  // stage loudly rather than persisting an unmatchable name. The prompt names the
+  // same 18 (prompt+schema co-evolve).
+  name: z.enum(CANONICAL_SKILLS),
   proficient: z.boolean(),
   expertise: z.boolean(),
 })
