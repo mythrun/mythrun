@@ -124,6 +124,10 @@ export default [
       // of the web app's tsconfig project, so the type-aware projectService
       // can't place its files; it ships nothing into the app bundle.
       'animation-audit/**',
+      // The copy-workbench — same class of standalone internal tool (the MYT-100
+      // copy-pass workbench artifact); own vite config, single-file output,
+      // outside the web app's tsconfig project.
+      'copy-workbench/**',
       'src/**/*.css',
       'index.html',
       'vite.config.ts',
