@@ -9,7 +9,8 @@
 <!-- source: backend/migrations/009_character_portability.sql -->
 <!-- source: backend/migrations/026_world_retrieval.sql -->
 <!-- source: backend/migrations/027_fact_supersede.sql -->
-<!-- source-hash: sha256:755254cd2eb8ccd79c4a64102c445e22082c21080ae7d1629e5b25faa50f920e -->
+<!-- source: backend/migrations/036_campaign_invite_primary.sql -->
+<!-- source-hash: sha256:be6161357cf77aebb90fabc5e5d7df24e7eae02b7dd3ce3b47c0e42080bd2753 -->
 <!-- last-ticket: MYT-74a -->
 
 <h1>Schema</h1>
@@ -251,7 +252,11 @@
   world" and goes nullish on origin deletion. <code>campaign_members</code> ties users to campaigns
   with <code>role IN ('owner', 'player')</code> and a <code>UNIQUE(campaign_id, user_id)</code> so
   no one is on the same campaign twice. <code>campaign_invites</code> hold redeemable codes with
-  optional expiry and use caps.
+  optional expiry and use caps. Migration 036 adds an <code>is_primary</code> boolean marking the
+  one durable "share this campaign" link, backstopped by a partial unique index (<code
+    >WHERE is_primary</code
+  >) so a campaign can hold at most one primary invite even under a concurrent double-mint — the
+  DB-level guarantee behind the owner's stable join link.
 </p>
 
 <p>

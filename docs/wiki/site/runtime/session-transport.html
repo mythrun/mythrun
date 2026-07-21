@@ -40,383 +40,386 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1656pt" height="1024pt"
- viewBox="14.00 14.00 1642.00 1009.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1005.12)">
+<svg width="1755pt" height="1049pt"
+ viewBox="14.00 14.00 1741.00 1034.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1030.39)">
 <title>session_transport</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-990.72 1623.53,-990.72 1623.53,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1015.99 1722.55,-1015.99 1722.55,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_api</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-221.63 8,-550.63 1140.49,-550.63 1140.49,-221.63 8,-221.63"/>
-<text xml:space="preserve" text-anchor="middle" x="574.24" y="-536.73" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task — containerId)</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="8,-218.29 8,-560.29 1229.6,-560.29 1229.6,-218.29 8,-218.29"/>
+<text xml:space="preserve" text-anchor="middle" x="618.8" y="-546.39" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task — containerId)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_redis</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1348.81,-95.63 1348.81,-464.63 1591.73,-464.63 1591.73,-95.63 1348.81,-95.63"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-450.73" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1408.22,-101.29 1408.22,-470.29 1710.55,-470.29 1710.55,-101.29 1408.22,-101.29"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-456.39" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_pg</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1329.01,-644.63 1329.01,-894.63 1611.53,-894.63 1611.53,-644.63 1329.01,-644.63"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-880.73" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1418.13,-669.29 1418.13,-919.29 1700.65,-919.29 1700.65,-669.29 1418.13,-669.29"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-905.39" font-family="Courier,monospace" font-size="11.00">Postgres</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_lifecycle</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="881.07,-801.63 881.07,-965.63 1156.99,-965.63 1156.99,-801.63 881.07,-801.63"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-951.73" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lifecycle (routes/sessions.ts)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="914.08,-811.29 914.08,-987.29 1236.21,-987.29 1236.21,-811.29 914.08,-811.29"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-973.39" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">lifecycle (routes/sessions.ts)</text>
 </g>
 <!-- client -->
 <g id="node1" class="node">
 <title>client</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="664.95,-751.07 468.24,-751.07 468.24,-694.19 664.95,-694.19 664.95,-751.07"/>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-732.53" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-719.33" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fetch+stream WebSocket</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-706.13" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">?ticket=&lt;nonce&gt;&amp;lastSeq=N</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="681.45,-760.73 484.74,-760.73 484.74,-703.85 681.45,-703.85 681.45,-760.73"/>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-742.19" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-728.99" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fetch+stream WebSocket</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-715.79" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">?ticket=&lt;nonce&gt;&amp;lastSeq=N</text>
 </g>
 <!-- auth -->
 <g id="node2" class="node">
 <title>auth</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="264.12,-529.87 8,-529.87 8,-433.39 264.12,-433.39 264.12,-529.87"/>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-511.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wsSessionAuth (preHandler)</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-498.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">consumeWsTicket → payload | null</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-484.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ticket.sessionId == :sessionId</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-471.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions.getById → active?</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-458.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">re&#45;check campaign_members</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-445.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(campaignId = SESSION ROW)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="264.12,-536.53 8,-536.53 8,-440.05 264.12,-440.05 264.12,-536.53"/>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-517.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wsSessionAuth (preHandler)</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-504.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">consumeWsTicket → payload | null</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-491.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ticket.sessionId == :sessionId</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-478.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions.getById → active?</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-465.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">re&#45;check campaign_members</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-451.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(campaignId = SESSION ROW)</text>
 </g>
 <!-- client&#45;&gt;auth -->
 <g id="edge4" class="edge">
 <title>client&#45;&gt;auth</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M513.74,-693.48C443.91,-654.2 318.37,-583.6 231.53,-534.76"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="232.92,-532.74 225.62,-531.44 230.52,-537.01 232.92,-532.74"/>
-<text xml:space="preserve" text-anchor="middle" x="338.12" y="-619.56" font-family="Courier,monospace" font-size="10.00">WS upgrade</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M528.92,-703.14C456.18,-663.26 324.36,-590.99 233.85,-541.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="235.22,-539.32 227.91,-538.1 232.87,-543.62 235.22,-539.32"/>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-620.61" font-family="Courier,monospace" font-size="10.00">WS upgrade</text>
 </g>
 <!-- start -->
 <g id="node16" class="node">
 <title>start</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1156.99,-944.07 881.07,-944.07 881.07,-887.19 1156.99,-887.19 1156.99,-944.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-925.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /:campaignId/start</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-912.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INSERT → debit owner → init Redis</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-899.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">402 + rollback on no credits</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1236.21,-966.33 914.08,-966.33 914.08,-896.25 1236.21,-896.25 1236.21,-966.33"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-947.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">POST /:campaignId/start</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-934.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">409 if any confirmed member has no character</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-921.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INSERT → debit owner → init Redis</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-908.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">402 + rollback on no credits</text>
 </g>
 <!-- client&#45;&gt;start -->
 <g id="edge1" class="edge">
 <title>client&#45;&gt;start</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M617.06,-751.68C653.29,-772.4 703.95,-800.26 750.06,-821.63 806.74,-847.92 822.12,-851.93 881.07,-872.63 891.76,-876.39 902.98,-880.17 914.19,-883.84"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="913.21,-886.09 920.62,-885.93 914.72,-881.44 913.21,-886.09"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-864.9" font-family="Courier,monospace" font-size="10.00">start session</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M640.13,-761.39C679.69,-781.55 734.14,-808.58 783.06,-830.29 840.32,-855.71 854.96,-861.55 914.08,-882.29 924.24,-885.86 934.81,-889.42 945.47,-892.9"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="944.48,-895.16 951.89,-894.99 945.99,-890.5 944.48,-895.16"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-874.36" font-family="Courier,monospace" font-size="10.00">start session</text>
 </g>
 <!-- rest -->
 <g id="node17" class="node">
 <title>rest</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1114.09,-858.07 923.98,-858.07 923.98,-801.19 1114.09,-801.19 1114.09,-858.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-839.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /:campaignId/active</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-826.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /:sessionId/messages</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-813.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(REST backfill)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1170.19,-867.73 980.09,-867.73 980.09,-810.85 1170.19,-810.85 1170.19,-867.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-849.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /:campaignId/active</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-835.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /:sessionId/messages</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-822.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(REST backfill)</text>
 </g>
 <!-- client&#45;&gt;rest -->
 <g id="edge27" class="edge">
 <title>client&#45;&gt;rest</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M647.7,-751.75C679.3,-762.5 716.09,-774.12 750.06,-782.63 803.87,-796.13 864.71,-807.13 914.81,-815.09"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="914.3,-817.49 921.6,-816.16 915.06,-812.65 914.3,-817.49"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-806.07" font-family="Courier,monospace" font-size="10.00">gap fill</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M671.57,-761.41C706.04,-772.17 746.15,-783.79 783.06,-792.29 844.86,-806.54 915.02,-818 970.97,-826.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="970.4,-828.43 977.67,-827 971.09,-823.58 970.4,-828.43"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-814.35" font-family="Courier,monospace" font-size="10.00">gap fill</text>
 </g>
 <!-- conn -->
 <g id="node3" class="node">
 <title>conn</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="721.06,-529.87 412.13,-529.87 412.13,-433.39 721.06,-433.39 721.06,-529.87"/>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-511.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleConnection</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-498.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">participants.join</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-484.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">addPresence + hub.register</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-471.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cancelSuspend · reseedSeq → durable MAX</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-458.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(raise&#45;only seq floor&#45;guard)</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-445.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_ready | session_reconnect</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="754.06,-539.13 412.13,-539.13 412.13,-429.45 754.06,-429.45 754.06,-539.13"/>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-520.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleConnection</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-507.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">participants.join (no character → close 4404)</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-494.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">new connId · addPresence + hub.register</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-480.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_joined on user&#39;s FIRST connection</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-467.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cancelSuspend · reseedSeq → durable MAX</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-454.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(raise&#45;only seq floor&#45;guard)</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-441.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_ready | session_reconnect</text>
 </g>
 <!-- auth&#45;&gt;conn -->
 <g id="edge7" class="edge">
 <title>auth&#45;&gt;conn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M264.76,-481.63C308.1,-481.63 357.11,-481.63 402.81,-481.63"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="402.78,-484.08 409.78,-481.63 402.78,-479.18 402.78,-484.08"/>
-<text xml:space="preserve" text-anchor="middle" x="338.12" y="-496.63" font-family="Courier,monospace" font-size="10.00">authorized</text>
-<text xml:space="preserve" text-anchor="middle" x="338.12" y="-484.63" font-family="Courier,monospace" font-size="10.00">(no reply sent)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M264.59,-487.15C307.63,-486.76 356.51,-486.32 402.79,-485.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="402.61,-488.36 409.58,-485.85 402.56,-483.46 402.61,-488.36"/>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-501.89" font-family="Courier,monospace" font-size="10.00">authorized</text>
+<text xml:space="preserve" text-anchor="middle" x="338.12" y="-489.89" font-family="Courier,monospace" font-size="10.00">(no reply sent)</text>
 </g>
 <!-- ticket -->
 <g id="node8" class="node">
 <title>ticket</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1548.82,-139.47 1391.72,-139.47 1391.72,-95.79 1548.82,-95.79 1548.82,-139.47"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-120.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ws:ticket:&lt;nonce&gt;</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-107.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GETDEL (single&#45;use)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1637.94,-145.13 1480.84,-145.13 1480.84,-101.45 1637.94,-101.45 1637.94,-145.13"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-126.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ws:ticket:&lt;nonce&gt;</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-113.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GETDEL (single&#45;use)</text>
 </g>
 <!-- auth&#45;&gt;ticket -->
 <g id="edge5" class="edge">
 <title>auth&#45;&gt;ticket</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M172.19,-432.9C219.58,-370.81 309.92,-264.59 412.13,-206.63 730.87,-25.89 1192.63,-72.32 1382.64,-101.99"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1382.11,-104.39 1389.41,-103.06 1382.88,-99.55 1382.11,-104.39"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-96.73" font-family="Courier,monospace" font-size="10.00">GETDEL</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M169.87,-439.43C216.02,-374.78 306.37,-262.14 412.13,-203.29 762.92,-8.1 1270.5,-70.35 1471.62,-105.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1470.98,-108.29 1478.3,-107.11 1471.84,-103.46 1470.98,-108.29"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-88.17" font-family="Courier,monospace" font-size="10.00">GETDEL</text>
 </g>
 <!-- sessions -->
 <g id="node13" class="node">
 <title>sessions</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1568.63,-873.07 1371.92,-873.07 1371.92,-816.19 1568.63,-816.19 1568.63,-873.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-854.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-841.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one active per campaign</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-828.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(idx_sessions_one_active)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1657.74,-897.73 1461.03,-897.73 1461.03,-840.85 1657.74,-840.85 1657.74,-897.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-879.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sessions</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-865.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one active per campaign</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-852.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(idx_sessions_one_active)</text>
 </g>
 <!-- auth&#45;&gt;sessions -->
 <g id="edge6" class="edge">
 <title>auth&#45;&gt;sessions</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M174.25,-530.54C223.17,-592.14 314.46,-698.1 412.13,-765.63 598.94,-894.8 658.69,-922.57 881.07,-968.63 1001.15,-993.51 1036.55,-991.67 1156.99,-968.63 1247.51,-951.32 1345.25,-908.15 1406.81,-877.63"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1407.71,-879.92 1412.88,-874.6 1405.52,-875.53 1407.71,-879.92"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-965.36" font-family="Courier,monospace" font-size="10.00">getById</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M173.69,-537.24C222.37,-599.48 313.74,-707.04 412.13,-775.29 611.68,-913.73 676.21,-942.29 914.08,-991.29 1054.3,-1020.18 1095.38,-1017.07 1236.21,-991.29 1328.92,-974.33 1429.58,-932.02 1493.27,-902"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1493.93,-904.39 1499.21,-899.18 1491.83,-899.96 1493.93,-904.39"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-987.63" font-family="Courier,monospace" font-size="10.00">getById</text>
 </g>
 <!-- hub -->
 <g id="node7" class="node">
 <title>hub</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1140.49,-450.67 897.58,-450.67 897.58,-380.59 1140.49,-380.59 1140.49,-450.67"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-432.13" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SessionHub</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-418.93" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Map&lt;campaignId, Map&lt;userId, ws&gt;&gt;</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-405.73" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PSUBSCRIBE session:campaign:*</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-392.53" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">resync&#45;close on reconnect</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1229.6,-460.93 920.68,-460.93 920.68,-377.65 1229.6,-377.65 1229.6,-460.93"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-442.39" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SessionHub</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-429.19" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Map&lt;campaignId, Map&lt;connId, {userId, ws}&gt;&gt;</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-415.99" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fan&#45;out to ALL of a user&#39;s sockets</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-402.79" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PSUBSCRIBE session:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-389.59" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">resync&#45;close on reconnect</text>
 </g>
 <!-- conn&#45;&gt;hub -->
 <g id="edge10" class="edge">
 <title>conn&#45;&gt;hub</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M721.66,-459.06C775.96,-451.1 836.41,-442.25 888.48,-434.62"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="888.73,-437.06 895.3,-433.62 888.02,-432.21 888.73,-437.06"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-457.55" font-family="Courier,monospace" font-size="10.00">register socket</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M754.8,-461.65C805.59,-454.92 861.08,-447.55 911.35,-440.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="911.6,-443.33 918.22,-439.98 910.96,-438.47 911.6,-443.33"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-460.62" font-family="Courier,monospace" font-size="10.00">register socket</text>
 </g>
 <!-- seq -->
 <g id="node9" class="node">
 <title>seq</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1542.22,-297.47 1398.32,-297.47 1398.32,-253.79 1542.22,-253.79 1542.22,-297.47"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-278.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:seq</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-265.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INCR (monotonic)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1631.34,-303.13 1487.44,-303.13 1487.44,-259.45 1631.34,-259.45 1631.34,-303.13"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-284.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:seq</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-271.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">INCR (monotonic)</text>
 </g>
 <!-- conn&#45;&gt;seq -->
 <g id="edge12" class="edge">
 <title>conn&#45;&gt;seq</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M705.15,-432.77C710.84,-428.44 716.18,-423.74 721.06,-418.63 747.47,-390.98 719.77,-360.97 750.06,-337.63 775.07,-318.36 1206.6,-291 1388.96,-280.24"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1389.06,-282.68 1395.9,-279.83 1388.77,-277.79 1389.06,-282.68"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-331.23" font-family="Courier,monospace" font-size="10.00">raise to durable MAX</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-319.23" font-family="Courier,monospace" font-size="10.00">(floor&#45;guard, no&#45;op when healthy)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M738.5,-428.88C744.01,-424.66 749.23,-420.14 754.06,-415.29 778.42,-390.87 755.2,-363.64 783.06,-343.29 890.34,-264.95 1246.88,-310.82 1379.22,-299.29 1411.68,-296.47 1447.39,-292.96 1478.34,-289.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1478.42,-292.25 1485.13,-289.1 1477.92,-287.37 1478.42,-292.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-317.87" font-family="Courier,monospace" font-size="10.00">raise to durable MAX</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-305.87" font-family="Courier,monospace" font-size="10.00">(floor&#45;guard, no&#45;op when healthy)</text>
 </g>
 <!-- pres -->
 <g id="node10" class="node">
 <title>pres</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1591.73,-225.07 1348.81,-225.07 1348.81,-168.19 1591.73,-168.19 1591.73,-225.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-206.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:conn:{cont}:{user}</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-193.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SET EX 60 (TTL presence)</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-180.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SCAN to count</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1710.55,-230.73 1408.22,-230.73 1408.22,-173.85 1710.55,-173.85 1710.55,-230.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-212.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:conn:{cont}:{user}:{connId}</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-198.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SET EX 60 (TTL presence, per connection)</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-185.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SCAN → distinct users</text>
 </g>
 <!-- conn&#45;&gt;pres -->
 <g id="edge9" class="edge">
 <title>conn&#45;&gt;pres</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M706.3,-432.66C711.61,-428.36 716.57,-423.7 721.06,-418.63 753.17,-382.41 720.69,-352.13 750.06,-313.63 791.16,-259.75 816.36,-255.76 881.07,-235.63 1033.41,-188.25 1218.32,-184.11 1339.65,-188.12"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1339.38,-190.56 1346.46,-188.36 1339.55,-185.66 1339.38,-190.56"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-238.63" font-family="Courier,monospace" font-size="10.00">addPresence</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M739.98,-428.96C745.01,-424.73 749.73,-420.18 754.06,-415.29 786.73,-378.41 750.85,-345.58 783.06,-308.29 824.58,-260.24 852.44,-266.58 914.08,-251.29 1076.02,-211.13 1267.28,-201.09 1399.12,-199.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1398.92,-202.19 1405.9,-199.68 1398.88,-197.29 1398.92,-202.19"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-254.29" font-family="Courier,monospace" font-size="10.00">addPresence</text>
 </g>
 <!-- messages -->
 <g id="node14" class="node">
 <title>messages</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1611.53,-701.07 1329.01,-701.07 1329.01,-644.19 1611.53,-644.19 1611.53,-701.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-682.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_messages</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-669.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">append&#45;only · UNIQUE(session_id, seq)</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-656.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listAfterSeq for replay</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1700.65,-725.73 1418.13,-725.73 1418.13,-668.85 1700.65,-668.85 1700.65,-725.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-707.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_messages</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-693.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">append&#45;only · UNIQUE(session_id, seq)</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-680.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listAfterSeq for replay</text>
 </g>
 <!-- conn&#45;&gt;messages -->
 <g id="edge13" class="edge">
 <title>conn&#45;&gt;messages</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M600.81,-530.6C633.18,-573.61 686.71,-633.32 750.06,-659.63 764.17,-665.5 1284.74,-667.3 1300.01,-667.63 1306.52,-667.78 1313.17,-667.93 1319.89,-668.1"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1319.55,-670.54 1326.61,-668.27 1319.68,-665.64 1319.55,-670.54"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-681.71" font-family="Courier,monospace" font-size="10.00">listAfterSeq</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-669.71" font-family="Courier,monospace" font-size="10.00">(reconnect replay) · MAX(seq)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M624.92,-539.7C661,-583.76 717.91,-642.32 783.06,-669.29 790.2,-672.25 1186.06,-685.37 1409.28,-692.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1408.91,-695 1415.99,-692.77 1409.07,-690.1 1408.91,-695"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-701.55" font-family="Courier,monospace" font-size="10.00">listAfterSeq</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-689.55" font-family="Courier,monospace" font-size="10.00">(reconnect replay) · MAX(seq)</text>
 </g>
 <!-- participants -->
 <g id="node15" class="node">
 <title>participants</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1585.13,-787.07 1355.42,-787.07 1355.42,-730.19 1585.13,-730.19 1585.13,-787.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-768.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_participants</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-755.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UNIQUE(session_id, user_id)</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-742.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">character resolved server&#45;side</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1674.24,-811.73 1444.53,-811.73 1444.53,-754.85 1674.24,-754.85 1674.24,-811.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-793.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_participants</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-779.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">UNIQUE(session_id, user_id)</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-766.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">character resolved server&#45;side</text>
 </g>
 <!-- conn&#45;&gt;participants -->
 <g id="edge8" class="edge">
 <title>conn&#45;&gt;participants</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M598.83,-530.53C631.1,-576.99 685.71,-645.29 750.06,-683.63 909.95,-778.92 987.13,-706.53 1156.99,-782.63 1171.28,-789.04 1171.04,-797.98 1185.99,-802.63 1234.38,-817.7 1249.75,-809.06 1300.01,-802.63 1321.78,-799.85 1344.74,-795.13 1366.49,-789.79"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1366.81,-792.24 1373.01,-788.16 1365.62,-787.49 1366.81,-792.24"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-785.63" font-family="Courier,monospace" font-size="10.00">join</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M621.58,-539.67C657.35,-588.07 715.66,-656.36 783.06,-694.29 962.62,-795.37 1060.1,-685.31 1236.21,-792.29 1253.47,-802.78 1246.92,-818.7 1265.21,-827.29 1311.07,-848.85 1328.92,-833.38 1379.22,-827.29 1402.3,-824.5 1426.7,-819.76 1449.81,-814.39"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1450.25,-816.8 1456.49,-812.8 1449.12,-812.03 1450.25,-816.8"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-795.29" font-family="Courier,monospace" font-size="10.00">join</text>
 </g>
 <!-- suspend -->
 <g id="node18" class="node">
 <title>suspend</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1143.79,-620.67 894.28,-620.67 894.28,-550.59 1143.79,-550.59 1143.79,-620.67"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-602.13" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;suspend job (BullMQ)</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-588.93" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">delay 5min · jobId suspend&#45;{sid}</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-575.73" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">re&#45;read presence → checkpoint</text>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-562.53" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">status stays &#39;active&#39;</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1213.1,-630.33 937.18,-630.33 937.18,-560.25 1213.1,-560.25 1213.1,-630.33"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-611.79" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session&#45;suspend job (BullMQ)</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-598.59" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">delay 5min · jobId suspend&#45;{sid}</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-585.39" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">re&#45;read distinct users → checkpoint</text>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-572.19" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">status stays &#39;active&#39;</text>
 </g>
 <!-- conn&#45;&gt;suspend -->
 <g id="edge11" class="edge">
 <title>conn&#45;&gt;suspend</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M678.03,-530.45C701.45,-539.31 726.28,-547.63 750.06,-553.63 793.39,-564.58 841.64,-571.81 885.12,-576.57"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="884.72,-579 891.94,-577.3 885.24,-574.12 884.72,-579"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-575.54" font-family="Courier,monospace" font-size="10.00">cancel pending</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M715.9,-539.8C738.03,-547.62 760.99,-554.84 783.06,-560.29 829.58,-571.79 881.25,-579.56 927.99,-584.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.62,-587.22 934.85,-585.55 928.16,-582.35 927.62,-587.22"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-581.38" font-family="Courier,monospace" font-size="10.00">cancel pending</text>
 </g>
 <!-- inbound -->
 <g id="node4" class="node">
 <title>inbound</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="697.95,-404.27 435.23,-404.27 435.23,-320.99 697.95,-320.99 697.95,-404.27"/>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-385.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleInbound</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-372.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">parse + classify frame</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-359.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_message: persist→broadcast</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-346.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typing_* / dm_invoke</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-332.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ DM trigger (see dm&#45;trigger)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="714.46,-400.93 451.74,-400.93 451.74,-317.65 714.46,-317.65 714.46,-400.93"/>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-382.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleInbound</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-369.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">parse + classify frame</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-355.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_message: persist→broadcast</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-342.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">typing_* / dm_invoke</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-329.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ DM trigger (see dm&#45;trigger)</text>
 </g>
 <!-- inbound&#45;&gt;hub -->
 <g id="edge16" class="edge">
 <title>inbound&#45;&gt;hub</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M698.48,-378.04C758.15,-385.06 828.6,-393.34 888.14,-400.35"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="887.8,-402.78 895.04,-401.16 888.38,-397.91 887.8,-402.78"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-398.44" font-family="Courier,monospace" font-size="10.00">publish frame</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M715.15,-377.5C737.79,-380.52 761.1,-383.56 783.06,-386.29 824.61,-391.47 869.54,-396.73 911.38,-401.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="910.95,-403.9 918.18,-402.25 911.5,-399.03 910.95,-403.9"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-400.78" font-family="Courier,monospace" font-size="10.00">publish frame</text>
 </g>
 <!-- inbound&#45;&gt;seq -->
 <g id="edge14" class="edge">
 <title>inbound&#45;&gt;seq</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M683.49,-320.26C717.11,-308.06 745.97,-297.71 750.06,-296.63 975.43,-237.47 1254.21,-253.38 1388.92,-266.36"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1388.56,-268.79 1395.77,-267.04 1389.04,-263.91 1388.56,-268.79"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-272.69" font-family="Courier,monospace" font-size="10.00">INCR → seq</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M715.06,-320.11C737.65,-313.82 760.97,-307.64 783.06,-302.29 840.76,-288.33 855,-282.1 914.08,-276.29 1056.56,-262.29 1093.04,-275.18 1236.21,-276.29 1318.65,-276.93 1412.95,-278.49 1478.13,-279.7"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1477.87,-282.15 1484.91,-279.83 1477.96,-277.25 1477.87,-282.15"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-279.29" font-family="Courier,monospace" font-size="10.00">INCR → seq</text>
 </g>
 <!-- inbound&#45;&gt;messages -->
 <g id="edge15" class="edge">
 <title>inbound&#45;&gt;messages</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M698.44,-399.8C706.71,-405.25 714.38,-411.49 721.06,-418.63 752.65,-452.44 713.23,-490.61 750.06,-518.63 759.05,-525.48 1145.97,-521.11 1156.99,-523.63 1254.56,-545.98 1357.41,-602.36 1417.34,-639"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1415.99,-641.05 1423.24,-642.64 1418.56,-636.88 1415.99,-641.05"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-526.63" font-family="Courier,monospace" font-size="10.00">append(seq)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M715.17,-387.13C729.64,-394.43 743.08,-403.66 754.06,-415.29 788.46,-451.76 743.62,-493.35 783.06,-524.29 802.87,-539.84 1211.78,-527.18 1236.21,-533.29 1340.05,-559.3 1448.54,-623.45 1509.39,-663.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1507.86,-665.31 1515.05,-667.12 1510.56,-661.22 1507.86,-665.31"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-536.29" font-family="Courier,monospace" font-size="10.00">append(seq)</text>
 </g>
 <!-- heart -->
 <g id="node5" class="node">
 <title>heart</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="247.61,-278.07 24.5,-278.07 24.5,-221.19 247.61,-221.19 247.61,-278.07"/>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-259.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">heartbeat</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-246.33" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ping 30s · terminate at +10s</text>
-<text xml:space="preserve" text-anchor="middle" x="136.06" y="-233.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">refresh presence TTL</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="247.61,-274.73 24.5,-274.73 24.5,-217.85 247.61,-217.85 247.61,-274.73"/>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-256.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">heartbeat</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-242.99" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ping 30s · terminate at +10s</text>
+<text xml:space="preserve" text-anchor="middle" x="136.06" y="-229.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">refresh presence TTL</text>
 </g>
 <!-- heart&#45;&gt;pres -->
 <g id="edge20" class="edge">
 <title>heart&#45;&gt;pres</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M152.7,-220.71C176.76,-179.45 227.1,-105.01 293.12,-71.63 515.36,40.72 604.4,-6.66 852.07,-32.63 1054.47,-53.86 1118.56,-35.48 1300.01,-127.63 1315.45,-135.47 1313.94,-145.12 1329.01,-153.63 1335.69,-157.41 1342.73,-160.89 1349.97,-164.09"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1348.82,-166.26 1356.22,-166.75 1350.74,-161.75 1348.82,-166.26"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-35.63" font-family="Courier,monospace" font-size="10.00">refresh TTL</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M153.5,-217.11C178.04,-176.74 228.36,-105.23 293.12,-73.29 529.59,43.32 622.68,-8.53 885.08,-34.29 1107.9,-56.18 1179.88,-30.35 1379.22,-132.29 1394.9,-140.31 1392.89,-150.63 1408.22,-159.29 1414.99,-163.12 1422.11,-166.62 1429.44,-169.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1428.39,-172.04 1435.79,-172.5 1430.29,-167.53 1428.39,-172.04"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-37.29" font-family="Courier,monospace" font-size="10.00">refresh TTL</text>
 </g>
 <!-- disc -->
 <g id="node6" class="node">
 <title>disc</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="681.45,-291.67 451.74,-291.67 451.74,-221.59 681.45,-221.59 681.45,-291.67"/>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-273.13" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleDisconnect</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-259.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dropPresence · deregister</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-246.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_left · scheduleSuspend</text>
-<text xml:space="preserve" text-anchor="middle" x="566.59" y="-233.53" font-family="Courier,monospace" font-size="11.00" fill="#231b12">if countPresence == 0</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="724.36,-288.33 441.84,-288.33 441.84,-218.25 724.36,-218.25 724.36,-288.33"/>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-269.79" font-family="Courier,monospace" font-size="11.00" fill="#231b12">handleDisconnect (per connId)</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-256.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dropPresence · deregister this socket</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-243.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">player_left on user&#39;s LAST connection</text>
+<text xml:space="preserve" text-anchor="middle" x="583.1" y="-230.19" font-family="Courier,monospace" font-size="11.00" fill="#231b12">scheduleSuspend if 0 distinct users</text>
 </g>
 <!-- disc&#45;&gt;hub -->
 <g id="edge22" class="edge">
 <title>disc&#45;&gt;hub</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M678.82,-292.34C693.06,-297.07 707.42,-301.91 721.06,-306.63 785.99,-329.12 858.39,-355.66 915.44,-376.92"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="914.27,-379.1 921.69,-379.25 915.99,-374.51 914.27,-379.1"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-356.4" font-family="Courier,monospace" font-size="10.00">deregister</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M708.76,-289.01C724.06,-293.67 739.45,-298.5 754.06,-303.29 820.85,-325.2 894.65,-351.78 954.54,-373.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="953.4,-376.16 960.82,-376.3 955.11,-371.57 953.4,-376.16"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-349.02" font-family="Courier,monospace" font-size="10.00">deregister</text>
 </g>
 <!-- disc&#45;&gt;pres -->
 <g id="edge21" class="edge">
 <title>disc&#45;&gt;pres</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M637.26,-220.85C699.36,-191.08 793.69,-151.04 881.07,-134.63 1044.92,-103.87 1237.52,-137.07 1356.5,-165.47"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1355.8,-167.82 1363.18,-167.08 1356.95,-163.05 1355.8,-167.82"/>
-<text xml:space="preserve" text-anchor="middle" x="1019.03" y="-137.63" font-family="Courier,monospace" font-size="10.00">dropPresence</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M661.08,-217.54C726.7,-189.14 824.37,-151.73 914.08,-136.29 1096.66,-104.88 1311.1,-141.24 1440.77,-171.15"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1440.04,-173.5 1447.41,-172.7 1441.15,-168.72 1440.04,-173.5"/>
+<text xml:space="preserve" text-anchor="middle" x="1075.14" y="-139.29" font-family="Courier,monospace" font-size="10.00">dropPresence</text>
 </g>
 <!-- disc&#45;&gt;suspend -->
 <g id="edge23" class="edge">
 <title>disc&#45;&gt;suspend</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M681.88,-278.06C696.71,-285.07 710.41,-294.36 721.06,-306.63 770.12,-363.22 706.86,-411.45 750.06,-472.63 769.34,-499.95 850.22,-533.74 881.07,-546.63 882.61,-547.28 884.17,-547.91 885.73,-548.54"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="884.55,-550.71 891.96,-550.97 886.33,-546.15 884.55,-550.71"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-537.12" font-family="Courier,monospace" font-size="10.00">schedule if empty</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M725.08,-280.12C735.89,-286.35 745.8,-293.97 754.06,-303.29 805.78,-361.63 739.41,-411.7 783.06,-476.29 792.61,-490.43 898.33,-549.75 914.08,-556.29 918.73,-558.23 923.5,-560.08 928.35,-561.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.46,-564.13 934.87,-564.15 929.09,-559.51 927.46,-564.13"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-543.54" font-family="Courier,monospace" font-size="10.00">schedule if empty</text>
 </g>
 <!-- hub&#45;&gt;client -->
 <g id="edge19" class="edge">
 <title>hub&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M906.98,-451.29C897.32,-457.6 888.44,-464.99 881.07,-473.63 846.05,-514.74 886.45,-549.99 852.07,-591.63 807.02,-646.21 734.24,-679.15 673.58,-698.35"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="673.18,-695.91 667.22,-700.32 674.63,-700.59 673.18,-695.91"/>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-682.27" font-family="Courier,monospace" font-size="10.00">ws.send</text>
-<text xml:space="preserve" text-anchor="middle" x="801.06" y="-670.27" font-family="Courier,monospace" font-size="10.00">(local sockets)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M938.79,-461.65C929.68,-467.91 921.28,-475.08 914.08,-483.29 879.61,-522.61 918.72,-557.28 885.08,-597.29 835.68,-656.04 755.52,-690.28 690.34,-709.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="689.85,-707.16 683.81,-711.45 691.21,-711.86 689.85,-707.16"/>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-686.98" font-family="Courier,monospace" font-size="10.00">ws.send</text>
+<text xml:space="preserve" text-anchor="middle" x="834.07" y="-674.98" font-family="Courier,monospace" font-size="10.00">(local sockets)</text>
 </g>
 <!-- channel -->
 <g id="node12" class="node">
 <title>channel</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1558.72,-370.47 1381.82,-370.47 1381.82,-326.79 1558.72,-326.79 1558.72,-370.47"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-351.93" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:campaign:{cId}</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-338.73" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PUBLISH frame JSON</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1647.84,-376.13 1470.93,-376.13 1470.93,-332.45 1647.84,-332.45 1647.84,-376.13"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-357.59" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:campaign:{cId}</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-344.39" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">PUBLISH frame JSON</text>
 </g>
 <!-- hub&#45;&gt;channel -->
 <g id="edge17" class="edge">
 <title>hub&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1110.53,-379.89C1134.68,-371.79 1161.02,-364.23 1185.99,-359.63 1247.33,-348.34 1317.35,-345.53 1372.44,-345.57"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1372.32,-348.02 1379.33,-345.6 1372.34,-343.12 1372.32,-348.02"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-362.63" font-family="Courier,monospace" font-size="10.00">PUBLISH</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1224.66,-376.94C1238.29,-373.98 1251.95,-371.36 1265.21,-369.29 1330.23,-359.15 1404.24,-355.42 1461.64,-354.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1461.57,-356.67 1468.53,-354.09 1461.48,-351.77 1461.57,-356.67"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-372.29" font-family="Courier,monospace" font-size="10.00">PUBLISH</text>
 </g>
 <!-- state -->
 <g id="node11" class="node">
 <title>state</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1578.53,-443.47 1362.02,-443.47 1362.02,-399.79 1578.53,-399.79 1578.53,-443.47"/>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-424.93" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:state</text>
-<text xml:space="preserve" text-anchor="middle" x="1470.27" y="-411.73" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{participants, mode, status}</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1667.64,-449.13 1451.13,-449.13 1451.13,-405.45 1667.64,-405.45 1667.64,-449.13"/>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-430.59" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:state</text>
+<text xml:space="preserve" text-anchor="middle" x="1559.39" y="-417.39" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{participants, mode, status}</text>
 </g>
 <!-- channel&#45;&gt;hub -->
 <g id="edge18" class="edge">
 <title>channel&#45;&gt;hub</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1381.19,-360.99C1362.75,-366.45 1344.29,-374.31 1329.01,-385.63 1309.29,-400.25 1321.45,-420.67 1300.01,-432.63 1254.99,-457.76 1199.32,-459.19 1149.51,-452.24"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1150.01,-449.83 1142.72,-451.22 1149.28,-454.68 1150.01,-449.83"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-470.83" font-family="Courier,monospace" font-size="10.00">pmessage</text>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-458.83" font-family="Courier,monospace" font-size="10.00">(every container)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1470.47,-363.53C1448.56,-369.03 1426.21,-377.69 1408.22,-391.29 1387.43,-407.03 1401.76,-429.18 1379.22,-442.29 1331.49,-470.06 1272.13,-471.29 1218.63,-463.02"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1219.2,-460.63 1211.89,-461.91 1218.4,-465.47 1219.2,-460.63"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-482.47" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-470.47" font-family="Courier,monospace" font-size="10.00">(every container)</text>
 </g>
 <!-- start&#45;&gt;state -->
 <g id="edge3" class="edge">
 <title>start&#45;&gt;state</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1140.9,-886.52C1146.76,-882.47 1152.19,-877.87 1156.99,-872.63 1197.3,-828.69 1144.84,-784.79 1185.99,-741.63 1222.23,-703.63 1260.85,-745.62 1300.01,-710.63 1326.05,-687.38 1312.98,-668.65 1329.01,-637.63 1365.23,-567.56 1418.13,-491.5 1447.53,-450.97"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1449.35,-452.63 1451.49,-445.53 1445.39,-449.75 1449.35,-452.63"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-744.63" font-family="Courier,monospace" font-size="10.00">setState</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1220.77,-895.71C1226.32,-891.7 1231.5,-887.25 1236.21,-882.29 1272.79,-843.75 1228.02,-804.25 1265.21,-766.29 1301.96,-728.78 1340.06,-770.28 1379.22,-735.29 1405.26,-712.04 1392.31,-693.37 1408.22,-662.29 1447.87,-584.9 1505.8,-500.43 1536.84,-456.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1538.81,-458.37 1540.89,-451.25 1534.83,-455.51 1538.81,-458.37"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-769.29" font-family="Courier,monospace" font-size="10.00">setState</text>
 </g>
 <!-- start&#45;&gt;sessions -->
 <g id="edge2" class="edge">
 <title>start&#45;&gt;sessions</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1157.57,-893.9C1223.6,-883.46 1301.51,-871.15 1362.92,-861.44"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1363.15,-863.89 1369.68,-860.37 1362.38,-859.05 1363.15,-863.89"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-891.58" font-family="Courier,monospace" font-size="10.00">create + one&#45;active</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1236.72,-910.65C1307.52,-901.55 1388.79,-891.1 1451.92,-882.98"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1451.88,-885.46 1458.51,-882.13 1451.26,-880.6 1451.88,-885.46"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-908.85" font-family="Courier,monospace" font-size="10.00">create + one&#45;active</text>
 </g>
 <!-- rest&#45;&gt;messages -->
 <g id="edge28" class="edge">
 <title>rest&#45;&gt;messages</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1114.68,-807.74C1130.29,-800.78 1145.2,-791.64 1156.99,-779.63 1184.67,-751.46 1154.78,-719.84 1185.99,-695.63 1207.55,-678.92 1263.33,-672.35 1319.75,-670.28"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1319.71,-672.73 1326.63,-670.06 1319.55,-667.84 1319.71,-672.73"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-698.63" font-family="Courier,monospace" font-size="10.00">listAfterSeq</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1170.89,-824.32C1194.38,-816.91 1218,-805.84 1236.21,-789.29 1260.82,-766.92 1238.24,-739.77 1265.21,-720.29 1288.72,-703.3 1349.15,-696.87 1409.07,-694.96"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1408.77,-697.42 1415.7,-694.77 1408.64,-692.52 1408.77,-697.42"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-723.29" font-family="Courier,monospace" font-size="10.00">listAfterSeq</text>
 </g>
 <!-- suspend&#45;&gt;pres -->
 <g id="edge24" class="edge">
 <title>suspend&#45;&gt;pres</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1144.29,-557.91C1148.87,-554.56 1153.14,-550.81 1156.99,-546.63 1201.57,-498.34 1140.34,-448.91 1185.99,-401.63 1222.16,-364.17 1263.57,-411.84 1300.01,-374.63 1342.95,-330.79 1287.52,-284.85 1329.01,-239.63 1332.74,-235.57 1336.84,-231.89 1341.23,-228.55"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1342.51,-230.64 1346.85,-224.62 1339.71,-226.62 1342.51,-230.64"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-416.63" font-family="Courier,monospace" font-size="10.00">countPresence</text>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-404.63" font-family="Courier,monospace" font-size="10.00">(&gt;0 → bail)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1213.67,-573.79C1221.93,-568.98 1229.57,-563.21 1236.21,-556.29 1281.7,-508.87 1219.56,-458.58 1265.21,-411.29 1301.38,-373.83 1342.9,-421.61 1379.22,-384.29 1423.25,-339.08 1365.26,-291.52 1408.22,-245.29 1411.13,-242.17 1414.24,-239.27 1417.53,-236.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1418.94,-238.57 1423.06,-232.41 1415.99,-234.66 1418.94,-238.57"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-426.29" font-family="Courier,monospace" font-size="10.00">distinct users</text>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-414.29" font-family="Courier,monospace" font-size="10.00">(&gt;0 → bail)</text>
 </g>
 <!-- suspend&#45;&gt;sessions -->
 <g id="edge26" class="edge">
 <title>suspend&#45;&gt;sessions</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1132.31,-621.38C1141.48,-627.42 1149.92,-634.45 1156.99,-642.63 1191.18,-682.19 1150.07,-718.65 1185.99,-756.63 1231.62,-804.88 1303.14,-826.85 1362.91,-836.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1362.17,-839.13 1369.46,-837.81 1362.93,-834.29 1362.17,-839.13"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-823.42" font-family="Courier,monospace" font-size="10.00">checkpoint envelope</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1210.88,-630.89C1220.25,-636.94 1228.87,-644.01 1236.21,-652.29 1275.17,-696.28 1225.43,-738.04 1265.21,-781.29 1310.31,-830.34 1344.41,-807.12 1408.22,-826.29 1422.47,-830.57 1437.5,-834.99 1452.33,-839.3"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1451.39,-841.58 1458.8,-841.17 1452.75,-836.87 1451.39,-841.58"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-822.39" font-family="Courier,monospace" font-size="10.00">checkpoint envelope</text>
 </g>
 <!-- suspend&#45;&gt;messages -->
 <g id="edge25" class="edge">
 <title>suspend&#45;&gt;messages</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1144.35,-592.43C1193.26,-596.68 1249.66,-603.55 1300.01,-614.63 1329.28,-621.08 1360.53,-630.9 1388.1,-640.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1387.03,-642.86 1394.45,-642.91 1388.68,-638.25 1387.03,-642.86"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-617.63" font-family="Courier,monospace" font-size="10.00">MAX(seq)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1213.6,-610.26C1265.83,-617.24 1325.63,-626.82 1379.22,-639.29 1409.35,-646.3 1441.68,-656.05 1470.46,-665.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1469.35,-667.77 1476.76,-667.66 1470.9,-663.12 1469.35,-667.77"/>
+<text xml:space="preserve" text-anchor="middle" x="1322.21" y="-642.29" font-family="Courier,monospace" font-size="10.00">MAX(seq)</text>
 </g>
 </g>
 </svg>
@@ -459,10 +462,12 @@
 
 <p>
   <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
-  five preconditions (campaign is active, no session already active, a session prep exists for the
-  next session number — <em>enqueued on demand</em> if it doesn't, below, — MYT-74a — the campaign's
-  prior session is fully reconciled, and — MYT-74b — no session-end is mid-flight), the handler runs
-  a fixed five-step sequence whose ordering is load-bearing:
+  six preconditions (campaign is active, no session already active, every confirmed member already
+  has an integrated character — <a href="#members-without-characters">the silent-lockout guard</a>,
+  below, — a session prep exists for the next session number — <em>enqueued on demand</em> if it
+  doesn't, below, — MYT-74a — the campaign's prior session is fully reconciled, and — MYT-74b — no
+  session-end is mid-flight), the handler runs a fixed five-step sequence whose ordering is
+  load-bearing:
 </p>
 
 <aside class="wiki-rationale">
@@ -479,6 +484,24 @@
   <a href="../frontend/live-play.html">play screen</a>'s start flow depends on this discrimination:
   it drives the prep beat only on a real <code>prep_not_ready</code>, and the join path only on
   <code>session_already_active</code>.
+</aside>
+
+<aside class="wiki-rationale" id="members-without-characters">
+  <strong>The silent-lockout guard names who the table is waiting on (myth-mnik3)</strong> — the
+  third precondition returns <code>409 members_without_characters</code> when any
+  <em>confirmed</em> member (invite accepted, not suspended) still has no integrated character in
+  the campaign. Such a member's WS connect is rejected server-side — the upgrade throws
+  <code>NoCharacterForParticipantError</code> and closes 4404 (below) — so starting the session
+  anyway would strand them in ambient quiet while the rest of the party plays. The guard queries
+  <code>listConfirmedMembersWithoutCharacter</code>, whose
+  <code>character_id IS NULL</code> predicate mirrors the exact character-row join the WS connect
+  resolves against, so the guard and the transport agree on "has a character" by construction. It
+  runs <em>immediately</em> before the session INSERT — the last precondition, past the point any
+  concurrent character-integration could still be racing — and the 409 body carries each blocking
+  member's <code>userId</code> and <code>displayName</code>, ordered by join time, so the
+  <a href="../frontend/live-play.html">play screen</a>'s blocked hold can render <em>who</em> the
+  table waits on rather than an unexplained refusal. Suspended users are excluded: they can never
+  reach the WS connect, so listing them would block a session on a seat that could never sit down.
 </aside>
 
 <aside class="wiki-rationale">
@@ -689,16 +712,22 @@
 <h2 id="connect-presence-registration-then-the-first-frame">Connect: presence, registration, then the first frame</h2>
 
 <p>
-  Past the handshake, <code>handleConnection</code> resolves the participant's character and writes
-  the <code>session_participants</code> row (<code>sessionParticipants.join</code> resolves the
-  character server-side — the client never supplies a <code>character_id</code>, and a member with
-  no integrated character surfaces as a typed <code>NoCharacterForParticipantError</code> that
-  closes the socket cleanly rather than a raw FK violation). It then records presence and registers
-  the socket <em>before</em> broadcasting the join, so the new socket is in the registry when the
-  fan-out comes back around. On join it also appends the character name to the
-  <code>:state</code> participant roster (the list the <a href="./fast-thinker.html">FT</a> system
-  prompt uses) — covering mid-session joins by construction, and never removed on leave (a departed
-  character is still in the scene).
+  Past the handshake, <code>handleConnection</code> mints a fresh per-connection id
+  (<code>connId</code>) for this socket — a user may hold several concurrent sockets (multiple tabs
+  or devices) and each is tracked independently by its own <code>connId</code> (<a
+    href="#per-connection-identity"
+    >below</a
+  >). It resolves the participant's character and writes the <code>session_participants</code> row
+  (<code>sessionParticipants.join</code> resolves the character server-side — the client never
+  supplies a <code>character_id</code>, and a member with no integrated character surfaces as a
+  typed <code>NoCharacterForParticipantError</code> that closes the socket with the distinct
+  <code>4404 'no_character'</code> code (<a href="#per-connection-identity">below</a>) rather than a
+  raw FK violation or a generic 1011). It then records this connection's presence key and registers
+  the socket under its <code>connId</code> <em>before</em> broadcasting the join, so the new socket
+  is in the registry when the fan-out comes back around. On join it also appends the character name
+  to the <code>:state</code> participant roster (the list the
+  <a href="./fast-thinker.html">FT</a> system prompt uses) — covering mid-session joins by
+  construction, and never removed on leave (a departed character is still in the scene).
 </p>
 
 <p>
@@ -731,7 +760,11 @@
   <code>session_ready</code>. A reconnect (<code>?lastSeq=N</code>) instead builds a
   <code>session_reconnect</code> replay frame and sends it <em>directly</em> on the socket — a
   synchronous <code>send</code> that reaches this socket ahead of the
-  <code>player_joined</code> (which only arrives after a Redis pub/sub round-trip).
+  <code>player_joined</code> (which only arrives after a Redis pub/sub round-trip). The
+  <code>player_joined</code> broadcast is gated on presence: the connection checks
+  <code>userConnectionCount</code> <em>before</em> recording its own presence key and fires
+  <code>player_joined</code> only when this is the user's <strong>first</strong> live connection — a
+  second tab opens silently rather than re-announcing a player already at the table.
 </p>
 
 <aside class="wiki-rationale">
@@ -856,13 +889,31 @@
   can't publish to a channel the hub doesn't subscribe to). Each API process holds one
   <em>dedicated</em> <code>PSUBSCRIBE</code>'d Redis client (a <code>duplicate()</code> of
   <code>redisRealtime</code>) and an in-memory writable registry,
-  <code>Map&lt;campaignId, Map&lt;userId, socket&gt;&gt;</code>. When any container publishes a
-  frame, every container's subscriber receives the <code>pmessage</code> and sends it to its own
-  locally-registered sockets for that campaign. This is structurally the SSE
-  <a href="./pipeline-status.html">pipeline subscriber</a> with two WS-specific differences: the
-  registry holds writable sockets keyed per user (not a set of read-only SSE sinks), and a resync
-  teardown <em>closes</em> the socket rather than ending a sink.
+  <code>Map&lt;campaignId, Map&lt;connId, { userId, socket }&gt;&gt;</code>. When any container
+  publishes a frame, every container's subscriber receives the <code>pmessage</code> and sends it to
+  <em>every</em> socket registered locally for that campaign — all of a user's tabs, every user.
+  This is structurally the SSE <a href="./pipeline-status.html">pipeline subscriber</a> with two
+  WS-specific differences: the registry holds writable sockets keyed per <em>connection</em> (not a
+  set of read-only SSE sinks), and a resync teardown <em>closes</em> the socket rather than ending a
+  sink.
 </p>
+
+<aside class="wiki-rationale" id="per-connection-identity">
+  <strong>Per-connection identity, so a second tab never orphans the first (myth-wat0m)</strong> —
+  the registry inner map keys by <code>connId</code>, not <code>userId</code>. The earlier per-user
+  map overwrote its entry when a user opened a second tab: only the newest socket received frames,
+  closing either tab broadcast a spurious <code>player_left</code> and scheduled a suspend under a
+  live session, and the surviving tab froze on "thinking" until reload. Keying per connection makes
+  a user's concurrent sockets independent — <code>register</code> adds to the user's connection set
+  without evicting a sibling, <code>deregister</code> removes exactly the leaving
+  <code>connId</code> (a stale close can't evict a live tab), and <code>pmessage</code> fans out to
+  all of them. The same per-connection identity runs end to end: the presence key carries a
+  <code>connId</code> suffix, <code>player_joined</code> fires only on a user's first connection and
+  <code>player_left</code> / <code>clearTyping</code> only when their last one drops, and the
+  suspend gate counts distinct users (below). Old per-user-shaped presence keys still parse during a
+  rolling deploy — a compat test pins this — and lapse under their own TTL, so a mixed-version fleet
+  never strands presence.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A dedicated subscriber client, not the shared realtime one</strong> — once an ioredis
@@ -945,11 +996,17 @@
 
 <p>
   Presence is not a counter — it's one TTL key per live connection,
-  <code>session:{campaignId}:conn:{containerId}:{userId}</code>, set with a 60-second expiry. The
-  heartbeat pings every 30 seconds (terminating a socket that hasn't ponged within a 10-second
-  grace) and refreshes the presence key on each ping, so a live connection never lapses.
-  <code>countPresence</code> walks the keys with <code>SCAN</code> (never <code>KEYS</code>, which
-  blocks the single-threaded Redis event loop on a shared cluster).
+  <code>session:{campaignId}:conn:{containerId}:{userId}:{connId}</code>, set with a 60-second
+  expiry. The <code>connId</code> suffix (myth-wat0m) makes the key per <em>socket</em>, so a user's
+  multiple tabs each hold an independent key and closing one drops only that key. The heartbeat
+  pings every 30 seconds (terminating a socket that hasn't ponged within a 10-second grace) and
+  refreshes <em>this connection's</em> presence key on each ping, so a live socket never lapses. Two
+  counters read these keys with <code>SCAN</code> (never <code>KEYS</code>, which blocks the
+  single-threaded Redis event loop on a shared cluster): <code>countPresence</code> counts
+  <strong>distinct users</strong> with at least one live connection — the number that gates suspend,
+  so a user with two tabs counts once — and <code>userConnectionCount</code> counts one user's live
+  sockets, the read that gates the first-connection <code>player_joined</code> and last-drop
+  <code>player_left</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -957,17 +1014,20 @@
   goes negative under failure. A container that crashes skips its socket <code>close</code> handlers
   and would never decrement, leaving a session that looks permanently occupied; a double-fire would
   push it negative. Per-connection TTL keys self-heal: a crashed container's presence simply lapses
-  after 60 seconds. The <code>containerId</code> (a per-process UUID generated once at boot)
-  namespaces the keys so two containers' presence for the same user don't collide.
+  after 60 seconds. The <code>containerId</code> (a per-process UUID generated once at boot) and the
+  per-socket <code>connId</code> together namespace the keys, so neither two containers' presence
+  for the same user nor a user's two tabs on one container collide.
 </aside>
 
 <p>
-  When the last player disconnects (<code>countPresence == 0</code>),
-  <code>handleDisconnect</code> schedules a delayed BullMQ suspend job — a five-minute grace window
-  keyed <code>suspend-{sessionId}</code>. A returning player <em>cancels</em> the pending job on
-  connect. The processor (<code>processSuspendJob</code>) is idempotent and self-validating: on fire
-  it <strong>re-reads live presence</strong> and only suspends when it's genuinely zero. Suspend
-  flushes the live <code>:state</code> to a Postgres checkpoint, keeps
+  When a disconnect drops the campaign to zero distinct users (<code>countPresence == 0</code> — the
+  last connection of the last user, after <code>deregister</code> has removed this
+  <code>connId</code>), <code>handleDisconnect</code> schedules a delayed BullMQ suspend job — a
+  five-minute grace window keyed <code>suspend-{sessionId}</code>. A user with another tab still
+  open never trips this. A returning player <em>cancels</em> the pending job on connect. The
+  processor (<code>processSuspendJob</code>) is idempotent and self-validating: on fire it
+  <strong>re-reads distinct-user presence</strong> and only suspends when it's genuinely zero.
+  Suspend flushes the live <code>:state</code> to a Postgres checkpoint, keeps
   <code>status = 'active'</code> (suspend is not end), and holds the Redis transport keys for ~2
   hours so a quick reconnect cold-starts from live Redis rather than the checkpoint.
 </p>
@@ -1156,8 +1216,10 @@
   <li>
     Count live presence keys for the campaign:
     <code>SCAN</code> for <code>${MYTHRUN_ENV}:${REGION_PREFIX}:session:{campaignId}:conn:*</code>.
-    A non-empty match means at least one connection is still considered live (or a crashed
-    container's key hasn't lapsed yet — the keys carry a 60-second TTL).
+    Each match is one open socket (a user with two tabs shows two keys); suspend gates on the number
+    of <em>distinct</em> users behind them, so read the <code>:{userId}:</code> segment, not the raw
+    key count. A non-empty match means at least one connection is still considered live (or a
+    crashed container's key hasn't lapsed yet — the keys carry a 60-second TTL).
   </li>
   <li>
     Inspect the delayed suspend job in BullMQ: jobId
@@ -1286,9 +1348,10 @@
       <td>10/min/user</td>
       <td>
         <code>200 { sessionId }</code> · <code>402</code> (no credits, row rolled back) ·
-        <code>409</code> (<code>campaign_not_active</code> / <code>prep_not_ready</code> /
-        <code>session_already_active</code> / <code>reconcile_pending</code> /
-        <code>session_ending</code>)
+        <code>409</code> (<code>campaign_not_active</code> /
+        <code>members_without_characters</code> (body carries the blocking members) /
+        <code>prep_not_ready</code> / <code>session_already_active</code> /
+        <code>reconcile_pending</code> / <code>session_ending</code>)
       </td>
     </tr>
     <tr>
@@ -1337,8 +1400,13 @@
       </td>
     </tr>
     <tr>
-      <td><code>session:{campaignId}:conn:{containerId}:{userId}</code></td>
-      <td>Per-connection presence; <code>SET … EX 60</code>, counted via <code>SCAN</code>.</td>
+      <td><code>session:{campaignId}:conn:{containerId}:{userId}:{connId}</code></td>
+      <td>
+        Per-connection presence (myth-wat0m: <code>connId</code> suffix, one key per socket);
+        <code>SET … EX 60</code>. <code>SCAN</code>ned two ways — distinct users (suspend gate) and
+        one user's connection count (join/leave gate). Old per-user-shaped keys still parse during a
+        rolling deploy and lapse under their own TTL.
+      </td>
     </tr>
     <tr>
       <td><code>session:{campaignId}:state</code></td>

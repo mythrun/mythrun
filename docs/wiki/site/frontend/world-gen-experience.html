@@ -370,9 +370,24 @@
   <code>stages</code> progress, and a coarse lifecycle <code>status</code>/<code>phase</code>. The
   route branches on that lifecycle: a <em>generating</em> world shows the two-act generation; a
   <em>failed</em> one shows a calm retryable resume screen; a <em>terminal</em> one a dead-end
-  nudge; and a finished world shows either the reveal or — once the owner has picked a starting
-  situation — the campaign page.
+  nudge; a <em>denied</em> one a calm no-access screen; and a finished world shows either the reveal
+  or — once the owner has picked a starting situation — the campaign page.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>A denied campaign is a terminal dead end, not a retry (myth-otukr)</strong> — when the
+  status stream's <em>open</em> returns 403/404 — not a member, no such campaign, a malformed id — no
+  phase frame ever arrives, so the route would otherwise strand on the <code>phase === null</code>
+  settling line forever. The stream client settles <code>failed{denied}</code> and stops retrying;
+  <code>useWorldGenStream</code> folds that into a coarse <code>denied</code> status that
+  <em>wins over</em> every phase-derived status (the connection failed before any frame could land),
+  and the route checks it <em>before</em> the settling gate and renders
+  <code>NoAccessView</code> — a calm no-access screen with <strong>no retry affordance</strong>,
+  because retrying an access denial can't grant access. This is deliberately narrower than the
+  transient <code>exhausted</code> connection state (the backoff ceiling on a network outage), which
+  the stream leaves re-armable rather than folding to a dead end: a denial is a route-level dead end,
+  a passing outage is not.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Why <code>world_ready</code> needs a second read</strong> — picking a starting situation
@@ -805,7 +820,8 @@
       Folds the status SSE into <code>nodes</code>/<code>edges</code>/<code>stages</code> +
       lifecycle; seeds the fold from the connect-time known-tier graph seed so a mid-gen refresh
       rehydrates (<code>resumedMidGen</code>); exposes <code>connectionsDone</code> and
-      <code>completedTailStageCount</code>.
+      <code>completedTailStageCount</code>. Folds a <code>failed{denied}</code> open (403/404) into a
+      terminal <code>denied</code> status that wins over any phase (myth-otukr).
     </td>
   </tr>
   <tr>

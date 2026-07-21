@@ -1221,12 +1221,18 @@
 </p>
 
 <p>
-  <strong><code>invites</code></strong> — <code>create</code>, <code>getByCode</code>,
-  <code>getCodePreview</code>, <code>listForCampaign</code>, <code>revoke</code>,
-  <code>acceptInvite</code>. Invites are how new players join a campaign in MYT-38's onboarding
-  flow; <code>getCodePreview</code> is the only read this layer exposes to unauthenticated callers
-  (the public preview the SPA shows on the join page before the user signs in). The rest are
-  authenticated. The non-trivial method is <code>acceptInvite</code> — its own section below.
+  <strong><code>invites</code></strong> — <code>create</code>, <code>ensurePrimary</code>,
+  <code>getByCode</code>, <code>getCodePreview</code>, <code>listForCampaign</code>,
+  <code>revoke</code>, <code>acceptInvite</code>. Invites are how new players join a campaign in
+  MYT-38's onboarding flow; <code>getCodePreview</code> is the only read this layer exposes to
+  unauthenticated callers (the public preview the SPA shows on the join page before the user signs
+  in). The rest are authenticated. Two methods are non-trivial: <code>acceptInvite</code> has its
+  own section below, and <code>ensurePrimary</code> (myth-y5c4q) is an idempotent get-or-create for
+  the campaign's one <em>primary</em> invite — the durable share link — run under a per-campaign
+  lock so concurrent owner tabs collapse to a single row, with the migration-036 partial unique
+  index (<code>is_primary</code>) as the DB backstop. <code>revoke</code> clears
+  <code>is_primary</code> alongside expiry, so the "an <code>is_primary=true</code> row is the
+  active primary" invariant is maintained in this layer.
 </p>
 
 <p>

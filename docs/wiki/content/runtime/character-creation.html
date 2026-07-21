@@ -26,7 +26,7 @@
 <!-- source: backend/src/contract/backend-routes.ts -->
 <!-- source: docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md -->
 <!-- source: docs/superpowers/specs/2026-07-11-myt-90-character-creation-design.md -->
-<!-- source-hash: sha256:56e5f2080fdd2f8cb3249ff457ec93497c23a93d3e6eaf6ab924f9dc6164af60 -->
+<!-- source-hash: sha256:0dcd6321591c82f17fbead3c8af3f46cd5b923d973f54de8cbe18466cd7b3836 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Character creation</h1>
@@ -527,7 +527,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   </tbody>
 </table>
 
-<h3>The sheet co-evolved with the live ledger (MYT-70)</h3>
+<h3 id="sheet-prompt-schema-co-evolution">The sheet co-evolved with the live ledger (MYT-70)</h3>
 
 <p>
   The character sheet is also the seed for the live
@@ -623,6 +623,31 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   three-attempt regenerate budget and terminal-fail. The prompt states the onset explicitly per
   progression archetype (<code>full</code>/<code>half</code>/<code>third</code>/<code>pact</code>).
 </p>
+
+<p>
+  Two 5e-fidelity rules on the skills table were tightened (myth-wj43). Skill <em>names</em> are now
+  a native enum of the canonical 18 (<code>Acrobatics</code> … <code>Survival</code>), spelled
+  exactly — the schema is <code>z.enum(CANONICAL_SKILLS)</code>, not free text — so a mis-spelling
+  (<code>Sleight Of Hand</code>), a saving throw, or a tool proficiency (<code>Thieves' Tools</code
+  >) can never be written to <code>character_skills</code>. <strong>Expertise</strong> (double
+  proficiency bonus) is now the 2014 RAW rule, and like caster onset it is class-and-level gated: a
+  rogue takes exactly two expertise skills at level&nbsp;1 (the second pair arrives at level&nbsp;6,
+  above the level-5 cap), a bard takes two at level&nbsp;3 or higher and none below it, and every
+  other class takes none. The prompt names the same 18 skills and the same expertise rule the schema
+  enforces — a <a href="#sheet-prompt-schema-co-evolution">prompt+schema co-evolution</a> so the
+  model's structured output is already shaped to what will validate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The enum is a write-side constraint that mirrors the read-side lookup</strong> — a skill's
+  proficiency only counts at play time if its <code>name</code> matches the live proficiency table
+  (<code>session/skill-check.ts</code>'s <code>SKILL_ABILITIES</code>, matched on
+  <code>lower(trim(name))</code>). Free text silently missed that join — a sheet with "Sleight Of
+  Hand" persisted clean and then granted no bonus at the table, an invisible failure. The native
+  enum constrains the provider's structured output to the canonical spellings up front, and any
+  drift terminal-fails the stage loudly rather than persisting an unmatchable name; the 18 names are
+  kept in lockstep with the read-side twin, pinned by the schema tests.
+</aside>
 
 <p>
   <code>validateCoherence</code> is the deterministic backstop that runs after every sheet

@@ -18,7 +18,7 @@
 <!-- source: frontend/ui/src/components/SessionSheet/ -->
 <!-- source: frontend/ui/src/components/KnowledgeSidebar/ -->
 <!-- source: frontend/client-core/src/contract/session-knowledge.ts -->
-<!-- source-hash: sha256:a291fba50f6396c4a6c7915cf7cd4e6b971a92bb9f3ff2bafe677e479557b9a4 -->
+<!-- source-hash: sha256:cde7e26dcb0a0329d85c34b380a0cbbd59bb783929ebf676e3623bc6ae544c96 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Live play</h1>
@@ -129,11 +129,30 @@
     <a href="./billing-credits.html">purchase moment</a>, carrying the owner-vs-member split.
   </li>
   <li>
+    <strong><code>409 members_without_characters</code></strong> → the <em>blocked</em> hold, but
+    naming names: the 409 body lists every confirmed member still without an integrated character, so
+    the hold reads "waiting on <em>Bryn, Sana</em>" rather than an unexplained refusal. Not transient
+    — someone has to finish creation — so no auto-poll; a malformed body degrades to the bare blocked
+    hold, never a crash.
+  </li>
+  <li>
     <strong><code>409 campaign_not_active</code></strong> (and any off-contract 409) → a calm,
     <em>manually</em> retryable "blocked" notice — not transient, so no auto-poll; anything
     unrecognized is a generic retry.
   </li>
 </ul>
+
+<aside class="wiki-rationale">
+  <strong>The silent-lockout fix has two faces (myth-mnik3)</strong> — a member with no integrated
+  character used to fall into ambient quiet: the owner's <code>/start</code> succeeded and left that
+  member staring at a table that never spoke. The fix closes both sides. The <em>owner</em> who
+  starts now gets a <code>409 members_without_characters</code> that names who is missing a character
+  (the blocked hold above), so the table knows who to nudge. The <em>member</em> without a character
+  who opens the session has their socket closed 4404 <code>no_character</code> by the
+  <a href="../runtime/session-transport.html#members-without-characters">transport</a> and lands on
+  an explicit "make a character" notice (below), never a silent shell. The guard's server predicate
+  is the exact character-row join the WS connect resolves against, so the two signals can't disagree.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>One backoff-polled waiting phase, not an SSE-driven re-start — the retry storm is
@@ -174,10 +193,11 @@
 <p>
   The <strong>preparing hold</strong> (<code>PreparingHold</code> + the
   <a href="./design-system.html">mythrunUI</a> <code>SessionPreparing</code> beat) is the
-  <code>waiting</code> phase made visible: "the DM is preparing the next session…" over a small
-  square 1-bit Bayer figure whose slow breathing pulse is the only sign of life — dropped under
-  <code>prefers-reduced-motion</code> — with <code>aria-busy</code> and a polite live region carrying
-  the line for assistive tech. The hold owns no timing: the hook polls behind it, and when a poll
+  <code>waiting</code> phase made visible: "the DM is preparing the next session…" over the shared
+  <a href="./design-system.html">BeatFigure</a> in breathe mode — a full-width band of hard 1-bit
+  Bayer cells whose density swells and ebbs as a slow traveling breath, its only sign of life, frozen
+  to a still frame under <code>prefers-reduced-motion</code> — with <code>aria-busy</code> and a
+  polite live region carrying the line for assistive tech. The hold owns no timing: the hook polls behind it, and when a poll
   finally answers 200 the phase flips to <code>ready</code> on its own. The
   <a href="../runtime/session-prep.html">prep-status SSE</a> (<code>useSessionPrep</code>) is kept
   for exactly one job — <strong>latching</strong> a terminal prep <em>failure</em> into the calm
@@ -295,7 +315,14 @@
   still running re-arms it with a fresh live frame. The route maps the transport's own connection
   status (<code>reconnecting</code>/<code>failed</code>) to a quiet system line pinned under the
   transcript, and resolves the presence typing userIds to display names through the party roster
-  (unknown ids are omitted, never shown raw).
+  (unknown ids are omitted, never shown raw). One terminal failure is the exception:
+  <code>failed{no_character}</code> — the transport closed 4404 because the viewer has no integrated
+  character — makes <code>SessionShell</code> render a full <code>NoCharacterNotice</code> (an
+  explicit "you don't have a character here yet" hold with a CTA into
+  <a href="./character-creation.html">creation</a>) <em>instead</em> of the live stage, because
+  reconnecting can't help. <code>failed{denied}</code> and <code>failed{exhausted}</code> still fall
+  through to the shell's quiet connection line — those are recoverable or already covered by the
+  disabled composer.
 </p>
 
 <h2 id="the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</h2>
@@ -374,22 +401,31 @@
 </p>
 
 <p>
-  <code>DieSpin</code> is a flat 2D outlined d20, authored here as a new mark because no pixelarticons
-  die exists. It spins in a <strong>stepped</strong> rotation — eight discrete 45° steps over roughly a
-  second, the motion analog of the brand's stepped Bayer dither, never a smooth CSS interpolation — and
-  stamps the used die's numeral upright in its centre when it lands. Under
-  <code>prefers-reduced-motion</code> it does not spin: it lands instantly and reveals. Because motion
-  is never the only signal, the die glyph is <code>aria-hidden</code> decoration and the landed result
-  is announced through a polite live region, so a screen reader hears the number the sighted player
-  watches settle.
+  <code>DieSpin</code> is a <strong>facet-band d20</strong>, authored here as a new mark because no
+  pixelarticons die exists: a hexagonal silhouette with the icosahedron's top and bottom triangular
+  facets drawn and an <strong>open equatorial band</strong> across the middle where the numeral
+  stamps — open geometry precisely so no facet stroke crosses the numeral's field at any value,
+  single- or two-digit (an earlier centre-triangle sliced it). It spins in a <strong>stepped</strong>
+  rotation — eight discrete 45° steps, the motion analog of the brand's stepped Bayer dither, never a
+  smooth CSS interpolation — and stamps the used die's numeral upright in its centre when it lands.
+  The <strong>easing lives in time, not the angle</strong>: the per-step dwell ramps (~50 → 220&nbsp;ms)
+  so the die visibly decelerates into the landing, and the final step to upright carries a single
+  scale-pop <strong>recoil</strong> frame before it snaps to rest and holds still — the stillness is
+  what sells the landing. Under <code>prefers-reduced-motion</code> it does not spin: it lands
+  instantly and reveals. Because motion is never the only signal, the die glyph is
+  <code>aria-hidden</code> decoration and the landed result is announced through a polite live region,
+  so a screen reader hears the number the sighted player watches settle.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>A stepped die, not a smooth one</strong> — the UX spec called for a smooth spin, but the
-  brand register is 1-bit and pixel-honest, so the die jumps in discrete steps the same way the Dither
-  bands rather than blending. This is the brand-overrides-UX rule applied to motion. The step count and
-  die geometry are story-tuned placeholders pending the end-of-milestone visual pass; the structure
-  (stepped, ~1s, reduced-motion-instant, mono numeral) is what's fixed now.
+  <strong>A stepped die, decelerating in the dwell</strong> — the UX spec called for a smooth spin,
+  but the brand register is 1-bit and pixel-honest, so the die jumps in discrete 45° steps the same
+  way the Dither bands rather than blending — the brand-overrides-UX rule applied to motion. The
+  refinement a design-lead pass landed is <em>where the easing lives</em>: the angle never
+  interpolates, so deceleration is carried entirely by a ramping dwell schedule (each step held longer
+  than the last) capped by one discrete recoil frame — the same "quantization is the easing" grammar
+  the shared <a href="./design-system.html">BeatFigure engine</a> uses. The open facet-band geometry
+  and the dwell ramp are the tuned result of that pass, not placeholders.
 </aside>
 
 <h2>The stage — six components, two registers</h2>
@@ -441,9 +477,11 @@
   </li>
   <li>
     <strong><code>SessionStartBeat</code></strong> — the 1-bit loading beat for the short
-    socket-connect boundary. (Its atmospheric prep phase is retired from this route — the
-    between-sessions wait is the <code>SessionPreparing</code> hold above, its cadence owned by the
-    start-flow hook, not an SSE.) Reduced-motion lands instantly.
+    socket-connect boundary, rebuilt on the shared <a href="./design-system.html">BeatFigure</a> in
+    fill mode: a full-width Bayer band whose threshold-sweep front rises to the current phase level.
+    (Its atmospheric prep phase is retired from this route — the between-sessions wait is the
+    <code>SessionPreparing</code> hold above, its cadence owned by the start-flow hook, not an SSE.)
+    Reduced-motion lands the front instantly.
   </li>
   <li>
     <strong><code>ThinkingIndicator</code></strong> — "DM is thinking…" on the thinking bit, player
@@ -906,13 +944,17 @@
   </tr>
   <tr>
     <td><code>SessionStartBeat</code></td>
-    <td>The 1-bit beat — this route mounts the connect phase only; reduced-motion instant.</td>
+    <td>
+      The 1-bit beat on the shared BeatFigure (fill mode — a threshold-sweep front) — this route
+      mounts the connect phase only; reduced-motion instant.
+    </td>
   </tr>
   <tr>
     <td><code>SessionPreparing</code></td>
     <td>
-      The between-sessions hold — a square 1-bit Bayer figure with a slow breathing pulse (still
-      under reduced motion), <code>aria-busy</code> + a polite live region. Owns no timing.
+      The between-sessions hold — the shared BeatFigure in breathe mode (a full-width Bayer band with
+      a slow traveling breath, frozen still under reduced motion), <code>aria-busy</code> + a polite
+      live region. Owns no timing.
     </td>
   </tr>
   <tr>
@@ -929,8 +971,9 @@
   <tr>
     <td><code>DieSpin</code></td>
     <td>
-      The stepped 2D outlined d20 — eight 45° steps, reduced-motion instant land, result announced via
-      a polite live region.
+      The facet-band d20 — eight discrete 45° steps with an open equatorial numeral field; the easing
+      is a ramping dwell (~50→220ms) capped by one scale-pop recoil, then stillness; reduced-motion
+      instant land; result announced via a polite live region.
     </td>
   </tr>
   <tr>

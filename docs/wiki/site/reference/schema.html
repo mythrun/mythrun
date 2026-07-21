@@ -1529,7 +1529,7 @@ END)</code></li>
 <details class="schema-table" data-table-name="campaign_invites" id="schema-table-campaign_invites">
   <summary>
     <span class="schema-table-name">campaign_invites</span>
-    <span class="schema-table-meta">8 columns · 1 index · 0 CHECKs · 2 FKs</span>
+    <span class="schema-table-meta">9 columns · 2 indexes · 0 CHECKs · 2 FKs</span>
   </summary>
   <table class="schema-columns">
     <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
@@ -1590,11 +1590,19 @@ END)</code></li>
         <td><code>now()</code></td>
         <td>—</td>
       </tr>
+      <tr data-column-name="is_primary">
+        <td><code>is_primary</code></td>
+        <td><code>boolean</code></td>
+        <td>NO</td>
+        <td><code>false</code></td>
+        <td>—</td>
+      </tr>
     </tbody>
   </table>
   <h4>Indexes</h4>
   <ul class="schema-list">
     <li><code>campaign_invites_invite_code_key</code> — UNIQUE (invite_code)</li>
+    <li><code>idx_campaign_invites_one_primary</code> — UNIQUE (campaign_id)</li>
   </ul>
 </details>
 <details class="schema-table" data-table-name="campaign_members" id="schema-table-campaign_members">

@@ -940,7 +940,11 @@
   <code>GET /api/users/check-username</code>). And a growing set are genuinely player-facing routes
   owned by the web app — a Frontend ticket, not a dev-tool inspector — that therefore have no panel
   here: the campaign wiki and transcript search, the owner starting-level and character
-  reset/confirm reveal actions, and the main-app dev widgets' API-cost and stage-timing tickers.
+  reset/confirm reveal actions, the web invite panel's primary-invite ensure-upsert (<code
+    >PUT /api/campaigns/:campaignId/invites/primary</code
+  >, myth-y5c4q — the dev tool drives the general POST mint, which a developer actually exercises;
+  the PUT is a get-or-create convenience with no distinct inspectable behavior, so it takes the
+  starting-level precedent), and the main-app dev widgets' API-cost and stage-timing tickers.
   MYT-102 added one more shape — <code>POST /api/auth/refresh</code>, which under
   <code>AUTH_MODE=bypass</code> is a 200-null session-probe stub (the real cookie/refresh route is
   real-mode-only) so the SPA's on-load probe never paints a console 404: no panel drives it and it

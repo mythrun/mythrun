@@ -16,7 +16,7 @@
 <!-- source: frontend/ui/src/components/CharacterLoadingBeat/ -->
 <!-- source: frontend/ui/src/components/CharacterSheetReveal/ -->
 <!-- source: frontend/ui/src/components/PartyRoster/ -->
-<!-- source-hash: sha256:66db87295fc1402dc7e03ad9f2617b5805cf677eb88676489f64dfc8e213a2fb -->
+<!-- source-hash: sha256:52948a584849ebff6617d591b837f0409e17d372e089e90a314ed8f9685ac15f -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Character-creation experience</h1>
@@ -189,6 +189,20 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>A refresh or deep-link of the create route hands off, never restarts (myth-qkjdq)</strong>
+  — <code>/character/new</code> is for a fresh or reset concept. If a player reloads it — or follows a
+  stale deep-link — while their <em>own</em> concept is already <code>processing</code>,
+  <code>completed</code>, <code>integrated</code>, or <code>failed</code>, the route reads the roster
+  (<code>useViewerConceptStatus</code> matches the viewer's <code>fetchMe</code> id against the
+  progress board) and redirects to the campaign surface, whose routing table owns the waiting beat,
+  the reveal, staging, the play entry, and the failure surface. Only <code>none</code> /
+  <code>submitted</code> — a genuinely fresh or reset concept — stay on the create flow; a probe still
+  loading or failing resolves to that same safe default, and the backend 409-guards a re-submit of a
+  locked concept regardless. Without this a refresh mid-generation restarted a character the player
+  had already committed.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>The create-machine's tail states are vestigial</strong> — the machine can reach
   <code>processing</code>, <code>reveal</code>, and <code>staging</code>, but on the discrete
   <code>/character/new</code> route only <code>chooser → freeform | guided → processing</code> are
@@ -307,8 +321,10 @@
 <p>
   While the sheet generates, the surface mounts <code>CharacterLoadingSurface</code> over the
   <code>CharacterLoadingBeat</code>: the shipped 1-bit loading register (paper, not voxel — the
-  April spec's voxel silhouette is post-launch), a squared figure that fills in from the feet up
-  beside a column of surfacing beat rows. Its real-time source is the
+  April spec's voxel silhouette is post-launch), a full-width quantized ink meter under a column of
+  surfacing beat rows — rebuilt on the shared <a href="./design-system.html">BeatFigure</a> engine,
+  its dithered fill front advancing one decelerating step per completed beat (never a tweened bar)
+  and shimmering in place between completions. Its real-time source is the
   <a href="./realtime-transport.html">MYT-85 status SSE</a>, folded by
   <code>useCharacterCreationStream</code> and <strong>filtered to the current user's id</strong> —
   the stream is campaign-wide, so a party of four all watch the same channel, each seeing only their
@@ -322,10 +338,14 @@
   per-user <code>stages[]</code> — so a mid-generation refresh rehydrates the already-completed
   stages instead of restarting the beats from empty — and live events fold monotonically on top (a
   stale buffered <code>stage-started</code> can't regress a snapshot-completed stage). The
-  reload-stable <code>done</code> signal is derived from the progress GET's
-  <code>status === 'completed'</code>, probed at mount and re-checked whenever a snapshot reports the
-  viewer's terminal <code>character_sheet</code> stage complete — so a missed completion event can no
-  longer strand the player on a dead screen. Beneath the rows an <code>aria-hidden</code> countdown
+  screen's advance no longer rides the SSE at all: a dedicated SSE-independent backoff poll of the
+  progress GET (<code>useCreationProgressPoll</code>, myth-qkjdq) flips the viewer off their
+  <em>own</em> terminal concept status — advancing to the reveal on <code>completed</code> and, newly,
+  to the concept-failure surface on <code>failed</code> — so a missed completion event, or a stream
+  that dies before it reaches the browser, can no longer strand the player on a dead screen. The live
+  SSE fold still animates the beats; the durable poll is what guarantees the exit
+  (<code>resolved = done || poll.done || poll.failed</code>). Beneath the rows an
+  <code>aria-hidden</code> countdown
   ticks a <code>~N left</code> estimate off the same
   <a href="./world-gen-experience.html#waiting-feedback">stage-timings history</a> the world-gen
   countdown reads, omitted entirely on a cold start (no history is not a fake instant estimate) and
@@ -335,16 +355,28 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Snapshot-seeded, with the progress GET as the reload backstop</strong> — the live fold
-  alone can't survive a refresh (the events it accumulated are gone) or a missed completion event
-  (the terminal <code>character_creation_complete</code> arm is a live event, not replayed). So the
-  hook seeds from the connect-time snapshot and derives <code>done</code> from the durable progress
-  board, not from the in-memory fold. A returning player whose concept already
+  <strong>Snapshot-seeded, with a transport-independent poll as the durable exit</strong> — the live
+  fold alone can't survive a refresh (the events it accumulated are gone) or a missed completion event
+  (the terminal <code>character_creation_complete</code> arm is a live event, not replayed), and a
+  campaign-status SSE can die at the CloudFront edge without ever reaching the browser. So the hook
+  seeds from the connect-time snapshot for the beats and takes its <em>advance</em> from the durable
+  progress board, not the in-memory fold: <code>useCreationProgressPoll</code> backoff-polls the same
+  GET the finalize board reads (a jittered ~3–6s cadence, one in-flight probe at a time, the loop
+  stopping the instant the concept reaches a terminal state) and latches <code>done</code> or
+  <code>failed</code> off the viewer's own concept status. A returning player whose concept already
   <code>completed</code> is still routed straight to the reveal by the routing table above without
-  ever mounting the beat; the seeding is what keeps an <em>in-progress</em> refresh from dropping to
-  a dead loading screen in the window before that route resolves. The
-  <code>character_creation_complete</code> event stays a properly-typed, <code>userId</code>-carrying
-  arm on the status stream, so the live swap still fires for exactly the right player.
+  ever mounting the beat; the poll is what keeps an <em>in-progress</em> refresh — or a live session
+  behind a dead stream — from dropping to a dead loading screen. The screen advances whether or not a
+  single SSE frame arrives.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The CloudFront-edge hypothesis was investigated and downgraded</strong> — the stall's first
+  suspect was the SSE dying at the CloudFront edge, but the edge config proved streaming-correct. The
+  durable fix isn't an edge tweak that would only narrow the window; it's the transport-independent
+  poll, which makes the screen's advance immune to <em>any</em> stream failure by construction rather
+  than betting on a healthy stream. Further hardening of the streaming path is tracked separately
+  (myth-7ptok).
 </aside>
 
 <h3>Meet your character</h3>
@@ -536,7 +568,11 @@
   </tr>
   <tr>
     <td><code>use-character-creation-stream.ts</code></td>
-    <td>The status-SSE fold, snapshot-seeded and filtered to the current <code>userId</code>; the reload-stable <code>done</code> from the progress GET (MYT-102).</td>
+    <td>The status-SSE fold, snapshot-seeded and filtered to the current <code>userId</code>; animates the loading beats (MYT-102).</td>
+  </tr>
+  <tr>
+    <td><code>use-creation-progress-poll.ts</code> <em>(myth-qkjdq)</em></td>
+    <td>The SSE-independent durable advance — a storm-safe backoff poll of the progress GET that latches <code>done</code>/<code>failed</code> off the viewer's own concept status, so the screen exits even behind a dead stream.</td>
   </tr>
   <tr>
     <td><code>creation-eta.ts</code> <em>(MYT-102)</em></td>
@@ -580,7 +616,7 @@
   </tr>
   <tr>
     <td><code>CharacterLoadingBeat</code></td>
-    <td>The 1-bit "coming into being" figure filling in beside advancing beat rows (reuses <code>Dither</code>); MYT-102 added an aria-hidden countdown line under the rows.</td>
+    <td>The 1-bit "coming into being" full-width meter under advancing beat rows — rebuilt on <code>BeatFigure</code> (quantized dither fill, one decelerating step per beat); MYT-102 added an aria-hidden countdown line under the rows.</td>
   </tr>
   <tr>
     <td><code>CharacterSheetReveal</code></td>

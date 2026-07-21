@@ -25,7 +25,7 @@ digraph live_play {
     waiting [label="409 prep_not_ready / reconcile_pending /\nsession_ending → waiting · PreparingHold\n(SessionPreparing — the calm between-sessions hold)", color="ember", fontcolor="ember"];
     join [label="409 session_already_active\n→ GET /active → sessionId\n(the rare probe↔POST race)"];
     purchase [label="402 insufficient_credits\n→ PurchaseSeam\nowner buy · member hold"];
-    blocked [label="409 campaign_not_active / off-contract\n→ calm manual-retry notice"];
+    blocked [label="409 members_without_characters (names WHO waits) /\ncampaign_not_active / off-contract\n→ calm manual-retry notice"];
   }
 
   shell [label="SessionShell  (ready{sessionId})\nuseSession over ws-session-client\nconnect(seedLastSeq: 0) — full replay"];
@@ -55,6 +55,7 @@ digraph live_play {
   }
 
   recap [label="session_end → /campaigns/:id/recap\n(stub route — the recap read is a filed bead)"];
+  nochar [label="failed{no_character} (transport closed 4404)\n→ NoCharacterNotice · CTA → create (myth-mnik3)"];
 
   route -> start;
   start -> waiting;
@@ -74,4 +75,5 @@ digraph live_play {
   sheet -> sidebar [style="invis"];
   cache -> stream [label="entity highlight\n(settled prose)", style="dotted", constraint=false];
   shell -> recap [ltail=cluster_shell, label="ended"];
+  shell -> nochar [ltail=cluster_shell, label="no character (4404)"];
 }

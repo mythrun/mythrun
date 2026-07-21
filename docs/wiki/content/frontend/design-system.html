@@ -21,7 +21,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:e533f1a4787c8f601dfb29e1cd2b179c86ec99bdf52d84c751efdd18a88d4352 -->
+<!-- source-hash: sha256:425e13bca465c19ef9a142ace9e70337de6dd945a7041121ffc608ee905444f8 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Design system</h1>
@@ -188,7 +188,30 @@
     <strong>Interaction states are token-swaps</strong> (discrete steps), never translucent
     overlays.
   </li>
+  <li>
+    <strong>Motion is quantized, not smoothed — quantization <em>is</em> the easing.</strong> A
+    progress fill advances as a hard Bayer threshold-front, not a smooth bar; rotation and pulse move
+    in discrete steps with variable dwell. The register that governs surface also governs time.
+  </li>
 </ul>
+
+<aside class="wiki-rationale">
+  <strong>Quantization is the easing — the motion grammar and its <code>BeatFigure</code>
+    engine</strong> — a 1-bit surface that eases with a smooth CSS transition contradicts
+  itself: the paper is dithered in hard cells, but the motion slides. So the loading beats carry
+  their timing the same way they carry tone — in steps. <code>BeatFigure</code> is the pure-math
+  engine that embodies it (a <code>develop.ts</code> pure module + a <code>use-beat-canvas.ts</code>
+  hook rendering to canvas): progress renders as a Bayer threshold-sweep <em>front</em> across
+  full-width figures; a filled cell locks bit-identical (no re-dither jitter once it is behind the
+  front); and the easing is carried not by interpolation but by variable <em>dwell</em> — four
+  decelerating frames per progress delta — with a front-band-only shimmer at ~7fps and a 3.2s
+  asymmetric traveling breath. <code>SessionStartBeat</code>, <code>SessionPreparing</code>, and
+  <code>CharacterLoadingBeat</code> are all rebuilt on it (their prop contracts unchanged), and
+  <code>DieSpin</code>'s spin follows the same law in a decelerating dwell ramp. The engine is the
+  one reusable motion primitive the pass folded into the system; the beats that ride it stay feature
+  composites documented on <a href="./live-play.html">live play</a> and
+  <a href="./character-creation.html">character creation</a>.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The accent is two tokens — a fill and a foreground (MYT-86)</strong> — a single
@@ -440,7 +463,7 @@
   <code>WorldGenLoading</code>, <code>RevealTransition</code>) stay feature components documented on
   that page. The <a href="./character-creation.html">character-creation experience</a> (MYT-90) drew
   the line the same way: its screen composites — <code>LevelCard</code>, <code>FreeformPrompt</code>,
-  <code>GuidedBuilder</code>, <code>CharacterLoadingBeat</code> (a <code>Dither</code> reuse),
+  <code>GuidedBuilder</code>, <code>CharacterLoadingBeat</code> (rebuilt on <code>BeatFigure</code>),
   <code>CharacterSheetReveal</code>, and <code>PartyRoster</code> — are controlled/presentational
   feature components (their sequencing lives in a client-core reducer, not the component) documented
   on that page, while the reusable primitive extension it needed landed in the system as the
@@ -463,12 +486,14 @@
   <a href="./live-play.html#the-dice-moment">dice-and-skill-check reveal</a> (MYT-93) drew the same
   line once more: <code>RollCard</code> — the in-stream dice moment, a <code>skill_check</code> /
   <code>dice_roll</code> transcript item rendered as a square paper card whose reveal phase is derived
-  route-side in a client-core reducer, not the component — and <code>DieSpin</code>, the stepped 2D
+  route-side in a client-core reducer, not the component — and <code>DieSpin</code>, the 2D
   outlined d20 it spins, are both feature composites documented on
   <a href="./live-play.html">live play</a>. <code>DieSpin</code> is a newly authored 1-bit die glyph —
-  no pixelarticons die exists, so it is the canonical reference for the mark — spun in the brand's
-  stepped-dither motion register (eight discrete 45° steps) rather than the smooth spin the UX spec
-  named, the brand-overrides-UX rule applied to motion. The
+  no pixelarticons die exists, so it is the canonical reference for the mark. It is drawn as a
+  facet-band d20 — an open equatorial numeral field, so no outline stroke ever crosses a numeral at
+  any face value — and spun in the quantized-motion register the pass settled: a decelerating dwell
+  ramp (50→220ms per step) with a single scale-pop recoil, then stillness — steps and dwell, not the
+  smooth spin the UX spec named, the brand-overrides-UX rule applied to motion. The
   <a href="./live-play.html#the-knowledge-layer">knowledge layer</a> (MYT-94) drew the line once more:
   its four surfaces — <code>EntityMention</code> / <code>EntityPopover</code> (in-prose entity
   highlighting), <code>SessionSheet</code> (the in-session curated sheet), and
@@ -487,10 +512,11 @@
   (they take resolved <code>[ph:]</code> chrome, own no timing or transcript logic, and are
   orchestrated on <a href="./live-play.html">live play</a>): <code>SessionPreparing</code> — the
   between-sessions hold, a sibling of <code>SessionStartBeat</code> in the 1-bit beat family: a
-  bordered square paper tile holding the sanctioned <code>Dither</code> band on the theme-invariant
-  paper ramp, a slow breathing pulse as its only sign of life (dropped under reduced motion — the
-  wait can run minutes, so no churn), <code>aria-busy</code> with a polite live region as the single
-  AT source of truth. It is deliberately a separate component rather than a third
+  bordered square paper tile carrying a <code>BeatFigure</code> whose 3.2s asymmetric traveling
+  breath is its only sign of life (dropped under reduced motion — the wait can run minutes, so no
+  churn), its fill taking theme tokens now that the beats moved onto the engine (the frozen
+  theme-invariant paper ramp survives as an opt-in relic tone), <code>aria-busy</code> with a polite
+  live region as the single AT source of truth. It is deliberately a separate component rather than a third
   <code>SessionStartBeat</code> phase: the start beat is a two-phase itinerary (prep → connect),
   while this is an open-ended wait with no itinerary — one atmospheric line. And
   <code>DmCorrection</code> — the DM's errata slip: a square, unfilled row ruled with a heavy ink

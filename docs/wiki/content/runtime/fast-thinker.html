@@ -21,7 +21,7 @@
 <!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:26a292a6f9ce649749e20b99e7e85f6b0b120053b6902dc9c49dcfdafbe5c75d -->
+<!-- source-hash: sha256:e7467f06c953fb70d1b62582361b52d48cf38498f62c9e77d2140ab35a89aaa7 -->
 <!-- last-ticket: myth-d6knq -->
 
 <h1>Fast Thinker</h1>
@@ -345,6 +345,31 @@
   channel <a href="#correction-channel">below</a>, never a mid-scene "let me correct that" written
   into the story.
 </p>
+
+<p>
+  myth-b4xt added a <strong>Tools Resolve Silently</strong> rule, the same theme carried one layer
+  deeper: every tool the FT calls — dice, skill checks, spells, the resource ledger, lore lookups,
+  corrections — is invisible machinery, and the player sees only the fiction it produces. The prompt
+  forbids narrating the <em>decision</em> to reach for a tool, the reasoning behind it, or the
+  bookkeeping that follows: no "no check needed yet — let the scene breathe," no "Burning Hands is a
+  first-level slot, so I'll spend that one," no "technically that's difficult terrain." The FT
+  resolves the tool, then writes only what happens in the world — a spent slot is the power
+  guttering out on the page, a found blade is the character's hand closing around the hilt, an
+  emptied purse is a pocket turned inside-out. When a mechanical fact matters to a player, the
+  fiction carries it, never a ledger note or an aside about the gears turning.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The silent-tools rule lives in the prompt, deliberately not in the audit gate</strong> —
+  these leaks (a stray "I'll roll Perception here," a slot-accounting aside) surface on
+  <em>tool-calling</em> turns, and the <a href="./session-turn.html#the-audit-gate">audit gate</a>
+  fails open on exactly those turns — it is a pure-prose boundary check, not a machinery-leak check,
+  and a turn that called tools is outside its remit. So the discipline is authored as a craft rule
+  the model follows, not a post-hoc gate that would catch it — adding a machinery-leak class to the
+  gate would false-negative precisely where the leaks live. The same terse instruction is repeated
+  in the prompt's closing hard-rules list, where the FT is most likely to still be attending to it
+  as it writes.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The FT cannot plot-dump what it does not know — that is the authenticity engine</strong> —

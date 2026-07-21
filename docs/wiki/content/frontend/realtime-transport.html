@@ -3,7 +3,7 @@
 <!-- source: frontend/src/platform/web/streaming-fetch.ts -->
 <!-- source: frontend/contract/src/rest/ws-ticket.ts -->
 <!-- source: frontend/src/routes/dev-transport.tsx -->
-<!-- source-hash: sha256:873d3149f15abbf71beac4a585343150d77af473b6622c3561cf3f1327d273e8 -->
+<!-- source-hash: sha256:4eb82a236e569e4e3187f0aa0b3104a5e57a7c75911f7458c1cfe7ae06cc0dec -->
 <!-- last-ticket: MYT-85 -->
 
 <h1>Realtime transport</h1>
@@ -40,7 +40,7 @@
   module-level singleton, so a live play session and a world-gen status stream hold independent
   connection state. It owns three things the WS and SSE clients both lean on: the
   <code>ConnectionState</code> store (<code>connecting → connected → reconnecting{n} → closed</code
-  >, or <code>failed{denied|exhausted}</code>), the backoff schedule (1s → 2s → 4s → 8s → 30s
+  >, or <code>failed{denied|exhausted|no_character}</code>), the backoff schedule (1s → 2s → 4s → 8s → 30s
   capped, ±10% jitter), and a monotonic <strong>generation token</strong> for single-flight
   connects.
 </p>
@@ -116,16 +116,30 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Close-routing is on readable signals only — every socket close is transient</strong> — the
-  client treats <em>every</em> WebSocket close code (1006 abnormal, 1011 any reason) as a transient
-  drop that earns a backoff reconnect, because the readable terminal signals live elsewhere: a
-  <code>session_end</code> <em>data</em> frame self-closes the client to <code>closed</code>, and a
-  ticket-POST <code>403</code>/<code>404</code> (no session / not a member) routes straight to
-  <code>failed{denied}</code>. A 401/429/503 or a network error on the ticket POST is transient, not
-  terminal — a 401 has already exhausted <code>defineEndpoint</code>'s own refresh-retry, and the
-  lossy refresh boolean must not be allowed to strand a recoverable hiccup as a permanent failure.
-  So the only two ways to leave the reconnect loop for good are an explicit denial or a data-frame
-  end — a dropped tunnel always retries.
+  <strong>Close-routing is on readable signals only — one typed close is terminal, every other is
+  transient</strong> — the client treats <em>every</em> WebSocket close code (1006 abnormal, 1011
+  any reason) as a transient drop that earns a backoff reconnect, with a single typed exception. The
+  readable terminal signals live elsewhere: a <code>session_end</code> <em>data</em> frame self-closes
+  the client to <code>closed</code>, and a ticket-POST <code>403</code>/<code>404</code> (no session /
+  not a member) routes straight to <code>failed{denied}</code>. A 401/429/503 or a network error on
+  the ticket POST is transient, not terminal — a 401 has already exhausted
+  <code>defineEndpoint</code>'s own refresh-retry, and the lossy refresh boolean must not be allowed
+  to strand a recoverable hiccup as a permanent failure.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The one terminal close: 4404 <code>no_character</code> (myth-mnik3)</strong> — the
+  <a href="../runtime/session-transport.html#per-connection-identity">server</a> closes a socket
+  with code <code>4404</code> reason <code>no_character</code> when the connecting member has no
+  integrated character (a <code>NoCharacterForParticipantError</code> on the join). Reconnecting
+  would be rejected identically, so this is the one close the client does <em>not</em> retry: it
+  routes to <code>failed{no_character}</code>, and the <a href="./live-play.html">play surface</a>
+  renders an explicit "you don't have a character here yet" state with a CTA into creation rather
+  than the ambient reconnect line. The route keys on <strong>both</strong> the code and the reason —
+  a stray <code>4404</code> with any other reason still reconnects — so a bare close code can't
+  strand a recoverable socket. There is no shared runtime constant across the WS boundary (the same
+  pattern as the message-length cap): the client pins <code>4404</code>/<code>no_character</code> by
+  intent to the backend's close, and a backend change must mirror here.
 </aside>
 
 <p>
@@ -322,8 +336,8 @@
         <code>ConnectionFailureReason</code>
       </td>
       <td>
-        The connection-state types the UI renders (<code>denied</code> terminal,
-        <code>exhausted</code> re-armable).
+        The connection-state types the UI renders (<code>denied</code> and
+        <code>no_character</code> terminal, <code>exhausted</code> re-armable).
       </td>
     </tr>
     <tr>

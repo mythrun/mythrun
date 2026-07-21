@@ -18,7 +18,7 @@ digraph frontend_realtime_transport {
     fontcolor="ember";
 
     conn [label="connection primitive\nper-instance state · single-flight generation ·\nbackoff 1→2→4→8→30s · ceiling≈10\n→ reconnecting{n} → failed{exhausted}"];
-    ws [label="WS session client\nmint ticket → wss upgrade ·\nseq dedup + whole-turn replay ·\nclose-routing · send() / __simulateDrop"];
+    ws [label="WS session client\nmint ticket → wss upgrade ·\nseq dedup + whole-turn replay ·\nclose-routing (4404 no_character → terminal) ·\nsend() / __simulateDrop"];
     sse [label="SSE status client\nfetch-stream framing · snapshot +\nPipelineEvent · non-200 routing ·\nnever auto-closes on a data frame"];
     ticket [label="mintWsTicket\ndefineEndpoint POST .../ws-ticket\n(inherits the 401 refresh-retry)"];
     seam [label="StreamingFetch seam\ninjected · configureStreamingFetch"];

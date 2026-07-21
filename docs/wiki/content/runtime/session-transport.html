@@ -12,8 +12,8 @@
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
 <!-- source: backend/migrations/035_session_opening_trigger_kind.sql -->
-<!-- source-hash: sha256:8d3ef6eb9dbc0c7c0eb863c449eb87d5ef80e78e29f79c6dd6a9c17e26614c80 -->
-<!-- last-ticket: myth-rf5rn -->
+<!-- source-hash: sha256:bfb26d4eb215e95171a7f6203b15755c6911820ccfb568a585482f4a2fdeee06 -->
+<!-- last-ticket: myth-wat0m -->
 
 <h1>Session transport</h1>
 
@@ -62,10 +62,12 @@
 
 <p>
   <code>POST /:campaignId/start</code> is member-guarded but the campaign <em>owner</em> pays. After
-  five preconditions (campaign is active, no session already active, a session prep exists for the
-  next session number — <em>enqueued on demand</em> if it doesn't, below, — MYT-74a — the campaign's
-  prior session is fully reconciled, and — MYT-74b — no session-end is mid-flight), the handler runs
-  a fixed five-step sequence whose ordering is load-bearing:
+  six preconditions (campaign is active, no session already active, every confirmed member already
+  has an integrated character — <a href="#members-without-characters">the silent-lockout guard</a>,
+  below, — a session prep exists for the next session number — <em>enqueued on demand</em> if it
+  doesn't, below, — MYT-74a — the campaign's prior session is fully reconciled, and — MYT-74b — no
+  session-end is mid-flight), the handler runs a fixed five-step sequence whose ordering is
+  load-bearing:
 </p>
 
 <aside class="wiki-rationale">
@@ -82,6 +84,24 @@
   <a href="../frontend/live-play.html">play screen</a>'s start flow depends on this discrimination:
   it drives the prep beat only on a real <code>prep_not_ready</code>, and the join path only on
   <code>session_already_active</code>.
+</aside>
+
+<aside class="wiki-rationale" id="members-without-characters">
+  <strong>The silent-lockout guard names who the table is waiting on (myth-mnik3)</strong> — the
+  third precondition returns <code>409 members_without_characters</code> when any
+  <em>confirmed</em> member (invite accepted, not suspended) still has no integrated character in
+  the campaign. Such a member's WS connect is rejected server-side — the upgrade throws
+  <code>NoCharacterForParticipantError</code> and closes 4404 (below) — so starting the session
+  anyway would strand them in ambient quiet while the rest of the party plays. The guard queries
+  <code>listConfirmedMembersWithoutCharacter</code>, whose
+  <code>character_id IS NULL</code> predicate mirrors the exact character-row join the WS connect
+  resolves against, so the guard and the transport agree on "has a character" by construction. It
+  runs <em>immediately</em> before the session INSERT — the last precondition, past the point any
+  concurrent character-integration could still be racing — and the 409 body carries each blocking
+  member's <code>userId</code> and <code>displayName</code>, ordered by join time, so the
+  <a href="../frontend/live-play.html">play screen</a>'s blocked hold can render <em>who</em> the
+  table waits on rather than an unexplained refusal. Suspended users are excluded: they can never
+  reach the WS connect, so listing them would block a session on a seat that could never sit down.
 </aside>
 
 <aside class="wiki-rationale">
@@ -292,16 +312,22 @@
 <h2>Connect: presence, registration, then the first frame</h2>
 
 <p>
-  Past the handshake, <code>handleConnection</code> resolves the participant's character and writes
-  the <code>session_participants</code> row (<code>sessionParticipants.join</code> resolves the
-  character server-side — the client never supplies a <code>character_id</code>, and a member with
-  no integrated character surfaces as a typed <code>NoCharacterForParticipantError</code> that
-  closes the socket cleanly rather than a raw FK violation). It then records presence and registers
-  the socket <em>before</em> broadcasting the join, so the new socket is in the registry when the
-  fan-out comes back around. On join it also appends the character name to the
-  <code>:state</code> participant roster (the list the <a href="./fast-thinker.html">FT</a> system
-  prompt uses) — covering mid-session joins by construction, and never removed on leave (a departed
-  character is still in the scene).
+  Past the handshake, <code>handleConnection</code> mints a fresh per-connection id
+  (<code>connId</code>) for this socket — a user may hold several concurrent sockets (multiple tabs
+  or devices) and each is tracked independently by its own <code>connId</code> (<a
+    href="#per-connection-identity"
+    >below</a
+  >). It resolves the participant's character and writes the <code>session_participants</code> row
+  (<code>sessionParticipants.join</code> resolves the character server-side — the client never
+  supplies a <code>character_id</code>, and a member with no integrated character surfaces as a
+  typed <code>NoCharacterForParticipantError</code> that closes the socket with the distinct
+  <code>4404 'no_character'</code> code (<a href="#per-connection-identity">below</a>) rather than a
+  raw FK violation or a generic 1011). It then records this connection's presence key and registers
+  the socket under its <code>connId</code> <em>before</em> broadcasting the join, so the new socket
+  is in the registry when the fan-out comes back around. On join it also appends the character name
+  to the <code>:state</code> participant roster (the list the
+  <a href="./fast-thinker.html">FT</a> system prompt uses) — covering mid-session joins by
+  construction, and never removed on leave (a departed character is still in the scene).
 </p>
 
 <p>
@@ -334,7 +360,11 @@
   <code>session_ready</code>. A reconnect (<code>?lastSeq=N</code>) instead builds a
   <code>session_reconnect</code> replay frame and sends it <em>directly</em> on the socket — a
   synchronous <code>send</code> that reaches this socket ahead of the
-  <code>player_joined</code> (which only arrives after a Redis pub/sub round-trip).
+  <code>player_joined</code> (which only arrives after a Redis pub/sub round-trip). The
+  <code>player_joined</code> broadcast is gated on presence: the connection checks
+  <code>userConnectionCount</code> <em>before</em> recording its own presence key and fires
+  <code>player_joined</code> only when this is the user's <strong>first</strong> live connection — a
+  second tab opens silently rather than re-announcing a player already at the table.
 </p>
 
 <aside class="wiki-rationale">
@@ -459,13 +489,31 @@
   can't publish to a channel the hub doesn't subscribe to). Each API process holds one
   <em>dedicated</em> <code>PSUBSCRIBE</code>'d Redis client (a <code>duplicate()</code> of
   <code>redisRealtime</code>) and an in-memory writable registry,
-  <code>Map&lt;campaignId, Map&lt;userId, socket&gt;&gt;</code>. When any container publishes a
-  frame, every container's subscriber receives the <code>pmessage</code> and sends it to its own
-  locally-registered sockets for that campaign. This is structurally the SSE
-  <a href="./pipeline-status.html">pipeline subscriber</a> with two WS-specific differences: the
-  registry holds writable sockets keyed per user (not a set of read-only SSE sinks), and a resync
-  teardown <em>closes</em> the socket rather than ending a sink.
+  <code>Map&lt;campaignId, Map&lt;connId, { userId, socket }&gt;&gt;</code>. When any container
+  publishes a frame, every container's subscriber receives the <code>pmessage</code> and sends it to
+  <em>every</em> socket registered locally for that campaign — all of a user's tabs, every user.
+  This is structurally the SSE <a href="./pipeline-status.html">pipeline subscriber</a> with two
+  WS-specific differences: the registry holds writable sockets keyed per <em>connection</em> (not a
+  set of read-only SSE sinks), and a resync teardown <em>closes</em> the socket rather than ending a
+  sink.
 </p>
+
+<aside class="wiki-rationale" id="per-connection-identity">
+  <strong>Per-connection identity, so a second tab never orphans the first (myth-wat0m)</strong> —
+  the registry inner map keys by <code>connId</code>, not <code>userId</code>. The earlier per-user
+  map overwrote its entry when a user opened a second tab: only the newest socket received frames,
+  closing either tab broadcast a spurious <code>player_left</code> and scheduled a suspend under a
+  live session, and the surviving tab froze on "thinking" until reload. Keying per connection makes
+  a user's concurrent sockets independent — <code>register</code> adds to the user's connection set
+  without evicting a sibling, <code>deregister</code> removes exactly the leaving
+  <code>connId</code> (a stale close can't evict a live tab), and <code>pmessage</code> fans out to
+  all of them. The same per-connection identity runs end to end: the presence key carries a
+  <code>connId</code> suffix, <code>player_joined</code> fires only on a user's first connection and
+  <code>player_left</code> / <code>clearTyping</code> only when their last one drops, and the
+  suspend gate counts distinct users (below). Old per-user-shaped presence keys still parse during a
+  rolling deploy — a compat test pins this — and lapse under their own TTL, so a mixed-version fleet
+  never strands presence.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A dedicated subscriber client, not the shared realtime one</strong> — once an ioredis
@@ -548,11 +596,17 @@
 
 <p>
   Presence is not a counter — it's one TTL key per live connection,
-  <code>session:{campaignId}:conn:{containerId}:{userId}</code>, set with a 60-second expiry. The
-  heartbeat pings every 30 seconds (terminating a socket that hasn't ponged within a 10-second
-  grace) and refreshes the presence key on each ping, so a live connection never lapses.
-  <code>countPresence</code> walks the keys with <code>SCAN</code> (never <code>KEYS</code>, which
-  blocks the single-threaded Redis event loop on a shared cluster).
+  <code>session:{campaignId}:conn:{containerId}:{userId}:{connId}</code>, set with a 60-second
+  expiry. The <code>connId</code> suffix (myth-wat0m) makes the key per <em>socket</em>, so a user's
+  multiple tabs each hold an independent key and closing one drops only that key. The heartbeat
+  pings every 30 seconds (terminating a socket that hasn't ponged within a 10-second grace) and
+  refreshes <em>this connection's</em> presence key on each ping, so a live socket never lapses. Two
+  counters read these keys with <code>SCAN</code> (never <code>KEYS</code>, which blocks the
+  single-threaded Redis event loop on a shared cluster): <code>countPresence</code> counts
+  <strong>distinct users</strong> with at least one live connection — the number that gates suspend,
+  so a user with two tabs counts once — and <code>userConnectionCount</code> counts one user's live
+  sockets, the read that gates the first-connection <code>player_joined</code> and last-drop
+  <code>player_left</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -560,17 +614,20 @@
   goes negative under failure. A container that crashes skips its socket <code>close</code> handlers
   and would never decrement, leaving a session that looks permanently occupied; a double-fire would
   push it negative. Per-connection TTL keys self-heal: a crashed container's presence simply lapses
-  after 60 seconds. The <code>containerId</code> (a per-process UUID generated once at boot)
-  namespaces the keys so two containers' presence for the same user don't collide.
+  after 60 seconds. The <code>containerId</code> (a per-process UUID generated once at boot) and the
+  per-socket <code>connId</code> together namespace the keys, so neither two containers' presence
+  for the same user nor a user's two tabs on one container collide.
 </aside>
 
 <p>
-  When the last player disconnects (<code>countPresence == 0</code>),
-  <code>handleDisconnect</code> schedules a delayed BullMQ suspend job — a five-minute grace window
-  keyed <code>suspend-{sessionId}</code>. A returning player <em>cancels</em> the pending job on
-  connect. The processor (<code>processSuspendJob</code>) is idempotent and self-validating: on fire
-  it <strong>re-reads live presence</strong> and only suspends when it's genuinely zero. Suspend
-  flushes the live <code>:state</code> to a Postgres checkpoint, keeps
+  When a disconnect drops the campaign to zero distinct users (<code>countPresence == 0</code> — the
+  last connection of the last user, after <code>deregister</code> has removed this
+  <code>connId</code>), <code>handleDisconnect</code> schedules a delayed BullMQ suspend job — a
+  five-minute grace window keyed <code>suspend-{sessionId}</code>. A user with another tab still
+  open never trips this. A returning player <em>cancels</em> the pending job on connect. The
+  processor (<code>processSuspendJob</code>) is idempotent and self-validating: on fire it
+  <strong>re-reads distinct-user presence</strong> and only suspends when it's genuinely zero.
+  Suspend flushes the live <code>:state</code> to a Postgres checkpoint, keeps
   <code>status = 'active'</code> (suspend is not end), and holds the Redis transport keys for ~2
   hours so a quick reconnect cold-starts from live Redis rather than the checkpoint.
 </p>
@@ -759,8 +816,10 @@
   <li>
     Count live presence keys for the campaign:
     <code>SCAN</code> for <code>${MYTHRUN_ENV}:${REGION_PREFIX}:session:{campaignId}:conn:*</code>.
-    A non-empty match means at least one connection is still considered live (or a crashed
-    container's key hasn't lapsed yet — the keys carry a 60-second TTL).
+    Each match is one open socket (a user with two tabs shows two keys); suspend gates on the number
+    of <em>distinct</em> users behind them, so read the <code>:{userId}:</code> segment, not the raw
+    key count. A non-empty match means at least one connection is still considered live (or a
+    crashed container's key hasn't lapsed yet — the keys carry a 60-second TTL).
   </li>
   <li>
     Inspect the delayed suspend job in BullMQ: jobId
@@ -889,9 +948,10 @@
       <td>10/min/user</td>
       <td>
         <code>200 { sessionId }</code> · <code>402</code> (no credits, row rolled back) ·
-        <code>409</code> (<code>campaign_not_active</code> / <code>prep_not_ready</code> /
-        <code>session_already_active</code> / <code>reconcile_pending</code> /
-        <code>session_ending</code>)
+        <code>409</code> (<code>campaign_not_active</code> /
+        <code>members_without_characters</code> (body carries the blocking members) /
+        <code>prep_not_ready</code> / <code>session_already_active</code> /
+        <code>reconcile_pending</code> / <code>session_ending</code>)
       </td>
     </tr>
     <tr>
@@ -940,8 +1000,13 @@
       </td>
     </tr>
     <tr>
-      <td><code>session:{campaignId}:conn:{containerId}:{userId}</code></td>
-      <td>Per-connection presence; <code>SET … EX 60</code>, counted via <code>SCAN</code>.</td>
+      <td><code>session:{campaignId}:conn:{containerId}:{userId}:{connId}</code></td>
+      <td>
+        Per-connection presence (myth-wat0m: <code>connId</code> suffix, one key per socket);
+        <code>SET … EX 60</code>. <code>SCAN</code>ned two ways — distinct users (suspend gate) and
+        one user's connection count (join/leave gate). Old per-user-shaped keys still parse during a
+        rolling deploy and lapse under their own TTL.
+      </td>
     </tr>
     <tr>
       <td><code>session:{campaignId}:state</code></td>

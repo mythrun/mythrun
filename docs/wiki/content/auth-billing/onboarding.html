@@ -7,9 +7,10 @@
 <!-- source: backend/src/repo/campaigns.ts -->
 <!-- source: backend/src/llm/profanity.ts -->
 <!-- source: backend/migrations/005_drop_profile_columns_users.sql -->
+<!-- source: backend/migrations/036_campaign_invite_primary.sql -->
 <!-- source: backend/src/app.ts -->
-<!-- source-hash: sha256:2c55fbf3adebdfc1b31d744d430b0906925564c5a7ea2b417ac1cd1f14b4e3cd -->
-<!-- last-ticket: MYT-39 -->
+<!-- source-hash: sha256:5da5c5c6349eeac8a0c08b1c5d71903fdb41e41ad7d92524d7ca8528a27cc2a7 -->
+<!-- last-ticket: myth-y5c4q -->
 
 <h1>Onboarding &amp; Invites</h1>
 
@@ -56,9 +57,9 @@
     pulls on hydration.
   </li>
   <li>
-    <strong>Six invite routes</strong> on <code>/api/campaigns/:id/invites/*</code> and
-    <code>/api/invites/:code/*</code> — owner-only create/list/revoke, public preview, accept,
-    members list.
+    <strong>Seven invite routes</strong> on <code>/api/campaigns/:id/invites/*</code> and
+    <code>/api/invites/:code/*</code> — owner-only create / list / revoke / ensure-primary, public
+    preview, accept, members list.
   </li>
   <li>
     <strong><code>repo.invites</code></strong> — the namespace whose <code>acceptInvite</code> is
@@ -296,32 +297,67 @@
 <h2>The other invite routes (cap=25, owner-only)</h2>
 
 <p>
-  <strong><code>POST /api/campaigns/:id/invites</code></strong> creates an invite. Owner-only,
-  enforced by <code>repo.campaigns.getMembership(campaignId, userId)</code> + role-check (404 if the
-  campaign doesn't exist, 403 if the caller isn't its owner). The repo's <code>create</code> takes a
+  <strong><code>POST /api/campaigns/:id/invites</code></strong> always mints a fresh invite —
+  additional share links, the dev-tool. Owner-only, enforced by
+  <code>repo.campaigns.getMembership(campaignId, userId)</code> + role-check (404 if the campaign
+  doesn't exist, 403 if the caller isn't its owner). The repo's <code>create</code> takes a
   <code>FOR NO KEY UPDATE</code> lock on the campaigns row first (lock-order convention: campaigns →
   invites → members), counts active invites, refuses with <code>InviteCapReachedError</code> at 25,
   and otherwise generates a 12-char base62 code with rejection sampling (<code>randomBytes</code> +
-  a <code>b < 248</code> filter, no modulo bias). Up to 3 retries on a UNIQUE collision against the
+  a <code>b < 248</code> filter, no modulo bias). Under the campaign lock it also sets the new row's
+  <code>is_primary</code>: a campaign's <em>first</em> active invite is its primary, every
+  additional one is not. Up to 3 retries on a UNIQUE collision against the
   <code>invite_code</code> column; collisions on a 62^12 keyspace are vanishingly unlikely but the
   retry loop is cheap and removes one failure mode from the ops surface.
 </p>
 
 <p>
+  <strong><code>PUT /api/campaigns/:id/invites/primary</code></strong> (myth-y5c4q) is the
+  idempotent get-or-create of the campaign's <em>one</em> primary share link — the durable "share
+  this campaign" URL. Owner-only. The repo's <code>ensurePrimary</code> holds the campaign-row lock,
+  returns the existing <code>is_primary</code> invite if there is one, and otherwise mints a fresh
+  code with <code>is_primary = true</code>. Repeated calls return the <em>same</em> code. This is a
+  distinct sub-resource from <code>POST</code>: PUT upserts the single primary, POST always mints
+  another.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Primary is a real column with a DB-level uniqueness guard, not a derived "first row"
+    (myth-y5c4q)</strong
+  >
+  — "primary" used to be computed in the repo (the oldest active invite,
+  <code>listForCampaign</code>'s <code>i === 0</code>), and the client's
+  <code>ensurePrimaryInvite</code> was a list-then-create read-modify-write. Two concurrent calls —
+  React StrictMode's dev double-mount, or two owner tabs — both saw no primary and both POSTed,
+  minting two live invite codes on an access-control surface. Migration 036 makes primary
+  first-class: an <code>is_primary</code> boolean plus a partial unique index (<code
+    >… (campaign_id) WHERE is_primary</code
+  >) that lets a campaign hold at most one primary, so a second-primary mint fails with a 23505 at
+  the DB layer even outside the app's campaign-row lock. The client's race collapses to the single
+  idempotent PUT above; the list now reads the column, not a positional guess. The migration
+  backfills the invariant by designating each campaign's oldest active invite as its primary
+  (matching the old derived semantics), and <code>revoke</code> clears
+  <code>is_primary</code> alongside expiry — so an <code>is_primary = true</code> row is never
+  expired, the index predicate needs no <code>now()</code> clause, and revoking a primary frees the
+  slot for a fresh one.
+</aside>
+
+<p>
   <strong><code>GET /api/campaigns/:id/invites</code></strong> lists active invites for the campaign
-  — owner-only. The first row in the result is flagged <code>primary: true</code> so the SPA can
-  highlight a "default" invite without us needing a separate column on the table. The "primary"
-  notion is purely presentational and re-derived on every list call; nothing in the schema knows
-  about it.
+  — owner-only. Each row carries <code>primary</code> straight from the
+  <code>is_primary</code> column (migration 036) so the SPA can highlight the default share link; at
+  most one row is ever <code>primary: true</code>, enforced by the partial unique index above.
 </p>
 
 <p>
   <strong><code>DELETE /api/campaigns/:id/invites/:inviteCode</code></strong> revokes an invite by
-  setting <code>expires_at = now()</code>. Returns 204 on success, 404 if the
-  <code>(inviteCode, campaignId)</code> tuple doesn't match (the route is keyed on the invite-code,
-  but the path also carries the campaign-id; mismatch is its own 404 to keep the contract simple).
-  Already-accepted memberships are unaffected — revoke prevents future accepts, never retroactively
-  kicks members.
+  setting <code>expires_at = now()</code> and clearing <code>is_primary</code> in the same update.
+  Returns 204 on success, 404 if the <code>(inviteCode, campaignId)</code> tuple doesn't match (the
+  route is keyed on the invite-code, but the path also carries the campaign-id; mismatch is its own
+  404 to keep the contract simple). Already-accepted memberships are unaffected — revoke prevents
+  future accepts, never retroactively kicks members. Revoking the primary frees the unique-index
+  slot, so the next <code>PUT …/primary</code> mints a fresh one.
 </p>
 
 <p>
@@ -572,8 +608,14 @@
   seam this surface touches — <code>users.create</code>,
   <code>users.getByCognitoSubWithTimeout</code>, <code>users.getByUsername</code>,
   <code>invites.acceptInvite</code>, <code>campaigns.addMember</code> / <code>getMembership</code> /
-  <code>listMembers</code>. The <a href="../data/schema.html">schema</a>'s migration 005 establishes
-  the minimal-claims user shape and the case-insensitive username index this layer relies on. The
+  <code>listMembers</code>. The same <code>campaigns</code> namespace also exposes
+  <code>listConfirmedMembersWithoutCharacter</code> — the predicate the
+  <a href="../runtime/session-transport.html#members-without-characters">session-start guard</a>
+  uses to refuse a start while any confirmed member still lacks a character; the acceptance flow
+  here is what makes a member "confirmed" (<code>invite_accepted</code>) in the first place. The
+  <a href="../data/schema.html">schema</a>'s migration 005 establishes the minimal-claims user shape
+  and the case-insensitive username index this layer relies on; migration 036 adds the
+  <code>is_primary</code> invite column and its partial unique index. The
   <a href="../runtime/index.html">backend runtime</a> page describes the
   <code>buildApp</code> wiring that registers <code>requireOnboarded</code>, the rate-limit plugin,
   and these route groups in order. The <a href="../runtime/llm.html">LLM client</a> page describes
@@ -634,7 +676,19 @@
       <td>default + owner</td>
       <td>30/min</td>
       <td>
-        201 <code>{ inviteCode, inviteUrl, uses, expiresAt, createdAt }</code> · 409
+        201 <code>{ inviteCode, inviteUrl, uses, expiresAt, createdAt, primary }</code> · 409
+        <code>invite_cap_reached</code> · 403 <code>not_campaign_owner</code> · 404
+        <code>campaign_not_found</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>PUT</code></td>
+      <td><code>/api/campaigns/:id/invites/primary</code></td>
+      <td>default + owner</td>
+      <td>30/min</td>
+      <td>
+        idempotent get-or-create of the one primary link · 200
+        <code>{ inviteCode, inviteUrl, uses, expiresAt, createdAt, primary }</code> · 409
         <code>invite_cap_reached</code> · 403 <code>not_campaign_owner</code> · 404
         <code>campaign_not_found</code>
       </td>

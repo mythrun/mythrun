@@ -524,7 +524,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   </tbody>
 </table>
 
-<h3 id="the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</h3>
+<h3 id="sheet-prompt-schema-co-evolution">The sheet co-evolved with the live ledger (MYT-70)</h3>
 
 <p>
   The character sheet is also the seed for the live
@@ -620,6 +620,31 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   three-attempt regenerate budget and terminal-fail. The prompt states the onset explicitly per
   progression archetype (<code>full</code>/<code>half</code>/<code>third</code>/<code>pact</code>).
 </p>
+
+<p>
+  Two 5e-fidelity rules on the skills table were tightened (myth-wj43). Skill <em>names</em> are now
+  a native enum of the canonical 18 (<code>Acrobatics</code> … <code>Survival</code>), spelled
+  exactly — the schema is <code>z.enum(CANONICAL_SKILLS)</code>, not free text — so a mis-spelling
+  (<code>Sleight Of Hand</code>), a saving throw, or a tool proficiency (<code>Thieves' Tools</code
+  >) can never be written to <code>character_skills</code>. <strong>Expertise</strong> (double
+  proficiency bonus) is now the 2014 RAW rule, and like caster onset it is class-and-level gated: a
+  rogue takes exactly two expertise skills at level&nbsp;1 (the second pair arrives at level&nbsp;6,
+  above the level-5 cap), a bard takes two at level&nbsp;3 or higher and none below it, and every
+  other class takes none. The prompt names the same 18 skills and the same expertise rule the schema
+  enforces — a <a href="#sheet-prompt-schema-co-evolution">prompt+schema co-evolution</a> so the
+  model's structured output is already shaped to what will validate.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The enum is a write-side constraint that mirrors the read-side lookup</strong> — a skill's
+  proficiency only counts at play time if its <code>name</code> matches the live proficiency table
+  (<code>session/skill-check.ts</code>'s <code>SKILL_ABILITIES</code>, matched on
+  <code>lower(trim(name))</code>). Free text silently missed that join — a sheet with "Sleight Of
+  Hand" persisted clean and then granted no bonus at the table, an invisible failure. The native
+  enum constrains the provider's structured output to the canonical spellings up front, and any
+  drift terminal-fails the stage loudly rather than persisting an unmatchable name; the 18 names are
+  kept in lockstep with the read-side twin, pinned by the schema tests.
+</aside>
 
 <p>
   <code>validateCoherence</code> is the deterministic backstop that runs after every sheet
@@ -1078,7 +1103,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#surviving-a-stuck-job-the-resilience-layer">Surviving a stuck job — the resilience layer</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:12px"><a href="#recovering-a-stuck-character">Recovering a stuck character</a></li><li style="padding-left:12px"><a href="#reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#sheet-prompt-schema-co-evolution">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#surviving-a-stuck-job-the-resilience-layer">Surviving a stuck job — the resilience layer</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:12px"><a href="#recovering-a-stuck-character">Recovering a stuck character</a></li><li style="padding-left:12px"><a href="#reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

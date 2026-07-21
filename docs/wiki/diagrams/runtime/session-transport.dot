@@ -7,9 +7,14 @@ digraph session_transport {
   // a server-assigned Redis-INCR seq, an append to session_messages, then a
   // fan-out through the SessionHub. The hub PSUBSCRIBEs one Redis channel per
   // campaign so a message published on any API container reaches every
-  // container's locally-connected sockets. Presence is a TTL key per
-  // connection; the last disconnect schedules a delayed BullMQ suspend job
-  // that re-reads presence on fire (idempotent, crash-safe). The join path
+  // container's locally-connected sockets. Every socket carries its own
+  // per-connection id (connId) end to end, so a user's multiple tabs coexist:
+  // the registry holds a user's connection SET and the presence key is keyed
+  // per connection. player_joined fires only on a user's FIRST connection and
+  // player_left only when their LAST one drops; the suspend gate counts
+  // DISTINCT users. Presence is a TTL key per connection; the last disconnect
+  // schedules a delayed BullMQ suspend job that re-reads presence on fire
+  // (idempotent, crash-safe). The join path
   // also raises the campaign :seq counter to the session's durable MAX(seq)
   // (raise-only reseedSeq — the myth-rf5rn floor-guard) before any message is
   // accepted, so a counter that expired over a long idle can't silently
@@ -26,11 +31,11 @@ digraph session_transport {
     style="dashed";
 
     auth   [label="wsSessionAuth (preHandler)\nconsumeWsTicket → payload | null\nticket.sessionId == :sessionId\nsessions.getById → active?\nre-check campaign_members\n(campaignId = SESSION ROW)"];
-    conn   [label="handleConnection\nparticipants.join\naddPresence + hub.register\ncancelSuspend · reseedSeq → durable MAX\n(raise-only seq floor-guard)\nsession_ready | session_reconnect"];
+    conn   [label="handleConnection\nparticipants.join (no character → close 4404)\nnew connId · addPresence + hub.register\nplayer_joined on user's FIRST connection\ncancelSuspend · reseedSeq → durable MAX\n(raise-only seq floor-guard)\nsession_ready | session_reconnect"];
     inbound [label="handleInbound\nparse + classify frame\nplayer_message: persist→broadcast\ntyping_* / dm_invoke\n→ DM trigger (see dm-trigger)"];
     heart  [label="heartbeat\nping 30s · terminate at +10s\nrefresh presence TTL"];
-    disc   [label="handleDisconnect\ndropPresence · deregister\nplayer_left · scheduleSuspend\nif countPresence == 0"];
-    hub    [label="SessionHub\nMap<campaignId, Map<userId, ws>>\nPSUBSCRIBE session:campaign:*\nresync-close on reconnect", color="ember", fontcolor="ember"];
+    disc   [label="handleDisconnect (per connId)\ndropPresence · deregister this socket\nplayer_left on user's LAST connection\nscheduleSuspend if 0 distinct users"];
+    hub    [label="SessionHub\nMap<campaignId, Map<connId, {userId, ws}>>\nfan-out to ALL of a user's sockets\nPSUBSCRIBE session:campaign:*\nresync-close on reconnect", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_redis {
@@ -41,7 +46,7 @@ digraph session_transport {
 
     ticket  [label="ws:ticket:<nonce>\nGETDEL (single-use)"];
     seq     [label="session:{cId}:seq\nINCR (monotonic)"];
-    pres    [label="session:{cId}:conn:{cont}:{user}\nSET EX 60 (TTL presence)\nSCAN to count"];
+    pres    [label="session:{cId}:conn:{cont}:{user}:{connId}\nSET EX 60 (TTL presence, per connection)\nSCAN → distinct users"];
     state   [label="session:{cId}:state\n{participants, mode, status}"];
     channel [label="session:campaign:{cId}\nPUBLISH frame JSON", color="ember", fontcolor="ember"];
   }
@@ -61,11 +66,11 @@ digraph session_transport {
     color="ember";
     fontcolor="ember";
 
-    start [label="POST /:campaignId/start\nINSERT → debit owner → init Redis\n402 + rollback on no credits"];
+    start [label="POST /:campaignId/start\n409 if any confirmed member has no character\nINSERT → debit owner → init Redis\n402 + rollback on no credits"];
     rest  [label="GET /:campaignId/active\nGET /:sessionId/messages\n(REST backfill)"];
   }
 
-  suspend [label="session-suspend job (BullMQ)\ndelay 5min · jobId suspend-{sid}\nre-read presence → checkpoint\nstatus stays 'active'", color="ember", fontcolor="ember"];
+  suspend [label="session-suspend job (BullMQ)\ndelay 5min · jobId suspend-{sid}\nre-read distinct users → checkpoint\nstatus stays 'active'", color="ember", fontcolor="ember"];
 
   // Mint + upgrade
   client -> start    [label="start session", style=dashed];
@@ -101,7 +106,7 @@ digraph session_transport {
   disc  -> suspend [label="schedule if empty"];
 
   // Suspend processor
-  suspend -> pres     [label="countPresence\n(>0 → bail)", style=dashed];
+  suspend -> pres     [label="distinct users\n(>0 → bail)", style=dashed];
   suspend -> messages [label="MAX(seq)", style=dashed];
   suspend -> sessions [label="checkpoint envelope", style=dashed];
 

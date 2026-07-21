@@ -1473,6 +1473,13 @@
         <code>delete_relationship_by_name</code> and <code>delete_fact_by_name</code> remove a row.
         Rename patches apply LAST so other patches in the same batch resolve against the pre-rename
         context. <strong>No new entities, ever</strong> — coherence still can't create entity rows.
+        myth-6qgqy adds a <strong>tier-name-leak</strong> audit to the prompt's checklist: a
+        <code>known</code>-tier prose kernel or fact <code>content</code> that NAMES a
+        <code>discoverable</code> / <code>secret</code> entity (or a <code>discoverable</code> one
+        naming a <code>secret</code>) is a leak into the player-facing intro + wiki, repaired
+        <em>obliquely</em> via <code>fix_fact_by_name</code> / <code>fix_prose_by_name</code> (drop
+        the name, keep the texture) — never by deleting the fact, and never by promoting the named
+        entity to a more visible tier, which would defeat the discovery the world is built around.
       </td>
       <td>
         post-COMMIT: <code>entity-updated</code> per <code>fix_prose_by_name</code> /
@@ -1808,6 +1815,29 @@
   it demands grounded copy that names the actors, mechanics, and stakes ("dominated by the thieves
   guild, where secrets are as much a currency as gold") over mood-setting that could be pasted onto
   any world — flowery is fine, but every sentence has to carry information.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >The read-filter isn't enough — a <code>known</code> fact can still NAME a hidden thing
+    (myth-6qgqy)</strong
+  >
+  — feeding the generator only the <code>known</code>-tier slice keeps a <em>discoverable</em> or
+  <em>secret</em> fact out of its context, but it does not stop a <code>known</code> fact from
+  <em>naming</em> a lower-tier entity in its own prose ("she sends her hardest debts to Vann Ledger,
+  who works out of The Drowned Reach"). That known fact was written two stages earlier, the
+  world-introduction reproduces it verbatim, and the player-facing intro + wiki hand over a name the
+  player was meant to discover in play. The proper NAME is itself the leak, even when the sentence
+  gives away nothing secret. So the discipline is enforced at the point the facts are
+  <em>generated</em>: the <code>world_and_factions</code> and
+  <code>locations_and_npcs</code> prompts carry a name-referential rule — a one-way ladder where
+  text may only name UP the visibility scale (a <code>known</code> fact names only
+  <code>known</code> entities; a <code>discoverable</code> fact may name <code>known</code> or
+  <code>discoverable</code>; a <code>secret</code> fact anything). When <code>known</code> text
+  needs to gesture at something hidden it does so obliquely — "a collector she'll only describe as
+  'a man who works the drowned quarter'" — the texture survives, the name doesn't. The
+  <code>coherence_pass</code> then audits the same invariant as defense-in-depth (below), so a name
+  that slips the generator gets caught before the world completes.
 </aside>
 
 <h3 id="stage-4b-phantom-reference-reconciliation">Stage 4b: phantom-reference reconciliation</h3>

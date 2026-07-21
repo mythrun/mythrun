@@ -41,194 +41,195 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1612pt" height="461pt"
- viewBox="14.00 14.00 1598.00 446.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<svg width="1672pt" height="461pt"
+ viewBox="14.00 14.00 1657.00 446.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 442.4)">
 <title>frontend_realtime_transport</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-428 1579.66,-428 1579.66,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-428 1639.07,-428 1639.07,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_cc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-189 8,-416 862.88,-416 862.88,-189 8,-189"/>
-<text xml:space="preserve" text-anchor="middle" x="435.44" y="-402.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;(the brain · DOM&#45;free · R1)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-189 8,-416 922.29,-416 922.29,-189 8,-189"/>
+<text xml:space="preserve" text-anchor="middle" x="465.15" y="-402.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/client&#45;core &#160;(the brain · DOM&#45;free · R1)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_web</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="502.89,-8 502.89,-189 868.75,-189 868.75,-8 502.89,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="685.82" y="-175.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(platform/web · web&#45;globals carve&#45;out)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="562.3,-8 562.3,-189 928.15,-189 928.15,-8 562.3,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="745.23" y="-175.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">@mythrun/web &#160;(platform/web · web&#45;globals carve&#45;out)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_edge</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="972.9,-50 972.9,-189 1292.55,-189 1292.55,-50 972.9,-50"/>
-<text xml:space="preserve" text-anchor="middle" x="1132.72" y="-175.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CloudFront &#160;staging.mythrun.com &#160;(same origin)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1032.31,-50 1032.31,-189 1351.96,-189 1351.96,-50 1032.31,-50"/>
+<text xml:space="preserve" text-anchor="middle" x="1192.13" y="-175.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CloudFront &#160;staging.mythrun.com &#160;(same origin)</text>
 </g>
 <!-- conn -->
 <g id="node1" class="node">
 <title>conn</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="862.88,-333.04 507.75,-333.04 507.75,-262.96 862.88,-262.96 862.88,-333.04"/>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-314.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connection primitive</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-301.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;instance state · single&#45;flight generation ·</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-288.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backoff 1→2→4→8→30s · ceiling≈10</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-274.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ reconnecting{n} → failed{exhausted}</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="922.29,-333.04 567.16,-333.04 567.16,-262.96 922.29,-262.96 922.29,-333.04"/>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-314.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connection primitive</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-301.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;instance state · single&#45;flight generation ·</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-288.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backoff 1→2→4→8→30s · ceiling≈10</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-274.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ reconnecting{n} → failed{exhausted}</text>
 </g>
 <!-- ws -->
 <g id="node2" class="node">
 <title>ws</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="303.72,-259.04 8,-259.04 8,-188.96 303.72,-188.96 303.72,-259.04"/>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-240.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WS session client</text>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-227.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mint ticket → wss upgrade ·</text>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-214.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">seq dedup + whole&#45;turn replay ·</text>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-200.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">close&#45;routing · send() / __simulateDrop</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="363.13,-272.64 8,-272.64 8,-189.36 363.13,-189.36 363.13,-272.64"/>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-254.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WS session client</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-240.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mint ticket → wss upgrade ·</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-227.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">seq dedup + whole&#45;turn replay ·</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-214.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">close&#45;routing (4404 no_character → terminal) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-201.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">send() / __simulateDrop</text>
 </g>
 <!-- ws&#45;&gt;conn -->
 <g id="edge1" class="edge">
 <title>ws&#45;&gt;conn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M304.18,-252.21C310.1,-253.19 315.97,-254.12 321.72,-255 379.09,-263.78 441.8,-271.79 498.69,-278.44"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="498.36,-280.87 505.6,-279.24 498.93,-276 498.36,-280.87"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M363.86,-258.73C369.69,-259.51 375.45,-260.27 381.13,-261 438.44,-268.34 501,-275.15 557.77,-280.87"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="557.45,-283.3 564.66,-281.57 557.94,-278.43 557.45,-283.3"/>
 </g>
 <!-- ticket -->
 <g id="node4" class="node">
 <title>ticket</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="810.07,-245.44 560.56,-245.44 560.56,-188.56 810.07,-188.56 810.07,-245.44"/>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-226.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mintWsTicket</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-213.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">defineEndpoint POST .../ws&#45;ticket</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-200.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(inherits the 401 refresh&#45;retry)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="869.48,-245.44 619.97,-245.44 619.97,-188.56 869.48,-188.56 869.48,-245.44"/>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-226.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mintWsTicket</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-213.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">defineEndpoint POST .../ws&#45;ticket</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-200.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(inherits the 401 refresh&#45;retry)</text>
 </g>
 <!-- ws&#45;&gt;ticket -->
 <g id="edge3" class="edge">
 <title>ws&#45;&gt;ticket</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M304.14,-222.05C381.76,-221.02 476.23,-219.76 551.58,-218.76"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="551.42,-221.21 558.39,-218.67 551.36,-216.31 551.42,-221.21"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M363.62,-226.55C443.85,-224.54 537.1,-222.19 611.16,-220.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="610.88,-222.79 617.82,-220.16 610.76,-217.89 610.88,-222.79"/>
 </g>
 <!-- wsglobal -->
 <g id="node7" class="node">
 <title>wsglobal</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="773.77,-44 596.86,-44 596.86,-8 773.77,-8 773.77,-44"/>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-22.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WebSocket (web global)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="833.18,-44 656.27,-44 656.27,-8 833.18,-8 833.18,-44"/>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-22.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">WebSocket (web global)</text>
 </g>
 <!-- ws&#45;&gt;wsglobal -->
 <g id="edge6" class="edge">
 <title>ws&#45;&gt;wsglobal</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M193.43,-188.48C224.98,-159.75 273.02,-120.36 321.72,-97 406.09,-56.52 512.05,-39.12 587.59,-31.64"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="587.64,-34.1 594.38,-30.99 587.18,-29.22 587.64,-34.1"/>
-<text xml:space="preserve" text-anchor="middle" x="405.74" y="-100" font-family="Courier,monospace" font-size="10.00">new WebSocket(wss…?ticket)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M239.99,-188.74C277.62,-160.74 330.17,-125.05 381.13,-102 466.48,-63.39 572.07,-44.12 647.25,-34.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="647.35,-37.13 654,-33.84 646.75,-32.26 647.35,-37.13"/>
+<text xml:space="preserve" text-anchor="middle" x="465.15" y="-105" font-family="Courier,monospace" font-size="10.00">new WebSocket(wss…?ticket)</text>
 </g>
 <!-- sse -->
 <g id="node3" class="node">
 <title>sse</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="287.22,-347.04 24.5,-347.04 24.5,-276.96 287.22,-276.96 287.22,-347.04"/>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-328.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE status client</text>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-315.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch&#45;stream framing · snapshot +</text>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-302.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PipelineEvent · non&#45;200 routing ·</text>
-<text xml:space="preserve" text-anchor="middle" x="155.86" y="-288.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">never auto&#45;closes on a data frame</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="316.93,-361.04 54.21,-361.04 54.21,-290.96 316.93,-290.96 316.93,-361.04"/>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-342.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SSE status client</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-329.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch&#45;stream framing · snapshot +</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-316.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PipelineEvent · non&#45;200 routing ·</text>
+<text xml:space="preserve" text-anchor="middle" x="185.57" y="-302.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">never auto&#45;closes on a data frame</text>
 </g>
 <!-- sse&#45;&gt;conn -->
 <g id="edge2" class="edge">
 <title>sse&#45;&gt;conn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M287.92,-308.52C351.54,-306.83 429.09,-304.77 498.67,-302.93"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="498.37,-305.39 505.3,-302.75 498.24,-300.49 498.37,-305.39"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M317.55,-319.42C389.24,-315.81 479.28,-311.29 558.1,-307.33"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="557.99,-309.79 564.86,-306.99 557.74,-304.89 557.99,-309.79"/>
 </g>
 <!-- seam -->
 <g id="node5" class="node">
 <title>seam</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="816.68,-394.84 553.96,-394.84 553.96,-351.16 816.68,-351.16 816.68,-394.84"/>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-376.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">StreamingFetch seam</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-363.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">injected · configureStreamingFetch</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="876.09,-394.84 613.37,-394.84 613.37,-351.16 876.09,-351.16 876.09,-394.84"/>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-376.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">StreamingFetch seam</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-363.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">injected · configureStreamingFetch</text>
 </g>
 <!-- sse&#45;&gt;seam -->
 <g id="edge4" class="edge">
 <title>sse&#45;&gt;seam</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M287.92,-327.16C366.08,-336.2 465.26,-347.67 544.85,-356.87"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="544.44,-359.29 551.67,-357.66 545,-354.42 544.44,-359.29"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M317.55,-337.05C403.63,-344.31 516.14,-353.8 603.94,-361.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="603.64,-363.64 610.82,-361.79 604.05,-358.76 603.64,-363.64"/>
 </g>
 <!-- apibeh -->
 <g id="node10" class="node">
 <title>apibeh</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1230.57,-167.84 1033.87,-167.84 1033.87,-124.16 1230.57,-124.16 1230.57,-167.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-149.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/api/* behavior</text>
-<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ticket mint · SSE status</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1289.98,-167.84 1093.28,-167.84 1093.28,-124.16 1289.98,-124.16 1289.98,-167.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1191.63" y="-149.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/api/* behavior</text>
+<text xml:space="preserve" text-anchor="middle" x="1191.63" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ticket mint · SSE status</text>
 </g>
 <!-- ticket&#45;&gt;apibeh -->
 <g id="edge8" class="edge">
 <title>ticket&#45;&gt;apibeh</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M810.54,-197.18C877.96,-186.42 960.44,-173.25 1024.86,-162.97"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1025.11,-165.41 1031.64,-161.89 1024.34,-160.58 1025.11,-165.41"/>
-<text xml:space="preserve" text-anchor="middle" x="922.89" y="-188.75" font-family="Courier,monospace" font-size="10.00">POST ws&#45;ticket</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M869.95,-197.18C937.37,-186.42 1019.85,-173.25 1084.27,-162.97"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1084.52,-165.41 1091.05,-161.89 1083.75,-160.58 1084.52,-165.41"/>
+<text xml:space="preserve" text-anchor="middle" x="982.3" y="-188.75" font-family="Courier,monospace" font-size="10.00">POST ws&#45;ticket</text>
 </g>
 <!-- webimpl -->
 <g id="node6" class="node">
 <title>webimpl</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="819.98,-167.84 550.66,-167.84 550.66,-124.16 819.98,-124.16 819.98,-167.84"/>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-149.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createWebStreamingFetch</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch + ReadableStream + TextDecoder</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="879.39,-167.84 610.07,-167.84 610.07,-124.16 879.39,-124.16 879.39,-167.84"/>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-149.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createWebStreamingFetch</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-136.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fetch + ReadableStream + TextDecoder</text>
 </g>
 <!-- seam&#45;&gt;webimpl -->
 <g id="edge5" class="edge">
 <title>seam&#45;&gt;webimpl</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M553.64,-356.5C466.93,-339.28 375.77,-305.13 413.16,-239 439.23,-192.88 490.43,-169.02 541.46,-156.88"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="541.92,-159.29 548.21,-155.36 540.84,-154.51 541.92,-159.29"/>
-<text xml:space="preserve" text-anchor="middle" x="405.74" y="-242" font-family="Courier,monospace" font-size="10.00">injected impl</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M612.79,-358.86C527.05,-343.3 437.26,-311.09 472.57,-245 497.93,-197.54 549.65,-172.46 601.26,-159.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="601.55,-161.79 607.77,-157.76 600.39,-157.03 601.55,-161.79"/>
+<text xml:space="preserve" text-anchor="middle" x="465.15" y="-248" font-family="Courier,monospace" font-size="10.00">injected impl</text>
 </g>
 <!-- webimpl&#45;&gt;apibeh -->
 <g id="edge9" class="edge">
 <title>webimpl&#45;&gt;apibeh</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M820.71,-146C886.06,-146 963.51,-146 1024.71,-146"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1024.42,-148.45 1031.42,-146 1024.42,-143.55 1024.42,-148.45"/>
-<text xml:space="preserve" text-anchor="middle" x="922.89" y="-149" font-family="Courier,monospace" font-size="10.00">GET (SSE read)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M880.12,-146C945.47,-146 1022.92,-146 1084.12,-146"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1083.83,-148.45 1090.83,-146 1083.83,-143.55 1083.83,-148.45"/>
+<text xml:space="preserve" text-anchor="middle" x="982.3" y="-149" font-family="Courier,monospace" font-size="10.00">GET (SSE read)</text>
 </g>
 <!-- wsbeh -->
 <g id="node9" class="node">
 <title>wsbeh</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1280.08,-106.44 984.36,-106.44 984.36,-49.56 1280.08,-49.56 1280.08,-106.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-87.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/ws/* behavior</text>
-<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-74.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">upgrade proxy · GET/HEAD · no cache ·</text>
-<text xml:space="preserve" text-anchor="middle" x="1132.22" y="-61.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">60s origin_read_timeout · gate&#45;exempt</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1339.49,-106.44 1043.77,-106.44 1043.77,-49.56 1339.49,-49.56 1339.49,-106.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1191.63" y="-87.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/ws/* behavior</text>
+<text xml:space="preserve" text-anchor="middle" x="1191.63" y="-74.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">upgrade proxy · GET/HEAD · no cache ·</text>
+<text xml:space="preserve" text-anchor="middle" x="1191.63" y="-61.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">60s origin_read_timeout · gate&#45;exempt</text>
 </g>
 <!-- wsglobal&#45;&gt;wsbeh -->
 <g id="edge7" class="edge">
 <title>wsglobal&#45;&gt;wsbeh</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M774.48,-36.3C831.69,-42.99 907.84,-51.89 975.09,-59.75"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="974.63,-62.16 981.86,-60.54 975.2,-57.3 974.63,-62.16"/>
-<text xml:space="preserve" text-anchor="middle" x="922.89" y="-61.19" font-family="Courier,monospace" font-size="10.00">101 upgrade</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M833.89,-36.3C891.1,-42.99 967.25,-51.89 1034.5,-59.75"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1034.04,-62.16 1041.27,-60.54 1034.61,-57.3 1034.04,-62.16"/>
+<text xml:space="preserve" text-anchor="middle" x="982.3" y="-61.19" font-family="Courier,monospace" font-size="10.00">101 upgrade</text>
 </g>
 <!-- harness -->
 <g id="node8" class="node">
 <title>harness</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="806.77,-105.84 563.86,-105.84 563.86,-62.16 806.77,-62.16 806.77,-105.84"/>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-87.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/dev/transport</text>
-<text xml:space="preserve" text-anchor="middle" x="685.32" y="-74.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DEV&#45;only manual rig (lazy chunk)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="866.18,-105.84 623.27,-105.84 623.27,-62.16 866.18,-62.16 866.18,-105.84"/>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-87.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/dev/transport</text>
+<text xml:space="preserve" text-anchor="middle" x="744.73" y="-74.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DEV&#45;only manual rig (lazy chunk)</text>
 </g>
 <!-- harness&#45;&gt;ws -->
 <g id="edge12" class="edge">
 <title>harness&#45;&gt;ws</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M563.36,-100.15C492.02,-111.44 400.57,-129.02 321.72,-154 294.72,-162.55 266.07,-173.88 240.35,-184.93"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="239.59,-182.59 234.14,-187.62 241.54,-187.08 239.59,-182.59"/>
-<text xml:space="preserve" text-anchor="middle" x="405.74" y="-157" font-family="Courier,monospace" font-size="10.00">drives by hand</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M622.57,-103.87C602.41,-107.41 581.74,-111.19 562.3,-115 481.38,-130.84 460.03,-131.04 381.13,-155 352.63,-163.66 322.39,-174.58 294.45,-185.43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="293.57,-183.14 287.95,-187.98 295.36,-187.71 293.57,-183.14"/>
+<text xml:space="preserve" text-anchor="middle" x="465.15" y="-158" font-family="Courier,monospace" font-size="10.00">drives by hand</text>
 </g>
 <!-- harness&#45;&gt;sse -->
 <g id="edge13" class="edge">
 <title>harness&#45;&gt;sse</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M563.17,-85.1C540.97,-90.41 519.58,-99.64 502.89,-115 485.67,-130.85 505.12,-148.35 489.75,-166 436.72,-226.87 381.85,-181.13 321.72,-235 309.28,-246.15 316.7,-257.48 303.72,-268 300.93,-270.26 298.03,-272.41 295.03,-274.45"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="293.99,-272.2 289.4,-278.03 296.62,-276.34 293.99,-272.2"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M622.52,-85.04C600.33,-90.35 578.96,-99.6 562.3,-115 544.8,-131.18 564.55,-148.79 549.16,-167 496.48,-229.32 438.8,-183.27 381.13,-241 367.07,-255.08 378.35,-269.17 363.13,-282 352.03,-291.36 339.22,-298.78 325.67,-304.66"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="324.86,-302.34 319.3,-307.25 326.71,-306.88 324.86,-302.34"/>
 </g>
 <!-- api -->
 <g id="node11" class="node">
 <title>api</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1575.66,-139.44 1319.55,-139.44 1319.55,-82.56 1575.66,-82.56 1575.66,-139.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1447.6" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API origin</text>
-<text xml:space="preserve" text-anchor="middle" x="1447.6" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging&#45;api.mythrun.com</text>
-<text xml:space="preserve" text-anchor="middle" x="1447.6" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(ws&#45;ticket handshake + SessionHub)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1635.07,-139.44 1378.96,-139.44 1378.96,-82.56 1635.07,-82.56 1635.07,-139.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1507.01" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">API origin</text>
+<text xml:space="preserve" text-anchor="middle" x="1507.01" y="-107.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging&#45;api.mythrun.com</text>
+<text xml:space="preserve" text-anchor="middle" x="1507.01" y="-94.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(ws&#45;ticket handshake + SessionHub)</text>
 </g>
 <!-- wsbeh&#45;&gt;api -->
 <g id="edge10" class="edge">
 <title>wsbeh&#45;&gt;api</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1280.74,-93.53C1290.68,-94.58 1300.68,-95.63 1310.56,-96.67"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1310.19,-99.1 1317.41,-97.4 1310.7,-94.23 1310.19,-99.1"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1340.15,-93.53C1350.09,-94.58 1360.09,-95.63 1369.97,-96.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1369.6,-99.1 1376.82,-97.4 1370.11,-94.23 1369.6,-99.1"/>
 </g>
 <!-- apibeh&#45;&gt;api -->
 <g id="edge11" class="edge">
 <title>apibeh&#45;&gt;api</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1231.09,-135.07C1256.21,-132.26 1283.68,-129.2 1310.36,-126.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1310.5,-128.67 1317.18,-125.45 1309.95,-123.8 1310.5,-128.67"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1290.5,-135.07C1315.62,-132.26 1343.09,-129.2 1369.77,-126.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1369.9,-128.67 1376.59,-125.45 1369.36,-123.8 1369.9,-128.67"/>
 </g>
 </g>
 </svg>
@@ -257,7 +258,7 @@
   module-level singleton, so a live play session and a world-gen status stream hold independent
   connection state. It owns three things the WS and SSE clients both lean on: the
   <code>ConnectionState</code> store (<code>connecting → connected → reconnecting{n} → closed</code
-  >, or <code>failed{denied|exhausted}</code>), the backoff schedule (1s → 2s → 4s → 8s → 30s
+  >, or <code>failed{denied|exhausted|no_character}</code>), the backoff schedule (1s → 2s → 4s → 8s → 30s
   capped, ±10% jitter), and a monotonic <strong>generation token</strong> for single-flight
   connects.
 </p>
@@ -333,16 +334,30 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Close-routing is on readable signals only — every socket close is transient</strong> — the
-  client treats <em>every</em> WebSocket close code (1006 abnormal, 1011 any reason) as a transient
-  drop that earns a backoff reconnect, because the readable terminal signals live elsewhere: a
-  <code>session_end</code> <em>data</em> frame self-closes the client to <code>closed</code>, and a
-  ticket-POST <code>403</code>/<code>404</code> (no session / not a member) routes straight to
-  <code>failed{denied}</code>. A 401/429/503 or a network error on the ticket POST is transient, not
-  terminal — a 401 has already exhausted <code>defineEndpoint</code>'s own refresh-retry, and the
-  lossy refresh boolean must not be allowed to strand a recoverable hiccup as a permanent failure.
-  So the only two ways to leave the reconnect loop for good are an explicit denial or a data-frame
-  end — a dropped tunnel always retries.
+  <strong>Close-routing is on readable signals only — one typed close is terminal, every other is
+  transient</strong> — the client treats <em>every</em> WebSocket close code (1006 abnormal, 1011
+  any reason) as a transient drop that earns a backoff reconnect, with a single typed exception. The
+  readable terminal signals live elsewhere: a <code>session_end</code> <em>data</em> frame self-closes
+  the client to <code>closed</code>, and a ticket-POST <code>403</code>/<code>404</code> (no session /
+  not a member) routes straight to <code>failed{denied}</code>. A 401/429/503 or a network error on
+  the ticket POST is transient, not terminal — a 401 has already exhausted
+  <code>defineEndpoint</code>'s own refresh-retry, and the lossy refresh boolean must not be allowed
+  to strand a recoverable hiccup as a permanent failure.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The one terminal close: 4404 <code>no_character</code> (myth-mnik3)</strong> — the
+  <a href="../runtime/session-transport.html#per-connection-identity">server</a> closes a socket
+  with code <code>4404</code> reason <code>no_character</code> when the connecting member has no
+  integrated character (a <code>NoCharacterForParticipantError</code> on the join). Reconnecting
+  would be rejected identically, so this is the one close the client does <em>not</em> retry: it
+  routes to <code>failed{no_character}</code>, and the <a href="./live-play.html">play surface</a>
+  renders an explicit "you don't have a character here yet" state with a CTA into creation rather
+  than the ambient reconnect line. The route keys on <strong>both</strong> the code and the reason —
+  a stray <code>4404</code> with any other reason still reconnects — so a bare close code can't
+  strand a recoverable socket. There is no shared runtime constant across the WS boundary (the same
+  pattern as the message-length cap): the client pins <code>4404</code>/<code>no_character</code> by
+  intent to the backend's close, and a backend change must mirror here.
 </aside>
 
 <p>
@@ -539,8 +554,8 @@
         <code>ConnectionFailureReason</code>
       </td>
       <td>
-        The connection-state types the UI renders (<code>denied</code> terminal,
-        <code>exhausted</code> re-armable).
+        The connection-state types the UI renders (<code>denied</code> and
+        <code>no_character</code> terminal, <code>exhausted</code> re-armable).
       </td>
     </tr>
     <tr>

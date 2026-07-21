@@ -7,7 +7,7 @@
 <!-- source: frontend/src/platform/web/use-foreground-refetch.ts -->
 <!-- source: frontend/ui/src/components/InvitePanel/ -->
 <!-- source: frontend/ui/src/components/JoinPreview/ -->
-<!-- source-hash: sha256:bf1da633c9886e8c5dd6d301e980e8c3693e1c464d27f437f919d00cab34020e -->
+<!-- source-hash: sha256:2ab15a310e00863c4ada71b4cdd6896ef3ade8358361a946536e81c4731fed5c -->
 <!-- last-ticket: MYT-91 -->
 
 <h1>Invites &amp; party</h1>
@@ -30,8 +30,10 @@
   <a href="../auth-billing/onboarding.html">onboarding &amp; invites</a> (create / list / revoke /
   accept, the public preview, the server-side party cap of six). The
   <code>client-core/api/invites.ts</code> slice wraps them as the only sanctioned reach to that
-  backend — five typed <code>defineEndpoint</code>s plus <code>ensurePrimaryInvite</code>, the
-  idempotent "one link per campaign" helper. The preview slice carries
+  backend — six typed <code>defineEndpoint</code>s. <code>ensurePrimaryInvite</code> is the sixth:
+  a single idempotent <code>PUT …/invites/primary</code> that returns the campaign's one primary
+  link, get-or-created atomically <em>server-side</em> (myth-y5c4q — it replaced a client-side
+  list-then-create helper). The preview slice carries
   <code>skipAuthRetry: true</code> because the join route calls it <em>pre-auth</em>: it answers 200
   or 404, never 401, so a signed-out lookup never spins the token-refresh path.
 </p>
@@ -42,8 +44,9 @@
   On the campaign page the owner sees a <code>CampaignInvitePanel</code> — mounted
   <strong>only</strong> for the owner (<code>creator === null</code>; invite create/list/revoke are
   owner-only backend routes, so a non-owner sees nothing where the seam was). It resolves the primary
-  share link on mount through <code>ensurePrimaryInvite</code> (the existing primary invite, or a
-  freshly minted one), then offers exactly three actions: copy, native share, and "replace link"
+  share link on mount through <code>ensurePrimaryInvite</code> — one atomic PUT that returns the
+  existing primary invite or mints one — then offers exactly three actions: copy, native share, and
+  "replace link"
   (revoke, then re-mint). All the network calls and web globals live in this route wrapper; the
   <a href="./design-system.html">mythrunUI</a> <code>InvitePanel</code> is a pure presentational
   component taking resolved props and neutral callbacks. Terse lifecycle only — a single link, never
@@ -68,6 +71,18 @@
   <code>true</code> in the mount effect (mirroring <code>useLiveRoster</code>) is what lets the link
   resolve. A caught <code>invite_cap_reached</code> maps to a calm advisory line; any other failure to
   the transient error notice with a re-mint affordance.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Resolving the link is one atomic PUT, so the double-mount can't double-mint
+  (myth-y5c4q)</strong> — the mounted-ref fix above stops a stale <em>display</em>; a separate
+  StrictMode hazard was the network call itself. <code>ensurePrimaryInvite</code> used to be a
+  client-side list-then-create: read the invites, find the primary, POST one if none. Under the dev
+  double-mount (or two owner tabs) both passes saw no primary and both POSTed, minting two live join
+  links on an access-control surface. It is now a single <code>PUT …/invites/primary</code> whose
+  get-or-create is atomic on the server (a campaign-row lock plus a partial unique index — see the
+  <a href="../auth-billing/onboarding.html">invite backend</a>), so repeated calls return the same
+  code and the race is closed where the guarantee actually lives, not by client timing.
 </aside>
 
 <h2>Receiving an invite — the public join route</h2>
@@ -213,8 +228,10 @@
   <tr>
     <td><code>api/invites.ts</code></td>
     <td>
-      The five invite slices (create / list / revoke / preview / accept) + <code>ensurePrimaryInvite</code>.
-      The preview is public (<code>skipAuthRetry</code>).
+      The six invite slices (create / list / revoke / preview / accept / ensure-primary).
+      <code>ensurePrimaryInvite</code> is now its own <code>PUT …/invites/primary</code> endpoint
+      (atomic server-side get-or-create), not a composed list-then-create. The preview is public
+      (<code>skipAuthRetry</code>).
     </td>
   </tr>
   <tr>
