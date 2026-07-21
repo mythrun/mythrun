@@ -132,11 +132,11 @@ function CatalogEditor({ entry }: { entry: Entry }): React.JSX.Element {
       )}
       <div className="wb-field">
         <span className="wb-field-label">
-          your catalog · {lineCount}/{targets.length} lines filled · one line per flavor
+          your catalog · {filled}/{targets.length} lines authored · one line per flavor
         </span>
         <textarea
           className="wb-textarea"
-          data-filled={lineCount > 0 ? 'true' : undefined}
+          data-filled={filled > 0 ? 'true' : undefined}
           rows={Math.max(targets.length, 6)}
           value={text}
           spellCheck
