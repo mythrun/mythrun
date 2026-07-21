@@ -68,7 +68,7 @@ export const InTranscript: Story = {
 export const Narrow: Story = {
   name: 'Narrow (~375px)',
   render: () => (
-    <div className="w-[375px] border border-border p-[var(--space-2)]">
+    <div className="max-w-[375px]">
       <DmCorrection
         text="Correction: the caravan-master mentioned earlier is Halden of Westreach, not Holden — and he travels north, not south."
         label={LABEL}

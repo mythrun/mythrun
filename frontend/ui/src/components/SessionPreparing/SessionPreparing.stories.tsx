@@ -50,7 +50,7 @@ export const ReducedMotion: Story = {
 export const Narrow: Story = {
   name: 'Narrow (~375px)',
   render: () => (
-    <div className="w-[375px] border border-border p-[var(--space-4)]">
+    <div className="max-w-[375px]">
       <SessionPreparing
         label="The DM is preparing the next session…"
         detail="Weaving the threads of what happened last time into what comes next."
