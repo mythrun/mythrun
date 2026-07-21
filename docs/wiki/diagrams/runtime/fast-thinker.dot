@@ -18,13 +18,22 @@ digraph fast_thinker {
   // (MYT-73 read-after-write) and a relay/invent records an injection back into
   // it. After its prose the FT appends a [[WORLD_DELTA]] fact-delta a dual-sink
   // guard strips from BOTH the player stream AND the transcript. The cap stops
-  // the loop after N steps.
+  // the loop after N steps. myth-d6knq adds issue_correction — the structured
+  // self-correction tool (dm_correction frame + row; its row re-enters the FT's
+  // own next-turn context) — and reshapes the context assembly: KNOWN-tier
+  // entity cards are appended for canon names spoken mid-session (myth-dwyuw,
+  // deterministic scan, no secret/discoverable path), and farewell-turn rows
+  // are filtered OUT of the FT context read (myth-n98pc, self-priming fix).
   rankdir=TB;
   compound=true;
   nodesep=0.4;
   ranksep=0.7;
 
-  ctx [label="FtTurnContext (public-by-construction)\nftContext · ftHistory · participants ·\nstandingDirective (behavior-bound)\n(no plot/secret field has anywhere to live)", color="ember", fontcolor="ember"];
+  cards [label="entity-card augment (deterministic)\ncanon names spoken in the recent transcript\n→ KNOWN-tier facts appended to ftContext\n(no secret/discoverable code path)", color="ember", fontcolor="ember"];
+
+  ctx [label="FtTurnContext (public-by-construction)\nftContext (+ entity cards) · ftHistory\n(farewell rows filtered · own dm_correction rows re-enter) ·\nparticipants · standingDirective (behavior-bound)\n(no plot/secret field has anywhere to live)", color="ember", fontcolor="ember"];
+
+  cards -> ctx [label="+ cards", color="ember"];
 
   subgraph cluster_ft {
     label="SonnetFastThinker.render(ctx, emit)";
@@ -44,6 +53,7 @@ digraph fast_thinker {
     dice  [label="roll_dice\nrollDice(count, sides)\n(crypto.randomInt — Principle #4)"];
     skill [label="roll_skill_check → skill-check.ts\nresolve roller (session_participants)\n→ modifier (per-skill level, expertise)\n→ Haiku DC table → d20 → tier"];
     lookup [label="search_lore / characters_known_to / faction_tree\n→ runWorldFactLookup (orchestrator)"];
+    corr [label="issue_correction\namend the DM's OWN earlier narration\n(correction as data — never inline prose)"];
   }
 
   subgraph cluster_flow {
@@ -57,7 +67,7 @@ digraph fast_thinker {
     vet [label="ST-vet (Opus) — the ONE tier-safety gate\nholds sd_playbook · redactRawText\nrelay | none | invent → player-safe text", color="ember", fontcolor="ember"];
   }
 
-  emit [label="TurnEmitter\nemitText / emitSkillCheck / emitDiceRoll\n(worker-latched → PUBLISH frames)", color="ember", fontcolor="ember"];
+  emit [label="TurnEmitter\nemitText / emitSkillCheck / emitDiceRoll /\nemitCorrection\n(worker-latched → PUBLISH frames)", color="ember", fontcolor="ember"];
   ws [label="working set (Scribe)\nsession:{cId}:workingset\nread-after-write", color="ember", fontcolor="ember"];
 
   ctx -> build;
@@ -67,8 +77,10 @@ digraph fast_thinker {
   consume -> skill [label="tool-call", style=dashed];
   consume -> dice  [label="tool-call", style=dashed];
   consume -> lookup [label="tool-call", style=dashed];
+  consume -> corr [label="tool-call", style=dashed];
   skill -> consume [label="constraint\n(fed back to model)"];
   dice  -> consume [label="result"];
+  corr  -> consume [label="{ text }\n(data only)"];
 
   lookup -> gate [label="pass?"];
   gate -> resolve [label="pass /\nauto_success"];
@@ -80,5 +92,5 @@ digraph fast_thinker {
 
   consume -> guard [label="text-delta"];
   guard -> emit [label="pre-delimiter prose only"];
-  consume -> emit [label="skill_check / dice_roll"];
+  consume -> emit [label="skill_check / dice_roll /\ndm_correction"];
 }

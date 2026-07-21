@@ -15,7 +15,8 @@
 <!-- source: backend/src/session/session-reconcile.ts -->
 <!-- source: backend/src/session/post-session-analysis.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
-<!-- source-hash: sha256:f0976eb54d342065fd3dfb635a16997a3e41e5206309c13f957eead62b1e6e7d -->
+<!-- source: backend/src/queue/job-containment.ts -->
+<!-- source-hash: sha256:b65aebe645ce1c006642ae0156452facf2bd9326a26ad862a1a4f395e9697b52 -->
 <!-- last-ticket: MYT-74b -->
 
 <h1>Worker</h1>
@@ -87,6 +88,9 @@
   <code>session/st-eval-queue.ts</code> / <code>session/st-config.ts</code>,
   <code>session/scribe-queue.ts</code> / <code>session/scribe-config.ts</code>,
   <code>session/session-reconcile.ts</code>, and <code>session/post-session-analysis.ts</code>.
+  Since myth-y2qfi the three inline prep processors register wrapped in
+  <code>containProcessor</code> — the containment boundary described in
+  <a href="#job-containment">Job containment</a> below.
 </p>
 
 <p>
@@ -233,15 +237,17 @@
 </aside>
 
 <p>
-  Boot is sequential and fail-fast.
-  <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis client configured for
-  BullMQ; immediately <code>ping()</code>'d (through <code>waitFor</code>) so a misconfigured URL
-  surfaces at startup rather than first-job time. Boot is where the client fails <em>loud</em>; at
-  runtime it does the opposite — both clients now share the bounded backoff-with-jitter reconnect
-  strategy, so a mid-run ElastiCache blip self-heals (the workers reconnect and BullMQ reclaims any
-  job stalled during the gap) instead of severing the process until a rollover. That config-vs-
-  transient split, and what an operator sees in the logs during a blip, live on
-  <a href="./redis-reconnect.html">Redis reconnection</a>.
+  Boot is sequential and fail-fast. Its very first act — before any connection, queue, or worker
+  exists — is installing the process escape guard covered in
+  <a href="#job-containment">Job containment</a> below, so nothing later in the sequence can escape
+  uncontained. Then <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis
+  client configured for BullMQ; immediately <code>ping()</code>'d (through <code>waitFor</code>) so
+  a misconfigured URL surfaces at startup rather than first-job time. Boot is where the client fails
+  <em>loud</em>; at runtime it does the opposite — both clients now share the bounded
+  backoff-with-jitter reconnect strategy, so a mid-run ElastiCache blip self-heals (the workers
+  reconnect and BullMQ reclaims any job stalled during the gap) instead of severing the process
+  until a rollover. That config-vs- transient split, and what an operator sees in the logs during a
+  blip, live on <a href="./redis-reconnect.html">Redis reconnection</a>.
   <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the realtime side,
   used by MYT-52's streaming entity / edge <code>PUBLISH</code> path, myth-imxg's per-fact events,
   and MYT-62's session-prep phase + prose deltas &mdash; all feeding the
@@ -262,6 +268,86 @@
   instead of hiding it behind a config flag — when a future contributor wires another Redis-backed
   background system, the factory name signals which one to pick.
 </aside>
+
+<h2 id="job-containment">Job containment: one bad job cannot kill the process</h2>
+
+<p>
+  The worker long carried a latent assumption: a job that fails, fails alone. Playtest session s10
+  falsified it. A session-prep Opus response hit the output-token cap; the resulting
+  structured-output error was re-thrown inside a detached promise chain in the LLM client's
+  streaming-repair path — no awaiter had attached yet, so the rejection escaped the job's await
+  chain entirely, and under Node's default <code>--unhandled-rejections=throw</code> policy the
+  process died. All nine queues, every in-flight job, from one bad LLM response. The fix
+  (myth-y2qfi) is three complementary layers, each catching what the previous one cannot.
+</p>
+
+<p>
+  The root fix lives in the <a href="./llm.html">LLM client</a>. <code>streamObject</code> creates
+  its wrapped <code>.object</code> promise eagerly, but consumers typically drain
+  <code>partialObjectStream</code> first and await <code>.object</code> later — or, on a stream
+  error path, never — so a repair-chain rejection could fire before any awaiter attached and detach
+  from every job boundary. The client now marks that promise handled at birth; real awaiters still
+  observe the rejection. That closes the one known escape route — the details live on the LLM client
+  page. The worker's two layers exist because "the one known escape route" is not the same as "the
+  last escape route".
+</p>
+
+<p>
+  Layer two is the processor boundary. The three inline prep processors — world-gen, campaign-setup,
+  session-prep — register through <code>containProcessor</code>
+  (<code>backend/src/queue/job-containment.ts</code>), an async wrapper that turns any throw in the
+  processor's await chain, synchronous or asynchronous, into a logged
+  <code>job.contained_failure</code> and re-throws so BullMQ still marks the job failed and applies
+  its retry policy. Containment means "this job fails", never "swallow silently". The six session
+  workers are not wrapped: their builders own their failure semantics (the turn worker is total by
+  design; reconcile and analysis throw deliberately so BullMQ retries), documented on their own
+  pages.
+</p>
+
+<p>
+  Layer three is the process boundary. <code>createProcessEscapeGuard</code> registers
+  <code>unhandledRejection</code> / <code>uncaughtException</code> handlers as the very first act of
+  <code>main()</code>, before any connection or worker exists — because a floating rejection
+  detached from every await chain (the exact incident shape) is invisible to both layers above. Each
+  escape is logged as <code>process.escape</code> and the process stays alive. The keep-alive
+  posture is bounded by a storm hatch: more than 25 escapes inside a rolling 60-second window logs
+  <code>process.escape_storm</code> and exits 1, so ECS restarts the task and the failure surfaces
+  as a crash-loop that alarms fire on. During graceful shutdown the guard no-ops and is detached, so
+  a rejection racing teardown can't re-trigger the fail-fast exit.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Keep-alive per escape, crash on a storm</strong> — generic Node advice says always exit on
+  <code>uncaughtException</code> because process state may be corrupt. The worker deliberately
+  departs: an escaped LLM-parse failure doesn't corrupt the process-scoped state (the pg pool, the
+  Redis clients, the BullMQ workers), and exiting would orphan eight healthy queues to punish one —
+  the exact blast radius the incident proved unacceptable. The residual risk is the <em>zombie</em>:
+  a systemic bug escaping on every job while <code>/health</code> stays green (<code
+    >isRunning()</code
+  >
+  is true — jobs are failing, not stuck). The storm hatch resolves that tradeoff: isolated escapes
+  survive; a storm becomes a loud crash-loop instead of a silent log trickle. The threshold sits
+  well above one bad response (a single escape) and well below every-job-escapes.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The containment log is secret-free</strong> — the boundary logs errors thrown from
+  LLM-adjacent code, and the typed LLM errors carry <code>diagnostic.rawTextSnippet</code>: verbatim
+  model output, which for session-prep is <code>sd_playbook</code> text — NPC secrets. So the
+  boundary never hands a logger the raw error. <code>describeErrorForLog</code> keeps only the
+  stable scalars (class name, <code>.code</code>, the terminal flag, a hard-capped message) and
+  drops <code>diagnostic</code>, <code>cause</code>, and <code>stack</code> entirely. Enforced
+  ignorance extends to CloudWatch.
+</aside>
+
+<p>
+  The module carries one more primitive, <code>withJobTimeout</code> (myth-3u4a0) — a hard
+  wall-clock bound on a single external await that throws the terminal
+  <code>{ terminal: true }</code> shape on trip, freeing the BullMQ lock and the worker slot instead
+  of renewing the lock forever on a hung await. Its consumer today is the character-creation
+  processor; that story lives on the
+  <a href="./character-creation.html">character creation</a> page.
+</p>
 
 <h2>The health endpoint</h2>
 
@@ -288,10 +374,12 @@
 
 <p>
   ECS sends <code>SIGTERM</code> and waits up to <code>stopTimeout = 120s</code> before
-  <code>SIGKILL</code>. The handler in <code>worker.ts</code> closes the health server first (stops
-  new probes from going green during teardown), then runs <code>worker.close()</code> on all nine
-  BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the deadline is
-  force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
+  <code>SIGKILL</code>. The handler in <code>worker.ts</code> flips the shutting-down flag and
+  detaches the <a href="#job-containment">process escape guard</a> first — a rejection racing
+  teardown must not re-trigger the storm hatch's fail-fast exit — then closes the health server
+  (stops new probes from going green during teardown), then runs <code>worker.close()</code> on all
+  nine BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the
+  deadline is force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
   For the session-turn worker that stall recovery is not just a shutdown nicety but the load-bearing
   crash-recovery path (a force-closed turn re-runs on another worker from clean state). The
@@ -473,6 +561,36 @@
   </li>
 </ol>
 
+<h3 id="diagnose-a-crash-loop-from-the-escape-storm-hatch">
+  Diagnose a worker crash-loop from the escape-storm hatch
+</h3>
+<ol>
+  <li>
+    Confirm the signature: the worker service is restart-looping in ECS, and the last CloudWatch
+    lines before each exit show <code>event: 'process.escape_storm'</code> preceded by a burst of
+    <code>event: 'process.escape'</code> lines. This is the guard's deliberate <code>exit(1)</code>
+    — a systemic defect escaping on many jobs, never one bad job (a single escape is logged and
+    survived).
+  </li>
+  <li>
+    Read the <code>err</code> descriptor on the <code>process.escape</code> lines — class name,
+    <code>code</code>, <code>terminal</code>, capped message. It is secret-free by construction, so
+    it is safe to paste into an issue. Correlate with any
+    <code>event: 'job.contained_failure'</code> lines (which carry <code>queue</code> and
+    <code>jobId</code>) to identify which queue's jobs are escaping.
+  </li>
+  <li>
+    Find what changed: a deploy just before the loop started, a provider incident (the escapes are
+    usually LLM-shaped), or a config change. The threshold is &gt;25 escapes in a rolling 60s window
+    — nothing job-isolated trips it.
+  </li>
+  <li>
+    Fix or roll back the defect. No manual reset is needed: ECS keeps restarting the task, and once
+    jobs stop escaping the loop settles on its own. Jobs that failed during the storm follow their
+    normal BullMQ retry policy; check the affected queue for jobs that exhausted retries.
+  </li>
+</ol>
+
 <h2>Integration points</h2>
 
 <p>
@@ -505,7 +623,11 @@
   candidate similarity search and fact embeds; the analysis worker takes no embedder). The
   <code>QueueEvents('session-turn')</code> subscriber registered alongside them publishes the
   terminal <code>turn_error</code> the JS listener can't. Streaming-cost attribution joins to the
-  <code>pipeline_runs</code> table introduced in MYT-43.
+  <code>pipeline_runs</code> table introduced in MYT-43. The job-containment module's root-fix
+  counterpart — the eagerly-created <code>streamObject</code> <code>.object</code> promise, marked
+  handled at birth — lives in the <a href="./llm.html">LLM client</a>; its
+  <code>withJobTimeout</code> primitive is consumed by the
+  <a href="./character-creation.html">character-creation</a> processor.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -586,6 +708,15 @@
       <td>
         <code>buildSessionTurnQueueEvents</code> — the broker-side terminal <code>turn_error</code>
         subscriber on a dedicated blocking connection; closed explicitly on SIGTERM.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/queue/job-containment.ts</code></td>
+      <td>
+        <code>containProcessor</code> (processor-boundary containment),
+        <code>createProcessEscapeGuard</code> (keep-alive + storm hatch),
+        <code>withJobTimeout</code> (terminal wall-clock bound), <code>describeErrorForLog</code>
+        (secret-free error descriptor).
       </td>
     </tr>
     <tr>
@@ -673,6 +804,18 @@
         concurrency)
       </td>
     </tr>
+    <tr>
+      <td>Concurrency: <code>session-analysis</code></td>
+      <td>1 (180s lock; no embedder — analysis doesn't embed)</td>
+    </tr>
+    <tr>
+      <td>Escape-storm hatch</td>
+      <td>
+        &gt;25 escapes / rolling 60s window → <code>exit(1)</code> (log events:
+        <code>process.escape</code>, <code>process.escape_storm</code>,
+        <code>job.contained_failure</code>)
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -680,6 +823,7 @@
 
 <p>
   <code>backend/src/worker.ts</code>, <code>backend/src/worker/</code>,
+  <code>backend/src/queue/job-containment.ts</code>,
   <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/redis/bullmq-client.ts</code>,
   <code>backend/src/llm/middleware.ts</code>, <code>infra/modules/serving/main.tf</code>,
   <code>.github/workflows/deploy.yml</code>. Design spec:

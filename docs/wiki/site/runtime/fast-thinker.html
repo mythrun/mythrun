@@ -42,269 +42,313 @@
   public-by-construction <a href="./scribe.html">fact-delta</a> — the new named things it introduced
   this turn — stripped from the player stream and the transcript by a delimiter guard and handed to
   the post-turn Scribe. The <a href="./session-turn.html">session-turn conductor</a> calls it once
-  per DM turn; everything the player reads is its output.
+  per DM turn — as of myth-d6knq through a post-render
+  <a href="./session-turn.html#the-audit-gate">audit gate</a> that catches pure-prose boundary
+  violations at that single seam; everything the player reads is its output.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1669pt" height="1038pt"
- viewBox="14.00 14.00 1654.00 1024.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1020.04)">
+<svg width="1976pt" height="1193pt"
+ viewBox="14.00 14.00 1962.00 1178.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 1174.32)">
 <title>fast_thinker</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1005.64 1635.86,-1005.64 1635.86,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-1159.92 1943.46,-1159.92 1943.46,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_ft</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="177.86,-418.04 177.86,-897.56 525.86,-897.56 525.86,-418.04 177.86,-418.04"/>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-883.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SonnetFastThinker.render(ctx, emit)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="193.46,-427.04 193.46,-906.56 541.46,-906.56 541.46,-427.04 193.46,-427.04"/>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-892.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SonnetFastThinker.render(ctx, emit)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_tools</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="525.86,-418.04 525.86,-522.52 1496.86,-522.52 1496.86,-418.04 525.86,-418.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1011.36" y="-508.62" font-family="Courier,monospace" font-size="11.00">ft&#45;tools.ts &#160;— &#160;pure resolvers (data only, never emit)</text>
-<text xml:space="preserve" text-anchor="middle" x="1011.36" y="-495.42" font-family="Courier,monospace" font-size="11.00">player&#45;agency gate: refuse skill/lore for a PC not in the turn&#39;s acting set</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="541.46,-427.04 541.46,-531.52 1857.46,-531.52 1857.46,-427.04 541.46,-427.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1199.46" y="-517.62" font-family="Courier,monospace" font-size="11.00">ft&#45;tools.ts &#160;— &#160;pure resolvers (data only, never emit)</text>
+<text xml:space="preserve" text-anchor="middle" x="1199.46" y="-504.42" font-family="Courier,monospace" font-size="11.00">player&#45;agency gate: refuse skill/lore for a PC not in the turn&#39;s acting set</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_flow</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="1125.86,-8 1125.86,-361.04 1623.86,-361.04 1623.86,-8 1125.86,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="1374.86" y="-347.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;fact&#45;lookup &#160;— &#160;gate → resolve → ST&#45;vet → relay (fail&#45;soft)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="1,5" points="1433.46,-8 1433.46,-367.64 1931.46,-367.64 1931.46,-8 1433.46,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1682.46" y="-353.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">world&#45;fact&#45;lookup &#160;— &#160;gate → resolve → ST&#45;vet → relay (fail&#45;soft)</text>
+</g>
+<!-- cards -->
+<g id="node1" class="node">
+<title>cards</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="525.23,-1155.92 209.7,-1155.92 209.7,-1085.84 525.23,-1085.84 525.23,-1155.92"/>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-1137.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">entity&#45;card augment (deterministic)</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-1124.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">canon names spoken in the recent transcript</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-1110.98" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ KNOWN&#45;tier facts appended to ftContext</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-1097.78" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(no secret/discoverable code path)</text>
 </g>
 <!-- ctx -->
-<g id="node1" class="node">
+<g id="node2" class="node">
 <title>ctx</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="509.62,-1001.64 194.1,-1001.64 194.1,-931.56 509.62,-931.56 509.62,-1001.64"/>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-983.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FtTurnContext (public&#45;by&#45;construction)</text>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-969.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ftContext · ftHistory · participants ·</text>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-956.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">standingDirective (behavior&#45;bound)</text>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-943.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(no plot/secret field has anywhere to live)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="587.94,-1023.84 146.99,-1023.84 146.99,-940.56 587.94,-940.56 587.94,-1023.84"/>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-1005.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FtTurnContext (public&#45;by&#45;construction)</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-992.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ftContext (+ entity cards) · ftHistory</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-978.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(farewell rows filtered · own dm_correction rows re&#45;enter) ·</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-965.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">participants · standingDirective (behavior&#45;bound)</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-952.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(no plot/secret field has anywhere to live)</text>
+</g>
+<!-- cards&#45;&gt;ctx -->
+<g id="edge1" class="edge">
+<title>cards&#45;&gt;ctx</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M367.46,-1085.39C367.46,-1069.49 367.46,-1050.31 367.46,-1032.89"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="369.91,-1033.31 367.46,-1026.31 365.01,-1033.31 369.91,-1033.31"/>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-1051.84" font-family="Courier,monospace" font-size="10.00">+ cards</text>
 </g>
 <!-- build -->
-<g id="node2" class="node">
+<g id="node3" class="node">
 <title>build</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="526.13,-876.36 177.6,-876.36 177.6,-806.28 526.13,-806.28 526.13,-876.36"/>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-857.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildModelMessages</text>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-844.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">system (ft&#45;system.txt) + full transcript</text>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-831.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sliding cache breakpoints (§3.9)</text>
-<text xml:space="preserve" text-anchor="middle" x="351.86" y="-818.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ standing directive as raw post&#45;breakpoint tail</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="541.73,-885.36 193.2,-885.36 193.2,-815.28 541.73,-815.28 541.73,-885.36"/>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-866.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">buildModelMessages</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-853.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">system (ft&#45;system.txt) + full transcript</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-840.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">sliding cache breakpoints (§3.9)</text>
+<text xml:space="preserve" text-anchor="middle" x="367.46" y="-827.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ standing directive as raw post&#45;breakpoint tail</text>
 </g>
 <!-- ctx&#45;&gt;build -->
-<g id="edge1" class="edge">
+<g id="edge2" class="edge">
 <title>ctx&#45;&gt;build</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M351.86,-930.93C351.86,-916.76 351.86,-900.23 351.86,-885.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="354.31,-885.54 351.86,-878.54 349.41,-885.54 354.31,-885.54"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M367.46,-940.11C367.46,-925.57 367.46,-909.18 367.46,-894.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="369.91,-894.86 367.46,-887.86 365.01,-894.86 369.91,-894.86"/>
 </g>
 <!-- loop -->
-<g id="node3" class="node">
+<g id="node4" class="node">
 <title>loop</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="517.42,-755.28 228.3,-755.28 228.3,-698.4 517.42,-698.4 517.42,-755.28"/>
-<text xml:space="preserve" text-anchor="middle" x="372.86" y="-736.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">streamTextWithTools (Sonnet)</text>
-<text xml:space="preserve" text-anchor="middle" x="372.86" y="-723.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stopWhen stepCountIs(FT_MAX_TOOL_STEPS)</text>
-<text xml:space="preserve" text-anchor="middle" x="372.86" y="-710.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prepareStep → final&#45;step prose close</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="533.02,-764.28 243.9,-764.28 243.9,-707.4 533.02,-707.4 533.02,-764.28"/>
+<text xml:space="preserve" text-anchor="middle" x="388.46" y="-745.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">streamTextWithTools (Sonnet)</text>
+<text xml:space="preserve" text-anchor="middle" x="388.46" y="-732.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stopWhen stepCountIs(FT_MAX_TOOL_STEPS)</text>
+<text xml:space="preserve" text-anchor="middle" x="388.46" y="-719.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prepareStep → final&#45;step prose close</text>
 </g>
 <!-- build&#45;&gt;loop -->
-<g id="edge2" class="edge">
+<g id="edge3" class="edge">
 <title>build&#45;&gt;loop</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M358.33,-805.65C360.79,-792.52 363.58,-777.54 366.06,-764.25"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="368.43,-764.92 367.31,-757.59 363.61,-764.02 368.43,-764.92"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M373.93,-814.65C376.39,-801.52 379.18,-786.54 381.66,-773.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="384.03,-773.92 382.91,-766.59 379.22,-773.02 384.03,-773.92"/>
 </g>
 <!-- consume -->
-<g id="node4" class="node">
+<g id="node5" class="node">
 <title>consume</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="526.32,-636.4 283.4,-636.4 283.4,-579.52 526.32,-579.52 526.32,-636.4"/>
-<text xml:space="preserve" text-anchor="middle" x="404.86" y="-617.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">consume fullStream IN PART ORDER</text>
-<text xml:space="preserve" text-anchor="middle" x="404.86" y="-604.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(the SINGLE emission point)</text>
-<text xml:space="preserve" text-anchor="middle" x="404.86" y="-591.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">error/abort parts → throw</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="541.92,-645.4 299.01,-645.4 299.01,-588.52 541.92,-588.52 541.92,-645.4"/>
+<text xml:space="preserve" text-anchor="middle" x="420.46" y="-626.86" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">consume fullStream IN PART ORDER</text>
+<text xml:space="preserve" text-anchor="middle" x="420.46" y="-613.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(the SINGLE emission point)</text>
+<text xml:space="preserve" text-anchor="middle" x="420.46" y="-600.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">error/abort parts → throw</text>
 </g>
 <!-- loop&#45;&gt;consume -->
-<g id="edge3" class="edge">
+<g id="edge4" class="edge">
 <title>loop&#45;&gt;consume</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M380.53,-697.84C384.85,-682.06 390.3,-662.16 394.94,-645.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="397.18,-646.28 396.67,-638.88 392.46,-644.99 397.18,-646.28"/>
-<text xml:space="preserve" text-anchor="middle" x="437.83" y="-664.4" font-family="Courier,monospace" font-size="10.00">fullStream parts</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M396.13,-706.84C400.45,-691.06 405.9,-671.16 410.54,-654.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="412.78,-655.28 412.27,-647.88 408.06,-653.99 412.78,-655.28"/>
+<text xml:space="preserve" text-anchor="middle" x="453.43" y="-673.4" font-family="Courier,monospace" font-size="10.00">fullStream parts</text>
 </g>
 <!-- guard -->
-<g id="node5" class="node">
+<g id="node6" class="node">
 <title>guard</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="496.52,-488.12 227.2,-488.12 227.2,-418.04 496.52,-418.04 496.52,-488.12"/>
-<text xml:space="preserve" text-anchor="middle" x="361.86" y="-469.58" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">WorldDeltaGuard (dual&#45;sink)</text>
-<text xml:space="preserve" text-anchor="middle" x="361.86" y="-456.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">strip \n[[WORLD_DELTA]] section from</text>
-<text xml:space="preserve" text-anchor="middle" x="361.86" y="-443.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BOTH live emit AND transcript;</text>
-<text xml:space="preserve" text-anchor="middle" x="361.86" y="-429.98" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">capture JSON → worldDelta</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="512.12,-497.12 242.8,-497.12 242.8,-427.04 512.12,-427.04 512.12,-497.12"/>
+<text xml:space="preserve" text-anchor="middle" x="377.46" y="-478.58" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">WorldDeltaGuard (dual&#45;sink)</text>
+<text xml:space="preserve" text-anchor="middle" x="377.46" y="-465.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">strip \n[[WORLD_DELTA]] section from</text>
+<text xml:space="preserve" text-anchor="middle" x="377.46" y="-452.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">BOTH live emit AND transcript;</text>
+<text xml:space="preserve" text-anchor="middle" x="377.46" y="-438.98" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">capture JSON → worldDelta</text>
 </g>
 <!-- consume&#45;&gt;guard -->
-<g id="edge16" class="edge">
+<g id="edge19" class="edge">
 <title>consume&#45;&gt;guard</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M396.97,-578.92C390.52,-555.97 381.29,-523.14 373.91,-496.91"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="376.33,-496.47 372.07,-490.39 371.61,-497.79 376.33,-496.47"/>
-<text xml:space="preserve" text-anchor="middle" x="419.73" y="-539.52" font-family="Courier,monospace" font-size="10.00">text&#45;delta</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M412.58,-587.92C406.12,-564.97 396.89,-532.14 389.51,-505.91"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="391.93,-505.47 387.68,-499.39 387.21,-506.79 391.93,-505.47"/>
+<text xml:space="preserve" text-anchor="middle" x="435.33" y="-548.52" font-family="Courier,monospace" font-size="10.00">text&#45;delta</text>
 </g>
 <!-- dice -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>dice</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1497.22,-481.52 1234.5,-481.52 1234.5,-424.64 1497.22,-424.64 1497.22,-481.52"/>
-<text xml:space="preserve" text-anchor="middle" x="1365.86" y="-462.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">roll_dice</text>
-<text xml:space="preserve" text-anchor="middle" x="1365.86" y="-449.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rollDice(count, sides)</text>
-<text xml:space="preserve" text-anchor="middle" x="1365.86" y="-436.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(crypto.randomInt — Principle #4)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="803.82,-490.52 541.1,-490.52 541.1,-433.64 803.82,-433.64 803.82,-490.52"/>
+<text xml:space="preserve" text-anchor="middle" x="672.46" y="-471.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">roll_dice</text>
+<text xml:space="preserve" text-anchor="middle" x="672.46" y="-458.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">rollDice(count, sides)</text>
+<text xml:space="preserve" text-anchor="middle" x="672.46" y="-445.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(crypto.randomInt — Principle #4)</text>
 </g>
 <!-- consume&#45;&gt;dice -->
-<g id="edge5" class="edge">
+<g id="edge6" class="edge">
 <title>consume&#45;&gt;dice</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M527.05,-602.15C660.85,-595.75 881.48,-581.92 1069.86,-554.52 1137.32,-544.71 1155.25,-544.24 1219.86,-522.52 1248.96,-512.74 1279.92,-498.78 1305.8,-486.02"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1306.87,-488.22 1312.04,-482.91 1304.68,-483.84 1306.87,-488.22"/>
-<text xml:space="preserve" text-anchor="middle" x="1219.04" y="-539.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M536.9,-587.92C553.9,-581.32 570.65,-573.27 585.46,-563.52 611.25,-546.53 633.86,-519.85 649.56,-498.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="651.5,-499.75 653.56,-492.62 647.51,-496.91 651.5,-499.75"/>
+<text xml:space="preserve" text-anchor="middle" x="640.46" y="-548.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
 </g>
 <!-- skill -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>skill</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="828.02,-488.12 525.7,-488.12 525.7,-418.04 828.02,-418.04 828.02,-488.12"/>
-<text xml:space="preserve" text-anchor="middle" x="676.86" y="-469.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">roll_skill_check → skill&#45;check.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="676.86" y="-456.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolve roller (session_participants)</text>
-<text xml:space="preserve" text-anchor="middle" x="676.86" y="-443.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ modifier (per&#45;skill level, expertise)</text>
-<text xml:space="preserve" text-anchor="middle" x="676.86" y="-429.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ Haiku DC table → d20 → tier</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1135.62,-497.12 833.3,-497.12 833.3,-427.04 1135.62,-427.04 1135.62,-497.12"/>
+<text xml:space="preserve" text-anchor="middle" x="984.46" y="-478.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">roll_skill_check → skill&#45;check.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="984.46" y="-465.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolve roller (session_participants)</text>
+<text xml:space="preserve" text-anchor="middle" x="984.46" y="-452.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ modifier (per&#45;skill level, expertise)</text>
+<text xml:space="preserve" text-anchor="middle" x="984.46" y="-438.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ Haiku DC table → d20 → tier</text>
 </g>
 <!-- consume&#45;&gt;skill -->
-<g id="edge4" class="edge">
+<g id="edge5" class="edge">
 <title>consume&#45;&gt;skill</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M526.88,-594.26C558.76,-586.51 591.53,-574.15 617.86,-554.52 637.33,-540.01 651.51,-517.02 661.09,-496.69"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="663.27,-497.81 663.91,-490.42 658.8,-495.8 663.27,-497.81"/>
-<text xml:space="preserve" text-anchor="middle" x="666.94" y="-539.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M542.67,-613.78C666.43,-609.65 847.98,-597.75 908.46,-563.52 932.12,-550.13 950.73,-526.05 963.61,-504.83"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="965.58,-506.31 967.01,-499.03 961.35,-503.83 965.58,-506.31"/>
+<text xml:space="preserve" text-anchor="middle" x="964.45" y="-548.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
 </g>
 <!-- lookup -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>lookup</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1205.13,-474.92 856.6,-474.92 856.6,-431.24 1205.13,-431.24 1205.13,-474.92"/>
-<text xml:space="preserve" text-anchor="middle" x="1030.86" y="-456.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">search_lore / characters_known_to / faction_tree</text>
-<text xml:space="preserve" text-anchor="middle" x="1030.86" y="-443.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ runWorldFactLookup (orchestrator)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1512.73,-483.92 1164.2,-483.92 1164.2,-440.24 1512.73,-440.24 1512.73,-483.92"/>
+<text xml:space="preserve" text-anchor="middle" x="1338.46" y="-465.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">search_lore / characters_known_to / faction_tree</text>
+<text xml:space="preserve" text-anchor="middle" x="1338.46" y="-452.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ runWorldFactLookup (orchestrator)</text>
 </g>
 <!-- consume&#45;&gt;lookup -->
-<g id="edge6" class="edge">
+<g id="edge7" class="edge">
 <title>consume&#45;&gt;lookup</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M526.76,-602.61C686.7,-595.89 951.47,-580.94 987.86,-554.52 1010.59,-538.02 1021.41,-507 1026.5,-483.78"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1028.87,-484.43 1027.82,-477.09 1024.06,-483.48 1028.87,-484.43"/>
-<text xml:space="preserve" text-anchor="middle" x="1035.97" y="-539.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M542.37,-615.51C767.73,-613.67 1232.13,-604.85 1292.46,-563.52 1315.89,-547.47 1327.61,-516.38 1333.32,-493.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1335.7,-493.63 1334.83,-486.27 1330.91,-492.56 1335.7,-493.63"/>
+<text xml:space="preserve" text-anchor="middle" x="1341.43" y="-548.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
+</g>
+<!-- corr -->
+<g id="node10" class="node">
+<title>corr</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1857.23,-490.52 1541.7,-490.52 1541.7,-433.64 1857.23,-433.64 1857.23,-490.52"/>
+<text xml:space="preserve" text-anchor="middle" x="1699.46" y="-471.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">issue_correction</text>
+<text xml:space="preserve" text-anchor="middle" x="1699.46" y="-458.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">amend the DM&#39;s OWN earlier narration</text>
+<text xml:space="preserve" text-anchor="middle" x="1699.46" y="-445.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(correction as data — never inline prose)</text>
+</g>
+<!-- consume&#45;&gt;corr -->
+<g id="edge8" class="edge">
+<title>consume&#45;&gt;corr</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M542.48,-615.04C821.77,-612.29 1490.77,-601.74 1585.46,-563.52 1619.89,-549.62 1650.93,-520.64 1671.89,-497.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1673.54,-499.2 1676.33,-492.33 1669.86,-495.96 1673.54,-499.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1651.74" y="-548.52" font-family="Courier,monospace" font-size="10.00">tool&#45;call</text>
 </g>
 <!-- emit -->
-<g id="node12" class="node">
+<g id="node14" class="node">
 <title>emit</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="295.72,-339.84 0,-339.84 0,-282.96 295.72,-282.96 295.72,-339.84"/>
-<text xml:space="preserve" text-anchor="middle" x="147.86" y="-321.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">TurnEmitter</text>
-<text xml:space="preserve" text-anchor="middle" x="147.86" y="-308.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">emitText / emitSkillCheck / emitDiceRoll</text>
-<text xml:space="preserve" text-anchor="middle" x="147.86" y="-294.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(worker&#45;latched → PUBLISH frames)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="308.93,-353.04 0,-353.04 0,-282.96 308.93,-282.96 308.93,-353.04"/>
+<text xml:space="preserve" text-anchor="middle" x="154.46" y="-334.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">TurnEmitter</text>
+<text xml:space="preserve" text-anchor="middle" x="154.46" y="-321.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">emitText / emitSkillCheck / emitDiceRoll /</text>
+<text xml:space="preserve" text-anchor="middle" x="154.46" y="-308.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">emitCorrection</text>
+<text xml:space="preserve" text-anchor="middle" x="154.46" y="-294.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(worker&#45;latched → PUBLISH frames)</text>
 </g>
 <!-- consume&#45;&gt;emit -->
-<g id="edge18" class="edge">
+<g id="edge21" class="edge">
 <title>consume&#45;&gt;emit</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M283.01,-591.51C200.01,-578.2 100.68,-555.8 74.84,-522.52 33.7,-469.53 82.01,-391.71 117.32,-347.15"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="119.23,-348.69 121.72,-341.71 115.42,-345.61 119.23,-348.69"/>
-<text xml:space="preserve" text-anchor="middle" x="143.85" y="-450.08" font-family="Courier,monospace" font-size="10.00">skill_check / dice_roll</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M298.29,-601.72C211.51,-588.81 105.73,-566.37 78.44,-531.52 38.34,-480.31 82.19,-406.17 118,-360.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="119.86,-361.96 122.3,-354.96 116.02,-358.9 119.86,-361.96"/>
+<text xml:space="preserve" text-anchor="middle" x="153.45" y="-465.08" font-family="Courier,monospace" font-size="10.00">skill_check / dice_roll /</text>
+<text xml:space="preserve" text-anchor="middle" x="153.45" y="-453.08" font-family="Courier,monospace" font-size="10.00">dm_correction</text>
 </g>
 <!-- guard&#45;&gt;emit -->
-<g id="edge17" class="edge">
+<g id="edge20" class="edge">
 <title>guard&#45;&gt;emit</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M308.69,-417.37C274.85,-395.29 231.31,-366.87 198.07,-345.17"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="199.43,-343.13 192.23,-341.36 196.75,-347.24 199.43,-343.13"/>
-<text xml:space="preserve" text-anchor="middle" x="339.69" y="-378.04" font-family="Courier,monospace" font-size="10.00">pre&#45;delimiter prose only</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M322.91,-426.32C290.53,-405.69 249.39,-379.48 215.87,-358.12"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="217.59,-356.31 210.37,-354.62 214.96,-360.45 217.59,-356.31"/>
+<text xml:space="preserve" text-anchor="middle" x="351.33" y="-387.04" font-family="Courier,monospace" font-size="10.00">pre&#45;delimiter prose only</text>
 </g>
 <!-- dice&#45;&gt;consume -->
-<g id="edge8" class="edge">
+<g id="edge10" class="edge">
 <title>dice&#45;&gt;consume</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1344.11,-481.82C1323.49,-505.8 1290.18,-539 1252.86,-554.52 1188.52,-581.28 757.08,-597.11 535.58,-603.56"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="535.55,-601.11 528.63,-603.76 535.7,-606.01 535.55,-601.11"/>
-<text xml:space="preserve" text-anchor="middle" x="1309.78" y="-539.52" font-family="Courier,monospace" font-size="10.00">result</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M623.81,-491.25C599.31,-505.55 569.2,-523.28 542.46,-539.52 519.14,-553.68 493.52,-569.66 471.81,-583.34"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="470.76,-581.11 466.14,-586.91 473.37,-585.25 470.76,-581.11"/>
+<text xml:space="preserve" text-anchor="middle" x="560.46" y="-548.52" font-family="Courier,monospace" font-size="10.00">result</text>
 </g>
 <!-- skill&#45;&gt;consume -->
-<g id="edge7" class="edge">
+<g id="edge9" class="edge">
 <title>skill&#45;&gt;consume</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M602.63,-488.77C577.25,-500.12 548.54,-512.4 521.86,-522.52 510.95,-526.66 507.08,-524.91 496.84,-530.52 475.95,-541.97 455.3,-558.52 438.88,-573.29"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="437.42,-571.31 433.91,-577.84 440.73,-574.92 437.42,-571.31"/>
-<text xml:space="preserve" text-anchor="middle" x="553.85" y="-545.52" font-family="Courier,monospace" font-size="10.00">constraint</text>
-<text xml:space="preserve" text-anchor="middle" x="553.85" y="-533.52" font-family="Courier,monospace" font-size="10.00">(fed back to model)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M908.2,-497.75C880.35,-509.55 848.35,-522.12 818.46,-531.52 792.84,-539.58 657.12,-567.88 551.2,-589.52"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="550.81,-587.1 544.44,-590.9 551.79,-591.9 550.81,-587.1"/>
+<text xml:space="preserve" text-anchor="middle" x="840.86" y="-554.52" font-family="Courier,monospace" font-size="10.00">constraint</text>
+<text xml:space="preserve" text-anchor="middle" x="840.86" y="-542.52" font-family="Courier,monospace" font-size="10.00">(fed back to model)</text>
 </g>
 <!-- lookup&#45;&gt;consume -->
-<g id="edge15" class="edge">
+<g id="edge18" class="edge">
 <title>lookup&#45;&gt;consume</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M981.97,-475.53C944.59,-491.03 891.39,-511.16 842.86,-522.52 811.5,-529.86 802.26,-523.47 770.83,-530.52 738.75,-537.71 732.69,-546.29 700.86,-554.52 647.25,-568.37 587.24,-579.75 535.34,-588.33"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="535.05,-585.89 528.54,-589.44 535.84,-590.73 535.05,-585.89"/>
-<text xml:space="preserve" text-anchor="middle" x="875.84" y="-545.52" font-family="Courier,monospace" font-size="10.00">{ result, skill_gate, roll_hidden }</text>
-<text xml:space="preserve" text-anchor="middle" x="875.84" y="-533.52" font-family="Courier,monospace" font-size="10.00">(data only)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1289.59,-484.6C1252.21,-500.13 1199.02,-520.27 1150.46,-531.52 1117.79,-539.09 1108.27,-532.72 1075.43,-539.52 1040.34,-546.79 1033.61,-556.53 998.46,-563.52 846.74,-593.7 669.1,-606.55 551.21,-611.99"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="551.17,-609.54 544.29,-612.3 551.39,-614.43 551.17,-609.54"/>
+<text xml:space="preserve" text-anchor="middle" x="1180.45" y="-554.52" font-family="Courier,monospace" font-size="10.00">{ result, skill_gate, roll_hidden }</text>
+<text xml:space="preserve" text-anchor="middle" x="1180.45" y="-542.52" font-family="Courier,monospace" font-size="10.00">(data only)</text>
 </g>
 <!-- gate -->
-<g id="node9" class="node">
+<g id="node11" class="node">
 <title>gate</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1444.42,-339.84 1155.3,-339.84 1155.3,-282.96 1444.42,-282.96 1444.42,-339.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1299.86" y="-321.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;lookup&#45;gate (Haiku)</text>
-<text xml:space="preserve" text-anchor="middle" x="1299.86" y="-308.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">contextual DC over PUBLIC standing only</text>
-<text xml:space="preserve" text-anchor="middle" x="1299.86" y="-294.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">auto_success | d20 vs DC → pass/fail</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1752.02,-346.44 1462.9,-346.44 1462.9,-289.56 1752.02,-289.56 1752.02,-346.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1607.46" y="-327.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">world&#45;lookup&#45;gate (Haiku)</text>
+<text xml:space="preserve" text-anchor="middle" x="1607.46" y="-314.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">contextual DC over PUBLIC standing only</text>
+<text xml:space="preserve" text-anchor="middle" x="1607.46" y="-301.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">auto_success | d20 vs DC → pass/fail</text>
 </g>
 <!-- lookup&#45;&gt;gate -->
-<g id="edge9" class="edge">
+<g id="edge12" class="edge">
 <title>lookup&#45;&gt;gate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1083,-430.62C1107.81,-419.98 1137.71,-406.54 1163.86,-393.04 1192.39,-378.32 1223.24,-360.21 1248.33,-344.89"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1249.35,-347.14 1254.04,-341.39 1246.79,-342.97 1249.35,-347.14"/>
-<text xml:space="preserve" text-anchor="middle" x="1220.79" y="-378.04" font-family="Courier,monospace" font-size="10.00">pass?</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1391.32,-439.49C1416.02,-428.93 1445.62,-415.59 1471.46,-402.04 1500.67,-386.72 1532.18,-367.66 1557.5,-351.66"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1558.68,-353.82 1563.28,-348 1556.05,-349.68 1558.68,-353.82"/>
+<text xml:space="preserve" text-anchor="middle" x="1528.5" y="-387.04" font-family="Courier,monospace" font-size="10.00">pass?</text>
 </g>
 <!-- ws -->
-<g id="node13" class="node">
+<g id="node15" class="node">
 <title>ws</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1125.91,-339.84 935.81,-339.84 935.81,-282.96 1125.91,-282.96 1125.91,-339.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1030.86" y="-321.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">working set (Scribe)</text>
-<text xml:space="preserve" text-anchor="middle" x="1030.86" y="-308.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
-<text xml:space="preserve" text-anchor="middle" x="1030.86" y="-294.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">read&#45;after&#45;write</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1433.52,-346.44 1243.41,-346.44 1243.41,-289.56 1433.52,-289.56 1433.52,-346.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1338.46" y="-327.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">working set (Scribe)</text>
+<text xml:space="preserve" text-anchor="middle" x="1338.46" y="-314.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
+<text xml:space="preserve" text-anchor="middle" x="1338.46" y="-301.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">read&#45;after&#45;write</text>
 </g>
 <!-- lookup&#45;&gt;ws -->
-<g id="edge14" class="edge">
+<g id="edge17" class="edge">
 <title>lookup&#45;&gt;ws</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1030.86,-430.56C1030.86,-408.93 1030.86,-375.17 1030.86,-349.26"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1033.31,-349.28 1030.86,-342.28 1028.41,-349.28 1033.31,-349.28"/>
-<text xml:space="preserve" text-anchor="middle" x="1093.87" y="-384.04" font-family="Courier,monospace" font-size="10.00">record injection</text>
-<text xml:space="preserve" text-anchor="middle" x="1093.87" y="-372.04" font-family="Courier,monospace" font-size="10.00">(vetted relay + tier)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1338.46,-439.5C1338.46,-417.32 1338.46,-382.37 1338.46,-355.81"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1340.91,-355.97 1338.46,-348.97 1336.01,-355.97 1340.91,-355.97"/>
+<text xml:space="preserve" text-anchor="middle" x="1401.47" y="-393.04" font-family="Courier,monospace" font-size="10.00">record injection</text>
+<text xml:space="preserve" text-anchor="middle" x="1401.47" y="-381.04" font-family="Courier,monospace" font-size="10.00">(vetted relay + tier)</text>
+</g>
+<!-- corr&#45;&gt;consume -->
+<g id="edge11" class="edge">
+<title>corr&#45;&gt;consume</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1636.27,-491.24C1604.15,-504.77 1564.23,-520.42 1527.46,-531.52 1461.37,-551.47 1443.91,-554.49 1375.46,-563.52 1082.56,-602.16 735.49,-612.42 551.03,-615.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="551.15,-612.63 544.19,-615.18 551.22,-617.53 551.15,-612.63"/>
+<text xml:space="preserve" text-anchor="middle" x="1532.07" y="-554.52" font-family="Courier,monospace" font-size="10.00">{ text }</text>
+<text xml:space="preserve" text-anchor="middle" x="1532.07" y="-542.52" font-family="Courier,monospace" font-size="10.00">(data only)</text>
 </g>
 <!-- resolve -->
-<g id="node10" class="node">
+<g id="node12" class="node">
 <title>resolve</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1417.82,-208.96 1141.9,-208.96 1141.9,-138.88 1417.82,-138.88 1417.82,-208.96"/>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-190.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolver (world&#45;store retrieval)</text>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-177.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">over&#45;pull ALL tiers, tier&#45;annotated</text>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-164.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">∪ working set (cosine vs query vec)</text>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-150.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">[claim by NPC] keeps attribution</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1725.42,-208.96 1449.5,-208.96 1449.5,-138.88 1725.42,-138.88 1725.42,-208.96"/>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-190.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resolver (world&#45;store retrieval)</text>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-177.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">over&#45;pull ALL tiers, tier&#45;annotated</text>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-164.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">∪ working set (cosine vs query vec)</text>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-150.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">[claim by NPC] keeps attribution</text>
 </g>
 <!-- gate&#45;&gt;resolve -->
-<g id="edge10" class="edge">
+<g id="edge13" class="edge">
 <title>gate&#45;&gt;resolve</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1295.72,-282.33C1292.98,-263.8 1289.34,-239.16 1286.24,-218.15"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1288.71,-218.06 1285.26,-211.5 1283.86,-218.78 1288.71,-218.06"/>
-<text xml:space="preserve" text-anchor="middle" x="1327.66" y="-248.96" font-family="Courier,monospace" font-size="10.00">pass /</text>
-<text xml:space="preserve" text-anchor="middle" x="1327.66" y="-236.96" font-family="Courier,monospace" font-size="10.00">auto_success</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1603.51,-288.93C1600.66,-268.71 1596.77,-241.04 1593.53,-218.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1595.98,-217.85 1592.58,-211.26 1591.13,-218.54 1595.98,-217.85"/>
+<text xml:space="preserve" text-anchor="middle" x="1634.67" y="-248.96" font-family="Courier,monospace" font-size="10.00">pass /</text>
+<text xml:space="preserve" text-anchor="middle" x="1634.67" y="-236.96" font-family="Courier,monospace" font-size="10.00">auto_success</text>
 </g>
 <!-- vet -->
-<g id="node11" class="node">
+<g id="node13" class="node">
 <title>vet</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1434.32,-64.88 1125.4,-64.88 1125.4,-8 1434.32,-8 1434.32,-64.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-46.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ST&#45;vet (Opus) — the ONE tier&#45;safety gate</text>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-33.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">holds sd_playbook · redactRawText</text>
-<text xml:space="preserve" text-anchor="middle" x="1279.86" y="-19.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">relay | none | invent → player&#45;safe text</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1741.93,-64.88 1433,-64.88 1433,-8 1741.93,-8 1741.93,-64.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-46.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ST&#45;vet (Opus) — the ONE tier&#45;safety gate</text>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-33.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">holds sd_playbook · redactRawText</text>
+<text xml:space="preserve" text-anchor="middle" x="1587.46" y="-19.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">relay | none | invent → player&#45;safe text</text>
 </g>
 <!-- resolve&#45;&gt;vet -->
-<g id="edge12" class="edge">
+<g id="edge15" class="edge">
 <title>resolve&#45;&gt;vet</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1279.86,-138.38C1279.86,-118.71 1279.86,-94.09 1279.86,-74.08"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1282.31,-74.35 1279.86,-67.35 1277.41,-74.35 1282.31,-74.35"/>
-<text xml:space="preserve" text-anchor="middle" x="1333.87" y="-104.88" font-family="Courier,monospace" font-size="10.00">over&#45;pulled</text>
-<text xml:space="preserve" text-anchor="middle" x="1333.87" y="-92.88" font-family="Courier,monospace" font-size="10.00">(secrets included)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1587.46,-138.38C1587.46,-118.71 1587.46,-94.09 1587.46,-74.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1589.91,-74.35 1587.46,-67.35 1585.01,-74.35 1589.91,-74.35"/>
+<text xml:space="preserve" text-anchor="middle" x="1641.47" y="-104.88" font-family="Courier,monospace" font-size="10.00">over&#45;pulled</text>
+<text xml:space="preserve" text-anchor="middle" x="1641.47" y="-92.88" font-family="Courier,monospace" font-size="10.00">(secrets included)</text>
 </g>
 <!-- vet&#45;&gt;lookup -->
-<g id="edge13" class="edge">
+<g id="edge16" class="edge">
 <title>vet&#45;&gt;lookup</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1192.03,-65.6C1101.84,-100.17 968.16,-168.72 920.86,-282.96 907.59,-315.02 906.09,-329.64 920.86,-361.04 933.77,-388.48 959.47,-410.49 982.78,-425.99"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="981.18,-427.87 988.39,-429.6 983.83,-423.75 981.18,-427.87"/>
-<text xml:space="preserve" text-anchor="middle" x="1024.36" y="-248.96" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">relay text ONLY</text>
-<text xml:space="preserve" text-anchor="middle" x="1024.36" y="-236.96" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">(no playbook, no raw pull)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1503.32,-65.53C1414.54,-100.46 1280.43,-169.73 1228.46,-282.96 1212.76,-317.17 1212.66,-333.48 1228.46,-367.64 1241.57,-395.98 1267.98,-418.87 1291.64,-434.9"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1290.16,-436.86 1297.36,-438.65 1292.85,-432.76 1290.16,-436.86"/>
+<text xml:space="preserve" text-anchor="middle" x="1333.48" y="-248.96" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">relay text ONLY</text>
+<text xml:space="preserve" text-anchor="middle" x="1333.48" y="-236.96" font-family="Courier,monospace" font-size="10.00" fill="#8a5a3c">(no playbook, no raw pull)</text>
 </g>
 <!-- ws&#45;&gt;resolve -->
-<g id="edge11" class="edge">
+<g id="edge14" class="edge">
 <title>ws&#45;&gt;resolve</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1082.45,-282.33C1118.85,-262.52 1168.09,-235.73 1208.29,-213.86"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1209.37,-216.07 1214.34,-210.57 1207.02,-211.76 1209.37,-216.07"/>
-<text xml:space="preserve" text-anchor="middle" x="1212.28" y="-242.96" font-family="Courier,monospace" font-size="10.00">∪ read&#45;merge</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1387.66,-288.93C1425.28,-267.46 1477.61,-237.6 1519.27,-213.83"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1520.48,-215.96 1525.35,-210.36 1518.05,-211.71 1520.48,-215.96"/>
+<text xml:space="preserve" text-anchor="middle" x="1519.88" y="-242.96" font-family="Courier,monospace" font-size="10.00">∪ read&#45;merge</text>
 </g>
 </g>
 </svg>
@@ -376,12 +420,13 @@
 <p>
   <code>render</code> iterates <code>fullStream</code> and emits player-visible frames
   <strong>in stream-part order</strong>: a <code>text-delta</code> becomes a
-  <code>text_delta</code> frame, a <code>tool-result</code> becomes a <code>skill_check</code> or
-  <code>dice_roll</code> frame built from the result and its call args. Tools <em>never</em> emit —
-  all emission happens here, in one place. As it consumes, the loop also assembles the returned
-  multi-part <code>AssistantMessage</code> directly from the stream parts (text deltas coalesce into
-  text parts split at tool boundaries; tool-call and tool-result parts append at their positions),
-  so the persisted turn is Mythrun-owned and never coupled to the SDK's own message shape.
+  <code>text_delta</code> frame, a <code>tool-result</code> becomes a <code>skill_check</code>,
+  <code>dice_roll</code>, or <code>dm_correction</code> frame built from the result and its call
+  args. Tools <em>never</em> emit — all emission happens here, in one place. As it consumes, the
+  loop also assembles the returned multi-part <code>AssistantMessage</code> directly from the stream
+  parts (text deltas coalesce into text parts split at tool boundaries; tool-call and tool-result
+  parts append at their positions), so the persisted turn is Mythrun-owned and never coupled to the
+  SDK's own message shape.
 </p>
 
 <aside class="wiki-rationale">
@@ -596,6 +641,22 @@
   yields demeanor or plausible public content, <em>never</em> invented hidden plot.
 </p>
 
+<p>
+  myth-d6knq hardened the craft rules after the weekend playtest, four additions with one theme —
+  the DM finishes what it starts and nothing more. <strong>Supply what you promise</strong>: when
+  the narration has a character read a document, recall a date, or deliver a name, the actual words
+  must appear in the prose — "she reads the letter and her face falls" without the letter's words is
+  a broken promise; the only reasons to withhold are a failed check or a genuine secret the story
+  has not given the FT. <strong>Stop at an unforced choice</strong>: when the scene reaches a fork
+  the party has not chosen — a figure walking away, a door, a split road — the narration ends
+  <em>at</em> the choice; the DM never picks the branch.
+  <strong>Never end the session in a normal turn</strong>: no "— End of Session —" markers, no
+  send-off flourishes; closings belong only to the dedicated farewell flow. And
+  <strong>never correct earlier narration inline</strong> — a correction goes through the structured
+  channel <a href="#correction-channel">below</a>, never a mid-scene "let me correct that" written
+  into the story.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The FT cannot plot-dump what it does not know — that is the authenticity engine</strong> —
   these prompt rules only hold because enforced ignorance is structural. The FT has no playbook, no
@@ -613,6 +674,88 @@
   <a href="./slow-thinker.html">Slow Thinker</a>'s own compression; it plays no role in FT grounding
   or recovery. Removing it from the FT's context type is what makes "secrets have nowhere to live"
   structural rather than a convention.
+</aside>
+
+<h2 id="entity-cards">Context repair: entity cards and the farewell filter</h2>
+
+<p>
+  Two changes from the same playtest reshape what the FT's context actually contains: one adds
+  grounding the FT was missing, one removes teaching it should never have received.
+</p>
+
+<h3 id="entity-cards-canon-for-names-spoken-mid-session">Entity cards: canon for names spoken mid-session</h3>
+
+<p>
+  The prep doc grounds the entities a session opens on. But a canon NPC can enter play
+  <em>later</em>, by spoken name — a player mentions them, a direction steers the scene toward them
+  — and their card never reached the FT's context. The model then does the only thing it can: invent
+  the attributes (the live bug — a canon-female ship captain rendered male for an entire session).
+  The fix (myth-dwyuw) runs before each render: the
+  <a href="./session-turn.html">turn worker</a> scans the recent transcript window (~40 rows,
+  including this turn's player messages) for the world's <em>known</em>-tier entity names, and
+  appends one compact card per match — name, type, and that entity's known-tier facts — to the base
+  <code>ft_context</code> as a labelled "established canon, do not contradict" block (<code
+    >augmentFtContextWithEntityCards</code
+  >
+  in <code>turn-context.ts</code>, over the pure matcher in <code>entity-card-scan.ts</code>).
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Known-tier only — and enforced ignorance is structural, not a filter</strong> — the card
+  builder never <em>decides</em> tiers. Both repo reads it makes — the entity list and the fact
+  fetch — request <code>accessLevels: ['known']</code> and nothing else, so discoverable and secret
+  material has <em>no code path</em> into a card: there is nothing downstream to filter because the
+  data never leaves the store. This is the CLAUDE.md hard boundary applied the same way the context
+  type applies it — secrets have nowhere to live — and an enforced-ignorance regression test pins
+  it: it seeds secret and discoverable facts on a matched entity and asserts the injected block
+  carries none of them. The block's label is deliberately plot-free too: it says only that these are
+  already-established, player-visible canon.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Deterministic ≥2-token name matching, not a model call</strong> — "which canon names
+  appear in this text" is structural matching against a closed known set, the sanctioned
+  Zero-Framework-Cognition exception (the same family as schema checks and the roster's exact-match
+  roller resolution) — no judgment about <em>meaning</em> is being made, so no Haiku call is owed.
+  The rules keep it honest: names are normalized (case-folded, punctuation to boundaries) and a
+  match requires a contiguous run of at least two name tokens at word boundaries — robust to
+  honorifics without a title list ("Captain Marsen Roud" is matched by a transcript's "Marsen Roud")
+  — while a single-token name never matches at all, because one common word colliding with a short
+  name would inject a wrong card far more often than it would help.
+</aside>
+
+<p>
+  The rest is discipline around the edges. Cards are capped (six per turn, earliest-mentioned first)
+  so the injected block cannot bloat the cached context. The augment is idempotent by construction:
+  the base <code>ft_context</code> is re-derived from scratch every turn and the appended block is
+  never persisted, and any entity the prep doc already names is suppressed — no duplicate cards.
+  Player characters are dropped from the scan (the roster and the per-turn party ledger already
+  ground them). And the whole augment is fail-soft: any failure logs and returns the base context
+  unchanged — grounding is additive, and a degraded turn must not crash.
+</p>
+
+<h3 id="farewell-filter">The farewell filter</h3>
+
+<p>
+  The opposite problem: the context read was returning teaching the FT should never see. A farewell
+  turn's send-off prose — the real, in-fiction "— End of Session One —" close — persists to the
+  transcript like any DM turn, and the FT's context reconstruction faithfully returned it. The model
+  learned the pattern: dramatic close → emit the marker. It began self-authoring fake "— End of
+  Session —" closings in ordinary mid-session turns, each one persisting and re-entering its own
+  context, reinforcing the habit. myth-n98pc cuts the loop at the read:
+  <code>listFtContextRows</code> now excludes every row whose <code>trigger_kind</code> is
+  <code>farewell</code>, so a send-off is teardown the FT never re-reads as scene state.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Filtered from the FT's read, kept for everyone else's</strong> — the farewell rows stay in
+  the transcript, and the analysis-side read (<code>listForAnalysis</code>) still surfaces them: the
+  <a href="./session-reconcile.html">post-session reconcile and analysis</a> need the closing beats
+  (where the party settled, who departed) precisely because the player-less farewell turn never runs
+  a Scribe. The predicate is <code>IS DISTINCT FROM 'farewell'</code>, not <code>&lt;&gt;</code>,
+  because player rows and most DM rows carry a NULL trigger_kind — a plain inequality would silently
+  drop the entire transcript. Only the FT's self-priming channel is cut; the durable record is
+  untouched.
 </aside>
 
 <h2 id="player-agency">Player agency: the FT never plays another player's character</h2>
@@ -672,6 +815,61 @@
   PC name mid-prose, or an NPC's name, is left alone — so the players' input format never enters the
   durable transcript or the FT's own next-turn context, breaking the cycle at its source.
 </p>
+
+<p>
+  The weekend playtest found the semantic sibling of that leak. On a <strong>scene switch</strong> —
+  a player's message opens a new location or a new line of action while another PC's scene hangs
+  unresolved — the FT would close the old scene by authoring the absent character's dialogue or
+  movement <em>inline</em>, woven smoothly into the narration: no tool call for the agency gate to
+  refuse, no <code>Name:</code> prefix for the strip to catch. Two things answer it. The prompt's
+  new scene-switch rule draws the exact line: a new scene answers <em>that</em> message; a prior
+  scene left hanging simply ends unresolved; another PC's words may be repeated only
+  <em>verbatim</em> from the transcript, and their plans carried out only when that player
+  <em>explicitly declared</em> them — executing a stated intent honors the player, inventing new
+  intent is the bug. And because a prompt alone has already proven insufficient on this boundary, a
+  third layer backstops the first two: every rendered turn now passes a post-render Haiku audit at
+  the <a href="./session-turn.html#the-audit-gate">conductor's render seam</a>, which classifies
+  exactly this violation (among two others) and — when it is safe to — re-renders the turn once with
+  a corrective instruction. The gate lives on the
+  <a href="./session-turn.html">session-turn</a> page; the layering is the point here: prompt rule,
+  deterministic tool gate, durable prefix strip, semantic post-audit — each catches what the one
+  before it structurally cannot.
+</p>
+
+<h2 id="correction-channel">The correction channel: issue_correction</h2>
+
+<p>
+  Sometimes the DM must amend its own earlier narration — the
+  <a href="./scribe.html">Scribe</a>'s retcon arrives as a fused
+  <code>[[DM CORRECTION: …]]</code> marker, or the model catches a name it got wrong. The old shape
+  was an inline walk-back delivered in prose ("A moment — let me correct something: …"). myth-d6knq
+  replaces it with a structured tool: <code>issue_correction</code>, a pure resolver like every
+  other tool, whose <code>text</code> is the correction in the DM's own voice — terse, honest,
+  in-fiction, no explanation of why. The consume loop emits the result as a
+  <code>dm_correction</code> frame (like any other tool frame, from the single emission point), the
+  codec persists the exchange as its own <code>dm_correction</code> row, and the client renders it
+  as a set-apart errata slip — never as story prose. An inline correction is now a bug by
+  definition: the prompt forbids it, and the post-render audit classifies one as a violation. The
+  tool is <em>not</em> player-agency-gated — the DM is correcting its own narration, never acting
+  for a player character.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A separate channel, because an amended fact must not survive wrong in canon</strong> — an
+  inline correction fails at both ends of the pipeline. On the player side it masquerades as
+  fiction: prose and errata are typographically identical, so the table can't tell "the world
+  changed" from "the DM misspoke." On the canon side it is worse: the wrong fact is already in the
+  durable transcript, which re-enters the FT's own context <em>and</em> feeds the Scribe's
+  extraction — so the mistake can outlive its correction. The structured channel closes the loop at
+  every re-entry point. The persisted <code>dm_correction</code> row is included in the FT context
+  read, so the codec decodes it back into the tool exchange and the FT re-reads its own correction
+  next turn — without that, the model could re-assert the very fact it just amended. And the
+  <a href="./session-turn.html">conductor</a> folds each correction into the Scribe's prose payload
+  as a framed <code>[Correction to earlier narration: …]</code> amendment, so the extractor reads it
+  as an amendment rather than canonizing the superseded form. The
+  <a href="./session-transport.html">transport</a> carries the frame live and replays the row on
+  reconnect.
+</aside>
 
 <h2 id="the-world-delta-the-ft-proposes-its-own-facts">The world delta: the FT proposes its own facts</h2>
 
@@ -939,7 +1137,11 @@
   <code>ftHistory</code> (which would render through the codec's attribution as a phantom "Player").
   A one-shot direction, by contrast, is fused onto the last user message by the
   <a href="./session-turn.html">conductor</a> before this assembly runs — fuse-then-append, so the
-  one-shot lands on the real player message, not the ephemeral tail.
+  one-shot lands on the real player message, not the ephemeral tail. On an
+  <a href="./session-turn.html#the-audit-gate">audit-gate retry</a> only, one more tail rides this
+  same uncached zone, appended last — closest to generation, the most urgent instruction: the
+  <code>[System correction: …]</code> corrective instruction naming the violation to avoid.
+  Render-only, like the others; absent on every normal first-attempt render.
 </aside>
 
 <h2 id="integration-points">Integration points</h2>
@@ -951,7 +1153,9 @@
   <a href="./slow-thinker.html">Slow Thinker</a> now runs off the turn path — its stage directions
   reach the FT as a fused one-shot (on the player's last message) and a standing tail message, both
   consumed silently. A Scribe-authored retcon reaches the FT the same way, as a fused
-  <code>[[DM CORRECTION: …]]</code> marker it delivers openly. It runs through the
+  <code>[[DM CORRECTION: …]]</code> marker it delivers openly — through the
+  <a href="#correction-channel"><code>issue_correction</code> tool</a> as a structured
+  <code>dm_correction</code> frame, never as inline prose. It runs through the
   <a href="./llm.html">LLM client</a>'s <code>streamTextWithTools</code> wrapper (Sonnet) and its
   skill-check resolver makes a nested Haiku call through the same abstraction. Its roller resolution
   and per-skill proficiency reads come from the
@@ -1108,7 +1312,10 @@
         <code>cosine</code> thunks) + the <code>recordInjection</code> sink, and the myth-ph544
         <a href="#player-agency">player-agency gate</a> (<code>participantNames</code> +
         <code>actingCharacters</code>) that refuses <code>roll_skill_check</code> /
-        <code>search_lore</code> for a PC who did not act this turn.
+        <code>search_lore</code> for a PC who did not act this turn. myth-d6knq adds
+        <code>issue_correction</code> — the structured
+        <a href="#correction-channel">self-correction channel</a> (a pure resolver echoing
+        <code>{ text }</code>; not player-agency-gated).
       </td>
     </tr>
     <tr>
@@ -1133,7 +1340,20 @@
         recentNarrative / the opaque vet capturing <code>sdPlaybook</code>, plus the MYT-73
         <code>recordInjection</code> sink, the <a href="./scribe.html">working-set</a> read thunk,
         and the pure <code>cosineSimilarity</code> ranker); <code>resolveWorldId</code> /
-        <code>reloadFtContext</code> — the worldId blob-cache + ft_context reload.
+        <code>reloadFtContext</code> — the worldId blob-cache + ft_context reload;
+        <code>augmentFtContextWithEntityCards</code> — the myth-dwyuw
+        <a href="#entity-cards">entity-card</a> augment (known-tier reads only, fail-soft).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/entity-card-scan.ts</code></td>
+      <td>
+        The pure, IO-free <a href="#entity-cards">entity-card</a> matcher (myth-dwyuw):
+        <code>normalizeName</code> / <code>firstMentionIndex</code> (contiguous
+        ≥<code>MATCH_MIN_TOKENS</code>-token runs at word boundaries) /
+        <code>scanMentionedEntities</code> (earliest-first, capped at <code>ENTITY_CARD_CAP</code>)
+        / <code>formatEntityCard</code> + <code>buildEntityCardBlock</code>. Never decides tiers —
+        the orchestrator hands it known-tier content only.
       </td>
     </tr>
     <tr>
@@ -1192,9 +1412,12 @@
       <td>
         The multiplayer FT system prompt (roster, attribution, tool protocol, enforced ignorance,
         the MYT-70 Resources &amp; The Ledger guidance, the MYT-73 World Delta section + the
-        <code>[[DM CORRECTION: …]]</code> open-delivery exception to silent-consume, and the
-        myth-ph544 <a href="#player-agency">Player Characters Belong to Their Players</a> section —
-        hold the floor, never voice/decide/move/re-equip or roll for another PC).
+        <code>[[DM CORRECTION: …]]</code> exception to silent-consume — delivered via
+        <code>issue_correction</code>, never inline, as of myth-d6knq — and the myth-ph544
+        <a href="#player-agency">Player Characters Belong to Their Players</a> section — hold the
+        floor, never voice/decide/move/re-equip or roll for another PC. myth-d6knq hardening: the
+        scene-switch rule (verbatim-or-declared-intent), the fact-supplying rule, the
+        stop-at-an-unforced-choice rule, no end-of-session flourishes, corrections never inline).
       </td>
     </tr>
     <tr>
@@ -1223,6 +1446,7 @@
   <code>backend/src/session/world-lookup-gate.ts</code>,
   <code>backend/src/session/world-lookup-config.ts</code>,
   <code>backend/src/session/turn-context.ts</code>,
+  <code>backend/src/session/entity-card-scan.ts</code>,
   <code>backend/src/session/transcript-codec.ts</code>, <code>backend/src/repo/entities.ts</code>,
   <code>backend/src/llm/st-lookup-vet.ts</code>,
   <code>backend/src/llm/prompts/session/ft-system.txt</code>,
@@ -1239,7 +1463,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-wrapper-streamtextwithtools">The wrapper: streamTextWithTools</a></li><li style="padding-left:0"><a href="#the-consume-loop-the-single-emission-point">The consume loop: the single emission point</a></li><li style="padding-left:0"><a href="#the-cap-and-the-prose-close">The cap and the prose close</a></li><li style="padding-left:0"><a href="#tool-registry-pure-resolvers">The tool registry: pure resolvers</a></li><li style="padding-left:0"><a href="#the-dice-engine-principle-4">The dice engine (Principle #4)</a></li><li style="padding-left:0"><a href="#skill-check-resolver">The skill-check resolver (Principle #5)</a></li><li style="padding-left:0"><a href="#enforced-ignorance-and-the-prompt">Enforced ignorance and the prompt</a></li><li style="padding-left:0"><a href="#player-agency">Player agency: the FT never plays another player's character</a></li><li style="padding-left:0"><a href="#the-world-delta-the-ft-proposes-its-own-facts">The world delta: the FT proposes its own facts</a></li><li style="padding-left:0"><a href="#world-knowledge-lookups">World-knowledge lookups: the Slow-Thinker-gated read seam</a></li><li style="padding-left:12px"><a href="#step-1-the-contextual-skill-gate-haiku">Step 1 — the contextual skill-gate (Haiku)</a></li><li style="padding-left:12px"><a href="#step-2-resolve-over-pull-and-step-3-the-st-vet-opus">Step 2 — resolve (over-pull) and Step 3 — the ST-vet (Opus)</a></li><li style="padding-left:12px"><a href="#step-4-relay-and-fail-soft-everywhere">Step 4 — relay, and fail-soft everywhere</a></li><li style="padding-left:12px"><a href="#the-working-set-canon-read-merge-myt-73">The working set ∪ canon read-merge (MYT-73)</a></li><li style="padding-left:0"><a href="#prompt-caching-the-cost-lever">Prompt caching: the cost lever</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#config-constants-ft-config-ts">Config constants (ft-config.ts)</a></li><li style="padding-left:12px"><a href="#world-lookup-config-constants-world-lookup-config-ts">World-lookup config constants (world-lookup-config.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-wrapper-streamtextwithtools">The wrapper: streamTextWithTools</a></li><li style="padding-left:0"><a href="#the-consume-loop-the-single-emission-point">The consume loop: the single emission point</a></li><li style="padding-left:0"><a href="#the-cap-and-the-prose-close">The cap and the prose close</a></li><li style="padding-left:0"><a href="#tool-registry-pure-resolvers">The tool registry: pure resolvers</a></li><li style="padding-left:0"><a href="#the-dice-engine-principle-4">The dice engine (Principle #4)</a></li><li style="padding-left:0"><a href="#skill-check-resolver">The skill-check resolver (Principle #5)</a></li><li style="padding-left:0"><a href="#enforced-ignorance-and-the-prompt">Enforced ignorance and the prompt</a></li><li style="padding-left:0"><a href="#entity-cards">Context repair: entity cards and the farewell filter</a></li><li style="padding-left:12px"><a href="#entity-cards-canon-for-names-spoken-mid-session">Entity cards: canon for names spoken mid-session</a></li><li style="padding-left:12px"><a href="#farewell-filter">The farewell filter</a></li><li style="padding-left:0"><a href="#player-agency">Player agency: the FT never plays another player's character</a></li><li style="padding-left:0"><a href="#correction-channel">The correction channel: issue_correction</a></li><li style="padding-left:0"><a href="#the-world-delta-the-ft-proposes-its-own-facts">The world delta: the FT proposes its own facts</a></li><li style="padding-left:0"><a href="#world-knowledge-lookups">World-knowledge lookups: the Slow-Thinker-gated read seam</a></li><li style="padding-left:12px"><a href="#step-1-the-contextual-skill-gate-haiku">Step 1 — the contextual skill-gate (Haiku)</a></li><li style="padding-left:12px"><a href="#step-2-resolve-over-pull-and-step-3-the-st-vet-opus">Step 2 — resolve (over-pull) and Step 3 — the ST-vet (Opus)</a></li><li style="padding-left:12px"><a href="#step-4-relay-and-fail-soft-everywhere">Step 4 — relay, and fail-soft everywhere</a></li><li style="padding-left:12px"><a href="#the-working-set-canon-read-merge-myt-73">The working set ∪ canon read-merge (MYT-73)</a></li><li style="padding-left:0"><a href="#prompt-caching-the-cost-lever">Prompt caching: the cost lever</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#config-constants-ft-config-ts">Config constants (ft-config.ts)</a></li><li style="padding-left:12px"><a href="#world-lookup-config-constants-world-lookup-config-ts">World-lookup config constants (world-lookup-config.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

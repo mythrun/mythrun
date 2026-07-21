@@ -2,6 +2,7 @@
 <!-- source: backend/src/llm/prep/prior-session-context.ts -->
 <!-- source: backend/src/llm/prep/serialize-world-state-for-prep.ts -->
 <!-- source: backend/src/llm/prep/stages/session-prep.ts -->
+<!-- source: backend/src/llm/prompts/prep/session-prep.txt -->
 <!-- source: backend/src/worker/publishers.ts -->
 <!-- source: backend/src/repo/session-preps.ts -->
 <!-- source: backend/src/repo/sessions.ts -->
@@ -14,8 +15,8 @@
 <!-- source: backend/migrations/034_session_opening.sql -->
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/worker/bullmq-config.ts -->
-<!-- source-hash: sha256:b28a4d8cd65824a891d2ca81004aa0b7af2285df071104656e2d842addfa600b -->
-<!-- last-ticket: MYT-74b -->
+<!-- source-hash: sha256:0f2515f788bca36b6d12c79864db5f334925be033a04f1577287c4edc775709c -->
+<!-- last-ticket: myth-vb2ov -->
 
 <h1>Session prep</h1>
 
@@ -129,9 +130,12 @@
   slowest single call in the system (a 9-minute timeout, two long markdown documents), and holding a
   pooled connection for its full duration would starve the rest of the worker. The
   <a href="./llm.html#the-session-prep-generation-stage">LLM client page</a> covers the generation
-  primitive — the omniscient serializer, the <code>maxOutputTokens</code> ceiling, the
-  enforced-ignorance split that lives inside the prompt, and the optional
-  <code>onProseDelta</code> callback the processor threads in to capture the stream as it lands.
+  primitive — the <code>maxOutputTokens</code> seam (now pinned to the named
+  <code>OPUS_MAX_OUTPUT_TOKENS</code> backstop), the enforced-ignorance split that lives inside the
+  prompt, and the optional <code>onProseDelta</code> callback the processor threads in to capture
+  the stream as it lands. How the call <em>stays</em> bounded as a campaign's canon accumulates —
+  input tiering, the in-prompt output budget, the overflow retry — is
+  <a href="#keeping-prep-bounded">this page's story, below</a>.
 </p>
 
 <p>
@@ -224,6 +228,33 @@
   The prep LLM is free to reword all of that.
 </p>
 
+<p>
+  Since myth-8mom0, that anchor also survives the session's <em>ending</em>. A session that closes
+  with a farewell — the wind-down narration that ends the table's night — used to evaporate at this
+  boundary: the farewell turn is playerless, so its facts never reached the working state the
+  analysis summarizes, and the next prep re-serialized the pre-farewell world (a finished carving
+  reverted; a departed NPC walked back in). The fix lands upstream, on the
+  <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a
+  >: it now reads the farewell's closing narration as an authoritative end-state block, so the
+  <code>summary</code> and every end-state field of the <code>handoff</code> — party positions, time
+  of day, each NPC's disposition, the unresolved threads — record where the session <em>ended</em>,
+  not a mid-session moment. On this side of the bridge nothing changed mechanically:
+  <code>buildPriorSessionContext</code> parses the same rows. But the rows now carry the close, so
+  "Where We Left Off" opens the next session on the actual ending — the departed NPC stays departed,
+  the finished carving stays finished.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The farewell carry rides the existing surfaces, not a new prep input</strong> — prep could
+  have read the farewell narration itself, as one more serializer section. Folding it into the
+  analysis instead fixes every consumer at once, because the handoff feeds prep twice: it renders
+  the "Where We Left Off" anchor, <em>and</em> it seeds the
+  <a href="#keeping-prep-bounded">working set</a> that decides which canon renders in full. One
+  authoritative producer means the farewell's cast is simultaneously described correctly and
+  guaranteed a full-detail slot in the next session's world dump. A second, prep-local farewell
+  input would have left those two surfaces free to disagree.
+</aside>
+
 <aside class="wiki-rationale">
   <strong
     >Verbatim NPC voice is concatenated onto <code>ft_context</code>, never run through the prep
@@ -262,6 +293,109 @@
   screen needs and nothing a Fast Thinker could mistake for narrative. They're added to the
   <a href="./pipeline-status.html">pipeline event contract</a> alongside the world-gen and
   character-creation arms.
+</aside>
+
+<h3 id="keeping-prep-bounded">Keeping prep bounded as canon accumulates</h3>
+
+<p>
+  Prep's input is the omniscient world dump, and its output tracked its input: shown a world, Opus
+  re-described the world. Every session the <a href="./session-reconcile.html">reconcile</a> folds
+  new entities and facts into canon, so both sides grew with the entity count — by session 5 of a
+  live campaign, prep was emitting ~15,000 output tokens, and around session 10 it overflowed the
+  stage's old inline 16,384-token cap and died mid-schema: the streamed JSON never closed, the job
+  failed, and the campaign hit a wall <em>because</em> it had been played long enough to matter.
+  Three layers now bound the call — the input, the prompt, and the ceiling.
+</p>
+
+<p>
+  <strong>The input is tiered around the session's working set.</strong> Above 40 entities,
+  <code>serialize-world-state-for-prep.ts</code> stops rendering the whole world in full. Full
+  detail — prose, facts, relationships, every access tier — goes only to the <em>working set</em>:
+  the party's entities, every entity the latest handoff names as in play (returning NPCs, key
+  locations, the places the party is standing), and their 1-hop relationship neighbors, with a
+  60-entity safety valve on the neighbor expansion. The dormant remainder renders as a compact
+  roster — one line per entity, name + type + access tier, no facts — capped at 100 with an "…and N
+  more" tally. At 40 entities or fewer the dump renders byte-for-byte as before, so session-1 worlds
+  and the captured smoke fixture are untouched.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Tier the input, not just raise the cap</strong> — the output wall was the symptom; the
+  cause was input growth. A model handed the full accumulated canon dutifully re-describes it, so a
+  bigger cap alone just moves the crash to session 20 — while paying Opus to re-emit a world's worth
+  of dormant canon on every prep. Bounding what the model sees is what bounds what it writes; the
+  raised cap below is the backstop, not the fix.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A working set plus one hop, not a token trim</strong> — truncating the dump at a byte
+  budget would drop entities by accident of serialization order. Structural selection keeps the
+  <em>right</em> canon: everything anchored to the party or flagged live by the handoff, plus one
+  hop of graph context so a returning NPC's faction and home ground arrive with her. And dormant
+  canon is compacted, never dropped — the roster line is the handle that lets the model pull an
+  entity back up if the session swerves somewhere unexpected.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Deterministic selection — no new I/O in the offline prep path</strong> — the working set
+  is computed by name matching and graph walking over data the serializer already loaded: no
+  embeddings, no relevance-ranking model call. That stays on the mechanical side of the ZFC line
+  (structural selection, not a content judgment), adds no failure mode or latency to the slowest
+  call in the system, and keeps prep reproducible — the same world and handoff always serialize to
+  the same input.
+</aside>
+
+<p>
+  <strong>The prompt budgets the output.</strong> The prompt's old "Length" section became an
+  <em>Output Budget</em> block, and its rule is scale-independence: output must not grow with the
+  world. Rich detail is spent only on the working set; dormant canon is referenced in a single line
+  or left out; the per-document targets still hold (2,000–3,000 words of <code>ft_context</code>, a
+  playbook always shorter than it, a 150–350-word opening) under a new total — all three documents
+  well under 6,000 words, however large the world has grown. The dormant roster carries its own
+  "reference only, do not re-describe" framing, so the instruction sits next to the data it governs.
+</p>
+
+<p>
+  <strong>Overflow degrades gracefully — once.</strong> If the stream still hits the ceiling, the
+  stage sees <code>finishReason: 'length'</code> — whether the truncated JSON kills the object
+  promise or a capped object still resolves — and classifies it as an <em>overflow</em> rather than
+  an opaque parse failure. It retries exactly once, appending an urgent tighter-budget override
+  (working-set scope only, harder word limits) to the same prompt. No prose deltas ride the retry —
+  the first attempt already streamed its discarded partial to the dev pane; the retry's resolved
+  object is the authoritative artifact. A second overflow throws the shared
+  <code>{ terminal: true }</code> error, and the
+  <a href="#a-prep-failure-is-session-scoped">session-scoped failure path</a> marks the stage failed
+  without BullMQ re-spinning a job that would hit the same wall.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One retry, then terminal — not silent truncation, not a loop</strong> — accepting a
+  truncated prep would hand the session half a playbook, or none: truncation usually surfaces as
+  JSON that never closes, and even a capped object that parses has lost content. But a first
+  overflow is often recoverable — the model over-wrote, and a sharper instruction lands it. Past
+  that, the same input meets the same ceiling: more retries buy Opus spend, not a different outcome,
+  and a non-terminal throw would leave BullMQ retrying a deterministic failure. One honest retry,
+  then a clean terminal fail an operator can see.
+</aside>
+
+<p>
+  <strong>The ceiling is a named backstop.</strong> The stage's <code>maxOutputTokens</code> is now
+  pinned to <code>OPUS_MAX_OUTPUT_TOKENS</code> — 128,000, the model's real maximum, a config
+  constant beside the model ids (the
+  <a href="./llm.html#the-session-prep-generation-stage">LLM client page</a> owns that seam). And
+  growth is observable before it breaks: every successful prep logs
+  <code>session_prep.usage</code> with its measured output tokens against the cap, and every
+  overflow logs <code>session_prep.output_overflow</code> — a long campaign's drift toward the wall
+  shows up in the logs while it is still headroom, not as a dead worker.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>128k is the backstop, not the routine target</strong> — the budget aims the whole output
+  well under 6,000 words, an order of magnitude below the ceiling. The cap's job changed: at 16,384
+  it was the de-facto output contract, and a long campaign was guaranteed to hit it; at 128,000 it
+  exists so truncation is an exceptional pathology with a graceful failure path, not a boundary
+  routine preps brush against. The routine bound on size — and therefore on cost — moved into the
+  prompt's budget and the single-retry policy, where it degrades soft instead of crashing hard.
 </aside>
 
 <h3 id="two-channels-one-stream">Two channels off one stream</h3>
@@ -350,22 +484,26 @@
 <aside class="wiki-rationale">
   <strong>No cost cap, no credit debit at prep time</strong> — the world-gen and character-creation
   caps exist to bound an open-ended pipeline that can chain many calls. Session prep is a single
-  call whose cost is structurally bounded by its <code>maxOutputTokens</code>
-  ceiling (16384 tokens) — there is no runaway loop to fence. The recorded cost is for attribution
-  and dashboards, not a gate. And no credit moves here: the session credit is debited later, at the
-  <code>/start</code> path in Session Runtime, through <code>credits.tryDebitForSession</code>. Prep
-  is preparatory work the runtime pays for when the session actually begins.
+  call (two, on an <a href="#keeping-prep-bounded">overflow retry</a>) whose routine size the
+  prompt's output budget holds well under 6,000 words, with the
+  <code>OPUS_MAX_OUTPUT_TOKENS</code> backstop above it — there is no runaway loop to fence, and the
+  <code>session_prep.usage</code> log keeps the spend observable. The recorded cost is for
+  attribution and dashboards, not a gate. And no credit moves here: the session credit is debited
+  later, at the <code>/start</code> path in Session Runtime, through
+  <code>credits.tryDebitForSession</code>. Prep is preparatory work the runtime pays for when the
+  session actually begins.
 </aside>
 
-<h3>A prep failure is session-scoped</h3>
+<h3 id="a-prep-failure-is-session-scoped">A prep failure is session-scoped</h3>
 
 <p>
   On any error the processor classifies it with <code>isTerminalError</code>, marks the
   <code>pipeline_runs</code> row <code>failed</code>, and publishes a <code>prep-failed</code> event
   carrying the terminal flag. A non-terminal error is re-thrown so BullMQ retries with backoff; a
-  terminal error returns cleanly so BullMQ marks the job done (retrying the same payload wouldn't
-  help). What it deliberately does <em>not</em> do — on either path — is call
-  <code>repo.campaigns.setFailed</code>.
+  terminal error — a permanently bad input, or the
+  <a href="#keeping-prep-bounded">double output overflow</a> — returns cleanly so BullMQ marks the
+  job done (retrying the same payload wouldn't help). What it deliberately does <em>not</em> do — on
+  either path — is call <code>repo.campaigns.setFailed</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -685,11 +823,11 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
 
 <p>
   Upstream: the generation primitive on the
-  <a href="./llm.html#the-session-prep-generation-stage">LLM client</a> page — the omniscient
-  serializer, the two-field schema, the <code>maxOutputTokens</code> ceiling, the
-  <code>onProseDelta</code> streaming seam, and the in-prompt enforced-ignorance split that keeps
-  <code>discoverable</code> / <code>secret</code> material out of <code>ft_context</code>; and the
-  prior session's
+  <a href="./llm.html#the-session-prep-generation-stage">LLM client</a> page — the three-field
+  schema, the <code>maxOutputTokens</code> seam (pinned to the
+  <code>OPUS_MAX_OUTPUT_TOKENS</code> backstop), the <code>onProseDelta</code> streaming seam, and
+  the in-prompt enforced-ignorance split that keeps <code>discoverable</code> /
+  <code>secret</code> material out of <code>ft_context</code>; and the prior session's
   <a href="./session-reconcile.html#post-session-analysis-and-the-handoff"> post-session analysis</a
   >, whose <code>summary</code> + <code>handoff</code> this prep reads to open on where the table
   left off. Sideways: the <a href="./worker.html">worker</a> registers this queue's
@@ -770,6 +908,53 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
       <td>
         <code>attempts: 2</code>, exponential backoff 30s,
         <code>removeOnComplete/removeOnFail: { count: 0 }</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>World-dump tiering and output budget</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Knob</th>
+      <th>Value</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>WORLD_DUMP_FULL_THRESHOLD</code></td>
+      <td>40</td>
+      <td>At or below: the whole world renders in full, byte-for-byte pre-tiering.</td>
+    </tr>
+    <tr>
+      <td><code>MAX_WORKING_SET_ENTITIES</code></td>
+      <td>60</td>
+      <td>
+        Safety valve on the full-detail working set (party + handoff-named + 1-hop neighbors); stops
+        the neighbor expansion.
+      </td>
+    </tr>
+    <tr>
+      <td><code>MAX_ROSTER_ENTITIES</code></td>
+      <td>100</td>
+      <td>Dormant-roster cap; the remainder collapses to an "…and N more" tally.</td>
+    </tr>
+    <tr>
+      <td>Output budget (in-prompt)</td>
+      <td>&lt; 6,000 words total</td>
+      <td>
+        <code>ft_context</code> 2,000–3,000 words; playbook shorter; opening 150–350. Holds
+        regardless of world size.
+      </td>
+    </tr>
+    <tr>
+      <td><code>maxOutputTokens</code></td>
+      <td><code>OPUS_MAX_OUTPUT_TOKENS</code> = 128,000</td>
+      <td>
+        Backstop, not the routine wall. <code>finishReason: 'length'</code> → one tighter-budget
+        retry, then <code>{ terminal: true }</code>.
       </td>
     </tr>
   </tbody>
@@ -904,8 +1089,12 @@ GET /api/campaigns/&lt;id&gt;/session-preps/&lt;prepId&gt; &rarr; SafeSessionPre
   publisher wiring in <code>backend/src/worker.ts</code> +
   <code>backend/src/server.ts</code> against <code>backend/src/worker/bullmq-config.ts</code>; the
   job name in <code>backend/src/contract/pipeline-jobs.ts</code>. The streamed generation primitive
-  (<code>onProseDelta</code>) is on
+  (<code>onProseDelta</code>, the overflow retry, the usage log) is on
   <a href="./llm.html#the-session-prep-generation-stage"
     ><code>llm/prep/stages/session-prep.ts</code></a
-  >; the two SSE routes are on <a href="./pipeline-status.html">pipeline status</a>.
+  >; the working-set tiering is in
+  <code>backend/src/llm/prep/serialize-world-state-for-prep.ts</code>, the output budget in
+  <code>backend/src/llm/prompts/prep/session-prep.txt</code>, the handoff bridge in
+  <code>backend/src/llm/prep/prior-session-context.ts</code>; the two SSE routes are on
+  <a href="./pipeline-status.html">pipeline status</a>.
 </p>

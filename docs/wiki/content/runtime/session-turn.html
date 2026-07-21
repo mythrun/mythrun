@@ -6,12 +6,16 @@
 <!-- source: backend/src/session/transcript-codec.ts -->
 <!-- source: backend/src/session/tiers/types.ts -->
 <!-- source: backend/src/session/tiers/stubs.ts -->
+<!-- source: backend/src/session/tiers/audited-fast-thinker.ts -->
+<!-- source: backend/src/llm/turn-audit.ts -->
+<!-- source: backend/src/llm/schemas/turn-audit.ts -->
+<!-- source: backend/src/llm/prompts/session/turn-audit.txt -->
 <!-- source: backend/src/contract/session-channel.ts -->
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:94fd4a2adfd1348e58930a912e20a0b60c1a97a942b889da51171e6e22cc2c45 -->
-<!-- last-ticket: myth-rf5rn -->
+<!-- source-hash: sha256:9781ab7278a11587f674ba0882af0f2c8accdae89342fd3f8c27393266fe33b6 -->
+<!-- last-ticket: myth-d6knq -->
 
 <h1>Session turn</h1>
 
@@ -34,7 +38,9 @@
   <a href="./session-reconcile.html#begin-a-farewell-not-an-inline-finalize"
     >unconditional finalize</a
   >
-  in its <code>finally</code>.
+  in its <code>finally</code>. And as of myth-d6knq the FT renders through an
+  <a href="#the-audit-gate">audit decorator</a> — a Haiku post-pass at the single render seam that
+  catches a pure-prose boundary violation before it becomes the durable record.
 </p>
 
 <!-- @diagram: runtime/session-turn -->
@@ -123,7 +129,8 @@
   atomic multi-VALUES INSERT left no rows behind), and retry once. A post-heal collision propagates.
   The <a href="./session-transport.html">transport</a>'s player-message persist runs the same heal;
   both branch on the shared <code>isSeqUniqueViolation</code> classifier, colocated with the repo
-  that owns the constraint.
+  that owns the constraint. The transport also raise-only floor-guards the counter at every WS join
+  — the follow-up fix for the <em>non-colliding</em> expired-counter case, told on that page.
 </aside>
 
 <aside class="wiki-rationale">
@@ -237,19 +244,25 @@
   <li>
     <strong>FT render</strong> — <code>ft.render(ctx, emit)</code> runs the
     <a href="./fast-thinker.html">Fast Thinker</a>'s tool loop, streaming <code>text_delta</code> /
-    <code>skill_check</code> / <code>dice_roll</code> / <code>ledger_update</code> frames through
-    the latched emitter, and returns a multi-part <code>AssistantMessage</code>; its token usage is
-    accumulated. The standing directive (also worker-resolved) rides the FT context and is appended
-    by the FT as a raw tail message after its cache breakpoints — see the
+    <code>skill_check</code> / <code>dice_roll</code> / <code>ledger_update</code> /
+    <code>dm_correction</code> frames through the latched emitter, and returns a multi-part
+    <code>AssistantMessage</code>; its token usage is accumulated. The <code>ft</code> the worker
+    injects is the <a href="#the-audit-gate">audit-decorated</a> FT — the controller neither knows
+    nor cares. The standing directive (also worker-resolved) rides the FT context and is appended by
+    the FT as a raw tail message after its cache breakpoints — see the
     <a href="./fast-thinker.html">Fast Thinker</a>'s prompt assembly.
   </li>
   <li>
     <strong>Assemble the Scribe job</strong> — the conductor no longer runs a Scribe tier here. It
     exposes <code>enqueueScribeJob</code>, which gathers the turn's player-facing prose (the joined
     text parts), the parsed FT <a href="./scribe.html">world-delta</a>, and the turn's ST-vet
-    injections into one job payload. The <em>worker</em> calls it on the flushed-success path only —
-    a turn that didn't durably land must not enqueue — so the assembly is here but the gating is the
-    worker's (the §5 arm below).
+    injections into one job payload. A correction the FT issued rides the
+    <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool channel,
+    not the text parts — but the Scribe must still see it, so the assembly folds each correction
+    into the prose as a framed <code>[Correction to earlier narration: …]</code> amendment; without
+    that fold, the extractor would canonize the amended fact in its superseded form. The
+    <em>worker</em> calls it on the flushed-success path only — a turn that didn't durably land must
+    not enqueue — so the assembly is here but the gating is the worker's (the §5 arm below).
   </li>
 </ol>
 
@@ -329,9 +342,11 @@
   The controller takes its tiers by constructor injection. The
   <strong><a href="./fast-thinker.html">Fast Thinker</a> is real</strong> (MYT-68) — the worker
   constructs a fresh <code>SonnetFastThinker</code> per turn with that turn's scoped skill-check
-  projection, resolved world tone, and the worker-latched emitter. As of MYT-73 the FT is the
-  <em>only</em> reasoning tier here: <code>makeTiers</code> returns just <code>{ ft }</code>. The
-  Slow Thinker runs in its own <a href="./slow-thinker.html">post-turn pipeline</a>, and the
+  projection, resolved world tone, and the worker-latched emitter, and (myth-d6knq) wraps it in the
+  <a href="#the-audit-gate"><code>AuditedFastThinker</code></a> decorator before handing it to the
+  controller. As of MYT-73 the FT is the <em>only</em> reasoning tier here:
+  <code>makeTiers</code> returns just <code>{ ft }</code>. The Slow Thinker runs in its own
+  <a href="./slow-thinker.html">post-turn pipeline</a>, and the
   <a href="./scribe.html">Scribe</a> is a post-turn job the worker enqueues rather than a tier the
   conductor calls — so the old on-path Scribe seam (and its stub) is gone.
 </p>
@@ -347,6 +362,82 @@
   Handing the working set to the FT as a plain context field would route around that gate, so the
   field stays empty by construction: the read-after-write is wired through the lookup tools' deps (a
   per-turn loader thunk + an injection sink), not through the FT's context object.
+</aside>
+
+<h2 id="the-audit-gate">The audit gate: a decorated render seam</h2>
+
+<p>
+  The conductor calls <code>ft.render(ctx, emit)</code> exactly once per turn — and that single call
+  is the seam where FT narration is finalized before persistence. myth-d6knq puts a gate on it: the
+  worker wraps the real <code>SonnetFastThinker</code> in an
+  <code>AuditedFastThinker</code> decorator, so every rendered turn passes the audit without the
+  controller (a thin ZFC shell) or the FT tier learning anything about auditing. The flow: attempt 1
+  renders through the <em>real</em> emitter — it streams live, as always. Then one Haiku call
+  (<code>auditTurn</code>, 20-second bound, disableable via the
+  <code>TURN_AUDIT_ENABLED</code> config flag) classifies the assembled narration as exactly one of
+  <code>pc_speech_authored</code> (new speech, a decision, or movement authored for a player
+  character who did not act this turn — the
+  <a href="./fast-thinker.html#player-agency">scene-switch signature</a>),
+  <code>inline_meta_correction</code> (a prose walk-back instead of the
+  <code>issue_correction</code> tool), <code>fake_session_end</code> (an end-of-session flourish
+  inside a normal turn), or <code>clean</code>. The overwhelming majority of turns are clean and pay
+  exactly one extra Haiku call.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A Haiku classifier, never a pattern match on FT output</strong> — the violations are
+  semantic. Authored PC speech on a scene switch reads as perfectly smooth narration — no
+  <code>Name:</code> prefix, no marker string, nothing a regex could anchor on without drowning in
+  false positives ("Then she says…" is legal when "she" is an NPC). Zero Framework Cognition says
+  this judgment belongs to a model: code orchestrates (render, ask, branch on the returned class),
+  Haiku classifies. The classifier is also enforced-ignorance-clean by construction: its input type
+  carries only FT-visible material — the narration itself, the submitting player message(s), and the
+  public PC roster — so no field <em>can</em> hold a plot fact or an NPC secret, and the prompt
+  tells it so ("you have no knowledge of the plot, and none is needed").
+</aside>
+
+<p>
+  On a violation the decorator retries <strong>once</strong> — and only when attempt 1 called
+  <em>no tools</em>. The retry re-renders through the inner FT with a corrective instruction that
+  names the violation, threaded as the render-only <code>correctiveInstruction</code> context field
+  (the <a href="./fast-thinker.html">FT</a> appends it as a raw
+  <code>[System correction: …]</code> tail after its cache breakpoints — never persisted, never in
+  <code>ftHistory</code>), and through a <strong>silent</strong> emitter. The retry is audited too:
+  clean → the retry is what the controller persists; still violating (or the audit call itself
+  failed) → fail open to attempt 1, with a warn and a fail-open counter.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Retry only when attempt 1 called no tools</strong> — a retry re-runs the model, and a
+  re-run re-executes whatever the model calls: dice would re-roll, a ledger mutation could
+  double-apply, a combat could re-initiate, and a <code>skill_check</code> frame the table already
+  watched would desync from a re-rolled result. There is no safe way to re-render a turn that
+  touched mechanical state. So the gate simply refuses to: any tool call on attempt 1 → fail-open.
+  This costs nothing in practice, because the violations the gate exists for — PC-speech, an inline
+  correction, a fake session end — are pure prose.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The retry never re-streams — the durable record is what heals</strong> — the client
+  accrues <code>text_delta</code> under a <code>turnId</code>; a live re-stream of the corrected
+  render would <em>append</em>, doubling the prose on every screen. Only the
+  <code>session_reconnect</code> replay whole-turn-replaces. So the retry renders into a no-op
+  emitter, and the corrected version wins where it matters most: it is what
+  <code>persistTurn</code> writes, so it is what a reconnecting client replays and — critically —
+  what the FT's own next-turn context reconstruction returns. The myth-ph544 lesson (a violation in
+  the transcript re-enters the FT's context and teaches it to repeat itself) is closed on the
+  durable record; a viewer who watched attempt 1 live converges on reconnect.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fail-open, never fail-closed</strong> — a turn is never blocked on the gate. By the time
+  the audit runs, attempt 1 has already streamed to the table; failing closed would mean either
+  killing a turn the players just watched (a <code>turn_error</code> that discards prose they read)
+  or persisting something other than a known-good render. Failing open keeps the one invariant that
+  matters on the bad path: streamed == persisted — the system behaves exactly as if the gate were
+  absent, which was yesterday's status quo. The prompt hardening remains the first line of defense;
+  the gate is a rare-path corrector, and every fail-open is logged with its class and counted so a
+  rising rate is visible, not silent.
 </aside>
 
 <h2>The distributed lock</h2>
@@ -460,7 +551,11 @@
   <a href="./dm-trigger.html">trigger-state</a> slots, threading both into the controller. MYT-70
   adds one more per-turn read: <code>readPartyLedgerSnapshot</code> loads every participant's live
   mechanical state, threaded onto the FT context as the <code>[Party ledger: …]</code> tail (see the
-  <a href="./character-ledger.html">character ledger</a>). The worker also builds the FT's
+  <a href="./character-ledger.html">character ledger</a>). myth-dwyuw adds one more step between
+  resolving <code>ftContext</code> and constructing the controller: the worker augments the prep doc
+  with known-tier <a href="./fast-thinker.html#entity-cards">entity cards</a> for canon names spoken
+  in the recent transcript (<code>augmentFtContextWithEntityCards</code> — fail-soft; any failure
+  returns the base context unchanged, so it can never brick a turn). The worker also builds the FT's
   <a href="./character-ledger.html">Rules Lawyer</a> deps here — the scoped
   <code>LedgerOps</code> surface (<code>repo.characters</code>, a <code>LedgerOps</code> superset,
   for the pre-mutation reads) and a <code>runInTx</code> runner bound to
@@ -489,7 +584,9 @@
       empty trigger messages, and the secret-preserving correction <code>Z</code> in
       <code>correctionText</code>. The worker sets its "direction" to the distinct
       <code>[[DM CORRECTION: Z]]</code> marker — the one explicit exception to the FT's
-      silent-consume rule, delivered <em>openly</em>.
+      silent-consume rule, delivered <em>openly</em>: as of myth-d6knq the FT surfaces it through
+      the <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool as
+      a structured <code>dm_correction</code> frame, never as inline prose.
     </li>
     <li>
       A <strong>farewell</strong> turn (MYT-74b) is the end-of-session send-off, enqueued by
@@ -635,14 +732,17 @@
 <p>
   The worker has no in-memory socket registry, so it streams a turn by <code>PUBLISH</code>ing the
   DM-turn frames — <code>dm_thinking</code>, <code>text_delta</code>, the MYT-68 mechanical frames
-  <code>skill_check</code> / <code>dice_roll</code>, <code>turn_end</code>, and
-  <code>turn_error</code> — to the per-campaign channel. The <code>SessionHub</code> in every API
-  container <code>PSUBSCRIBE</code>s the pattern and fans each frame out to its locally-registered
-  sockets. The FT streams through a <strong><code>TurnEmitter</code></strong> the worker builds — a
-  small object (<code>emitText</code> / <code>emitSkillCheck</code> / <code>emitDiceRoll</code>)
-  bound to one (campaign, turn) and wrapped by the emitted-anything latch. The tier seam stays
-  frame-agnostic — it imports no wire-frame type; the publisher builds the wire frame around each
-  emitted piece — so the contract module stays out of every tier implementation.
+  <code>skill_check</code> / <code>dice_roll</code>, the myth-d6knq <code>dm_correction</code>,
+  <code>turn_end</code>, and <code>turn_error</code> — to the per-campaign channel. The
+  <code>SessionHub</code> in every API container <code>PSUBSCRIBE</code>s the pattern and fans each
+  frame out to its locally-registered sockets. The FT streams through a
+  <strong><code>TurnEmitter</code></strong> the worker builds — a small object (<code
+    >emitText</code
+  >
+  / <code>emitSkillCheck</code> / <code>emitDiceRoll</code>) bound to one (campaign, turn) and
+  wrapped by the emitted-anything latch. The tier seam stays frame-agnostic — it imports no
+  wire-frame type; the publisher builds the wire frame around each emitted piece — so the contract
+  module stays out of every tier implementation.
 </p>
 
 <aside class="wiki-rationale">
@@ -914,6 +1014,17 @@
       </td>
     </tr>
     <tr>
+      <td><code>dm_correction</code></td>
+      <td><code>{ type, turnId, text }</code></td>
+      <td>
+        myth-d6knq structured DM self-correction (the
+        <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool) —
+        rendered as a set-apart errata slip, never story prose. Live: no seq; reconnect replay
+        carries the row seq. Owned by the <a href="./session-transport.html">transport</a>
+        contract.
+      </td>
+    </tr>
+    <tr>
       <td><code>mode_change</code> / <code>combat_started</code> / <code>combat_resolved</code></td>
       <td><code>{ type, … }</code></td>
       <td>
@@ -965,7 +1076,8 @@
       <td>
         Server-ordered seq counter (<code>INCR</code>); one per persisted message, player and DM. An
         evicted counter heals on collision — reseed to the durable <code>MAX(seq)</code>, one retry
-        (myth-rf5rn).
+        (myth-rf5rn) — and is raise-only floor-guarded at every WS join (the
+        <a href="./session-transport.html">transport</a>'s follow-up).
       </td>
     </tr>
     <tr>
@@ -1036,16 +1148,36 @@
         <code>SessionController</code> — the transient conductor (<code>loadFromRedis</code> /
         <code>processDmTurn</code> / <code>persistTurn</code> / <code>flushToRedis</code>);
         <code>fuseDirectionIntoLastUserMessage</code>; the <code>TranscriptStore</code> seam.
+        myth-d6knq: <code>enqueueScribeJob</code> folds <code>issue_correction</code> calls into the
+        Scribe prose as framed amendments.
       </td>
     </tr>
     <tr>
       <td><code>src/session/turn-worker.ts</code></td>
       <td>
         <code>processTurnJob</code> (the §5 converge / terminal / fresh decision; the latched
-        emitter; per-turn context resolution; the explicit-pending + post-turn re-mature drains),
-        <code>buildSessionTurnWorker</code>, <code>makeLatchedEmitter</code>,
-        <code>reloadFtContext</code>, <code>publishTerminalTurnError</code>,
-        <code>LockLostError</code>; the tuning constants.
+        emitter; per-turn context resolution — including the myth-dwyuw
+        <a href="./fast-thinker.html#entity-cards">entity-card</a> ft_context augment; the
+        explicit-pending + post-turn re-mature drains), <code>buildSessionTurnWorker</code> (which
+        wraps the FT in the <a href="#the-audit-gate"><code>AuditedFastThinker</code></a
+        >), <code>makeLatchedEmitter</code>, <code>reloadFtContext</code>,
+        <code>publishTerminalTurnError</code>, <code>LockLostError</code>; the tuning constants.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/session/tiers/audited-fast-thinker.ts</code> +
+        <code>src/llm/turn-audit.ts</code> + <code>src/llm/schemas/turn-audit.ts</code> +
+        <code>src/llm/prompts/session/turn-audit.txt</code>
+      </td>
+      <td>
+        The myth-d6knq <a href="#the-audit-gate">audit gate</a>: the
+        <code>AuditedFastThinker</code> decorator (one silent retry only when attempt 1 called no
+        tools; fail-open otherwise, with an <code>onFailOpen</code> counter seam);
+        <code>auditTurn</code> — the Haiku classifier over public-by-construction input;
+        <code>TurnAuditResultSchema</code> (<code>{ class, confidence, reason }</code>); the
+        classifier prompt. <code>TURN_AUDIT_ENABLED</code> / <code>TURN_AUDIT_TIMEOUT_MS</code> (20
+        s) / <code>TURN_AUDIT_MODEL</code> (Haiku).
       </td>
     </tr>
     <tr>
@@ -1061,7 +1193,10 @@
         >
         / <code>combat_resolve</code>, kind === tool name) so a combat turn's tool rows persist
         instead of crashing the codec — no migration, since
-        <code>session_messages.message_type</code> is free TEXT.
+        <code>session_messages.message_type</code> is free TEXT. myth-d6knq added
+        <code>dm_correction</code> (kind ↔ the <code>issue_correction</code> tool) — mandatory
+        registration, since an unregistered FT tool name throws
+        <code>TranscriptCorruptError</code> and crashes the turn.
       </td>
     </tr>
     <tr>
@@ -1077,7 +1212,9 @@
         <code>createTurnPublisher</code>, <code>TurnPublisher</code> — <code>dmThinking</code> /
         <code>textDelta</code> / <code>turnEnd</code> / <code>turnError</code> /
         <code>emitFor</code>, plus the MYT-70 <code>ledgerUpdate</code> + its
-        <code>emitLedgerUpdate</code> seam on the latched emitter.
+        <code>emitLedgerUpdate</code> seam on the latched emitter, and the myth-d6knq
+        <code>dmCorrection</code> + <code>emitCorrection</code> (the live
+        <code>{ type: 'dm_correction', turnId, text }</code> frame — no seq).
       </td>
     </tr>
     <tr>
@@ -1109,7 +1246,11 @@
         <code>PartyLedgerSnapshot</code>, and widened <code>TurnEmitter</code> with
         <code>emitLedgerUpdate</code>. MYT-72 added the optional <code>rollHidden</code> flag to
         <code>SkillCheckFramePayload</code> (the NPC world-lookup variant; the publisher renders it
-        as a hidden pass so an NPC's standing never leaks).
+        as a hidden pass so an NPC's standing never leaks). myth-d6knq added
+        <code>DmCorrectionFramePayload</code> + <code>emitCorrection</code> on
+        <code>TurnEmitter</code>, and the render-only
+        <code>FtTurnContext.correctiveInstruction</code> the
+        <a href="#the-audit-gate">audit gate</a> injects on its retry.
       </td>
     </tr>
     <tr>
@@ -1146,7 +1287,10 @@
   <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/session/session-lock.ts</code>,
   <code>backend/src/session/turn-publisher.ts</code>,
   <code>backend/src/session/turn-queue.ts</code>,
-  <code>backend/src/session/transcript-codec.ts</code>, <code>backend/src/session/tiers/</code>,
+  <code>backend/src/session/transcript-codec.ts</code>,
+  <code>backend/src/session/tiers/</code> (including <code>audited-fast-thinker.ts</code>),
+  <code>backend/src/llm/turn-audit.ts</code>, <code>backend/src/llm/schemas/turn-audit.ts</code>,
+  <code>backend/src/llm/prompts/session/turn-audit.txt</code>,
   <code>backend/src/contract/session-channel.ts</code>,
   <code>backend/src/routes/dev-fire-turn.ts</code>. Design specs:
   <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code>,

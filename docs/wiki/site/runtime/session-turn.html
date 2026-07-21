@@ -47,196 +47,200 @@
   <a href="./session-reconcile.html#begin-a-farewell-not-an-inline-finalize"
     >unconditional finalize</a
   >
-  in its <code>finally</code>.
+  in its <code>finally</code>. And as of myth-d6knq the FT renders through an
+  <a href="#the-audit-gate">audit decorator</a> — a Haiku post-pass at the single render seam that
+  catches a pure-prose boundary violation before it becomes the durable record.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="3863pt" height="527pt"
- viewBox="14.00 14.00 3848.00 512.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 508.12)">
+<svg width="4383pt" height="549pt"
+ viewBox="14.00 14.00 4368.00 534.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 530.44)">
 <title>session_turn</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-493.72 3829.82,-493.72 3829.82,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-516.04 4349.77,-516.04 4349.77,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_batch</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="283.51,-115.04 283.51,-193.04 493.42,-193.04 493.42,-115.04 283.51,-115.04"/>
-<text xml:space="preserve" text-anchor="middle" x="388.47" y="-179.14" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="283.51,-123.04 283.51,-201.04 493.42,-201.04 493.42,-123.04 283.51,-123.04"/>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-187.14" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="671.44,-219.04 671.44,-341.04 2717.24,-341.04 2717.24,-219.04 671.44,-219.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1694.34" y="-327.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker process &#160;— &#160;node dist/worker.js</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="671.44,-191.04 671.44,-366.04 3237.19,-366.04 3237.19,-191.04 671.44,-191.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1954.32" y="-352.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker process &#160;— &#160;node dist/worker.js</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_pg</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1818.16,-349.04 1818.16,-440.04 2061.07,-440.04 2061.07,-349.04 1818.16,-349.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-426.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1818.16,-374.04 1818.16,-465.04 2061.07,-465.04 2061.07,-374.04 1818.16,-374.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-451.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_realtime</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="2817.25,-150.04 2817.25,-399.04 3211.99,-399.04 3211.99,-150.04 2817.25,-150.04"/>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-385.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="3337.2,-142.04 3337.2,-391.04 3731.94,-391.04 3731.94,-142.04 3337.2,-142.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-377.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
 </g>
 <g id="clust5" class="cluster">
 <title>cluster_api</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3372.01,-229.04 3372.01,-307.04 3595.12,-307.04 3595.12,-229.04 3372.01,-229.04"/>
-<text xml:space="preserve" text-anchor="middle" x="3483.56" y="-293.14" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task)</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3891.96,-221.04 3891.96,-299.04 4115.07,-299.04 4115.07,-221.04 3891.96,-221.04"/>
+<text xml:space="preserve" text-anchor="middle" x="4003.51" y="-285.14" font-family="Courier,monospace" font-size="11.00">API process &#160;(per ECS task)</text>
 </g>
 <!-- trigger -->
 <g id="node1" class="node">
 <title>trigger</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="183.5,-178.08 0,-178.08 0,-108 183.5,-108 183.5,-178.08"/>
-<text xml:space="preserve" text-anchor="middle" x="91.75" y="-159.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trigger</text>
-<text xml:space="preserve" text-anchor="middle" x="91.75" y="-146.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev fire&#45;turn route ·</text>
-<text xml:space="preserve" text-anchor="middle" x="91.75" y="-133.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> MYT&#45;67 player chat)</text>
-<text xml:space="preserve" text-anchor="middle" x="91.75" y="-119.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueTurn(payload)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="183.5,-186.08 0,-186.08 0,-116 183.5,-116 183.5,-186.08"/>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-167.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trigger</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-154.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(dev fire&#45;turn route ·</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-141.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> MYT&#45;67 player chat)</text>
+<text xml:space="preserve" text-anchor="middle" x="91.75" y="-127.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueTurn(payload)</text>
 </g>
 <!-- q_turn -->
 <g id="node2" class="node">
 <title>q_turn</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="493.42,-171.48 283.51,-171.48 283.51,-114.6 493.42,-114.6 493.42,-171.48"/>
-<text xml:space="preserve" text-anchor="middle" x="388.47" y="-152.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: session&#45;turn</text>
-<text xml:space="preserve" text-anchor="middle" x="388.47" y="-139.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no custom jobId · attempts</text>
-<text xml:space="preserve" text-anchor="middle" x="388.47" y="-126.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">maxStalledCount 3</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="493.42,-179.48 283.51,-179.48 283.51,-122.6 493.42,-122.6 493.42,-179.48"/>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-160.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: session&#45;turn</text>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-147.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">no custom jobId · attempts</text>
+<text xml:space="preserve" text-anchor="middle" x="388.47" y="-134.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">maxStalledCount 3</text>
 </g>
 <!-- trigger&#45;&gt;q_turn -->
 <g id="edge1" class="edge">
 <title>trigger&#45;&gt;q_turn</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M183.98,-143.04C212.52,-143.04 244.37,-143.04 274.23,-143.04"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="274.2,-145.49 281.2,-143.04 274.2,-140.59 274.2,-145.49"/>
-<text xml:space="preserve" text-anchor="middle" x="233.51" y="-146.04" font-family="Courier,monospace" font-size="10.00">add job</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M183.98,-151.04C212.52,-151.04 244.37,-151.04 274.23,-151.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="274.2,-153.49 281.2,-151.04 274.2,-148.59 274.2,-153.49"/>
+<text xml:space="preserve" text-anchor="middle" x="233.51" y="-154.04" font-family="Courier,monospace" font-size="10.00">add job</text>
 </g>
 <!-- proc -->
 <g id="node3" class="node">
 <title>proc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="973.76,-289.08 671.44,-289.08 671.44,-219 973.76,-219 973.76,-289.08"/>
-<text xml:space="preserve" text-anchor="middle" x="822.6" y="-270.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processTurnJob</text>
-<text xml:space="preserve" text-anchor="middle" x="822.6" y="-257.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">tryAcquire lock → heartbeat</text>
-<text xml:space="preserve" text-anchor="middle" x="822.6" y="-244.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">§5 decision: converge / terminal / fresh</text>
-<text xml:space="preserve" text-anchor="middle" x="822.6" y="-230.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">release in finally</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="973.76,-261.08 671.44,-261.08 671.44,-191 973.76,-191 973.76,-261.08"/>
+<text xml:space="preserve" text-anchor="middle" x="822.6" y="-242.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processTurnJob</text>
+<text xml:space="preserve" text-anchor="middle" x="822.6" y="-229.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">tryAcquire lock → heartbeat</text>
+<text xml:space="preserve" text-anchor="middle" x="822.6" y="-216.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">§5 decision: converge / terminal / fresh</text>
+<text xml:space="preserve" text-anchor="middle" x="822.6" y="-202.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">release in finally</text>
 </g>
 <!-- q_turn&#45;&gt;proc -->
 <g id="edge2" class="edge">
 <title>q_turn&#45;&gt;proc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M494.07,-169.91C548.11,-183.79 614.95,-200.96 674.13,-216.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="673.28,-218.47 680.67,-217.84 674.5,-213.73 673.28,-218.47"/>
-<text xml:space="preserve" text-anchor="middle" x="582.43" y="-220.19" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
-<text xml:space="preserve" text-anchor="middle" x="582.43" y="-208.19" font-family="Courier,monospace" font-size="10.00">+ stalled redelivery</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M494.07,-169.2C544.56,-177.96 606.23,-188.66 662.39,-198.41"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="661.88,-200.81 669.2,-199.59 662.72,-195.98 661.88,-200.81"/>
+<text xml:space="preserve" text-anchor="middle" x="582.43" y="-208.03" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<text xml:space="preserve" text-anchor="middle" x="582.43" y="-196.03" font-family="Courier,monospace" font-size="10.00">+ stalled redelivery</text>
 </g>
 <!-- ctrl -->
 <g id="node4" class="node">
 <title>ctrl</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1571.13,-319.48 1169.79,-319.48 1169.79,-262.6 1571.13,-262.6 1571.13,-319.48"/>
-<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-300.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionController (transient)</text>
-<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-287.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">load → reconstruct history → fuse one&#45;shot →</text>
-<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-274.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">render → persistTurn → flushToRedis · GC&#39;d per turn</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1571.13,-331.48 1169.79,-331.48 1169.79,-274.6 1571.13,-274.6 1571.13,-331.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-312.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionController (transient)</text>
+<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-299.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">load → reconstruct history → fuse one&#45;shot →</text>
+<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-286.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">render → persistTurn → flushToRedis · GC&#39;d per turn</text>
 </g>
 <!-- proc&#45;&gt;ctrl -->
 <g id="edge4" class="edge">
 <title>proc&#45;&gt;ctrl</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M974.2,-264.25C1031.77,-268.15 1098.49,-272.67 1160.53,-276.88"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1160.29,-279.32 1167.44,-277.35 1160.62,-274.43 1160.29,-279.32"/>
-<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-277.76" font-family="Courier,monospace" font-size="10.00">new + drive (fresh run)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M974.2,-247.28C1031.77,-255.4 1098.49,-264.82 1160.53,-273.57"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1160.18,-275.99 1167.46,-274.55 1160.87,-271.14 1160.18,-275.99"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-272.15" font-family="Courier,monospace" font-size="10.00">new + drive (fresh run)</text>
 </g>
 <!-- pub -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>pub</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2717.24,-285.48 2362.11,-285.48 2362.11,-228.6 2717.24,-228.6 2717.24,-285.48"/>
-<text xml:space="preserve" text-anchor="middle" x="2539.68" y="-266.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">TurnPublisher (latched emitter)</text>
-<text xml:space="preserve" text-anchor="middle" x="2539.68" y="-253.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PUBLISH dm_thinking / text_delta /</text>
-<text xml:space="preserve" text-anchor="middle" x="2539.68" y="-240.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;skill_check / dice_roll / turn_end / turn_error</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3237.19,-284.08 2921.67,-284.08 2921.67,-214 3237.19,-214 3237.19,-284.08"/>
+<text xml:space="preserve" text-anchor="middle" x="3079.43" y="-265.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">TurnPublisher (latched emitter)</text>
+<text xml:space="preserve" text-anchor="middle" x="3079.43" y="-252.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PUBLISH dm_thinking / text_delta /</text>
+<text xml:space="preserve" text-anchor="middle" x="3079.43" y="-239.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;skill_check / dice_roll / dm_correction /</text>
+<text xml:space="preserve" text-anchor="middle" x="3079.43" y="-225.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12"> &#160;turn_end / turn_error</text>
 </g>
 <!-- proc&#45;&gt;pub -->
-<g id="edge9" class="edge">
+<g id="edge10" class="edge">
 <title>proc&#45;&gt;pub</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M974.21,-247.92C1212.11,-239.13 1689.41,-225.03 2094.08,-235.04 2179.15,-237.14 2273.29,-241.51 2352.97,-245.8"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2352.68,-248.24 2359.8,-246.17 2352.94,-243.34 2352.68,-248.24"/>
-<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-235.54" font-family="Courier,monospace" font-size="10.00">dm_thinking / turn_end</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M974.29,-226.24C1294.52,-226.87 2066.47,-229.45 2713.64,-240.04 2778.68,-241.1 2850.22,-242.76 2912.59,-244.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2912.46,-246.81 2919.52,-244.55 2912.58,-241.92 2912.46,-246.81"/>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-235.26" font-family="Courier,monospace" font-size="10.00">dm_thinking / turn_end</text>
 </g>
 <!-- lock -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>lock</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3126.18,-206.48 2903.06,-206.48 2903.06,-149.6 3126.18,-149.6 3126.18,-206.48"/>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-187.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:lock:{cId}</text>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-174.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SET NX PX (token)</text>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-161.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Lua compare&#45;extend / &#45;release</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3646.13,-198.48 3423.01,-198.48 3423.01,-141.6 3646.13,-141.6 3646.13,-198.48"/>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-179.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:lock:{cId}</text>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-166.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SET NX PX (token)</text>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-153.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Lua compare&#45;extend / &#45;release</text>
 </g>
 <!-- proc&#45;&gt;lock -->
 <g id="edge3" class="edge">
 <title>proc&#45;&gt;lock</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M974.16,-230.36C1130.24,-207.09 1381.55,-173.22 1600.13,-160.04 2078.88,-131.17 2650.44,-156.87 2894.09,-170.65"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2893.68,-173.08 2900.81,-171.03 2893.96,-168.18 2893.68,-173.08"/>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-166.35" font-family="Courier,monospace" font-size="10.00">tryAcquire / extend</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-154.35" font-family="Courier,monospace" font-size="10.00">/ release (compare&#45;and&#45;delete)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M974.4,-208.56C1188.49,-185.29 1592.94,-147.04 1938.61,-147.04 1938.61,-147.04 1938.61,-147.04 3080.43,-147.04 3193.56,-147.04 3322.37,-154.28 3413.67,-160.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3413.42,-163.07 3420.57,-161.12 3413.76,-158.18 3413.42,-163.07"/>
+<text xml:space="preserve" text-anchor="middle" x="2213.09" y="-162.04" font-family="Courier,monospace" font-size="10.00">tryAcquire / extend</text>
+<text xml:space="preserve" text-anchor="middle" x="2213.09" y="-150.04" font-family="Courier,monospace" font-size="10.00">/ release (compare&#45;and&#45;delete)</text>
 </g>
 <!-- steval -->
-<g id="node13" class="node">
+<g id="node14" class="node">
 <title>steval</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1475.41,-121.48 1265.5,-121.48 1265.5,-64.6 1475.41,-64.6 1475.41,-121.48"/>
-<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-102.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">st&#45;evaluation queue</text>
-<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-89.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;hoc SlowThinker)</text>
-<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-76.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueued on flushed success</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1475.41,-120.48 1265.5,-120.48 1265.5,-63.6 1475.41,-63.6 1475.41,-120.48"/>
+<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-101.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">st&#45;evaluation queue</text>
+<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-88.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(post&#45;hoc SlowThinker)</text>
+<text xml:space="preserve" text-anchor="middle" x="1370.46" y="-75.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueued on flushed success</text>
 </g>
 <!-- proc&#45;&gt;steval -->
-<g id="edge13" class="edge">
+<g id="edge14" class="edge">
 <title>proc&#45;&gt;steval</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M857.89,-218.4C891.44,-186.11 945.68,-140.41 1002.76,-119.04 1083.91,-88.66 1182.12,-83.19 1256.48,-84.75"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1256.09,-87.19 1263.15,-84.92 1256.21,-82.29 1256.09,-87.19"/>
-<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-134.04" font-family="Courier,monospace" font-size="10.00">post&#45;turn enqueue</text>
-<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-122.04" font-family="Courier,monospace" font-size="10.00">(off the hot path)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M868.93,-190.39C903.5,-165.36 953.42,-133.66 1002.76,-118.04 1085.08,-91.98 1182.8,-86.2 1256.66,-86.55"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1256.25,-88.99 1263.27,-86.6 1256.29,-84.09 1256.25,-88.99"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-133.04" font-family="Courier,monospace" font-size="10.00">post&#45;turn enqueue</text>
+<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-121.04" font-family="Courier,monospace" font-size="10.00">(off the hot path)</text>
 </g>
 <!-- tiers -->
 <g id="node5" class="node">
 <title>tiers</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2094.08,-320.08 1785.15,-320.08 1785.15,-250 2094.08,-250 2094.08,-320.08"/>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-301.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">conductor (deterministic)</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-288.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fuse one&#45;shot → FT.render(emit)</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-275.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ enqueueScribeJob (assemble)</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-261.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(FT REAL — Sonnet; Scribe + ST off&#45;path)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2094.08,-344.68 1785.15,-344.68 1785.15,-261.4 2094.08,-261.4 2094.08,-344.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-326.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">conductor (deterministic)</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-312.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fuse one&#45;shot → ft.render(emit)</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-299.74" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">→ enqueueScribeJob (assemble;</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-286.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">corrections folded as framed amendments)</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-273.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(FT REAL — Sonnet; Scribe + ST off&#45;path)</text>
 </g>
 <!-- ctrl&#45;&gt;tiers -->
 <g id="edge5" class="edge">
 <title>ctrl&#45;&gt;tiers</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1571.81,-288.92C1638.78,-288.21 1712.54,-287.43 1776.25,-286.76"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1775.98,-289.21 1782.95,-286.69 1775.93,-284.31 1775.98,-289.21"/>
-<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-291.58" font-family="Courier,monospace" font-size="10.00">conductor</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1571.81,-303.04C1638.78,-303.04 1712.54,-303.04 1776.25,-303.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1775.95,-305.49 1782.95,-303.04 1775.95,-300.59 1775.95,-305.49"/>
+<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-306.04" font-family="Courier,monospace" font-size="10.00">conductor</text>
 </g>
 <!-- msgs -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>msgs</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2061.07,-419.08 1818.16,-419.08 1818.16,-349 2061.07,-349 2061.07,-419.08"/>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-400.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session_messages</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-387.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player rows + DM&#45;turn rows</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-374.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(THE transcript store · §3.7)</text>
-<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-360.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">listFtContextRows / appendDmTurn</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2061.07,-444.08 1818.16,-444.08 1818.16,-374 2061.07,-374 2061.07,-444.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-425.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session_messages</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-412.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player rows + DM&#45;turn rows</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-399.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(THE transcript store · §3.7)</text>
+<text xml:space="preserve" text-anchor="middle" x="1939.61" y="-385.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">listFtContextRows / appendDmTurn</text>
 </g>
 <!-- ctrl&#45;&gt;msgs -->
 <g id="edge6" class="edge">
 <title>ctrl&#45;&gt;msgs</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1549.35,-320.21C1633.51,-334.01 1732.16,-350.19 1809.09,-362.8"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1808.32,-365.16 1815.62,-363.87 1809.11,-360.32 1808.32,-365.16"/>
-<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-368.96" font-family="Courier,monospace" font-size="10.00">reconstruct history</text>
-<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-356.96" font-family="Courier,monospace" font-size="10.00">+ persist DM turn (atomic)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1527.56,-332.22C1616.01,-348.75 1725.35,-369.18 1809.02,-384.82"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1808.43,-387.2 1815.77,-386.08 1809.33,-382.39 1808.43,-387.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-389.75" font-family="Courier,monospace" font-size="10.00">reconstruct history</text>
+<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-377.75" font-family="Courier,monospace" font-size="10.00">+ persist DM turn (atomic)</text>
 </g>
 <!-- turnstate -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>turnstate</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3211.99,-378.08 2817.25,-378.08 2817.25,-308 3211.99,-308 3211.99,-378.08"/>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-359.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:usage · :seq · :state</text>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-346.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:summary (ST job&#39;s — not flushed here)</text>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-333.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">direction:oneshot (GETDEL) · direction:standing (read)</text>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-319.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(NO ft_history — retired)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3731.94,-370.08 3337.2,-370.08 3337.2,-300 3731.94,-300 3731.94,-370.08"/>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-351.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:usage · :seq · :state</text>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-338.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:summary (ST job&#39;s — not flushed here)</text>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-325.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">direction:oneshot (GETDEL) · direction:standing (read)</text>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-311.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(NO ft_history — retired)</text>
 </g>
 <!-- ctrl&#45;&gt;turnstate -->
 <g id="edge7" class="edge">
 <title>ctrl&#45;&gt;turnstate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1427.73,-320.13C1505.56,-358.41 1651.6,-423.26 1785.15,-444.04 2164.7,-503.09 2615.95,-429.68 2851.75,-380.53"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2851.92,-383 2858.27,-379.16 2850.92,-378.2 2851.92,-383"/>
-<text xml:space="preserve" text-anchor="middle" x="2228.09" y="-480.72" font-family="Courier,monospace" font-size="10.00">load / flush {usage}</text>
-<text xml:space="preserve" text-anchor="middle" x="2228.09" y="-468.72" font-family="Courier,monospace" font-size="10.00">take one&#45;shot · read standing</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1423.17,-332.15C1520.73,-384.25 1740.02,-488.04 1938.61,-488.04 1938.61,-488.04 1938.61,-488.04 3080.43,-488.04 3222.09,-488.04 3376.18,-420.09 3463.23,-374.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3464.26,-376.99 3469.31,-371.56 3461.98,-372.65 3464.26,-376.99"/>
+<text xml:space="preserve" text-anchor="middle" x="2522.88" y="-503.04" font-family="Courier,monospace" font-size="10.00">load / flush {usage}</text>
+<text xml:space="preserve" text-anchor="middle" x="2522.88" y="-491.04" font-family="Courier,monospace" font-size="10.00">take one&#45;shot · read standing</text>
 </g>
 <!-- scribe -->
-<g id="node14" class="node">
+<g id="node15" class="node">
 <title>scribe</title>
 <polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2041.27,-70.08 1837.96,-70.08 1837.96,0 2041.27,0 2041.27,-70.08"/>
 <text xml:space="preserve" text-anchor="middle" x="1939.61" y="-51.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">scribe queue</text>
@@ -245,71 +249,89 @@
 <text xml:space="preserve" text-anchor="middle" x="1939.61" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(skipped on correction)</text>
 </g>
 <!-- ctrl&#45;&gt;scribe -->
-<g id="edge14" class="edge">
+<g id="edge15" class="edge">
 <title>ctrl&#45;&gt;scribe</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1435.96,-261.92C1538.14,-215.8 1737.32,-125.9 1851.89,-74.19"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1852.62,-76.54 1858,-71.43 1850.61,-72.08 1852.62,-76.54"/>
-<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-200.97" font-family="Courier,monospace" font-size="10.00">enqueueScribeJob</text>
-<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-188.97" font-family="Courier,monospace" font-size="10.00">(flushed success)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M1432.96,-273.98C1535.14,-225.69 1739.99,-128.89 1855.13,-74.49"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1856,-76.79 1861.28,-71.58 1853.9,-72.36 1856,-76.79"/>
+<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-208.04" font-family="Courier,monospace" font-size="10.00">enqueueScribeJob</text>
+<text xml:space="preserve" text-anchor="middle" x="1678.14" y="-196.04" font-family="Courier,monospace" font-size="10.00">(flushed success)</text>
 </g>
-<!-- tiers&#45;&gt;pub -->
+<!-- audit -->
+<g id="node6" class="node">
+<title>audit</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2713.64,-325.08 2332.11,-325.08 2332.11,-255 2713.64,-255 2713.64,-325.08"/>
+<text xml:space="preserve" text-anchor="middle" x="2522.88" y="-306.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">AuditedFastThinker (decorator)</text>
+<text xml:space="preserve" text-anchor="middle" x="2522.88" y="-293.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Haiku turn&#45;audit on the rendered prose</text>
+<text xml:space="preserve" text-anchor="middle" x="2522.88" y="-280.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">clean → pass · violation → ONE silent retry</text>
+<text xml:space="preserve" text-anchor="middle" x="2522.88" y="-266.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(only if attempt 1 called no tools) · else fail&#45;open</text>
+</g>
+<!-- tiers&#45;&gt;audit -->
 <g id="edge8" class="edge">
-<title>tiers&#45;&gt;pub</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2094.63,-277.83C2173.43,-274.14 2269.97,-269.62 2352.87,-265.74"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2352.93,-268.19 2359.81,-265.41 2352.7,-263.29 2352.93,-268.19"/>
-<text xml:space="preserve" text-anchor="middle" x="2228.09" y="-278.98" font-family="Courier,monospace" font-size="10.00">emit text / skill_check / dice_roll</text>
+<title>tiers&#45;&gt;audit</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2094.47,-299.6C2164.51,-298.03 2248.27,-296.16 2323.01,-294.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2322.85,-296.94 2329.79,-294.34 2322.74,-292.04 2322.85,-296.94"/>
+<text xml:space="preserve" text-anchor="middle" x="2213.09" y="-313.84" font-family="Courier,monospace" font-size="10.00">ft.render</text>
+<text xml:space="preserve" text-anchor="middle" x="2213.09" y="-301.84" font-family="Courier,monospace" font-size="10.00">(the render seam)</text>
+</g>
+<!-- audit&#45;&gt;pub -->
+<g id="edge9" class="edge">
+<title>audit&#45;&gt;pub</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2714.33,-275.96C2778.69,-271.2 2849.99,-265.93 2912.31,-261.32"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2912.43,-263.77 2919.24,-260.81 2912.07,-258.88 2912.43,-263.77"/>
+<text xml:space="preserve" text-anchor="middle" x="2817.66" y="-288.21" font-family="Courier,monospace" font-size="10.00">emit text / skill_check /</text>
+<text xml:space="preserve" text-anchor="middle" x="2817.66" y="-276.21" font-family="Courier,monospace" font-size="10.00">dice_roll / dm_correction</text>
 </g>
 <!-- channel -->
-<g id="node10" class="node">
+<g id="node11" class="node">
 <title>channel</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3103.07,-278.88 2926.17,-278.88 2926.17,-235.2 3103.07,-235.2 3103.07,-278.88"/>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-260.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:campaign:{cId}</text>
-<text xml:space="preserve" text-anchor="middle" x="3014.62" y="-247.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(PUBLISH frame JSON)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3623.02,-270.88 3446.12,-270.88 3446.12,-227.2 3623.02,-227.2 3623.02,-270.88"/>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-252.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:campaign:{cId}</text>
+<text xml:space="preserve" text-anchor="middle" x="3534.57" y="-239.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(PUBLISH frame JSON)</text>
 </g>
 <!-- pub&#45;&gt;channel -->
-<g id="edge10" class="edge">
+<g id="edge11" class="edge">
 <title>pub&#45;&gt;channel</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2717.79,-257.04C2785.27,-257.04 2859.63,-257.04 2916.92,-257.04"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2916.79,-259.49 2923.79,-257.04 2916.79,-254.59 2916.79,-259.49"/>
-<text xml:space="preserve" text-anchor="middle" x="2767.25" y="-260.04" font-family="Courier,monospace" font-size="10.00">PUBLISH</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3237.65,-249.04C3303.9,-249.04 3378.91,-249.04 3436.84,-249.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3436.8,-251.49 3443.8,-249.04 3436.8,-246.59 3436.8,-251.49"/>
+<text xml:space="preserve" text-anchor="middle" x="3287.2" y="-252.04" font-family="Courier,monospace" font-size="10.00">PUBLISH</text>
 </g>
 <!-- hub -->
-<g id="node11" class="node">
+<g id="node12" class="node">
 <title>hub</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="3595.12,-285.48 3372.01,-285.48 3372.01,-228.6 3595.12,-228.6 3595.12,-285.48"/>
-<text xml:space="preserve" text-anchor="middle" x="3483.56" y="-266.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionHub</text>
-<text xml:space="preserve" text-anchor="middle" x="3483.56" y="-253.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PSUBSCRIBE session:campaign:*</text>
-<text xml:space="preserve" text-anchor="middle" x="3483.56" y="-240.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fan out to local sockets</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="4115.07,-277.48 3891.96,-277.48 3891.96,-220.6 4115.07,-220.6 4115.07,-277.48"/>
+<text xml:space="preserve" text-anchor="middle" x="4003.51" y="-258.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SessionHub</text>
+<text xml:space="preserve" text-anchor="middle" x="4003.51" y="-245.74" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PSUBSCRIBE session:campaign:*</text>
+<text xml:space="preserve" text-anchor="middle" x="4003.51" y="-232.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">fan out to local sockets</text>
 </g>
 <!-- channel&#45;&gt;hub -->
-<g id="edge11" class="edge">
+<g id="edge12" class="edge">
 <title>channel&#45;&gt;hub</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M3103.72,-257.04C3176.91,-257.04 3281.74,-257.04 3362.59,-257.04"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3362.51,-259.49 3369.51,-257.04 3362.51,-254.59 3362.51,-259.49"/>
-<text xml:space="preserve" text-anchor="middle" x="3292" y="-272.04" font-family="Courier,monospace" font-size="10.00">pmessage</text>
-<text xml:space="preserve" text-anchor="middle" x="3292" y="-260.04" font-family="Courier,monospace" font-size="10.00">(every container)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M3623.67,-249.04C3696.86,-249.04 3801.69,-249.04 3882.54,-249.04"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3882.46,-251.49 3889.46,-249.04 3882.46,-246.59 3882.46,-251.49"/>
+<text xml:space="preserve" text-anchor="middle" x="3811.95" y="-264.04" font-family="Courier,monospace" font-size="10.00">pmessage</text>
+<text xml:space="preserve" text-anchor="middle" x="3811.95" y="-252.04" font-family="Courier,monospace" font-size="10.00">(every container)</text>
 </g>
 <!-- client -->
-<g id="node12" class="node">
+<g id="node13" class="node">
 <title>client</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3825.82,-278.88 3695.12,-278.88 3695.12,-235.2 3825.82,-235.2 3825.82,-278.88"/>
-<text xml:space="preserve" text-anchor="middle" x="3760.47" y="-260.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
-<text xml:space="preserve" text-anchor="middle" x="3760.47" y="-247.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dedup on turnId</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="4345.77,-270.88 4215.07,-270.88 4215.07,-227.2 4345.77,-227.2 4345.77,-270.88"/>
+<text xml:space="preserve" text-anchor="middle" x="4280.42" y="-252.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player / SPA</text>
+<text xml:space="preserve" text-anchor="middle" x="4280.42" y="-239.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dedup on turnId</text>
 </g>
 <!-- hub&#45;&gt;client -->
-<g id="edge12" class="edge">
+<g id="edge13" class="edge">
 <title>hub&#45;&gt;client</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M3595.59,-257.04C3626.11,-257.04 3658.44,-257.04 3686.24,-257.04"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3685.9,-259.49 3692.9,-257.04 3685.9,-254.59 3685.9,-259.49"/>
-<text xml:space="preserve" text-anchor="middle" x="3645.12" y="-260.04" font-family="Courier,monospace" font-size="10.00">ws.send</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M4115.54,-249.04C4146.06,-249.04 4178.39,-249.04 4206.19,-249.04"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="4205.85,-251.49 4212.85,-249.04 4205.85,-246.59 4205.85,-251.49"/>
+<text xml:space="preserve" text-anchor="middle" x="4165.07" y="-252.04" font-family="Courier,monospace" font-size="10.00">ws.send</text>
 </g>
 <!-- scribe&#45;&gt;q_turn -->
-<g id="edge15" class="edge">
+<g id="edge16" class="edge">
 <title>scribe&#45;&gt;q_turn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M1837.25,-33.01C1665.25,-30.59 1305.37,-29.88 1002.76,-58.04 827.38,-74.36 625.25,-104.61 502.46,-124.28"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="502.44,-121.8 495.92,-125.33 503.22,-126.64 502.44,-121.8"/>
-<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-73.04" font-family="Courier,monospace" font-size="10.00">correction turn</text>
-<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-61.04" font-family="Courier,monospace" font-size="10.00">(retcon Z)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="1,5" d="M1837.5,-32.51C1665.48,-29.39 1305.12,-28.04 1002.76,-61.04 827.47,-80.17 625.31,-111.69 502.5,-131.89"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="502.46,-129.41 495.95,-132.97 503.25,-134.25 502.46,-129.41"/>
+<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-76.04" font-family="Courier,monospace" font-size="10.00">correction turn</text>
+<text xml:space="preserve" text-anchor="middle" x="1071.78" y="-64.04" font-family="Courier,monospace" font-size="10.00">(retcon Z)</text>
 </g>
 </g>
 </svg>
@@ -403,7 +425,8 @@
   atomic multi-VALUES INSERT left no rows behind), and retry once. A post-heal collision propagates.
   The <a href="./session-transport.html">transport</a>'s player-message persist runs the same heal;
   both branch on the shared <code>isSeqUniqueViolation</code> classifier, colocated with the repo
-  that owns the constraint.
+  that owns the constraint. The transport also raise-only floor-guards the counter at every WS join
+  — the follow-up fix for the <em>non-colliding</em> expired-counter case, told on that page.
 </aside>
 
 <aside class="wiki-rationale">
@@ -517,19 +540,25 @@
   <li>
     <strong>FT render</strong> — <code>ft.render(ctx, emit)</code> runs the
     <a href="./fast-thinker.html">Fast Thinker</a>'s tool loop, streaming <code>text_delta</code> /
-    <code>skill_check</code> / <code>dice_roll</code> / <code>ledger_update</code> frames through
-    the latched emitter, and returns a multi-part <code>AssistantMessage</code>; its token usage is
-    accumulated. The standing directive (also worker-resolved) rides the FT context and is appended
-    by the FT as a raw tail message after its cache breakpoints — see the
+    <code>skill_check</code> / <code>dice_roll</code> / <code>ledger_update</code> /
+    <code>dm_correction</code> frames through the latched emitter, and returns a multi-part
+    <code>AssistantMessage</code>; its token usage is accumulated. The <code>ft</code> the worker
+    injects is the <a href="#the-audit-gate">audit-decorated</a> FT — the controller neither knows
+    nor cares. The standing directive (also worker-resolved) rides the FT context and is appended by
+    the FT as a raw tail message after its cache breakpoints — see the
     <a href="./fast-thinker.html">Fast Thinker</a>'s prompt assembly.
   </li>
   <li>
     <strong>Assemble the Scribe job</strong> — the conductor no longer runs a Scribe tier here. It
     exposes <code>enqueueScribeJob</code>, which gathers the turn's player-facing prose (the joined
     text parts), the parsed FT <a href="./scribe.html">world-delta</a>, and the turn's ST-vet
-    injections into one job payload. The <em>worker</em> calls it on the flushed-success path only —
-    a turn that didn't durably land must not enqueue — so the assembly is here but the gating is the
-    worker's (the §5 arm below).
+    injections into one job payload. A correction the FT issued rides the
+    <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool channel,
+    not the text parts — but the Scribe must still see it, so the assembly folds each correction
+    into the prose as a framed <code>[Correction to earlier narration: …]</code> amendment; without
+    that fold, the extractor would canonize the amended fact in its superseded form. The
+    <em>worker</em> calls it on the flushed-success path only — a turn that didn't durably land must
+    not enqueue — so the assembly is here but the gating is the worker's (the §5 arm below).
   </li>
 </ol>
 
@@ -609,9 +638,11 @@
   The controller takes its tiers by constructor injection. The
   <strong><a href="./fast-thinker.html">Fast Thinker</a> is real</strong> (MYT-68) — the worker
   constructs a fresh <code>SonnetFastThinker</code> per turn with that turn's scoped skill-check
-  projection, resolved world tone, and the worker-latched emitter. As of MYT-73 the FT is the
-  <em>only</em> reasoning tier here: <code>makeTiers</code> returns just <code>{ ft }</code>. The
-  Slow Thinker runs in its own <a href="./slow-thinker.html">post-turn pipeline</a>, and the
+  projection, resolved world tone, and the worker-latched emitter, and (myth-d6knq) wraps it in the
+  <a href="#the-audit-gate"><code>AuditedFastThinker</code></a> decorator before handing it to the
+  controller. As of MYT-73 the FT is the <em>only</em> reasoning tier here:
+  <code>makeTiers</code> returns just <code>{ ft }</code>. The Slow Thinker runs in its own
+  <a href="./slow-thinker.html">post-turn pipeline</a>, and the
   <a href="./scribe.html">Scribe</a> is a post-turn job the worker enqueues rather than a tier the
   conductor calls — so the old on-path Scribe seam (and its stub) is gone.
 </p>
@@ -627,6 +658,82 @@
   Handing the working set to the FT as a plain context field would route around that gate, so the
   field stays empty by construction: the read-after-write is wired through the lookup tools' deps (a
   per-turn loader thunk + an injection sink), not through the FT's context object.
+</aside>
+
+<h2 id="the-audit-gate">The audit gate: a decorated render seam</h2>
+
+<p>
+  The conductor calls <code>ft.render(ctx, emit)</code> exactly once per turn — and that single call
+  is the seam where FT narration is finalized before persistence. myth-d6knq puts a gate on it: the
+  worker wraps the real <code>SonnetFastThinker</code> in an
+  <code>AuditedFastThinker</code> decorator, so every rendered turn passes the audit without the
+  controller (a thin ZFC shell) or the FT tier learning anything about auditing. The flow: attempt 1
+  renders through the <em>real</em> emitter — it streams live, as always. Then one Haiku call
+  (<code>auditTurn</code>, 20-second bound, disableable via the
+  <code>TURN_AUDIT_ENABLED</code> config flag) classifies the assembled narration as exactly one of
+  <code>pc_speech_authored</code> (new speech, a decision, or movement authored for a player
+  character who did not act this turn — the
+  <a href="./fast-thinker.html#player-agency">scene-switch signature</a>),
+  <code>inline_meta_correction</code> (a prose walk-back instead of the
+  <code>issue_correction</code> tool), <code>fake_session_end</code> (an end-of-session flourish
+  inside a normal turn), or <code>clean</code>. The overwhelming majority of turns are clean and pay
+  exactly one extra Haiku call.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A Haiku classifier, never a pattern match on FT output</strong> — the violations are
+  semantic. Authored PC speech on a scene switch reads as perfectly smooth narration — no
+  <code>Name:</code> prefix, no marker string, nothing a regex could anchor on without drowning in
+  false positives ("Then she says…" is legal when "she" is an NPC). Zero Framework Cognition says
+  this judgment belongs to a model: code orchestrates (render, ask, branch on the returned class),
+  Haiku classifies. The classifier is also enforced-ignorance-clean by construction: its input type
+  carries only FT-visible material — the narration itself, the submitting player message(s), and the
+  public PC roster — so no field <em>can</em> hold a plot fact or an NPC secret, and the prompt
+  tells it so ("you have no knowledge of the plot, and none is needed").
+</aside>
+
+<p>
+  On a violation the decorator retries <strong>once</strong> — and only when attempt 1 called
+  <em>no tools</em>. The retry re-renders through the inner FT with a corrective instruction that
+  names the violation, threaded as the render-only <code>correctiveInstruction</code> context field
+  (the <a href="./fast-thinker.html">FT</a> appends it as a raw
+  <code>[System correction: …]</code> tail after its cache breakpoints — never persisted, never in
+  <code>ftHistory</code>), and through a <strong>silent</strong> emitter. The retry is audited too:
+  clean → the retry is what the controller persists; still violating (or the audit call itself
+  failed) → fail open to attempt 1, with a warn and a fail-open counter.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Retry only when attempt 1 called no tools</strong> — a retry re-runs the model, and a
+  re-run re-executes whatever the model calls: dice would re-roll, a ledger mutation could
+  double-apply, a combat could re-initiate, and a <code>skill_check</code> frame the table already
+  watched would desync from a re-rolled result. There is no safe way to re-render a turn that
+  touched mechanical state. So the gate simply refuses to: any tool call on attempt 1 → fail-open.
+  This costs nothing in practice, because the violations the gate exists for — PC-speech, an inline
+  correction, a fake session end — are pure prose.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The retry never re-streams — the durable record is what heals</strong> — the client
+  accrues <code>text_delta</code> under a <code>turnId</code>; a live re-stream of the corrected
+  render would <em>append</em>, doubling the prose on every screen. Only the
+  <code>session_reconnect</code> replay whole-turn-replaces. So the retry renders into a no-op
+  emitter, and the corrected version wins where it matters most: it is what
+  <code>persistTurn</code> writes, so it is what a reconnecting client replays and — critically —
+  what the FT's own next-turn context reconstruction returns. The myth-ph544 lesson (a violation in
+  the transcript re-enters the FT's context and teaches it to repeat itself) is closed on the
+  durable record; a viewer who watched attempt 1 live converges on reconnect.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Fail-open, never fail-closed</strong> — a turn is never blocked on the gate. By the time
+  the audit runs, attempt 1 has already streamed to the table; failing closed would mean either
+  killing a turn the players just watched (a <code>turn_error</code> that discards prose they read)
+  or persisting something other than a known-good render. Failing open keeps the one invariant that
+  matters on the bad path: streamed == persisted — the system behaves exactly as if the gate were
+  absent, which was yesterday's status quo. The prompt hardening remains the first line of defense;
+  the gate is a rare-path corrector, and every fail-open is logged with its class and counted so a
+  rising rate is visible, not silent.
 </aside>
 
 <h2 id="the-distributed-lock">The distributed lock</h2>
@@ -740,7 +847,11 @@
   <a href="./dm-trigger.html">trigger-state</a> slots, threading both into the controller. MYT-70
   adds one more per-turn read: <code>readPartyLedgerSnapshot</code> loads every participant's live
   mechanical state, threaded onto the FT context as the <code>[Party ledger: …]</code> tail (see the
-  <a href="./character-ledger.html">character ledger</a>). The worker also builds the FT's
+  <a href="./character-ledger.html">character ledger</a>). myth-dwyuw adds one more step between
+  resolving <code>ftContext</code> and constructing the controller: the worker augments the prep doc
+  with known-tier <a href="./fast-thinker.html#entity-cards">entity cards</a> for canon names spoken
+  in the recent transcript (<code>augmentFtContextWithEntityCards</code> — fail-soft; any failure
+  returns the base context unchanged, so it can never brick a turn). The worker also builds the FT's
   <a href="./character-ledger.html">Rules Lawyer</a> deps here — the scoped
   <code>LedgerOps</code> surface (<code>repo.characters</code>, a <code>LedgerOps</code> superset,
   for the pre-mutation reads) and a <code>runInTx</code> runner bound to
@@ -769,7 +880,9 @@
       empty trigger messages, and the secret-preserving correction <code>Z</code> in
       <code>correctionText</code>. The worker sets its "direction" to the distinct
       <code>[[DM CORRECTION: Z]]</code> marker — the one explicit exception to the FT's
-      silent-consume rule, delivered <em>openly</em>.
+      silent-consume rule, delivered <em>openly</em>: as of myth-d6knq the FT surfaces it through
+      the <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool as
+      a structured <code>dm_correction</code> frame, never as inline prose.
     </li>
     <li>
       A <strong>farewell</strong> turn (MYT-74b) is the end-of-session send-off, enqueued by
@@ -915,14 +1028,17 @@
 <p>
   The worker has no in-memory socket registry, so it streams a turn by <code>PUBLISH</code>ing the
   DM-turn frames — <code>dm_thinking</code>, <code>text_delta</code>, the MYT-68 mechanical frames
-  <code>skill_check</code> / <code>dice_roll</code>, <code>turn_end</code>, and
-  <code>turn_error</code> — to the per-campaign channel. The <code>SessionHub</code> in every API
-  container <code>PSUBSCRIBE</code>s the pattern and fans each frame out to its locally-registered
-  sockets. The FT streams through a <strong><code>TurnEmitter</code></strong> the worker builds — a
-  small object (<code>emitText</code> / <code>emitSkillCheck</code> / <code>emitDiceRoll</code>)
-  bound to one (campaign, turn) and wrapped by the emitted-anything latch. The tier seam stays
-  frame-agnostic — it imports no wire-frame type; the publisher builds the wire frame around each
-  emitted piece — so the contract module stays out of every tier implementation.
+  <code>skill_check</code> / <code>dice_roll</code>, the myth-d6knq <code>dm_correction</code>,
+  <code>turn_end</code>, and <code>turn_error</code> — to the per-campaign channel. The
+  <code>SessionHub</code> in every API container <code>PSUBSCRIBE</code>s the pattern and fans each
+  frame out to its locally-registered sockets. The FT streams through a
+  <strong><code>TurnEmitter</code></strong> the worker builds — a small object (<code
+    >emitText</code
+  >
+  / <code>emitSkillCheck</code> / <code>emitDiceRoll</code>) bound to one (campaign, turn) and
+  wrapped by the emitted-anything latch. The tier seam stays frame-agnostic — it imports no
+  wire-frame type; the publisher builds the wire frame around each emitted piece — so the contract
+  module stays out of every tier implementation.
 </p>
 
 <aside class="wiki-rationale">
@@ -1194,6 +1310,17 @@
       </td>
     </tr>
     <tr>
+      <td><code>dm_correction</code></td>
+      <td><code>{ type, turnId, text }</code></td>
+      <td>
+        myth-d6knq structured DM self-correction (the
+        <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool) —
+        rendered as a set-apart errata slip, never story prose. Live: no seq; reconnect replay
+        carries the row seq. Owned by the <a href="./session-transport.html">transport</a>
+        contract.
+      </td>
+    </tr>
+    <tr>
       <td><code>mode_change</code> / <code>combat_started</code> / <code>combat_resolved</code></td>
       <td><code>{ type, … }</code></td>
       <td>
@@ -1245,7 +1372,8 @@
       <td>
         Server-ordered seq counter (<code>INCR</code>); one per persisted message, player and DM. An
         evicted counter heals on collision — reseed to the durable <code>MAX(seq)</code>, one retry
-        (myth-rf5rn).
+        (myth-rf5rn) — and is raise-only floor-guarded at every WS join (the
+        <a href="./session-transport.html">transport</a>'s follow-up).
       </td>
     </tr>
     <tr>
@@ -1316,16 +1444,36 @@
         <code>SessionController</code> — the transient conductor (<code>loadFromRedis</code> /
         <code>processDmTurn</code> / <code>persistTurn</code> / <code>flushToRedis</code>);
         <code>fuseDirectionIntoLastUserMessage</code>; the <code>TranscriptStore</code> seam.
+        myth-d6knq: <code>enqueueScribeJob</code> folds <code>issue_correction</code> calls into the
+        Scribe prose as framed amendments.
       </td>
     </tr>
     <tr>
       <td><code>src/session/turn-worker.ts</code></td>
       <td>
         <code>processTurnJob</code> (the §5 converge / terminal / fresh decision; the latched
-        emitter; per-turn context resolution; the explicit-pending + post-turn re-mature drains),
-        <code>buildSessionTurnWorker</code>, <code>makeLatchedEmitter</code>,
-        <code>reloadFtContext</code>, <code>publishTerminalTurnError</code>,
-        <code>LockLostError</code>; the tuning constants.
+        emitter; per-turn context resolution — including the myth-dwyuw
+        <a href="./fast-thinker.html#entity-cards">entity-card</a> ft_context augment; the
+        explicit-pending + post-turn re-mature drains), <code>buildSessionTurnWorker</code> (which
+        wraps the FT in the <a href="#the-audit-gate"><code>AuditedFastThinker</code></a
+        >), <code>makeLatchedEmitter</code>, <code>reloadFtContext</code>,
+        <code>publishTerminalTurnError</code>, <code>LockLostError</code>; the tuning constants.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/session/tiers/audited-fast-thinker.ts</code> +
+        <code>src/llm/turn-audit.ts</code> + <code>src/llm/schemas/turn-audit.ts</code> +
+        <code>src/llm/prompts/session/turn-audit.txt</code>
+      </td>
+      <td>
+        The myth-d6knq <a href="#the-audit-gate">audit gate</a>: the
+        <code>AuditedFastThinker</code> decorator (one silent retry only when attempt 1 called no
+        tools; fail-open otherwise, with an <code>onFailOpen</code> counter seam);
+        <code>auditTurn</code> — the Haiku classifier over public-by-construction input;
+        <code>TurnAuditResultSchema</code> (<code>{ class, confidence, reason }</code>); the
+        classifier prompt. <code>TURN_AUDIT_ENABLED</code> / <code>TURN_AUDIT_TIMEOUT_MS</code> (20
+        s) / <code>TURN_AUDIT_MODEL</code> (Haiku).
       </td>
     </tr>
     <tr>
@@ -1341,7 +1489,10 @@
         >
         / <code>combat_resolve</code>, kind === tool name) so a combat turn's tool rows persist
         instead of crashing the codec — no migration, since
-        <code>session_messages.message_type</code> is free TEXT.
+        <code>session_messages.message_type</code> is free TEXT. myth-d6knq added
+        <code>dm_correction</code> (kind ↔ the <code>issue_correction</code> tool) — mandatory
+        registration, since an unregistered FT tool name throws
+        <code>TranscriptCorruptError</code> and crashes the turn.
       </td>
     </tr>
     <tr>
@@ -1357,7 +1508,9 @@
         <code>createTurnPublisher</code>, <code>TurnPublisher</code> — <code>dmThinking</code> /
         <code>textDelta</code> / <code>turnEnd</code> / <code>turnError</code> /
         <code>emitFor</code>, plus the MYT-70 <code>ledgerUpdate</code> + its
-        <code>emitLedgerUpdate</code> seam on the latched emitter.
+        <code>emitLedgerUpdate</code> seam on the latched emitter, and the myth-d6knq
+        <code>dmCorrection</code> + <code>emitCorrection</code> (the live
+        <code>{ type: 'dm_correction', turnId, text }</code> frame — no seq).
       </td>
     </tr>
     <tr>
@@ -1389,7 +1542,11 @@
         <code>PartyLedgerSnapshot</code>, and widened <code>TurnEmitter</code> with
         <code>emitLedgerUpdate</code>. MYT-72 added the optional <code>rollHidden</code> flag to
         <code>SkillCheckFramePayload</code> (the NPC world-lookup variant; the publisher renders it
-        as a hidden pass so an NPC's standing never leaks).
+        as a hidden pass so an NPC's standing never leaks). myth-d6knq added
+        <code>DmCorrectionFramePayload</code> + <code>emitCorrection</code> on
+        <code>TurnEmitter</code>, and the render-only
+        <code>FtTurnContext.correctiveInstruction</code> the
+        <a href="#the-audit-gate">audit gate</a> injects on its retry.
       </td>
     </tr>
     <tr>
@@ -1426,7 +1583,10 @@
   <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/session/session-lock.ts</code>,
   <code>backend/src/session/turn-publisher.ts</code>,
   <code>backend/src/session/turn-queue.ts</code>,
-  <code>backend/src/session/transcript-codec.ts</code>, <code>backend/src/session/tiers/</code>,
+  <code>backend/src/session/transcript-codec.ts</code>,
+  <code>backend/src/session/tiers/</code> (including <code>audited-fast-thinker.ts</code>),
+  <code>backend/src/llm/turn-audit.ts</code>, <code>backend/src/llm/schemas/turn-audit.ts</code>,
+  <code>backend/src/llm/prompts/session/turn-audit.txt</code>,
   <code>backend/src/contract/session-channel.ts</code>,
   <code>backend/src/routes/dev-fire-turn.ts</code>. Design specs:
   <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code>,
@@ -1437,7 +1597,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-transient-sessioncontroller">The transient SessionController</a></li><li style="padding-left:0"><a href="#the-pg-direct-transcript-one-store-reconstructed-each-turn">The PG-direct transcript: one store, reconstructed each turn</a></li><li style="padding-left:0"><a href="#the-conductor-deterministic-code-never-an-llm">The conductor: deterministic code, never an LLM</a></li><li style="padding-left:0"><a href="#the-tier-seam-and-structural-enforced-ignorance">The tier seam, and structural enforced ignorance</a></li><li style="padding-left:0"><a href="#the-distributed-lock">The distributed lock</a></li><li style="padding-left:0"><a href="#the-lock-fenced-worker-the-5-decision-order">The lock-fenced worker: the §5 decision order</a></li><li style="padding-left:0"><a href="#release-drain-and-the-post-turn-re-mature">Release, drain, and the post-turn re-mature</a></li><li style="padding-left:0"><a href="#cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</a></li><li style="padding-left:0"><a href="#turn-state-and-the-residual-redis-flush">Turn state and the residual Redis flush</a></li><li style="padding-left:0"><a href="#the-producer-and-the-dev-fire-turn-trigger">The producer and the dev fire-turn trigger</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#fire-a-dm-turn-end-to-end">Fire a DM turn end-to-end locally</a></li><li style="padding-left:12px"><a href="#diagnose-a-turn-that-never-completes">Diagnose a turn that never completes</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#server-frames-added-server-client-only">Server frames added (server → client only)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster">Redis keys (realtime cluster)</a></li><li style="padding-left:12px"><a href="#tuning-constants-turn-worker-ts">Tuning constants (turn-worker.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-transient-sessioncontroller">The transient SessionController</a></li><li style="padding-left:0"><a href="#the-pg-direct-transcript-one-store-reconstructed-each-turn">The PG-direct transcript: one store, reconstructed each turn</a></li><li style="padding-left:0"><a href="#the-conductor-deterministic-code-never-an-llm">The conductor: deterministic code, never an LLM</a></li><li style="padding-left:0"><a href="#the-tier-seam-and-structural-enforced-ignorance">The tier seam, and structural enforced ignorance</a></li><li style="padding-left:0"><a href="#the-audit-gate">The audit gate: a decorated render seam</a></li><li style="padding-left:0"><a href="#the-distributed-lock">The distributed lock</a></li><li style="padding-left:0"><a href="#the-lock-fenced-worker-the-5-decision-order">The lock-fenced worker: the §5 decision order</a></li><li style="padding-left:0"><a href="#release-drain-and-the-post-turn-re-mature">Release, drain, and the post-turn re-mature</a></li><li style="padding-left:0"><a href="#cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</a></li><li style="padding-left:0"><a href="#turn-state-and-the-residual-redis-flush">Turn state and the residual Redis flush</a></li><li style="padding-left:0"><a href="#the-producer-and-the-dev-fire-turn-trigger">The producer and the dev fire-turn trigger</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#fire-a-dm-turn-end-to-end">Fire a DM turn end-to-end locally</a></li><li style="padding-left:12px"><a href="#diagnose-a-turn-that-never-completes">Diagnose a turn that never completes</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#server-frames-added-server-client-only">Server frames added (server → client only)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster">Redis keys (realtime cluster)</a></li><li style="padding-left:12px"><a href="#tuning-constants-turn-worker-ts">Tuning constants (turn-worker.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

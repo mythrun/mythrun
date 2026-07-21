@@ -21,7 +21,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:8877ba2157b1b3519698b1d2d359ddc9c16fba538b18063f45f438a76f1c51a9 -->
+<!-- source-hash: sha256:60a35140af4a694235bd67c5060fe5678b880817c5dd21c28b9d9c748de37ce1 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Design system</h1>
@@ -482,8 +482,33 @@
   spec §6 monochrome, so they carry type by shape, never colour — and <code>useViewportBelowLg</code>,
   a sibling of <code>useViewportNarrow</code> at the <code>lg</code> (1024px) step for a desktop rail
   that becomes a portaled <code>Drawer</code> below it (a JS flip, because a <code>Show</code>'s
-  <code>display:none</code> can't hide the Drawer's portaled content).
+  <code>display:none</code> can't hide the Drawer's portaled content). The calm-session-start pass
+  (myth-ep74g) added two more session-register components, both presentational and i18n-agnostic
+  (they take resolved <code>[ph:]</code> chrome, own no timing or transcript logic, and are
+  orchestrated on <a href="./live-play.html">live play</a>): <code>SessionPreparing</code> — the
+  between-sessions hold, a sibling of <code>SessionStartBeat</code> in the 1-bit beat family: a
+  bordered square paper tile holding the sanctioned <code>Dither</code> band on the theme-invariant
+  paper ramp, a slow breathing pulse as its only sign of life (dropped under reduced motion — the
+  wait can run minutes, so no churn), <code>aria-busy</code> with a polite live region as the single
+  AT source of truth. It is deliberately a separate component rather than a third
+  <code>SessionStartBeat</code> phase: the start beat is a two-phase itinerary (prep → connect),
+  while this is an open-ended wait with no itinerary — one atmospheric line. And
+  <code>DmCorrection</code> — the DM's errata slip: a square, unfilled row ruled with a heavy ink
+  left margin, the mono <code>--font-ui</code> face set against the narration's serif, a terse
+  uppercase eyebrow, <code>role="note"</code>.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>DmCorrection is an amendment, not an alarm</strong> — a DM correction is the record being
+  kept honest, not an error state, so the slip borrows nothing from the alert vocabulary: no status
+  intent, no fill, no icon — and, per the brand's square 1-bit register, no badge, dot, or chip.
+  Two typographic signals alone set it apart from the fiction it corrects: the mono face (narration
+  is serif, so the machine face says "a note about the story, not the story") and the heavy ink left
+  rule — a ledger margin, the slip annotated into the record rather than narrated. It sits unfilled
+  on the ambient transcript ground so the errata never shares the narration's warm paper lift, and
+  its ink is muted through a semantic token (<code>text-ink-secondary</code>, AA in both themes),
+  never an opacity dim.
+</aside>
 
 <h2>Responsive by construction</h2>
 

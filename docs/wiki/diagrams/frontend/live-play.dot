@@ -1,16 +1,20 @@
 digraph live_play {
   // The /campaigns/:id/play keystone. PlayRoute resolves the viewer identity +
-  // ownership, then PlaySession runs the start-flow classifier — each /start arm
-  // resolves to a different screen. The `ready` arm mounts SessionShell, the
-  // streamed multiplayer transcript over the WS transport view-model (useSession),
-  // which folds every frame through the reconnect-safe transcript reducer. A
+  // ownership, then PlaySession runs the start flow: a read-only GET /active probe
+  // FIRST (a running session joins silently — no POST, no 409), then POST /start
+  // and the classifier — each arm resolves to a different screen. The transient
+  // between-sessions codes collapse into ONE waiting phase that backoff-polls
+  // /start behind the SessionPreparing hold (no SSE-driven re-start). The `ready`
+  // arm mounts SessionShell, the streamed multiplayer transcript over the WS
+  // transport view-model (useSession), which folds every frame through the
+  // reconnect-safe transcript reducer — including the dm_correction errata row. A
   // second, presentation-only reveal gate (useRollReveal) turns skill_check /
   // dice_roll frames into in-stream RollCards and holds the outcome prose.
   rankdir=TB;
   compound=true;
 
   route [label="PlayRoute  ·  /campaigns/:id/play\nfullBleed route handle · usePlayViewer\ngetMe + /mine → { userId, isOwner, party }"];
-  start [label="PlaySession · useSessionStart\nPOST /start  (the OWNER's credit debits)\nclassify the caught arm ↓"];
+  start [label="PlaySession · useSessionStart\nprobe GET /active FIRST — running ⟹ join (no POST, no 409)\nelse POST /start (the OWNER's credit debits) → classify ↓"];
 
   subgraph cluster_arms {
     label="the start-flow arms (one screen each)";
@@ -18,10 +22,10 @@ digraph live_play {
     color="ember";
     fontcolor="ember";
 
-    prep [label="409 prep_not_ready\n→ PrepBeat · useSessionPrep (SSE)\nready ⟹ retry()", color="ember", fontcolor="ember"];
-    join [label="409 session_already_active\n→ GET /active → sessionId\n(the mid-session join)"];
+    waiting [label="409 prep_not_ready / reconcile_pending /\nsession_ending → waiting · PreparingHold\n(SessionPreparing — the calm between-sessions hold)", color="ember", fontcolor="ember"];
+    join [label="409 session_already_active\n→ GET /active → sessionId\n(the rare probe↔POST race)"];
     purchase [label="402 insufficient_credits\n→ PurchaseSeam\nowner buy · member hold"];
-    blocked [label="409 campaign_not_active /\nreconcile_pending / session_ending\n→ calm retry notice"];
+    blocked [label="409 campaign_not_active / off-contract\n→ calm manual-retry notice"];
   }
 
   shell [label="SessionShell  (ready{sessionId})\nuseSession over ws-session-client\nconnect(seedLastSeq: 0) — full replay"];
@@ -33,7 +37,7 @@ digraph live_play {
     fontcolor="ember";
 
     reducer [label="reduceFrameReconciling\ntranscript reducer + own-echo FIFO reconcile\n+ turnId whole-turn replace", color="ember", fontcolor="ember"];
-    stream [label="MessageStream\nDmMessage (serif, streams) · PlayerMessage (mono)\nskill_check/dice_roll → RollCard · other mechanical → mono line"];
+    stream [label="MessageStream\nDmMessage (serif, streams) · PlayerMessage (mono)\nskill_check/dice_roll → RollCard · dm_correction → errata slip\nother mechanical → mono line"];
     reveal [label="useRollReveal · buildRevealView\ndice moment: phase (idle→revealed→released)\n+ gatedTurnIds (outcome prose held) — no wire frame", color="ember", fontcolor="ember"];
     presence [label="out-of-band presence\nThinkingIndicator · typing · connection line"];
     input [label="SessionInput\nsend · @dm explicit-text summon"];
@@ -53,13 +57,13 @@ digraph live_play {
   recap [label="session_end → /campaigns/:id/recap\n(stub route — the recap read is a filed bead)"];
 
   route -> start;
-  start -> prep;
+  start -> waiting;
   start -> join;
   start -> purchase;
   start -> blocked;
-  start -> shell [label="200"];
+  start -> shell [label="200 (or an /active hit)"];
   join -> shell [style="dotted"];
-  prep -> shell [style="dotted"];
+  waiting -> start [style="dotted", label="backoff-poll /start\n2s→4s→8s→~12s + jitter"];
   shell -> reducer [lhead=cluster_shell];
   reducer -> stream [style="invis"];
   reducer -> reveal [style="invis"];

@@ -14,7 +14,12 @@ digraph session_turn {
   // The rendered DM turn persists as ONE atomic, idempotent PG append (the
   // single durability point); only the small {usage} flushes to Redis, and the
   // post-turn finally enqueues the st-evaluation AND the scribe job (skipped on a
-  // player-less `correction` turn). The worker holds no socket:
+  // player-less `correction` turn). myth-d6knq wraps the FT render seam in the
+  // AuditedFastThinker decorator: a Haiku post-audit classifies the rendered
+  // narration (pc_speech_authored / inline_meta_correction / fake_session_end);
+  // a violation earns ONE silent corrective retry — only when attempt 1 called
+  // no tools (nothing mechanical to double-apply) — else the gate fails open.
+  // The worker holds no socket:
   // it PUBLISHes frames to the per-campaign channel, which the API containers'
   // SessionHub fans out to live WebSockets.
   rankdir=LR;
@@ -38,8 +43,9 @@ digraph session_turn {
 
     proc [label="processTurnJob\ntryAcquire lock → heartbeat\n§5 decision: converge / terminal / fresh\nrelease in finally", color="ember", fontcolor="ember"];
     ctrl [label="SessionController (transient)\nload → reconstruct history → fuse one-shot →\nrender → persistTurn → flushToRedis · GC'd per turn"];
-    tiers [label="conductor (deterministic)\nfuse one-shot → FT.render(emit)\n→ enqueueScribeJob (assemble)\n(FT REAL — Sonnet; Scribe + ST off-path)", color="ember", fontcolor="ember"];
-    pub  [label="TurnPublisher (latched emitter)\nPUBLISH dm_thinking / text_delta /\n  skill_check / dice_roll / turn_end / turn_error"];
+    tiers [label="conductor (deterministic)\nfuse one-shot → ft.render(emit)\n→ enqueueScribeJob (assemble;\ncorrections folded as framed amendments)\n(FT REAL — Sonnet; Scribe + ST off-path)", color="ember", fontcolor="ember"];
+    audit [label="AuditedFastThinker (decorator)\nHaiku turn-audit on the rendered prose\nclean → pass · violation → ONE silent retry\n(only if attempt 1 called no tools) · else fail-open", color="ember", fontcolor="ember"];
+    pub  [label="TurnPublisher (latched emitter)\nPUBLISH dm_thinking / text_delta /\n  skill_check / dice_roll / dm_correction /\n  turn_end / turn_error"];
   }
 
   subgraph cluster_pg {
@@ -82,7 +88,8 @@ digraph session_turn {
   ctrl -> msgs  [label="reconstruct history\n+ persist DM turn (atomic)", color="ember"];
   ctrl -> turnstate [label="load / flush {usage}\ntake one-shot · read standing"];
 
-  tiers   -> pub     [label="emit text / skill_check / dice_roll"];
+  tiers   -> audit   [label="ft.render\n(the render seam)"];
+  audit   -> pub     [label="emit text / skill_check /\ndice_roll / dm_correction"];
   proc    -> pub     [label="dm_thinking / turn_end", style=dashed];
   pub     -> channel [label="PUBLISH"];
   channel -> hub     [label="pmessage\n(every container)", color="ember"];

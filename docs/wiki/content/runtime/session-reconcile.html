@@ -13,6 +13,7 @@
 <!-- source: backend/src/llm/prompts/session/post-session-analysis.txt -->
 <!-- source: backend/src/repo/facts.ts -->
 <!-- source: backend/src/repo/sessions.ts -->
+<!-- source: backend/src/repo/session-messages.ts -->
 <!-- source: backend/src/repo/entities.ts -->
 <!-- source: backend/src/repo/worlds.ts -->
 <!-- source: backend/src/repo/campaign-wiki-view.ts -->
@@ -21,8 +22,8 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:6160647f6aa3d8153fc07b7c6fa91517dbd790a57488e8ff5e1f49b5fb873ed2 -->
-<!-- last-ticket: myth-ejsp5 -->
+<!-- source-hash: sha256:edcda21e6eb68309495d2aa0e25e9d4d0e94de92b7ec46d596a020cf0f7a55f1 -->
+<!-- last-ticket: myth-8mom0 -->
 
 <h1>End-of-session reconciliation</h1>
 
@@ -40,7 +41,9 @@
   <strong>Post-session analysis</strong> reads the transcript and writes the next session's
   narrative state — a player-facing recap plus a secret-aware <strong>handoff</strong> that primes
   the prep engine (including verbatim NPC voice lines that keep characterization consistent across
-  sessions).
+  sessions). Both closeout jobs also read the farewell's durable <strong>closing narration</strong>
+  — the player-less farewell skips the Scribe, so the send-off prose is the only place the session's
+  final beats live — and fold it in as the authoritative account of how the session ended.
 </p>
 
 <!-- @diagram: runtime/session-reconcile -->
@@ -65,7 +68,8 @@
   (MYT-74a); and a <strong>post-session analysis pass</strong> that reads the transcript and writes
   the next session's narrative state — recap plus handoff (MYT-74b). The diagram traces all of it:
   the two end triggers beginning the end at the left, the farewell turn and the finalize that fires
-  the two closeout jobs in the middle, and each worker's pipeline on the right.
+  the two closeout jobs in the middle — with the durable closing narration the farewell leaves
+  behind for both jobs to read — and each worker's pipeline on the right.
 </p>
 
 <aside class="wiki-rationale">
@@ -157,8 +161,14 @@
   established — so the Fast Thinker writes the send-off in its own voice rather than quoting a
   marker. It joins the correction turn under a shared <code>isPlayerless</code> predicate in the
   turn worker: neither advances the watermark, enqueues the Scribe, nor runs the budget auto-end.
-  The <a href="./session-turn.html#player-less-turns-correction-and-farewell">turn page</a> covers
-  the render seam and the gates.
+  The Scribe skip has a consequence the closeout jobs must answer for: whatever the send-off
+  establishes — an NPC departing, an object reaching its finished form — never enters the working
+  set. The farewell's prose is still persisted like any turn's, as durable <code>dm_text</code> rows
+  stamped <code>trigger_kind='farewell'</code>, and those rows land at <code>persistTurn</code>,
+  <em>before</em> the finalize enqueues the closeout jobs. Both jobs read them back as the
+  <strong>closing narration</strong> (below). The
+  <a href="./session-turn.html#player-less-turns-correction-and-farewell">turn page</a> covers the
+  render seam and the gates.
 </p>
 
 <h3>Complete: the unconditional finalize</h3>
@@ -308,7 +318,48 @@
 <h3>1. Retrieve (deterministic)</h3>
 
 <p>
-  Load the working set. For each distinct subject, call
+  Load the working set — and the farewell turn's
+  <strong>closing narration</strong> (<code>listFarewellNarration</code>: the durable
+  <code>trigger_kind='farewell'</code> <code>dm_text</code> rows, joined in seq order). The farewell
+  is player-less, so the post-turn Scribe never ran on it: its closing beats live <em>only</em> in
+  those rows. Before myth-8mom0 the reconcile read only the working set, so canon committed the
+  session's <em>pre</em>-farewell state and the next session's prep re-serialized it — a carving the
+  send-off finished reverted to half-done; an NPC the send-off walked out of town was back at the
+  bar. Both were live reproductions.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Read the durable prose; don't un-gate the Scribe (myth-8mom0)</strong> — the obvious fix
+  is to let the Scribe run on the farewell so its facts enter the working set like every other
+  turn's. But the Scribe is an <em>async post-turn job</em>, and the reconcile is enqueued in the
+  same <code>finally</code> that follows the farewell render — un-gating would open a race at
+  exactly the boundary this fix exists to close (the Scribe's working-set append landing after the
+  reconcile loads, or worse, clears the set), and closing it would mean new sequencing machinery.
+  The durable rows need none of that: they are persisted at <code>persistTurn</code>,
+  <em>before</em> the finalize enqueues either closeout job, so by the time a worker runs, the
+  narration is already there — race-free by construction, no ordering change. And the
+  <code>isPlayerless</code> Scribe gate keeps its other job untouched: the correction turn must stay
+  Scribe-skipped (a retcon line points at the buried secret it exists to bury).
+</aside>
+
+<p>
+  A session with an empty working set <em>and</em> no closing narration takes a shortcut: run the
+  commit with an empty plan, so the <code>reconciled_at</code> gate still fires through the same
+  conditional path and the start interlock releases consistently. Both inputs must be empty.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The empty-working-set shortcut must not skip a farewell session</strong> — a quiet session
+  can end with an empty working set (nothing improvised worth extracting) and still land real facts
+  in its send-off, and because the farewell is Scribe-skipped, those are precisely the sessions
+  whose <em>only</em> canon-worthy material lives in the closing narration. The pre-myth-8mom0
+  shortcut keyed on the working set alone, so such a session was waved past the reconciler and its
+  close dropped entirely — the bug class this fix closes, in its purest form.
+</aside>
+
+<p>
+  For each distinct working-set subject — plus, when there is one, the whole closing narration as
+  one more query — call
   <a href="../data/world-store-retrieval.html#the-read-path-part-one-semantic-search"
     ><code>findSimilarEntities</code></a
   >
@@ -317,9 +368,19 @@
   canon, never a fact a prior session already corrected away. <code>findSimilarEntities</code>
   throws on failure (it is on the canon write path — a swallowed embed blip would make the
   reconciler think no similar entity exists and mint a duplicate), so a retrieval failure propagates
-  and the job retries. This fan-out — the per-subject query embeddings, batched through Voyage, and
-  the candidate reads — is the dominant latency, not the single Opus call.
+  and the job retries. This fan-out — the query embeddings, batched through Voyage, and the
+  candidate reads — is the dominant latency, not the single Opus call.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Candidate retrieval runs over the closing text too</strong> — the closing narration's
+  subjects are not working-set subjects, so the per-subject fan-out would pull no candidates for
+  them. The reconciler would then see a farewell beat about an entity it was shown no canon row for,
+  and a subject the farewell merely <em>updates</em> (the carver whose piece is finished in the
+  send-off) would be minted as a duplicate entity instead of matching — and superseding into — its
+  existing canon row. One extra semantic query over the whole closing text pulls those candidates
+  into the same dedup'd pool, so an end-state beat resolves onto the entity it is about.
+</aside>
 
 <h3>2. Reconcile (one holistic Opus call)</h3>
 
@@ -327,14 +388,25 @@
   <code>llm/session-reconciler.ts</code> is one Opus call through the standard
   <code>generateObject</code> boundary. Its input is the full working set (each item's subject name,
   content, kind, tier, provenance, source, optional parent name), the retrieved candidates and their
-  live facts, and the world tone. Its output is a structured <strong>plan</strong>: entity
-  match/mint ops, fact appends (each optionally superseding a live fact), relationship edges, and a
-  <code>promotions</code> list. The model owns every judgment — it decides match vs mint per
+  live facts, the world tone, and — when the session had one — the closing narration, threaded as an
+  <strong>authoritative end-state block</strong>. Its output is a structured <strong>plan</strong>:
+  entity match/mint ops, fact appends (each optionally superseding a live fact), relationship edges,
+  and a <code>promotions</code> list. The model owns every judgment — it decides match vs mint per
   subject, resolves contradictions by <em>absorb</em> (canonize the improvised version) or
   <em>supersede</em> (append the canonical version and point the old fact's
   <code>superseded_by</code> at it), bakes an NPC's attribution into an attributed claim's content,
   and <em>omits</em> any restatement that already matches live canon so a stable entity doesn't
   accrete a duplicate fact every session.
+</p>
+
+<p>
+  The prompt makes the closing narration authoritative for how the session <em>ended</em>: any
+  canon-worthy end-state it establishes is folded, matched onto an existing candidate rather than
+  minted fresh, and where the close contradicts a live candidate fact — the half-finished carving
+  that is now complete, the NPC who was present and has now left — the final version supersedes the
+  stale one, never both. A closing-narration fact is player-witnessed prose, so it lands at
+  <code>known</code> unless it refines a higher-tier candidate; a close that merely restates canon
+  is omitted like any other restatement.
 </p>
 
 <h4>The fourth branch: promote (MYT-74c)</h4>
@@ -513,11 +585,12 @@
 </p>
 
 <p>
-  The job reads four durable inputs, all safe to read after the WebSocket closes: the bounded
+  The job reads five durable inputs, all safe to read after the WebSocket closes: the bounded
   transcript tail (the latest 160 rows — the late tail is where evolved relationships and voice
-  live), the prep <code>sd_playbook</code>, the Slow-Thinker running summary from Redis, and the PC
-  roster. <code>llm/post-session-analysis.ts</code> feeds them to one Opus call that emits a
-  <code>{ summary, emergingThreads, handoff }</code> object.
+  live), the prep <code>sd_playbook</code>, the Slow-Thinker running summary from Redis, the PC
+  roster, and the farewell's closing narration (the same <code>listFarewellNarration</code> read the
+  reconcile makes). <code>llm/post-session-analysis.ts</code> feeds them to one Opus call that emits
+  a <code>{ summary, emergingThreads, handoff }</code> object.
 </p>
 
 <ul>
@@ -535,6 +608,20 @@
     lands in <code>sessions.handoff</code>.
   </li>
 </ul>
+
+<p>
+  The closing narration lands in the prompt as a distinct <strong>authoritative</strong> block: the
+  <code>summary</code> and every end-state field of the handoff — party positions and conditions,
+  <code>timeOfDay</code>, each NPC's <code>state</code>, the unresolved threads — must reflect the
+  session's <em>closing</em> state, not an earlier mid-session moment. That is the analysis half of
+  the myth-8mom0 carry: the close reaches the next session through the surfaces that already exist
+  (the recap, and the handoff's "Where We Left Off" anchor in
+  <a href="./session-prep.html">prep</a>), so a departed NPC stays departed in the next session's
+  opening. It composes cleanly with the containment verifier (below): the farewell is
+  <em>authoritative for the paraphrasable end-state</em> and simultaneously
+  <em>banned as a verbatim voice or atmosphere source</em> — two different channels, and the prompt
+  holds both rules at once.
+</p>
 
 <aside class="wiki-rationale">
   <strong>Verbatim NPC voice is the point of the handoff</strong> — the recurring failure across
@@ -587,8 +674,8 @@
   <code>getPriorContextForPrep</code> and splits them two ways. The <code>summary</code> strings
   become a chronological recap fed to the prep prompt, and the latest session's handoff renders a
   <strong>"Where We Left Off"</strong> anchor — party positions, time of day, unresolved threads,
-  returning-NPC dispositions — so the prep opens on where the table actually is. That part is a
-  paraphrasable prompt input.
+  returning-NPC dispositions — so the prep opens on where the table actually is: since myth-8mom0,
+  where the farewell left it, not a mid-session snapshot. That part is a paraphrasable prompt input.
 </p>
 
 <aside class="wiki-rationale">
@@ -950,7 +1037,10 @@
   model). Downstream, the next session's <a href="./session-prep.html">prep</a> reads the handoff
   and the prior summaries; secret tiers stay behind the
   <a href="./slow-thinker.html">Slow-Thinker</a> gate, whose sanction is also what lets a secret be
-  promoted into the wiki at all.
+  promoted into the wiki at all. The farewell carry runs one direction only — into canon (reconcile)
+  and the next session's prep (the analysis handoff), never back into the Fast Thinker's own
+  in-session window; the complementary context filter that keeps farewell prose out of the FT's
+  window lives on the <a href="./fast-thinker.html">Fast Thinker</a> page.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -1180,6 +1270,8 @@
   <code>entities.ts</code> (the append-only fact writes, the <code>markEnded</code> /
   <code>writeAnalysis</code> / <code>getPriorContextForPrep</code> binders, play-marking, and the
   MYT-74c <code>promoteToKnown</code> tier-flips),
+  <code>backend/src/repo/session-messages.ts</code> (the <code>listFarewellNarration</code>
+  closing-narration read),
   <code>backend/src/repo/worlds.ts</code> (<code>getWikiSummary</code>, the narrow no-<code
     >concept</code
   >

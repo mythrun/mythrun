@@ -1,20 +1,28 @@
 digraph session_prep {
-  // Session prep — MYT-61 + MYT-62 + MYT-63. The four-route HTTP plugin
-  // (routes/session-preps.ts, MYT-63) is the enqueue + CRUD surface: trigger
-  // (owner) adds one 'session-prep' job per (campaign, session_number) on
-  // the dedicated session-prep queue, jobId sp-{campaignId}-{sessionNumber};
-  // list/read (member) return a SafeSessionPrep projection that OMITS
-  // sd_playbook (the HTTP enforced-ignorance gate — an explicit field literal,
-  // not a spread, since there are no Fastify response schemas); reset (owner)
-  // deletes the prep row + re-arms the stage in one transaction.
+  // Session prep — MYT-61 + MYT-62 + MYT-63 + MYT-101 + myth-vb2ov/myth-8mom0.
+  // The four-route HTTP plugin (routes/session-preps.ts, MYT-63) is the enqueue
+  // + CRUD surface: trigger (owner) adds one 'session-prep' job per
+  // (campaign, session_number) on the dedicated session-prep queue, jobId
+  // sp-{campaignId}-{sessionNumber}; list/read (member) return a SafeSessionPrep
+  // projection that OMITS sd_playbook (the HTTP enforced-ignorance gate — an
+  // explicit field literal, not a spread, since there are no Fastify response
+  // schemas); reset (owner) deletes the prep row + re-arms the stage in one
+  // transaction.
   // The processor claims the per-session pipeline_runs row
   // (stage='session-prep:{n}'), publishes prep-started, resolves the campaign's
-  // world, runs MYT-59's generateSessionPrep (one Opus streamObject producing
-  // ft_context + sd_playbook), persists the two docs to session_preps
-  // (ON CONFLICT DO NOTHING), marks the run completed WITH recorded cost (no
-  // cost cap — the structural bound is maxOutputTokens), and publishes
-  // prep-ready. A prep failure marks the run failed + publishes prep-failed but
-  // DELIBERATELY never flips campaigns.status — session-scoped, resumable.
+  // world, serializes it — TIERED above 40 entities (myth-vb2ov): full detail
+  // for the session working set (party + handoff-named + 1-hop neighbors), a
+  // one-line dormant roster for the rest — and runs generateSessionPrep (one
+  // Opus streamObject producing ft_context + sd_playbook + opening) under an
+  // in-prompt OUTPUT BUDGET, ceiling pinned to OPUS_MAX_OUTPUT_TOKENS (128k
+  // backstop). finishReason:'length' → one tighter-budget retry, then a
+  // {terminal:true} fail. The opening is vetted against this generation's own
+  // sd_playbook (runSecretTripwire) BEFORE the insert; the three docs persist
+  // to session_preps (ON CONFLICT DO NOTHING); the run is marked completed WITH
+  // recorded cost (no cost cap — the routine bound is the prompt budget, the
+  // 128k cap is the backstop). A prep failure marks the run failed + publishes
+  // prep-failed but DELIBERATELY never flips campaigns.status — session-scoped,
+  // resumable.
   //
   // MYT-62: the stream feeds TWO channels. PHASE events (prep-started/ready/
   // failed) ride the player-facing pipeline:campaign: channel — the only signal
@@ -62,12 +70,14 @@ digraph session_prep {
       style="dotted";
 
       resolve [label="campaigns.getWorldId\n  (campaign → world_id)"];
-      serialize [label="serialize-world-state-\n  for-prep.ts\nOMNISCIENT dump\n  (all access tiers)\n  + party known-facts\n  + starting situation"];
-      llm [label="generateSessionPrep\n  model: Opus, streamObject\n  { ft_context, sd_playbook }\n  maxOutputTokens 16384\n  timeout 9 min\n  onProseDelta(field, text)\n  (no extra LLM cost)"];
+      serialize [label="serialize-world-state-\n  for-prep.ts\nomniscient, all access tiers\n>40 entities → TIERED:\n  working set FULL (party +\n  handoff-named + 1-hop,\n  cap 60); dormant → 1-line\n  roster (cap 100 + tally)\n≤40 → full dump, unchanged"];
+      llm [label="generateSessionPrep\n  model: Opus, streamObject\n  { ft_context, sd_playbook,\n    opening }\n  in-prompt OUTPUT BUDGET\n  (<6k words total)\n  cap OPUS_MAX_OUTPUT_TOKENS\n  (128k backstop)\n  timeout 9 min\n  onProseDelta(field, text)\n  logs session_prep.usage"];
     }
 
+    vet [label="runSecretTripwire(opening)\n  vs THIS generation's\n  sd_playbook (MYT-101)\nbreach → non-terminal fail\n  (nothing persisted)"];
+
     persist [label="sessionPreps.insert\nINSERT session_preps\n  ON CONFLICT\n  (campaign_id, session_number)\n  DO NOTHING"];
-    mark [label="markStageCompleted\npipeline_runs='completed'\ncost_usd = computeCostUsd(Opus)\n  (recorded, NOT capped)\npublishEvent('prep-ready')", color="ember", fontcolor="ember"];
+    mark [label="markStageCompleted\npipeline_runs='completed'\ncost_usd = computeCostUsd\n  (recorded, NOT capped)\npublishEvent('prep-ready')", color="ember", fontcolor="ember"];
 
     fail [label="catch: markStageFailed\npublishEvent('prep-failed',\n  terminal)\nNO campaigns.setFailed\n  (session-scoped)\nnon-terminal → rethrow"];
   }
@@ -77,7 +87,7 @@ digraph session_prep {
     style="dotted";
 
     campaigns_t     [label="campaigns\n  world_id (read)\n  status UNCHANGED\n   on prep failure"];
-    preps_t         [label="session_preps\n  ft_context + sd_playbook\n  UNIQUE(campaign_id,\n    session_number)\n  (migration 022)"];
+    preps_t         [label="session_preps\n  ft_context + sd_playbook\n  + opening (034)\n  UNIQUE(campaign_id,\n    session_number)\n  (migration 022)"];
     pipeline_runs_t [label="pipeline_runs\n  campaign_id, user_id NULL\n  stage='session-prep:{n}'"];
   }
 
@@ -109,18 +119,24 @@ digraph session_prep {
   resolve  -> serialize;
   serialize -> llm;
 
+  // myth-vb2ov graceful overflow: finishReason:'length' → ONE tighter-budget
+  // retry (no deltas on the retry); a second overflow is a terminal fail.
+  llm -> llm [label="finishReason:'length' →\n  retry ONCE\n  (tighter budget)", style=dashed, color="ember"];
+
   // Prose deltas stream to the dev-only channel as they arrive
   llm -> prose_ch [label="onProseDelta →\n  publishProse\n  ('prep-delta')", style=dashed, color="ember"];
 
-  // Persist + mark + prep-ready
-  llm     -> persist;
-  persist -> preps_t [label="ft_context +\n  sd_playbook", style=dotted];
+  // Vet the opening against its own playbook, then persist + mark + prep-ready
+  llm     -> vet;
+  vet     -> persist [label="clean"];
+  persist -> preps_t [label="ft_context +\n  sd_playbook +\n  opening", style=dotted];
   persist -> mark;
   mark    -> pipeline_runs_t [label="completed +\n  cost_usd", style=dotted];
   mark    -> phase_ch        [label="prep-ready", style=dashed];
 
   // Failure path
-  llm  -> fail [label="error", style=dashed, color="ember"];
+  llm  -> fail [label="error / 2nd overflow\n  ({terminal:true})", style=dashed, color="ember"];
+  vet  -> fail [label="breach\n  (non-terminal)", style=dashed, color="ember"];
   fail -> pipeline_runs_t [label="failed + error", style=dotted];
   fail -> phase_ch        [label="prep-failed", style=dashed];
   fail -> campaigns_t     [label="status NOT\n  touched", style=dotted];

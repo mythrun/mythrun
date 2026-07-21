@@ -328,10 +328,12 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
         "Start over" at the reveal. Flips the caller's own <code>'completed'</code>/<code
           >'failed'</code
         >
-        concept back to a resubmittable state and DELETEs the generated sheet, in one transaction,
+        concept — or a <em>stale</em> <code>'processing'</code> one no worker has updated for 10
+        minutes — back to a resubmittable state and DELETEs the generated sheet, in one transaction,
         so the next <code>POST /characters</code> re-runs the pipeline.
-        <code>409 'not_resettable'</code> once the character is <code>'integrated'</code> or the
-        campaign is <code>'active'</code>. Replies <code>204</code>.
+        <code>409 'not_resettable'</code> once the character is <code>'integrated'</code>, the
+        campaign is <code>'active'</code>, or the <code>'processing'</code> row is still fresh (an
+        active worker owns it). Replies <code>204</code>.
       </td>
     </tr>
     <tr>
@@ -656,7 +658,10 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   round of Sonnet calls, by design — a genuine re-roll). The reset is guarded transactionally: it
   refuses (<code>409 'not_resettable'</code>) once the character is <code>'integrated'</code> or the
   campaign is <code>'active'</code>, because you can't unwind a character that is already woven into
-  a running game.
+  a running game. The same route also unwinds a <em>stale</em> <code>'processing'</code> concept —
+  one no live worker has touched for 10 minutes — which is the player-side arm of the
+  <a href="#surviving-a-stuck-job-the-resilience-layer">resilience layer</a> below; a fresh
+  <code>'processing'</code> row stays locked.
 </p>
 
 <aside class="wiki-rationale">
@@ -747,20 +752,34 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   The first staging playtest turned up a failure the enqueue-after-commit recovery above did not
   cover: a character-creation job that finished both Sonnet calls and then <em>hung</em> — the
   worker task alive, its BullMQ lock renewing, no further logs — leaving the player's concept at
-  <code>'processing'</code> with no way forward. MYT-102 added three layers so a job can no longer
-  hang, strand, or brick a player, each catching a failure the others miss.
+  <code>'processing'</code> with no way forward. MYT-102 laid down the first containment layers; the
+  <a href="./worker.html">worker</a>-resilience pass that followed (after a wedged staging job
+  proved a hang renews its BullMQ lock forever) hardened them into the current set — two watchdogs,
+  a failure listener, a player-side reset, and an owner-side resume — each catching a failure the
+  others miss.
 </p>
 
 <p>
-  <strong>A per-stage watchdog.</strong> <code>raceStageWatchdog</code> wraps each stage's whole
-  execution — the LLM calls <em>and</em> the persistence — in a <code>Promise.race</code> against
-  <code>CHARACTER_CREATION_STAGE_TIMEOUT_MS</code> (5 minutes, ~5× the slowest healthy stage). On a
-  trip it throws <code>LlmTimeoutError</code> (a <code>terminal: false</code> error), so the
-  processor's existing non-terminal arm marks the <code>pipeline_runs</code> row failed, publishes
-  <code>stage-failed { willRetry: true }</code>, and rethrows — which lets BullMQ's
-  <code>attempts: 2</code> policy drive one retry. The concept stays <code>'processing'</code>
-  across the retry, because a transient hang must not terminal-fail the character.
+  <strong>A per-stage watchdog, and its trip is terminal.</strong> Each stage's whole execution —
+  the LLM calls <em>and</em> the persistence — races a hard wall clock
+  (<code>CHARACTER_CREATION_STAGE_TIMEOUT_MS</code>, 5 minutes, ~5× the slowest healthy stage). On a
+  trip the watchdog throws the cross-workstream unrecoverable shape (<code>terminal: true</code>,
+  surfaced as <code>errorCode 'job_timeout'</code>), so the processor's terminal arm marks the
+  <code>pipeline_runs</code> row failed, flips the concept to <code>'failed'</code> right there in
+  the loop, and publishes <code>stage-failed { willRetry: false }</code> — the player sees the
+  failure immediately and resubmits.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Terminal, not retry — a deliberate reversal</strong> — the watchdog originally threw
+  <code>terminal: false</code> so BullMQ's <code>attempts: 2</code> policy would drive one retry, on
+  the theory that a hang might be transient. That non-terminal choice turned out to be the wedge: at
+  a 5-minute threshold a trip is overwhelmingly a genuine hang, the retry hangs the same way, and a
+  non-terminal throw on an unrecoverable stage keeps retrying while the concept sits at
+  <code>'processing'</code> with nothing the player can do. Retrying a hang and resubmitting after a
+  fast fail re-run the exact same pipeline either way — failing fast just hands the re-run decision
+  to the player minutes sooner. The in-code comment on the timeout constant documents the reversal.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The watchdog wraps the stage, not just the model call</strong> — the staging hang happened
@@ -768,23 +787,66 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   bounding only the LLM call would not have caught it. The abandoned stage promise's late writes are
   harmless: persistence is idempotent and the atomic stage-claim re-arms a pending/failed row rather
   than double-inserting, so a slow stage that finishes after the watchdog fired cannot corrupt the
-  retry.
+  resubmit's re-run.
 </aside>
 
 <p>
-  <strong>An exhausted-transient listener.</strong> A transient failure rethrows so BullMQ retries,
-  but the <em>final</em> failed attempt used to leave the concept at
-  <code>'processing'</code> forever — <code>markStageFailed</code> only ran on terminal errors, and
-  nothing produced a job-level failure. The worker now attaches
-  <code>handleCharacterCreationJobFailure</code> to the <code>campaign-setup</code> worker's
-  <code>'failed'</code> event. It acts only once BullMQ has exhausted every attempt (<code
-    >attemptsMade &gt;= attempts</code
-  >): it flips the concept to <code>'failed'</code>, publishes a terminal
-  <code>stage-failed { willRetry: false, errorCode }</code>, and logs loud. It never throws (it
-  catches and logs internally), so it can't crash BullMQ's emitter, and it skips a concept that
-  already reached <code>'completed'</code> — a late <code>'failed'</code> event must never unwind a
-  finished character.
+  <strong>A whole-job watchdog on top of the per-stage one.</strong> The processor factory wraps the
+  <em>entire</em> job in a second, wider wall clock (<code>CHARACTER_CREATION_JOB_TIMEOUT_MS</code>,
+  16 minutes), so every await in the job is bounded — including the orchestration loop's own DB and
+  Redis awaits (the atomic stage claim, the <code>pipeline_runs</code> and
+  <code>character_concepts</code> writes, the event publish) that sit <em>outside</em> any stage and
+  therefore outside the per-stage watchdog. On a trip the job promise settles as a terminal failure,
+  BullMQ's attempts exhaust, and the failure listener below flips the concept. The shared
+  <code>withJobTimeout</code> helper lives in the <a href="./worker.html">worker</a>'s
+  job-containment layer.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Why a second watchdog at all</strong> — the staging hang's defining symptom was that the
+  BullMQ lock kept renewing: the worker task was alive and awaiting, so nothing at the queue layer
+  would ever reclaim the job. A stall in an orchestration await — a wedged DB connection between
+  stages, say — slips past the per-stage watchdog and renews the lock forever. The job-level cap
+  guarantees no await anywhere in the job can hold the worker slot indefinitely. It is deliberately
+  more than 3× the per-stage cap, so an in-stage hang always trips the tighter watchdog first (which
+  fails the concept in-loop); the backstop fires only when the sum of individually under-cap awaits
+  wedges the job.
+</aside>
+
+<p>
+  <strong>An exhausted-transient listener.</strong> A genuinely transient failure (an Anthropic
+  rate-limit, an overload) still rethrows non-terminally so BullMQ retries, but the
+  <em>final</em> failed attempt used to leave the concept at <code>'processing'</code> forever — the
+  concept flip only ran on terminal errors, and nothing produced a job-level failure. The worker now
+  attaches <code>handleCharacterCreationJobFailure</code> to the
+  <code>campaign-setup</code> worker's <code>'failed'</code> event. It acts only once BullMQ has
+  exhausted every attempt (<code>attemptsMade &gt;= attempts</code>) — a transient's last failed
+  retry, or the whole-job watchdog's trip — and then flips the concept to <code>'failed'</code>,
+  publishes a terminal <code>stage-failed { willRetry: false, errorCode }</code>, and logs loud. It
+  never throws (it catches and logs internally), so it can't crash BullMQ's emitter, and it skips a
+  concept that already reached <code>'completed'</code> — a late <code>'failed'</code> event must
+  never unwind a finished character.
+</p>
+
+<p>
+  <strong>A player-side reset for a stale <code>'processing'</code> row.</strong> Every layer above
+  runs worker-side, and the staging hang proved a job can wedge in a way none of them can reach — a
+  stalled await never returns control, so no code on the worker flips the row.
+  <code>POST /characters/reset</code> — the same "Start over" route from the reveal — therefore also
+  matches a <code>'processing'</code> concept whose <code>updated_at</code> has not advanced for 10
+  minutes (<code>STALE_PROCESSING_RESET_MS</code>). The player resets and resubmits without any
+  operator involved; a <em>fresh</em> <code>'processing'</code> row — an active worker mid-stage —
+  stays locked behind <code>409 'not_resettable'</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why 10 minutes</strong> — a healthy job bumps the concept row's <code>updated_at</code> as
+  it moves through the pipeline, and its longest legitimate silent gap is one stage's LLM calls plus
+  persistence — comfortably under the 5-minute per-stage watchdog. Ten minutes of silence therefore
+  means no live worker is driving the row. And it sits just below the 16-minute whole-job cap, so a
+  player can self-serve a recovery slightly before the backstop fails the job on its own: the reset
+  is the fast path, the watchdogs the guarantee.
+</aside>
 
 <p>
   <strong>An owner-triggered resume.</strong> The last gap is a concept stranded with no live job at
@@ -869,7 +931,8 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
     <code>'pending'</code> or <code>'failed'</code> with none <code>'running'</code> (<code
       >SELECT status, stage FROM pipeline_runs WHERE campaign_id = … AND user_id = …</code
     >). A <code>'running'</code> row means a worker is still on it under the 5-minute watchdog — let
-    the watchdog trip rather than resuming underneath it.
+    the watchdog trip (it terminal-fails the concept, and the member resubmits) rather than resuming
+    underneath it.
   </li>
   <li>
     Have the owner call <code>POST /api/campaigns/:campaignId/resume</code>. The
@@ -883,6 +946,35 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
     <a href="./pipeline-status.html#watch-a-campaign-locally">dev tool's wire-log drawer</a> — the
     concept re-runs from its first incomplete stage (stage 3 UPDATEs an existing
     <code>characters</code> row rather than double-inserting).
+  </li>
+</ol>
+
+<h3 id="reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</h3>
+<ol>
+  <li>
+    Symptom: a member's creation has sat at <code>'processing'</code> with no visible progress for
+    over 10 minutes. With DB access, confirm staleness directly:
+    <code
+      >SELECT status, updated_at FROM character_concepts WHERE campaign_id = … AND user_id = …</code
+    >
+    — a live worker bumps <code>updated_at</code> as the pipeline progresses, so a silent 10-minute
+    gap means no worker is driving the row.
+  </li>
+  <li>
+    The member calls <code>POST /api/campaigns/:campaignId/characters/reset</code> (the frontend's
+    "Start over"). Once the row has been stale for 10 minutes the reset matches it, flips it back to
+    <code>'submitted'</code>, and deletes any partial sheet in the same transaction. A
+    <code>409 'not_resettable'</code> means the row is still fresh — an active worker may own it, so
+    wait out the window rather than fighting the lock.
+  </li>
+  <li>
+    The member re-POSTs <code>/characters</code> with their concept and grounding text; the pipeline
+    re-runs from scratch as a normal submit.
+  </li>
+  <li>
+    No operator action is required — the reset is member-scoped and self-serve. The owner-side
+    <code>/resume</code> sweep (previous runbook) remains the tool for a concept stranded with no
+    job at all.
   </li>
 </ol>
 
@@ -986,7 +1078,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#surviving-a-stuck-job-the-resilience-layer">Surviving a stuck job — the resilience layer</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:12px"><a href="#recovering-a-stuck-character">Recovering a stuck character</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#the-sheet-co-evolved-with-the-live-ledger-myt-70">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#surviving-a-stuck-job-the-resilience-layer">Surviving a stuck job — the resilience layer</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:12px"><a href="#recovering-a-stuck-character">Recovering a stuck character</a></li><li style="padding-left:12px"><a href="#reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

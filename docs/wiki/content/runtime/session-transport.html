@@ -12,7 +12,7 @@
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
 <!-- source: backend/migrations/035_session_opening_trigger_kind.sql -->
-<!-- source-hash: sha256:5bb3f768c2d89440c5ece0d480b7a521b63e2f8cb90686d70c0d9dfa386061a6 -->
+<!-- source-hash: sha256:8d3ef6eb9dbc0c7c0eb863c449eb87d5ef80e78e29f79c6dd6a9c17e26614c80 -->
 <!-- last-ticket: myth-rf5rn -->
 
 <h1>Session transport</h1>
@@ -304,6 +304,17 @@
   character is still in the scene).
 </p>
 
+<p>
+  One more thing happens at join, before any message can be accepted: the connection raises the
+  campaign's <code>:seq</code> counter to the session's durable <code>MAX(seq)</code> — the
+  <strong>join-time floor-guard</strong> (a myth-rf5rn follow-up). <code>reseedSeq</code> is
+  raise-only, so on a healthy counter this is a no-op; on a counter that expired over a long idle,
+  it restores the floor before the write window opens. Why the write path's collision heal (<a
+    href="#inbound-chat-heal"
+    >below</a
+  >) is not enough on its own is its rationale's story.
+</p>
+
 <aside class="wiki-rationale">
   <strong
     >The <code>:state</code> roster is the FT prompt's, not the skill-check resolver's source of
@@ -405,16 +416,26 @@
   via <code>GET …/messages</code>.
 </aside>
 
-<aside class="wiki-rationale">
-  <strong>Heal on the collision, not proactively on connect</strong> — the alternative was a
-  defensive reseed on every reconnect, or pinning the key's TTL alive forever. But the unique
-  violation <em>is</em> the exact signal that the counter is behind — no probe detects the state
-  more precisely — and healing there means the healthy path pays nothing. Before this fix the
-  purpose-built <code>reseedSeq</code> API had zero callers, and an idle-past-TTL session silently
-  ate every player message (socket alive, the client showed it as sent) while the DM turn's
-  identical collision failed the turn terminally. The
+<aside class="wiki-rationale" id="inbound-chat-heal">
+  <strong>Two layers: heal on the collision in flight, floor-guard at join</strong> — the original
+  fix reasoned that the unique violation <em>is</em> the exact signal the counter is behind — no
+  probe detects the state more precisely, and healing there means the healthy path pays nothing.
+  That holds, but only for the <em>colliding</em> case, and the post-fix live smoke caught the case
+  the collision heal structurally cannot see. The counter is <strong>campaign-scoped</strong> and
+  carries across sessions, so a later session's durable rows start <em>high</em> — session two's
+  opening might sit at seq 50. When the key expires over a long idle and <code>INCR</code> restarts
+  at 1, the low numbers it hands out were used by a <em>prior</em> session; the unique index is
+  <code>(session_id, seq)</code>, so nothing collides. The messages persist silently
+  <em>before</em> the session's opening row, corrupting transcript order — and the trigger debounce
+  reads every new message as older than the DM's last response, so the DM goes permanently silent
+  with no error anywhere. No write-side signal exists for that state, which is why the guard moved
+  to the one place that can see it coming: the WS join path raises the counter to the session's
+  durable floor before any message is accepted. <code>reseedSeq</code> is raise-only — it never
+  lowers a live counter, so a healthy counter (or a race with a sibling join's raise) degrades to a
+  no-op rather than re-handing-out used numbers. The collision heal stays as the in-flight backstop
+  for a counter that expires mid-connection; the
   <a href="./session-turn.html">turn worker's <code>persistTurn</code></a> runs the same heal on its
-  seq-block allocation; both writers branch on the shared
+  seq-block allocation, and all the writers branch on the shared
   <code>isSeqUniqueViolation</code> classifier, colocated with the repo that owns the constraint.
 </aside>
 
@@ -476,13 +497,19 @@
   that includes the DM-turn rows: a <code>player_message</code> row replays as a
   <code>player_message</code> frame; a <code>dm_text</code> row replays as a consolidated
   <code>dm_message</code> frame; <code>skill_check</code> / <code>dice_roll</code> rows are
-  reconstructed from their stored JSON content into their respective frames; and the six MYT-70
+  reconstructed from their stored JSON content into their respective frames; the six MYT-70
   <a href="./character-ledger.html">ledger-tool</a> rows reconstruct into
-  <code>ledger_update</code> frame(s) from the row's persisted <code>LedgerResolution</code>. So a
-  reconnecting client sees the prior DM turns, not just the player chat. Author display and
-  character names are resolved through two in-memory maps built <em>once</em> from campaign-wide
-  reads — no per-message DB lookup. An author who has since left the campaign falls back to a stable
-  "Former player" byline; their prose history still replays intact.
+  <code>ledger_update</code> frame(s) from the row's persisted <code>LedgerResolution</code>; and a
+  myth-d6knq <code>dm_correction</code> row (tool-JSON content, like a roll row) reconstructs into a
+  <code>dm_correction</code> frame carrying the row's seq, the same drop-graceful way. So a
+  reconnecting client sees the prior DM turns, not just the player chat. The replay is also the heal
+  path for an <a href="./session-turn.html#the-audit-gate">audit-corrected</a> turn: when the turn
+  worker's audit gate persisted a corrected render that differs from what streamed live, the
+  reconnect's whole-turn replace is how a live viewer's copy converges on the durable record — the
+  corrected retry is deliberately never re-streamed. Author display and character names are resolved
+  through two in-memory maps built <em>once</em> from campaign-wide reads — no per-message DB
+  lookup. An author who has since left the campaign falls back to a stable "Former player" byline;
+  their prose history still replays intact.
 </p>
 
 <aside class="wiki-rationale">
@@ -625,7 +652,14 @@
   the contract had reserved: three server → client frames (<code>mode_change</code>,
   <code>combat_started</code>, <code>combat_resolved</code>) on the same live-then-replayed
   lifecycle as the mechanical frames, and one client → server frame, <code>resume_combat</code> (the
-  any-member resume summon, no payload). The rest — <code>st_evaluation</code>,
+  any-member resume summon, no payload). myth-d6knq adds the correction channel's frame:
+  <code>dm_correction</code> (server → client) — the DM amending its own earlier narration through
+  the FT's <a href="./fast-thinker.html#correction-channel"><code>issue_correction</code></a> tool,
+  never inline prose. Live it is exactly <code>{ type: 'dm_correction', turnId, text }</code> (no
+  seq); on reconnect it replays from its persisted row, then carrying the row's seq — the same
+  live-then-replayed lifecycle as the mechanical frames. It is <em>not</em> DM narration: the client
+  renders it as a set-apart errata slip in the transcript, never as story prose, so a correction can
+  never masquerade as the fiction it corrects. The rest — <code>st_evaluation</code>,
   <code>scribe_result</code>, and the others — is still deliberately absent until its surface is
   built.
 </p>
@@ -828,9 +862,11 @@
         <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>,
         the MYT-66 DM-turn frames <code>dm_thinking</code> / <code>text_delta</code> /
         <code>turn_end</code> / <code>turn_error</code> (each carries a <code>turnId</code>, no seq;
-        published by the <a href="./session-turn.html">turn worker</a>), and the MYT-74a
-        <code>session_end</code> lifecycle frame (<code>{ reason: 'normal' }</code>, no seq, not
-        replayed).
+        published by the <a href="./session-turn.html">turn worker</a>), the myth-d6knq
+        <code>dm_correction</code> errata frame (<code>{ turnId, text }</code> live, row seq on
+        replay), and the MYT-74a <code>session_end</code> lifecycle frame (<code
+          >{ reason: 'normal' }</code
+        >, no seq, not replayed).
       </td>
     </tr>
   </tbody>
@@ -898,8 +934,9 @@
       <td><code>session:{campaignId}:seq</code></td>
       <td>
         Monotonic <code>INCR</code> counter; first <code>nextSeq</code> → 1. ~2h TTL — an
-        idle-past-TTL eviction is healed on the next append (reseed to the durable
-        <code>MAX(seq)</code>, myth-rf5rn).
+        idle-past-TTL eviction is healed twice over (myth-rf5rn): raised to the session's durable
+        <code>MAX(seq)</code> at every WS join (the raise-only floor-guard) and reseeded on a
+        write-path collision (the in-flight backstop).
       </td>
     </tr>
     <tr>
@@ -956,11 +993,12 @@
     <tr>
       <td><code>src/routes/ws-session.ts</code></td>
       <td>
-        <code>wsSessionRoutes</code> plugin (the upgrade route + handshake + connection lifecycle),
-        <code>WS_MAX_PAYLOAD_BYTES</code>. The inbound handler also writes the
-        <a href="./dm-trigger.html">DM-trigger</a> typing / activity state and reschedules the
-        quiet-window debounce (the explicit / auto branching is delegated to
-        <code>ws-trigger-actions.ts</code>).
+        <code>wsSessionRoutes</code> plugin (the upgrade route + handshake + connection lifecycle —
+        including the join-time <code>reseedSeq</code> floor-guard and the reconnect replay's DM-row
+        reconstruction, <code>dm_correction</code> included), <code>WS_MAX_PAYLOAD_BYTES</code>. The
+        inbound handler also writes the <a href="./dm-trigger.html">DM-trigger</a> typing / activity
+        state and reschedules the quiet-window debounce (the explicit / auto branching is delegated
+        to <code>ws-trigger-actions.ts</code>).
       </td>
     </tr>
     <tr>
@@ -999,9 +1037,10 @@
         <code>end_session</code>; <code>roll_complete</code> deliberately NOT here) /
         <code>SERVER_FRAME_TYPES</code> (the MYT-66 streaming frames + the MYT-68
         <code>skill_check</code> / <code>dice_roll</code> / <code>dm_message</code> frames + the
-        MYT-70 <code>ledger_update</code> frame + the MYT-74a <code>session_end</code> frame; no
-        <code>dm_trigger</code> frame) allowlists, <code>ClientFrame</code> /
-        <code>ServerFrame</code> unions, <code>classifyClientFrame</code> tripwire.
+        MYT-70 <code>ledger_update</code> frame + the MYT-74a <code>session_end</code> frame + the
+        myth-d6knq <code>dm_correction</code> frame; no <code>dm_trigger</code> frame) allowlists,
+        <code>ClientFrame</code> / <code>ServerFrame</code> unions,
+        <code>classifyClientFrame</code> tripwire.
       </td>
     </tr>
     <tr>
@@ -1031,9 +1070,14 @@
         Composable repo binders — <code>append</code> / <code>listAfterSeq</code> /
         <code>maxSeq</code>, plus the MYT-68 PG-direct transcript surface
         (<code>listFtContextRows</code>, whose <code>message_type</code> IN-list MYT-70 widened to
-        carry the six ledger-tool rows / <code>turnRowsExist</code> / <code>appendDmTurn</code>),
-        and <code>join</code> (server-side character resolution) / <code>leave</code> /
-        <code>list</code>; <code>NoCharacterForParticipantError</code>;
+        carry the six ledger-tool rows and myth-d6knq widened with <code>dm_correction</code> — and
+        which now excludes <code>trigger_kind = 'farewell'</code> rows, the myth-n98pc
+        <a href="./fast-thinker.html#farewell-filter">farewell filter</a> on the FT's read only /
+        <code>turnRowsExist</code> / <code>appendDmTurn</code> / <code>listFarewellNarration</code>,
+        the myth-8mom0 read the
+        <a href="./session-reconcile.html">reconcile + analysis workers</a> use for the send-off's
+        closing beats), and <code>join</code> (server-side character resolution) /
+        <code>leave</code> / <code>list</code>; <code>NoCharacterForParticipantError</code>;
         <code>isSeqUniqueViolation</code> (the (session_id, seq) 23505 classifier both seq writers
         heal on — myth-rf5rn).
       </td>

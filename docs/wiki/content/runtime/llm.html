@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:b3a44456234ba62149920f38e30bd07d2b985ece9a09da991546794dd8e31353 -->
+<!-- source-hash: sha256:00473546d03d73d8906a5c18e0eec127616d526bc2a623faf31b562690f7ebbd -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>LLM client</h1>
@@ -32,8 +32,10 @@
   newest — the
   <a href="./fast-thinker.html#world-knowledge-lookups">Fast Thinker's world-knowledge lookups</a>:
   a Haiku contextual recall-gate and the synchronous Opus ST-vet (the one call that sets
-  <code>redactRawText</code>). Everything heavier (provider mechanics, retries, structured-output
-  validation) is delegated to Vercel AI SDK v6.
+  <code>redactRawText</code>), and the Haiku <a href="./session-turn.html">turn-audit gate</a> that
+  classifies each Fast-Thinker render for behavioral violations (authored PC speech, an inline
+  correction, a faked session end) before it reaches the table. Everything heavier (provider
+  mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
 </p>
 
 <!-- @diagram: runtime/llm -->
@@ -553,10 +555,16 @@
   — the call asks Opus for two long markdown documents (a ~2,000–3,000-word context plus a
   ~1,000–2,000-word playbook), alongside the short 150–350-word <code>opening</code>, inside a
   single structured response. The two long docs are what drive the ceiling. The SDK's default output
-  ceiling truncates that mid-document, which a schema-presence floor can't recover from. The stage
-  pins <code>maxOutputTokens: 16384</code> — the reason the <code>maxOutputTokens</code> opt was
-  added to the wrapper at all. It also sets the codebase's largest LLM timeout (9 minutes) because
-  two long Opus documents over a streamed object is the slowest single call in the system.
+  ceiling truncates that mid-document, which a schema-presence floor can't recover from — the reason
+  the <code>maxOutputTokens</code> opt was added to the wrapper at all. The stage pins it to
+  <code>OPUS_MAX_OUTPUT_TOKENS</code> (128k, the model's real output ceiling) as a
+  <em>backstop</em>, not the routine wall: a low fixed cap (the original <code>16384</code>)
+  truncated prep mid-schema around session ~10 as accumulated campaign canon grew the output, so the
+  <a href="./session-prep.html">session-prep</a> orchestration bounds the growth at the source
+  (working-set input tiering plus an in-prompt output budget with a single graceful overflow-retry)
+  and the raised cap only ever catches a genuine runaway. It also sets the codebase's largest LLM
+  timeout (9 minutes) because two long Opus documents over a streamed object is the slowest single
+  call in the system.
 </aside>
 
 <aside class="wiki-rationale">
@@ -599,6 +607,22 @@
   fire-and-forget cosmetic telemetry, so a throwing sink must never abort generation. Field
   attribution is correct regardless of emission order because each field is diffed independently
   against its own retained value — do not "simplify" this by assuming the fields fill in order.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The wrapped <code>.object</code> promise is handled at birth</strong> — a consumer that
+  drains <code>partialObjectStream</code> reads the stream first and awaits
+  <code>result.object</code> only afterward (or, on a stream-error path, never). The wrapper builds
+  that object promise <em>eagerly</em>, so if the <code>haiku-then-sonnet</code> repair chain
+  rejects before any awaiter has attached, the rejection is detached — and under the worker's
+  <code>--unhandled-rejections=throw</code> policy a detached rejection kills the whole process,
+  every queue, not just the failing job. That is exactly how a session-prep output-token overflow
+  once took down all nine worker queues at once. The wrapper attaches a no-op
+  <code>.catch()</code> at construction so the rejection is always observed; a real
+  <code>await result.object</code> still sees the error. It is the same discipline the
+  <a href="#stream-text-with-tools">tool-loop wrapper</a> applies to its usage promises, and the
+  <a href="./worker.html">worker</a>'s job-containment layer is the second line of defence behind
+  it.
 </aside>
 
 <p>
@@ -789,7 +813,8 @@
       <td><code>backend/src/llm/models.ts</code></td>
       <td>
         <code>HAIKU</code>, <code>SONNET</code>, <code>OPUS</code> — wrapped
-        <code>LanguageModelV3</code> instances.
+        <code>LanguageModelV3</code> instances; <code>OPUS_MAX_OUTPUT_TOKENS</code> (128k — the
+        model's real output ceiling, pinned by the session-prep call as a backstop).
       </td>
     </tr>
     <tr>
@@ -857,6 +882,17 @@
       <td>
         Two-field session-prep template (<code>ft_context</code> + <code>sd_playbook</code>);
         known-only Fast-Thinker hard exclusions live here.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/turn-audit.ts</code></td>
+      <td>
+        <code>auditTurn(input)</code> — the Haiku behavioral-integrity classifier the
+        <a href="./session-turn.html">AuditedFastThinker</a> gate runs at the render seam;
+        <code>TURN_AUDIT_MODEL</code> / <code>TURN_AUDIT_TIMEOUT_MS</code> /
+        <code>TURN_AUDIT_ENABLED</code>. Schema <code>TurnAuditResultSchema</code>
+        (<code>schemas/turn-audit.ts</code>), prompt
+        <code>prompts/session/turn-audit.txt</code>.
       </td>
     </tr>
   </tbody>

@@ -1,6 +1,6 @@
 digraph worker {
   // The worker. A second ECS Fargate service that runs node dist/worker.js
-  // and pulls jobs from seven BullMQ queues on redisBatch. Health server on
+  // and pulls jobs from nine BullMQ queues on redisBatch. Health server on
   // 127.0.0.1:3001 is what ECS probes. Real prep-stage processors land across
   // MYT-51 onward; session-prep (MYT-61) is the third queue/worker; the
   // session-turn worker (MYT-66) is the fourth — the lock-fenced DM-turn
@@ -9,14 +9,21 @@ digraph worker {
   // post-hoc SlowThinker; the scribe worker (MYT-73) is the seventh — the
   // post-turn reconciler (working set + tripwire + retcon); the
   // session-reconcile worker (MYT-74a) is the eighth — the end-of-session
-  // reconciler that folds the working set into durable canon. The st-evaluation
-  // and scribe workers are both enqueued by the turn worker on its
-  // flushed-success path; the session-reconcile worker is fired by the
-  // end_session WS frame or the turn worker's budget-100% auto-end. The turn /
-  // trigger / st-eval / scribe / reconcile workers also read/write redisRealtime
-  // (lock / state / direction / working set / trigger coordination). A
-  // QueueEvents('session-turn') subscriber publishes the broker-side terminal
-  // turn_error on a dedicated blocking connection.
+  // reconciler that folds the working set into durable canon; the
+  // session-analysis worker (MYT-74b) is the ninth — the end-of-session
+  // closeout that writes the recap + handoff. The st-evaluation and scribe
+  // workers are both enqueued by the turn worker on its flushed-success path;
+  // the reconcile + analysis workers are fired at finalize (end_session WS
+  // frame or the turn worker's budget-100% auto-end). The turn / trigger /
+  // st-eval / scribe / reconcile / analysis workers also read/write
+  // redisRealtime (lock / state / direction / working set / summary / trigger
+  // coordination). A QueueEvents('session-turn') subscriber publishes the
+  // broker-side terminal turn_error on a dedicated blocking connection and
+  // runs the finalize backstop. myth-y2qfi containment: containProcessor
+  // wraps the three inline prep processors (throw → contained job failure);
+  // a process-level escape guard catches floating rejections and keeps the
+  // process alive, with a >25-escapes/60s storm hatch that exit(1)s so a
+  // systemic failure crash-loops instead of zombie-ing.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -28,7 +35,7 @@ digraph worker {
     color="ember";
     fontcolor="ember";
 
-    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn' | 'dm-trigger' |\n  'st-evaluation' | 'scribe' |\n  'session-reconcile')"];
+    queue_producer [label="Queue producer\nadd('world-gen' |\n  'campaign-setup' |\n  'session-prep' |\n  'session-turn' | 'dm-trigger' |\n  'st-evaluation' | 'scribe' |\n  'session-reconcile' |\n  'session-analysis')"];
   }
 
   subgraph cluster_redis {
@@ -43,6 +50,7 @@ digraph worker {
     q_steval   [label="queue: st-evaluation\n(post-hoc SlowThinker)", color="ember", fontcolor="ember"];
     q_scribe   [label="queue: scribe\n(post-turn reconciler)", color="ember", fontcolor="ember"];
     q_recon    [label="queue: session-reconcile\n(end-of-session → canon)", color="ember", fontcolor="ember"];
+    q_analysis [label="queue: session-analysis\n(end-of-session → recap + handoff)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_worker {
@@ -61,7 +69,10 @@ digraph worker {
     w_steval   [label="buildStEvaluationWorker\nst-evaluation\nconcurrency 2\npolicy → Haiku gate → Opus director\n→ write direction slots + summary", color="ember", fontcolor="ember"];
     w_scribe   [label="buildScribeWorker\nscribe\nconcurrency 2 · 90s lock\nembed → Haiku tripwire → Opus retcon\n→ working set + correction turn", color="ember", fontcolor="ember"];
     w_recon    [label="buildReconcileWorker\nsession-reconcile\nconcurrency 1 · 180s lock · NOT total\nretrieve → Opus reconcile → validate\n→ commit (gated) → clear working set", color="ember", fontcolor="ember"];
-    qevents    [label="QueueEvents('session-turn')\nbroker failed → turn_error\ndedicated BRPOP connection", color="ember", fontcolor="ember"];
+    w_analysis [label="buildPostSessionAnalysisWorker\nsession-analysis\nconcurrency 1 · 180s lock · NOT total\ntranscript + playbook + summary\n→ Opus → recap + handoff", color="ember", fontcolor="ember"];
+    contain    [label="queue/job-containment.ts\ncontainProcessor wraps the\n3 inline prep processors\nthrow → logged, contained job failure\n(secret-free err descriptor)", color="ember", fontcolor="ember"];
+    guard      [label="process escape guard\nunhandledRejection / uncaughtException\n→ log + keep-alive (one bad job\ncan't kill nine queues)\nstorm: >25 escapes / 60s → exit(1)", color="ember", fontcolor="ember"];
+    qevents    [label="QueueEvents('session-turn')\nbroker failed → turn_error\n+ finalize backstop\ndedicated BRPOP connection", color="ember", fontcolor="ember"];
     health     [label="worker/health-server.ts\nGET /health on 127.0.0.1:3001\nprobes: pg + redisBatch +\nredisRealtime + isRunning()"];
     bullmq_redis [label="redis/bullmq-client.ts\nmaxRetriesPerRequest: null\n(BullMQ requirement)"];
   }
@@ -86,10 +97,12 @@ digraph worker {
   q_steval   -> w_steval [label="BLPOP-style", color="ember"];
   q_scribe   -> w_scribe [label="BLPOP-style", color="ember"];
   q_recon    -> w_recon  [label="BLPOP-style\n+ retry (idempotent)", color="ember"];
+  q_analysis -> w_analysis [label="BLPOP-style\n+ retry (idempotent)", color="ember"];
   w_trig     -> q_turn   [label="enqueue\nsession-turn", color="ember"];
   w_turn     -> q_steval [label="enqueue st-evaluation\n(post-turn, flushed success)", color="ember"];
   w_turn     -> q_scribe [label="enqueue scribe\n(post-turn, flushed success)", color="ember"];
-  w_turn     -> q_recon  [label="enqueue reconcile\n(budget-100% auto-end)", style=dotted, color="ember"];
+  w_turn     -> q_recon  [label="enqueue reconcile\n(finalize)", style=dotted, color="ember"];
+  w_turn     -> q_analysis [label="enqueue analysis\n(finalize)", style=dotted, color="ember"];
   w_scribe   -> q_turn   [label="enqueue correction turn\n(retcon Z)", style=dotted, color="ember"];
   q_turn     -> qevents  [label="broker failed", style=dotted, color="ember"];
 
@@ -105,7 +118,15 @@ digraph worker {
   entry   -> w_steval [style=dashed];
   entry   -> w_scribe [style=dashed];
   entry   -> w_recon  [style=dashed];
+  entry   -> w_analysis [style=dashed];
   entry   -> qevents  [style=dashed, label="register +\nclose on SIGTERM"];
+
+  // myth-y2qfi containment layers
+  entry   -> guard    [style=dashed, label="install FIRST\n(before connections)", color="ember"];
+  contain -> w_world  [style=dashed, label="wraps", color="ember"];
+  contain -> w_camp   [style=dashed, color="ember"];
+  contain -> w_prep   [style=dashed, color="ember"];
+  guard   -> ecs      [style=dotted, label="storm: exit(1)\n→ crash-loop restart", color="ember"];
   bullmq_redis -> w_world [style=dashed, label="connection"];
   bullmq_redis -> w_camp  [style=dashed];
   bullmq_redis -> w_prep  [style=dashed];
@@ -114,13 +135,15 @@ digraph worker {
   bullmq_redis -> w_steval [style=dashed];
   bullmq_redis -> w_scribe [style=dashed];
   bullmq_redis -> w_recon  [style=dashed];
+  bullmq_redis -> w_analysis [style=dashed];
 
-  // Turn + trigger + st-eval + scribe + reconcile workers also drive redisRealtime (lock / state / direction / working set / coordination)
+  // Turn + trigger + st-eval + scribe + reconcile + analysis workers also drive redisRealtime (lock / state / direction / working set / summary / coordination)
   w_turn -> realtime [style=dashed, label="lock + state +\nDM-turn frames", color="ember"];
   w_trig -> realtime [style=dashed, label="trigger state +\nclassifier", color="ember"];
   w_steval -> realtime [style=dashed, label="direction slots +\nsummary + usage:st", color="ember"];
   w_scribe -> realtime [style=dashed, label="working set\n(embed-on-append)", color="ember"];
   w_recon -> realtime [style=dashed, label="lock + working set\n(load + clear)", color="ember"];
+  w_analysis -> realtime [style=dashed, label="running summary\n(read)", color="ember"];
 
   // Health + ECS probe
   entry  -> health [style=dashed, label="start last"];
@@ -134,5 +157,6 @@ digraph worker {
   health -> w_steval    [label="isRunning()", style=dotted];
   health -> w_scribe    [label="isRunning()", style=dotted];
   health -> w_recon     [label="isRunning()", style=dotted];
+  health -> w_analysis  [label="isRunning()", style=dotted];
   health -> realtime    [label="PING", style=dotted];
 }

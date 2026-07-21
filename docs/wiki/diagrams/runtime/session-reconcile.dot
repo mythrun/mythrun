@@ -12,7 +12,13 @@ digraph session_reconcile {
   // entity-op resolution is TOTAL since myth-ejsp5 — id-bind → name-rebind →
   // canon-by-name pre-pass → mint-degrade, never a dangling_match reject);
   // ANALYSIS reads the transcript → {summary, emergingThreads, handoff}, mechanically
-  // verifies the handoff's verbatim excerpts (containment), and persists. MYT-74c adds
+  // verifies the handoff's verbatim excerpts (containment), and persists. myth-8mom0:
+  // the player-less farewell is Scribe-skipped, so its closing beats never reach the
+  // working set — BOTH closeout jobs read the durable farewell dm_text rows (persisted
+  // at persistTurn, BEFORE finalize enqueues them — race-free) as the AUTHORITATIVE
+  // closing narration; retrieval adds ONE query over the closing text (resolve onto
+  // canon, don't mint a duplicate) and the empty-working-set shortcut no longer skips
+  // a farewell session. MYT-74c adds
   // the PROMOTE branch (a matched discoverable/secret candidate fact the party
   // surfaced this session → flip to known, entity follows) + the player CAMPAIGN
   // WIKI (a member-readable known-only read that grows with each promotion).
@@ -51,6 +57,7 @@ digraph session_reconcile {
 
     row    [label="sessions row\nstatus='ended', ended_at=now\nreconciled_at = NULL, summary = NULL\n(tri-state: ended ≠ reconciled)"];
     interlock [label="POST /sessions/:id/start\n409 reconcile_pending (ended +\nreconciled_at NULL)\n409 session_ending (flag set)", color="ember", fontcolor="ember"];
+    fw_rows [label="farewell closing narration\nsession_messages dm_text rows\ntrigger_kind='farewell'\npersisted at persistTurn\n(BEFORE the closeout enqueues)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_batch {
@@ -66,9 +73,9 @@ digraph session_reconcile {
     color="ember";
     fontcolor="ember";
 
-    proc   [label="processReconcileJob (NOT total)\ngate-read → lock → load →\nretrieve → render → reconcile →\nvalidate → embed → commit → clear", color="ember", fontcolor="ember"];
-    retrieve [label="findSimilarEntities\n(per distinct subject, top-K)\n+ live candidate facts\n(superseded_by IS NULL)"];
-    opus   [label="Opus reconciler (ONE call)\nmatch/mint/supersede/PROMOTE\nfact append · relationship edges\nredactRawText · pinned cap", color="ember", fontcolor="ember"];
+    proc   [label="processReconcileJob (NOT total)\ngate-read → lock → load (+ farewell) →\nretrieve → render → reconcile →\nvalidate → embed → commit → clear", color="ember", fontcolor="ember"];
+    retrieve [label="findSimilarEntities\n(per distinct subject + ONE query\nover the closing text, top-K)\n+ live candidate facts\n(superseded_by IS NULL)", color="ember", fontcolor="ember"];
+    opus   [label="Opus reconciler (ONE call)\nmatch/mint/supersede/PROMOTE\nclosing narration = authoritative END\nfact append · relationship edges\nredactRawText · pinned cap", color="ember", fontcolor="ember"];
     validate [label="validate (PURE, security-critical)\nsubjectName→entityId map\nentity ops TOTAL: id-bind → name-rebind\n→ canon-by-name → MINT-degrade\n(heals warn-logged, names/ids only)\nfact/edge/tier/attribution/promotion\n→ reject CODE only", color="ember", fontcolor="ember"];
     commit [label="commit (ONE tx)\nmint entities · append facts ·\nsupersede + NULL embedding · edges ·\nhierarchy · markTouchedByPlay ·\npromoteToKnown(facts → entities)\nconditional markReconciled (LAST)", color="ember", fontcolor="ember"];
   }
@@ -80,7 +87,7 @@ digraph session_reconcile {
     fontcolor="ember";
 
     aproc  [label="processPostSessionAnalysisJob (NOT total)\nsummary IS NULL gate → load\ndurable inputs → analyze →\nverify → writeAnalysis (gated)", color="ember", fontcolor="ember"];
-    aopus  [label="Opus analyst (ONE call)\ntranscript tail + sd_playbook +\nrunning summary + roster →\n{summary, emergingThreads, handoff}\nredactRawText · pinned cap", color="ember", fontcolor="ember"];
+    aopus  [label="Opus analyst (ONE call)\ntranscript tail + sd_playbook +\nrunning summary + roster +\nclosing narration (AUTHORITATIVE) →\n{summary, emergingThreads, handoff}\nredactRawText · pinned cap", color="ember", fontcolor="ember"];
     contain [label="containment verifier (PURE)\ndrop any voice/atmosphere excerpt\nNOT verbatim in a non-correction/\nfarewell transcript row", color="ember", fontcolor="ember"];
   }
 
@@ -115,6 +122,7 @@ digraph session_reconcile {
   endfn  -> farewell [label="enqueue ONE\nfarewell turn", color="ember"];
 
   // The farewell renders, then finalizes
+  farewell -> fw_rows [label="persistTurn\n(durable send-off prose)", color="ember"];
   farewell -> finalize [label="render done →\n`finally`", color="ember"];
   farewell -> backstop [label="terminal stall", style=dotted, color="ember"];
   backstop -> finalize [label="idempotent", style=dotted, color="ember"];
@@ -129,6 +137,7 @@ digraph session_reconcile {
   // Reconcile pipeline
   q_recon -> proc  [label="+ retry (idempotent)", color="ember"];
   ws_list -> proc  [label="load (durable\ncheckpoint source)", color="ember"];
+  fw_rows -> proc  [label="closing narration\n(blocks the empty\nshortcut)", color="ember"];
   proc -> retrieve [label="1. retrieve"];
   retrieve -> opus [label="2. candidates + live facts"];
   opus -> validate [label="3. plan"];
@@ -147,6 +156,7 @@ digraph session_reconcile {
 
   // Analysis pipeline
   q_anal -> aproc [label="+ retry (idempotent)", color="ember"];
+  fw_rows -> aproc [label="closing narration\n(anchors summary +\nhandoff end-state)", color="ember"];
   aproc -> aopus  [label="analyze"];
   aopus -> contain [label="handoff"];
   contain -> narr  [label="writeAnalysis\n(summary IS NULL gate)", color="ember"];

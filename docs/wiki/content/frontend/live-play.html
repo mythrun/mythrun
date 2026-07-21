@@ -10,29 +10,33 @@
 <!-- source: frontend/ui/src/components/DieSpin/ -->
 <!-- source: frontend/ui/src/components/SessionInput/ -->
 <!-- source: frontend/ui/src/components/SessionStartBeat/ -->
+<!-- source: frontend/ui/src/components/SessionPreparing/ -->
+<!-- source: frontend/ui/src/components/DmCorrection/ -->
 <!-- source: frontend/ui/src/components/ThinkingIndicator/ -->
 <!-- source: frontend/ui/src/components/EntityMention/ -->
 <!-- source: frontend/ui/src/components/EntityPopover/ -->
 <!-- source: frontend/ui/src/components/SessionSheet/ -->
 <!-- source: frontend/ui/src/components/KnowledgeSidebar/ -->
 <!-- source: frontend/client-core/src/contract/session-knowledge.ts -->
-<!-- source-hash: sha256:84cd0df4746a686303de51aeb15ede17ae9393916eae8c7d1cf60dc7c849b778 -->
+<!-- source-hash: sha256:affbc8e67cb5e4716d6f5dfa47e2509e15f124963bcdb49e458b0406a2f15b0d -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Live play</h1>
 
 <p class="lead">
   The table itself: <code>/campaigns/:id/play</code>, where the party and the AI DM run a session.
-  An atmospheric prep beat gives way to a Start that debits the owner's session credit, then the
-  screen becomes a streamed multiplayer transcript — the DM's prose arrives token by token, the
-  humans' messages post the instant they're typed, a mid-session joiner sees the full backlog, a
-  dropped connection resyncs without double-rendering the turn it dropped during, and a skill check
-  arrives as an in-stream dice card the player rolls before the outcome prose unfolds. Beside the
-  transcript sits a knowledge sidebar — a browsable world wiki, a relationship graph, and the player's
-  live character sheet — and recognized names in the DM's settled prose highlight into terse knowledge
-  cards, every surface showing only what the character already knows. The route is a thin composition;
-  all the reasoning — the start classifier, the transcript reducer, the reveal gate, the transport
-  view-model, the one-snapshot knowledge cache — lives in the platform-neutral
+  Start debits the owner's session credit — a return to an already-running game instead joins
+  silently off a read-only probe, and the between-sessions gap is a calm preparing hold while the
+  flow backoff-polls for readiness — then the screen becomes a streamed multiplayer transcript: the
+  DM's prose arrives token by token, the humans' messages post the instant they're typed, a
+  mid-session joiner sees the full backlog, a dropped connection resyncs without double-rendering the
+  turn it dropped during, a skill check arrives as an in-stream dice card the player rolls before the
+  outcome prose unfolds, and the DM's rare self-correction lands as a set-apart errata slip. Beside
+  the transcript sits a knowledge sidebar — a browsable world wiki, a relationship graph, and the
+  player's live character sheet — and recognized names in the DM's settled prose highlight into terse
+  knowledge cards, every surface showing only what the character already knows. The route is a thin
+  composition; all the reasoning — the start flow, the transcript reducer, the reveal gate, the
+  transport view-model, the one-snapshot knowledge cache — lives in the platform-neutral
   <a href="./app-shell.html">client brain</a>.
 </p>
 
@@ -69,21 +73,38 @@
 <p>
   With the viewer resolved, <code>PlaySession</code> owns the rest. It calls <code>start()</code> once
   on mount and renders by the start flow's phase: the short connecting beat while the attempt is in
-  flight, the prep beat, the live session shell, the purchase seam, or a calm retry notice. The route
-  file itself stays a thin shell — the client-core hooks (the start classifier, the prep SSE fold, the
-  transport view-model) carry every judgment, and each is an injectable seam so a test drives any
-  phase deterministically without a live transport.
+  flight, the between-sessions preparing hold, the live session shell, the purchase seam, or a calm
+  retry notice. The route file itself stays a thin shell — the client-core hooks (the start flow, the
+  prep SSE fold, the transport view-model) carry every judgment, and each is an injectable seam so a
+  test drives any phase deterministically without a live transport.
 </p>
 
-<h2>The start flow — one classifier, five arms</h2>
+<h2>The start flow — probe first, then one classifier</h2>
 
 <p>
-  <code>POST /api/sessions/:campaignId/start</code> debits <strong>the campaign owner's</strong>
-  session credit regardless of who pressed Start, and answers with one of several shapes that each
-  mean a different next screen. <code>classifyStartError</code> (in
-  <code>client-core/session/start-flow.ts</code>) maps a caught error to a discriminated
-  <code>StartOutcome</code>, keying <strong>only</strong> on the contract-blessed
-  <code>status</code>/<code>code</code>/<code>body</code> — never on prose (the
+  An initial or manual attempt POSTs nothing at first. It probes <code>GET …/active</code> — a
+  read-only lookup, no debit — and if a session is already running it mounts the shell against that
+  id directly: returning to a live game issues no <code>POST /start</code> and no 409 at all. Only
+  when nothing is running (or the probe fails — it is a best-effort short-circuit, never a gate) does
+  the flow fall through to <code>POST /api/sessions/:campaignId/start</code>, which debits
+  <strong>the campaign owner's</strong> session credit regardless of who pressed Start and answers
+  with one of several shapes that each mean a different next screen.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Probe <code>GET /active</code> before <code>POST /start</code> — a handled 409 still paints
+  the console red</strong> — the flow originally POSTed first and treated
+  <code>409 session_already_active</code> as the join signal. The classifier handled it cleanly, but
+  every return to a running game logged a red "Failed to load resource" line, and that line is the
+  browser's own network log — no app-level handler can suppress it. The only real fix is not issuing
+  the 409: the probe joins silently, and the 409 join arm survives only for the rare race where a
+  session starts between the probe and the POST.
+</aside>
+
+<p>
+  <code>classifyStartError</code> (in <code>client-core/session/start-flow.ts</code>) maps a caught
+  error to a discriminated <code>StartOutcome</code>, keying <strong>only</strong> on the
+  contract-blessed <code>status</code>/<code>code</code>/<code>body</code> — never on prose (the
   <a href="../runtime/index.html">ZFC</a> line: pure orchestration, no pattern-matching). The
   <code>useSessionStart</code> hook resolves each outcome to a render phase:
 </p>
@@ -91,33 +112,51 @@
 <ul>
   <li><strong><code>200</code></strong> → <code>ready{sessionId}</code>: mount the live shell.</li>
   <li>
-    <strong><code>409 session_already_active</code></strong> → the <em>join</em> path. The 409 body
-    carries no sessionId, so the hook calls <code>GET …/active</code> to resolve the running session's
-    id, then mounts the shell against it. This is the mid-session join.
+    <strong><code>409 session_already_active</code></strong> → the <em>join</em> arm — now only the
+    probe↔POST race, since the probe covers the common return-to-a-running-game path. The 409 body
+    carries no sessionId, so the hook re-resolves it via <code>GET …/active</code>, then mounts the
+    shell against it.
   </li>
   <li>
-    <strong><code>409 prep_not_ready</code></strong> → the prep beat (below), which resolves
-    <em>upward</em>: when prep completes it re-attempts <code>start()</code>.
+    <strong><code>409 prep_not_ready</code> / <code>reconcile_pending</code> /
+    <code>session_ending</code></strong> → one <code>waiting</code> phase — the calm between-sessions
+    hold (below). These codes are transient by contract (the next session's prep is running, the last
+    one is reconciling or ending — all resolve on their own), so the hook backoff-polls
+    <code>/start</code> from inside the phase rather than surfacing a retry.
   </li>
   <li>
     <strong><code>402 insufficient_credits</code></strong> → the
     <a href="./billing-credits.html">purchase moment</a>, carrying the owner-vs-member split.
   </li>
   <li>
-    <strong><code>409 campaign_not_active</code> / <code>reconcile_pending</code> /
-    <code>session_ending</code></strong> → a calm, retryable "blocked" notice; anything unrecognized
-    is a generic retry.
+    <strong><code>409 campaign_not_active</code></strong> (and any off-contract 409) → a calm,
+    <em>manually</em> retryable "blocked" notice — not transient, so no auto-poll; anything
+    unrecognized is a generic retry.
   </li>
 </ul>
 
 <aside class="wiki-rationale">
-  <strong>The join arm and the prep arm are only distinguishable because the backend reordered its
-  preconditions (MYT-92)</strong> — the start flow drives the atmospheric prep beat on
+  <strong>One backoff-polled waiting phase, not an SSE-driven re-start — the retry storm is
+  impossible by construction</strong> — the old prep beat re-attempted <code>start()</code> the
+  instant its prep SSE reported ready, with zero backoff. In the between-sessions window (a session
+  just ended, the next prep isn't ready, reconcile still running) a stale or flapping ready re-fired
+  the attempt in a tight loop — ten POSTs in half a second — that hit the <code>/start</code> rate
+  limit (10/min) and 429'd the player right after every session close. The fix removes the re-start
+  trigger entirely rather than damping it: the three transient codes collapse into one
+  <code>waiting</code> phase, and the hook itself polls <code>/start</code> on an exponential,
+  jittered ramp (2s → 4s → 8s → ~12s cap, ≈5 polls/min at the cap — never near the limit), staying in
+  <code>waiting</code> across polls so the screen doesn't thrash. The poll <em>is</em> the readiness
+  probe; there is no second signal left to storm on.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The join arm and the waiting arm are only distinguishable because the backend reordered its
+  preconditions (MYT-92)</strong> — the start flow drives the between-sessions hold on
   <code>prep_not_ready</code> and the join path on <code>session_already_active</code>, so the two
   must be told apart truthfully. Until the play E2E caught it, a member whose <code>/start</code>
   raced an already-running session got <code>prep_not_ready</code> — because
   <code>maxSessionNumber</code> counts the live session, so the "next" prep legitimately doesn't
-  exist — and pinned forever on the prep beat. The
+  exist — and pinned forever on the prep wait. The
   <a href="../runtime/session-transport.html#starting-a-session-the-atomicity-critical-ordering">fix
   moved the active-session guard ahead of the prep guard</a> on the server; the client relies on that
   discrimination.
@@ -127,21 +166,26 @@
   <strong>Seed <code>lastSeq = 0</code> on the very first connect</strong> — the view-model connects
   with <code>seedLastSeq: 0</code>, which asks the transport for a full-history replay. A fresh connect
   would otherwise get a <code>session_ready</code> with no messages, and only a reconnect replays the
-  backlog. Seeding zero makes the owner's first connect, a reload, and the 409-join / mid-session
+  backlog. Seeding zero makes the owner's first connect, a reload, and the probe-join / mid-session
   joiner all rebuild the whole transcript from one <code>session_reconnect</code> batch — one code
   path covers every entry into a running session.
 </aside>
 
 <p>
-  The <strong>prep beat</strong> (<code>PrepBeat</code> + <code>useSessionPrep</code>) is the
-  "the DM is preparing tonight's session…" experience. It rides the shipped
-  <a href="../runtime/session-prep.html">prep-status SSE</a> (the campaign-scoped channel, distinct
-  from world-gen), seeds its coarse bit off the connect-time snapshot, and advances on the live
-  <code>prep-started</code>/<code>prep-ready</code>/<code>prep-failed</code> events. On
-  <code>ready</code> it re-attempts start. It <strong>latches</strong> a failure: because a reconnect
-  re-snapshots <code>generating</code> (the prep row's existence is the snapshot's only signal), the
-  beat holds a seen failure on the calm retry rather than re-arming the atmospheric wait off a
-  post-failure re-snapshot.
+  The <strong>preparing hold</strong> (<code>PreparingHold</code> + the
+  <a href="./design-system.html">mythrunUI</a> <code>SessionPreparing</code> beat) is the
+  <code>waiting</code> phase made visible: "the DM is preparing the next session…" over a small
+  square 1-bit Bayer figure whose slow breathing pulse is the only sign of life — dropped under
+  <code>prefers-reduced-motion</code> — with <code>aria-busy</code> and a polite live region carrying
+  the line for assistive tech. The hold owns no timing: the hook polls behind it, and when a poll
+  finally answers 200 the phase flips to <code>ready</code> on its own. The
+  <a href="../runtime/session-prep.html">prep-status SSE</a> (<code>useSessionPrep</code>) is kept
+  for exactly one job — <strong>latching</strong> a terminal prep <em>failure</em> into the calm
+  dead-end fast, a definitive "tonight didn't come together" instead of polling forever behind an
+  atmospheric wait. The latch still holds against re-snapshots: a post-failure reconnect re-reports
+  <code>generating</code> (the prep row's existence is the snapshot's only signal), which must not
+  re-arm the wait. During <code>reconcile_pending</code> / <code>session_ending</code> the prep bit
+  reads ready — prep isn't the blocker — so the latch never false-fires there.
 </p>
 
 <h2>The transcript reducer — the reconnect-safe core</h2>
@@ -183,6 +227,34 @@
   settled. Player items (turnId <code>null</code>) survive the prune and dedup on <code>seq</code>
   instead. The seam is a separate exported function precisely so the optimistic layer can re-fold the
   same batch through a <em>reconciling</em> folder (below) rather than the raw one.
+</aside>
+
+<h2>The errata slip — when the DM amends the record</h2>
+
+<p>
+  The wire already carried the DM's rare self-correction: a <code>dm_correction</code> frame the Fast
+  Thinker emits when something previously narrated needs amending — broadcast live within the turn,
+  and replayed on reconnect from its persisted row. The client now renders it. The reducer folds the
+  frame into its own <code>dm_correction</code> item — a content kind deliberately distinct from
+  <code>dm</code>, so a correction can never read as the fiction it corrects — carrying its own
+  emission <code>turnId</code> (the turn the DM issued it in, not the corrected turn's), so it rides
+  whole-turn-replace exactly like every other row. MessageStream dispatches the item to
+  <code>DmCorrection</code>, the errata slip: square and unfilled on the ambient transcript ground
+  (never the narration's warm paper lift), ruled with a heavy ink left margin, the mono face set
+  against the DM's serif, under a terse uppercase eyebrow. The eyebrow is resolved
+  <code>[ph:]</code> chrome the route threads in; the correction text is DM data, never an i18n key.
+  The slip's register at the design-system altitude — why it reads as a record amendment, not an
+  alarm — is on the <a href="./design-system.html">design-system page</a>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The live frame and the replay row must render identically — the reducer is the single
+  source</strong> — a correction reaches a client two ways: live, as a seq-less frame inside the
+  turn, and on reconnect, as a seq-bearing row in the replay batch. Both fold through the same
+  reducer arm into the same item shape, so the player who watched the amendment land and the player
+  who reconnected past it read the identical slip. There is no separate replay renderer to drift —
+  and there must not be: if the two ever looked different, the record itself would appear revised
+  depending on when you looked, which is exactly what an errata register exists to prevent.
 </aside>
 
 <h2>Optimistic own-messages</h2>
@@ -336,8 +408,9 @@
     <code>prefers-reduced-motion</code> (no smooth-scroll vestibular trigger). It dispatches each
     transcript item to its renderer — <code>dm</code> to DmMessage, <code>player</code> to
     PlayerMessage, <code>skill_check</code>/<code>dice_roll</code> to the
-    <a href="#the-dice-moment">RollCard</a>, the rest to a mono system line — holds a gated turn's DM
-    prose off-screen, and carries the connection system line.
+    <a href="#the-dice-moment">RollCard</a>, <code>dm_correction</code> to the DmCorrection errata
+    slip, the rest to a mono system line — holds a gated turn's DM prose off-screen, and carries the
+    connection system line.
   </li>
   <li>
     <strong><code>DmMessage</code></strong> — the DM's prose in <strong>Source Serif 4</strong>
@@ -367,9 +440,10 @@
     the wire.
   </li>
   <li>
-    <strong><code>SessionStartBeat</code></strong> — the 1-bit loading-beat family, with two labeled
-    phases: the SSE-driven atmospheric prep wait and the short socket-connect boundary. Reduced-motion
-    lands instantly.
+    <strong><code>SessionStartBeat</code></strong> — the 1-bit loading beat for the short
+    socket-connect boundary. (Its atmospheric prep phase is retired from this route — the
+    between-sessions wait is the <code>SessionPreparing</code> hold above, its cadence owned by the
+    start-flow hook, not an SSE.) Reduced-motion lands instantly.
   </li>
   <li>
     <strong><code>ThinkingIndicator</code></strong> — "DM is thinking…" on the thinking bit, player
@@ -604,10 +678,13 @@
     live Anthropic credentials.
   </li>
   <li>
-    Enter <code>/campaigns/:id/play</code>. If prep hasn't run you land on the atmospheric prep beat;
-    when it completes, Start debits the <strong>owner's</strong> session credit and the transcript
-    opens. Type a message — it posts instantly (optimistic), then settles when its seq echo returns —
-    and watch the DM's prose stream in token by token.
+    Enter <code>/campaigns/:id/play</code>. If prep hasn't run you land on the calm preparing hold —
+    watch the Network panel: the flow backoff-polls <code>/start</code> at a widening 2s→~12s cadence,
+    and when prep completes a poll answers 200, debits the <strong>owner's</strong> session credit,
+    and opens the transcript. Type a message — it posts instantly (optimistic), then settles when its
+    seq echo returns — and watch the DM's prose stream in token by token. Reload mid-session: the
+    return joins off the <code>GET /active</code> probe — no <code>POST /start</code>, and no red 409
+    line in the console.
   </li>
   <li>
     Open the same campaign as a <strong>second identity</strong> mid-session: it should rebuild the
@@ -640,8 +717,9 @@
 <p>
   This screen is the client half of the <a href="../runtime/session-transport.html">session
   transport</a>: it consumes that transport's frames through the shipped
-  <a href="./realtime-transport.html">WS session client</a> and prep-status SSE, and every start arm
-  maps to a backend precondition documented there. The 402 arm hands off to the
+  <a href="./realtime-transport.html">WS session client</a> and prep-status SSE, every start arm
+  maps to a backend precondition documented there, and the <code>dm_correction</code> frame the
+  errata slip renders is emitted by the Fast Thinker's correction tool on the server side. The 402 arm hands off to the
   <a href="./billing-credits.html">billing &amp; credits</a> purchase moment; the full-bleed frame is a
   declared shared edit with that work on the <a href="./app-shell.html">app shell</a>'s
   <code>AppFrame</code>. The play entry itself is reached from
@@ -668,8 +746,10 @@
   <tr>
     <td><code>start-flow.ts</code></td>
     <td>
-      <code>classifyStartError</code> + <code>useSessionStart</code> — the start classifier and its
-      async state machine; exports the <code>PurchaseMoment</code> seam MYT-95 consumes.
+      <code>classifyStartError</code> + <code>useSessionStart</code> — the probe-first start
+      classifier and its async state machine, including the <code>waiting</code> phase's jittered
+      2s→~12s backoff poll of <code>/start</code>; exports the <code>PurchaseMoment</code> seam
+      MYT-95 consumes.
     </td>
   </tr>
   <tr>
@@ -682,8 +762,8 @@
   <tr>
     <td><code>transcript-reducer.ts</code> · <code>transcript-types.ts</code></td>
     <td>
-      The pure per-frame reducer + item types; <code>applyReconnect</code> is the whole-turn-replace
-      folder seam.
+      The pure per-frame reducer + item types (incl. the <code>dm_correction</code> errata row);
+      <code>applyReconnect</code> is the whole-turn-replace folder seam.
     </td>
   </tr>
   <tr>
@@ -776,8 +856,11 @@
     </td>
   </tr>
   <tr>
-    <td><code>play/prep-beat.tsx</code> · <code>purchase-seam.tsx</code> · <code>notices.tsx</code></td>
-    <td>The prep phase (with the failure latch), the 402 purchase seam, and the calm holds/notices.</td>
+    <td><code>play/preparing-hold.tsx</code> · <code>purchase-seam.tsx</code> · <code>notices.tsx</code></td>
+    <td>
+      The between-sessions preparing hold (the prep SSE kept only for the terminal-failure latch),
+      the 402 purchase seam, and the calm holds/notices.
+    </td>
   </tr>
 </table>
 
@@ -791,7 +874,15 @@
     <td><code>MessageStream</code></td>
     <td>
       The scroller — auto-follow + jump-to-now; instant positioning under reduced motion. Dispatches
-      each item to its renderer and holds a gated turn's DM prose off-screen.
+      each item to its renderer (incl. <code>dm_correction</code> → DmCorrection) and holds a gated
+      turn's DM prose off-screen.
+    </td>
+  </tr>
+  <tr>
+    <td><code>DmCorrection</code></td>
+    <td>
+      The errata slip — square, unfilled, heavy ink left rule, mono against the narration serif, a
+      terse uppercase eyebrow; <code>role="note"</code>. A record amendment, not an alarm.
     </td>
   </tr>
   <tr>
@@ -815,7 +906,14 @@
   </tr>
   <tr>
     <td><code>SessionStartBeat</code></td>
-    <td>The 1-bit beat — prep phase (SSE) + connect phase; reduced-motion instant.</td>
+    <td>The 1-bit beat — this route mounts the connect phase only; reduced-motion instant.</td>
+  </tr>
+  <tr>
+    <td><code>SessionPreparing</code></td>
+    <td>
+      The between-sessions hold — a square 1-bit Bayer figure with a slow breathing pulse (still
+      under reduced motion), <code>aria-busy</code> + a polite live region. Owns no timing.
+    </td>
   </tr>
   <tr>
     <td><code>ThinkingIndicator</code></td>
@@ -870,8 +968,9 @@
   <code>use-session-sheet</code>), <code>frontend/client-core/src/api/play-session.ts</code>,
   <code>frontend/client-core/src/contract/session/</code> +
   <code>frontend/client-core/src/contract/session-knowledge.ts</code>, and the <code>DmMessage</code> /
-  <code>PlayerMessage</code> / <code>MessageStream</code> / <code>RollCard</code> /
-  <code>DieSpin</code> / <code>SessionInput</code> / <code>SessionStartBeat</code> /
+  <code>DmCorrection</code> / <code>PlayerMessage</code> / <code>MessageStream</code> /
+  <code>RollCard</code> / <code>DieSpin</code> / <code>SessionInput</code> /
+  <code>SessionStartBeat</code> / <code>SessionPreparing</code> /
   <code>ThinkingIndicator</code> / <code>EntityMention</code> / <code>EntityPopover</code> /
   <code>SessionSheet</code> / <code>KnowledgeSidebar</code> components under
   <code>frontend/ui/src/components/</code>. The shared <code>snapshotToGraph</code>
