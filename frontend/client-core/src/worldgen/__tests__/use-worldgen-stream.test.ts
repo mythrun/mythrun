@@ -36,8 +36,9 @@ function makeMockClient(opts: { honorUnsub?: boolean } = {}) {
   let openedPath: string | null = null
   let closed = false
 
+  const connectionState = createStore<ConnectionState>(() => ({ status: 'connecting', attempt: 0 }))
   const client: SseStatusClient = {
-    connectionState: createStore<ConnectionState>(() => ({ status: 'connecting', attempt: 0 })),
+    connectionState,
     open: (path) => {
       openedPath = path
     },
@@ -65,6 +66,12 @@ function makeMockClient(opts: { honorUnsub?: boolean } = {}) {
     },
     emitSnapshot: (raw: unknown) => {
       for (const cb of snapshotCbs) cb(raw)
+    },
+    /** Drive the per-instance connection store the way the real client does on an
+     *  open outcome — the hook subscribes to it (the 403/404 `failed{denied}`
+     *  thread). */
+    setConn: (state: ConnectionState) => {
+      connectionState.setState(state, true)
     },
     isClosed: () => closed,
     openedPath: () => openedPath,
@@ -566,6 +573,71 @@ describe('useWorldGenStream', () => {
     })
 
     expect(result.current.status).toBe('terminal')
+  })
+
+  it('surfaces status `denied` when the SSE open settles failed{denied} (403/404 — no phase ever arrives)', () => {
+    // The strand bug (myth-otukr): a forbidden/nonexistent/malformed campaign
+    // makes the client's open return 403/404 → `failed{denied}`, and it STOPS
+    // retrying. No snapshot, no phase — so the coarse status would sit at the
+    // phase===null 'generating' default forever. The hook subscribes to the
+    // connection store and surfaces `denied` so the route can dead-end calmly.
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    // Before the open outcome the hook is on the honest generating default.
+    expect(result.current.status).toBe('generating')
+    expect(result.current.phase).toBeNull()
+
+    act(() => {
+      mock.setConn({ status: 'failed', attempt: 0, failedReason: 'denied' })
+    })
+
+    expect(result.current.status).toBe('denied')
+    expect(result.current.phase).toBeNull()
+  })
+
+  it('does NOT surface denied for a transient failure{exhausted} (the client re-arms; not a route dead end)', () => {
+    // The backoff ceiling (a network outage) is re-armable — the client may
+    // reconnect — so it is NOT the access-control dead end. Only `denied` folds.
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.setConn({ status: 'failed', attempt: 10, failedReason: 'exhausted' })
+    })
+
+    expect(result.current.status).toBe('generating')
+  })
+
+  it('denied wins over a later phase-derived status (terminal before any frame)', () => {
+    const mock = makeMockClient()
+    const { result } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    act(() => {
+      mock.setConn({ status: 'failed', attempt: 0, failedReason: 'denied' })
+      // Even a stray late phase frame can't unstick a denied connection.
+      mock.emit({ type: 'phase', phase: 'world_gen' })
+    })
+
+    expect(result.current.status).toBe('denied')
   })
 
   it('maps every world-ready-and-beyond phase to the complete status', () => {

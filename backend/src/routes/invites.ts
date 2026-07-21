@@ -159,6 +159,49 @@ async function handleCreateInvite(
   }
 }
 
+// Idempotent get-or-create of the campaign's ONE primary share link
+// (myth-y5c4q). Distinct from POST (which always mints a fresh invite, for
+// additional links / the dev-tool): PUT is the idempotent upsert of the `primary`
+// sub-resource — repeated calls (a StrictMode double-mount, two owner tabs)
+// return the SAME code instead of minting duplicates. Owner-only, like the rest.
+async function handleEnsurePrimaryInvite(
+  request: FastifyRequest<{ Params: CampaignIdParams }>,
+  reply: FastifyReply,
+  ctx: InvitesCtx,
+): Promise<FastifyReply> {
+  const userId = await resolveUserId(ctx.repo, request, reply)
+  /* c8 ignore start — `userId === null` arm is defense-in-depth: the
+   * requireOnboarded preHandler chain guarantees request.user.sub maps
+   * to a users row; resolveUserId's null returns are c8-ignored. */
+  if (userId === null) return reply
+  /* c8 ignore stop */
+  const campaignId = request.params.id
+  if (!(await requireOwner(ctx.repo, campaignId, userId, reply))) return reply
+
+  try {
+    const invite = await ctx.repo.invites.ensurePrimary({ campaignId, createdBy: userId })
+    return await reply.code(200).send({
+      inviteCode: invite.inviteCode,
+      inviteUrl: inviteUrlOf(ctx.frontendBaseUrl, invite.inviteCode),
+      uses: invite.uses,
+      expiresAt: invite.expiresAt,
+      createdAt: invite.createdAt,
+      primary: invite.primary,
+    })
+  } catch (err) {
+    if (err instanceof InviteCapReachedError) {
+      return reply.code(409).send({
+        code: 'invite_cap_reached',
+        activeInvites: err.activeInvites,
+      })
+    }
+    if (err instanceof InviteCreationError) {
+      return reply.code(500).send({ code: 'invite_creation_error' })
+    }
+    throw err
+  }
+}
+
 async function handleListInvites(
   request: FastifyRequest<{ Params: CampaignIdParams }>,
   reply: FastifyReply,
@@ -307,6 +350,12 @@ export const invitesRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     '/api/campaigns/:id/invites',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
     (req, reply) => handleCreateInvite(req, reply, ctx),
+  )
+
+  app.put<{ Params: CampaignIdParams }>(
+    '/api/campaigns/:id/invites/primary',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    (req, reply) => handleEnsurePrimaryInvite(req, reply, ctx),
   )
 
   app.get<{ Params: CampaignIdParams }>(

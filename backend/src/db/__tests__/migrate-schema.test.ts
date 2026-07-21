@@ -1,12 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { copyFile, mkdtemp, readdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
 import { createPgPool } from '../postgres.js'
 import { runMigrations } from '../migrate.js'
 import { guardTestDatabase } from './guard-db.js'
 import { uuidv7 } from '../../repo/uuidv7.js'
+import { createUsersRepo } from '../../repo/users.js'
+import { createWorldsRepo } from '../../repo/worlds.js'
+import { createCampaignsRepo } from '../../repo/campaigns.js'
 import { seedTestDatabase } from '../../__tests__/_helpers/seed-test-database.js'
 
 // myth-exac T01: demo-world UUID seeded by migration 008. Used by the
@@ -70,6 +75,7 @@ const EXPECTED_IDX_NAMES = [
   'idx_billing_history_user_occurred',
   'idx_campaign_characters_character',
   'idx_campaign_characters_user',
+  'idx_campaign_invites_one_primary',
   'idx_campaign_members_campaign',
   'idx_campaign_members_user',
   'idx_campaigns_created_by',
@@ -838,6 +844,7 @@ describe('schema-parity (integration)', () => {
       '033_starting_level.sql',
       '034_session_opening.sql',
       '035_session_opening_trigger_kind.sql',
+      '036_campaign_invite_primary.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(
@@ -1106,5 +1113,121 @@ describe('migration 030 — world color identity', () => {
         column_default: null,
       },
     ])
+  })
+})
+
+// myth-y5c4q: migration 036 makes the "primary" invite a first-class,
+// DB-enforced concept — an is_primary column, a backfill that designates the
+// oldest active invite per campaign as primary (deduping any duplicates), and a
+// PARTIAL UNIQUE INDEX that rejects a second primary at the DB layer. The backfill
+// assertion needs a PRE-036 state (duplicate invites with no is_primary column),
+// so this block applies 001..035 into a temp dir, seeds duplicates, THEN applies
+// 036 and asserts the whole contract. Its own describe so schema-parity stays
+// self-contained; the exempted DROP SCHEMA reset is the migration test's subject.
+describe('migration 036 — campaign invite primary', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    await guardTestDatabase(databaseUrl)
+    pool = createPgPool(databaseUrl, { max: 1 })
+  })
+
+  afterAll(async () => {
+    // Restore the fully-migrated + seeded baseline subsequent test files assume
+    // (the incremental run below leaves the schema mid-history).
+    await resetSchema(pool)
+    await runMigrations({ pool, migrationsDir: REAL_MIGRATIONS_DIR, logger: makeSilentLogger() })
+    await seedTestDatabase(pool)
+    await pool.end()
+  })
+
+  it('adds is_primary, backfills the oldest active invite per campaign, and rejects a second primary', async () => {
+    await resetSchema(pool)
+
+    // Stage 1: apply migrations 001..035 into a temp dir (036 withheld), so the
+    // schema is one migration BEHIND — no is_primary column yet.
+    const tmp = await mkdtemp(join(tmpdir(), 'mig036-'))
+    const allMigrations = (await readdir(REAL_MIGRATIONS_DIR)).filter((f) => f.endsWith('.sql'))
+    for (const f of allMigrations) {
+      // Filenames start with the zero-padded version; '036_...' > '036' so the
+      // target migration is excluded, everything before it copied.
+      if (f < '036') await copyFile(join(REAL_MIGRATIONS_DIR, f), join(tmp, f))
+    }
+    await runMigrations({ pool, migrationsDir: tmp, logger: makeSilentLogger() })
+
+    // Seed a campaign (owner + world via the repo, which owns the FK plumbing)
+    // and TWO live invites — the Brindlemarsh duplicate — pre-036, so the raw
+    // INSERT carries no is_primary. Explicit created_at pins the ordering.
+    const owner = await createUsersRepo(pool).create(pool, {
+      cognitoSub: 'mig036-owner-sub',
+      username: 'mig036owner',
+      displayName: 'Mig036 Owner',
+    })
+    const world = await createWorldsRepo(pool).create({
+      createdBy: owner.id,
+      name: 'Mig036 World',
+      concept: 'concept',
+    })
+    const campaign = await createCampaignsRepo(pool).create({
+      worldId: world.id,
+      createdBy: owner.id,
+      name: 'Brindlemarsh',
+    })
+    const olderId = uuidv7()
+    const newerId = uuidv7()
+    await pool.query(
+      `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, created_at)
+       VALUES ($1, $3, $4, 'OLDESTCODE01', '2026-01-01T00:00:00Z'),
+              ($2, $3, $4, 'NEWERCODE002', '2026-01-02T00:00:00Z')`,
+      [olderId, newerId, campaign.id, owner.id],
+    )
+
+    // Stage 2: add 036 to the temp dir and apply it (the backfill + index run).
+    await copyFile(
+      join(REAL_MIGRATIONS_DIR, '036_campaign_invite_primary.sql'),
+      join(tmp, '036_campaign_invite_primary.sql'),
+    )
+    await runMigrations({ pool, migrationsDir: tmp, logger: makeSilentLogger() })
+
+    // Column shape: boolean NOT NULL DEFAULT false.
+    const colRows = await pool.query(
+      `SELECT column_name, data_type, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_name='campaign_invites' AND column_name='is_primary'`,
+    )
+    expect(colRows.rows).toEqual([
+      {
+        column_name: 'is_primary',
+        data_type: 'boolean',
+        is_nullable: 'NO',
+        column_default: 'false',
+      },
+    ])
+
+    // The partial unique index exists with the WHERE is_primary predicate.
+    const idxRows = await pool.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+        WHERE schemaname='public' AND indexname='idx_campaign_invites_one_primary'`,
+    )
+    expect(idxRows.rows[0]?.indexdef).toContain('WHERE is_primary')
+
+    // The DEDUPE backfill: the OLDEST live invite is primary, the newer is not —
+    // exactly one primary for the campaign.
+    const backfilled = await pool.query<{ id: string; is_primary: boolean }>(
+      `SELECT id, is_primary FROM campaign_invites WHERE campaign_id=$1 ORDER BY created_at ASC`,
+      [campaign.id],
+    )
+    expect(backfilled.rows.map((r) => r.is_primary)).toEqual([true, false])
+    expect(backfilled.rows[0]?.id).toBe(olderId)
+
+    // The index REJECTS a second primary at the DB layer (23505) — the belt to
+    // the app-lock's suspenders.
+    await expect(
+      pool.query(
+        `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, is_primary)
+         VALUES ($1, $2, $3, 'SECONDPRIM01', true)`,
+        [uuidv7(), campaign.id, owner.id],
+      ),
+    ).rejects.toThrow(/idx_campaign_invites_one_primary|unique/i)
   })
 })

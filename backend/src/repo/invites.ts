@@ -64,7 +64,7 @@ export function invitesNs(c: ClientLike) {
         [code],
       )
       const row = result.rows[0]
-      return row ? toCampaignInvite(row, false) : null
+      return row ? toCampaignInvite(row) : null
     },
 
     getCodePreview: async (code: string): Promise<CampaignInvitePreview | null> => {
@@ -108,16 +108,23 @@ export function invitesNs(c: ClientLike) {
           ORDER BY created_at ASC`,
         [campaignId],
       )
-      return result.rows.map((r, i) => toCampaignInvite(r, i === 0))
+      // `primary` is the is_primary column now (migration 036), not the old
+      // oldest-row heuristic — the DB owns which invite is the share link.
+      return result.rows.map((r) => toCampaignInvite(r))
     },
 
     revoke: async (
       inviteCode: string,
       campaignId: string,
     ): Promise<{ revoked: true } | { notFoundOrWrongCampaign: true }> => {
+      // Clear is_primary alongside expiry: a revoked invite is no longer the
+      // active primary, and clearing it frees the partial unique index so a
+      // fresh primary can be minted (the index predicate has no now() clause, so
+      // it counts an is_primary=true row regardless of expiry — the invariant
+      // is_primary=true ⟺ active primary is maintained HERE, myth-y5c4q).
       const result = await c.query(
         `UPDATE campaign_invites
-            SET expires_at = now()
+            SET expires_at = now(), is_primary = false
           WHERE invite_code = $1 AND campaign_id = $2`,
         [inviteCode, campaignId],
       )
@@ -127,13 +134,108 @@ export function invitesNs(c: ClientLike) {
   }
 }
 
+/** Is this pg error the invite_code UNIQUE collision the create retry loop
+ *  absorbs (vs. any other constraint violation, which must propagate)? */
+function isInviteCodeCollision(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: string }).code === '23505' &&
+    'constraint' in err &&
+    (err as { constraint?: string }).constraint === 'campaign_invites_invite_code_key'
+  )
+}
+
+/** Lock the campaigns row FIRST per the lock-order convention (campaigns →
+ *  invites → members): concurrent invite writes serialize on it, so the
+ *  cap/primary checks below are correct and the create/ensure races collapse to
+ *  one winner. */
+async function lockCampaignRow(client: PoolClient, campaignId: string): Promise<void> {
+  await client.query('SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE', [campaignId])
+}
+
+/** Throw InviteCapReachedError if the campaign is already at the active-invite
+ *  cap. The caller holds the campaign lock, so the count is stable. */
+async function assertUnderInviteCap(client: PoolClient, campaignId: string): Promise<void> {
+  const cap = await client.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM campaign_invites
+      WHERE campaign_id = $1
+        AND (expires_at IS NULL OR expires_at > now())`,
+    [campaignId],
+  )
+  /* c8 ignore start — `?? '0'` falsy arm is unreachable: count(*) always
+   * returns one row. Kept for TS. */
+  const active = Number(cap.rows[0]?.count ?? '0')
+  /* c8 ignore stop */
+  if (active >= INVITE_CAP_PER_CAMPAIGN) {
+    throw new InviteCapReachedError(campaignId, active)
+  }
+}
+
+/** The campaign's active primary invite row, or null. `is_primary` is the
+ *  migration-036 column; the invariant (revoke clears is_primary) means an
+ *  is_primary=true row is never expired, but the expiry guard stays for defense
+ *  in depth. */
+async function selectActivePrimary(
+  client: PoolClient,
+  campaignId: string,
+): Promise<CampaignInviteDbRow | null> {
+  const result = await client.query<CampaignInviteDbRow>(
+    `SELECT * FROM campaign_invites
+      WHERE campaign_id = $1 AND is_primary
+        AND (expires_at IS NULL OR expires_at > now())
+      LIMIT 1`,
+    [campaignId],
+  )
+  return result.rows[0] ?? null
+}
+
+/** INSERT an invite row, retrying on the (rare) invite_code UNIQUE collision.
+ *  Returns the inserted row; throws InviteCreationError after INVITE_CODE_RETRIES
+ *  collisions. The caller owns the transaction (BEGIN/COMMIT/ROLLBACK) and the
+ *  campaign lock. `isPrimary` sets the new row's is_primary — the partial unique
+ *  index (idx_campaign_invites_one_primary) is the DB guard against a 2nd primary. */
+async function insertInviteWithRetry(
+  client: PoolClient,
+  campaignId: string,
+  createdBy: string,
+  isPrimary: boolean,
+): Promise<CampaignInviteDbRow> {
+  for (let i = 0; i < INVITE_CODE_RETRIES; i++) {
+    const id = uuidv7()
+    const code = generateInviteCode()
+    try {
+      const result = await client.query<CampaignInviteDbRow>(
+        `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, is_primary)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [id, campaignId, createdBy, code, isPrimary],
+      )
+      const row = result.rows[0]
+      /* c8 ignore start — `!row` arm is unreachable: an INSERT ... RETURNING *
+       * always emits one row on success. */
+      if (!row) throw new Error('invites.insert: INSERT returned no row')
+      /* c8 ignore stop */
+      return row
+    } catch (err) {
+      if (isInviteCodeCollision(err)) continue
+      /* c8 ignore start — re-throw of non-collision pg errors (FK 23503, the
+       * primary-index 23505, etc.): they propagate to the caller's ROLLBACK. */
+      throw err
+      /* c8 ignore stop */
+    }
+  }
+  throw new InviteCreationError(INVITE_CODE_RETRIES)
+}
+
 /**
- * Self-managing `invites` methods bound to the pool. `create` and
- * `acceptInvite` each own their own connection + the lock-order-sensitive
+ * Self-managing `invites` methods bound to the pool. `create`, `ensurePrimary`,
+ * and `acceptInvite` each own their own connection + the lock-order-sensitive
  * multi-row FOR UPDATE sequence (campaigns → invites → members) + the three
- * `SET LOCAL` timeouts, and map pg timeout errors to InviteTimeoutError. The
- * lock order is load-bearing for deadlock avoidance, so these stay
- * self-managing and out of TxRepo (see the design's "Two idioms").
+ * `SET LOCAL` timeouts, and `acceptInvite` maps pg timeout errors to
+ * InviteTimeoutError. The lock order is load-bearing for deadlock avoidance, so
+ * these stay self-managing and out of TxRepo (see the design's "Two idioms").
  */
 // eslint-disable-next-line max-lines-per-function
 export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
@@ -157,86 +259,71 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
       try {
         await beginAndConfigure(client)
         inTransaction = true
-
-        // Lock the campaigns row first per the lock-order convention
-        // (campaigns → invites → members). This serializes concurrent
-        // creates so the cap check is correct.
-        await client.query('SELECT id FROM campaigns WHERE id = $1 FOR NO KEY UPDATE', [
+        await lockCampaignRow(client, input.campaignId)
+        await assertUnderInviteCap(client, input.campaignId)
+        // A campaign's FIRST active invite is its primary (preserving the old
+        // oldest-is-primary semantics); every additional invite is non-primary.
+        // Computed under the campaign lock, so the flag is race-free; the
+        // partial unique index is the DB backstop.
+        const existingPrimary = await selectActivePrimary(client, input.campaignId)
+        const row = await insertInviteWithRetry(
+          client,
           input.campaignId,
-        ])
-
-        // Cap check (active invites only).
-        const cap = await client.query<{ count: string }>(
-          `SELECT count(*)::text AS count FROM campaign_invites
-            WHERE campaign_id = $1
-              AND (expires_at IS NULL OR expires_at > now())`,
-          [input.campaignId],
+          input.createdBy,
+          existingPrimary === null,
         )
-        /* c8 ignore start — `?? '0'` falsy arm is unreachable: count(*)
-         * always returns one row. Kept for TS. */
-        const active = Number(cap.rows[0]?.count ?? '0')
-        /* c8 ignore stop */
-        if (active >= INVITE_CAP_PER_CAMPAIGN) {
-          await client.query('ROLLBACK')
-          inTransaction = false
-          throw new InviteCapReachedError(input.campaignId, active)
-        }
-
-        // Insert with retry on UNIQUE collision on invite_code.
-        for (let i = 0; i < INVITE_CODE_RETRIES; i++) {
-          const id = uuidv7()
-          const code = generateInviteCode()
-          try {
-            const result = await client.query<CampaignInviteDbRow>(
-              `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *`,
-              [id, input.campaignId, input.createdBy, code],
-            )
-            await client.query('COMMIT')
-            inTransaction = false
-            const row = result.rows[0]
-            /* c8 ignore start — `!row` arm is unreachable: an INSERT ...
-             * RETURNING * always emits one row on success. */
-            if (!row) throw new Error('invites.create: INSERT returned no row')
-            /* c8 ignore stop */
-            return toCampaignInvite(row, true)
-          } catch (err) {
-            if (
-              typeof err === 'object' &&
-              err !== null &&
-              'code' in err &&
-              (err as { code?: string }).code === '23505' &&
-              'constraint' in err &&
-              (err as { constraint?: string }).constraint === 'campaign_invites_invite_code_key'
-            ) {
-              continue
-            }
-            /* c8 ignore start — re-throw of non-23505 pg errors: pg
-             * client errors propagate to the caller. The 23505 retry
-             * loop is tested; this is the catch-all path. */
-            throw err
-            /* c8 ignore stop */
-          }
-        }
-        await client.query('ROLLBACK')
+        await client.query('COMMIT')
         inTransaction = false
-        throw new InviteCreationError(INVITE_CODE_RETRIES)
+        return toCampaignInvite(row)
       } catch (err) {
-        /* c8 ignore start — outer rollback + rethrow: every inner
-         * catch arm above handles its own ROLLBACK; this is defense-
-         * in-depth for the case where the INSERT itself never ran
-         * (e.g. BEGIN failed). */
         if (inTransaction) {
           try {
             await client.query('ROLLBACK')
           } catch {
-            /* ignore */
+            /* ignore — reported by the caller */
           }
         }
         throw err
       } finally {
-        /* c8 ignore stop */
+        client.release()
+      }
+    },
+
+    // Idempotent get-or-create of the campaign's ONE primary share link
+    // (myth-y5c4q). The client's ensurePrimaryInvite was a list-then-create RMW
+    // that double-minted under a StrictMode double-mount / two-tab race; this
+    // moves the get-or-create server-side and atomic. Under the campaign-row
+    // lock, concurrent ensures serialize: the first mints the primary, the rest
+    // return it — never a second row. The partial unique index
+    // (idx_campaign_invites_one_primary) is the belt-and-suspenders DB guard.
+    ensurePrimary: async (input: CreateInviteInput): Promise<CampaignInvite> => {
+      const client = await pool.connect()
+      let inTransaction = false
+      try {
+        await beginAndConfigure(client)
+        inTransaction = true
+        await lockCampaignRow(client, input.campaignId)
+        const existing = await selectActivePrimary(client, input.campaignId)
+        if (existing !== null) {
+          await client.query('COMMIT')
+          inTransaction = false
+          return toCampaignInvite(existing)
+        }
+        await assertUnderInviteCap(client, input.campaignId)
+        const row = await insertInviteWithRetry(client, input.campaignId, input.createdBy, true)
+        await client.query('COMMIT')
+        inTransaction = false
+        return toCampaignInvite(row)
+      } catch (err) {
+        if (inTransaction) {
+          try {
+            await client.query('ROLLBACK')
+          } catch {
+            /* ignore — reported by the caller */
+          }
+        }
+        throw err
+      } finally {
         client.release()
       }
     },

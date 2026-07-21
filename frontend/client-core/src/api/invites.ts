@@ -67,6 +67,15 @@ const acceptEndpoint = defineEndpoint<AcceptResult, { inviteCode: string }>({
   path: (i) => `/api/invites/${encodeURIComponent(i.inviteCode)}/accept`,
   response: AcceptResultSchema,
 })
+// The idempotent get-or-create of the primary share link (myth-y5c4q). PUT
+// (not POST) — repeated calls return the SAME code, so the StrictMode
+// double-mount / two-tab race can't mint a duplicate. Server-side atomic; the
+// response carries `primary: true`.
+const ensurePrimaryEndpoint = defineEndpoint<InviteListItem, { campaignId: string }>({
+  method: 'PUT',
+  path: (i) => `/api/campaigns/${encodeURIComponent(i.campaignId)}/invites/primary`,
+  response: InviteListItemSchema,
+})
 
 /** Owner-only. Mints a fresh invite (201). Throws `HttpError` 409 `invite_cap_reached`. */
 export function createInvite(ctx: ApiContext, campaignId: string): Promise<Invite> {
@@ -94,12 +103,10 @@ export function acceptInvite(ctx: ApiContext, inviteCode: string): Promise<Accep
 }
 
 /** Owner-only. The one primary share link for a campaign: the existing primary
- *  invite if one exists, else a freshly minted one (idempotent per campaign — the
- *  panel shows a single link, never a dashboard). */
-export async function ensurePrimaryInvite(
-  ctx: ApiContext,
-  campaignId: string,
-): Promise<InviteListItem | Invite> {
-  const { invites } = await listInvites(ctx, campaignId)
-  return invites.find((i) => i.primary) ?? (await createInvite(ctx, campaignId))
+ *  invite if one exists, else a freshly minted one. A SINGLE idempotent server
+ *  call (PUT .../invites/primary) — the get-or-create is atomic server-side, so
+ *  a StrictMode double-mount or two owner tabs can't double-mint (myth-y5c4q,
+ *  replacing the old list-then-create read-modify-write). */
+export function ensurePrimaryInvite(ctx: ApiContext, campaignId: string): Promise<InviteListItem> {
+  return ensurePrimaryEndpoint({ campaignId }, ctx)
 }

@@ -112,6 +112,7 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
 
   // Invites
   { method: 'POST', path: '/api/campaigns/:campaignId/invites' },
+  { method: 'PUT', path: '/api/campaigns/:campaignId/invites/primary' },
   { method: 'GET', path: '/api/campaigns/:campaignId/invites' },
   { method: 'DELETE', path: '/api/campaigns/:campaignId/invites/:inviteCode' },
   { method: 'GET', path: '/api/invites/:inviteCode/preview' },

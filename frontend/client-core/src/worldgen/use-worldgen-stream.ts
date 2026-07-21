@@ -35,8 +35,11 @@ import { snapshotToGraph, type GraphSeed, type GraphSeedSource } from './snapsho
 /** The coarse lifecycle the loading UI renders against. `generating` covers the
  *  whole in-flight window (incl. `world_snapshot_ready`); `failed` is retryable
  *  (retry button); `terminal` is a non-resumable dead end; `complete` is
- *  world-gen done (world_ready and beyond). */
-export type WorldGenStatus = 'generating' | 'failed' | 'terminal' | 'complete'
+ *  world-gen done (world_ready and beyond); `denied` is the access-control dead
+ *  end — the status stream's open returned 403/404 (not a member / no such
+ *  campaign / malformed id), so no phase ever arrives. It wins over every
+ *  phase-derived status (the connection failed before any frame). */
+export type WorldGenStatus = 'generating' | 'failed' | 'terminal' | 'complete' | 'denied'
 
 export interface WorldGenStream {
   readonly phase: PipelinePhase | null
@@ -301,6 +304,11 @@ export function useWorldGenStream(
   const [seed, setSeed] = useState<GraphSeed | null>(null)
   const [resumedMidGen, setResumedMidGen] = useState(false)
   const [override, setOverride] = useState<WorldGenStatus | null>(null)
+  // The access-control dead end: the SSE open returned 403/404, so the client's
+  // connection settled `failed{denied}` and STOPPED retrying — no snapshot, no
+  // phase, ever. Surfaced as the coarse `denied` status so the route can render a
+  // calm no-access screen instead of stranding on the phase===null loading beat.
+  const [denied, setDenied] = useState(false)
 
   const mountedRef = useMountedRef()
   const seededRef = useRef(false)
@@ -309,6 +317,16 @@ export function useWorldGenStream(
   // the server's phase is authoritative from then on.
   useEffect(() => {
     const client = createClient(ctx)
+    // The only terminal connection outcome the stream surfaces: 403/404 → the
+    // access-control dead end. `exhausted` (the backoff ceiling) is a transient
+    // network outage the client re-arms from, not a route-level dead end, so it
+    // is intentionally not folded here. `denied` is monotonic within a mount (no
+    // retry affordance clears it), and — like every other state here — it is not
+    // reset across a bare `:id` change (the route remounts per campaign).
+    const offConn = client.connectionState.subscribe((state) => {
+      if (!mountedRef.current) return
+      if (state.status === 'failed' && state.failedReason === 'denied') setDenied(true)
+    })
     const offEvent = client.onEvent((event) => {
       if (!mountedRef.current) return
       setEvents((prev) => [...prev, event])
@@ -339,6 +357,7 @@ export function useWorldGenStream(
     })
     client.open(streamPath(campaignId))
     return () => {
+      offConn()
       offEvent()
       offSnapshot()
       client.close()
@@ -369,7 +388,9 @@ export function useWorldGenStream(
   // advance it (mirrors the nodes/edges derivation). This is what unfreezes the
   // status-card % + fog fade for the whole gen (MYT-89 C7).
   const stages = useMemo(() => foldStages(snapshotStages, events), [snapshotStages, events])
-  const status = override ?? statusForPhase(phase)
+  // `denied` is terminal and frame-independent (it happened before any phase), so
+  // it wins over the phase/override-derived status.
+  const status: WorldGenStatus = denied ? 'denied' : (override ?? statusForPhase(phase))
 
   return { phase, nodes, edges, status, stages, costUsd, resumedMidGen, retry }
 }

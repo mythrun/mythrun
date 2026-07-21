@@ -23,7 +23,7 @@ export interface ApiContext {
  * `Res` is the validated response type.
  */
 export interface EndpointSpec<Res, In> {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   /** Builds the path (appended to `ctx.baseUrl`) from the typed input. */
   path: (input: In) => string
   /** Optional request-body schema. When present, the input is validated + sent as JSON. */

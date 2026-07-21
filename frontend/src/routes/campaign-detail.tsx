@@ -148,6 +148,24 @@ function TerminalView(): React.JSX.Element {
   )
 }
 
+/** The access-control dead end (myth-otukr): the status stream's open returned
+ *  403/404 — the campaign doesn't exist, or the viewer isn't a member — so no
+ *  phase ever arrives. A calm, terminal no-access screen (NO retry: retrying an
+ *  access denial can't grant access), mirroring the /play route's calm-hold
+ *  pattern. Without this the route stranded on the phase===null settling line
+ *  forever. */
+function NoAccessView(): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <Stack gap={3} data-testid="campaign-no-access">
+      <Heading level={1} role="title">
+        {t('campaign.noAccess.title')}
+      </Heading>
+      <Text as="p">{t('campaign.noAccess.body')}</Text>
+    </Stack>
+  )
+}
+
 /** The brief resolve window at `world_ready` while the chosen-situation flag loads —
  *  a calm line, so the reveal↔page split never flashes the wrong surface. */
 function SettlingView(): React.JSX.Element {
@@ -228,6 +246,12 @@ export function CampaignDetailRoute({
       )}
     </RevealTransition>
   )
+
+  // The access-control dead end (myth-otukr): the status stream's open returned
+  // 403/404, so it stopped retrying and no phase will ever arrive. Surface the
+  // calm no-access screen BEFORE the phase===null settling gate below — otherwise
+  // a denied/nonexistent/malformed campaign strands on the settling line forever.
+  if (status === 'denied') return <NoAccessView />
 
   // The CONNECTING window (MYT-102 audit): before the stream's first snapshot
   // frame, `phase` is null and the coarse status defaults to 'generating' — a

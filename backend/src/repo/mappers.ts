@@ -306,9 +306,13 @@ export interface CampaignInviteDbRow {
   readonly uses: number
   readonly expires_at: Date | null
   readonly created_at: Date
+  readonly is_primary: boolean
 }
 
-export function toCampaignInvite(row: CampaignInviteDbRow, primary: boolean): CampaignInvite {
+// `primary` is now the real is_primary column (migration 036), not a
+// caller-supplied derived flag — the DB is the single source of truth for which
+// invite is the canonical share link (myth-y5c4q).
+export function toCampaignInvite(row: CampaignInviteDbRow): CampaignInvite {
   return {
     id: row.id,
     campaignId: row.campaign_id,
@@ -318,7 +322,7 @@ export function toCampaignInvite(row: CampaignInviteDbRow, primary: boolean): Ca
     uses: row.uses,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
-    primary,
+    primary: row.is_primary,
   }
 }
 

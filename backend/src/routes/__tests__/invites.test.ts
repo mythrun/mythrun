@@ -226,6 +226,74 @@ describe('invitesRoutes', () => {
   })
 
   // ----------------------------------------------------------------------
+  // PUT /api/campaigns/:id/invites/primary (idempotent get-or-create)
+  // ----------------------------------------------------------------------
+
+  describe('PUT /api/campaigns/:id/invites/primary', () => {
+    it('200 mints the primary on first call (primary:true)', async () => {
+      const { owner, campaignId } = await seedCampaign(pool, scope)
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/campaigns/${campaignId}/invites/primary`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(200)
+      const body = res.json<{ inviteCode: string; inviteUrl: string; primary: boolean }>()
+      expect(body.inviteCode).toMatch(/^[A-Za-z0-9]{12}$/)
+      expect(body.inviteUrl).toBe(`${FRONTEND_BASE_URL}/join/${body.inviteCode}`)
+      expect(body.primary).toBe(true)
+    })
+
+    it('is IDEMPOTENT — repeated calls return the SAME code, exactly one row', async () => {
+      // The double-create fix (myth-y5c4q): the panel used to list-then-create;
+      // two mounts (StrictMode / two tabs) double-minted. The idempotent endpoint
+      // returns the existing primary instead.
+      const { owner, campaignId } = await seedCampaign(pool, scope)
+      const first = await app.inject({
+        method: 'PUT',
+        url: `/api/campaigns/${campaignId}/invites/primary`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      const second = await app.inject({
+        method: 'PUT',
+        url: `/api/campaigns/${campaignId}/invites/primary`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(first.json<{ inviteCode: string }>().inviteCode).toBe(
+        second.json<{ inviteCode: string }>().inviteCode,
+      )
+      const rows = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM campaign_invites WHERE campaign_id=$1`,
+        [campaignId],
+      )
+      expect(Number(rows.rows[0]?.count)).toBe(1)
+    })
+
+    it('403 not_campaign_owner for a non-owner caller', async () => {
+      const { campaignId } = await seedCampaign(pool, scope)
+      const stranger = await seedUser(pool, scope, 'stranger')
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/campaigns/${campaignId}/invites/primary`,
+        headers: { 'x-mythrun-dev-sub': stranger.devSub },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ code: 'not_campaign_owner' })
+    })
+
+    it('404 campaign_not_found when the campaign does not exist', async () => {
+      const owner = await seedUser(pool, scope, 'lone')
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/campaigns/${uuidv7()}/invites/primary`,
+        headers: { 'x-mythrun-dev-sub': owner.devSub },
+      })
+      expect(res.statusCode).toBe(404)
+      expect(res.json()).toEqual({ code: 'campaign_not_found' })
+    })
+  })
+
+  // ----------------------------------------------------------------------
   // GET /api/campaigns/:id/invites
   // ----------------------------------------------------------------------
 
@@ -241,12 +309,15 @@ describe('invitesRoutes', () => {
       expect(res.json()).toEqual({ invites: [] })
     })
 
-    it('200 lists active invites; primary flag set on the earliest entry', async () => {
+    it('200 lists active invites; primary flag reflects the is_primary column', async () => {
+      // Post-migration-036 the primary flag is the real is_primary column (not
+      // the old oldest-entry heuristic). Seed the earliest as the primary; the
+      // list must surface the column verbatim, ordered created_at ASC.
       const { owner, campaignId } = await seedCampaign(pool, scope)
       await pool.query(
-        `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, created_at)
-         VALUES ($1, $2, $3, $4, now() - interval '2 hours'),
-                ($5, $2, $3, $6, now() - interval '1 hour')`,
+        `INSERT INTO campaign_invites (id, campaign_id, created_by, invite_code, is_primary, created_at)
+         VALUES ($1, $2, $3, $4, true,  now() - interval '2 hours'),
+                ($5, $2, $3, $6, false, now() - interval '1 hour')`,
         [uuidv7(), campaignId, owner.userId, 'codeAaaaaaa1', uuidv7(), 'codeBbbbbbb2'],
       )
       const res = await app.inject({

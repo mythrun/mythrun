@@ -196,6 +196,56 @@ describe('invites repo (integration)', () => {
     })
   })
 
+  describe('ensurePrimary', () => {
+    it('mints the primary when the campaign has none (primary=true)', async () => {
+      const { invites, campaign, owner } = await setup()
+      const inv = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })
+      expect(inv.inviteCode).toMatch(/^[A-Za-z0-9]{12}$/)
+      expect(inv.primary).toBe(true)
+      const list = await invites.listForCampaign(campaign.id)
+      expect(list).toHaveLength(1)
+      expect(list[0]?.primary).toBe(true)
+    })
+
+    it('is idempotent — a second call returns the SAME code, no second row', async () => {
+      const { invites, campaign, owner } = await setup()
+      const first = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })
+      const second = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })
+      expect(second.inviteCode).toBe(first.inviteCode)
+      const list = await invites.listForCampaign(campaign.id)
+      expect(list).toHaveLength(1)
+    })
+
+    it('returns the primary that create() already established (does not mint a duplicate)', async () => {
+      const { invites, campaign, owner } = await setup()
+      // create() makes the campaign's first invite its primary; ensurePrimary
+      // must find and return it, not add a second row.
+      const created = await invites.create({ campaignId: campaign.id, createdBy: owner.id })
+      const ensured = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })
+      expect(ensured.inviteCode).toBe(created.inviteCode)
+      expect(ensured.primary).toBe(true)
+      expect(await invites.listForCampaign(campaign.id)).toHaveLength(1)
+    })
+
+    it('after revoking the primary, mints a FRESH primary (revoke cleared is_primary)', async () => {
+      const { invites, campaign, owner } = await setup()
+      const first = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })
+      expect(await invites.revoke(first.inviteCode, campaign.id)).toEqual({ revoked: true })
+      // The revoked primary is is_primary=false now, so a fresh primary can be
+      // minted without colliding on the partial unique index.
+      const second = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })
+      expect(second.inviteCode).not.toBe(first.inviteCode)
+      expect(second.primary).toBe(true)
+      // Exactly one is_primary=true row survives (the fresh one); the DB index
+      // would 23505 otherwise.
+      const primaryCount = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM campaign_invites WHERE campaign_id=$1 AND is_primary`,
+        [campaign.id],
+      )
+      expect(Number(primaryCount.rows[0]?.count)).toBe(1)
+    })
+  })
+
   describe('getByCode', () => {
     it('returns the invite by code', async () => {
       const { invites, campaign, owner } = await setup()
@@ -707,6 +757,54 @@ describe('invites repo — concurrency (separate pool)', () => {
 
       const updatedInv = await invitesRepo.getByCode(inv.inviteCode)
       expect(updatedInv?.uses).toBe(1)
+    }
+  }, 60_000)
+
+  it('N parallel ensurePrimary → exactly ONE invite row, all callers get the same code', async () => {
+    // The double-create fix (myth-y5c4q): the client used to list-then-create,
+    // so a StrictMode double-mount / two tabs both saw no primary and both
+    // POSTed → two live codes. The server-side get-or-create serializes on the
+    // campaign-row lock, so concurrent ensures collapse to one winner + N-1
+    // returns of the same row. Generous lock window (mirrors the accept race
+    // test) so the winner commits before the others' lock_timeout under load.
+    const users = createUsersRepo(pool)
+    const worldsRepo = createWorldsRepo(pool)
+    const campaignsRepo = createCampaignsRepo(pool)
+    const invitesRepo = createInvitesRepo(pool, { lockTimeoutMs: 30_000 })
+
+    for (let i = 0; i < 20; i++) {
+      await cleanupTestScope(pool, scope)
+      const owner = await users.create(pool, {
+        cognitoSub: scope.userSub(i),
+        username: scope.username(i),
+        displayName: scope.displayName(i),
+      })
+      const w = await worldsRepo.create({ createdBy: owner.id, name: scope.worldName(i), concept: 'c' })
+      const c = await campaignsRepo.create({
+        worldId: w.id,
+        createdBy: owner.id,
+        name: scope.campaignName(i),
+      })
+      await campaignsRepo.addMember({ campaignId: c.id, userId: owner.id, role: 'owner' })
+
+      // Four concurrent ensures (the pool caps at max:4) — the real
+      // double-mount / two-tab race, amplified.
+      const results = await Promise.all([
+        invitesRepo.ensurePrimary({ campaignId: c.id, createdBy: owner.id }),
+        invitesRepo.ensurePrimary({ campaignId: c.id, createdBy: owner.id }),
+        invitesRepo.ensurePrimary({ campaignId: c.id, createdBy: owner.id }),
+        invitesRepo.ensurePrimary({ campaignId: c.id, createdBy: owner.id }),
+      ])
+
+      const codes = new Set(results.map((r) => r.inviteCode))
+      expect(codes.size).toBe(1) // all callers resolved the SAME primary
+      expect(results.every((r) => r.primary)).toBe(true)
+
+      const rowCount = await pool.query<{ count: string }>(
+        `SELECT count(*)::text FROM campaign_invites WHERE campaign_id=$1`,
+        [c.id],
+      )
+      expect(Number(rowCount.rows[0]?.count)).toBe(1) // exactly one row minted
     }
   }, 60_000)
 

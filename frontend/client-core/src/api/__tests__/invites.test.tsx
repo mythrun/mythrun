@@ -13,9 +13,11 @@ import { HttpError, isHttpError } from '../errors.ts'
 // The invite slices (MYT-91 Task 2) wrap the shipped MYT-75 invite routes as
 // declarative `defineEndpoint`s. These drive each slice's method/path/body/parse
 // against a stubbed global `fetch` (the transport `defineEndpoint.send` calls),
-// plus `ensurePrimaryInvite`'s two branches (existing primary → no create; no
-// primary → create). The preview slice is PUBLIC (`skipAuthRetry`), asserted by
-// the endpoint-layer tests; here we assert its path + parse.
+// plus `ensurePrimaryInvite` — now a SINGLE idempotent PUT to the server-side
+// get-or-create (myth-y5c4q), no longer the old list-then-create RMW that
+// double-minted under a StrictMode/two-tab race. The preview slice is PUBLIC
+// (`skipAuthRetry`), asserted by the endpoint-layer tests; here we assert its
+// path + parse.
 
 function responseOf(status: number, body: unknown): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), {
@@ -27,15 +29,6 @@ function responseOf(status: number, body: unknown): Response {
 /** Stubs global `fetch` to resolve a single response; returns the matching ctx. */
 function ctxReturning(status: number, body: unknown): ApiContext {
   const fetchMock = vi.fn().mockResolvedValue(responseOf(status, body))
-  vi.stubGlobal('fetch', fetchMock)
-  return { baseUrl: 'http://api.test', getAuthHeaders: () => Promise.resolve({}) }
-}
-
-/** Stubs global `fetch` to resolve a QUEUE of responses (one per call), for the
- *  multi-call `ensurePrimaryInvite` create branch (list then create). */
-function ctxSequence(...responses: readonly { status: number; body: unknown }[]): ApiContext {
-  const fetchMock = vi.fn()
-  for (const r of responses) fetchMock.mockResolvedValueOnce(responseOf(r.status, r.body))
   vi.stubGlobal('fetch', fetchMock)
   return { baseUrl: 'http://api.test', getAuthHeaders: () => Promise.resolve({}) }
 }
@@ -132,45 +125,26 @@ describe('invite slices', () => {
     expect((error as HttpError).code).toBe('invite_not_found')
   })
 
-  it('ensurePrimaryInvite returns the existing primary without creating', async () => {
+  it('ensurePrimaryInvite is a SINGLE idempotent PUT to .../invites/primary (no list-then-create)', async () => {
+    // The race fix (myth-y5c4q): the client no longer lists-then-creates (two
+    // calls, both racing to POST). One PUT to the atomic server-side
+    // get-or-create — repeated calls return the SAME primary, so a StrictMode
+    // double-mount / two tabs can't double-mint. The response carries primary:true.
     const ctx = ctxReturning(200, {
-      invites: [
-        { inviteCode: 'P', inviteUrl: 'u', uses: 1, expiresAt: null, createdAt: 'x', primary: true },
-      ],
+      inviteCode: 'P',
+      inviteUrl: 'http://app/join/P',
+      uses: 1,
+      expiresAt: null,
+      createdAt: '2026-07-14T00:00:00.000Z',
+      primary: true,
     })
     const invite = await ensurePrimaryInvite(ctx, 'camp-1')
     expect(invite.inviteCode).toBe('P')
-    expect(fetch).toHaveBeenCalledTimes(1) // list only, no create
-  })
-
-  it('ensurePrimaryInvite mints a fresh invite when no active invite is primary', async () => {
-    const ctx = ctxSequence(
-      {
-        status: 200,
-        body: {
-          invites: [
-            { inviteCode: 'OLD', inviteUrl: 'u', uses: 3, expiresAt: null, createdAt: 'x', primary: false },
-          ],
-        },
-      },
-      {
-        status: 201,
-        body: {
-          inviteCode: 'NEW',
-          inviteUrl: 'http://app/join/NEW',
-          uses: 0,
-          expiresAt: null,
-          createdAt: '2026-07-14T00:00:00.000Z',
-        },
-      },
-    )
-    const invite = await ensurePrimaryInvite(ctx, 'camp-1')
-    expect(invite.inviteCode).toBe('NEW')
-    expect(fetch).toHaveBeenCalledTimes(2) // list, then create
-    expect(fetch).toHaveBeenNthCalledWith(
-      2,
-      'http://api.test/api/campaigns/camp-1/invites',
-      expect.objectContaining({ method: 'POST' }),
+    expect(invite.primary).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(1) // ONE call — no list, no separate create
+    expect(fetch).toHaveBeenCalledWith(
+      'http://api.test/api/campaigns/camp-1/invites/primary',
+      expect.objectContaining({ method: 'PUT' }),
     )
   })
 })

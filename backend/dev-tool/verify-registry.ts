@@ -179,6 +179,13 @@ export const EXEMPT_ROUTES: readonly BackendRoute[] = [
   // it exists only so the SPA's on-load probe never paints a console 404. No
   // dev-tool panel drives it; it is not a mutation surface.
   { method: 'POST', path: '/api/auth/refresh' },
+  // PUT /api/campaigns/:campaignId/invites/primary (myth-y5c4q): the idempotent
+  // ensure-primary upsert the WEB invite panel calls on mount. The dev tool's
+  // invites panel drives the general POST mint (a fresh code every press —
+  // the surface a developer actually exercises); the PUT is a get-or-create
+  // convenience with no distinct inspectable behavior beyond it, so it is
+  // exempt rather than a phantom panel (the starting-level precedent).
+  { method: 'PUT', path: '/api/campaigns/:campaignId/invites/primary' },
   // POST /api/campaigns/synthesize-preview/stream (myth-umggn): the one-shot
   // SSE variant of synthesize-preview consumed by the WEB guided flow (the
   // brief streams in live). The campaign-create panel drives the synchronous

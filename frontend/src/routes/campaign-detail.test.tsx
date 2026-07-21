@@ -429,6 +429,20 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(retry).toHaveBeenCalledOnce()
   })
 
+  it('renders the calm no-access screen (NOT the settling spinner) when the stream is denied', () => {
+    // The strand bug (myth-otukr): a forbidden (403 not_campaign_member),
+    // nonexistent (403), or malformed (404) campaign makes the status stream's
+    // open settle failed{denied} — no phase ever arrives. The hook surfaces the
+    // coarse `denied` status; the route must dead-end on the calm no-access
+    // screen instead of the phase===null settling line forever.
+    mockStream.mockReturnValue(streamValue({ status: 'denied', phase: null }))
+    renderDetail()
+    expect(screen.getByTestId('campaign-no-access')).toBeDefined()
+    // NOT the infinite settling spinner, and NOT a retry (denial is terminal).
+    expect(screen.queryByTestId('campaign-settling')).toBeNull()
+    expect(screen.queryByTestId('worldgen-retry')).toBeNull()
+  })
+
   it('renders the terminal state with NO retry affordance (a genuine world-gen terminal)', () => {
     // The world-gen dead end: a resume-capped failure — override 'terminal' while
     // the phase stays 'world_gen_failed' (NOT the character-context 'failed', which
