@@ -207,6 +207,85 @@ describe('invites repo (integration)', () => {
       expect(list[0]?.primary).toBe(true)
     })
 
+    it('cap-reached inside the locked transaction ROLLS BACK and rethrows (fake pool — the defensive branch)', async () => {
+      // The public API cannot construct "at cap with no active primary"
+      // (create() auto-primaries when none exists), so the cap branch inside
+      // ensurePrimary is defensive. Drive it with the file's fake-pool idiom:
+      // no active primary, cap-check AT the cap → typed throw + ROLLBACK, and
+      // the swallowed rollback-failure arm via a ROLLBACK that itself rejects.
+      const statements: string[] = []
+      const fakePool = {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              statements.push(sql.split(' ')[0] ?? '')
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.includes('FROM campaigns WHERE id')) {
+                return Promise.resolve({ rows: [{ id: 'whatever' }], rowCount: 1 })
+              }
+              if (sql.includes('is_primary')) {
+                // No active primary → fall through to the cap check.
+                return Promise.resolve({ rows: [], rowCount: 0 })
+              }
+              if (sql.includes('count(*)')) {
+                return Promise.resolve({ rows: [{ count: '25' }], rowCount: 1 }) // AT cap
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+            },
+            release: () => {
+              /* no-op */
+            },
+          }
+          return Promise.resolve(fake as unknown as PoolClient)
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      await expect(
+        invitesRepo.ensurePrimary({
+          campaignId: '019dccef-0000-7000-8000-000000000001',
+          createdBy: '019dccef-0000-7000-8000-000000000002',
+        }),
+      ).rejects.toBeInstanceOf(InviteCapReachedError)
+      // The rollback ran on the way out; the typed cap error is what surfaces.
+      expect(statements).toContain('ROLLBACK')
+    })
+
+    it('a ROLLBACK that itself fails is swallowed — the ORIGINAL error surfaces (fake pool)', async () => {
+      const fakePool = {
+        connect: (): Promise<PoolClient> => {
+          const fake = {
+            query: (sqlOrConfig: unknown): Promise<{ rows: unknown[]; rowCount: number }> => {
+              const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : ''
+              if (sql.startsWith('BEGIN')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.includes('FROM campaigns WHERE id')) {
+                return Promise.resolve({ rows: [{ id: 'whatever' }], rowCount: 1 })
+              }
+              if (sql.includes('is_primary')) return Promise.resolve({ rows: [], rowCount: 0 })
+              if (sql.includes('count(*)')) {
+                return Promise.resolve({ rows: [{ count: '25' }], rowCount: 1 })
+              }
+              if (sql.startsWith('ROLLBACK')) {
+                return Promise.reject(new Error('connection torn mid-rollback'))
+              }
+              return Promise.resolve({ rows: [], rowCount: 0 })
+            },
+            release: () => {
+              /* no-op */
+            },
+          }
+          return Promise.resolve(fake as unknown as PoolClient)
+        },
+      } as unknown as Pool
+      const invitesRepo = createInvitesRepo(fakePool)
+      await expect(
+        invitesRepo.ensurePrimary({
+          campaignId: '019dccef-0000-7000-8000-000000000001',
+          createdBy: '019dccef-0000-7000-8000-000000000002',
+        }),
+      ).rejects.toBeInstanceOf(InviteCapReachedError)
+    })
+
     it('is idempotent — a second call returns the SAME code, no second row', async () => {
       const { invites, campaign, owner } = await setup()
       const first = await invites.ensurePrimary({ campaignId: campaign.id, createdBy: owner.id })

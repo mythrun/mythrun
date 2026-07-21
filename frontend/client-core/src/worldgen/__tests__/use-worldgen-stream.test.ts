@@ -37,8 +37,22 @@ function makeMockClient(opts: { honorUnsub?: boolean } = {}) {
   let closed = false
 
   const connectionState = createStore<ConnectionState>(() => ({ status: 'connecting', attempt: 0 }))
+  // A leaky (honorUnsub:false) client also leaks its connection-store
+  // subscription, so a post-unmount setConn still reaches the hook's callback —
+  // exactly the race the mounted-ref guard absorbs.
+  const leakyConnectionState = honorUnsub
+    ? connectionState
+    : ({
+        ...connectionState,
+        subscribe: (cb: (s: ConnectionState) => void) => {
+          connectionState.subscribe(cb)
+          return () => {
+            /* leak: never unsubscribes */
+          }
+        },
+      } as typeof connectionState)
   const client: SseStatusClient = {
-    connectionState,
+    connectionState: leakyConnectionState,
     open: (path) => {
       openedPath = path
     },
@@ -528,6 +542,27 @@ describe('useWorldGenStream', () => {
     // A late frame after teardown must not throw or setState-after-unmount.
     act(() => {
       mock.emit({ type: 'phase', phase: 'world_gen' })
+    })
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('a late connection-state DENIAL from a leaky client is dropped by the mounted-ref guard', () => {
+    const mock = makeMockClient({ honorUnsub: false })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { unmount } = renderHook(() =>
+      useWorldGenStream(ctx, CID, {
+        createClient: () => mock.client,
+        fetchSnapshot: vi.fn(),
+        resume: vi.fn(),
+      }),
+    )
+
+    unmount()
+    // The subscriber still fires (leaky client) but the mounted-ref guard
+    // drops it — no setState-after-unmount, no React warning.
+    act(() => {
+      mock.setConn({ status: 'failed', attempt: 0, failedReason: 'denied' })
     })
     expect(errorSpy).not.toHaveBeenCalled()
     errorSpy.mockRestore()

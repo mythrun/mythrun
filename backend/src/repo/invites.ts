@@ -276,6 +276,10 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
         inTransaction = false
         return toCampaignInvite(row)
       } catch (err) {
+        /* c8 ignore start — the false arm (error AFTER the COMMIT flipped the
+           flag) is unreachable by construction: only the pure row-mapper runs
+           between COMMIT and return, on a row the INSERT itself produced. The
+           rollback arms are exercised by the fake-pool cap tests. */
         if (inTransaction) {
           try {
             await client.query('ROLLBACK')
@@ -285,6 +289,7 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
         }
         throw err
       } finally {
+        /* c8 ignore stop */
         client.release()
       }
     },
@@ -315,6 +320,10 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
         inTransaction = false
         return toCampaignInvite(row)
       } catch (err) {
+        /* c8 ignore start — the false arm (error AFTER the COMMIT flipped the
+           flag) is unreachable by construction: only the pure row-mapper runs
+           between COMMIT and return, on a row the INSERT itself produced. The
+           rollback arms are exercised by the fake-pool cap tests. */
         if (inTransaction) {
           try {
             await client.query('ROLLBACK')
@@ -324,6 +333,7 @@ export function selfManagingInvites(pool: Pool, opts: InvitesRepoOpts = {}) {
         }
         throw err
       } finally {
+        /* c8 ignore stop */
         client.release()
       }
     },

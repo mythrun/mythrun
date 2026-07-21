@@ -261,6 +261,28 @@ describe('useSessionStart', () => {
     })
   })
 
+  it('members_without_characters 409 → blocked phase CARRIES the names to the surface', async () => {
+    const deps = makeDeps({
+      startSession: vi.fn().mockRejectedValue(
+        httpError(409, 'members_without_characters', {
+          members: [{ userId: 'u9', displayName: 'Perrin' }],
+        }),
+      ),
+    })
+    const { result } = renderStart(deps)
+
+    act(() => {
+      result.current.start()
+    })
+    await waitFor(() => {
+      expect(result.current.state).toEqual({
+        phase: 'blocked',
+        code: 'members_without_characters',
+        memberNames: ['Perrin'],
+      })
+    })
+  })
+
   it('402 → purchase with the moment (available/required from the body, viewerIsOwner threaded)', async () => {
     const body = { code: 'insufficient_credits', available: 3, required: 1 }
     const deps = makeDeps({
