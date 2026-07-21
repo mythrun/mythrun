@@ -41,6 +41,7 @@
 //
 // Spec: docs/superpowers/specs/2026-06-04-myt-65-ws-transport-design.md
 
+import { randomUUID } from 'node:crypto'
 import type {
   FastifyBaseLogger,
   FastifyInstance,
@@ -51,6 +52,7 @@ import type {
 import type { Redis } from 'ioredis'
 import type { Repo } from '../repo/index.js'
 import { isSeqUniqueViolation } from '../repo/session-messages.js'
+import { NoCharacterForParticipantError } from '../repo/session-participants-errors.js'
 import type { SessionMessage } from '../repo/types.js'
 import type { CombatStateBlob, SessionState } from '../redis/session-state.js'
 import type { SessionHub } from '../ws/session-hub.js'
@@ -162,6 +164,15 @@ const PONG_GRACE_MS = 10_000
 /** WS close code for a server-initiated heartbeat-timeout / defensive close.
  *  1011 = internal error / unexpected condition; the client reconnects + replays. */
 const SERVER_CLOSE_CODE = 1011
+
+/** myth-mnik3: a TYPED, EXPECTED connect rejection — the member has no integrated
+ *  character in this campaign (NoCharacterForParticipantError). Closed with a
+ *  private-range code (4000-4999, app-defined per RFC 6455) + a machine-readable
+ *  reason so the client renders "you don't have a character in this campaign yet"
+ *  instead of treating a generic 1011 connect-failed as ambient quiet. Distinct
+ *  from SERVER_CLOSE_CODE, which every OTHER connect failure keeps. */
+const NO_CHARACTER_CLOSE_CODE = 4404
+const NO_CHARACTER_CLOSE_REASON = 'no_character'
 
 /** Max chars of a player_message `text` we persist + broadcast. This is
  *  UNTRUSTED CLIENT INPUT (stored in session_messages.content, fanned out to
@@ -330,6 +341,13 @@ async function handleConnection(
   lastSeq: number | null,
 ): Promise<void> {
   const { repo, sessionState, hub, suspendQueue, containerId } = ctx.deps
+  // Per-connection identity (myth-wat0m). A user may hold several concurrent
+  // sockets (multiple tabs / devices); each gets its own connId so the hub
+  // registry and the presence keys are keyed per-CONNECTION, not per-user — a
+  // second tab never evicts the first, and closing one tab never drops the
+  // user's presence to zero while another tab is live. Minted before the guarded
+  // body so it's in scope for the failure-cleanup + close.
+  const connId = randomUUID()
   try {
     // Resolve the participant's character + write the participant row, then
     // resolve display + character names for the broadcast frames. These names
@@ -342,6 +360,13 @@ async function handleConnection(
     const displayName = user?.displayName ?? ''
     const characterName = character?.name ?? ''
 
+    // Was this user ALREADY present via another live connection BEFORE this one?
+    // Gates the player_joined broadcast (myth-wat0m: no rejoin spam when a
+    // second tab opens). Read BEFORE addPresence so this socket's own key is not
+    // yet counted. A Redis fault here fails the connect like any other connect-
+    // time Redis fault (the guard closes the socket; the client reconnects).
+    const alreadyPresent = (await sessionState.userConnectionCount(campaignId, userId)) > 0
+
     // Record presence + register the socket BEFORE the player_joined broadcast
     // so this socket is in the registry when the fan-out comes back round.
     // ORDERING (load-bearing for reconnect): hub.register MUST run before the
@@ -349,8 +374,8 @@ async function handleConnection(
     // published live during that DB read is then delivered to this socket, and
     // the client's seq-dedup drops the overlap with the replay batch. A
     // read-then-register would drop that gap.
-    await sessionState.addPresence(campaignId, containerId, userId)
-    hub.register(campaignId, userId, socket)
+    await sessionState.addPresence(campaignId, containerId, userId, connId)
+    hub.register(campaignId, userId, connId, socket)
     await sessionState.refreshTtls(campaignId)
     // A returning player cancels any pending all-disconnected suspend.
     await cancelSuspend(suspendQueue, sessionId)
@@ -379,19 +404,27 @@ async function handleConnection(
       // Redis pub/sub round-trip), so the client's FIRST frame is deterministic.
       const reconnect = await buildReconnectFrame(ctx, sessionId, campaignId, lastSeq)
       socket.send(JSON.stringify(reconnect))
-      await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
+      // player_joined only on the user's FIRST connection — a second tab
+      // reconnecting must not re-announce a user who is already present
+      // (myth-wat0m). The reconnect replay above still reaches THIS socket.
+      if (!alreadyPresent) {
+        await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
+      }
     } else {
       // Fresh connect: player_joined is a seq-LESS out-of-band presence frame
       // (like typing_*): ONLY player_message advances `:seq` (arch overview
       // §5.2 lists no seq on presence frames). Join/left aren't persisted to
       // session_messages and are absent from reconnect replay, so they must
       // never carry a seq a client could gap-detect on. The first
-      // player_message is therefore seq 1.
-      await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
+      // player_message is therefore seq 1. Broadcast only on the FIRST
+      // connection (an extra tab still gets its own session_ready below).
+      if (!alreadyPresent) {
+        await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
+      }
       socket.send(JSON.stringify({ type: 'session_ready' }))
     }
 
-    startHeartbeat(ctx, socket, campaignId, userId)
+    startHeartbeat(ctx, socket, campaignId, userId, connId)
 
     // Both lifecycle dispatches self-guard (their own try/catch), and the outer
     // .catch is a second net so a void-dispatched rejection can't escape to the
@@ -406,7 +439,7 @@ async function handleConnection(
     })
 
     socket.on('close', () => {
-      void handleDisconnect(ctx, userId, campaignId, sessionId).catch((err: unknown) => {
+      void handleDisconnect(ctx, userId, campaignId, sessionId, connId).catch((err: unknown) => {
         ctx.app.log.error({ err, campaignId, userId }, 'ws-session handleDisconnect escaped its guard')
       })
     })
@@ -417,11 +450,20 @@ async function handleConnection(
     )
     // Best-effort: undo any partial registration so a failed connect doesn't
     // leak a registry entry or a presence key. Each step is independently
-    // swallowed; we already hold the close as the user-visible outcome.
-    hub.deregister(campaignId, userId)
-    await sessionState.dropPresence(campaignId, containerId, userId).catch(() => undefined)
+    // swallowed; we already hold the close as the user-visible outcome. Both
+    // undo THIS connection's connId only (a no-op if it never registered).
+    hub.deregister(campaignId, connId)
+    await sessionState.dropPresence(campaignId, containerId, userId, connId).catch(() => undefined)
+    // myth-mnik3: a member with no integrated character is a TYPED, EXPECTED
+    // rejection — close with the distinct 4404 'no_character' so the client can
+    // tell the player they have no character yet, rather than rendering a generic
+    // connect-failed as ambient quiet. Every OTHER failure keeps 1011.
     try {
-      socket.close(SERVER_CLOSE_CODE, 'connect-failed')
+      if (err instanceof NoCharacterForParticipantError) {
+        socket.close(NO_CHARACTER_CLOSE_CODE, NO_CHARACTER_CLOSE_REASON)
+      } else {
+        socket.close(SERVER_CLOSE_CODE, 'connect-failed')
+      }
     } catch {
       /* socket already torn down */
     }
@@ -893,14 +935,16 @@ function startHeartbeat(
   socket: WsSocket,
   campaignId: string,
   userId: string,
+  connId: string,
 ): void {
   const { sessionState, containerId } = ctx.deps
   let pongTimer: NodeJS.Timeout | undefined
   const pingTimer = setInterval(() => {
     socket.ping()
-    // Best-effort TTL refresh; a failure is logged-and-swallowed (the next
-    // ping retries, and the presence TTL has headroom over the 30s cadence).
-    void sessionState.addPresence(campaignId, containerId, userId).catch((err: unknown) => {
+    // Best-effort TTL refresh of THIS connection's presence key; a failure is
+    // logged-and-swallowed (the next ping retries, and the presence TTL has
+    // headroom over the 30s cadence).
+    void sessionState.addPresence(campaignId, containerId, userId, connId).catch((err: unknown) => {
       ctx.app.log.warn({ err, campaignId, userId }, 'ws-session presence refresh failed')
     })
     // Arm the pong deadline: no pong within 10s → dead peer → terminate.
@@ -1130,16 +1174,26 @@ async function persistMessage(
   }
 }
 
-/** Disconnect cleanup: drop presence, deregister, broadcast player_left, and
- *  schedule a suspend if this was the last connected player.
+/** Disconnect cleanup for ONE connection: deregister this socket, drop its
+ *  presence, and — only if it was the user's LAST connection — signal a
+ *  departure (clear typing + broadcast player_left). Schedule a suspend if this
+ *  drained the last connection of the last user.
+ *
+ *  myth-wat0m: keyed per-connection. A user closing ONE of several tabs must NOT
+ *  read as leaving — `deregister` evicts only this connId (a sibling tab stays
+ *  registered + receiving), and the player_left / clearTyping fire only when the
+ *  user has no other live connection. The suspend gate (`countPresence === 0`,
+ *  distinct users) is unchanged: it fires only when nobody is present at all.
  *
  *  EACH step is independently best-effort: one transient Redis error must not
  *  skip the others (especially `scheduleSuspend`, the load-bearing cleanup —
  *  skipping it strands an empty session never-suspended) and must not feed the
  *  process unhandledRejection escalation. `deregister` (in-memory, can't throw)
  *  always runs. `dropPresence` failing is self-healing (presence keys carry a
- *  TTL). If `countPresence` itself throws, we FAIL SAFE and schedule the
- *  suspend anyway — the suspend processor re-reads presence on fire and bails
+ *  TTL). If `userConnectionCount` throws we treat the user as DEPARTED (the
+ *  pre-myth-wat0m always-signal behavior), so a genuine last-disconnect never
+ *  silently lingers. If `countPresence` itself throws, we FAIL SAFE and schedule
+ *  the suspend anyway — the suspend processor re-reads presence on fire and bails
  *  if anyone's actually connected, so an over-schedule is inert, while an
  *  under-schedule would leak a live-forever empty session. */
 async function handleDisconnect(
@@ -1147,28 +1201,46 @@ async function handleDisconnect(
   userId: string,
   campaignId: string,
   sessionId: string,
+  connId: string,
 ): Promise<void> {
   const { sessionState, hub, suspendQueue, containerId, triggerState } = ctx.deps
   const log = ctx.app.log
 
-  hub.deregister(campaignId, userId)
+  // Socket-identity-safe: evict ONLY this connection (never a sibling tab).
+  hub.deregister(campaignId, connId)
 
-  // §4.1: clear this user's typing key on disconnect (best-effort, like the
-  // other steps). The key carries a TTL so an un-cleared key self-heals; this
-  // is the fast-path so the indicator doesn't linger until expiry.
-  await triggerState.clearTyping(campaignId, userId).catch((err: unknown) => {
-    log.warn({ err, campaignId, userId }, 'ws-session clearTyping on disconnect failed (TTL will reap)')
-  })
-
-  await sessionState.dropPresence(campaignId, containerId, userId).catch((err: unknown) => {
+  // Drop THIS connection's presence key first, so the last-connection check
+  // below doesn't count the socket that's leaving.
+  await sessionState.dropPresence(campaignId, containerId, userId, connId).catch((err: unknown) => {
     log.warn({ err, campaignId, userId }, 'ws-session dropPresence failed (TTL will reap)')
   })
 
-  // player_left is a seq-LESS presence frame (see the player_joined note):
-  // system events don't advance the player_message seq stream.
-  await hub.publish(campaignId, { type: 'player_left', userId }).catch((err: unknown) => {
-    log.warn({ err, campaignId, userId }, 'ws-session player_left publish failed')
-  })
+  // Was that the user's LAST connection? Only then is this a real departure.
+  // On a count-read failure, fall back to treating them as departed (the
+  // pre-myth-wat0m always-signal behavior) so a genuine leave never lingers.
+  let userDeparted: boolean
+  try {
+    userDeparted = (await sessionState.userConnectionCount(campaignId, userId)) === 0
+  } catch (err) {
+    log.warn({ err, campaignId, userId }, 'ws-session userConnectionCount failed — treating as departed')
+    userDeparted = true
+  }
+
+  if (userDeparted) {
+    // §4.1: clear the user's typing key on their LAST disconnect (best-effort).
+    // The key carries a TTL so an un-cleared key self-heals; this is the
+    // fast-path so the indicator doesn't linger until expiry. Skipped when
+    // another tab is still live (that tab's activity owns the typing state).
+    await triggerState.clearTyping(campaignId, userId).catch((err: unknown) => {
+      log.warn({ err, campaignId, userId }, 'ws-session clearTyping on disconnect failed (TTL will reap)')
+    })
+
+    // player_left is a seq-LESS presence frame (see the player_joined note):
+    // system events don't advance the player_message seq stream.
+    await hub.publish(campaignId, { type: 'player_left', userId }).catch((err: unknown) => {
+      log.warn({ err, campaignId, userId }, 'ws-session player_left publish failed')
+    })
+  }
 
   // Fail safe: a countPresence throw → treat as 0 → schedule the suspend.
   let empty: boolean

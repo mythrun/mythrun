@@ -51,6 +51,7 @@ import type { TurnQueueLike } from '../../session/turn-queue.js'
 import type { DmTriggerQueueLike } from '../../session/dm-trigger-queue.js'
 import type { ReconcileQueueLike } from '../../session/session-reconcile.js'
 import { wsSessionRoutes, type WsSessionDeps } from '../ws-session.js'
+import { NoCharacterForParticipantError } from '../../repo/session-participants-errors.js'
 
 /** A no-op session-turn / dm-trigger / reconcile producer for the integration
  *  suite. The existing connect/persist/disconnect tests don't assert on a turn
@@ -1547,6 +1548,68 @@ describe('ws-session route (integration)', () => {
     expect(await sessionState.countPresence(campaignId)).toBe(0)
   })
 
+  it('myth-wat0m: two tabs (same user) both receive; closing tab 1 leaves tab 2 live — no player_left, no suspend', async () => {
+    const sessionState = makeSessionState(redis, KEY_PREFIX)
+
+    // Tab 1: a fresh connect → session_ready + player_joined (first connection).
+    const ticket1 = await mint()
+    const tab1 = await connect(`/ws/session/${sessionId}?ticket=${ticket1}`)
+    try {
+      const t1 = await collectFrames(tab1, 2)
+      expect(t1.map((f) => f.type)).toContain('player_joined')
+      // After tab 1 settles, exactly one connection is recorded for this user.
+      expect(await sessionState.userConnectionCount(campaignId, userId)).toBe(1)
+
+      // Tab 2: same user, second connection → session_ready only, NO re-join.
+      const ticket2 = await mint()
+      const tab2 = await connect(`/ws/session/${sessionId}?ticket=${ticket2}`)
+      try {
+        const t2 = await collectFrames(tab2, 1)
+        expect(t2.map((f) => f.type)).toContain('session_ready')
+
+        // One present user, two live connections (the multi-tab shape).
+        expect(await sessionState.countPresence(campaignId)).toBe(1)
+        expect(await sessionState.userConnectionCount(campaignId, userId)).toBe(2)
+
+        // A published player_message reaches BOTH tabs.
+        const echo1 = collectFrames(tab1, 1)
+        const echo2 = collectFrames(tab2, 1)
+        tab1.send(JSON.stringify({ type: 'player_message', text: 'hi from tab 1' }))
+        const [e1] = await echo1
+        const [e2] = await echo2
+        expect(e1).toMatchObject({ type: 'player_message', text: 'hi from tab 1' })
+        expect(e2).toMatchObject({ type: 'player_message', text: 'hi from tab 1' })
+
+        // Close tab 1 abruptly. The server disconnect runs, but tab 2 is still
+        // live so it must NOT read as a departure and must NOT suspend.
+        const suspendsBefore = suspendQueue.adds.length
+        tab1.terminate()
+        // Poll the terminal effect: tab 1's presence drops, leaving one.
+        await vi.waitFor(
+          async () => {
+            expect(await sessionState.userConnectionCount(campaignId, userId)).toBe(1)
+          },
+          { timeout: 4000, interval: 50 },
+        )
+        // No suspend scheduled (still one live tab); the user is still present.
+        expect(suspendQueue.adds.length).toBe(suspendsBefore)
+        expect(await sessionState.countPresence(campaignId)).toBe(1)
+
+        // Tab 2 still registered + receiving: a new published message reaches it.
+        // If a spurious player_left had been broadcast, it would arrive BEFORE
+        // this echo (publish ordering) and fail the type assertion.
+        const after = collectFrames(tab2, 1)
+        tab2.send(JSON.stringify({ type: 'player_message', text: 'tab 2 still here' }))
+        const [a2] = await after
+        expect(a2).toMatchObject({ type: 'player_message', text: 'tab 2 still here' })
+      } finally {
+        tab2.terminate()
+      }
+    } finally {
+      tab1.terminate()
+    }
+  })
+
   it('a throwing publish on player_message DROPS the frame but KEEPS THE SOCKET ALIVE', async () => {
     // Wrap the real hub so `publish` throws ONLY for player_message frames
     // (player_joined on connect + the later typing_start still go through). The
@@ -1554,11 +1617,11 @@ describe('ws-session route (integration)', () => {
     // handleInbound's guard then swallows the publish error and leaves the
     // socket usable — a subsequent typing_start must still round-trip.
     const throwOnMessageHub: SessionHub = {
-      register: (c, u, w) => {
-        hub.register(c, u, w)
+      register: (c, u, connId, w) => {
+        hub.register(c, u, connId, w)
       },
-      deregister: (c, u) => {
-        hub.deregister(c, u)
+      deregister: (c, connId) => {
+        hub.deregister(c, connId)
       },
       hasLocal: (c) => hub.hasLocal(c),
       close: () => hub.close(),
@@ -1775,6 +1838,7 @@ function makeStubSessionState(): {
   addPresence: ReturnType<typeof vi.fn>
   dropPresence: ReturnType<typeof vi.fn>
   countPresence: ReturnType<typeof vi.fn>
+  userConnectionCount: ReturnType<typeof vi.fn>
   getState: ReturnType<typeof vi.fn>
   setState: ReturnType<typeof vi.fn>
   refreshTtls: ReturnType<typeof vi.fn>
@@ -1789,6 +1853,11 @@ function makeStubSessionState(): {
     addPresence: vi.fn().mockResolvedValue(undefined),
     dropPresence: vi.fn().mockResolvedValue(undefined),
     countPresence: vi.fn().mockResolvedValue(0),
+    // myth-wat0m: the connect path reads this BEFORE addPresence to gate
+    // player_joined (0 → first connection → broadcast); the disconnect path
+    // reads it AFTER dropPresence to gate player_left (0 → last connection →
+    // broadcast). Default 0 models a clean single-connection session.
+    userConnectionCount: vi.fn().mockResolvedValue(0),
     getState: vi.fn().mockResolvedValue(null),
     setState: vi.fn().mockResolvedValue(undefined),
     refreshTtls: vi.fn().mockResolvedValue(undefined),
@@ -2005,6 +2074,41 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     socket.emit('close')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(socket.pingCount).toBe(2)
+  })
+
+  it('myth-wat0m heartbeat: a dead socket is reaped without touching a live sibling', async () => {
+    // Two independent connections (each its own per-socket heartbeat closure).
+    // The dead one never pongs and is terminated; the live one pongs and lives —
+    // proving heartbeat is per-CONNECTION, not shared across a user's sockets.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+    const { handler } = await captureHandler(
+      makeUnitDeps({
+        repo: makeStubRepo().repo,
+        sessionState: makeStubSessionState(),
+        hub: makeStubHub(),
+      }),
+    )
+    const dead = makeFakeWsSocket()
+    const live = makeFakeWsSocket()
+    handler(dead, fakeRequest({}))
+    handler(live, fakeRequest({}))
+    await flush()
+
+    // First ping interval: both ping and arm their own pong deadline.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(dead.pingCount).toBe(1)
+    expect(live.pingCount).toBe(1)
+
+    // Only the LIVE socket pongs; the dead one stays silent.
+    live.emit('pong')
+
+    // Grace elapses: the dead socket is terminated, the live sibling untouched.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(dead.terminateCount).toBe(1)
+    expect(live.terminateCount).toBe(0)
+
+    dead.emit('close')
+    live.emit('close')
   })
 
   it('heartbeat: a presence-refresh failure during ping is logged-and-swallowed', async () => {
@@ -2403,9 +2507,133 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
       expect.objectContaining({ err: expect.any(Error) as unknown }),
       'ws-session connect failed — closing socket',
     )
-    expect(hub.deregister).toHaveBeenCalledWith('c-1', 'u-1')
+    // Deregister is now keyed by the per-connection connId (a minted UUID), not
+    // the userId (myth-wat0m).
+    expect(hub.deregister).toHaveBeenCalledWith('c-1', expect.any(String))
     expect(sessionState.dropPresence).toHaveBeenCalled()
     expect(socket.closes).toContainEqual({ code: 1011, reason: 'connect-failed' })
+  })
+
+  it('connect failure (NoCharacterForParticipantError): closes 4404 no_character, not 1011', async () => {
+    // myth-mnik3: the member-has-no-character rejection is a TYPED, EXPECTED
+    // case — it must close with the distinct 4404 'no_character' so the client
+    // can render a real "you have no character yet" message. Every OTHER connect
+    // failure keeps 1011 'connect-failed' (covered by the test above).
+    const sessionState = makeStubSessionState()
+    const { repo } = makeStubRepo({
+      sessionParticipants: {
+        join: vi.fn().mockRejectedValue(new NoCharacterForParticipantError('c-1', 'u-1')),
+        list: vi.fn().mockResolvedValue([]),
+      },
+    })
+    const hub = makeStubHub()
+    const { handler } = await captureHandler(makeUnitDeps({ repo, sessionState, hub }))
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    expect(socket.closes).toContainEqual({ code: 4404, reason: 'no_character' })
+    // It did NOT fall back to the generic 1011.
+    expect(socket.closes).not.toContainEqual({ code: 1011, reason: 'connect-failed' })
+    // Best-effort cleanup still ran (deregister this connId + drop presence).
+    expect(hub.deregister).toHaveBeenCalledWith('c-1', expect.any(String))
+    expect(sessionState.dropPresence).toHaveBeenCalled()
+  })
+
+  it('myth-wat0m connect: a SECOND connection of the same user does NOT re-broadcast player_joined', async () => {
+    // userConnectionCount > 0 BEFORE this connection means the user is already
+    // present (another tab) → the join broadcast is suppressed. The socket still
+    // gets its own session_ready.
+    const sessionState = makeStubSessionState()
+    sessionState.userConnectionCount.mockResolvedValue(1) // already present
+    const hub = makeStubHub()
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    // No player_joined published for the extra tab.
+    const joinedCalls = hub.publish.mock.calls.filter(
+      (c) => (c[1] as { type: string }).type === 'player_joined',
+    )
+    expect(joinedCalls).toHaveLength(0)
+    // …but this socket still received its own session_ready.
+    const readyTypes = socket.sent.map((s) => (JSON.parse(s) as { type: string }).type)
+    expect(readyTypes).toContain('session_ready')
+  })
+
+  it('myth-wat0m connect: the FIRST connection of a user DOES broadcast player_joined', async () => {
+    const sessionState = makeStubSessionState()
+    sessionState.userConnectionCount.mockResolvedValue(0) // not yet present
+    const hub = makeStubHub()
+    const { handler } = await captureHandler(
+      makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub }),
+    )
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    expect(hub.publish).toHaveBeenCalledWith(
+      'c-1',
+      expect.objectContaining({ type: 'player_joined' }),
+    )
+  })
+
+  it('myth-wat0m disconnect: closing a NON-last connection does NOT broadcast player_left nor schedule suspend', async () => {
+    const sessionState = makeStubSessionState()
+    // AFTER dropPresence, the user still has one other live tab, and a user is
+    // still present in the session.
+    sessionState.userConnectionCount.mockResolvedValue(1)
+    sessionState.countPresence.mockResolvedValue(1)
+    const hub = makeStubHub()
+    const deps = makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub })
+    const suspendQueue = deps.suspendQueue as RecordingSuspendQueue
+    const { handler } = await captureHandler(deps)
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+    // Ignore connect-time publishes (player_joined); assert on the disconnect.
+    hub.publish.mockClear()
+
+    socket.emit('close')
+    await flush()
+
+    // This connection was evicted (socket-identity-safe) …
+    expect(hub.deregister).toHaveBeenCalledWith('c-1', expect.any(String))
+    // … but the user still has a live tab, so NO player_left and NO suspend.
+    const leftCalls = hub.publish.mock.calls.filter(
+      (c) => (c[1] as { type: string }).type === 'player_left',
+    )
+    expect(leftCalls).toHaveLength(0)
+    expect(suspendQueue.adds).toHaveLength(0)
+    // The still-present tab's typing state is left alone (not cleared).
+    expect((deps.triggerState.clearTyping as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0)
+  })
+
+  it('myth-wat0m disconnect: closing the LAST connection broadcasts player_left + schedules suspend', async () => {
+    const sessionState = makeStubSessionState()
+    sessionState.userConnectionCount.mockResolvedValue(0) // no other tab
+    sessionState.countPresence.mockResolvedValue(0) // nobody present → empty
+    const hub = makeStubHub()
+    const deps = makeUnitDeps({ repo: makeStubRepo().repo, sessionState, hub })
+    const suspendQueue = deps.suspendQueue as RecordingSuspendQueue
+    const { handler } = await captureHandler(deps)
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+    hub.publish.mockClear()
+
+    socket.emit('close')
+    await flush()
+
+    expect(hub.publish).toHaveBeenCalledWith(
+      'c-1',
+      expect.objectContaining({ type: 'player_left', userId: 'u-1' }),
+    )
+    expect((deps.triggerState.clearTyping as ReturnType<typeof vi.fn>).mock.calls).toContainEqual(['c-1', 'u-1'])
+    expect(suspendQueue.adds.map((a) => a.sessionId)).toContain('sess-1')
   })
 
   it('connect failure: a throwing socket.close in the cleanup path is swallowed', async () => {

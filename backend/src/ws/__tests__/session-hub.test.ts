@@ -73,8 +73,8 @@ describe('session-hub (real Redis)', () => {
     const hub = await createSessionHub({ redis, keyPrefix: PREFIX, logger: silentLogger })
     const a = fakeSocket()
     const b = fakeSocket()
-    hub.register(campaignId, 'userA', a)
-    hub.register(campaignId, 'userB', b)
+    hub.register(campaignId, 'userA', 'connA', a)
+    hub.register(campaignId, 'userB', 'connB', b)
 
     await hub.publish(campaignId, {
       type: 'player_message',
@@ -90,7 +90,7 @@ describe('session-hub (real Redis)', () => {
     expect(first).toBeDefined()
     expect(JSON.parse(first ?? '{}')).toMatchObject({ type: 'player_message', seq: 1 })
 
-    hub.deregister(campaignId, 'userA')
+    hub.deregister(campaignId, 'connA')
     await hub.publish(campaignId, {
       type: 'player_message',
       seq: 2,
@@ -110,10 +110,48 @@ describe('session-hub (real Redis)', () => {
     const hub = await createSessionHub({ redis, keyPrefix: PREFIX, logger: silentLogger })
     expect(hub.hasLocal('cmp-has')).toBe(false)
     const s = fakeSocket()
-    hub.register('cmp-has', 'u1', s)
+    hub.register('cmp-has', 'u1', 'conn1', s)
     expect(hub.hasLocal('cmp-has')).toBe(true)
-    hub.deregister('cmp-has', 'u1')
+    hub.deregister('cmp-has', 'conn1')
     expect(hub.hasLocal('cmp-has')).toBe(false)
+    await hub.close()
+  })
+
+  it('fans a published frame to BOTH of one user’s concurrent connections (multi-tab, no overwrite)', async () => {
+    // myth-wat0m: a user's second tab must NOT evict the first from the registry.
+    // Two connections for the SAME userId, distinct connIds, both receive.
+    const campaignId = 'cmp-multitab'
+    const hub = await createSessionHub({ redis, keyPrefix: PREFIX, logger: silentLogger })
+    const tab1 = fakeSocket()
+    const tab2 = fakeSocket()
+    hub.register(campaignId, 'userA', 'conn-1', tab1)
+    hub.register(campaignId, 'userA', 'conn-2', tab2)
+
+    await hub.publish(campaignId, {
+      type: 'player_message',
+      seq: 1,
+      userId: 'userB',
+      displayName: 'B',
+      characterName: 'Bx',
+      text: 'hi both tabs',
+    })
+    await waitFor(() => tab1.sent.length === 1 && tab2.sent.length === 1)
+
+    // Deregister ONLY tab1 (socket-identity-safe): tab2 keeps receiving.
+    hub.deregister(campaignId, 'conn-1')
+    await hub.publish(campaignId, {
+      type: 'player_message',
+      seq: 2,
+      userId: 'userB',
+      displayName: 'B',
+      characterName: 'Bx',
+      text: 'only tab2 now',
+    })
+    await waitFor(() => tab2.sent.length === 2)
+    // tab1 was evicted; its count stays at 1.
+    expect(tab1.sent.length).toBe(1)
+    expect(hub.hasLocal(campaignId)).toBe(true)
+
     await hub.close()
   })
 
@@ -121,8 +159,8 @@ describe('session-hub (real Redis)', () => {
     const hub = await createSessionHub({ redis, keyPrefix: PREFIX, logger: silentLogger })
     const a = fakeSocket()
     const b = fakeSocket()
-    hub.register('cmp-X', 'uX', a)
-    hub.register('cmp-Y', 'uY', b)
+    hub.register('cmp-X', 'uX', 'connX', a)
+    hub.register('cmp-Y', 'uY', 'connY', b)
     await hub.publish('cmp-X', {
       type: 'player_message',
       seq: 1,
@@ -202,8 +240,8 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     })
     const bad = fakeSocket({ throwOnSend: true })
     const good = fakeSocket()
-    hub.register('cmp-iso', 'userBad', bad)
-    hub.register('cmp-iso', 'userGood', good)
+    hub.register('cmp-iso', 'userBad', 'conn-bad', bad)
+    hub.register('cmp-iso', 'userGood', 'conn-good', good)
 
     const payload = JSON.stringify({ type: 'player_message', seq: 1 })
     sub.emit('pmessage', PMSG_PATTERN, channel('cmp-iso'), payload)
@@ -220,7 +258,7 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
 
     // Deregister the survivor — campaign now has no local sockets, proving
     // the evicted bad socket was already gone (not just masked).
-    hub.deregister('cmp-iso', 'userGood')
+    hub.deregister('cmp-iso', 'conn-good')
     expect(hub.hasLocal('cmp-iso')).toBe(false)
 
     await hub.close()
@@ -235,8 +273,8 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     })
     const s1 = fakeSocket()
     const s2 = fakeSocket()
-    hub.register('cmp-resync', 'u1', s1)
-    hub.register('cmp-resync', 'u2', s2)
+    hub.register('cmp-resync', 'u1', 'conn1', s1)
+    hub.register('cmp-resync', 'u2', 'conn2', s2)
 
     // First 'ready' is the initial connect — the everReady guard means NO
     // resync close.
@@ -257,7 +295,9 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     await hub.close()
   })
 
-  it('register overwrites the prior socket for the same userId', async () => {
+  it('two connections for the same user each keep their own registry slot (no overwrite)', async () => {
+    // myth-wat0m: the pre-fix per-user map made a second register() overwrite the
+    // first socket. Now each connId is its own slot, so BOTH receive.
     const sub = makeFakeSub()
     const hub = await createSessionHub({
       redis: makeFakeRedis(sub),
@@ -266,15 +306,44 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     })
     const first = fakeSocket()
     const second = fakeSocket()
-    hub.register('cmp-ovr', 'u1', first)
-    hub.register('cmp-ovr', 'u1', second)
+    hub.register('cmp-ovr', 'u1', 'conn-a', first)
+    hub.register('cmp-ovr', 'u1', 'conn-b', second)
 
     const payload = JSON.stringify({ type: 'player_message', seq: 1 })
     sub.emit('pmessage', PMSG_PATTERN, channel('cmp-ovr'), payload)
 
-    // Only the second (current) socket receives; the replaced one does not.
-    expect(first.sent).toEqual([])
+    // BOTH sockets receive — neither overwrote the other.
+    expect(first.sent).toEqual([payload])
     expect(second.sent).toEqual([payload])
+
+    await hub.close()
+  })
+
+  it('deregister is socket-identity-safe: a stale close for one connId cannot evict the user’s newer socket', async () => {
+    // The make-before-break reconnect hazard (myth-wat0m): a NEW socket registers
+    // (conn-new) while the OLD socket's delayed close deregisters (conn-old). The
+    // old connId's deregister must NOT touch the new socket.
+    const sub = makeFakeSub()
+    const hub = await createSessionHub({
+      redis: makeFakeRedis(sub),
+      keyPrefix: PREFIX,
+      logger: silentLogger,
+    })
+    const oldSock = fakeSocket()
+    const newSock = fakeSocket()
+    hub.register('cmp-mbb', 'u1', 'conn-old', oldSock)
+    hub.register('cmp-mbb', 'u1', 'conn-new', newSock)
+
+    // The old socket's close fires late and deregisters ITS connId only.
+    hub.deregister('cmp-mbb', 'conn-old')
+
+    const payload = JSON.stringify({ type: 'player_message', seq: 1 })
+    sub.emit('pmessage', PMSG_PATTERN, channel('cmp-mbb'), payload)
+
+    // The newer socket survived the stale deregister and still receives.
+    expect(newSock.sent).toEqual([payload])
+    expect(oldSock.sent).toEqual([])
+    expect(hub.hasLocal('cmp-mbb')).toBe(true)
 
     await hub.close()
   })
@@ -305,7 +374,7 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
       logger: silentLogger,
     })
     const s = fakeSocket()
-    hub.register('cmp-nm', 'u1', s)
+    hub.register('cmp-nm', 'u1', 'conn1', s)
     // A pmessage whose channel does NOT start with the hub's channel prefix is
     // dropped (defensive — the pattern can't match this in practice).
     sub.emit('pmessage', PMSG_PATTERN, 'some:other:channel', '{"type":"x"}')
@@ -335,7 +404,7 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     })
     // No map for this campaign → deregister returns early without throwing.
     expect(() => {
-      hub.deregister('cmp-never', 'nobody')
+      hub.deregister('cmp-never', 'conn-nobody')
     }).not.toThrow()
     await hub.close()
   })
@@ -348,7 +417,7 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
       logger: silentLogger,
     })
     const s = fakeSocket()
-    hub.register('cmp-closed', 'u1', s)
+    hub.register('cmp-closed', 'u1', 'conn1', s)
     await hub.close()
     // psubscribe was called once at construction; a post-close 'ready' must not
     // re-subscribe or close the (already torn-down) socket.
@@ -376,8 +445,8 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
       },
     }
     const s2 = fakeSocket()
-    hub.register('cmp-rt', 'u1', s1)
-    hub.register('cmp-rt', 'u2', s2)
+    hub.register('cmp-rt', 'u1', 'conn1', s1)
+    hub.register('cmp-rt', 'u2', 'conn2', s2)
 
     sub.emit('ready') // initial connect — everReady guard, no teardown
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -404,7 +473,7 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
       logger,
     })
     const s = fakeSocket()
-    hub.register('cmp-pun', 'u1', s)
+    hub.register('cmp-pun', 'u1', 'conn1', s)
 
     await hub.close()
 

@@ -10,8 +10,11 @@
 //
 // Structurally this mirrors sse/pipeline-subscriber.ts, with two
 // WS-specific differences:
-//   (a) a WRITABLE per-user registry Map<campaignId, Map<userId, WSLike>>
-//       (not a Set of read-only SSE sinks), and
+//   (a) a WRITABLE per-CONNECTION registry Map<campaignId, Map<connId,
+//       {userId, ws}>> (not a Set of read-only SSE sinks): a user may hold
+//       several concurrent sockets (multiple tabs / devices), each keyed by its
+//       own connId, so a second tab never evicts the first and a deregister
+//       drops EXACTLY one socket identity (myth-wat0m), and
 //   (b) resync teardown CLOSES the writable WS socket (close(1011, …)),
 //       not an SSE sink. Clients reconnect + replay history.
 //
@@ -40,11 +43,26 @@ export interface WSLike {
   close(code?: number, reason?: string): void
 }
 
+/** One registered connection: the owning userId (carried for fan-out failure
+ *  logging) plus its socket. The registry keys these by a per-connection id, so
+ *  a user's multiple concurrent sockets each get their own entry. */
+interface RegisteredConn {
+  readonly userId: string
+  readonly ws: WSLike
+}
+
 export interface SessionHub {
-  /** Attach a connected socket for (campaign, user). Overwrites any prior socket for that user. */
-  register(campaignId: string, userId: string, ws: WSLike): void
-  /** Detach a user's socket from a campaign. Drops the inner map when empty. */
-  deregister(campaignId: string, userId: string): void
+  /** Attach a connected socket for (campaign, user) under a per-connection id.
+   *  A user may hold MANY concurrent connections (multiple tabs / devices); each
+   *  registers under its own connId and independently receives published frames.
+   *  A second connection NEVER evicts an earlier one (the pre-myth-wat0m
+   *  per-user map overwrote it). */
+  register(campaignId: string, userId: string, connId: string, ws: WSLike): void
+  /** Detach ONE connection (by connId) from a campaign. Socket-identity-safe: it
+   *  removes only the named connection, never a sibling/newer socket for the same
+   *  user (a stale close can't evict a live tab). Drops the inner map when the
+   *  campaign's last connection leaves. */
+  deregister(campaignId: string, connId: string): void
   /** Publish a server frame to the campaign's channel (cross-container fan-out). */
   publish(campaignId: string, frame: ServerFrame): Promise<void>
   /** Whether any socket is registered locally for this campaign. */
@@ -84,8 +102,9 @@ export async function createSessionHub({
   })
 
   const pattern = sessionChannelPattern(keyPrefix)
-  // campaignId -> (userId -> socket). Writable registry, one socket per user.
-  const registry = new Map<string, Map<string, WSLike>>()
+  // campaignId -> (connId -> {userId, socket}). Writable registry, keyed
+  // per-CONNECTION so a user's multiple tabs coexist (myth-wat0m).
+  const registry = new Map<string, Map<string, RegisteredConn>>()
   let closed = false
   // The first 'ready' is the initial connect, not a reconnect — registered
   // sockets haven't missed any messages yet. Subsequent 'ready' events
@@ -121,10 +140,10 @@ export async function createSessionHub({
         { campaigns: registry.size },
         'session-hub reconnected — closing registered sockets with redis-resync-required',
       )
-      for (const users of registry.values()) {
-        for (const ws of [...users.values()]) {
+      for (const conns of registry.values()) {
+        for (const conn of [...conns.values()]) {
           try {
-            ws.close(RESYNC_CLOSE_CODE, RESYNC_CLOSE_REASON)
+            conn.ws.close(RESYNC_CLOSE_CODE, RESYNC_CLOSE_REASON)
           } catch (err) {
             logger.warn({ err }, 'session-hub failed to close socket on resync')
           }
@@ -140,43 +159,47 @@ export async function createSessionHub({
     // filters to the pattern, so this is belt-and-suspenders.)
     if (!channel.startsWith(sessionChannel(keyPrefix, ''))) return
     const campaignId = campaignIdFromChannel(keyPrefix, channel)
-    const users = registry.get(campaignId)
-    if (!users || users.size === 0) return
+    const conns = registry.get(campaignId)
+    if (!conns || conns.size === 0) return
     // Send the raw payload string — it's already the JSON-stringified frame.
-    // Iterate over a snapshot so a deregister-during-iteration is safe.
-    for (const [userId, ws] of [...users]) {
+    // Fan out to EVERY connection (all of a user's tabs, all users). Iterate a
+    // snapshot so a deregister-during-iteration is safe.
+    for (const [connId, conn] of [...conns]) {
       try {
-        ws.send(payload)
+        conn.ws.send(payload)
       } catch (err) {
         // Stale socket: drop it so one broken socket can't wedge the others.
         logger.warn(
-          { err, campaignId, userId },
+          { err, campaignId, userId: conn.userId, connId },
           'session-hub ws.send threw — evicting dead socket from registry',
         )
-        users.delete(userId)
+        conns.delete(connId)
       }
     }
   })
 
-  function register(campaignId: string, userId: string, ws: WSLike): void {
-    let users = registry.get(campaignId)
-    if (!users) {
-      users = new Map()
-      registry.set(campaignId, users)
+  function register(campaignId: string, userId: string, connId: string, ws: WSLike): void {
+    let conns = registry.get(campaignId)
+    if (!conns) {
+      conns = new Map()
+      registry.set(campaignId, conns)
     }
-    users.set(userId, ws)
+    conns.set(connId, { userId, ws })
   }
 
-  function deregister(campaignId: string, userId: string): void {
-    const users = registry.get(campaignId)
-    if (!users) return
-    users.delete(userId)
-    if (users.size === 0) registry.delete(campaignId)
+  function deregister(campaignId: string, connId: string): void {
+    const conns = registry.get(campaignId)
+    if (!conns) return
+    // Delete BY connId: only the leaving socket identity goes. A user's other
+    // tabs (different connIds) stay registered, and a stale close for an
+    // already-replaced connId can't evict a newer sibling.
+    conns.delete(connId)
+    if (conns.size === 0) registry.delete(campaignId)
   }
 
   function hasLocal(campaignId: string): boolean {
-    const users = registry.get(campaignId)
-    return users !== undefined && users.size > 0
+    const conns = registry.get(campaignId)
+    return conns !== undefined && conns.size > 0
   }
 
   async function publish(campaignId: string, frame: ServerFrame): Promise<void> {

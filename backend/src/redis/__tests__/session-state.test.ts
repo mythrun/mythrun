@@ -77,42 +77,95 @@ describe('makeSessionState — presence (crash-safe TTL)', () => {
     await redis.quit()
   })
 
-  it('addPresence/countPresence/dropPresence track live connections', async () => {
+  it('countPresence counts DISTINCT users; dropPresence removes one', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
-    await ss.addPresence(cId, 'cont1', 'userA')
-    await ss.addPresence(cId, 'cont1', 'userB')
+    await ss.addPresence(cId, 'cont1', 'userA', 'conn-a')
+    await ss.addPresence(cId, 'cont1', 'userB', 'conn-b')
     expect(await ss.countPresence(cId)).toBe(2)
-    await ss.dropPresence(cId, 'cont1', 'userA')
+    await ss.dropPresence(cId, 'cont1', 'userA', 'conn-a')
     expect(await ss.countPresence(cId)).toBe(1)
   })
 
   it('addPresence sets a TTL on each per-connection key (~PRESENCE_TTL)', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
-    await ss.addPresence(cId, 'cont1', 'userA')
-    const ttl = await redis.ttl(`${KEY_PREFIX}session:${cId}:conn:cont1:userA`)
+    await ss.addPresence(cId, 'cont1', 'userA', 'conn-a')
+    const ttl = await redis.ttl(`${KEY_PREFIX}session:${cId}:conn:cont1:userA:conn-a`)
     expect(ttl).toBeGreaterThan(PRESENCE_TTL - 5)
     expect(ttl).toBeLessThanOrEqual(PRESENCE_TTL)
   })
 
-  it('re-adding the same connection refreshes (idempotent count)', async () => {
+  it('re-adding the SAME connection refreshes (idempotent — still one connection)', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
-    await ss.addPresence(cId, 'cont1', 'userA')
-    await ss.addPresence(cId, 'cont1', 'userA')
+    await ss.addPresence(cId, 'cont1', 'userA', 'conn-a')
+    await ss.addPresence(cId, 'cont1', 'userA', 'conn-a')
     expect(await ss.countPresence(cId)).toBe(1)
+    expect(await ss.userConnectionCount(cId, 'userA')).toBe(1)
+  })
+
+  it('myth-wat0m: a user’s two tabs are two connections but ONE present user', async () => {
+    // Same user, same container, two tabs (distinct connIds). countPresence
+    // (distinct users) is 1; userConnectionCount (their open tabs) is 2. Closing
+    // ONE tab leaves the user present (count still 1, one connection remaining).
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.addPresence(cId, 'cont1', 'userA', 'tab-1')
+    await ss.addPresence(cId, 'cont1', 'userA', 'tab-2')
+    expect(await ss.countPresence(cId)).toBe(1)
+    expect(await ss.userConnectionCount(cId, 'userA')).toBe(2)
+
+    await ss.dropPresence(cId, 'cont1', 'userA', 'tab-1')
+    // Still present via tab-2 — the whole point of the fix.
+    expect(await ss.countPresence(cId)).toBe(1)
+    expect(await ss.userConnectionCount(cId, 'userA')).toBe(1)
+
+    await ss.dropPresence(cId, 'cont1', 'userA', 'tab-2')
+    // Last tab gone → genuinely empty.
+    expect(await ss.countPresence(cId)).toBe(0)
+    expect(await ss.userConnectionCount(cId, 'userA')).toBe(0)
+  })
+
+  it('userConnectionCount counts only the target user’s connections', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.addPresence(cId, 'cont1', 'userA', 'a1')
+    await ss.addPresence(cId, 'cont2', 'userA', 'a2') // same user, another container
+    await ss.addPresence(cId, 'cont1', 'userB', 'b1')
+    expect(await ss.userConnectionCount(cId, 'userA')).toBe(2)
+    expect(await ss.userConnectionCount(cId, 'userB')).toBe(1)
+    expect(await ss.userConnectionCount(cId, 'userC')).toBe(0)
+    // Two distinct users present.
+    expect(await ss.countPresence(cId)).toBe(2)
   })
 
   it('countPresence is 0 for an unknown session', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
     expect(await ss.countPresence('never-seen')).toBe(0)
+    expect(await ss.userConnectionCount('never-seen', 'userA')).toBe(0)
   })
 
-  it('presence is isolated per campaign and per container', async () => {
+  it('presence is isolated per campaign; a user across two containers is ONE present user', async () => {
     const ss = makeSessionState(redis, KEY_PREFIX)
-    await ss.addPresence('c-A', 'cont1', 'userA')
-    await ss.addPresence('c-A', 'cont2', 'userA') // same user, two containers
-    await ss.addPresence('c-B', 'cont1', 'userA')
-    expect(await ss.countPresence('c-A')).toBe(2)
+    await ss.addPresence('c-A', 'cont1', 'userA', 'a1')
+    await ss.addPresence('c-A', 'cont2', 'userA', 'a2') // same user, two containers
+    await ss.addPresence('c-B', 'cont1', 'userA', 'b1')
+    // Distinct-user count: userA is one user on c-A (across two containers).
+    expect(await ss.countPresence('c-A')).toBe(1)
+    expect(await ss.userConnectionCount('c-A', 'userA')).toBe(2)
     expect(await ss.countPresence('c-B')).toBe(1)
+  })
+
+  it('rolling-deploy compat: an OLD-shape conn key (no connId) is still counted', async () => {
+    // A pre-myth-wat0m container writes `conn:{cont}:{user}` (no connId suffix).
+    // During a rolling deploy a NEW container's counts must still see it — the
+    // userId is the second ':'-segment in BOTH shapes, so parsing holds. A
+    // missed old-shape key would under-count and could suspend a live session
+    // or spuriously churn presence.
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    // Old-shape key seeded directly (what an old container would have SET).
+    await redis.set(`${KEY_PREFIX}session:${cId}:conn:contOld:userA`, '1', 'EX', PRESENCE_TTL)
+    // New-shape connection for the SAME user (a second tab on a new container).
+    await ss.addPresence(cId, 'contNew', 'userA', 'new-conn')
+    // Both keys attributed to userA → one distinct user, two connections.
+    expect(await ss.countPresence(cId)).toBe(1)
+    expect(await ss.userConnectionCount(cId, 'userA')).toBe(2)
   })
 })
 

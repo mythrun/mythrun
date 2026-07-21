@@ -85,8 +85,9 @@ describe('processSuspendJob — self-validating presence re-read', () => {
     const { deps, refreshTtls } = makeDeps(redis, store)
 
     // A live connection is present — the player reconnected (or never left) but
-    // the cancel raced the fire. The job must self-validate and bail.
-    await deps.sessionState.addPresence(campaignId, 'container-1', 'userA')
+    // the cancel raced the fire. The job must self-validate and bail. (myth-wat0m:
+    // presence is now keyed per-connection, so seed with a connId.)
+    await deps.sessionState.addPresence(campaignId, 'container-1', 'userA', 'conn-1')
 
     const result = await processSuspendJob(deps, fakeJob({ sessionId, campaignId }))
 

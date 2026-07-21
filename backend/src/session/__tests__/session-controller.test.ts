@@ -195,6 +195,9 @@ function fakeSessionState(opts: {
     addPresence: unused('addPresence'),
     dropPresence: unused('dropPresence'),
     countPresence: unused('countPresence'),
+    // myth-wat0m — per-connection presence count; the WS route owns it, the
+    // controller never calls it, so it stays a throwing stub like its siblings.
+    userConnectionCount: unused('userConnectionCount'),
     setState: unused('setState'),
     refreshTtls: unused('refreshTtls'),
     checkpoint: unused('checkpoint'),

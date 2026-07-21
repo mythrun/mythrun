@@ -4,9 +4,9 @@
 // keyed by campaignId (one live session per campaign). This module owns
 // ONLY the transport keys:
 //
-//   session:{cId}:seq                  monotonic sequence counter (INCR)
-//   session:{cId}:conn:{cont}:{user}   per-connection presence (TTL)
-//   session:{cId}:state                {participants, mode, status} JSON blob
+//   session:{cId}:seq                          monotonic sequence counter (INCR)
+//   session:{cId}:conn:{cont}:{user}:{connId}  per-connection presence (TTL)
+//   session:{cId}:state                        {participants, mode, status} JSON blob
 //
 // The LLM-tier turn-state keys are `:summary`, `:usage`, and (MYT-69)
 // `:usage:st`. As of MYT-68 the FT transcript is PG-direct (reconstructed from
@@ -27,13 +27,17 @@ import type { Redis } from 'ioredis'
 import type { TokenUsage } from '../session/tiers/types.js'
 
 /**
- * Per-connection presence TTL, seconds. Each `conn:{containerId}:{userId}`
+ * Per-connection presence TTL, seconds. Each `conn:{containerId}:{userId}:{connId}`
  * key carries this expiry so a CRASHED container's presence lapses
  * automatically — a bare INCR/DECR counter would leak (crash skips the
  * `close` handler → never suspends) or go negative (double-DECR). The
  * connection handler refreshes the key on every ping (well within 60s),
  * so live connections never expire mid-session. Per the MYT-65 design's
  * "Connections counter + suspend (crash-safe)" hardening decision.
+ *
+ * myth-wat0m: the key is now keyed per-CONNECTION (a `{connId}` suffix), not
+ * per-user, so a user's multiple tabs each hold an independent key. Closing one
+ * tab drops only that tab's key; the user stays present while another tab lives.
  */
 export const PRESENCE_TTL = 60
 
@@ -187,12 +191,30 @@ export interface SessionState {
    *  pass `MAX(session_messages.seq)`. */
   reseedSeq(campaignId: string, max: number): Promise<void>
   /** Records one live connection with a TTL (crash-safe). Idempotent per
-   *  (containerId, userId). */
-  addPresence(campaignId: string, containerId: string, userId: string): Promise<void>
-  /** Removes one connection's presence key. */
-  dropPresence(campaignId: string, containerId: string, userId: string): Promise<void>
-  /** Counts live (non-expired) connection keys for the session via SCAN. */
+   *  (containerId, userId, connId) — myth-wat0m: keyed per-CONNECTION so a
+   *  user's multiple tabs each hold their own key. */
+  addPresence(
+    campaignId: string,
+    containerId: string,
+    userId: string,
+    connId: string,
+  ): Promise<void>
+  /** Removes ONE connection's presence key (by connId) — never a sibling tab's. */
+  dropPresence(
+    campaignId: string,
+    containerId: string,
+    userId: string,
+    connId: string,
+  ): Promise<void>
+  /** Counts DISTINCT users with ≥1 live (non-expired) connection, via SCAN. The
+   *  suspend gate reads this: `=== 0` means the session is genuinely empty (the
+   *  last connection of the last user has dropped), regardless of how many tabs
+   *  any one user held. A user with two tabs counts once. */
   countPresence(campaignId: string): Promise<number>
+  /** Counts one user's live connections (their open tabs / devices) via SCAN.
+   *  Drives the player_joined/player_left gating: broadcast a join only on a
+   *  user's FIRST connection and a left only when their LAST one drops. */
+  userConnectionCount(campaignId: string, userId: string): Promise<number>
   /** Reads the `:state` blob, or null if unset / corrupt. */
   getState(campaignId: string): Promise<SessionStateBlob | null>
   /** Writes the `:state` blob (JSON), refreshing its TTL. */
@@ -286,9 +308,14 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const endingKey = (campaignId: string): string => `${base(campaignId)}:ending`
   const combatKey = (campaignId: string): string => `${base(campaignId)}:combat`
   const resumedKey = (campaignId: string): string => `${base(campaignId)}:resumed`
-  const connKey = (campaignId: string, containerId: string, userId: string): string =>
-    `${base(campaignId)}:conn:${containerId}:${userId}`
+  const connKey = (
+    campaignId: string,
+    containerId: string,
+    userId: string,
+    connId: string,
+  ): string => `${base(campaignId)}:conn:${containerId}:${userId}:${connId}`
   const connPattern = (campaignId: string): string => `${base(campaignId)}:conn:*`
+  const connPrefix = (campaignId: string): string => `${base(campaignId)}:conn:`
 
   // Bound once so both the returned `loadTurnState` and `checkpoint` (H6, which
   // folds a turn-state snapshot into the envelope) share one reader.
@@ -314,29 +341,31 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
       }
     },
 
-    addPresence: async (campaignId, containerId, userId) => {
-      await redis.set(connKey(campaignId, containerId, userId), '1', 'EX', PRESENCE_TTL)
+    addPresence: async (campaignId, containerId, userId, connId) => {
+      await redis.set(connKey(campaignId, containerId, userId, connId), '1', 'EX', PRESENCE_TTL)
     },
 
-    dropPresence: async (campaignId, containerId, userId) => {
-      await redis.del(connKey(campaignId, containerId, userId))
+    dropPresence: async (campaignId, containerId, userId, connId) => {
+      await redis.del(connKey(campaignId, containerId, userId, connId))
     },
 
     countPresence: async (campaignId) => {
-      // SCAN, not KEYS: KEYS is O(N) over the WHOLE keyspace and blocks the
-      // single-threaded Redis event loop — unacceptable on a shared
-      // ElastiCache cluster. SCAN is cursor-paged and non-blocking. The
-      // match set is bounded per session (a handful of connections), so the
-      // full cursor walk is cheap.
-      const pattern = connPattern(campaignId)
-      let cursor = '0'
-      let count = 0
-      do {
-        const [next, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
-        cursor = next
-        count += batch.length
-      } while (cursor !== '0')
-      return count
+      // Distinct users with ≥1 live connection (a multi-tab user counts once).
+      const userIds = await scanConnUserIds(
+        redis,
+        connPattern(campaignId),
+        connPrefix(campaignId),
+      )
+      return new Set(userIds).size
+    },
+
+    userConnectionCount: async (campaignId, userId) => {
+      const userIds = await scanConnUserIds(
+        redis,
+        connPattern(campaignId),
+        connPrefix(campaignId),
+      )
+      return userIds.filter((u) => u === userId).length
     },
 
     getState: async (campaignId) => {
@@ -508,6 +537,43 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
       return result === 'OK'
     },
   }
+}
+
+/**
+ * SCAN all live per-connection presence keys for a session and return the userId
+ * embedded in each — WITH multiplicity (one entry per live connection). Callers
+ * derive the distinct-user count (`countPresence`) and a single user's connection
+ * count (`userConnectionCount`) from this list.
+ *
+ * SCAN, not KEYS: KEYS is O(N) over the WHOLE keyspace and blocks the
+ * single-threaded Redis event loop — unacceptable on a shared ElastiCache
+ * cluster. SCAN is cursor-paged and non-blocking, and the match set is bounded
+ * per session (a handful of connections), so the full walk is cheap.
+ *
+ * Parse: strip the known `session:{cId}:conn:` prefix, then split the remainder
+ * on ':'. The userId is the SECOND segment in BOTH the current
+ * `{container}:{userId}:{connId}` shape and the pre-myth-wat0m `{container}:{userId}`
+ * shape (the new shape just appends a connId), so a ROLLING DEPLOY that still has
+ * old-shape keys in flight parses correctly — no under-count that could suspend a
+ * live session or spuriously churn presence. containerId/userId/connId are all
+ * colon-free UUIDs, so index 1 is unambiguously the userId.
+ */
+async function scanConnUserIds(
+  redis: Redis,
+  pattern: string,
+  prefix: string,
+): Promise<string[]> {
+  const userIds: string[] = []
+  let cursor = '0'
+  do {
+    const [next, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
+    cursor = next
+    for (const key of batch) {
+      const userId = key.slice(prefix.length).split(':')[1]
+      if (userId !== undefined && userId !== '') userIds.push(userId)
+    }
+  } while (cursor !== '0')
+  return userIds
 }
 
 /** Bulk-read the two turn-state keys via one MGET, JSON-parsing each with an
