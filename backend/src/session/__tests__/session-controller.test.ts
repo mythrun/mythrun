@@ -696,6 +696,32 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     )
   })
 
+  it('folds an issue_correction with a malformed (non-string) input.text as an EMPTY amendment', async () => {
+    // Defensive: a correction tool_call whose input carries no string `text`
+    // (malformed) must still fold — as an empty amendment — rather than throw or
+    // interpolate a non-string. Exercises the `typeof t === 'string' ? t : ''`
+    // non-string arm.
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'The hall empties.' },
+        {
+          kind: 'tool_call',
+          toolCallId: 'tc-corr',
+          toolName: 'issue_correction',
+          input: { text: 42 },
+        },
+      ],
+      usage: { input: 5, output: 7 },
+    }
+    const { controller, scribePayloads } = build({ assistant })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.enqueueScribeJob()
+
+    expect(scribePayloads[0]?.prose).toBe('The hall empties.\n\n[Correction to earlier narration: ]')
+  })
+
   it('threads the FT render worldDelta onto the payload when present', async () => {
     const worldDelta: WorldDelta = {
       facts: [{ subject: 'the locked door', content: 'It bears a wax seal.', kind: 'fact' }],

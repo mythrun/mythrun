@@ -100,6 +100,21 @@ describe('auditTurn', () => {
     expect(callOpts.prompt).toContain('player-less turn')
   })
 
+  it('serializes an empty roster as "(none)"', async () => {
+    // Every other case passes a populated roster; this exercises the empty-roster
+    // side of serializeInput's ternary (a turn with no PCs seated).
+    mockGenerateText.mockResolvedValueOnce({
+      output: CLEAN,
+      finishReason: 'stop',
+      usage: HAIKU_USAGE,
+    } as never)
+
+    await auditTurn({ narration: 'The hall stands empty.', submittingMessage: 'x', roster: [] })
+
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(callOpts.prompt).toContain('Party roster: (none)')
+  })
+
   it('propagates LLM call errors (the decorator owns fail-open)', async () => {
     mockGenerateText.mockRejectedValueOnce(new Error('haiku rate limit'))
 

@@ -23,8 +23,26 @@ import { createRepo, type Repo } from '../../repo/index.js'
 import { cleanupTestScope, makeTestScope, type TestScope } from '../../repo/__tests__/_helpers/test-scope.js'
 import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 import { augmentFtContextWithEntityCards, type EntityCardRepo } from '../turn-context.js'
+import type { SessionMessage } from '../../repo/types.js'
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
+
+/** A minimal DM-text SessionMessage for the fake-repo arms (only `.content` is
+ *  read by the name-scan haystack). */
+function msg(content: string): SessionMessage {
+  return {
+    id: 'm',
+    sessionId: 's',
+    seq: 1,
+    userId: null,
+    messageType: 'dm_text',
+    content,
+    createdAt: new Date(),
+    turnId: null,
+    turnOrdinal: null,
+    triggerKind: null,
+  }
+}
 
 describe('augmentFtContextWithEntityCards (integration)', () => {
   let pool: Pool
@@ -219,5 +237,48 @@ describe('augmentFtContextWithEntityCards (integration)', () => {
     }
     const out = await augmentFtContextWithEntityCards(emptyRows, { worldId: 'w', sessionId: 's', maxConsumedSeq: 0, baseFtContext: 'base' })
     expect(out).toBe('base')
+  })
+
+  it('returns the base unchanged when every known entity is ALREADY grounded in the base ft_context', async () => {
+    // The recent transcript names Roud, but the base prep doc already grounds her
+    // → she is filtered out of the candidate set → candidates empty → no read of
+    // facts, base returned (idempotent, no duplicate card).
+    const allGrounded: EntityCardRepo = {
+      sessionMessages: { listFtContextRows: () => Promise.resolve([msg('Captain Marsen Roud spoke at the rail.')]) },
+      entities: {
+        listByWorld: () => Promise.resolve([{ id: 'e-roud', name: 'Captain Marsen Roud', entityType: 'npc' }]),
+      },
+      facts: { listByEntities: () => Promise.reject(new Error('facts must not be read when no candidates remain')) },
+    }
+    const base = 'The docks. Captain Marsen Roud oversees the slow-water piers.'
+    const out = await augmentFtContextWithEntityCards(allGrounded, {
+      worldId: 'w',
+      sessionId: 's',
+      maxConsumedSeq: 5,
+      baseFtContext: base,
+    })
+    expect(out).toBe(base)
+  })
+
+  it('cards a matched entity that has NO known facts as just the labelled name', async () => {
+    // The match resolves no known facts → `byEntity.get(id) ?? []` takes the
+    // empty-array fallback → the card is the labelled name only (still grounds
+    // that the entity exists in canon), with no facts appended.
+    const noFacts: EntityCardRepo = {
+      sessionMessages: { listFtContextRows: () => Promise.resolve([msg('A writ from House Eyrin changed hands at dusk.')]) },
+      entities: {
+        listByWorld: () => Promise.resolve([{ id: 'e-house', name: 'House Eyrin', entityType: 'faction' }]),
+      },
+      facts: { listByEntities: () => Promise.resolve([]) },
+    }
+    const out = await augmentFtContextWithEntityCards(noFacts, {
+      worldId: 'w',
+      sessionId: 's',
+      maxConsumedSeq: 5,
+      baseFtContext: 'base',
+    })
+    expect(out).toContain('- House Eyrin (faction)')
+    // No facts → no colon-and-body form.
+    expect(out).not.toContain('House Eyrin (faction):')
   })
 })

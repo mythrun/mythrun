@@ -97,6 +97,31 @@ describe('scanMentionedEntities', () => {
     const text = 'Marsen Roud and House Eyrin'
     expect(scanMentionedEntities(entities, text)).toEqual(scanMentionedEntities(entities, text))
   })
+
+  it('breaks a first-mention-index tie by id in both comparison directions', () => {
+    // Rows sharing a name resolve to the SAME first-mention index, so the sort
+    // comparator's leading `a.idx - b.idx` is zero and falls through to the id
+    // tiebreak. This id ordering forces the sort to exercise BOTH the `<` and the
+    // `>` arms of the tiebreak, and the result is fully id-ordered regardless.
+    const triplets: readonly ScanEntity[] = [
+      { id: 'e-bb', name: 'Marsen Roud', entityType: 'npc' },
+      { id: 'e-aa', name: 'Marsen Roud', entityType: 'npc' },
+      { id: 'e-cc', name: 'Marsen Roud', entityType: 'npc' },
+    ]
+    const got = scanMentionedEntities(triplets, 'Marsen Roud stepped onto the pier')
+    expect(got.map((e) => e.id)).toEqual(['e-aa', 'e-bb', 'e-cc'])
+  })
+
+  it('the id tiebreak yields 0 for two rows with the same id (equal-id arm)', () => {
+    // A degenerate duplicate-id input drives the tiebreak's final `: 0` arm
+    // (neither `<` nor `>`); order is preserved.
+    const dupes: readonly ScanEntity[] = [
+      { id: 'e-dup', name: 'Marsen Roud', entityType: 'npc' },
+      { id: 'e-dup', name: 'Marsen Roud', entityType: 'npc' },
+    ]
+    const got = scanMentionedEntities(dupes, 'Marsen Roud stepped onto the pier')
+    expect(got.map((e) => e.id)).toEqual(['e-dup', 'e-dup'])
+  })
 })
 
 describe('formatEntityCard / buildEntityCardBlock', () => {

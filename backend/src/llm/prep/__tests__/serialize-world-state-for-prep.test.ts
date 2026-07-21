@@ -324,6 +324,74 @@ describe('serializeWorldStateForPrep', () => {
     expect(out).toContain('more dormant entities')
   })
 
+  it('expands the working set across 1-hop relationships (both directions) and caps it', async () => {
+    // myth-vb2ov working-set graph expansion: a seed entity (the handoff-named
+    // Voss) pulls its 1-hop relationship neighbors into full detail. This drives
+    // BOTH comparator directions — Voss as relationship SOURCE and as TARGET —
+    // and provides enough neighbors to trip the MAX_WORKING_SET_ENTITIES cap
+    // (60), exercising the stable-order break in the neighbor loop.
+    const entitiesById = new Map<
+      string,
+      { id: string; name: string; entityType: string; accessLevel: string }
+    >()
+    const proseByEntityId = new Map<string, string>()
+    const factsById = new Map<
+      string,
+      { id: string; entityId: string; content: string; topic: string; accessLevel: string }
+    >()
+    // 70 canon neighbors, each with a heavy prose kernel + a secret fact. Only the
+    // ones inside the cap render in full; the rest collapse to compact roster lines.
+    for (let i = 0; i < 70; i++) {
+      const id = `n${String(i).padStart(2, '0')}`
+      entitiesById.set(id, { id, name: `Neighbor${String(i)} Kin`, entityType: 'npc', accessLevel: 'known' })
+      proseByEntityId.set(id, 'PROSE '.repeat(200))
+      factsById.set(`f${String(i)}`, {
+        id: `f${String(i)}`,
+        entityId: id,
+        content: `secret-of-${String(i)}`,
+        topic: 'past',
+        accessLevel: 'secret',
+      })
+    }
+    entitiesById.set('inplay', { id: 'inplay', name: 'Voss', entityType: 'npc', accessLevel: 'known' })
+    proseByEntityId.set('inplay', 'A watchful tavern-keeper.')
+
+    // Voss is the SOURCE of edges to n00..n68 (line 172 arm) and the TARGET of an
+    // edge from n69 (line 173 arm). >60 distinct neighbors → the cap break fires.
+    const relationshipsById = new Map<string, { sourceEntityId: string; targetEntityId: string }>()
+    for (let i = 0; i < 69; i++) {
+      relationshipsById.set(`r${String(i)}`, { sourceEntityId: 'inplay', targetEntityId: `n${String(i).padStart(2, '0')}` })
+    }
+    relationshipsById.set('r-in', { sourceEntityId: 'n69', targetEntityId: 'inplay' })
+
+    const bigInv = { entitiesById, proseByEntityId, factsById, relationshipsById }
+    const repo = stubRepo()
+    ;(repo as unknown as { worldInventory: { load: ReturnType<typeof vi.fn> } }).worldInventory.load =
+      vi.fn(() => Promise.resolve(bigInv))
+
+    const out = await serializeWorldStateForPrep(repo, {
+      campaignId: 'camp1',
+      sessionNumber: 12,
+      priorSessionContext: {
+        previousSummaries: [],
+        latestHandoff: {
+          party: [],
+          timeOfDay: 'dusk',
+          unresolvedThreads: [],
+          npcs: [{ name: 'Voss', state: 'wary', voice: [] }],
+          keyLocations: [],
+        },
+      },
+    })
+
+    // A neighbor inside the cap (earliest id) renders in FULL — its secret survives.
+    expect(out).toContain('secret-of-0')
+    // A neighbor pushed past the cap collapses to a compact roster line: name
+    // present, secret withheld. (n69 sorts last, so it is beyond the 60-cap.)
+    expect(out).toContain('Neighbor69 Kin')
+    expect(out).not.toContain('secret-of-69')
+  })
+
   it('renders the full world dump unchanged for a small world (below the tiering threshold)', async () => {
     // The default stub world has a single entity — well under the threshold, so
     // its secret fact renders in full exactly as before (no roster section).

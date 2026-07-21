@@ -3994,6 +3994,36 @@ describe('makeLatchedEmitter', () => {
     expect(seen.mode).toEqual({ from: 'exploration', to: 'combat', reason: 'enemies attack' })
     expect((seen.resolved as { outcome: string }).outcome).toBe('victory')
   })
+
+  it('marks before — and passes through — a dm_correction frame (myth-d6knq)', async () => {
+    const order: string[] = []
+    let seen: unknown
+    const inner: TurnEmitter = {
+      emitText: (): Promise<void> => Promise.resolve(),
+      emitSkillCheck: (): Promise<void> => Promise.resolve(),
+      emitDiceRoll: (): Promise<void> => Promise.resolve(),
+      emitLedgerUpdate: (): Promise<void> => Promise.resolve(),
+      emitModeChange: (): Promise<void> => Promise.resolve(),
+      emitCombatStarted: (): Promise<void> => Promise.resolve(),
+      emitCombatResolved: (): Promise<void> => Promise.resolve(),
+      emitCorrection: (p): Promise<void> => {
+        order.push('inner.emitCorrection')
+        seen = p
+        return Promise.resolve()
+      },
+    }
+    const mark = vi.fn((): Promise<void> => {
+      order.push('mark')
+      return Promise.resolve()
+    })
+
+    const latched = makeLatchedEmitter(inner, mark)
+    await latched.emitCorrection({ text: 'Earlier I named the ferryman Coss; it is Trask.' })
+
+    expect(order).toEqual(['mark', 'inner.emitCorrection'])
+    expect(mark).toHaveBeenCalledTimes(1)
+    expect(seen).toEqual({ text: 'Earlier I named the ferryman Coss; it is Trask.' })
+  })
 })
 
 // ---------------------------------------------------------------------------

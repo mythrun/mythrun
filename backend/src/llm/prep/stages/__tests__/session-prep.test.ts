@@ -286,6 +286,58 @@ describe('generateSessionPrep', () => {
     warnSpy.mockRestore()
   })
 
+  it('swallows a drain-time stream tear: the authoritative object still resolves', async () => {
+    // The delta drain can throw mid-stream on a torn `partialObjectStream` (not a
+    // faulty sink — that is caught inside drainProseDeltas). The outer try/catch
+    // around the drain must swallow it so `await result.object` below stays
+    // authoritative and the attempt still succeeds.
+    streamObjectMock.mockReset()
+    const deltas: string[] = []
+    function* tears(): Generator<Record<string, string>> {
+      yield { ft_context: 'Hel' }
+      throw new Error('partialObjectStream tore mid-drain')
+    }
+    streamObjectMock.mockReturnValueOnce({
+      partialObjectStream: tears(),
+      object: Promise.resolve({ ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100), opening: 'o'.repeat(100) }),
+      usage: Promise.resolve({ inputTokens: 10, outputTokens: 20, totalTokens: 30 }),
+      finishReason: Promise.resolve('stop'),
+    } as unknown as ReturnType<typeof import('../../../ai.js').streamObject>)
+
+    const r = await generateSessionPrep({} as never, {
+      campaignId: 'c',
+      worldId: 'w',
+      sessionNumber: 1,
+      onProseDelta: (_f, t) => deltas.push(t),
+    })
+
+    // The pre-tear delta streamed; the tear was swallowed; the object resolved.
+    expect(deltas).toEqual(['Hel'])
+    expect(r.ft_context).toBe('x'.repeat(200))
+  })
+
+  it('rethrows a genuine schema failure (object rejects, finishReason is NOT length)', async () => {
+    // A `finishReason: 'length'` object-reject is an overflow (retryable); ANY
+    // other reject is a real schema/transport failure that must propagate
+    // unchanged — NOT be misclassified as overflow (no retry, no terminal wrap).
+    streamObjectMock.mockReset()
+    function* empty(): Generator<Record<string, string>> {
+      /* a genuine parse failure yields no usable partials */
+    }
+    streamObjectMock.mockReturnValueOnce({
+      partialObjectStream: empty(),
+      object: Promise.reject(new Error('schema validation failed after repair chain')),
+      usage: Promise.resolve({ inputTokens: 10, outputTokens: 20, totalTokens: 30 }),
+      finishReason: Promise.resolve('stop'),
+    } as unknown as ReturnType<typeof import('../../../ai.js').streamObject>)
+
+    await expect(
+      generateSessionPrep({} as never, { campaignId: 'c', worldId: 'w', sessionNumber: 1 }),
+    ).rejects.toThrow(/schema validation failed after repair chain/)
+    // No retry — a non-length failure is not an overflow.
+    expect(streamObjectMock).toHaveBeenCalledTimes(1)
+  })
+
   it('recovers when the tighter-budget retry fits under the cap', async () => {
     streamObjectMock.mockReset()
     streamObjectMock
@@ -302,6 +354,37 @@ describe('generateSessionPrep', () => {
       sessionNumber: 11,
     })
     expect(r.ft_context).toBe('x'.repeat(200))
+    expect(streamObjectMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats a COMPLETED-but-length-capped object as an overflow (object resolves, finishReason length)', async () => {
+    // Distinct from the reject-path overflow: here `await result.object` RESOLVES
+    // a schema-valid object, but `finishReason` is 'length' — content was still
+    // truncated, so the attempt must be classified as overflow (retryable), NOT
+    // 'ok'. Attempt 1 resolves-with-length; the tighter-budget retry then fits.
+    streamObjectMock.mockReset()
+    function* none(): Generator<Record<string, string>> {
+      /* no deltas on this path (no onProseDelta) */
+    }
+    streamObjectMock
+      .mockReturnValueOnce({
+        partialObjectStream: none(),
+        object: Promise.resolve({ ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100), opening: 'o'.repeat(100) }),
+        usage: Promise.resolve({ inputTokens: 79_000, outputTokens: 128_000, totalTokens: 207_000 }),
+        finishReason: Promise.resolve('length'),
+      } as unknown as ReturnType<typeof import('../../../ai.js').streamObject>)
+      .mockReturnValueOnce(
+        scripted(
+          [{ ft_context: 'z'.repeat(200) }],
+          { ft_context: 'z'.repeat(200), sd_playbook: 'w'.repeat(100), opening: 'p'.repeat(100) },
+        ),
+      )
+
+    const r = await generateSessionPrep({} as never, { campaignId: 'c', worldId: 'w', sessionNumber: 9 })
+
+    // Attempt 1's resolved-but-truncated object was discarded as overflow; the
+    // retry is the authoritative result.
+    expect(r.ft_context).toBe('z'.repeat(200))
     expect(streamObjectMock).toHaveBeenCalledTimes(2)
   })
 

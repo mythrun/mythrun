@@ -633,6 +633,67 @@ describe('ws-session route (integration)', () => {
     }
   })
 
+  it('myth-d6knq: dm_correction rows with corrupt/unparseable content are dropped; a valid null-turnId row replays with turnId ""', async () => {
+    // Sweeps parseDmCorrectionRow's drop arms — a missing output key
+    // (asRecord(undefined) → null), a non-string output.text, and unparseable
+    // content (parseDmRowContent → null) — plus the valid path via `append` (NULL
+    // turn_id), which exercises the `row.turnId ?? ''` fallback.
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-0000000000df'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The ferry noses into the fog.' },
+        {
+          // Output key absent entirely → asRecord(undefined) is null → dropped.
+          kind: 'dm_correction',
+          content: JSON.stringify({ toolCallId: 'tc-k2', input: { text: 'x' } }),
+        },
+        {
+          // Output present but text is not a string → dropped.
+          kind: 'dm_correction',
+          content: JSON.stringify({ toolCallId: 'tc-k3', input: {}, output: { text: 99 } }),
+        },
+        // Unparseable content → parseDmRowContent returns null → dropped.
+        { kind: 'dm_correction', content: 'not-json{' },
+      ],
+      seqs: [1, 2, 3, 4],
+    })
+    // A VALID dm_correction row written via `append` → NULL turn_id → the frame
+    // replays with `turnId ?? ''` degraded to ''.
+    await repo.sessionMessages.append({
+      sessionId,
+      seq: 5,
+      userId: null,
+      messageType: 'dm_correction',
+      content: JSON.stringify({
+        toolCallId: 'tc-k4',
+        input: { text: 'It was Trask, not Coss.' },
+        output: { text: 'It was Trask, not Coss.' },
+      }),
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      // The three corrupt dm_correction rows (seqs 2-4) dropped; the dm_text and
+      // the valid null-turnId correction replay.
+      expect(first.messages.map((m) => m.type)).toEqual(['dm_message', 'dm_correction'])
+      expect(first.messages[0]).toMatchObject({ type: 'dm_message', seq: 1, turnId })
+      expect(first.messages[1]).toMatchObject({
+        type: 'dm_correction',
+        seq: 5,
+        turnId: '',
+        text: 'It was Trask, not Coss.',
+      })
+    } finally {
+      ws.terminate()
+    }
+  })
+
   it('MYT-68 §3.7: a skill_check row with valid JSON but an ill-typed field is dropped, rest intact', async () => {
     const repo = createRepo(pool)
     const turnId = '01900000-0000-7000-8000-0000000000cc'

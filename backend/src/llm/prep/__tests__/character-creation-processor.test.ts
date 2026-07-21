@@ -549,6 +549,53 @@ describe('runCharacterCreationJob', () => {
     expect(stageFailed?.reason).toBeUndefined()
   })
 
+  it('a TRANSIENT (non-terminal) stage error publishes willRetry:true and RETHROWS (BullMQ attempts:2)', async () => {
+    // A rate-limit / overload is non-terminal: the stage marks the pipeline_runs
+    // row failed, publishes stage-failed with willRetry:true, and RETHROWS so
+    // BullMQ's attempts:2 policy fires. Distinct from the terminal path, it does
+    // NOT flip the concept row to 'failed' (a retry may still succeed), so the
+    // player stays on the loading beat rather than seeing a premature failure.
+    const { userId, campaignId } = await seed()
+    // Stage 2 (character_concept) throws a TRANSIENT error (terminal:false).
+    mockGenerateText.mockRejectedValueOnce(new LlmRateLimitedError('upstream rate limited: 429'))
+
+    const events: Record<string, unknown>[] = []
+    await expect(
+      runCharacterCreationJob(
+        makeDeps(pool, {
+          publishEvent: (cid, e) => {
+            events.push({ campaignId: cid, ...e })
+            return Promise.resolve()
+          },
+        }),
+        makeJob(campaignId, userId),
+      ),
+    ).rejects.toThrow(/rate limited/)
+
+    // The pipeline_runs row for the failed stage is marked failed…
+    const run = await pool.query<{ status: string }>(
+      `SELECT status FROM pipeline_runs
+        WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_concept'`,
+      [campaignId, userId],
+    )
+    expect(run.rows[0]?.status).toBe('failed')
+
+    // …but the CONCEPT stays 'processing' (non-terminal — a BullMQ retry may yet
+    // succeed; only exhaustion, handled by the 'failed' listener, flips it).
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('processing')
+
+    // stage-failed event with willRetry:true + the sanitized errorCode.
+    const stageFailed = events.find((e) => e.type === 'stage-failed')
+    expect(stageFailed).toBeDefined()
+    expect(stageFailed?.willRetry).toBe(true)
+    expect(stageFailed?.errorCode).toBe('llm_rate_limited')
+    expect(stageFailed?.reason).toBeUndefined()
+  })
+
   it('aborts the job when cost-cap is exceeded before the first stage', async () => {
     const { userId, campaignId } = await seed()
     // Pre-insert pipeline_runs rows summing to MORE than the cap of $5.00.

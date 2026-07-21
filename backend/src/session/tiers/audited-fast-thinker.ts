@@ -121,7 +121,11 @@ export class AuditedFastThinker implements FastThinker {
     // `clean` is already handled above, so a violation class always maps to an
     // instruction; the guard is defensive (and narrows the type to `string` for
     // the exactOptionalPropertyTypes spread below).
+    /* c8 ignore start — unreachable defensive narrowing: correctiveInstructionFor
+       returns undefined ONLY for `clean`, and a clean audit already returned at the
+       top of render, so this arm can never fire in practice. */
     if (correctiveInstruction === undefined) return first
+    /* c8 ignore stop */
     const retry = await this.inner.render({ ...ctx, correctiveInstruction }, this.retryEmitter)
     const retryAudit = await this.classify(buildInput(ctx, retry, batch), 'retry')
     if (retryAudit !== null && retryAudit.class === 'clean') {
@@ -174,9 +178,10 @@ export class AuditedFastThinker implements FastThinker {
 
 /** The corrective instruction injected on the retry render, one per violation
  *  class. Each NAMES the violation so the FT knows what to avoid — this is the
- *  content the gate escalates with. `clean` has no instruction (unreachable —
- *  a clean turn never retries). */
-function correctiveInstructionFor(cls: TurnAuditClass): string | undefined {
+ *  content the gate escalates with. `clean` has no instruction (unreachable via
+ *  `render` — a clean turn never retries). Exported so the exhaustive-switch
+ *  arms (including the defensive `clean` arm) are directly unit-testable. */
+export function correctiveInstructionFor(cls: TurnAuditClass): string | undefined {
   switch (cls) {
     case 'pc_speech_authored':
       return (

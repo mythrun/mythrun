@@ -5,7 +5,7 @@
 // + a mock audit classifier. No LLM, no DB, no worker.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AuditedFastThinker } from '../audited-fast-thinker.js'
+import { AuditedFastThinker, correctiveInstructionFor } from '../audited-fast-thinker.js'
 import type { TurnAuditFn, TurnAuditInput } from '../../../llm/turn-audit.js'
 import type { TurnAuditResult } from '../../../llm/schemas/turn-audit.js'
 import type {
@@ -206,5 +206,198 @@ describe('AuditedFastThinker', () => {
       expect.objectContaining({ event: 'ft_turn_audit_error', phase: 'attempt-1' }),
       expect.any(String),
     )
+  })
+
+  it('retry audit itself failing fails open to attempt 1 with a null retriedClass', async () => {
+    // attempt 1 violates (retryable); the RETRY render succeeds but the retry
+    // AUDIT throws → classify returns null → `retryAudit === null` → the failOpen
+    // carries retriedClass:null (distinct from "retry came back still-violating").
+    const { ft, renderMock } = makeInner([
+      textAssistant('attempt-1 puppets Tally'), // attempt 1 (violates)
+      textAssistant('retry text (unaudited)'), // retry render (succeeds)
+    ])
+    const audit = vi
+      .fn<TurnAuditFn>()
+      .mockResolvedValueOnce(PC_VIOLATION) // attempt-1 audit
+      .mockRejectedValueOnce(new Error('retry audit 529')) // retry audit itself fails
+    const warn = vi.fn()
+    const onFailOpen = vi.fn()
+    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn }, onFailOpen })
+
+    const result = await gate.render(CTX, NOOP_EMITTER)
+
+    expect(renderMock).toHaveBeenCalledTimes(2) // one retry, then give up
+    expect(result.parts).toEqual([{ kind: 'text', text: 'attempt-1 puppets Tally' }]) // fail-open to attempt 1
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ft_turn_audit_fail_open',
+        reason: 'retry_not_clean',
+        retriedClass: null,
+      }),
+      expect.any(String),
+    )
+    expect(onFailOpen).toHaveBeenCalledWith({ class: 'pc_speech_authored' })
+  })
+
+  it('an audit that rejects with a NON-Error still fails open (String(err) branch)', async () => {
+    const { ft, renderMock } = makeInner([textAssistant('the world answers')])
+    const audit = vi.fn<TurnAuditFn>().mockRejectedValue('haiku string failure') // a non-Error throw
+    const warn = vi.fn()
+    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn } })
+
+    const result = await gate.render(CTX, NOOP_EMITTER)
+
+    expect(result.parts[0]).toEqual({ kind: 'text', text: 'the world answers' })
+    expect(renderMock).toHaveBeenCalledTimes(1)
+    // The non-Error was stringified into the structured warn.
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'ft_turn_audit_error', err: 'haiku string failure' }),
+      expect.any(String),
+    )
+  })
+
+  it('extractBatch stops at the prior DM turn (only the trailing player run is the batch)', async () => {
+    // A history whose trailing player message is PRECEDED by an assistant (DM)
+    // turn exercises the loop-break: the batch is only the messages after the
+    // last DM turn.
+    const ctxWithPriorDm: FtTurnContext = {
+      ...CTX,
+      ftHistory: [
+        { v: 1, role: 'assistant', parts: [{ kind: 'text', text: 'The prior DM turn.' }] },
+        { v: 1, role: 'user', parts: [{ kind: 'text', text: 'I open the door.' }], characterName: 'Junie' },
+      ],
+    }
+    const { ft } = makeInner([textAssistant('The door swings wide.')])
+    const captured: TurnAuditInput[] = []
+    const audit = vi.fn<TurnAuditFn>((input) => {
+      captured.push(input)
+      return Promise.resolve(CLEAN)
+    })
+    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+
+    await gate.render(ctxWithPriorDm, NOOP_EMITTER)
+
+    expect(captured[0]?.submittingMessage).toBe('Junie: I open the door.')
+  })
+
+  it('extractBatch labels a nameless player message as "Player" and excludes it from acting characters', async () => {
+    const ctxNameless: FtTurnContext = {
+      ...CTX,
+      ftHistory: [{ v: 1, role: 'user', parts: [{ kind: 'text', text: 'What do I see?' }] }], // no characterName
+    }
+    const { ft } = makeInner([textAssistant('A long gallery, unlit.')])
+    const captured: TurnAuditInput[] = []
+    const audit = vi.fn<TurnAuditFn>((input) => {
+      captured.push(input)
+      return Promise.resolve(CLEAN)
+    })
+    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+
+    await gate.render(ctxNameless, NOOP_EMITTER)
+
+    expect(captured[0]?.submittingMessage).toBe('Player: What do I see?')
+    expect(captured[0]?.actingCharacters).toEqual([]) // nameless → not an acting character
+  })
+
+  it('the RETRY renders through the default SILENT emitter — every emit method resolves and nothing re-streams', async () => {
+    // The retry render receives the decorator's default retryEmitter (the
+    // SILENT_EMITTER), whose eight no-op arrows must swallow every frame kind so
+    // the corrected turn is NOT re-streamed to the client (the player already
+    // saw attempt 1's text_delta; a live re-stream would double the prose). This
+    // inner drives ALL eight methods on the emitter it is handed on the retry.
+    let call = 0
+    const inner: FastThinker = {
+      render: async (_ctx, emit) => {
+        call += 1
+        if (call === 1) return textAssistant('attempt-1 puppets Tally')
+        // The retry: exercise every emit method on the (silent) emitter handed in.
+        await Promise.all([
+          emit.emitText('x'),
+          emit.emitSkillCheck({
+            characterName: 'Venn',
+            skill: 'Insight',
+            context: 'reading the room',
+            roll: 12,
+            roll2: null,
+            rollType: 'normal',
+            modifier: 3,
+            total: 15,
+            dc: 12,
+            outcomeTier: 'success',
+            constraint: 'He clocks the lie.',
+          }),
+          emit.emitDiceRoll({ count: 1, sides: 6, results: [3], total: 3 }),
+          emit.emitLedgerUpdate({ characterName: 'Venn', kind: 'gold', summary: 'Pays 2gp.', gold: 40 }),
+          emit.emitModeChange({ from: 'exploration', to: 'combat', reason: 'a blade clears leather' }),
+          emit.emitCombatStarted({
+            enemies: [{ name: 'Cutpurse', description: 'a wiry cutpurse', count: 1 }],
+            initiative: [{ combatant: 'Venn', roll: 14 }],
+          }),
+          emit.emitCombatResolved({ narration: 'It ends.', outcome: 'victory', casualties: [], hpChanges: [] }),
+          emit.emitCorrection({ text: 'On reflection, the door was already ajar.' }),
+        ])
+        return textAssistant('Venn scratches his jaw and considers your question.')
+      },
+    }
+    // attempt 1 violates (no tool → retryable); retry comes back clean.
+    const audit = vi.fn<TurnAuditFn>().mockResolvedValueOnce(PC_VIOLATION).mockResolvedValueOnce(CLEAN)
+    const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+
+    const result = await gate.render(CTX, NOOP_EMITTER)
+
+    // All eight silent-emitter calls resolved (no throw) and the corrected retry
+    // render is what gets returned (persisted).
+    expect(result.parts).toEqual([
+      { kind: 'text', text: 'Venn scratches his jaw and considers your question.' },
+    ])
+    expect(call).toBe(2) // exactly one retry
+  })
+
+  it('correctiveInstructionFor maps each violation class to its named instruction; clean → undefined', () => {
+    // Direct unit of the exhaustive switch — `render` only ever reaches it with a
+    // NON-clean class (a clean turn returns before the retry), so the defensive
+    // `clean` arm is unreachable through the decorator and is covered here.
+    expect(correctiveInstructionFor('pc_speech_authored')).toMatch(/never put words/i)
+    expect(correctiveInstructionFor('inline_meta_correction')).toMatch(/issue_correction tool/)
+    expect(correctiveInstructionFor('fake_session_end')).toMatch(/ended the session/i)
+    expect(correctiveInstructionFor('clean')).toBeUndefined()
+  })
+
+  it('an inline_meta_correction violation retries with the issue_correction-tool instruction', async () => {
+    const { ft, ctxAt } = makeInner([
+      textAssistant('Correction: the lantern was lit, not dark.'), // attempt 1 (violates)
+      textAssistant('The lantern throws a thin, wavering light.'), // retry (clean)
+    ])
+    const audit = vi
+      .fn<TurnAuditFn>()
+      .mockResolvedValueOnce({ class: 'inline_meta_correction', confidence: 0.9, reason: 'inline fix' })
+      .mockResolvedValueOnce(CLEAN)
+    const info = vi.fn()
+    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn: vi.fn(), info } })
+
+    await gate.render(CTX, NOOP_EMITTER)
+
+    expect(ctxAt(1).correctiveInstruction).toMatch(/issue_correction tool/)
+    // A corrected-on-retry turn logs the structured info event.
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'ft_turn_audit_corrected', originalClass: 'inline_meta_correction' }),
+      expect.any(String),
+    )
+  })
+
+  it('a fake_session_end violation retries with the leave-the-scene-open instruction', async () => {
+    const { ft, ctxAt } = makeInner([
+      textAssistant('And so the session draws to a close. Until next time, adventurers.'), // attempt 1
+      textAssistant('The tide keeps rising; Trask waits for your answer.'), // retry (clean)
+    ])
+    const audit = vi
+      .fn<TurnAuditFn>()
+      .mockResolvedValueOnce({ class: 'fake_session_end', confidence: 0.9, reason: 'fake end' })
+      .mockResolvedValueOnce(CLEAN)
+    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+
+    await gate.render(CTX, NOOP_EMITTER)
+
+    expect(ctxAt(1).correctiveInstruction).toMatch(/leave the scene open/i)
   })
 })
