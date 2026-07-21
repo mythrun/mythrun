@@ -355,6 +355,17 @@ async function handleConnection(
     // A returning player cancels any pending all-disconnected suspend.
     await cancelSuspend(suspendQueue, sessionId)
 
+    // myth-rf5rn follow-up (caught by the post-fix live smoke): after a long
+    // idle the campaign `:seq` counter expires and INCR restarts at 1. When
+    // this session's durable rows start HIGH (the counter is campaign-scoped,
+    // carried across sessions), those low seqs DON'T collide — they persist
+    // silently BEFORE the session opening, corrupting transcript order, and
+    // the trigger debounce reads new messages as old (the DM goes permanently
+    // silent). The collision heal can't see the non-colliding case, so raise
+    // the counter to the durable floor at the write-window entry. reseedSeq
+    // never lowers a live counter, so the healthy-counter case is a no-op.
+    await sessionState.reseedSeq(campaignId, await repo.sessionMessages.maxSeq(sessionId))
+
     // MYT-68: the FT's prompt roster is NOT maintained here. The worker derives
     // it per turn from session_participants (`join` above wrote this player's
     // row), in deterministic order — the racy `:state.participants` RMW this

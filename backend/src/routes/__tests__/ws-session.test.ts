@@ -1969,6 +1969,26 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     socket.emit('close')
   })
 
+  it('join floor-guard: connect reseeds the campaign counter to the durable MAX before any message flows', async () => {
+    // myth-rf5rn follow-up (smoke-caught): an expired counter restarting BELOW
+    // a session whose rows start high does NOT collide — low seqs persist
+    // silently before the session opening (order corruption) and the trigger
+    // debounce reads new messages as old (DM permanently silent). The join
+    // path must raise the counter to the durable floor so the first INCR
+    // lands above it; the collision heal alone cannot see this case.
+    const sessionState = makeStubSessionState()
+    const { repo, sessionMessages } = makeStubRepo()
+    sessionMessages.maxSeq.mockResolvedValue(202)
+    const { handler } = await captureHandler(makeUnitDeps({ repo, sessionState, hub: makeStubHub() }))
+    const socket = makeFakeWsSocket()
+    handler(socket, fakeRequest({}))
+    await flush()
+
+    expect(sessionMessages.maxSeq).toHaveBeenCalledWith('sess-1')
+    expect(sessionState.reseedSeq).toHaveBeenCalledWith('c-1', 202)
+    socket.emit('close')
+  })
+
   it('persistMessage: a seq-unique violation reseeds from the durable MAX, then retries', async () => {
     const sessionState = makeStubSessionState()
     sessionState.nextSeq.mockResolvedValueOnce(5).mockResolvedValueOnce(6)
@@ -2112,6 +2132,7 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     const { repo } = makeStubRepo({
       sessionMessages: {
         append: vi.fn().mockResolvedValue(undefined),
+        maxSeq: vi.fn().mockResolvedValue(0), // join floor-guard reads this
         // seq 3 authored by a user no longer in members/characters; seq 4 has a
         // null author (anomalous player row). Both byline-degrade to the
         // placeholder. messageType is REQUIRED since the MYT-68 replay switch —
@@ -2179,6 +2200,7 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     const { repo } = makeStubRepo({
       sessionMessages: {
         append: vi.fn().mockResolvedValue(undefined),
+        maxSeq: vi.fn().mockResolvedValue(0), // join floor-guard reads this
         listAfterSeq: vi.fn().mockResolvedValue([
           { seq: 1, userId: null, content: okTrue, messageType: 'acquire_resource', turnId: 't1' },
           // ok:false rejection — EXPECTED, not corrupt → skipped with NO warn.
