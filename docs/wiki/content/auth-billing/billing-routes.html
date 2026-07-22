@@ -1,12 +1,11 @@
 <!-- source: backend/src/routes/billing.ts -->
 <!-- source: backend/src/billing/customer.ts -->
 <!-- source: backend/src/billing/sku-cache.ts -->
-<!-- source: backend/src/billing/errors.ts -->
 <!-- source: backend/src/repo/users.ts -->
 <!-- source: backend/src/repo/user-subscriptions.ts -->
 <!-- source: backend/src/repo/billing-history.ts -->
 <!-- source: backend/src/repo/purchases.ts -->
-<!-- source-hash: sha256:ab9d06bc2f66ac905d481d341ab217a1e1276a4cab8812810ea7cf82480d2f3f -->
+<!-- source-hash: sha256:0388b20171f3da61e72ccd9e8223e07ba60316760f040b3a1bf5981b1fb3a4f7 -->
 <!-- last-ticket: MYT-42 -->
 
 <h1>Billing routes</h1>
@@ -293,9 +292,11 @@
   produce the credit grants and audit rows. <code>findOrCreateStripeCustomer</code> sits in
   <code>backend/src/repo/users.ts</code>; the helper's three-phase shape is documented on the
   <a href="../data/repository.html">repository layer</a> page. Cart rule failures and upgrade
-  preconditions return errors from the closed <code>BillingErrorCode</code> union in
-  <code>backend/src/billing/errors.ts</code> so the SPA can branch on
-  <code>response.code</code> without parsing prose.
+  preconditions return stable machine-readable <code>code</code> values so the SPA can
+  branch on <code>response.code</code> without parsing prose. (The codes are emitted as
+  literals at each route; a closed union type meant to pin the set was never wired to an
+  enforcing test and was removed as dead code — bead <code>myth-wtj2i</code> tracks
+  re-introducing it properly.)
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -458,7 +459,7 @@
 
 <p>
   <code>backend/src/routes/billing.ts</code>, <code>backend/src/billing/customer.ts</code>,
-  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/billing/errors.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>,
   <code>backend/src/repo/users.ts</code> (<code>findOrCreateStripeCustomer</code>),
   <code>backend/src/repo/user-subscriptions.ts</code>,
   <code>backend/src/repo/billing-history.ts</code>, <code>backend/src/repo/purchases.ts</code>.

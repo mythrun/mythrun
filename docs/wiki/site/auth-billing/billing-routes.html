@@ -608,9 +608,11 @@
   produce the credit grants and audit rows. <code>findOrCreateStripeCustomer</code> sits in
   <code>backend/src/repo/users.ts</code>; the helper's three-phase shape is documented on the
   <a href="../data/repository.html">repository layer</a> page. Cart rule failures and upgrade
-  preconditions return errors from the closed <code>BillingErrorCode</code> union in
-  <code>backend/src/billing/errors.ts</code> so the SPA can branch on
-  <code>response.code</code> without parsing prose.
+  preconditions return stable machine-readable <code>code</code> values so the SPA can
+  branch on <code>response.code</code> without parsing prose. (The codes are emitted as
+  literals at each route; a closed union type meant to pin the set was never wired to an
+  enforcing test and was removed as dead code — bead <code>myth-wtj2i</code> tracks
+  re-introducing it properly.)
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -773,7 +775,7 @@
 
 <p>
   <code>backend/src/routes/billing.ts</code>, <code>backend/src/billing/customer.ts</code>,
-  <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/billing/errors.ts</code>,
+  <code>backend/src/billing/sku-cache.ts</code>,
   <code>backend/src/repo/users.ts</code> (<code>findOrCreateStripeCustomer</code>),
   <code>backend/src/repo/user-subscriptions.ts</code>,
   <code>backend/src/repo/billing-history.ts</code>, <code>backend/src/repo/purchases.ts</code>.
