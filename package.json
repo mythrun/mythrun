@@ -30,14 +30,10 @@
     "prepare": "husky",
     "test:coverage": "pnpm --filter @mythrun/backend test:coverage"
   },
-  "lint-staged": {
-    "*.{ts,tsx,mts,cts,js,cjs,mjs,html,yml,yaml,json,md}": "prettier --write"
-  },
   "devDependencies": {
     "eslint": "^9.15.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.3",
     "prettier": "^3.3.0",
     "typescript-eslint": "^8.15.0"
   }

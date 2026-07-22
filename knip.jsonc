@@ -1,0 +1,43 @@
+{
+  // Dead-code scanning config (run: `pnpm dlx knip`). The 2026-07-22 cleanup
+  // drove unused exports/types/deps to zero; this config encodes every channel
+  // knip can't see on its own. If a future run reports something new, it's
+  // probably real.
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  // ENTRY points (not unused themselves; their imports count as consumption):
+  "entry": [
+    // Manually-run real-LLM smoke/eval recipe library — invoked via .sh
+    // wrappers, package.json smoke:* scripts, or directly with tsx.
+    "backend/scripts/**/*.ts",
+    // Standalone internal tools: own vite configs, folded single-file output,
+    // outside every package tsconfig (see frontend/eslint.config.js ignores).
+    "frontend/animation-audit/**/*.{ts,tsx,mjs}",
+    "frontend/copy-workbench/**/*.{ts,tsx,mjs}",
+    // Compile-time type-level test: its @ts-expect-error firing IS the
+    // assertion; nothing imports it by design.
+    "frontend/src/i18n/typed-keys.guard.ts"
+  ],
+  "ignore": [
+    // Wiki build-time artifacts: layout/helper.js is copied into site/ by the
+    // build; fixtures feed the build tests by path, not import.
+    "docs/wiki/layout/**",
+    "docs/wiki/site/**",
+    "docs/wiki/build/__tests__/fixtures/**",
+    // CloudFront functions: deployed by Terraform, tested via a custom mjs
+    // loader — no Node import graph.
+    "infra/modules/frontend-hosting/functions/**",
+    // ESLint rule test fixture referenced by path from the rule tests.
+    "backend/eslint-rules/__tests__/fixtures/**"
+  ],
+  "workspaces": {
+    "backend": {
+      // Piped in scripts/dev-logged.sh (shell consumer, no import graph).
+      "ignoreDependencies": ["pino-pretty"]
+    },
+    "frontend": {
+      // Installed/driven by CI (frontend-check.yml: playwright install) for
+      // the storybook test-runner; no direct import.
+      "ignoreDependencies": ["playwright"]
+    }
+  }
+}
