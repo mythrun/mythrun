@@ -289,8 +289,8 @@ describe('WorldReveal — settled graph beside the wiki', () => {
     expect(within(graph).getByRole('button', { name: /Maeris Vale/i })).toBeDefined()
     // The wiki loads its groups once the injected snapshot resolves.
     const wiki = await screen.findByTestId('reveal-wiki')
-    expect(within(wiki).getByRole('heading', { name: '[ph: places]' })).toBeDefined()
-    expect(within(wiki).getByRole('heading', { name: '[ph: people]' })).toBeDefined()
+    expect(within(wiki).getByRole('heading', { name: i18n.t('worldReveal.group.location') })).toBeDefined()
+    expect(within(wiki).getByRole('heading', { name: i18n.t('worldReveal.group.npc') })).toBeDefined()
   })
 
   it('opens the wiki on the world INTRODUCTION when the snapshot carries one — no extra fetch', async () => {
@@ -313,13 +313,13 @@ describe('WorldReveal — settled graph beside the wiki', () => {
     expect(within(wiki).getByRole('heading', { name: 'The Ashfen Reaches' })).toBeDefined()
     expect(within(wiki).getByText('A tidewater world of salt and tallow.')).toBeDefined()
     expect(within(wiki).getByText(i18n.t('worldReveal.wikiDigDeeper'))).toBeDefined()
-    // The reference row: the wire name annotated with its kind label.
+    // The reference row: the wire name annotated with its kind label (the group label).
     expect(
-      within(wiki).getByRole('button', { name: 'Maeris Vale [ph: people]' }),
+      within(wiki).getByRole('button', { name: `Maeris Vale ${i18n.t('worldReveal.group.npc')}` }),
     ).toBeDefined()
     // The browse index rides the same surface (search + groups reachable).
     expect(within(wiki).getByText(i18n.t('worldReveal.wikiIndex'))).toBeDefined()
-    expect(within(wiki).getByRole('heading', { name: '[ph: places]' })).toBeDefined()
+    expect(within(wiki).getByRole('heading', { name: i18n.t('worldReveal.group.location') })).toBeDefined()
     expect(fetchSnapshot).toHaveBeenCalledTimes(1)
   })
 
@@ -329,7 +329,7 @@ describe('WorldReveal — settled graph beside the wiki', () => {
       /* deliberately never resolves */
     })
     renderReveal({ fetchSnapshot: vi.fn(() => pending) })
-    expect(screen.getByText('[ph: settling your world]')).toBeDefined()
+    expect(screen.getByText(i18n.t('worldReveal.loading'))).toBeDefined()
     expect(screen.queryByTestId('reveal-wiki')).toBeNull()
   })
 
@@ -610,8 +610,8 @@ describe('WorldReveal — silent updates while the tail runs (MYT-89 reveal timi
     expect(fetchSnapshot).toHaveBeenCalledTimes(2)
     // Still the browsable wiki with the original content — quiet by construction.
     expect(screen.getByTestId('reveal-wiki')).toBe(wiki)
-    expect(screen.queryByText('[ph: settling your world]')).toBeNull()
-    expect(within(wiki).getByRole('heading', { name: '[ph: people]' })).toBeDefined()
+    expect(screen.queryByText(i18n.t('worldReveal.loading'))).toBeNull()
+    expect(within(wiki).getByRole('heading', { name: i18n.t('worldReveal.group.npc') })).toBeDefined()
   })
 
   it('does NOT refetch while a tail stage is merely RUNNING (completions only)', async () => {

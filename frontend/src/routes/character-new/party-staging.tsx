@@ -223,6 +223,15 @@ export function PartyStagingSurface({
         canBegin={canBegin}
         onBegin={handleBegin}
         onInvite={handleInvite}
+        labels={{
+          partyHeading: t('characterCreate.staging.partyHeading'),
+          inviteSub: t('characterCreate.staging.inviteSub'),
+          creating: t('characterCreate.staging.creating'),
+          gathering: t('characterCreate.staging.gathering'),
+          waiting: t('characterCreate.staging.waiting'),
+          beginSolo: t('characterCreate.staging.beginSolo'),
+          beginParty: t('characterCreate.staging.beginParty'),
+        }}
       />
       {beginFailed && (
         <Text role="ui-caption" as="p" data-testid="party-staging-begin-error">

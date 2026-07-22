@@ -56,7 +56,7 @@ const BOTTOM_THRESHOLD = 32
 
 // Accessible name for the scroll-to-latest control. NOTE (contract gap): the
 // committed MessageStreamProps carries NO label prop, so this generic-chrome
-// control name is inlined rather than threaded as a resolved [ph:] key. Flagged
+// control name is inlined rather than threaded as a resolved i18n key. Flagged
 // for the Task 8 contract + the MYT-100 copy pass (see the T9 report).
 const JUMP_LABEL = 'Jump to latest'
 
@@ -113,7 +113,7 @@ function renderItem(
   if (item.kind === 'dm_correction') {
     // A set-apart errata slip (myth-d6knq) — NEVER the DM narrative register, so a
     // correction can't read as the fiction it corrects. `correctionLabel` is the
-    // resolved [ph:] eyebrow; absent ⇒ no eyebrow (the slip still stands apart).
+    // resolved eyebrow; absent ⇒ no eyebrow (the slip still stands apart).
     return <DmCorrection text={item.text} label={correctionLabel ?? ''} />
   }
   if (item.kind === 'player') {

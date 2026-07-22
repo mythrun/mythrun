@@ -47,8 +47,8 @@ export type KnowledgeTab = 'wiki' | 'graph' | 'sheet'
  * wiki's data + navigation callbacks come from the cache + the sidebar's own state, so
  * only the labels pass through). Derived from `WorldWikiProps` via `Pick` so this bundle
  * cannot drift from the wiki's label surface — a renamed WorldWiki label is a compile
- * error here. Optional (each defaults to a `[ph:]` inside WorldWiki); the composing
- * route resolves them from i18n. Spread straight onto `<WorldWiki {...wikiLabels} />`.
+ * error here. Each is a resolved i18n string the composing route supplies (MYT-100 made
+ * the WorldWiki labels required). Spread straight onto `<WorldWiki {...wikiLabels} />`.
  */
 export type WikiTabLabels = Pick<
   WorldWikiProps,
@@ -61,6 +61,7 @@ export type WikiTabLabels = Pick<
   | 'emptyBodyLabel'
   | 'referencesLabel'
   | 'indexLabel'
+  | 'glossaryLabel'
 >
 
 /**

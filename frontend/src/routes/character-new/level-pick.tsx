@@ -20,7 +20,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 // that level. A member (a joined world, a non-null creator) — or an unresolved /
 // failed role probe — sees a calm WAITING HOLD instead of the picker; the level is
 // the owner's to set. The five levels are STATIC (not fetched) — each level's
-// `grantGloss` is a plain-D&D one-line `[ph:]` gloss of what it grants, caster-
+// `grantGloss` is a plain-D&D one-line i18n gloss of what it grants, caster-
 // specifics hedged. Single-select with a default of 3 (the mockup's pre-selection,
 // the canonical spec); confirming POSTs the level via `setStartingLevel` and hands
 // off to the CREATE beat (`/campaigns/:id/character/new`). A 409 `level_locked`
@@ -86,7 +86,7 @@ interface LevelChoice {
   readonly grantGloss: string
 }
 
-/** The five level choices, each with its plain-D&D `[ph:]` grant gloss. Literal
+/** The five level choices, each with its plain-D&D i18n grant gloss. Literal
  *  i18n keys (not dynamically constructed) so the typed-key rail stays satisfied. */
 function useLevelChoices(): readonly LevelChoice[] {
   const { t } = useTranslation()
@@ -217,6 +217,7 @@ export function LevelPickRoute({
           <LevelCard
             key={choice.level}
             level={choice.level}
+            eyebrow={t('startingLevel.cardEyebrow')}
             grantGloss={choice.grantGloss}
             selected={choice.level === selected}
             onSelect={() => {

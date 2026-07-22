@@ -8,7 +8,7 @@ import { LevelCard } from './LevelCard.tsx'
 describe('LevelCard', () => {
   it('renders the level number and the grant gloss', () => {
     const { getByText } = render(
-      <LevelCard level={3} grantGloss="Your subclass. 2nd-level spells." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={3} grantGloss="Your subclass. 2nd-level spells." selected={false} onSelect={vi.fn()} />,
     )
     expect(getByText('3')).toBeInTheDocument()
     expect(getByText('Your subclass. 2nd-level spells.')).toBeInTheDocument()
@@ -16,7 +16,7 @@ describe('LevelCard', () => {
 
   it('exposes "Level N" as the accessible name (mono eyebrow + number)', () => {
     const { getByRole } = render(
-      <LevelCard level={3} grantGloss="Your subclass. 2nd-level spells." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={3} grantGloss="Your subclass. 2nd-level spells." selected={false} onSelect={vi.fn()} />,
     )
     // The eyebrow word + the number read together as the button's name.
     expect(getByRole('button', { name: /Level\s*3/ })).toBeInTheDocument()
@@ -24,7 +24,7 @@ describe('LevelCard', () => {
 
   it('is a real <button> so keyboard activation works natively', () => {
     const { getByRole } = render(
-      <LevelCard level={1} grantGloss="Core class features." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={1} grantGloss="Core class features." selected={false} onSelect={vi.fn()} />,
     )
     expect(getByRole('button').tagName).toBe('BUTTON')
   })
@@ -33,7 +33,7 @@ describe('LevelCard', () => {
     const onSelect = vi.fn()
     const user = userEvent.setup()
     const { getByRole } = render(
-      <LevelCard level={2} grantGloss="A second class feature." selected={false} onSelect={onSelect} />,
+      <LevelCard eyebrow="Level" level={2} grantGloss="A second class feature." selected={false} onSelect={onSelect} />,
     )
     await user.click(getByRole('button'))
     expect(onSelect).toHaveBeenCalledOnce()
@@ -43,7 +43,7 @@ describe('LevelCard', () => {
     const onSelect = vi.fn()
     const user = userEvent.setup()
     const { getByRole } = render(
-      <LevelCard level={2} grantGloss="A second class feature." selected={false} onSelect={onSelect} />,
+      <LevelCard eyebrow="Level" level={2} grantGloss="A second class feature." selected={false} onSelect={onSelect} />,
     )
     getByRole('button').focus()
     await user.keyboard('{Enter}')
@@ -54,7 +54,7 @@ describe('LevelCard', () => {
     const onSelect = vi.fn()
     const user = userEvent.setup()
     const { getByRole } = render(
-      <LevelCard level={2} grantGloss="A second class feature." selected={false} onSelect={onSelect} />,
+      <LevelCard eyebrow="Level" level={2} grantGloss="A second class feature." selected={false} onSelect={onSelect} />,
     )
     getByRole('button').focus()
     await user.keyboard(' ')
@@ -63,7 +63,7 @@ describe('LevelCard', () => {
 
   it('marks the SELECTED card via data-state + aria-pressed + the ember selection class', () => {
     const { getByRole } = render(
-      <LevelCard level={3} grantGloss="Your subclass." selected onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={3} grantGloss="Your subclass." selected onSelect={vi.fn()} />,
     )
     const btn = getByRole('button')
     expect(btn).toHaveAttribute('data-state', 'selected')
@@ -74,7 +74,7 @@ describe('LevelCard', () => {
 
   it('marks the UNSELECTED card via data-state + aria-pressed', () => {
     const { getByRole } = render(
-      <LevelCard level={3} grantGloss="Your subclass." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={3} grantGloss="Your subclass." selected={false} onSelect={vi.fn()} />,
     )
     const btn = getByRole('button')
     expect(btn).toHaveAttribute('data-state', 'default')
@@ -83,14 +83,14 @@ describe('LevelCard', () => {
 
   it('is flat 1-bit / square (0px radius, no circles)', () => {
     const { getByRole } = render(
-      <LevelCard level={4} grantGloss="First ASI or feat." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={4} grantGloss="First ASI or feat." selected={false} onSelect={vi.fn()} />,
     )
     expect(getByRole('button').className).toContain('rounded-none')
   })
 
   it('carries a data-testid + data-level on the root', () => {
     const { getByTestId } = render(
-      <LevelCard level={5} grantGloss="Extra Attack / 3rd-level spells." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={5} grantGloss="Extra Attack / 3rd-level spells." selected={false} onSelect={vi.fn()} />,
     )
     const root = getByTestId('level-card')
     expect(root).toHaveAttribute('data-level', '5')
@@ -98,16 +98,16 @@ describe('LevelCard', () => {
 
   it('forwards the ref to the button element', () => {
     const ref = createRef<HTMLButtonElement>()
-    render(<LevelCard ref={ref} level={1} grantGloss="Core class features." selected={false} onSelect={vi.fn()} />)
+    render(<LevelCard ref={ref} eyebrow="Level" level={1} grantGloss="Core class features." selected={false} onSelect={vi.fn()} />)
     expect(ref.current).toBeInstanceOf(HTMLButtonElement)
   })
 
   it('has no a11y violations (selected and unselected)', async () => {
     const unsel = render(
-      <LevelCard level={2} grantGloss="A second class feature." selected={false} onSelect={vi.fn()} />,
+      <LevelCard eyebrow="Level" level={2} grantGloss="A second class feature." selected={false} onSelect={vi.fn()} />,
     )
     expect(await axe(unsel.container)).toHaveNoViolations()
-    const sel = render(<LevelCard level={3} grantGloss="Your subclass." selected onSelect={vi.fn()} />)
+    const sel = render(<LevelCard eyebrow="Level" level={3} grantGloss="Your subclass." selected onSelect={vi.fn()} />)
     expect(await axe(sel.container)).toHaveNoViolations()
   })
 })

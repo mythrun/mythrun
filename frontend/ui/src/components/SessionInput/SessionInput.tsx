@@ -13,7 +13,7 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // broadcast-so-the-table-sees-the-summon all live at the route wire (Task 16);
 // here we neither know nor touch the token. `disabled` gates BOTH intents while
 // the session is ended / not-ready. Platform-neutral (§9): neutral callbacks,
-// resolved [ph:] labels as props — no className/style, no DOM events leaked out.
+// resolved i18n labels as props — no className/style, no DOM events leaked out.
 //
 // Register: the @DM summon is a REAL, bordered `secondary` affordance — prominent
 // (easy to find, never buried in a menu) but register-QUIET (the brand's paper-y

@@ -12,7 +12,7 @@ import { DmMessage } from '../DmMessage/DmMessage.tsx'
 // Do: keep it terse and quiet — a correction is errata, not a retraction notice.
 // Don't: colour it (no red/warning), badge it, or round it — the brand is square
 //   1-bit paper; the distinction is the mono face + the ruled margin, nothing more.
-// Content/i18n: `text` is DM DATA (never an i18n key); `label` is the resolved [ph:]
+// Content/i18n: `text` is DM DATA (never an i18n key); `label` is the resolved i18n
 //   errata eyebrow the consumer passes.
 
 const meta: Meta<typeof DmCorrection> = {
@@ -26,7 +26,7 @@ export default meta
 
 type Story = StoryObj<typeof DmCorrection>
 
-// Test-double label (stories are i18n-exempt; the real [ph:] bundle resolves route-side).
+// Test-double label (stories are i18n-exempt; the real i18n bundle resolves route-side).
 const LABEL = 'Correction'
 
 export const Default: Story = {

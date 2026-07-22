@@ -73,6 +73,7 @@ export const AvatarGroup = forwardRef<HTMLDivElement, AvatarGroupProps>(function
             ring,
           )}
         >
+          {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- numeric overflow-count notation, not translatable copy */}
           {`+${String(overflow)}`}
         </span>
       ) : null}

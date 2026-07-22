@@ -46,7 +46,9 @@ describe('useCharacterCreationStream', () => {
     expect(mock.openedPath()).toBe(`/api/campaigns/${CID}/status/stream`)
     expect(result.current.beats.map((b) => b.id)).toEqual(['name', 'class', 'scores', 'kit'])
     expect(result.current.beats.every((b) => b.state === 'pending')).toBe(true)
-    expect(result.current.beats.every((b) => b.label.length > 0)).toBe(true)
+    // This layer emits stable beat IDs only, never display strings — the screen
+    // maps each id → t('characterCreate.loading.beat.<id>'). So label stays empty.
+    expect(result.current.beats.every((b) => b.label === '')).toBe(true)
     expect(result.current.done).toBe(false)
     expect(result.current.stages).toEqual([])
   })

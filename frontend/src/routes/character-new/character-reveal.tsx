@@ -148,6 +148,15 @@ export function CharacterRevealSurface({
         }}
         onConfirm={handleConfirm}
         onStartOver={handleStartOver}
+        labels={{
+          confirm: t('characterCreate.reveal.confirm'),
+          seeFull: t('characterCreate.reveal.seeFull'),
+          hideFull: t('characterCreate.reveal.hideFull'),
+          startOver: t('characterCreate.reveal.startOver'),
+          panelFeatures: t('characterCreate.reveal.panel.features'),
+          panelEquipment: t('characterCreate.reveal.panel.equipment'),
+          panelSpells: t('characterCreate.reveal.panel.spells'),
+        }}
       />
       {actionFailed && (
         <Text role="ui-caption" as="p" data-testid="character-reveal-action-error">

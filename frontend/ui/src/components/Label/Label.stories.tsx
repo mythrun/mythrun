@@ -14,6 +14,9 @@ const meta: Meta<typeof Label> = {
   title: 'Forms/Label',
   component: Label,
   tags: ['autodocs'],
+  // The required-marker SR word is a required prop (shell-owned i18n) — supply it
+  // once at the meta level so every `{...args}` specimen inherits it.
+  args: { requiredLabel: '(required)' },
   argTypes: {
     required: { control: 'boolean' },
     htmlFor: { control: 'text' },

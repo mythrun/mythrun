@@ -8,7 +8,24 @@ import { InvitePanel } from './InvitePanel.tsx'
 
 // A ready panel: a live primary link, share available, nothing pending. Each test
 // overrides the slice of props it exercises.
+// The resolved chrome copy the shell supplies (real MYT-100 campaign.invite.* copy).
+const LABELS: InvitePanelProps['labels'] = {
+  panelHeading: 'Invite',
+  hint: 'share this link · friends join your party here',
+  loading: 'preparing your invite link…',
+  noLink: 'no active link, create one to invite',
+  linkLabel: 'Invite link',
+  create: 'Create a link',
+  copy: 'Copy link',
+  copied: 'Copied',
+  share: 'Share',
+  replace: 'Replace link',
+  limit: "You've reached the invite limit. Replace the existing link instead.",
+  error: 'Something went wrong. Try again.',
+}
+
 const READY: InvitePanelProps = {
+  labels: LABELS,
   inviteUrl: 'https://mythrun.com/join/ABC123',
   loading: false,
   canShare: true,

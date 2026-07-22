@@ -1,362 +1,401 @@
 {
-  "appGreeting": "[ph_greeting] {{name}}",
   "back": "Back",
   "billing": {
-    "buy": "[ph: buy]",
+    "buy": "Purchase",
     "cancelled": {
-      "back": "[ph: back to billing]",
-      "body": "[ph: no charge was made — pick up where you left off]",
-      "title": "[ph: checkout cancelled]"
+      "back": "Back to billing",
+      "body": "You weren't charged. Pick up where you left off.",
+      "title": "Checkout cancelled"
     },
-    "current": "[ph: current plan]",
+    "current": "Your plan",
     "history": {
-      "empty": "[ph: no purchases yet]",
-      "purchase": "[ph: purchase — {{amount}}]",
-      "refund": "[ph: refund — {{amount}}]",
-      "refundedSuffix": "[ph: (refunded)]",
-      "subscription": "[ph: {{tier}} — {{amount}}]",
-      "title": "[ph: purchase history]"
+      "empty": "No purchases yet",
+      "purchase": "Purchase · {{amount}}",
+      "refund": "Refund · {{amount}}",
+      "refundedSuffix": "(refunded)",
+      "subscription": "{{tier}} · {{amount}}",
+      "title": "Purchase history"
     },
-    "manage": "[ph: manage]",
-    "pendingUpgrade": "[ph: an upgrade is already processing — it'll settle shortly]",
-    "portalLink": "[ph: manage billing & payment methods]",
-    "priceEach": "[ph: {{price}} each]",
-    "pricePerMonth": "[ph: {{price}} / mo]",
+    "manage": "Manage",
+    "pendingUpgrade": "You already have an upgrade in progress. It'll settle shortly.",
+    "portalLink": "Manage billing & payment methods",
+    "priceEach": "{{price}} each",
+    "pricePerMonth": "{{price}} / month",
     "return": {
-      "polling": "[ph: confirming your purchase…]",
-      "processing": "[ph: purchase processing — your credits will appear shortly]",
-      "settled": "[ph: credits added — you're all set]",
-      "viewHistory": "[ph: view purchase history]"
+      "polling": "Confirming your purchase…",
+      "processing": "Your purchase is processing. The credits will appear shortly.",
+      "settled": "Credits added.",
+      "viewHistory": "View purchase history"
     },
-    "sectionTitle": "[ph: sessions & billing]",
-    "sessionLabel": "[ph: session credits]",
-    "subscribe": "[ph: subscribe]",
-    "upgrade": "[ph: upgrade]",
-    "worldGenLabel": "[ph: world credits]"
+    "sectionTitle": "Sessions & billing",
+    "sessionLabel": "Session credits",
+    "subscribe": "Subscribe",
+    "upgrade": "Upgrade",
+    "worldGenLabel": "World credits"
   },
   "callback": {
-    "error": "[ph_callback_error: ~1 sentence — sign-in couldn't complete, plus a nudge to try again]",
-    "loading": "[ph_callback_loading: a brief 'signing you in' line]"
+    "error": "Sign-in was unsuccessful. Head back and try again.",
+    "loading": "One moment, signing you in."
   },
   "campaign": {
     "character": {
       "error": {
-        "body": "[ph: we couldn't load your character creation just now]",
-        "retry": "[ph: try again]"
+        "body": "Couldn't load your character. Try again.",
+        "retry": "$t(shared.tryAgain)"
       },
       "failure": {
         "concept": {
-          "body": "[ph: something went wrong building your character — start over and try again]",
-          "retry": "[ph: start over]",
-          "title": "[ph: that character didn't come together]"
+          "body": "Something went wrong building your character. Start over to try again.",
+          "retry": "Start over",
+          "title": "That character didn't take shape"
         },
         "integration": {
-          "body": "[ph: weaving your characters into the world didn't finish — try again]",
-          "retry": "[ph: try again]",
-          "title": "[ph: we couldn't bring the party into the world]"
+          "body": "Bringing the party into the world didn't finish. Try again.",
+          "retry": "$t(shared.tryAgain)",
+          "title": "The party didn't make it into the world"
         },
-        "retryError": "[ph: that didn't work either — give it another moment]"
+        "retryError": "Still no luck. Give it another moment."
       },
       "hold": {
-        "body": "[ph: your host is choosing where the story begins — hang tight]",
-        "title": "[ph: setting up the table]"
+        "body": "Your host is choosing where the story begins.",
+        "title": "The host is setting up"
       },
-      "loading": "[ph: getting your character ready]",
+      "loading": "Getting your character ready",
       "play": {
-        "body": "[ph: the world is waiting]",
-        "enter": "[ph: enter the world]",
-        "title": "[ph: your character is ready]"
+        "body": "The world is waiting.",
+        "enter": "Step into the world",
+        "title": "Your character is ready"
       }
     },
-    "eyebrow": "[ph: your campaign]",
-    "noAccess": {
-      "body": "[ph: it may not exist, or you may not have access — head back home]",
-      "title": "[ph: we couldn't open this campaign]"
+    "eyebrow": "Your campaign",
+    "invite": {
+      "copied": "Copied",
+      "copy": "Copy link",
+      "create": "Create a link",
+      "error": "$t(shared.somethingWrong)",
+      "hint": "share this link · friends join your party here",
+      "limit": "You've reached the invite limit. Replace the existing link instead.",
+      "linkLabel": "Invite link",
+      "loading": "preparing your invite link…",
+      "noLink": "no active link, create one to invite",
+      "panelHeading": "Invite",
+      "replace": "Replace link",
+      "share": "Share"
     },
-    "notFound": "[ph: we couldn't find this campaign]",
-    "settling": "[ph: settling your campaign]"
+    "noAccess": {
+      "body": "It may not exist, or you may not have access. Head home.",
+      "title": "This campaign is closed to you"
+    },
+    "notFound": "We couldn't find this campaign",
+    "settling": "Settling in"
   },
   "campaignNew": {
     "fork": {
-      "eyebrow": "[ph: a new world]",
+      "eyebrow": "A new world",
       "idea": {
-        "subtitle": "[ph: start from an idea — subtitle]",
-        "title": "[ph: start from an idea — title]"
+        "subtitle": "Give a sentence or a page. Mythrun fills in the rest.",
+        "title": "I know what I want"
       },
-      "lede": "[ph: every campaign starts as a world]",
+      "lede": "Every story needs a setting.",
       "love": {
-        "subtitle": "[ph: build from what you love — subtitle]",
-        "title": "[ph: build from what you love — title]"
+        "subtitle": "Describe what you love and watch a world emerge.",
+        "title": "Help me brainstorm"
       },
-      "question": "[ph: how do you want to begin?]"
+      "question": "How do you want to craft your world?"
     },
     "freeform": {
-      "begin": "[ph: begin]",
-      "eyebrow": "[ph: your own idea]",
-      "hint": "[ph: a sentence or a page — tone, place, what makes it strange]",
-      "question": "[ph: describe the world you want to play in]",
-      "rejectedFallback": "[ph: that idea can't seed a world — try another]",
-      "retry": "[ph: something interrupted the weave — try again]",
-      "switchToGuided": "[ph: not sure where to start? build it from things you love]"
+      "begin": "Begin",
+      "eyebrow": "In your words",
+      "hint": "A few words or a few paragraphs. What makes your world tick?",
+      "question": "Describe the world you want to play in.",
+      "rejectedFallback": "$t(shared.rejected)",
+      "retry": "The nib snapped mid-sentence. Try submitting again.",
+      "switchToGuided": "Intimidated by the blank page? Try building from things you love."
     },
     "guided": {
-      "cooldown": "[ph: a lot of tries just now — give it a moment]",
-      "credits": "[ph: you're out of session credits — top up to keep going]",
-      "eyebrow": "[ph: what you love]",
-      "find": "[ph: find my world →]",
-      "nameQuestion": "[ph: name something you love]",
-      "next": "[ph: next →]",
-      "retry": "[ph: something interrupted the weave — try again]",
+      "cooldown": "$t(shared.cooldown)",
+      "credits": "$t(shared.lowCredits)",
+      "eyebrow": "From what you love",
+      "find": "Weave it together →",
+      "nameQuestion": "Name a story you love.",
+      "next": "Next",
+      "retry": "$t(shared.interrupted)",
       "step": {
-        "one": "[ph: one of three]",
-        "three": "[ph: three of three]",
-        "two": "[ph: two of three]"
+        "one": "One of three",
+        "three": "Three of three",
+        "two": "Two of three"
       },
-      "switchToFreeform": "[ph: rather start from your own idea? describe it]",
-      "whyQuestion": "[ph: what do you love about it]"
+      "switchToFreeform": "Feeling constrained? Describe your world yourself.",
+      "whyQuestion": "What about it stays with you?"
     },
     "preview": {
-      "askChange": "[ph: ask for one change]",
-      "begin": "[ph: begin]",
-      "cancelChange": "[ph: never mind]",
-      "changeQuestion": "[ph: what would you change]",
-      "changeUsed": "[ph: your one change has been used]",
-      "cooldown": "[ph: a lot of tries just now — give it a moment]",
-      "credits": "[ph: you're out of session credits — top up to keep going]",
-      "eyebrow": "[ph: the world we found]",
-      "retry": "[ph: something interrupted the weave — try again]",
-      "rework": "[ph: rework]",
-      "startOver": "[ph: start over]"
+      "askChange": "Adjust something",
+      "begin": "Begin",
+      "cancelChange": "Keep it as is",
+      "changeQuestion": "What would you like to edit?",
+      "changeUsed": "Your world has already been altered.",
+      "cooldown": "$t(shared.cooldown)",
+      "credits": "$t(shared.lowCredits)",
+      "eyebrow": "Your world",
+      "retry": "$t(shared.interrupted)",
+      "rework": "Revise",
+      "startOver": "$t(shared.beginAgain)"
     },
     "rejection": {
-      "editAsFreeform": "[ph: edit it as your own idea]",
-      "eyebrow": "[ph: not this one]",
-      "fallback": "[ph: that idea can't seed a world — try another]",
-      "filteredMessage": "[ph: that can't become a world here — start something new]",
-      "judged": "[ph: what we tried to build]",
-      "startOver": "[ph: start over]"
+      "editAsFreeform": "Adjust it yourself",
+      "eyebrow": "Not this world",
+      "fallback": "$t(shared.rejected)",
+      "filteredMessage": "That's off the table here. Try something else.",
+      "judged": "The concept",
+      "startOver": "$t(shared.beginAgain)"
     },
     "synthesizing": {
-      "eyebrow": "[ph: finding your world]",
-      "failed": "[ph: something interrupted the weave — try again]",
-      "stillWriting": "[ph: still writing]",
-      "tryAgain": "[ph: try again]"
+      "eyebrow": "Piecing it together",
+      "failed": "$t(shared.interrupted)",
+      "stillWriting": "Writing",
+      "tryAgain": "$t(shared.tryAgain)"
     }
   },
   "characterCreate": {
     "chooser": {
       "freeform": {
-        "body": "[ph: describe them in your own words]",
-        "cta": "[ph: tell us who you are]"
+        "body": "Write what's important to you and Mythrun will fill in the rest",
+        "cta": "Simply describe your character"
       },
       "guided": {
-        "body": "[ph: answer a few questions and we'll build the sheet]",
-        "cta": "[ph: build your character]"
+        "body": "Pick from options, question by question.",
+        "cta": "Build step by step"
       },
-      "prompt": "[ph: how do you want to make your character?]"
+      "prompt": "How do you want to make your character?"
     },
     "freeform": {
-      "conceptPrompt": "[ph: who are you?]",
-      "conceptWhisper": "[ph: a name, a calling, a wound — whatever matters most]",
-      "error": "[ph: something went wrong — try again]",
-      "groundingPrompt": "[ph: and how do you come to be here?]",
-      "groundingWhisperFallback": "[ph: what brought your character to this place?]",
-      "stepIndicator": "[ph: {{current}} of {{total}}]",
-      "tooShort": "[ph: tell us a little more]"
+      "conceptPrompt": "Who are you?",
+      "conceptWhisper": "A name, a calling, an outfit. Whatever matters most.",
+      "continue": "Continue",
+      "error": "$t(shared.somethingWrong)",
+      "groundingPrompt": "And how do you come to be here?",
+      "groundingWhisperFallback": "What brings you to this place?",
+      "stepIndicator": "{{current}} of {{total}}",
+      "tooShort": "Tell us a little more."
     },
     "guided": {
+      "back": "$t(back)",
       "background": {
         "options": {
           "Acolyte": {
-            "name": "[ph: acolyte]"
+            "name": "Acolyte"
           },
           "Charlatan": {
-            "name": "[ph: charlatan]"
+            "name": "Charlatan"
           },
           "Criminal": {
-            "name": "[ph: criminal]"
+            "name": "Criminal"
           },
           "Entertainer": {
-            "name": "[ph: entertainer]"
+            "name": "Entertainer"
           },
           "Folk Hero": {
-            "name": "[ph: folk hero]"
+            "name": "Folk Hero"
           },
           "Guild Artisan": {
-            "name": "[ph: guild artisan]"
+            "name": "Guild Artisan"
           },
           "Hermit": {
-            "name": "[ph: hermit]"
+            "name": "Hermit"
           },
           "Noble": {
-            "name": "[ph: noble]"
+            "name": "Noble"
           },
           "Outlander": {
-            "name": "[ph: outlander]"
+            "name": "Outlander"
           },
           "Sage": {
-            "name": "[ph: sage]"
+            "name": "Sage"
           },
           "Sailor": {
-            "name": "[ph: sailor]"
+            "name": "Sailor"
           },
           "Soldier": {
-            "name": "[ph: soldier]"
+            "name": "Soldier"
           },
           "Urchin": {
-            "name": "[ph: urchin]"
+            "name": "Urchin"
           }
         },
-        "question": "[ph: what shaped you before this?]"
+        "question": "What lifestyle did you lead?"
       },
       "class": {
         "options": {
           "barbarian": {
-            "name": "[ph: barbarian]"
+            "name": "Barbarian"
           },
           "bard": {
-            "name": "[ph: bard]"
+            "name": "Bard"
           },
           "cleric": {
-            "name": "[ph: cleric]"
+            "name": "Cleric"
           },
           "druid": {
-            "name": "[ph: druid]"
+            "name": "Druid"
           },
           "fighter": {
-            "name": "[ph: fighter]"
+            "name": "Fighter"
           },
           "monk": {
-            "name": "[ph: monk]"
+            "name": "Monk"
           },
           "paladin": {
-            "name": "[ph: paladin]"
+            "name": "Paladin"
           },
           "ranger": {
-            "name": "[ph: ranger]"
+            "name": "Ranger"
           },
           "rogue": {
-            "name": "[ph: rogue]"
+            "name": "Rogue"
           },
           "sorcerer": {
-            "name": "[ph: sorcerer]"
+            "name": "Sorcerer"
           },
           "warlock": {
-            "name": "[ph: warlock]"
+            "name": "Warlock"
           },
           "wizard": {
-            "name": "[ph: wizard]"
+            "name": "Wizard"
           }
         },
-        "question": "[ph: what is your calling?]"
+        "question": "What is your calling?"
       },
+      "next": "Next",
       "notes": {
-        "prompt": "[ph: anything else we should know?]",
-        "whisper": "[ph: a detail, a quirk, a scar — leave it blank to skip]"
+        "prompt": "Anything else to add?",
+        "whisper": "Add a detail, or skip ahead."
       },
       "species": {
         "options": {
           "Dragonborn": {
-            "name": "[ph: dragonborn]"
+            "name": "Dragonborn"
           },
           "Dwarf": {
-            "name": "[ph: dwarf]"
+            "name": "Dwarf"
           },
           "Elf": {
-            "name": "[ph: elf]"
+            "name": "Elf"
           },
           "Gnome": {
-            "name": "[ph: gnome]"
+            "name": "Gnome"
           },
           "Half-Elf": {
-            "name": "[ph: half-elf]"
+            "name": "Half-Elf"
           },
           "Half-Orc": {
-            "name": "[ph: half-orc]"
+            "name": "Half-Orc"
           },
           "Halfling": {
-            "name": "[ph: halfling]"
+            "name": "Halfling"
           },
           "Human": {
-            "name": "[ph: human]"
+            "name": "Human"
           },
           "Tiefling": {
-            "name": "[ph: tiefling]"
+            "name": "Tiefling"
           }
         },
-        "question": "[ph: where are you from?]"
+        "question": "What kin claims you?"
       },
       "subclass": {
         "options": {
           "barbarian": {
-            "name": "[ph: berserker]"
+            "name": "Path of the Berserker"
           },
           "bard": {
-            "name": "[ph: college of lore]"
+            "name": "College of Lore"
           },
           "cleric": {
-            "name": "[ph: life domain]"
+            "name": "Life Domain"
           },
           "druid": {
-            "name": "[ph: circle of the land]"
+            "name": "Circle of the Land"
           },
           "fighter": {
-            "name": "[ph: champion]"
+            "name": "Champion"
           },
           "monk": {
-            "name": "[ph: way of the open hand]"
+            "name": "Way of the Open Hand"
           },
           "paladin": {
-            "name": "[ph: oath of devotion]"
+            "name": "Oath of Devotion"
           },
           "ranger": {
-            "name": "[ph: hunter]"
+            "name": "Hunter"
           },
           "rogue": {
-            "name": "[ph: thief]"
+            "name": "Thief"
           },
           "sorcerer": {
-            "name": "[ph: draconic bloodline]"
+            "name": "Draconic Bloodline"
           },
           "warlock": {
-            "name": "[ph: the fiend]"
+            "name": "The Fiend"
           },
           "wizard": {
-            "name": "[ph: school of evocation]"
+            "name": "School of Evocation"
           }
         },
-        "question": "[ph: how do you practice it?]"
-      }
+        "question": "How do you practice your calling?"
+      },
+      "switchToFreeform": "Describe them instead"
     },
     "joinSummary": {
-      "cta": "[ph: create your character]",
-      "eyebrow": "[ph: you're joining]",
-      "loadError": "[ph: we couldn't open this world — try again]",
-      "loading": "[ph: opening the world…]",
-      "retry": "[ph: try again]"
+      "cta": "Create your character",
+      "eyebrow": "Joining",
+      "loadError": "Couldn't open this world. Try again.",
+      "loading": "Stepping into the world…",
+      "retry": "$t(shared.tryAgain)"
     },
     "loading": {
-      "countdown": "[ph: ~{{time}} left]",
-      "stalled": "[ph: taking longer than usual]",
-      "title": "[ph: making your character]"
+      "beat": {
+        "class": "A calling takes shape",
+        "kit": "Equipment is gathered",
+        "name": "A name surfaces",
+        "scores": "Ability scores settle"
+      },
+      "countdown": "About {{time}} left",
+      "heading": "Bringing them to life…",
+      "stalled": "Still working. This one's taking a while.",
+      "title": "Your character is coming together"
     },
-    "processing": "[ph: bringing your character to life…]",
     "recap": {
-      "eyebrow": "[ph: your opening scene]"
+      "eyebrow": "Where you begin"
     },
     "reveal": {
-      "actionError": "[ph: something went wrong — try again]",
-      "loadError": "[ph: we couldn't bring up your character — try again]",
-      "loading": "[ph: meeting your character…]",
-      "retry": "[ph: try again]"
+      "actionError": "$t(shared.somethingWrong)",
+      "confirm": "This is me",
+      "hideFull": "Hide full sheet",
+      "loadError": "Couldn't bring up your character. Try again.",
+      "loading": "Meeting your character…",
+      "panel": {
+        "equipment": "What they carry",
+        "features": "What they can do",
+        "spells": "What they can cast"
+      },
+      "retry": "$t(shared.tryAgain)",
+      "seeFull": "See full sheet",
+      "startOver": "$t(shared.beginAgain)"
     },
     "staging": {
-      "beginError": "[ph: something went wrong — try again]",
-      "lede": "[ph: your character is made — play solo now, or invite others and start once the table's together]",
-      "loadError": "[ph: we couldn't load your party — try again]",
-      "loading": "[ph: gathering your party…]",
-      "retry": "[ph: try again]",
-      "title": "[ph: ready to begin?]"
+      "beginError": "$t(shared.somethingWrong)",
+      "beginParty": "everyone's ready, begin →",
+      "beginSolo": "begin the adventure →",
+      "creating": "choosing who they are…",
+      "gathering": "just joined, making their character…",
+      "inviteSub": "share a link · they join here",
+      "lede": "Your character is made. Play solo now, or invite others and start once the table's together.",
+      "loadError": "Couldn't load your party. Try again.",
+      "loading": "Gathering your party…",
+      "partyHeading": "Your party",
+      "retry": "$t(shared.tryAgain)",
+      "title": "Shall we begin?",
+      "waiting": "waiting for the party to gather…"
     }
   },
   "devTransport": {
@@ -385,230 +424,272 @@
     }
   },
   "error": {
-    "body": "[ph_error_body: about a sentence on the error]",
-    "contractBody": "[ph_contract_body: a dev note on the drift]",
-    "contractTitle": "[ph_contract_title]",
-    "retry": "[ph_retry]",
-    "title": "[ph_error_title]"
+    "body": "Something gave way. Try again in a moment.",
+    "contractBody": "The backend returned a shape the client doesn't expect. Regenerate the contract.",
+    "contractTitle": "Shape mismatch",
+    "retry": "$t(shared.tryAgain)",
+    "title": "Something broke."
+  },
+  "form": {
+    "required": "(required)"
   },
   "frame": {
-    "buyCredits": "[ph_buy_credits]",
-    "credits": "[ph_credits_label: session credits]",
-    "creditsLoading": "[ph_credits_loading]",
-    "displayName": "[ph_name]",
-    "logo": "[ph_logo]",
-    "settings": "[ph_settings]"
+    "buyCredits": "Add credits",
+    "credits": "Session credits",
+    "creditsLoading": "Loading balance",
+    "displayName": "{{displayName}}",
+    "settings": "Settings",
+    "wordmark": "Mythrun"
   },
   "home": {
     "card": {
       "byCreator": " · by {{creator}}",
-      "failed": "[ph: generation failed]",
-      "generating": "[ph: shaping your world]",
-      "lowCredits": "[ph: low on session credits — top up to start a session]",
-      "needsCharacter": "[ph: make your character]",
-      "notPlayed": "[ph: not played yet]",
-      "recently": "[ph: recently]",
-      "record": "[ph: {{sessions}} sessions · {{when}}]",
-      "waiting": "[ph: waiting for players]"
+      "failed": "The ink ran dry. Open to retry.",
+      "generating": "Crafting your world...",
+      "lowCredits": "$t(shared.lowCredits)",
+      "needsCharacter": "Time to author your character",
+      "notPlayed": "The table waits for its first session",
+      "recently": "recently",
+      "record_one": "{{sessions}} session · last played {{when}}",
+      "record_other": "{{sessions}} sessions · last played {{when}}",
+      "waiting": "The party's still assembling"
     },
-    "createCampaign": "[ph_home_create_campaign: create a campaign]",
-    "empty": "[ph: no campaigns yet]",
-    "loading": "[ph_loading]",
-    "title": "[ph_home_title]"
+    "createCampaign": "Create a campaign",
+    "empty": "An empty shelf. Write your first story.",
+    "loading": "Binding your pages...",
+    "title": "Your campaigns"
   },
   "join": {
-    "invalid": "[ph: this invite link isn't valid]",
-    "loadError": "[ph: we couldn't load this invitation — try again]",
-    "loading": "[ph: looking up your invitation…]",
-    "retry": "[ph: try again]"
+    "invalid": "This invitation doesn't lead anywhere.",
+    "loadError": "This invitation didn't load. Try again.",
+    "loading": "Reading your invite…",
+    "preview": {
+      "accept": "accept the invitation →",
+      "eyebrow": "You've been invited",
+      "error": "$t(shared.somethingWrong)",
+      "full": "This campaign is already full.",
+      "gone": "This campaign is no longer available.",
+      "invalid": "This invite is no longer valid.",
+      "invitedBy": "Invited by",
+      "notFound": "That invite doesn't lead anywhere.",
+      "revoked": "This invite link was turned off.",
+      "signin": "sign in to join →",
+      "timeout": "That took too long. Try again."
+    },
+    "retry": "$t(shared.tryAgain)"
   },
   "landing": {
-    "cta": "[ph_landing_cta: a terse primary-CTA label — enter a session]",
-    "legal": "[ph_landing_legal: <1>Terms</1> · <2>Privacy</2> · <3>Questions?</3> — a short legal/contact line]",
-    "pricing": "[ph_landing_pricing: one line — sessions start at $X, your first is free]",
+    "cta": "Begin the prologue",
+    "legal": "<1>Terms</1> · <2>Privacy</2> · <3>Questions?</3>",
+    "pricing": "Your first session is free",
     "signin": "Sign in",
-    "tagline": "[ph_landing_tagline: a terse at-the-table line, ~1 sentence — what a session feels like]",
-    "title": "[ph_landing_title: the page's h1 — brand name + what Mythrun is, ~5-8 words, for SEO + screen readers]",
+    "tagline": "Gather your party. Build your world. Discover what awaits.",
+    "title": "Immersive stories, told through D&D",
     "wordmark": "Mythrun"
   },
   "notFound": {
-    "body": "[ph_404_body: about a sentence explaining this]",
-    "title": "[ph_404_title]"
+    "body": "The story ran cold. Head back home.",
+    "title": "This page is unwritten."
   },
   "onboard": {
     "continue": "Continue",
     "errors": {
-      "displayNameInvalid": "[ph_onboard_err_display: ~1 sentence — that display name can't be used, try another]",
-      "generic": "[ph_onboard_err_generic: ~1 sentence — something went wrong, please try again]"
+      "displayNameInvalid": "That name can't be used. Pick another.",
+      "generic": "That didn't take. Try again in a moment."
     },
-    "hint": "[ph_onboard_hint: a reassuring 'you can change this later' line]",
+    "hint": "You can rewrite this later.",
     "nameLabel": "Display name",
-    "prompt": "[ph_onboard_prompt: the gentle 'what should we call you?' question, serif]"
+    "prompt": "What should we call you?"
   },
   "play": {
     "blocked": {
-      "body": "[ph: the table isn't ready just yet — give it a moment]",
-      "membersBody": "[ph: waiting on {{names}} to finish their characters]",
-      "retry": "[ph: try again]"
+      "body": "The table isn't ready just yet. Give it a moment.",
+      "membersBody": "{{names}} are still finishing their characters.",
+      "retry": "$t(shared.tryAgain)"
     },
     "complete": {
-      "body": "[ph: gathering tonight's recap…]",
-      "title": "[ph: session complete]"
+      "body": "Writing up the recap…",
+      "title": "The session ends"
     },
     "connection": {
-      "failed": "[ph: lost the connection — trying to get you back]",
-      "reconnecting": "[ph: reconnecting to the table…]"
+      "failed": "lost you for a moment, reconnecting",
+      "reconnecting": "finding your way back…"
     },
     "correction": {
-      "label": "[ph: correction]"
+      "label": "Correction"
     },
     "error": {
-      "body": "[ph: we couldn't open this session just now]",
-      "retry": "[ph: try again]"
+      "body": "This session failed to open. Try again.",
+      "retry": "$t(shared.tryAgain)"
     },
     "input": {
-      "placeholder": "[ph: what do you do?]",
-      "send": "[ph: send]",
-      "summon": "[ph: ask the DM]"
+      "placeholder": "What do you do next?",
+      "send": "Send",
+      "summon": "Ask the DM"
     },
     "knowledge": {
-      "graphNodes": "[ph: browse the world by name]",
-      "graphTab": "[ph: connections]",
-      "graphUnavailable": "[ph: the connections map isn't ready yet]",
-      "mention": "[ph: {{name}}]",
-      "openInWiki": "[ph: open in the world guide]",
+      "graphNodes": "Browse the world by name",
+      "graphTab": "Connections",
+      "graphUnavailable": "The connections map isn't ready yet.",
+      "mention": "{{name}}",
+      "openInWiki": "Read the full entry",
       "sheet": {
-        "conditions": "[ph: recent changes]",
-        "empty": "[ph: nothing has changed yet]",
-        "hp": "[ph: current HP]"
+        "conditions": "Recent updates",
+        "empty": "Still as you started.",
+        "hp": "HP"
       },
-      "sheetTab": "[ph: your character]",
-      "sheetUnavailable": "[ph: your character sheet isn't ready yet]",
-      "tabs": "[ph: table knowledge]",
+      "sheetTab": "Your character",
+      "sheetUnavailable": "Your character sheet isn't ready yet.",
+      "tabs": "What you know",
       "type": {
-        "faction": "[ph: faction]",
-        "location": "[ph: place]",
-        "npc": "[ph: person]",
-        "other": "[ph: entry]"
+        "faction": "$t(shared.entityType.faction)",
+        "location": "$t(shared.entityType.location)",
+        "npc": "$t(shared.entityType.npc)",
+        "other": "Entry"
       },
       "wiki": {
-        "back": "[ph: back]",
-        "empty": "[ph: nothing found]",
-        "emptyBody": "[ph: nothing known here yet]",
+        "back": "$t(back)",
+        "empty": "$t(shared.wiki.empty)",
+        "emptyBody": "Nothing recorded here yet.",
+        "glossary": "$t(shared.wiki.glossary)",
         "group": {
-          "faction": "[ph: factions]",
-          "item": "[ph: things]",
-          "location": "[ph: places]",
-          "npc": "[ph: people]"
+          "faction": "$t(shared.entityGroup.faction)",
+          "item": "$t(shared.entityGroup.item)",
+          "location": "$t(shared.entityGroup.location)",
+          "npc": "$t(shared.entityGroup.npc)"
         },
-        "index": "[ph: browse]",
-        "references": "[ph: dig deeper]",
-        "related": "[ph: connected]",
-        "search": "[ph: search the world]",
-        "searchPlaceholder": "[ph: search by name]"
+        "index": "Explore",
+        "references": "$t(shared.wiki.digDeeper)",
+        "related": "$t(shared.wiki.related)",
+        "search": "Search the world",
+        "searchPlaceholder": "$t(shared.wiki.searchPlaceholder)"
       },
-      "wikiTab": "[ph: world]",
-      "wikiUnavailable": "[ph: the world guide isn't ready yet]"
+      "wikiTab": "World",
+      "wikiUnavailable": "The world guide isn't ready yet."
     },
-    "loading": "[ph: opening the table…]",
+    "loading": "Setting a place for you…",
     "noCharacter": {
-      "body": "[ph: you don't have a character in this campaign yet — make one to join the table]",
-      "cta": "[ph: make your character]",
-      "title": "[ph: you're not at the table yet]"
+      "body": "There's no character for you here yet. Make one to take your seat.",
+      "cta": "Create your character",
+      "title": "You don't have a seat yet"
     },
     "prep": {
-      "failedBody": "[ph: preparing the session was interrupted — try again]",
-      "failedRetry": "[ph: try again]",
-      "failedTitle": "[ph: tonight's session didn't come together]"
+      "failedBody": "Something interrupted the prep. Try again.",
+      "failedRetry": "$t(shared.tryAgain)",
+      "failedTitle": "The prep didn't come together"
     },
     "preparing": {
-      "detail": "[ph: this can take a moment]",
-      "label": "[ph: the DM is preparing the next session…]"
+      "detail": "This can take a moment.",
+      "label": "The DM is preparing the next session…"
     },
     "purchase": {
       "notOwner": {
-        "body": "[ph: the host is out of session credits — hang tight]",
-        "title": "[ph: the table is paused]"
+        "body": "The host is out of session credits. Hang tight.",
+        "title": "The table is paused"
       },
       "owner": {
-        "body": "[ph: add more to keep playing]",
-        "buy": "[ph: add session credits]",
-        "detail": "[ph: {{available}} of {{required}} needed]",
-        "title": "[ph: you're out of session credits]"
+        "buy": "Add session credits",
+        "detail": "{{available}} / {{required}} credits",
+        "title": "You're out of session credits"
       }
     },
     "roll": {
-      "advantage": "[ph: advantage]",
-      "continue": "[ph: continue]",
-      "dc": "[ph: DC]",
-      "dieResult": "[ph: your roll]",
-      "disadvantage": "[ph: disadvantage]",
-      "roll": "[ph: roll]",
+      "advantage": "advantage",
+      "continue": "Continue",
+      "dc": "DC",
+      "dieResult": "Your roll",
+      "disadvantage": "disadvantage",
+      "roll": "Roll",
       "tier": {
-        "fail": "[ph: miss]",
-        "greatSuccess": "[ph: critical success]",
-        "success": "[ph: success]"
+        "fail": "failure",
+        "greatSuccess": "critical success",
+        "success": "success"
       }
     },
     "sidebar": {
-      "body": "[ph: the party + your sheet live here soon]",
-      "collapse": "[ph: close the table panel]",
-      "expand": "[ph: open the table panel]",
-      "title": "[ph: at the table]"
+      "collapse": "Hide the table panel",
+      "expand": "Open the table panel",
+      "title": "At the table"
     },
     "start": {
-      "connecting": "[ph: joining the table…]",
-      "prep": "[ph: the DM is preparing tonight's session…]"
+      "connecting": "Joining the table…",
+      "heading": "The table gathers…",
+      "prep": "The DM is preparing today's session…"
     },
     "startError": {
-      "body": "[ph: we couldn't start the session just now]",
-      "retry": "[ph: try again]"
+      "body": "The session failed to start. Try again.",
+      "retry": "$t(shared.tryAgain)"
     },
     "thinking": {
-      "dm": "[ph: the DM is thinking…]",
-      "typing": "[ph: is typing…]"
+      "dm": "the DM is thinking…",
+      "typing": "is typing…"
     }
   },
-  "richSample": "[ph_rich-text with a <1>link</1>]",
+  "shared": {
+    "beginAgain": "Begin again",
+    "cooldown": "That's a lot of tries. Give it a moment.",
+    "entityGroup": {
+      "faction": "Factions",
+      "item": "Items",
+      "location": "Places",
+      "npc": "People"
+    },
+    "entityType": {
+      "faction": "Faction",
+      "location": "Place",
+      "npc": "Person"
+    },
+    "interrupted": "Something interrupted the weave. Try again.",
+    "lowCredits": "Low on session credits. Top up to dive back in.",
+    "rejected": "This one can't take root. Try a different idea.",
+    "somethingWrong": "Something went wrong. Try again.",
+    "tryAgain": "Try again",
+    "wiki": {
+      "digDeeper": "Dig deeper",
+      "empty": "No matches",
+      "glossary": "Glossary",
+      "related": "Related",
+      "searchPlaceholder": "Search"
+    }
+  },
   "signin": {
     "discord": "Continue with Discord",
     "google": "Continue with Google",
-    "legal": "[ph_signin_legal: a short Terms · Privacy line]",
-    "suspended": "[ph_signin_suspended: ~1 sentence — this account is suspended, with a contact nudge]",
-    "tagline": "[ph_signin_tagline: a terse at-the-table line, ~1 sentence — the door into a session]",
+    "legal": "Terms · Privacy",
+    "suspended": "This account is suspended. <1>Contact us</1> to get it sorted out.",
+    "tagline": "Take your seat.",
     "wordmark": "Mythrun"
   },
   "splash": {
-    "loading": "[ph_splash_loading: a brief 'getting things ready' line]"
+    "loading": "Getting things ready…"
   },
   "startingLevel": {
-    "cta": "[ph: begin at level {{level}}]",
-    "error": "[ph: something went wrong — try again]",
-    "eyebrow": "[ph: starting level]",
-    "grant1": "[ph: core class features — a true beginning]",
-    "grant2": "[ph: a second class feature; casters gain more slots]",
-    "grant3": "[ph: your subclass, and 2nd-level spells for full casters]",
-    "grant4": "[ph: an ability score improvement or a first feat]",
-    "grant5": "[ph: Extra Attack or 3rd-level spells — a real power spike]",
-    "hold": "[ph: your host is choosing where you begin]",
-    "holdTitle": "[ph: the table is being set]",
-    "lede": "[ph: everyone starts here — higher levels bring more features and staying power]",
-    "loading": "[ph: setting the table]",
-    "prompt": "[ph: what level does your party begin at?]"
+    "cardEyebrow": "Level",
+    "cta": "Begin at level {{level}}",
+    "error": "$t(shared.somethingWrong)",
+    "eyebrow": "Starting level",
+    "grant1": "The absolute baseline.",
+    "grant2": "A little extra power.",
+    "grant3": "Gain expertise through specialization.",
+    "grant4": "Boost your scores and abilities.",
+    "grant5": "Let's skip the training montage.",
+    "hold": "Your host is setting the party's level.",
+    "holdTitle": "Setting the table",
+    "lede": "Everyone starts here",
+    "loading": "Setting the table",
+    "prompt": "What level does your party begin at?"
   },
   "startingSituation": {
-    "empty": "[ph: no openings yet]",
-    "error": "[ph: something went wrong — try again]",
-    "eyebrow": "[ph: the opening]",
-    "hold": "[ph: your host is choosing where it begins]",
-    "holdTitle": "[ph: the table is being set]",
-    "loading": "[ph: finding your openings]",
-    "prompt": "[ph: where does it begin?]"
+    "empty": "No openings yet",
+    "error": "$t(shared.somethingWrong)",
+    "eyebrow": "Where it starts",
+    "hold": "Your host is choosing where it all begins.",
+    "holdTitle": "Setting the table",
+    "loading": "Selecting your starting locations",
+    "prompt": "Where does the story open?"
   },
   "stub": {
-    "characterNew": "[ph_character_new_screen]",
-    "play": "[ph_play_screen]",
-    "recap": "[ph_recap_screen]"
+    "recap": "The recap will live here"
   },
   "theme": {
     "toDark": "Switch to dark theme",
@@ -617,79 +698,79 @@
   },
   "worldGen": {
     "a11y": {
-      "entities": "[ph: {{count}} have taken shape]",
-      "entityList": "[ph: what has taken shape so far]"
+      "entities": "{{count}} entities have been written",
+      "entityList": "what's appeared so far"
     },
-    "countdown": "[ph: ~{{time}} left]",
-    "failedBody": "[ph: the making was interrupted — you can pick it back up]",
-    "failedTitle": "[ph: the world stalled]",
-    "flavor1": "[ph: worldgen flavor 1]",
-    "flavor10": "[ph: worldgen flavor 10]",
-    "flavor11": "[ph: worldgen flavor 11]",
-    "flavor12": "[ph: worldgen flavor 12]",
-    "flavor13": "[ph: worldgen flavor 13]",
-    "flavor14": "[ph: worldgen flavor 14]",
-    "flavor15": "[ph: worldgen flavor 15]",
-    "flavor16": "[ph: worldgen flavor 16]",
-    "flavor17": "[ph: worldgen flavor 17]",
-    "flavor18": "[ph: worldgen flavor 18]",
-    "flavor19": "[ph: worldgen flavor 19]",
-    "flavor2": "[ph: worldgen flavor 2]",
-    "flavor20": "[ph: worldgen flavor 20]",
-    "flavor3": "[ph: worldgen flavor 3]",
-    "flavor4": "[ph: worldgen flavor 4]",
-    "flavor5": "[ph: worldgen flavor 5]",
-    "flavor6": "[ph: worldgen flavor 6]",
-    "flavor7": "[ph: worldgen flavor 7]",
-    "flavor8": "[ph: worldgen flavor 8]",
-    "flavor9": "[ph: worldgen flavor 9]",
-    "loadingLabel": "[ph: making your world]",
-    "retry": "[ph: try again]",
+    "countdown": "about {{time}} left",
+    "failedBody": "The making was interrupted.",
+    "failedTitle": "The world stalled",
+    "flavor1": "The gods decide what to name themselves.",
+    "flavor10": "The first law is made and then broken.",
+    "flavor11": "Languages find their words.",
+    "flavor12": "Ink is put to page.",
+    "flavor13": "Invisible borders snake across the land.",
+    "flavor14": "A song is sung for the first time.",
+    "flavor15": "The stars are grouped into stories.",
+    "flavor16": "Music finds its first instrument.",
+    "flavor17": "A throne is carved that will outlast its king.",
+    "flavor18": "The first grave is marked.",
+    "flavor19": "A gift is given.",
+    "flavor2": "History fades into mythology.",
+    "flavor20": "The world's name is spoken aloud.",
+    "flavor3": "The spark of magic enters the world.",
+    "flavor4": "Waters spring forth.",
+    "flavor5": "A landscape is carved into shape.",
+    "flavor6": "A creature notices its own thoughts.",
+    "flavor7": "Populations spill across the world.",
+    "flavor8": "Somewhere, a people decides that they are a people.",
+    "flavor9": "A calendar is scrawled across the seasons.",
+    "loadingLabel": "making your world",
+    "retry": "$t(shared.tryAgain)",
     "stage": {
-      "coherence_pass": "[ph: reconciling the whole]",
-      "concept_intake": "[ph: reading your idea]",
-      "embed_world": "[ph: committing it to memory]",
-      "entity_consolidation": "[ph: resolving the ties]",
-      "entity_relationships": "[ph: drawing the ties]",
-      "locations_and_npcs": "[ph: settling people and places]",
-      "random_tables": "[ph: seeding the unexpected]",
-      "starting_situation": "[ph: finding your opening]",
-      "vocabulary_intake": "[ph: learning the local tongue]",
-      "world_and_factions": "[ph: raising the powers]",
-      "world_color": "[ph: setting the palette]",
-      "world_introduction": "[ph: writing the introduction]"
+      "coherence_pass": "Reading it all back",
+      "concept_intake": "Reading your idea",
+      "embed_world": "Committing it to memory",
+      "entity_consolidation": "Settling who's who",
+      "entity_relationships": "Drawing the connections",
+      "locations_and_npcs": "Settling people and places",
+      "random_tables": "Preparing the unexpected",
+      "starting_situation": "Choosing where it begins",
+      "vocabulary_intake": "Gathering the right words",
+      "world_and_factions": "Creating regions and factions",
+      "world_color": "Setting the mood",
+      "world_introduction": "Writing the opening pages"
     },
-    "statusDone": "[ph: your world is ready]",
-    "statusProgress": "[ph: world generation progress]",
-    "statusTitle": "[ph: weaving your world]",
-    "terminalBody": "[ph: this one can't continue — start a new campaign]",
-    "terminalTitle": "[ph: this world can't be made]",
-    "watch": "[ph: watch your world be born]"
+    "statusDone": "Your world is ready",
+    "statusProgress": "world generation progress",
+    "statusTitle": "weaving your world",
+    "terminalBody": "This world's a dead end. Start a new one.",
+    "terminalTitle": "this world can't be made",
+    "watch": "Watch it take shape"
   },
   "worldReveal": {
-    "continue": "[ph: continue]",
-    "empty": "[ph: nothing to explore yet]",
-    "explorePrompt": "[ph: wander your world; continue when you're ready]",
-    "graphNodeList": "[ph: pick a place or figure from your world]",
+    "continue": "Continue",
+    "empty": "nothing here yet",
+    "explorePrompt": "Wander your world. Continue when you're ready.",
+    "graphNodeList": "Select a node to learn more",
     "group": {
-      "faction": "[ph: factions]",
-      "item": "[ph: things]",
-      "location": "[ph: places]",
-      "npc": "[ph: people]"
+      "faction": "$t(shared.entityGroup.faction)",
+      "item": "$t(shared.entityGroup.item)",
+      "location": "$t(shared.entityGroup.location)",
+      "npc": "$t(shared.entityGroup.npc)"
     },
-    "loading": "[ph: settling your world]",
-    "title": "[ph: your world]",
-    "unavailable": "[ph: the world wiki isn't available right now]",
-    "wikiBack": "[ph: go back]",
-    "wikiClose": "[ph: close the world wiki]",
-    "wikiDigDeeper": "[ph: dig deeper]",
-    "wikiEmpty": "[ph: nothing matches]",
-    "wikiEmptyBody": "[ph: the world holds nothing on this yet]",
-    "wikiGlossary": "[ph: glossary]",
-    "wikiIndex": "[ph: index]",
-    "wikiOpen": "[ph: open the world wiki]",
-    "wikiRelated": "[ph: connected across your world]",
-    "wikiSearchLabel": "[ph: search your world]",
-    "wikiSearchPlaceholder": "[ph: search]"
+    "loading": "settling your world",
+    "title": "Your world",
+    "unavailable": "the world wiki isn't available right now",
+    "wikiBack": "$t(back)",
+    "wikiClose": "close the wiki",
+    "wikiDigDeeper": "$t(shared.wiki.digDeeper)",
+    "wikiEmpty": "$t(shared.wiki.empty)",
+    "wikiEmptyBody": "Nothing's recorded here yet.",
+    "wikiGlossary": "$t(shared.wiki.glossary)",
+    "wikiIndex": "Index",
+    "wikiOpen": "open the wiki",
+    "wikiRelated": "$t(shared.wiki.related)",
+    "wikiSearchLabel": "Explore your world",
+    "wikiSearchPlaceholder": "$t(shared.wiki.searchPlaceholder)"
   }
 }

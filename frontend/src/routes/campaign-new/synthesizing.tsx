@@ -27,7 +27,7 @@ import type { RejectionState } from './rejection.tsx'
 //
 // Pure presentation + the store subscription: the screen never navigates
 // itself and never opens/closes the stream (the controller owns the handle).
-// Composes @mythrun/ui only; every string is an i18n `[ph:]` key; the PROSE
+// Composes @mythrun/ui only; every string is an i18n key; the PROSE
 // renders as data (R5).
 
 export interface SynthesizingScreenProps {

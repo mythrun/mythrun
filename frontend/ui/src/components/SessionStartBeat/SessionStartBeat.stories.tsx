@@ -7,17 +7,18 @@ import { SessionStartBeat } from './SessionStartBeat.tsx'
 // with an ease-in "acceleration") beside the two phase rows. ONE beat, TWO labeled
 // phases: `prep` (the SSE-driven atmospheric wait) and `connecting` (the short
 // socket-connect boundary). Pure/presentational: the specimens hand it a fixed
-// `phase`. The labels are realistic samples (stories are lint-exempt); the real
-// screen passes the resolved [ph:] i18n strings.
+// `phase`. The labels use the real MYT-100 copy (the real screen resolves the
+// same i18n strings and passes them in).
 
-const PREP_LABEL = 'the DM is preparing tonight’s session…'
-const CONNECTING_LABEL = 'connecting to the table…'
+const HEADING = 'The table gathers'
+const PREP_LABEL = "The DM is preparing today's session…"
+const CONNECTING_LABEL = 'Joining the table…'
 
 const meta: Meta<typeof SessionStartBeat> = {
   title: 'Session/SessionStartBeat',
   component: SessionStartBeat,
   tags: ['autodocs'],
-  args: { prepLabel: PREP_LABEL, connectingLabel: CONNECTING_LABEL },
+  args: { heading: HEADING, prepLabel: PREP_LABEL, connectingLabel: CONNECTING_LABEL },
   // A paper page ground so the loadwrap card reads as it does on the real screen.
   decorators: [
     (Story) => (
@@ -81,7 +82,7 @@ function StartDriver(): React.JSX.Element {
     }
   }, [phase])
   return (
-    <SessionStartBeat phase={phase} reducedMotion={false} prepLabel={PREP_LABEL} connectingLabel={CONNECTING_LABEL} />
+    <SessionStartBeat phase={phase} reducedMotion={false} heading={HEADING} prepLabel={PREP_LABEL} connectingLabel={CONNECTING_LABEL} />
   )
 }
 

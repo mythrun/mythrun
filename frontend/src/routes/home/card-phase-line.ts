@@ -55,7 +55,10 @@ export function cardPhaseLine(
 ): string {
   const { cardPhase, sessionCount, lastPlayedAt } = campaign
   if (cardPhase === 'played') {
+    // `count` drives i18next's plural selection (record_one vs record_other); the
+    // same value rides as `sessions` for the `{{sessions}}` interpolation.
     return t('home.card.record', {
+      count: sessionCount,
       sessions: sessionCount,
       when: lastPlayedAt !== null ? formatRelative(lastPlayedAt, nowMs, locale) : t('home.card.recently'),
     })

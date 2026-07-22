@@ -8,10 +8,10 @@ import { FreeformPrompt } from './FreeformPrompt.tsx'
 // is the field's aria-described guidance. Pure/presentational — value/onChange and
 // onSubmit are the neutral callbacks the view-model wires.
 //
-// Content/i18n: `prompt`, `whisper`, and `placeholder` are the resolved copy the
-// shell passes in; the specimen strings below are realistic samples (stories are
-// lint-exempt). The component is measure-agnostic, so these stories supply the
-// reading measure (the desktop column and the 375px phone frame).
+// Content/i18n: `prompt`, `whisper`, `placeholder`, and `submitLabel` are the
+// resolved copy the shell passes in; the specimen strings below are realistic
+// samples (stories are lint-exempt). The component is measure-agnostic, so these
+// stories supply the reading measure (the desktop column and the 375px phone frame).
 
 const meta: Meta<typeof FreeformPrompt> = {
   title: 'Character/FreeformPrompt',
@@ -49,6 +49,7 @@ function Live({
       value={value}
       onChange={setValue}
       onSubmit={() => undefined}
+      submitLabel="Continue"
       placeholder={PLACEHOLDER}
       {...(stepIndicator !== undefined && { stepIndicator })}
     />

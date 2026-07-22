@@ -32,7 +32,7 @@ import { Spinner } from '../Spinner/Spinner.tsx'
 // then purely decorative and the ThinkingIndicator's own text is the SOLE
 // announcement, preserving the existing live-region semantics exactly.
 //
-// Platform-neutral props (§9): booleans + resolved [ph:] labels + display-name
+// Platform-neutral props (§9): booleans + resolved i18n labels + display-name
 // DATA. `typingLabel` is the resolved presence label; the names are joined in
 // front of it (MYT-100 owns the final copy / pluralization).
 

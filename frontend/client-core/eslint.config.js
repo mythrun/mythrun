@@ -102,5 +102,57 @@ export default [
       ],
     },
   },
+  {
+    // MYT-100 placeholder ban: `[ph:` / `[ph_` is interim placeholder copy. After
+    // the copy pass any surviving marker is a BUG, so it is a hard build break
+    // across ALL client-core source — tests INCLUDED. Implemented via
+    // no-restricted-syntax so it catches both plain string literals (the beat
+    // labels, contract defaults) and template literals. Flat config REPLACES
+    // no-restricted-syntax options (it does not merge them), so the repo-wide
+    // default-export ban inherited from the root config is RE-LISTED here —
+    // otherwise this block would silently drop it for src/**. (The root's
+    // test-only DROP SCHEMA selectors are backend Postgres test-isolation policy
+    // with no meaning in a frontend package, so they are intentionally not
+    // carried over — see the LINT-agent report for that seam.)
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ExportDefaultDeclaration',
+          message: 'Default exports are forbidden. Use named exports only.',
+        },
+        {
+          selector: 'Literal[value=/\\[ph[:_]/]',
+          message:
+            'Placeholder copy ([ph:… / [ph_…) must not ship. Replace it with a real i18n key + value. (MYT-100.)',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/\\[ph[:_]/]',
+          message:
+            'Placeholder copy ([ph:… / [ph_…) must not ship. Replace it with a real i18n key + value. (MYT-100.)',
+        },
+        {
+          // Bare JSX text (`<span>[ph: …]</span>`) matcher — kept for PARITY with
+          // the web + ui ph-bans so the three configs stay identical and can't
+          // drift. Inert here: client-core is the DOM-free brain (no JSX), so no
+          // JSXText node ever appears; it fires in the JSX packages.
+          selector: 'JSXText[value=/\\[ph[:_]/]',
+          message:
+            'Placeholder copy ([ph:… / [ph_…) must not ship. Replace it with a real i18n key + value. (MYT-100.)',
+        },
+      ],
+    },
+  },
+  {
+    // MYT-100: the i18n descriptions registry is an authoring-context file that
+    // MUST stay 1:1 with the catalog (common.json) — a lockstep test in
+    // resources.test.ts is the real invariant. It grows one entry per catalog
+    // key BY DESIGN, so the root config's 400-line max-lines warning is noise
+    // here (any fixed cap just re-trips as copy is added). Turned off for this
+    // one file; the 1:1 test, not a line count, guards it.
+    files: ['src/i18n/descriptions.ts'],
+    rules: { 'max-lines': 'off' },
+  },
   eslintConfigPrettier,
 ]

@@ -7,6 +7,9 @@ import type { LoadingBeat } from './types.ts'
 
 /** Props for the character-generation loading beat. */
 export interface CharacterLoadingBeatProps {
+  /** The resolved beat heading (the eyebrow over the surfacing rows) — the shell
+   *  resolves i18n and passes it. */
+  heading: string
   /** The ordered beats, each advancing pending → active → done. */
   beats: LoadingBeat[]
   /** Honour the user's reduced-motion preference — no fill animation / churn.

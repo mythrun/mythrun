@@ -20,7 +20,7 @@ import { CharacterRevealSurface } from './character-reveal.tsx'
 // "See full sheet" → a LOCAL expand (no network). These tests inject the three
 // endpoint seams (defaults are the real endpoints) and assert each path. All three
 // providers wrap the surface (ThemeProvider reads localStorage on mount → the
-// in-memory shim; i18n serves the [ph:] catalog; ApiClientProvider carries the ctx).
+// in-memory shim; i18n serves the real catalog; ApiClientProvider carries the ctx).
 
 // ENVIRONMENT shim (Node vs jsdom): @mythrun/ui's <ThemeProvider> reads `localStorage`
 // on mount; the platform builtin can shadow jsdom's real Storage. Install a functional
@@ -165,7 +165,7 @@ describe('CharacterRevealSurface — fetch + adapt + render', () => {
       .mockResolvedValueOnce(RAW)
     renderSurface({ getCharacter })
     await screen.findByTestId('character-reveal-error')
-    fireEvent.click(screen.getByText('[ph: try again]'))
+    fireEvent.click(screen.getByText(i18n.t('characterCreate.reveal.retry')))
     await screen.findByTestId('character-sheet-reveal')
     expect(getCharacter).toHaveBeenCalledTimes(2)
   })
@@ -189,7 +189,7 @@ describe('CharacterRevealSurface — actions', () => {
     const onReset = vi.fn()
     renderSurface({ resetCharacterConcept, onReset })
     await screen.findByTestId('character-sheet-reveal')
-    fireEvent.click(screen.getByRole('button', { name: 'Start over' }))
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
     await waitFor(() => {
       expect(onReset).toHaveBeenCalledTimes(1)
     })
@@ -227,7 +227,7 @@ describe('CharacterRevealSurface — actions', () => {
     const onReset = vi.fn()
     renderSurface({ resetCharacterConcept, onReset })
     await screen.findByTestId('character-sheet-reveal')
-    fireEvent.click(screen.getByRole('button', { name: 'Start over' }))
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
     await screen.findByTestId('character-reveal-action-error')
     expect(onReset).not.toHaveBeenCalled()
   })

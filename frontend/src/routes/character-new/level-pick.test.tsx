@@ -151,11 +151,9 @@ describe('LevelPickRoute — the owner-only picker', () => {
     const cards = await screen.findAllByTestId('level-card')
     expect(cards).toHaveLength(5)
     expect(cards.map((c) => c.getAttribute('data-level'))).toEqual(['1', '2', '3', '4', '5'])
-    // Each card carries its [ph:] grant gloss.
-    expect(screen.getByText('[ph: core class features — a true beginning]')).toBeDefined()
-    expect(
-      screen.getByText('[ph: Extra Attack or 3rd-level spells — a real power spike]'),
-    ).toBeDefined()
+    // Each card carries its grant gloss.
+    expect(screen.getByText(i18n.t('startingLevel.grant1'))).toBeDefined()
+    expect(screen.getByText(i18n.t('startingLevel.grant5'))).toBeDefined()
     // The owner sees the picker, never the member hold.
     expect(screen.queryByTestId('level-pick-hold')).toBeNull()
   })
@@ -189,10 +187,13 @@ describe('LevelPickRoute — selecting a level hands off to character creation',
   it('posts the chosen level and navigates to the create beat on success', async () => {
     const setLevel = vi.fn().mockResolvedValue(undefined)
     renderPick({ setStartingLevel: setLevel })
-    await screen.findAllByTestId('level-card')
+    const cards = await screen.findAllByTestId('level-card')
 
-    // Pick level 5 (not the default) then confirm.
-    fireEvent.click(screen.getByRole('button', { name: /Extra Attack/ }))
+    // Pick level 5 (not the default) then confirm — select by the durable
+    // data-level attribute, not the grant-gloss copy.
+    const level5 = cards.find((c) => c.getAttribute('data-level') === '5')
+    if (level5 === undefined) throw new Error('no level-5 card')
+    fireEvent.click(level5)
     fireEvent.click(screen.getByTestId('level-pick-confirm'))
 
     // Handed off to the create beat, having posted level 5 for this campaign.
@@ -249,7 +250,7 @@ describe('LevelPickRoute — selecting a level hands off to character creation',
 
     // A calm retryable note surfaces and the picker stays for a re-confirm — we did
     // NOT navigate onward.
-    await screen.findByText('[ph: something went wrong — try again]')
+    await screen.findByText(i18n.t('startingLevel.error'))
     expect(screen.getByTestId('level-pick')).toBeDefined()
     expect(screen.queryByTestId('character-new')).toBeNull()
   })

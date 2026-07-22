@@ -57,8 +57,10 @@ export interface WorldGenLoadingProps extends Omit<BaseProps, 'children'> {
   /** Entities have started streaming → show the watch button. Default false
    *  (the pure prep act). */
   watchReady?: boolean
-  /** i18n key: the watch button's label (e.g. "watch your world be born"). */
-  watchLabel?: string
+  /** The watch button's label (a resolved i18n string, e.g. "Watch it take
+   *  shape") — the consumer passes it (MYT-100 made it required; the DS owns no
+   *  copy). Rendered only when `watchReady`. */
+  watchLabel: string
   /** Pressed the watch button — the consumer swaps to the graph view. */
   onWatch?: () => void
 }

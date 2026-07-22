@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { StageTiming } from '@mythrun/client-core'
 import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
+import { WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/contract/events'
 import type { StageProgress, WorldGenGraphProps } from '@mythrun/ui'
 import { i18n } from '../../i18n/config.ts'
 import { GeneratingView } from './generating.tsx'
@@ -18,9 +19,10 @@ import { GeneratingView } from './generating.tsx'
 //
 //   ACT TWO (graph): the GATED, fog-forward experience (§3.3/§3.4): the graph is
 //   `interactive={false}`, the status card is fed the stream's `stages[]` + a
-//   WATCHED-entity-only `[ph:]` stage-label map (the visible wait ends at the
-//   wiki-reveal boundary — the route swaps to the reveal there, so tail labels
-//   would be dead data) + a data-driven ETA label (audit ③) and NO cost (audit
+//   full stage-label map (every canonical stage carries a friendly label — built
+//   by iterating WORLD_GEN_STAGES, so the card/announcer never fall back; the card
+//   still only bars the watched entity stages) + a data-driven ETA label (audit ③)
+//   and NO cost (audit
 //   ⑥), and the fog DRAIN is keyed off the ENTITY COUNT against the DB-derived
 //   floor (MYT-89 spawn-drain): full fog at the graph entry, fully drained by
 //   MIN_EXPECTED_ENTITIES arrivals.
@@ -164,11 +166,11 @@ describe('GeneratingView — act one: the prep loading screen', () => {
     expect(graphSpy).not.toHaveBeenCalled()
   })
 
-  it('cycles ALL TWENTY `[ph:]` flavor lines every ~3s, each exactly once per pass (a shuffled permutation)', () => {
+  it('cycles ALL TWENTY flavor lines every ~3s, each exactly once per pass (a shuffled permutation)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
-    // The twenty catalog lines the view must thread through (Miklos writes the
-    // real copy later). Literal keys — the typed catalog rejects dynamic ones.
+    // The twenty catalog lines the view must thread through. Literal keys — the
+    // typed catalog rejects dynamic ones.
     const allFlavors = new Set([
       i18n.t('worldGen.flavor1'),
       i18n.t('worldGen.flavor2'),
@@ -316,24 +318,32 @@ describe('GeneratingView — status card wiring (§3.3)', () => {
     expect((status as Record<string, unknown> | undefined)?.costUsd).toBeUndefined()
   })
 
-  it('supplies a WATCHED-entity-only i18n stage-label map (prep lives in act one, the tail behind the reveal)', () => {
+  it('supplies a friendly i18n label for EVERY canonical world-gen stage', () => {
     mockMatchMedia(false)
     renderWatching()
     const labels = lastGraphProps().status?.stageLabels
-    // The watched entity stage ids resolve to their i18n'd friendly labels — one
-    // per status-card bar, through the wiki-reveal boundary…
-    expect(labels?.world_and_factions).toBe(i18n.t('worldGen.stage.world_and_factions'))
-    expect(labels?.locations_and_npcs).toBe(i18n.t('worldGen.stage.locations_and_npcs'))
-    expect(labels?.entity_relationships).toBe(i18n.t('worldGen.stage.entity_relationships'))
-    // …the prep stages get NO entry — the card renders no bar for them…
-    expect(labels?.concept_intake).toBeUndefined()
-    expect(labels?.world_color).toBeUndefined()
-    expect(labels?.vocabulary_intake).toBeUndefined()
-    // …and neither do the silent tail stages — the reveal replaces this view
-    // before they'd ever be the running bar.
-    expect(labels?.entity_consolidation).toBeUndefined()
-    expect(labels?.coherence_pass).toBeUndefined()
-    expect(labels?.embed_world).toBeUndefined()
+    // The production map is built by iterating WORLD_GEN_STAGES, so every canonical
+    // stage carries a real label — the card + SR announcer never fall back to the
+    // defensive title. This expected map is Record<WorldGenStage>, so a future
+    // taxonomy addition fails THIS compile in lockstep with the production map's
+    // own compile guard (STAGE_LABEL_KEY).
+    const expected: Record<WorldGenStage, string> = {
+      concept_intake: i18n.t('worldGen.stage.concept_intake'),
+      world_color: i18n.t('worldGen.stage.world_color'),
+      vocabulary_intake: i18n.t('worldGen.stage.vocabulary_intake'),
+      world_and_factions: i18n.t('worldGen.stage.world_and_factions'),
+      locations_and_npcs: i18n.t('worldGen.stage.locations_and_npcs'),
+      entity_relationships: i18n.t('worldGen.stage.entity_relationships'),
+      world_introduction: i18n.t('worldGen.stage.world_introduction'),
+      entity_consolidation: i18n.t('worldGen.stage.entity_consolidation'),
+      starting_situation: i18n.t('worldGen.stage.starting_situation'),
+      random_tables: i18n.t('worldGen.stage.random_tables'),
+      coherence_pass: i18n.t('worldGen.stage.coherence_pass'),
+      embed_world: i18n.t('worldGen.stage.embed_world'),
+    }
+    for (const s of WORLD_GEN_STAGES) {
+      expect(labels?.[s]).toBe(expected[s])
+    }
   })
 
   it('supplies i18n framing labels (title/done/progress) for the card', () => {

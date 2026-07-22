@@ -28,6 +28,10 @@ export interface FormFieldProps extends BaseProps {
   error?: string
   /** Marks the field required — flows to the Label marker AND the control's `required`. */
   required?: boolean
+  /** The resolved screen-reader word for the required marker (e.g. "(required)"),
+   *  forwarded to the Label — the shell resolves i18n and passes it (MYT-100; the
+   *  DS owns no copy). Rendered only when `required`. */
+  requiredLabel: string
   /** Invalid state. Defaults to `error != null`; supply to force-invalidate without an error string. */
   invalid?: boolean
   /** The single control element (Input / Select / Checkbox / …) this field wraps and wires. */

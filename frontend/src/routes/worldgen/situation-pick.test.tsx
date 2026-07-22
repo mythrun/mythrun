@@ -188,7 +188,7 @@ describe('SituationPickRoute — the owner-only picker', () => {
       /* never resolves */
     })
     renderPick({ fetchSituations: vi.fn(() => pending) })
-    expect(screen.getByText('[ph: finding your openings]')).toBeDefined()
+    expect(screen.getByText(i18n.t('startingSituation.loading'))).toBeDefined()
     expect(screen.queryByTestId('situation-hooks')).toBeNull()
   })
 })
@@ -245,7 +245,7 @@ describe('SituationPickRoute — selecting a hook hands off to level-pick', () =
 
     // A calm retryable note surfaces and the hooks stay for a re-pick — we did NOT
     // navigate onward.
-    await screen.findByText('[ph: something went wrong — try again]')
+    await screen.findByText(i18n.t('startingSituation.error'))
     expect(screen.getByTestId('situation-hooks')).toBeDefined()
     expect(screen.queryByTestId('level-pick')).toBeNull()
   })

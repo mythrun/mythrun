@@ -17,6 +17,6 @@ export interface DieSpinProps {
   reducedMotion: boolean
   /** Fired when the spin's last step lands (or immediately under reduced motion). */
   onSpinComplete: () => void
-  /** Resolved [ph:] SR label announced with the landed result (polite live region). */
+  /** Resolved SR label announced with the landed result (polite live region). */
   resultLabel?: string
 }

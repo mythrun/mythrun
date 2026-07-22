@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 // failure retry, the prep dead-end, and the post-session "complete" transition. All
 // flat 1-bit paper register (§ brand); a failure is a resume action, not an apology.
 // Each is a thin composition of @mythrun/ui primitives centred by the caller's
-// CenteredHold. Copy is `[ph:]` (MYT-100 owns the one copy pass).
+// CenteredHold. Copy is i18n.
 
 // The testids are passed as `data-testid` (the i18next no-literal-string rail
 // excludes `data-testid` but flags a bare `testId="…"` on a custom component — the

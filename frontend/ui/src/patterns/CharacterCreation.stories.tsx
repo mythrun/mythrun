@@ -68,7 +68,7 @@ function CharacterCreationForm({ submitting = false }: { submitting?: boolean })
 
         <CardBody>
           <Stack gap={5}>
-            <FormField label="Name" required>
+            <FormField requiredLabel="(required)" label="Name" required>
               <Input placeholder="e.g. Mira Stonehollow" defaultValue="Mira Stonehollow" />
             </FormField>
 
@@ -79,15 +79,15 @@ function CharacterCreationForm({ submitting = false }: { submitting?: boolean })
             />
 
             <Grid columns={2} gap={4}>
-              <FormField label="Ancestry">
+              <FormField requiredLabel="(required)" label="Ancestry">
                 <Select options={ANCESTRIES} placeholder="Choose…" defaultValue="human" />
               </FormField>
-              <FormField label="Class">
+              <FormField requiredLabel="(required)" label="Class">
                 <Select options={CLASSES} placeholder="Choose…" defaultValue="ranger" />
               </FormField>
             </Grid>
 
-            <FormField label="Pronouns">
+            <FormField requiredLabel="(required)" label="Pronouns">
               <RadioGroup defaultValue="she" name="pronouns">
                 <Radio value="she" label="She / her" />
                 <Radio value="he" label="He / him" />
@@ -95,11 +95,11 @@ function CharacterCreationForm({ submitting = false }: { submitting?: boolean })
               </RadioGroup>
             </FormField>
 
-            <FormField label="Patron deity" error="No deity by that name walks this world.">
+            <FormField requiredLabel="(required)" label="Patron deity" error="No deity by that name walks this world.">
               <Input defaultValue="Vol'thara" />
             </FormField>
 
-            <FormField label="Backstory" description="Optional — anything the DM should know going in.">
+            <FormField requiredLabel="(required)" label="Backstory" description="Optional — anything the DM should know going in.">
               <TextArea rows={4} placeholder="Where does your hero come from? What do they want?" />
             </FormField>
 

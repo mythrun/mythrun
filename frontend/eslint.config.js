@@ -400,5 +400,47 @@ export default [
       'mythrun-ui/no-ad-hoc-ui': 'off',
     },
   },
+  {
+    // MYT-100 placeholder ban: `[ph:` / `[ph_` is interim placeholder copy. After
+    // the copy pass any surviving marker is a BUG, so it is a hard build break
+    // across ALL app source — tests INCLUDED (route render tests currently assert
+    // on `[ph: …]` strings; those move to real copy in this pass). Implemented via
+    // no-restricted-syntax so it catches both plain string literals and template
+    // literals. Flat config REPLACES no-restricted-syntax options (it does not
+    // merge them), so the repo-wide default-export ban inherited from the root
+    // config is RE-LISTED here — otherwise this block would silently drop it for
+    // src/**. (The root's test-only DROP SCHEMA selectors are backend Postgres
+    // test-isolation policy with no meaning in a frontend package, so they are
+    // intentionally not carried over — see the LINT-agent report for that seam.)
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ExportDefaultDeclaration',
+          message: 'Default exports are forbidden. Use named exports only.',
+        },
+        {
+          selector: 'Literal[value=/\\[ph[:_]/]',
+          message:
+            'Placeholder copy ([ph:… / [ph_…) must not ship. Replace it with a real i18n key + value. (MYT-100.)',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/\\[ph[:_]/]',
+          message:
+            'Placeholder copy ([ph:… / [ph_…) must not ship. Replace it with a real i18n key + value. (MYT-100.)',
+        },
+        {
+          // Bare JSX text (`<span>[ph: …]</span>`) is neither a Literal nor a
+          // TemplateElement. Story/test files sit OFF the text rail, so without
+          // this a placeholder in bare JSX text would slip BOTH rails; §6 wants
+          // ZERO [ph anywhere, so catch it here too.
+          selector: 'JSXText[value=/\\[ph[:_]/]',
+          message:
+            'Placeholder copy ([ph:… / [ph_…) must not ship. Replace it with a real i18n key + value. (MYT-100.)',
+        },
+      ],
+    },
+  },
   eslintConfigPrettier,
 ]

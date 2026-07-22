@@ -45,14 +45,14 @@ describe('DieSpin', () => {
         result={20}
         reducedMotion={false}
         onSpinComplete={vi.fn()}
-        resultLabel="[ph: you rolled a 20]"
+        resultLabel="you rolled a 20"
       />,
     )
     const numeral = getByTestId('die-spin-result')
     expect(numeral).toHaveTextContent('20')
     expect(numeral).toHaveClass('font-ui')
     const live = getByRole('status')
-    expect(live).toHaveTextContent('[ph: you rolled a 20]')
+    expect(live).toHaveTextContent('you rolled a 20')
     expect(live).toHaveAttribute('aria-live', 'polite')
   })
 
@@ -188,7 +188,7 @@ describe('DieSpin', () => {
         result={20}
         reducedMotion={false}
         onSpinComplete={vi.fn()}
-        resultLabel="[ph: you rolled a 20]"
+        resultLabel="you rolled a 20"
       />,
     )
     expect(await axe(landed.container)).toHaveNoViolations()

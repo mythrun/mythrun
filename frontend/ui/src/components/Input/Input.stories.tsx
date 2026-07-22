@@ -42,7 +42,7 @@ type Story = StoryObj<typeof Input>
 export const Default: Story = {
   args: { defaultValue: 'Mira Stonehollow' },
   render: (args) => (
-    <FormField label="field.character_name">
+    <FormField requiredLabel="(required)" label="field.character_name">
       <Input {...args} />
     </FormField>
   ),
@@ -65,7 +65,7 @@ export const Sizes: Story = {
 export const Invalid: Story = {
   args: { defaultValue: 'not-an-email' },
   render: (args) => (
-    <FormField label="field.email" invalid>
+    <FormField requiredLabel="(required)" label="field.email" invalid>
       <Input {...args} />
     </FormField>
   ),
@@ -76,7 +76,7 @@ export const Invalid: Story = {
 export const Disabled: Story = {
   args: { disabled: true, defaultValue: "Can't edit this" },
   render: (args) => (
-    <FormField label="field.character_name">
+    <FormField requiredLabel="(required)" label="field.character_name">
       <Input {...args} />
     </FormField>
   ),
@@ -88,7 +88,7 @@ export const ReadOnly: Story = {
   name: 'Read-only',
   args: { readOnly: true, defaultValue: 'Locked value' },
   render: (args) => (
-    <FormField label="field.character_name">
+    <FormField requiredLabel="(required)" label="field.character_name">
       <Input {...args} />
     </FormField>
   ),

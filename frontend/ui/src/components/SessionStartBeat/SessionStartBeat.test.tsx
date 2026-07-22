@@ -4,16 +4,19 @@ import { render, within } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { SessionStartBeat } from './SessionStartBeat.tsx'
 
-// The two resolved [ph:] labels the shell supplies (props are DATA — the component
-// renders them verbatim). Sample strings kept clearly placeholder-shaped.
-const PREP_LABEL = '[ph: the DM is preparing tonight’s session…]'
-const CONNECTING_LABEL = '[ph: connecting to the table…]'
+// The resolved labels the shell supplies (props are DATA — the component renders
+// them verbatim). Real MYT-100 copy (play.start.prep / play.start.connecting); the
+// heading is a realistic fixture (the app wires its own key).
+const HEADING = 'The table gathers'
+const PREP_LABEL = "The DM is preparing today's session…"
+const CONNECTING_LABEL = 'Joining the table…'
 
 function renderBeat(phase: 'prep' | 'connecting', reducedMotion = false) {
   return render(
     <SessionStartBeat
       phase={phase}
       reducedMotion={reducedMotion}
+      heading={HEADING}
       prepLabel={PREP_LABEL}
       connectingLabel={CONNECTING_LABEL}
     />,
@@ -34,6 +37,7 @@ describe('SessionStartBeat', () => {
       <SessionStartBeat
         phase="connecting"
         reducedMotion={false}
+        heading={HEADING}
         prepLabel={PREP_LABEL}
         connectingLabel={CONNECTING_LABEL}
       />,
@@ -80,6 +84,7 @@ describe('SessionStartBeat', () => {
       <SessionStartBeat
         phase="connecting"
         reducedMotion={false}
+        heading={HEADING}
         prepLabel={PREP_LABEL}
         connectingLabel={CONNECTING_LABEL}
       />,
@@ -124,6 +129,7 @@ describe('SessionStartBeat', () => {
         ref={ref}
         phase="prep"
         reducedMotion={false}
+        heading={HEADING}
         prepLabel={PREP_LABEL}
         connectingLabel={CONNECTING_LABEL}
       />,

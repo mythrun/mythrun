@@ -15,7 +15,7 @@ import { HighlightedProse } from './HighlightedProse.tsx'
 // sits on a quiet warm paper lift (`bg-surface`, a utility so it flips under
 // `.dark`), the player row on its own tint. Square register (no radius, no
 // avatar/bubble). `text` is DATA (LLM prose), never an i18n key; `writingLabel`
-// is a resolved [ph:] key the consumer passes.
+// is a resolved i18n key the consumer passes.
 //
 // MYT-94 (Task 11) — SETTLE-ONLY entity highlighting. When the turn has settled
 // AND the caller supplies both a compiled `highlight` index and its `highlightLabels`

@@ -10,7 +10,7 @@ import { createCampaign, useApiContext, isHttpError } from '@mythrun/client-core
 // line. Pure presentation with ONE side effect: Begin calls `createCampaign` and
 // fires a neutral intent on success — the screen never navigates itself; the
 // controller maps `onCommitted` to the generating route. Composes @mythrun/ui only
-// (no ad-hoc UI); every string is an i18n `[ph:]` key (R5).
+// (no ad-hoc UI); every string is an i18n key (R5).
 
 // The freeform floor mirrors the contract's `FreeformSourceSchema.concept.min(20)`
 // (a shorter concept is a body-shape bug, not a gate concern): Begin stays disabled

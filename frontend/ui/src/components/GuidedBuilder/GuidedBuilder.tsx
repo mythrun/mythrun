@@ -27,16 +27,9 @@ import { GuidedRail } from './GuidedRail.tsx'
 // single-option step (e.g. the Cleric/Sorcerer/Warlock subclass) stretches to one
 // full-width confirm card. The rail wraps; the nav row wraps.
 //
-// The nav CONTROL LABELS ("Next", "Back", "Describe them instead") are fixed brand
-// chrome, not passed-in copy — the contract carries no label props (only the
-// callbacks), exactly like LevelCard's fixed "Level" eyebrow and FreeformPrompt's
-// fixed "Continue". They read as generic navigation chrome; the mockup's evocative
-// per-step labels ("Next: how you practice it →") are deferred to the end-of-milestone
-// copy pass, and if strict i18n later wants them shell-owned the contract would grow
-// label props.
-const NEXT_LABEL = 'Next'
-const BACK_LABEL = 'Back'
-const SKIP_LABEL = 'Describe them instead'
+// The nav control labels ("Next", "Back", "Describe them instead") arrive resolved
+// via `labels` — the shell owns i18n and passes them in (MYT-100 grew the contract
+// the label props, exactly as anticipated when they were interim brand chrome).
 
 // The progress rail's rung markup lives in GuidedRail.tsx (extracted in MYT-102
 // so the builder-less notes/grounding screens keep the same signposting); the
@@ -75,7 +68,7 @@ const LINK_CLASS = cn(
 )
 
 export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(function GuidedBuilder(
-  { rail, question, options, selectedId, onSelect, onNext, onBack, onSkipToFreeform },
+  { labels, rail, question, options, selectedId, onSelect, onNext, onBack, onSkipToFreeform },
   ref,
 ) {
   // First step ⇔ nothing is completed yet: derive it from the rail (no internal
@@ -124,15 +117,15 @@ export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(func
           {!isFirstStep && (
             <button type="button" onClick={onBack} className={LINK_CLASS}>
               <span aria-hidden="true">‹</span>
-              {BACK_LABEL}
+              {labels.back}
             </button>
           )}
           <button type="button" onClick={onSkipToFreeform} className={LINK_CLASS}>
-            {SKIP_LABEL}
+            {labels.switchToFreeform}
           </button>
         </Stack>
         <Button variant="primary" size="lg" onPress={onNext}>
-          {NEXT_LABEL}
+          {labels.next}
         </Button>
       </Stack>
     </Stack>

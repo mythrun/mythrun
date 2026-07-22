@@ -20,7 +20,7 @@ export default meta
 
 type Story = StoryObj<typeof SituationRecap>
 
-const EYEBROW = '[ph: your opening scene]'
+const EYEBROW = 'Your opening scene'
 const TITLE = 'The harbour at low tide'
 const LOCATION = 'Ashfen Reach'
 const SHORT_PROSE = 'A skiff has come in wrong, riding low with no one at the tiller.'

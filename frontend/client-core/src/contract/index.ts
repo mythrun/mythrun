@@ -250,11 +250,14 @@ export type {
   CharacterLevel,
   LevelCardProps,
   FreeformPromptProps,
+  GuidedBuilderLabels,
   GuidedBuilderProps,
   CharacterLoadingBeatProps,
   GuidedRailProps,
   SituationRecapProps,
+  CharacterSheetRevealLabels,
   CharacterSheetRevealProps,
+  PartyRosterLabels,
   PartyRosterProps,
 } from './character/index.ts'
 
@@ -288,7 +291,9 @@ export type {
 export type {
   AcceptArmKind,
   PreviewArmKind,
+  InvitePanelLabels,
   InvitePanelProps,
+  JoinPreviewLabels,
   JoinPreviewProps,
 } from './invite/types.ts'
 // Billing contracts (MYT-95) — the DOM-free prop vocabulary for the billing

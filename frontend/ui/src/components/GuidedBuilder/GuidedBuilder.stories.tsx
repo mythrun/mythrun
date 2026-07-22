@@ -10,10 +10,9 @@ import { GuidedBuilder } from './GuidedBuilder.tsx'
 // stateful harness (selection only) and a reading-measure container so each step
 // reads like the real screen.
 //
-// Content/i18n: `question` + the option `name`/`description` are resolved display
-// strings the shell passes in. The specimen copy below is realistic sample text
-// (stories are lint-exempt); the nav CONTROL labels are the component's fixed brand
-// chrome.
+// Content/i18n: `question` + the option `name`/`description` + the nav `labels` are
+// resolved display strings the shell passes in. The specimen copy below is realistic
+// sample text (stories are lint-exempt).
 
 const meta: Meta<typeof GuidedBuilder> = {
   title: 'Character/GuidedBuilder',
@@ -28,6 +27,9 @@ type Story = StoryObj<typeof GuidedBuilder>
 
 const noop = (): void => undefined
 
+// The resolved nav labels the shell supplies (real MYT-100 copy).
+const NAV_LABELS = { next: 'Next', back: 'Back', switchToFreeform: 'Describe them instead' }
+
 // Step 1 (Calling) — nothing chosen yet, so no rung is `done` and Back is hidden.
 const CALLING_RAIL: RailStep[] = [
   { step: 'class', label: 'Calling', state: 'now' },
@@ -35,7 +37,7 @@ const CALLING_RAIL: RailStep[] = [
   { step: 'background', label: 'Background', state: 'todo' },
 ]
 
-// The twelve SRD classes (copy is [ph:]-adjacent realistic sample text).
+// The twelve SRD classes (realistic sample display copy).
 const CLASS_OPTIONS: GuidedOption[] = [
   { id: 'barbarian', name: 'Barbarian', description: 'The fury that answers when reason will not.' },
   { id: 'bard', name: 'Bard', description: 'The story that bends the room.' },
@@ -96,6 +98,7 @@ function Builder({
   return (
     <div className="mx-auto max-w-[1120px] bg-bg p-[var(--space-6)]">
       <GuidedBuilder
+        labels={NAV_LABELS}
         rail={rail}
         question={question}
         options={options}
@@ -145,6 +148,7 @@ export const MobileCalling: Story = {
   render: () => (
     <div className="mx-auto max-w-[375px] bg-bg p-[var(--space-4)]">
       <GuidedBuilder
+        labels={NAV_LABELS}
         rail={CALLING_RAIL}
         question="What is your calling?"
         options={CLASS_OPTIONS.slice(0, 4)}

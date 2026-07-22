@@ -112,6 +112,7 @@ const LABELS = {
     emptyBodyLabel: 'Nothing recorded here yet.',
     referencesLabel: 'Dig deeper',
     indexLabel: 'Index',
+    glossaryLabel: 'Glossary',
     groupLabels: { faction: 'Factions', location: 'Places', npc: 'People', item: 'Things' },
   },
   graphNodeListLabel: 'Pick a place or person',

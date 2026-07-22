@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 // "Build from what you love" (→ the guided screen). Pure presentation — it fires
 // two neutral intents and knows nothing of the state machine; the controller maps
 // each to a `screen`. Composes @mythrun/ui only (no ad-hoc UI); every string is an
-// i18n `[ph:]` key (R5).
+// i18n key (R5).
 export interface ForkScreenProps {
   /** Chose "Start from an idea" → the controller advances to `freeform`. */
   onFreeform: () => void

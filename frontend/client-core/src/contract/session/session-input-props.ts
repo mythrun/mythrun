@@ -4,7 +4,7 @@
 // message so the table SEES the summon — the invisible dm_invoke frame is NOT used).
 // The component exposes the two intents only; token insertion lives at the route wire.
 // `disabled` gates both while the session is ended / not-ready. Platform-neutral (§9):
-// neutral callbacks (never DOM events), resolved [ph:] labels — no className/style.
+// neutral callbacks (never DOM events), resolved labels — no className/style.
 
 /** Props for the play-session composer. */
 export interface SessionInputProps {
@@ -18,11 +18,11 @@ export interface SessionInputProps {
   onSummonDm: () => void
   /** Gate both intents while the session is ended / not-ready. */
   disabled: boolean
-  /** Resolved [ph:] placeholder copy (the web layer fills it). */
+  /** Resolved placeholder copy (the web layer fills it). */
   placeholder: string
-  /** Resolved [ph:] label for the @DM summon affordance. */
+  /** Resolved label for the @DM summon affordance. */
   summonLabel: string
-  /** Resolved [ph:] label for the Send affordance. */
+  /** Resolved label for the Send affordance. */
   sendLabel: string
   /** Hard character cap on the composed message — mirrors the server's
    *  MAX_MESSAGE_TEXT_LEN so an over-long message can't be optimistically

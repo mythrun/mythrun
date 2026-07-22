@@ -35,7 +35,7 @@ export interface MessageStreamProps {
   reducedMotion: boolean
   /** Derived reveal data (per-card phase + the set of prose-gated turnIds) — MYT-93. */
   rollReveal: RollRevealView
-  /** Resolved [ph:] label bundle threaded to each RollCard — MYT-93. */
+  /** Resolved label bundle threaded to each RollCard — MYT-93. */
   rollLabels: RollCardLabels
   /** Commit a card's roll, keyed by item key (neutral callback) — MYT-93. */
   onRoll: (key: string) => void
@@ -48,7 +48,7 @@ export interface MessageStreamProps {
   onEntityOpen?: (entityId: string) => void
   /** Resolved popover / mention chrome, forwarded to the dm arm alongside `highlight`. */
   highlightLabels?: EntityHighlightLabels
-  /** The resolved [ph:] errata eyebrow forwarded to a `dm_correction` row (myth-d6knq).
+  /** The resolved errata eyebrow forwarded to a `dm_correction` row (myth-d6knq).
    *  Absent ⇒ the correction still renders (the slip degrades to no eyebrow), so every
    *  pre-correction caller is unaffected. */
   correctionLabel?: string

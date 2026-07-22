@@ -45,7 +45,7 @@ type Story = StoryObj<typeof TextArea>
 export const Default: Story = {
   args: { rows: 4, defaultValue: 'The road to Stonehollow winds through the fog.' },
   render: (args) => (
-    <FormField label="field.session_notes">
+    <FormField requiredLabel="(required)" label="field.session_notes">
       <TextArea {...args} />
     </FormField>
   ),
@@ -68,7 +68,7 @@ export const Sizes: Story = {
 export const Invalid: Story = {
   args: { rows: 4, defaultValue: 'Too short.' },
   render: (args) => (
-    <FormField label="field.session_notes" invalid>
+    <FormField requiredLabel="(required)" label="field.session_notes" invalid>
       <TextArea {...args} />
     </FormField>
   ),
@@ -79,7 +79,7 @@ export const Invalid: Story = {
 export const Disabled: Story = {
   args: { disabled: true, rows: 4, defaultValue: "Can't edit this." },
   render: (args) => (
-    <FormField label="field.session_notes">
+    <FormField requiredLabel="(required)" label="field.session_notes">
       <TextArea {...args} />
     </FormField>
   ),
@@ -90,7 +90,7 @@ export const ReadOnly: Story = {
   name: 'Read-only',
   args: { readOnly: true, rows: 4, defaultValue: 'Locked narration.' },
   render: (args) => (
-    <FormField label="field.session_notes">
+    <FormField requiredLabel="(required)" label="field.session_notes">
       <TextArea {...args} />
     </FormField>
   ),

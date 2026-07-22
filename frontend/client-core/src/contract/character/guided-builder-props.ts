@@ -6,8 +6,20 @@ import type { GuidedOption, RailStep } from './types.ts'
 // and advances them via the neutral callbacks. Platform-neutral (§9): `onSelect`
 // carries the option id, the nav callbacks are plain functions — never DOM events.
 
+/** The controlled builder's resolved nav control labels (shell-owned i18n). */
+export interface GuidedBuilderLabels {
+  /** Advance-to-next-step control (e.g. "Next"). */
+  next: string
+  /** Step-back control (e.g. "Back"). */
+  back: string
+  /** Escape-hatch to the freeform fork (e.g. "Describe them instead"). */
+  switchToFreeform: string
+}
+
 /** Props for the controlled guided character builder. */
 export interface GuidedBuilderProps {
+  /** The resolved nav control labels (the shell resolves i18n and passes them). */
+  labels: GuidedBuilderLabels
   /** The progress rail (one rung per step, with its state + chosen value). */
   rail: RailStep[]
   /** The current step's resolved question. */

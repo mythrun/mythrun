@@ -5,6 +5,8 @@
 
 /** Props for the freeform character-concept prompt. */
 export interface FreeformPromptProps {
+  /** The resolved submit-control label (the shell resolves i18n and passes it). */
+  submitLabel: string
   /** Optional resolved step signpost shown quietly above the prompt (e.g. the
    *  freeform path's "1 of 2" — so the player knows a second question follows
    *  and doesn't front-load their whole answer into the first). MYT-102. */

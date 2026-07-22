@@ -68,7 +68,7 @@ function LandingFooter(): React.JSX.Element {
 }
 
 // The public landing page (MYT-86). Composed from @mythrun/ui only; nav/main/
-// footer are semantic landmarks (Box `as`). Prose is [ph_] i18n; the CTA + nav
+// footer are semantic landmarks (Box `as`). Prose is i18n; the CTA + nav
 // Sign-in route to /auth/signin via SPA navigation. The footer is the INVERTED
 // surface (dark on a light page, light on a dark page); the page→footer Dither
 // flips direction with the theme to grade the page into it.

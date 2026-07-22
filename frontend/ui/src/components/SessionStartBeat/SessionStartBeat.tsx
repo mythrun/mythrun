@@ -29,16 +29,12 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 //
 // THE ROWS: the two phases as a mono column. `done` reads solid ink, `active` is emphasised in
 // ember, `pending` is the SOLID tertiary-ink token — NOT a sub-AA `opacity` dim (the contrast
-// lesson: progress rows carry meaning, so they meet the 4.5:1 floor). A fixed mono eyebrow names
-// the beat (`[ph:]` interim chrome, not carried by the contract).
+// lesson: progress rows carry meaning, so they meet the 4.5:1 floor). A mono eyebrow (the
+// resolved `heading` prop) names the beat.
 //
 // a11y: the whole surface is `aria-busy` while mounted (the parent unmounts it when play
 // begins); the figure + rows are decoration, so an SR-only polite live region announces the
 // ACTIVE phase's label as the single AT source of truth (motion is never the sole signal).
-
-// Fixed interim chrome — the beat's eyebrow. Not carried by the contract, so it is a `[ph:]`
-// placeholder (the deliberate pre-copy-pass convention), not real copy.
-const START_HEADING = '[ph: the table gathers…]'
 
 // The meter level per phase: `prep` is well underway (the long atmospheric wait), `connecting`
 // lands at completion. The prep→connecting rise is the beat "accelerating toward completion".
@@ -85,7 +81,7 @@ function phaseRows(
 }
 
 export const SessionStartBeat = forwardRef<HTMLDivElement, SessionStartBeatProps>(
-  function SessionStartBeat({ phase, reducedMotion, prepLabel, connectingLabel }, ref) {
+  function SessionStartBeat({ phase, reducedMotion, heading, prepLabel, connectingLabel }, ref) {
     // The active phase's label is the single AT source of truth.
     const activeLabel = phase === 'prep' ? prepLabel : connectingLabel
     const rows = phaseRows(phase, prepLabel, connectingLabel)
@@ -110,7 +106,7 @@ export const SessionStartBeat = forwardRef<HTMLDivElement, SessionStartBeatProps
         {/* The two phase rows. */}
         <div className={TEXT_CLASS}>
           <p aria-hidden="true" className={HEADING_CLASS}>
-            {START_HEADING}
+            {heading}
           </p>
           <ul className={ROWS_CLASS} aria-hidden="true">
             {rows.map((row) => (

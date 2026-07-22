@@ -20,7 +20,7 @@ import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 //
 // Quiet by design: muted-but-AA ink (`text-ink-secondary`, a token — flips under
 // `.dark`, never a sub-AA opacity dim), a terse uppercase eyebrow (the resolved
-// [ph:] `label` — chrome, i18n-resolved route-side), then the amendment `text`
+// `label` — chrome, i18n-resolved route-side), then the amendment `text`
 // (DM DATA, never an i18n key). `role="note"` marks it as an annotation to AT; the
 // eyebrow is its accessible lead-in.
 

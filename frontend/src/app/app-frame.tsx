@@ -1,5 +1,5 @@
 import { Outlet, useMatches, useNavigate } from 'react-router-dom'
-import { Box, Stack, Text, IconButton } from '@mythrun/ui'
+import { Box, Stack, Text, IconButton, HorizontalLockup } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { HeaderCredits } from './header-credits.tsx'
 
@@ -58,11 +58,16 @@ export function AppFrame(): React.JSX.Element {
     <Stack minHeight="screen" data-testid="app-frame">
       <Box padding={4} surface="base" border data-testid="app-frame-header">
         <Stack direction="row" justify="between" align="center" gap={5}>
-          {/* The wordmark — the frame's quiet anchor (left). Fixed: it holds its
-              width (noShrink) so a long display name can't squeeze it into a spill. */}
-          <Text role="ui-label" noShrink data-testid="frame-logo">
-            {t('frame.logo')}
-          </Text>
+          {/* The brand mark — the frame's quiet anchor (left). The compact
+              horizontal lockup the landing nav uses; it is inherently shrink-0, so
+              a long display name can't squeeze it into a spill. Its accessible name
+              is the wordmark i18n key (the landing.wordmark / signin.wordmark
+              pattern). */}
+          <HorizontalLockup
+            aria-label={t('frame.wordmark')}
+            size={24}
+            data-testid="frame-logo"
+          />
           {/* Identity + balance + buy + settings affordances (right). */}
           <Stack direction="row" align="center" gap={5}>
             <Text role="ui-label" truncate data-testid="frame-display-name">

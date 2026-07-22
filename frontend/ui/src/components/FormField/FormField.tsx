@@ -39,7 +39,7 @@ interface WiredControlProps {
 }
 
 export const FormField = forwardRef<HTMLDivElement, FormFieldProps>(function FormField(
-  { label, description, error, required = false, invalid, children },
+  { label, description, error, required = false, requiredLabel, invalid, children },
   ref,
 ) {
   const baseId = useId()
@@ -79,7 +79,7 @@ export const FormField = forwardRef<HTMLDivElement, FormFieldProps>(function For
 
   return (
     <Stack ref={ref} gap={1}>
-      <Label htmlFor={controlId} required={required}>
+      <Label htmlFor={controlId} required={required} requiredLabel={requiredLabel}>
         {label}
       </Label>
       {wiredControl}

@@ -15,7 +15,7 @@ const OPTIONS = [
 describe('FormField (wrapping Input)', () => {
   it('gives the control its accessible name from the label', () => {
     const { getByLabelText } = render(
-      <FormField label="field.character_name">
+      <FormField requiredLabel="(required)" label="field.character_name">
         <Input />
       </FormField>,
     )
@@ -26,7 +26,7 @@ describe('FormField (wrapping Input)', () => {
   it('clicking the label focuses the control', async () => {
     const user = userEvent.setup()
     const { getByText, getByRole } = render(
-      <FormField label="field.character_name">
+      <FormField requiredLabel="(required)" label="field.character_name">
         <Input />
       </FormField>,
     )
@@ -36,7 +36,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('renders the description and wires it into aria-describedby', () => {
     const { getByRole, getByText } = render(
-      <FormField label="field.name" description="field.name.help">
+      <FormField requiredLabel="(required)" label="field.name" description="field.name.help">
         <Input />
       </FormField>,
     )
@@ -49,7 +49,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('with NO description/error sets no aria-describedby', () => {
     const { getByRole } = render(
-      <FormField label="field.name">
+      <FormField requiredLabel="(required)" label="field.name">
         <Input />
       </FormField>,
     )
@@ -58,7 +58,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('error: marks the control invalid AND describes it AND announces it (role=alert)', () => {
     const { getByRole } = render(
-      <FormField label="field.name" error="field.name.error">
+      <FormField requiredLabel="(required)" label="field.name" error="field.name.error">
         <Input />
       </FormField>,
     )
@@ -77,7 +77,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('description AND error: both ids land in aria-describedby', () => {
     const { getByRole, getByText } = render(
-      <FormField label="field.name" description="field.name.help" error="field.name.error">
+      <FormField requiredLabel="(required)" label="field.name" description="field.name.help" error="field.name.error">
         <Input />
       </FormField>,
     )
@@ -91,7 +91,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('no error region in the DOM when error is absent', () => {
     const { queryByRole } = render(
-      <FormField label="field.name" description="field.name.help">
+      <FormField requiredLabel="(required)" label="field.name" description="field.name.help">
         <Input />
       </FormField>,
     )
@@ -100,7 +100,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('required: flows to the control AND the label marker (non-color)', () => {
     const { getByRole, getByText } = render(
-      <FormField label="field.name" required>
+      <FormField requiredLabel="(required)" label="field.name" required>
         <Input />
       </FormField>,
     )
@@ -113,7 +113,7 @@ describe('FormField (wrapping Input)', () => {
 
   it('explicit invalid (no error string) still invalidates the control', () => {
     const { getByRole } = render(
-      <FormField label="field.name" invalid>
+      <FormField requiredLabel="(required)" label="field.name" invalid>
         <Input />
       </FormField>,
     )
@@ -123,7 +123,7 @@ describe('FormField (wrapping Input)', () => {
   it('throws clearly when children is not a single valid element', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     expect(() =>
-      render(<FormField label="field.name">{'just a string'}</FormField>),
+      render(<FormField requiredLabel="(required)" label="field.name">{'just a string'}</FormField>),
     ).toThrow(/single (valid )?(react )?element/i)
     spy.mockRestore()
   })
@@ -131,7 +131,7 @@ describe('FormField (wrapping Input)', () => {
   it('forwards its ref to the wrapping container', () => {
     const ref = createRef<HTMLDivElement>()
     render(
-      <FormField ref={ref} label="field.name">
+      <FormField requiredLabel="(required)" ref={ref} label="field.name">
         <Input />
       </FormField>,
     )
@@ -141,16 +141,16 @@ describe('FormField (wrapping Input)', () => {
   it('has no axe violations (default / described / error / required)', async () => {
     const { container } = render(
       <div>
-        <FormField label="field.a">
+        <FormField requiredLabel="(required)" label="field.a">
           <Input />
         </FormField>
-        <FormField label="field.b" description="field.b.help">
+        <FormField requiredLabel="(required)" label="field.b" description="field.b.help">
           <Input />
         </FormField>
-        <FormField label="field.c" error="field.c.error">
+        <FormField requiredLabel="(required)" label="field.c" error="field.c.error">
           <Input />
         </FormField>
-        <FormField label="field.d" required>
+        <FormField requiredLabel="(required)" label="field.d" required>
           <Input />
         </FormField>
       </div>,
@@ -162,7 +162,7 @@ describe('FormField (wrapping Input)', () => {
 describe('FormField (wrapping Select — a different control shape)', () => {
   it('associates the label with the Select trigger', () => {
     const { getByText, getByRole } = render(
-      <FormField label="field.race">
+      <FormField requiredLabel="(required)" label="field.race">
         <Select options={OPTIONS} placeholder="field.race.placeholder" />
       </FormField>,
     )
@@ -174,7 +174,7 @@ describe('FormField (wrapping Select — a different control shape)', () => {
 
   it('error: wires aria-describedby + aria-invalid + role=alert onto the trigger', () => {
     const { getByRole } = render(
-      <FormField label="field.race" error="field.race.error">
+      <FormField requiredLabel="(required)" label="field.race" error="field.race.error">
         <Select options={OPTIONS} />
       </FormField>,
     )
@@ -187,7 +187,7 @@ describe('FormField (wrapping Select — a different control shape)', () => {
 
   it('description: wires aria-describedby onto the trigger', () => {
     const { getByRole, getByText } = render(
-      <FormField label="field.race" description="field.race.help">
+      <FormField requiredLabel="(required)" label="field.race" description="field.race.help">
         <Select options={OPTIONS} />
       </FormField>,
     )

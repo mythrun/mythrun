@@ -14,12 +14,12 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // without relying on color alone:
 //   • a visible ember asterisk, `aria-hidden` (decorative — its meaning would be
 //     opaque to AT spoken as "asterisk"),
-//   • a VisuallyHidden "(required)" word so a screen reader announces the
-//     requirement in words when reading the label.
-// (Internal SR chrome word follows the Spinner precedent — a library-supplied
-// English fallback, not a consumer i18n key.)
+//   • a VisuallyHidden required word (the resolved `requiredLabel` prop) so a
+//     screen reader announces the requirement in words when reading the label.
+// (MYT-100 lifted that SR word out of the component — the shell resolves i18n and
+// passes it; the DS owns no copy.)
 export const Label = forwardRef<HTMLLabelElement, LabelProps>(function Label(
-  { htmlFor, required = false, children, ...rest },
+  { htmlFor, required = false, requiredLabel, children, ...rest },
   ref,
 ) {
   return (
@@ -31,7 +31,7 @@ export const Label = forwardRef<HTMLLabelElement, LabelProps>(function Label(
           <span aria-hidden="true" className="text-accent-fg">
             *
           </span>
-          <VisuallyHidden>(required)</VisuallyHidden>
+          <VisuallyHidden>{requiredLabel}</VisuallyHidden>
         </>
       )}
     </label>

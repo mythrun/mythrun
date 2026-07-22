@@ -26,9 +26,9 @@ export type {
 // Prop contracts — one per @mythrun/ui character component.
 export type { CharacterLevel, LevelCardProps } from './level-card-props.ts'
 export type { FreeformPromptProps } from './freeform-prompt-props.ts'
-export type { GuidedBuilderProps } from './guided-builder-props.ts'
+export type { GuidedBuilderLabels, GuidedBuilderProps } from './guided-builder-props.ts'
 export type { CharacterLoadingBeatProps } from './character-loading-beat-props.ts'
 export type { GuidedRailProps } from './guided-rail-props.ts'
 export type { SituationRecapProps } from './situation-recap-props.ts'
-export type { CharacterSheetRevealProps } from './character-sheet-reveal-props.ts'
-export type { PartyRosterProps } from './party-roster-props.ts'
+export type { CharacterSheetRevealLabels, CharacterSheetRevealProps } from './character-sheet-reveal-props.ts'
+export type { PartyRosterLabels, PartyRosterProps } from './party-roster-props.ts'

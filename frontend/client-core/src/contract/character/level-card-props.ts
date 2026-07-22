@@ -7,6 +7,9 @@ export type CharacterLevel = 1 | 2 | 3 | 4 | 5
 
 /** Props for one starting-level card. */
 export interface LevelCardProps {
+  /** The resolved machine-register eyebrow over the number (e.g. "Level") — the
+   *  shell resolves i18n and passes it (MYT-100 lifted it into the contract). */
+  eyebrow: string
   /** This card's level (1–5). */
   level: CharacterLevel
   /** Resolved one-line "what this level grants" gloss (the web layer fills the copy). */

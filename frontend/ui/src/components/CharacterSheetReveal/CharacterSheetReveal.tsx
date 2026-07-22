@@ -39,28 +39,19 @@ import { Button } from '../Button/Button.tsx'
 // row on desktop. Every flex/grid child is `min-w-0` so long prose never forces a
 // horizontal scroll.
 //
-// The panel/section TITLES ("What they can do", "Skills", …) and the action LABELS
-// ("This is me", "See full sheet", "Start over") are fixed brand chrome, not passed-
-// in copy — the contract carries only the display data + the callbacks (exactly like
-// LevelCard's fixed "Level" eyebrow and GuidedBuilder's fixed "Next"/"Back"). They
-// read as generic chrome; if strict i18n later wants them shell-owned, the contract
-// would grow label props. The mockup genders them to the character ("What she can
-// do"); the shipped chrome uses the neutral "they".
-
-// Fixed brand chrome — the curated panel titles.
-const FEATURES_TITLE = 'What they can do'
-const EQUIPMENT_TITLE = 'What they carry'
-const SPELLS_TITLE = 'What they can cast'
-// Fixed brand chrome — the expanded (full-sheet) section titles.
+// The curated panel titles + the action labels ("This is me", "See full sheet",
+// "Hide full sheet", "Begin again") arrive resolved via `labels` — the shell owns
+// i18n and passes them in (MYT-100 grew the contract the label props, exactly as
+// anticipated when they were interim brand chrome). The mockup genders them to the
+// character ("What she can do"); the resolved copy uses the neutral "they".
+//
+// The expanded full-sheet section titles + the proficiency/expertise tags below are
+// NOT part of the MYT-100 label contract (§5 lifts only the curated panel titles and
+// the action labels); they stay as fixed chrome for now.
 const SKILLS_TITLE = 'Skills'
 const SAVES_TITLE = 'Saving throws'
 const FULL_EQUIPMENT_TITLE = 'Everything they carry'
 const FULL_SPELLS_TITLE = 'Every spell they know'
-// Fixed brand chrome — the action labels + the toggle's two states.
-const SEE_FULL_LABEL = 'See full sheet'
-const HIDE_FULL_LABEL = 'Hide full sheet'
-const START_OVER_LABEL = 'Start over'
-// Fixed brand chrome — the mono proficiency tags on the expanded skill rows.
 const PROFICIENT_TAG = 'proficient'
 const EXPERTISE_TAG = 'expertise'
 
@@ -242,7 +233,7 @@ function FullSheetView({ full }: { full: FullSheet }): React.JSX.Element {
 
 export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRevealProps>(
   function CharacterSheetReveal(
-    { curated, full, expanded, onToggleExpand, onConfirm, onStartOver },
+    { labels, curated, full, expanded, onToggleExpand, onConfirm, onStartOver },
     ref,
   ) {
     const hasSpells = curated.spells !== undefined && curated.spells.length > 0
@@ -291,18 +282,18 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
           </div>
           <div className="flex min-w-0 flex-col gap-[var(--space-4)]">
             <EntryPanel
-              title={FEATURES_TITLE}
+              title={labels.panelFeatures}
               entries={curated.features}
               testid="character-sheet-reveal-features"
             />
             <EntryPanel
-              title={EQUIPMENT_TITLE}
+              title={labels.panelEquipment}
               entries={curated.equipment}
               testid="character-sheet-reveal-equipment"
             />
             {hasSpells && curated.spells !== undefined && (
               <EntryPanel
-                title={SPELLS_TITLE}
+                title={labels.panelSpells}
                 entries={curated.spells}
                 testid="character-sheet-reveal-spells"
               />
@@ -322,7 +313,7 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
         {/* Actions: confirm into the party · toggle the full sheet · start over. */}
         <div className={ACTIONS_CLASS}>
           <Button variant="primary" size="lg" onPress={onConfirm}>
-            This is me <span aria-hidden="true">→</span>
+            {labels.confirm} <span aria-hidden="true">→</span>
           </Button>
           <Button
             variant="secondary"
@@ -331,10 +322,10 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
             aria-expanded={expanded}
             aria-controls={fullSheetId}
           >
-            {expanded ? HIDE_FULL_LABEL : SEE_FULL_LABEL}
+            {expanded ? labels.hideFull : labels.seeFull}
           </Button>
           <Button variant="ghost" size="lg" onPress={onStartOver}>
-            {START_OVER_LABEL}
+            {labels.startOver}
           </Button>
         </div>
       </Stack>

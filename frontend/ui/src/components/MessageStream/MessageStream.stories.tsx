@@ -16,7 +16,7 @@ import { STORY_INDEX, STORY_LABELS } from '../DmMessage/highlight.fixture.ts'
 // dice_roll rows as square RollCards (the dice moment), with a turn's outcome prose
 // BUFFERED (rendered nothing) until its card is continued.
 
-// The resolved [ph:] label bundle the play route threads to each RollCard. Sample
+// The resolved i18n label bundle the play route threads to each RollCard. Sample
 // copy here — stories are i18n-exempt; MYT-100 is the copy pass.
 const ROLL_LABELS: RollCardLabels = {
   roll: 'Roll',
@@ -283,7 +283,7 @@ export const Default: Story = {
 export const Reconnecting: Story = {
   args: {
     items: TRANSCRIPT,
-    connectionLine: '[ph: reconnecting…]',
+    connectionLine: 'finding your way back…',
     reducedMotion: false,
     rollReveal: SHOWCASE_REVEAL,
     rollLabels: ROLL_LABELS,

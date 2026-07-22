@@ -12,11 +12,27 @@ const noop = (): void => undefined
 
 const LINK = 'https://mythrun.com/join/ABC123'
 
+// The resolved chrome copy the shell supplies (real MYT-100 campaign.invite.* copy).
+const LABELS = {
+  panelHeading: 'Invite',
+  hint: 'share this link · friends join your party here',
+  loading: 'preparing your invite link…',
+  noLink: 'no active link, create one to invite',
+  linkLabel: 'Invite link',
+  create: 'Create a link',
+  copy: 'Copy link',
+  copied: 'Copied',
+  share: 'Share',
+  replace: 'Replace link',
+  limit: "You've reached the invite limit. Replace the existing link instead.",
+  error: 'Something went wrong. Try again.',
+}
+
 const meta: Meta<typeof InvitePanel> = {
   title: 'Invite/InvitePanel',
   component: InvitePanel,
   tags: ['autodocs'],
-  args: { onCopy: noop, onShare: noop, onRevoke: noop, onCreate: noop },
+  args: { labels: LABELS, onCopy: noop, onShare: noop, onRevoke: noop, onCreate: noop },
   // A paper page ground + a reading measure (the consuming screen owns the width).
   decorators: [
     (Story) => (

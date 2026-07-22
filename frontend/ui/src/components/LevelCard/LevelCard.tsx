@@ -25,10 +25,9 @@ import { cn } from '../../lib/cn.ts'
 // the neutral surface token-swap (the shipped ghost/secondary affordance), and
 // focus rides the shared theme-aware `outline-accent-fg` ring.
 //
-// The "Level" eyebrow is fixed brand chrome, not passed-in copy — the contract
-// carries no eyebrow label (only `level`/`grantGloss`). It reads as generic chrome
-// (like ThemeToggle/Spinner's fixed default labels); if strict i18n later wants it
-// owned by the shell, the contract would grow an eyebrow-label prop.
+// The eyebrow (e.g. "Level") arrives resolved via `eyebrow` — the shell owns i18n
+// and passes it in (MYT-100 grew the contract the label prop, exactly as anticipated
+// when it was interim brand chrome).
 
 const CARD_CLASS = cn(
   // Reset the native <button> to the paper-card register + fill its cell.
@@ -54,7 +53,7 @@ const NUMBER_CLASS = 'font-body text-3xl font-semibold leading-[1]'
 const GRANT_CLASS = 'border-t border-border pt-[var(--space-2)] font-body text-sm leading-[1.4] text-ink-secondary'
 
 export const LevelCard = forwardRef<HTMLButtonElement, LevelCardProps>(function LevelCard(
-  { level, grantGloss, selected, onSelect },
+  { eyebrow, level, grantGloss, selected, onSelect },
   ref,
 ) {
   return (
@@ -68,8 +67,8 @@ export const LevelCard = forwardRef<HTMLButtonElement, LevelCardProps>(function 
       data-state={selected ? 'selected' : 'default'}
       className={CARD_CLASS}
     >
-      {/* Fixed brand chrome (see header) — the machine-register eyebrow. */}
-      <span className={EYEBROW_CLASS}>Level</span>
+      {/* The resolved machine-register eyebrow (shell-owned i18n). */}
+      <span className={EYEBROW_CLASS}>{eyebrow}</span>
       <span className={NUMBER_CLASS}>{level}</span>
       <span className={GRANT_CLASS}>{grantGloss}</span>
     </button>

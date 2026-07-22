@@ -25,7 +25,7 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 //
 // a11y: `aria-busy` while mounted (the route unmounts it when play begins); the figure is
 // decoration, so an SR-only polite live region carries the `label` as the single AT source of
-// truth (motion is never the sole signal). `label` / `detail` are resolved [ph:] chrome the
+// truth (motion is never the sole signal). `label` / `detail` are resolved chrome the
 // consumer passes (the DS component stays i18n-agnostic).
 
 // The centred hold — a quiet column: the breathing figure over the atmospheric line(s). min-w-0

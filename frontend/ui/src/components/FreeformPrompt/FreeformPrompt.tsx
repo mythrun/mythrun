@@ -25,13 +25,9 @@ import { Button } from '../Button/Button.tsx'
 // screen owns the reading measure (the stories supply a max-width), so it reads
 // the same at a desktop column and at 375px.
 //
-// The submit CTA's label is fixed brand chrome, not passed-in copy — the contract
-// carries no submit-label prop (only the onSubmit callback), exactly like
-// LevelCard's fixed "Level" eyebrow. It reads as generic forward-action chrome;
-// the mockup's evocative "Bring them to life" is deferred to the end-of-milestone
-// copy pass, and if strict i18n later wants it shell-owned the contract would
-// grow a submit-label prop.
-const SUBMIT_LABEL = 'Continue'
+// The submit CTA's label arrives resolved via `submitLabel` — the shell owns i18n
+// and passes it in (MYT-100 grew the contract the label prop, exactly as anticipated
+// when it was interim brand chrome).
 
 // The optional step signpost (MYT-102): a quiet mono eyebrow above the prompt —
 // the "1 of 2" that tells the player another question follows so they don't
@@ -46,7 +42,7 @@ const PROMPT_CLASS = 'block font-body text-[1.25rem] font-semibold leading-[1.3]
 const WHISPER_CLASS = 'font-body text-sm font-normal italic leading-[1.4] text-ink-secondary'
 
 export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(function FreeformPrompt(
-  { stepIndicator, prompt, whisper, value, onChange, onSubmit, placeholder },
+  { stepIndicator, prompt, whisper, value, onChange, onSubmit, submitLabel, placeholder },
   ref,
 ) {
   // Stable ids wire the question ↔ field (accessible name) and the whisper ↔
@@ -91,7 +87,7 @@ export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(fu
           Auto width holds at 375px (Button caps at max-w-full — no overflow). */}
       <Stack direction="row" justify="end">
         <Button variant="primary" size="lg" onPress={onSubmit}>
-          {SUBMIT_LABEL}
+          {submitLabel}
         </Button>
       </Stack>
     </Stack>

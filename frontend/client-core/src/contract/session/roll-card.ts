@@ -7,10 +7,10 @@ import type { CardItem, RollPhase } from '../../session/roll-reveal.ts'
 // (no client→server roll frame). `phase` is DERIVED by the route's client-core selector
 // (`cardPhase`) and passed in, so @mythrun/ui holds no reveal runtime (R1). The
 // `constraint` field is NEVER rendered (it is the seed the DM's gated prose is written
-// from). Platform-neutral (§9): pure data + resolved [ph:] labels + neutral callbacks —
+// from). Platform-neutral (§9): pure data + resolved labels + neutral callbacks —
 // no DOM types.
 
-/** The resolved [ph:] label bundle the route threads to each card (so @mythrun/ui
+/** The resolved label bundle the route threads to each card (so @mythrun/ui
  *  needs no translation import). Outcome-tier words are rendered as typographic WEIGHT,
  *  never a colour chip (spec §5 / the no-status-chips register). */
 export interface RollCardLabels {
@@ -37,7 +37,7 @@ export interface RollCardProps {
   phase: RollPhase
   /** Honour reduced motion — the die lands instantly, no spin. */
   reducedMotion: boolean
-  /** Resolved [ph:] label bundle (the web layer fills it). */
+  /** Resolved label bundle (the web layer fills it). */
   labels: RollCardLabels
   /** Commit the roll (the spin completed) — neutral callback, never a DOM event. */
   onRoll: () => void

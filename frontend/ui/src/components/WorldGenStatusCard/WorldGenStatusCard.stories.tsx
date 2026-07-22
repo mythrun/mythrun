@@ -20,9 +20,9 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // fills) whose running cell pulses (opacity fade — the brand's only sanctioned
 // motion; NO spinner, NO circle). The bars hit 100% exactly at the wiki-reveal
 // moment: the pulse stops and the bar rests full. Cost is NOT shown (the player
-// never sees API spend). Every label is a `[ph:]` i18n key (the DS owns no copy).
-// These specimens render it inside a mock graph pane so the `absolute` overlay pins
-// correctly.
+// never sees API spend). Every label arrives resolved from the shell (the DS owns
+// no copy); these specimens use the real MYT-100 copy. They render it inside a mock
+// graph pane so the `absolute` overlay pins correctly.
 
 const meta: Meta<typeof WorldGenStatusCard> = {
   title: 'Patterns/WorldGenStatusCard',
@@ -55,12 +55,19 @@ function stagesAt(done: number): StageProgress[] {
   )
 }
 
-// Friendly per-stage labels (i18n keys — the DS owns no copy). Watched entity stages
+// Friendly per-stage labels (resolved copy — the DS owns none). Watched entity stages
 // only — the prep stages live on the loading screen and the silent tail has no bar.
 const STAGE_LABELS: Record<string, string> = {
-  world_and_factions: '[ph: raising the powers]',
-  locations_and_npcs: '[ph: settling people and places]',
-  entity_relationships: '[ph: drawing connections]',
+  world_and_factions: 'Creating regions and factions',
+  locations_and_npcs: 'Settling people and places',
+  entity_relationships: 'Drawing the connections',
+}
+
+// The card's resolved chrome labels the shell supplies (real MYT-100 copy).
+const CARD_LABELS = {
+  titleLabel: 'weaving your world',
+  doneLabel: 'Your world is ready',
+  progressLabel: 'world generation progress',
 }
 
 // A mock graph pane (the `relative` host the overlay pins inside).
@@ -115,14 +122,14 @@ function demoStagesAt(startMs: number, nowMs: number): StageProgress[] {
   }))
 }
 
-/** Mirrors the app's `~M:SS` formatting (the words are i18n there; specimens
- *  hold placeholder copy). */
+/** Mirrors the app's `~M:SS` formatting (the words are resolved i18n in the app;
+ *  specimens use the same shape). */
 function formatCountdown(remainingMs: number | null): string | undefined {
   if (remainingMs === null) return undefined
   const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
-  return `[ph: ~${String(minutes)}:${String(seconds).padStart(2, '0')} left]`
+  return `~${String(minutes)}:${String(seconds).padStart(2, '0')} left`
 }
 
 function TickingDemo(): React.JSX.Element {
@@ -143,7 +150,7 @@ function TickingDemo(): React.JSX.Element {
       <WorldGenStatusCard
         stages={stages}
         stageLabels={STAGE_LABELS}
-        doneLabel="[ph: your world is ready]"
+        {...CARD_LABELS}
         {...(countdownLabel !== undefined ? { countdownLabel } : {})}
       />
     </Pane>
@@ -164,7 +171,8 @@ export const Early: Story = {
       <WorldGenStatusCard
         stages={stagesAt(0)}
         stageLabels={STAGE_LABELS}
-        countdownLabel="[ph: ~4:12 left]"
+        {...CARD_LABELS}
+        countdownLabel="~4:12 left"
       />
     </Pane>
   ),
@@ -178,7 +186,8 @@ export const Mid: Story = {
       <WorldGenStatusCard
         stages={stagesAt(2)}
         stageLabels={STAGE_LABELS}
-        countdownLabel="[ph: ~1:37 left]"
+        {...CARD_LABELS}
+        countdownLabel="~1:37 left"
       />
     </Pane>
   ),
@@ -188,7 +197,7 @@ export const Mid: Story = {
 export const NoEstimate: Story = {
   render: () => (
     <Pane>
-      <WorldGenStatusCard stages={stagesAt(1)} stageLabels={STAGE_LABELS} />
+      <WorldGenStatusCard stages={stagesAt(1)} stageLabels={STAGE_LABELS} {...CARD_LABELS} />
     </Pane>
   ),
 }
@@ -202,7 +211,7 @@ export const Complete: Story = {
       <WorldGenStatusCard
         stages={stagesAt(WATCHED_ENTITY_STAGES.length)}
         stageLabels={STAGE_LABELS}
-        doneLabel="[ph: your world is ready]"
+        {...CARD_LABELS}
       />
     </Pane>
   ),
@@ -217,13 +226,14 @@ export const Footer: Story = {
   render: () => (
     <div className="mx-auto flex h-dvh max-w-[375px] flex-col bg-bg">
       <div className="relative min-h-0 flex-1 bg-bg p-[var(--space-3)] font-ui text-xs text-ink-tertiary">
-        [ph: the full-bleed graph pane]
+        the full-bleed graph pane
       </div>
       <WorldGenStatusCard
         variant="footer"
         stages={stagesAt(1)}
         stageLabels={STAGE_LABELS}
-        countdownLabel="[ph: ~3:41 left]"
+        {...CARD_LABELS}
+        countdownLabel="~3:41 left"
       />
     </div>
   ),

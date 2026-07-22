@@ -1,6 +1,6 @@
 import { useSearchParams } from 'react-router-dom'
-import { Stack, Card, Text, Button, Dither, Lockup, GoogleMark, DiscordMark, Banner, ThemeToggle, useTheme } from '@mythrun/ui'
-import { useTranslation } from 'react-i18next'
+import { Stack, Card, Text, Button, Dither, Lockup, GoogleMark, DiscordMark, Banner, Link, ThemeToggle, useTheme } from '@mythrun/ui'
+import { Trans, useTranslation } from 'react-i18next'
 import { useSessionStore, createAuthState, buildAuthorizeUrl, isLocalPath } from '@mythrun/client-core'
 import { redirectTo } from '../platform/web/navigation.ts'
 
@@ -61,7 +61,13 @@ export function SigninRoute(): React.JSX.Element {
             </Text>
             {suspended ? (
               <Banner severity="warning" data-testid="signin-suspended">
-                {t('signin.suspended')}
+                {/* The suspended notice carries an inline "Contact us" mailto — the
+                    <1> slot in the catalog string routes to support (matches how
+                    landing.legal composes its Trans links). */}
+                <Trans
+                  i18nKey="signin.suspended"
+                  components={{ 1: <Link href="mailto:hello@mythrun.com" data-testid="signin-contact" /> }}
+                />
               </Banner>
             ) : null}
             <Stack align="stretch" gap={3}>

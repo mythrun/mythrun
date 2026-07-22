@@ -24,6 +24,9 @@ const meta: Meta<typeof FormField> = {
   title: 'Forms/FormField',
   component: FormField,
   tags: ['autodocs'],
+  // The required-marker SR word is a required prop (shell-owned i18n) — supply it
+  // once at the meta level so every `{...args}` specimen inherits it.
+  args: { requiredLabel: '(required)' },
   argTypes: {
     label: { control: 'text' },
     description: { control: 'text' },

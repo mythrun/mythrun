@@ -65,20 +65,21 @@ const TERMINAL_STAGE: CharacterCreationStage = 'character_sheet'
 
 interface BeatDef {
   readonly id: string
-  readonly label: string
   readonly stage: CharacterCreationStage
 }
 
 /** The fixed "coming into being" beats, in surfacing order. `character_concept`
  *  produces the name + identity, so it lights `name` + `class`; `character_sheet`
  *  rolls the scores + gathers the kit, so it lights `scores` + `kit`.
- *  (`location_selection` is silent mechanical setup — no beat.) Labels are
- *  `[ph:]` interim placeholders — the display owns final copy (i18n pass). */
+ *  (`location_selection` is silent mechanical setup — no beat.) This layer emits
+ *  only the stable beat IDs — never display strings; the consuming screen maps
+ *  each id → `t('characterCreate.loading.beat.<id>')` (this is the platform-neutral
+ *  DOM-free data layer, so it owns no copy). */
 const CHARACTER_BEATS: readonly BeatDef[] = [
-  { id: 'name', label: '[ph: a name surfaces]', stage: 'character_concept' },
-  { id: 'class', label: '[ph: a class and calling take shape]', stage: 'character_concept' },
-  { id: 'scores', label: '[ph: ability scores settle]', stage: 'character_sheet' },
-  { id: 'kit', label: '[ph: equipment is gathered]', stage: 'character_sheet' },
+  { id: 'name', stage: 'character_concept' },
+  { id: 'class', stage: 'character_concept' },
+  { id: 'scores', stage: 'character_sheet' },
+  { id: 'kit', stage: 'character_sheet' },
 ]
 
 const streamPath = (campaignId: string): string =>
@@ -179,12 +180,13 @@ const BEAT_STATE: Record<StageProgress['status'], LoadingBeat['state']> = {
 }
 
 /** Project the folded viewer stages onto the fixed beat list; an unseen stage
- *  leaves its beats `pending`. */
+ *  leaves its beats `pending`. `label` is left empty here — the consuming screen
+ *  resolves the display copy from the beat `id` (this layer emits IDs only). */
 function deriveBeats(stages: readonly StageProgress[]): LoadingBeat[] {
   const statusByStage = new Map(stages.map((s) => [s.stage, s.status]))
   return CHARACTER_BEATS.map((def) => ({
     id: def.id,
-    label: def.label,
+    label: '',
     state: BEAT_STATE[statusByStage.get(def.stage) ?? 'pending'],
   }))
 }

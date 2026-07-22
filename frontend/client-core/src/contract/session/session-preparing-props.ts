@@ -6,10 +6,10 @@
 
 /** Props for the between-sessions preparing hold. */
 export interface SessionPreparingProps {
-  /** The atmospheric line — a resolved [ph:] key ("the DM is preparing the next
+  /** The atmospheric line — a resolved key ("the DM is preparing the next
    *  session…"). Also the single AT source of truth (a polite live region). */
   label: string
-  /** An optional quiet sub-line — a resolved [ph:] key. Omitted ⇒ label only. */
+  /** An optional quiet sub-line — a resolved key. Omitted ⇒ label only. */
   detail?: string
   /** Honour reduced motion — the figure's breathing pulse is dropped when true. */
   reducedMotion: boolean

@@ -21,11 +21,14 @@ import type {
   CharacterLevel,
   LevelCardProps,
   FreeformPromptProps,
+  GuidedBuilderLabels,
   GuidedBuilderProps,
   GuidedRailProps,
   SituationRecapProps,
   CharacterLoadingBeatProps,
+  CharacterSheetRevealLabels,
   CharacterSheetRevealProps,
+  PartyRosterLabels,
   PartyRosterProps,
 } from '../index.ts'
 // The same contracts must be reachable from the top `@mythrun/client-core/contract`
@@ -167,6 +170,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
 
   it('LevelCardProps', () => {
     expectTypeOf<LevelCardProps>().toEqualTypeOf<{
+      // MYT-100: the resolved eyebrow (shell-owned i18n).
+      eyebrow: string
       level: CharacterLevel
       grantGloss: string
       selected: boolean
@@ -176,6 +181,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
 
   it('FreeformPromptProps — neutral onChange(value)/onSubmit, optional placeholder', () => {
     expectTypeOf<FreeformPromptProps>().toEqualTypeOf<{
+      // MYT-100: the resolved submit-control label (shell-owned i18n).
+      submitLabel: string
       // MYT-102: the optional resolved step signpost ("1 of 2") shown quietly
       // above the prompt so the player knows a second question follows.
       stepIndicator?: string
@@ -190,6 +197,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
 
   it('GuidedBuilderProps is fully controlled (no internal step state)', () => {
     expectTypeOf<GuidedBuilderProps>().toEqualTypeOf<{
+      // MYT-100: the resolved nav control labels (shell-owned i18n).
+      labels: GuidedBuilderLabels
       rail: RailStep[]
       question: string
       options: GuidedOption[]
@@ -198,6 +207,14 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       onNext: () => void
       onBack: () => void
       onSkipToFreeform: () => void
+    }>()
+  })
+
+  it('GuidedBuilderLabels — the resolved nav control labels', () => {
+    expectTypeOf<GuidedBuilderLabels>().toEqualTypeOf<{
+      next: string
+      back: string
+      switchToFreeform: string
     }>()
   })
 
@@ -219,6 +236,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
 
   it('CharacterLoadingBeatProps', () => {
     expectTypeOf<CharacterLoadingBeatProps>().toEqualTypeOf<{
+      // MYT-100: the resolved beat heading (shell-owned i18n).
+      heading: string
       beats: LoadingBeat[]
       reducedMotion: boolean
       // MYT-102: the ticking `~M:SS` wait estimate — OPTIONAL (omitted, not
@@ -230,6 +249,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
 
   it('CharacterSheetRevealProps — controlled expand + confirm/start-over', () => {
     expectTypeOf<CharacterSheetRevealProps>().toEqualTypeOf<{
+      // MYT-100: the resolved chrome labels (shell-owned i18n).
+      labels: CharacterSheetRevealLabels
       curated: CuratedSheet
       full: FullSheet
       expanded: boolean
@@ -239,13 +260,39 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
     }>()
   })
 
+  it('CharacterSheetRevealLabels — the resolved chrome labels', () => {
+    expectTypeOf<CharacterSheetRevealLabels>().toEqualTypeOf<{
+      confirm: string
+      seeFull: string
+      hideFull: string
+      startOver: string
+      panelFeatures: string
+      panelEquipment: string
+      panelSpells: string
+    }>()
+  })
+
   it('PartyRosterProps — owner-gated begin + invite', () => {
     expectTypeOf<PartyRosterProps>().toEqualTypeOf<{
+      // MYT-100: the resolved chrome labels (shell-owned i18n).
+      labels: PartyRosterLabels
       members: RosterMember[]
       viewerIsOwner: boolean
       canBegin: boolean
       onBegin: () => void
       onInvite: () => void
+    }>()
+  })
+
+  it('PartyRosterLabels — the resolved chrome labels', () => {
+    expectTypeOf<PartyRosterLabels>().toEqualTypeOf<{
+      partyHeading: string
+      inviteSub: string
+      creating: string
+      gathering: string
+      waiting: string
+      beginSolo: string
+      beginParty: string
     }>()
   })
 })

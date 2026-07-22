@@ -26,34 +26,17 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // and the action row WRAPS (`flex-wrap`), so it reads the same at a desktop
 // measure and at ~375px. The consuming screen owns the max-width.
 //
-// COPY — the display strings the component emits are fixed interim chrome deferred
-// to the end-of-milestone copy pass (the `[ph:]` convention, like PartyRoster):
-// terse generic words (`Invite`, `Copy link`, `Copied`, `Share`, `Replace link`,
-// `Create a link`, the field's `Invite link` a11y label) read as real chrome; the
-// evocative hint + notice lines are `[ph:]` placeholders. The contract carries no
-// strings.
+// COPY — every user-visible string arrives resolved via `labels` (MYT-100 lifted them
+// into the contract, same pattern as PartyRoster; the DS owns no copy). The calm-notice
+// Banner severity is the only chrome decision that stays DS-side.
 
-// Fixed chrome / interim copy.
-const PANEL_LABEL = 'Invite'
-const PANEL_HINT = '[ph: share this link — friends join your party here]'
-const LOADING_LINE = '[ph: preparing your invite link…]'
-const NO_LINK_LINE = '[ph: no active link — create one to invite]'
-const LINK_LABEL = 'Invite link'
-const CREATE_LABEL = 'Create a link'
-const COPY_LABEL = 'Copy link'
-const COPIED_LABEL = 'Copied'
-const SHARE_LABEL = 'Share'
-const REVOKE_LABEL = 'Replace link'
-
-// The calm-notice arm → its Banner severity + interim line. `cap-reached` is a soft
-// limit (advisory warning, not a failure); `error` is a transient failure (danger).
-// Body text stays --ink inside the Banner (§4) — only the glyph takes the severity.
-const NOTICE: Record<'cap-reached' | 'error', { severity: 'warning' | 'danger'; line: string }> = {
-  'cap-reached': {
-    severity: 'warning',
-    line: '[ph: you’ve reached the invite limit — replace the existing link instead]',
-  },
-  error: { severity: 'danger', line: '[ph: something went wrong — try again]' },
+// The calm-notice arm → its Banner severity (the DS keeps the severity mapping; the
+// line body arrives via `labels`). `cap-reached` is a soft limit (advisory warning,
+// not a failure); `error` is a transient failure (danger). Body text stays --ink
+// inside the Banner (§4) — only the glyph takes the severity.
+const NOTICE_SEVERITY: Record<'cap-reached' | 'error', 'warning' | 'danger'> = {
+  'cap-reached': 'warning',
+  error: 'danger',
 }
 
 const ROOT_CLASS = 'flex min-w-0 flex-col gap-[var(--space-4)]'
@@ -68,31 +51,34 @@ const LINK_BLOCK_CLASS = 'flex min-w-0 flex-col gap-[var(--space-3)]'
 const ACTIONS_CLASS = 'flex flex-wrap gap-[var(--space-2)]'
 
 export const InvitePanel = forwardRef<HTMLDivElement, InvitePanelProps>(function InvitePanel(
-  { inviteUrl, loading, canShare, copied, notice, onCopy, onShare, onRevoke, onCreate },
+  { labels, inviteUrl, loading, canShare, copied, notice, onCopy, onShare, onRevoke, onCreate },
   ref,
 ) {
   // A unique id per instance ties the read-only link field to its (SR-only) label
   // without colliding when several panels mount (stories, tests) — no static id.
   const linkId = useId()
-  const activeNotice = notice !== null ? NOTICE[notice] : null
+  const activeNotice =
+    notice !== null
+      ? { severity: NOTICE_SEVERITY[notice], line: notice === 'cap-reached' ? labels.limit : labels.error }
+      : null
 
   return (
     <div ref={ref} data-testid="invite-panel" className={ROOT_CLASS}>
       <div className="flex min-w-0 flex-col gap-[var(--space-1)]">
-        <p className={PANEL_LABEL_CLASS}>{PANEL_LABEL}</p>
-        <p className={HINT_CLASS}>{PANEL_HINT}</p>
+        <p className={PANEL_LABEL_CLASS}>{labels.panelHeading}</p>
+        <p className={HINT_CLASS}>{labels.hint}</p>
       </div>
 
       {loading ? (
         <p data-testid="invite-panel-loading" className={LOADING_CLASS}>
-          {LOADING_LINE}
+          {labels.loading}
         </p>
       ) : inviteUrl === null ? (
         <div className={LINK_BLOCK_CLASS}>
-          <p className={NO_LINK_CLASS}>{NO_LINK_LINE}</p>
+          <p className={NO_LINK_CLASS}>{labels.noLink}</p>
           <div className={ACTIONS_CLASS}>
             <Button variant="primary" onPress={onCreate} data-testid="invite-panel-create">
-              {CREATE_LABEL}
+              {labels.create}
             </Button>
           </div>
         </div>
@@ -100,21 +86,25 @@ export const InvitePanel = forwardRef<HTMLDivElement, InvitePanelProps>(function
         <div className={LINK_BLOCK_CLASS}>
           {/* The field carries a real (SR-only) label bound by id — the eyebrow is a
               heading, not a control label, so the read-only input gets its own name. */}
+          {/* Not a required field — `requiredLabel` is unused (rendered only when
+              `required`), so an empty string satisfies the prop without copy. */}
           <VisuallyHidden>
-            <Label htmlFor={linkId}>{LINK_LABEL}</Label>
+            <Label htmlFor={linkId} requiredLabel="">
+              {labels.linkLabel}
+            </Label>
           </VisuallyHidden>
           <Input id={linkId} value={inviteUrl} readOnly data-testid="invite-panel-link" />
           <div className={ACTIONS_CLASS}>
             <Button variant="primary" onPress={onCopy} data-testid="invite-panel-copy">
-              {copied ? COPIED_LABEL : COPY_LABEL}
+              {copied ? labels.copied : labels.copy}
             </Button>
             {canShare && (
               <Button variant="secondary" onPress={onShare} data-testid="invite-panel-share">
-                {SHARE_LABEL}
+                {labels.share}
               </Button>
             )}
             <Button variant="ghost" onPress={onRevoke} data-testid="invite-panel-revoke">
-              {REVOKE_LABEL}
+              {labels.replace}
             </Button>
           </div>
         </div>

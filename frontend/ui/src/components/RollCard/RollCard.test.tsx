@@ -16,7 +16,7 @@ import { RollCard } from './RollCard.tsx'
 // dice_roll is the flavor variant (no DC/tier/Continue); reduced motion lands
 // instantly; and all numerics ride `--font-ui`.
 
-// Test-double labels (stories/tests are i18n-exempt — the real [ph:] bundle is
+// Test-double labels (stories/tests are i18n-exempt — the real i18n bundle is
 // resolved route-side; MYT-100 is the copy pass). Distinct tier words so the
 // weight assertion targets a specific node.
 const LABELS: RollCardLabels = {

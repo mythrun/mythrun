@@ -26,7 +26,7 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // sanctioned motion). Hard brand rule: NO circles / spinners / dots. Cost is NOT
 // rendered (audit ⑥). These tests pin the fixed bar count + % math, the prep/tail
 // exclusion, 100%-at-the-reveal-moment, the running-vs-done label, the square
-// (non-circular) indicator, the stage-label resolution + `[ph:]` fallback, and
+// (non-circular) indicator, the stage-label resolution + titleLabel fallback, and
 // the countdown line.
 
 const TOTAL = WATCHED_ENTITY_STAGES.length // 4 (myth-zaqxh added world_introduction)
@@ -59,11 +59,16 @@ const EXPECTED_MID_PERCENT = Math.round((2 / TOTAL) * 100) // 50
 // moment, even though the silent tail has not run at all.
 const DONE: readonly StageProgress[] = WATCHED_ENTITY_STAGES.map((s) => stage(s, 'completed'))
 
+// The resolved chrome labels the shell supplies (real MYT-100 copy). The stage map
+// covers the running stage in the MID fixture; `titleLabel` doubles as the defensive
+// fallback for any unmapped stage id.
 const LABELS = {
   stageLabels: {
-    entity_relationships: '[ph: drawing the ties]',
+    entity_relationships: 'Drawing the connections',
   },
-  doneLabel: '[ph: world ready]',
+  titleLabel: 'weaving your world',
+  doneLabel: 'Your world is ready',
+  progressLabel: 'world generation progress',
 }
 
 describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxonomy', () => {
@@ -120,12 +125,23 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
 
   it('shows the RUNNING stage friendly label', () => {
     const { getByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
-    expect(getByText('[ph: drawing the ties]')).toBeInTheDocument()
+    expect(getByText('Drawing the connections')).toBeInTheDocument()
   })
 
-  it('falls back to a `[ph: <stage>]` placeholder for an unmapped stage (DS owns no copy)', () => {
-    const { getByText } = render(<WorldGenStatusCard stages={MID} />)
-    expect(getByText('[ph: entity_relationships]')).toBeInTheDocument()
+  it('falls back to the card titleLabel for an unmapped stage (DS owns no copy — never a placeholder)', () => {
+    // No stageLabels, so the running stage (entity_relationships) has no friendly
+    // label — it resolves to the generic `titleLabel` caption instead of any invented
+    // placeholder. In the overlay variant that title shows twice: once as the framing
+    // caption, once as the fallback running label.
+    const { getAllByText } = render(
+      <WorldGenStatusCard
+        stages={MID}
+        titleLabel="weaving your world"
+        doneLabel="Your world is ready"
+        progressLabel="world generation progress"
+      />,
+    )
+    expect(getAllByText('weaving your world')).toHaveLength(2)
   })
 
   it('exposes the percent through a determinate progressbar', () => {
@@ -142,7 +158,7 @@ describe('WorldGenStatusCard — done state (the wiki-reveal moment)', () => {
     // connection-weaving lands, which is exactly when the route fires the reveal.
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
     expect(getByText('100%')).toBeInTheDocument()
-    expect(getByText('[ph: world ready]')).toBeInTheDocument()
+    expect(getByText('Your world is ready')).toBeInTheDocument()
     expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
   })
 
@@ -155,26 +171,26 @@ describe('WorldGenStatusCard — done state (the wiki-reveal moment)', () => {
   it('never reaches 100% before the boundary stage (world_introduction) completes', () => {
     const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText('100%')).toBeNull()
-    expect(queryByText('[ph: world ready]')).toBeNull()
+    expect(queryByText('Your world is ready')).toBeNull()
   })
 })
 
 describe('WorldGenStatusCard — the per-second countdown (MYT-89 waiting-feedback)', () => {
   it('renders the ticking countdown line when supplied, aria-hidden (the progressbar carries AT semantics)', () => {
     const { getByTestId } = render(
-      <WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:14 left]" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} countdownLabel="~2:14 left" {...LABELS} />,
     )
     const countdown = getByTestId('worldgen-status-countdown')
-    expect(countdown).toHaveTextContent('[ph: ~2:14 left]')
+    expect(countdown).toHaveTextContent('~2:14 left')
     expect(countdown).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('re-renders the countdown as the consumer ticks it (the per-second walk)', () => {
     const { getByTestId, rerender } = render(
-      <WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:14 left]" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} countdownLabel="~2:14 left" {...LABELS} />,
     )
-    rerender(<WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:13 left]" {...LABELS} />)
-    expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('[ph: ~2:13 left]')
+    rerender(<WorldGenStatusCard stages={MID} countdownLabel="~2:13 left" {...LABELS} />)
+    expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('~2:13 left')
   })
 
   it('renders NO countdown when countdownLabel is omitted (cold-start / no history)', () => {
@@ -226,27 +242,24 @@ describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile sta
       <WorldGenStatusCard
         variant="footer"
         stages={MID}
-        countdownLabel="[ph: ~2:14 left]"
+        countdownLabel="~2:14 left"
         {...LABELS}
       />,
     )
     expect(container.querySelector('[data-variant="footer"]')).not.toBeNull()
-    expect(getByText('[ph: drawing the ties]')).toBeInTheDocument()
+    expect(getByText('Drawing the connections')).toBeInTheDocument()
     expect(getByText(`${String(EXPECTED_MID_PERCENT)}%`)).toBeInTheDocument()
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
-    expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('[ph: ~2:14 left]')
+    expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('~2:14 left')
   })
 
   it('drops the framing caption (compact — the title is overlay chrome)', () => {
     const { queryByText } = render(
-      <WorldGenStatusCard
-        variant="footer"
-        stages={MID}
-        titleLabel="[ph: weaving your world]"
-        {...LABELS}
-      />,
+      <WorldGenStatusCard variant="footer" stages={MID} {...LABELS} />,
     )
-    expect(queryByText('[ph: weaving your world]')).toBeNull()
+    // LABELS.titleLabel ("weaving your world") is the overlay caption; the footer
+    // drops it, and the running stage is mapped, so the title appears nowhere.
+    expect(queryByText('weaving your world')).toBeNull()
   })
 
   it('is a full-width in-flow bar, NOT an absolute overlay', () => {
@@ -276,7 +289,7 @@ describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile sta
       <WorldGenStatusCard
         variant="footer"
         stages={MID}
-        countdownLabel="[ph: ~2:14 left]"
+        countdownLabel="~2:14 left"
         {...LABELS}
       />,
     )
@@ -294,7 +307,7 @@ describe('WorldGenStatusCard — chrome', () => {
 
   it('has no a11y violations (generating + done)', async () => {
     const generating = render(
-      <WorldGenStatusCard stages={MID} countdownLabel="[ph: ~2:14 left]" {...LABELS} />,
+      <WorldGenStatusCard stages={MID} countdownLabel="~2:14 left" {...LABELS} />,
     )
     expect(await axe(generating.container)).toHaveNoViolations()
     generating.unmount()

@@ -23,6 +23,18 @@ type Story = StoryObj<typeof CharacterSheetReveal>
 
 const noop = (): void => undefined
 
+// The resolved chrome labels the shell supplies (real MYT-100 copy — `startOver`
+// resolves `$t(shared.beginAgain)`).
+const REVEAL_LABELS = {
+  confirm: 'This is me',
+  seeFull: 'See full sheet',
+  hideFull: 'Hide full sheet',
+  startOver: 'Begin again',
+  panelFeatures: 'What they can do',
+  panelEquipment: 'What they carry',
+  panelSpells: 'What they can cast',
+}
+
 // A martial character (Kessa Vurm — the mockup specimen): NO spells.
 const MARTIAL_CURATED: CuratedSheet = {
   name: 'Kessa Vurm',
@@ -168,6 +180,7 @@ function Reveal({
   return (
     <div className="bg-bg p-[var(--space-6)]">
       <CharacterSheetReveal
+        labels={REVEAL_LABELS}
         curated={curated}
         full={full}
         expanded={expanded}

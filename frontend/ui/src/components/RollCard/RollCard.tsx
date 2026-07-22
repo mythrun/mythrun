@@ -82,6 +82,7 @@ function SkillReadout({ frame, labels }: { frame: SkillItem['frame']; labels: Ro
   return (
     <Stack gap={1} align="center">
       <span className="font-ui text-sm">
+        {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- dice arithmetic notation, not translatable copy */}
         {signed(frame.modifier)} = {frame.total}
       </span>
       <Stack direction="row" gap={2} align="center" justify="center" wrap>
@@ -94,6 +95,7 @@ function SkillReadout({ frame, labels }: { frame: SkillItem['frame']; labels: Ro
       </Stack>
       {frame.roll2 !== null && (
         <Text role="meta">
+          {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- dice-pair separator notation, not translatable copy */}
           {frame.roll} / {frame.roll2}
         </Text>
       )}
@@ -106,6 +108,7 @@ function SkillReadout({ frame, labels }: { frame: SkillItem['frame']; labels: Ro
 function DiceHeader({ frame }: { frame: DiceItem['frame'] }): ReactNode {
   return (
     <span className="font-ui text-sm font-medium">
+      {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- NdM dice notation, not translatable copy */}
       {frame.count}d{frame.sides}
     </span>
   )

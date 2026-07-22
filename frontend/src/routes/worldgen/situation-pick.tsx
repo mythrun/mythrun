@@ -113,7 +113,7 @@ interface SituationBodyProps {
   onSelect: (index: number) => void
 }
 
-/** The body: a calm `[ph: …]` line while loading / on error / when empty, else the
+/** The body: a calm i18n line while loading / on error / when empty, else the
  *  three hooks as GhostHookList items (title + place + prose). A failed pick shows
  *  the same calm retryable note beneath the list (which stays, so re-picking works). */
 function SituationBody({ load, submitFailed, onSelect }: SituationBodyProps): React.JSX.Element {

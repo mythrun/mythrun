@@ -32,8 +32,8 @@ import { SessionSheet } from '../SessionSheet/SessionSheet.tsx'
 // tab (`onTabChange('wiki')`) so the tap lands on that entity's wiki page (UX §9).
 //
 // A NULL projection (the 409 `snapshot_not_ready` race → the calm empty cache, or a
-// member with no finalized character) renders the matching quiet `[ph:]` unavailable
-// line instead of the tab body — never an error flash.
+// member with no finalized character) renders the matching quiet unavailable line
+// (a resolved label prop) instead of the tab body — never an error flash.
 //
 // Register: square (`rounded-none`, no circles/dots/chips), two typefaces only. Holds
 // desktop AND ~375px by construction — a single `min-w-0` column so the mobile Drawer
@@ -61,7 +61,7 @@ export function coerceTab(value: string): KnowledgeTab {
   return WIKI_TAB
 }
 
-/** A calm `[ph:]` unavailable line — the quiet `ui-caption` a null projection shows in
+/** A calm unavailable line — the quiet `ui-caption` a null projection shows in
  *  place of the tab body (mirrors the reveal wiki panel's calm line). */
 function UnavailableLine({ label, testid }: { label: string; testid: string }): React.JSX.Element {
   return (

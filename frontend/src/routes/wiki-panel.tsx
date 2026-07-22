@@ -90,7 +90,7 @@ export interface WikiPanelProps {
   onQuery: (query: string) => void
 }
 
-/** The wiki side of a world surface: a calm `[ph: …]` line while the snapshot
+/** The wiki side of a world surface: a calm i18n line while the snapshot
  *  loads (or failed to), else the browsable `WorldWiki` with every chrome label
  *  resolved from the app catalog (the DS owns no copy). */
 export function WikiPanel({ state, externalSelection, onSelect, query, onQuery }: WikiPanelProps): React.JSX.Element {
@@ -117,6 +117,7 @@ export function WikiPanel({ state, externalSelection, onSelect, query, onQuery }
       emptyBodyLabel={t('worldReveal.wikiEmptyBody')}
       referencesLabel={t('worldReveal.wikiDigDeeper')}
       indexLabel={t('worldReveal.wikiIndex')}
+      glossaryLabel={t('worldReveal.wikiGlossary')}
       groupLabels={{
         faction: t('worldReveal.group.faction'),
         location: t('worldReveal.group.location'),

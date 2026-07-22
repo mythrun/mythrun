@@ -113,7 +113,7 @@ function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Ele
       <div className="mx-auto flex max-w-[900px] flex-col gap-[var(--space-3)]">
         <div className="flex flex-col gap-[var(--space-2)]">
           <Slider
-            label="[ph: density]"
+            label="density"
             min={FOG_PARAM_RANGES.density.min}
             max={FOG_PARAM_RANGES.density.max}
             step={FOG_PARAM_RANGES.density.step}
@@ -122,7 +122,7 @@ function FogTuner({ reducedMotion }: { reducedMotion?: boolean }): React.JSX.Ele
             readout={density.toFixed(2)}
           />
           <Slider
-            label="[ph: entities]"
+            label="entities"
             min={FOG_PARAM_RANGES.entities.min}
             max={MIN_EXPECTED_ENTITIES}
             step={FOG_PARAM_RANGES.entities.step}

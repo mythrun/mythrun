@@ -239,6 +239,7 @@ function buildSidebarLabels(t: TFunction): SidebarLabels {
       emptyBodyLabel: t('play.knowledge.wiki.emptyBody'),
       referencesLabel: t('play.knowledge.wiki.references'),
       indexLabel: t('play.knowledge.wiki.index'),
+      glossaryLabel: t('play.knowledge.wiki.glossary'),
       groupLabels: {
         faction: t('play.knowledge.wiki.group.faction'),
         location: t('play.knowledge.wiki.group.location'),

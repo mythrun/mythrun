@@ -6,8 +6,28 @@ import type { RosterMember } from './types.ts'
 // the finalize control. Platform-neutral (§9): `onBegin`/`onInvite` are plain
 // callbacks, never DOM events; owner-gating + begin-readiness arrive as booleans.
 
+/** The roster's resolved chrome labels (the shell resolves i18n and passes them). */
+export interface PartyRosterLabels {
+  /** The panel heading (e.g. "Your party"; the member count is appended DS-side). */
+  partyHeading: string
+  /** The invite slot's sub-line (e.g. "share a link · they join here"). */
+  inviteSub: string
+  /** A still-creating member's stand-in sub-line (e.g. "choosing who they are…"). */
+  creating: string
+  /** A just-joined member's stand-in sub-line (e.g. "just joined, making their character…"). */
+  gathering: string
+  /** The non-owner's waiting line (e.g. "waiting for the party to gather…"). */
+  waiting: string
+  /** The owner's begin control when soloing (e.g. "begin the adventure →"). */
+  beginSolo: string
+  /** The owner's begin control with a full party (e.g. "everyone's ready, begin →"). */
+  beginParty: string
+}
+
 /** Props for the party-finalize roster. */
 export interface PartyRosterProps {
+  /** The resolved chrome labels (the shell resolves i18n and passes them). */
+  labels: PartyRosterLabels
   /** The party members, in display order. */
   members: RosterMember[]
   /** Whether the viewer owns the campaign (only the owner sees the begin control). */

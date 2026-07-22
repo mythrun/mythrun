@@ -49,6 +49,7 @@ function LevelPicker({ columns }: { columns: string }): React.JSX.Element {
         {LEVELS.map(({ level, grantGloss }) => (
           <LevelCard
             key={level}
+            eyebrow="Level"
             level={level}
             grantGloss={grantGloss}
             selected={picked === level}
@@ -89,8 +90,8 @@ export const SelectionStates: Story = {
   name: 'Unselected vs selected',
   render: () => (
     <div className="grid max-w-[440px] grid-cols-2 gap-[var(--space-3)] bg-bg p-[var(--space-6)]">
-      <LevelCard level={1} grantGloss="Core class features. A true beginning." selected={false} onSelect={noop} />
-      <LevelCard level={3} grantGloss="Your subclass. 2nd-level spells." selected onSelect={noop} />
+      <LevelCard eyebrow="Level" level={1} grantGloss="Core class features. A true beginning." selected={false} onSelect={noop} />
+      <LevelCard eyebrow="Level" level={3} grantGloss="Your subclass. 2nd-level spells." selected onSelect={noop} />
     </div>
   ),
 }

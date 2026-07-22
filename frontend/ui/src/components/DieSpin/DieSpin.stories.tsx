@@ -19,7 +19,7 @@ import { DieSpin } from './DieSpin.tsx'
 // Do: drive `spinning` from real interaction (the RollCard's Roll press) and land
 //   the numeral on `onSpinComplete`. Don't: interpolate the rotation smoothly, add a
 //   circle (the register is square/1-bit), or draw a stroke across the numeral field.
-// Content/i18n: `resultLabel` is a resolved [ph:] SR string the consumer passes;
+// Content/i18n: `resultLabel` is a resolved i18n SR string the consumer passes;
 //   `result` is DATA (the numeral), never an i18n key.
 
 const meta: Meta<typeof DieSpin> = {
@@ -58,7 +58,7 @@ export const Result: Story = {
     result: 17,
     reducedMotion: false,
     onSpinComplete: () => undefined,
-    resultLabel: '[ph: you rolled a 17]',
+    resultLabel: 'you rolled a 17',
   },
 }
 
@@ -77,7 +77,7 @@ export const Stress: Story = {
           result={v}
           reducedMotion={false}
           onSpinComplete={() => undefined}
-          resultLabel={`[ph: you rolled a ${String(v)}]`}
+          resultLabel={`you rolled a ${String(v)}`}
         />
       ))}
     </div>
@@ -105,14 +105,14 @@ function SpinDemo({ reducedMotion }: { reducedMotion: boolean }): React.JSX.Elem
         onSpinComplete={() => {
           setSpinning(false)
         }}
-        {...(result === null ? {} : { resultLabel: `[ph: you rolled a ${String(result)}]` })}
+        {...(result === null ? {} : { resultLabel: `you rolled a ${String(result)}` })}
       />
       <button
         type="button"
         className="border border-border-strong px-[var(--space-3)] py-[var(--space-1)] font-ui text-sm uppercase tracking-wide"
         onClick={roll}
       >
-        [ph: roll]
+        Roll
       </button>
     </div>
   )

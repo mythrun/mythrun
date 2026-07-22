@@ -36,7 +36,7 @@ export interface DmMessageProps {
   text: string
   /** Whether the turn is still streaming (drives the writing caret). */
   streaming: boolean
-  /** Optional resolved [ph:] screen-reader annotation announced while writing. */
+  /** Optional resolved screen-reader annotation announced while writing. */
   writingLabel?: string
   /** The compiled entity index (Task 3). When present AND the turn is SETTLED, recognized
    *  entity names highlight (mention → popover). NEVER applied while `streaming` (spec §6:

@@ -107,8 +107,8 @@ function question(): string {
   return screen.getByRole('heading', { level: 2 }).textContent
 }
 
-/** Click the option card carrying `data-option-id` (the durable selector — the
- *  visible copy is [ph:] and will churn at the copy pass). */
+/** Click the option card carrying `data-option-id` (the durable selector — stable
+ *  across copy changes, unlike the visible option name). */
 function pickOption(container: HTMLElement, id: string): void {
   const el = container.querySelector(`[data-option-id="${id}"]`)
   if (el === null) throw new Error(`no option card for id=${id}`)

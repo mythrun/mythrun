@@ -12,7 +12,7 @@
 export interface DmCorrectionProps {
   /** The correction prose (DM output — DATA, not an i18n key). */
   text: string
-  /** The resolved [ph:] errata eyebrow — the terse chrome label marking the row as an
+  /** The resolved errata eyebrow — the terse chrome label marking the row as an
    *  amendment (e.g. "correction"). Resolved route-side (the DS component is i18n-agnostic). */
   label: string
 }

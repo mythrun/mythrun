@@ -27,10 +27,6 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // whole surface is `aria-busy` while any beat is unfinished, and an SR-only polite live region
 // announces the ACTIVE beat's label (figure + rows are aria-hidden decoration).
 
-// Fixed interim chrome — the beat's eyebrow. Not carried by the contract, so it is a `[ph:]`
-// placeholder (the deliberate pre-copy-pass convention), not real copy.
-const LOADING_HEADING = '[ph: bringing them to life…]'
-
 // The loadwrap: a theme-aware paper card, a column holding the surfacing rows over the
 // full-width meter. min-w-0 so the rows wrap rather than spilling at ~375px.
 const WRAP_CLASS = cn(
@@ -60,7 +56,7 @@ const ROW_STATE_CLASS: Record<CharacterLoadingBeatProps['beats'][number]['state'
 }
 
 export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingBeatProps>(
-  function CharacterLoadingBeat({ beats, reducedMotion, countdownLabel }, ref) {
+  function CharacterLoadingBeat({ heading, beats, reducedMotion, countdownLabel }, ref) {
     const total = beats.length
     const doneCount = beats.filter((beat) => beat.state === 'done').length
     // Fill level as the mechanical done/total ratio (0 beats → 0). Drives the meter + the
@@ -89,7 +85,7 @@ export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingB
         {/* The surfacing beat rows. */}
         <div className={TEXT_CLASS}>
           <p aria-hidden="true" className={HEADING_CLASS}>
-            {LOADING_HEADING}
+            {heading}
           </p>
           <ul className={ROWS_CLASS} aria-hidden="true">
             {beats.map((beat) => (

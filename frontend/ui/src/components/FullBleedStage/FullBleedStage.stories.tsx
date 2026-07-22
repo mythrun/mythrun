@@ -31,8 +31,8 @@ function FramedPage({ children }: { children: React.ReactNode }): React.JSX.Elem
   return (
     <div className="min-h-dvh bg-bg">
       <div className="flex items-baseline justify-between border-b border-border-strong bg-surface p-[var(--space-4)] font-ui text-sm text-ink">
-        <span>[ph: wordmark]</span>
-        <span>[ph: chrome]</span>
+        <span>wordmark</span>
+        <span>chrome</span>
       </div>
       <div className="bg-surface p-[var(--space-6)]">{children}</div>
     </div>
@@ -49,10 +49,10 @@ export const InAFrame: Story = {
       <FullBleedStage inset={6}>
         <div className="flex min-h-[16rem] flex-1 flex-col border border-border-strong">
           <div className="flex-1 p-[var(--space-4)] font-body text-sm text-ink">
-            [ph: the stage content — a full-height column on narrow viewports]
+            the stage content — a full-height column on narrow viewports
           </div>
           <div className="border-t border-border-strong p-[var(--space-3)] font-ui text-xs text-ink-secondary">
-            [ph: a footer bar pinned to the fold on narrow viewports]
+            a footer bar pinned to the fold on narrow viewports
           </div>
         </div>
       </FullBleedStage>

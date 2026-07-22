@@ -30,10 +30,21 @@ const GATHERING: RosterMember[] = [
 
 const noop = (): void => undefined
 
+// The resolved chrome labels the shell supplies (real MYT-100 copy).
+const LABELS = {
+  partyHeading: 'Your party',
+  inviteSub: 'share a link · they join here',
+  creating: 'choosing who they are…',
+  gathering: 'just joined, making their character…',
+  waiting: 'waiting for the party to gather…',
+  beginSolo: 'begin the adventure →',
+  beginParty: "everyone's ready, begin →",
+}
+
 describe('PartyRoster', () => {
   it('renders a row per member with the displayName and the ready character name', () => {
     const { getByText, getAllByTestId } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     // One member row per real member (the empty invite row is a distinct node).
     expect(getAllByTestId('party-roster-member')).toHaveLength(3)
@@ -48,14 +59,14 @@ describe('PartyRoster', () => {
 
   it('marks the viewer with a "you" marker (prose, not a dot)', () => {
     const { getByTestId } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     expect(getByTestId('party-roster-you')).toHaveTextContent(/you/i)
   })
 
   it('shows the status prose sub-line for a still-creating member (no characterName)', () => {
     const { getByText, queryByText } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     // Pell has no characterName → the "choosing who they are" prose stands in.
     expect(getByText(/choosing who they are/i)).toBeInTheDocument()
@@ -67,14 +78,14 @@ describe('PartyRoster', () => {
 
   it('shows a "ready" status marker as prose for ready members', () => {
     const { getAllByText } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     expect(getAllByText(/^ready$/i).length).toBeGreaterThan(0)
   })
 
   it('renders a gathering member as a real member row (not the invite slot) with the gathering marker', () => {
     const { getByText, getAllByTestId, queryByTestId } = render(
-      <PartyRoster members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     // Bree is a real teammate, so she renders as a member row — NOT the dashed
     // invite affordance (the bug this split fixes).
@@ -89,7 +100,7 @@ describe('PartyRoster', () => {
 
   it('counts a gathering member as a real member in the party label', () => {
     const { getByText } = render(
-      <PartyRoster members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     // Owner (ready) + Bree (gathering) are both real → the panel reads "(2)".
     expect(getByText(/your party \(2\)/i)).toBeInTheDocument()
@@ -97,7 +108,7 @@ describe('PartyRoster', () => {
 
   it('conveys the gathering status as prose text, never a dot/chip/badge', () => {
     const { getAllByTestId } = render(
-      <PartyRoster members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={GATHERING} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     for (const marker of getAllByTestId('party-roster-status')) {
       expect(marker.className).not.toMatch(/border/)
@@ -109,7 +120,7 @@ describe('PartyRoster', () => {
     const onInvite = vi.fn()
     const user = userEvent.setup()
     const { getByTestId } = render(
-      <PartyRoster members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={onInvite} />,
+      <PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={onInvite} />,
     )
     const invite = getByTestId('party-roster-invite')
     expect(invite.tagName).toBe('BUTTON')
@@ -122,7 +133,7 @@ describe('PartyRoster', () => {
     const onInvite = vi.fn()
     const user = userEvent.setup()
     const { getByTestId } = render(
-      <PartyRoster members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={onInvite} />,
+      <PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={onInvite} />,
     )
     getByTestId('party-roster-invite').focus()
     await user.keyboard('{Enter}')
@@ -131,7 +142,7 @@ describe('PartyRoster', () => {
 
   it('counts only real members in the party label (the invite row is excluded)', () => {
     const { getByText } = render(
-      <PartyRoster members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     // Two entries, one of them the empty invite slot → the panel reads "(1)".
     expect(getByText(/your party \(1\)/i)).toBeInTheDocument()
@@ -141,7 +152,7 @@ describe('PartyRoster', () => {
     const onBegin = vi.fn()
     const user = userEvent.setup()
     const { getByRole } = render(
-      <PartyRoster members={SOLO} viewerIsOwner canBegin onBegin={onBegin} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={onBegin} onInvite={noop} />,
     )
     const begin = getByRole('button', { name: /begin/i })
     expect(begin).toBeEnabled()
@@ -150,10 +161,10 @@ describe('PartyRoster', () => {
   })
 
   it('uses the solo begin label for a one-member party and the party label otherwise', () => {
-    const solo = render(<PartyRoster members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />)
+    const solo = render(<PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />)
     expect(solo.getByRole('button', { name: /adventure/i })).toBeInTheDocument()
 
-    const party = render(<PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />)
+    const party = render(<PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />)
     expect(party.getByRole('button', { name: /everyone/i })).toBeInTheDocument()
   })
 
@@ -161,7 +172,7 @@ describe('PartyRoster', () => {
     const onBegin = vi.fn()
     const user = userEvent.setup()
     const { getByRole } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin={false} onBegin={onBegin} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin={false} onBegin={onBegin} onInvite={noop} />,
     )
     const begin = getByRole('button', { name: /begin/i })
     expect(begin).toBeDisabled()
@@ -171,7 +182,7 @@ describe('PartyRoster', () => {
 
   it('shows a waiting line (not the Begin control) to a non-owner member', () => {
     const { queryByRole, getByTestId } = render(
-      <PartyRoster members={PARTY} viewerIsOwner={false} canBegin={false} onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner={false} canBegin={false} onBegin={noop} onInvite={noop} />,
     )
     expect(queryByRole('button', { name: /begin/i })).not.toBeInTheDocument()
     expect(getByTestId('party-roster-waiting')).toBeInTheDocument()
@@ -179,7 +190,7 @@ describe('PartyRoster', () => {
 
   it('conveys status as prose text, never a dot/chip/badge (no borders/fills, no circles)', () => {
     const { getAllByTestId, container } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     // Every status marker is plain mono text — no bordered/filled pill.
     for (const marker of getAllByTestId('party-roster-status')) {
@@ -192,7 +203,7 @@ describe('PartyRoster', () => {
 
   it('is flat 1-bit / square (member rows carry rounded-none, no circles)', () => {
     const { getAllByTestId } = render(
-      <PartyRoster members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     for (const row of getAllByTestId('party-roster-member')) {
       expect(row.className).toContain('rounded-none')
@@ -202,17 +213,17 @@ describe('PartyRoster', () => {
   it('carries a data-testid on the root and forwards the ref', () => {
     const ref = createRef<HTMLDivElement>()
     const { getByTestId } = render(
-      <PartyRoster ref={ref} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+      <PartyRoster ref={ref} labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
     expect(getByTestId('party-roster')).toBeInTheDocument()
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
   it('has no a11y violations (owner solo, and non-owner party)', async () => {
-    const owner = render(<PartyRoster members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />)
+    const owner = render(<PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />)
     expect(await axe(owner.container)).toHaveNoViolations()
     const member = render(
-      <PartyRoster members={PARTY} viewerIsOwner={false} canBegin={false} onBegin={noop} onInvite={noop} />,
+      <PartyRoster labels={LABELS} members={PARTY} viewerIsOwner={false} canBegin={false} onBegin={noop} onInvite={noop} />,
     )
     expect(await axe(member.container)).toHaveNoViolations()
   })

@@ -109,9 +109,12 @@ describe('SigninRoute', () => {
     expect(createAuthState).toHaveBeenCalledWith({ provider: 'google', returnTo: '/join/abc' })
   })
 
-  it('shows the suspended notice when the store is suspended', () => {
+  it('shows the suspended notice with an inline Contact-us mailto when the store is suspended', () => {
     act(() => { useSessionStore.getState().setSuspended() })
     renderSignin()
     expect(screen.getByTestId('signin-suspended')).toBeDefined()
+    // The <1> slot renders as a mailto link to support (the Trans-composed CTA).
+    const contact = screen.getByTestId('signin-contact')
+    expect(contact.getAttribute('href')).toBe('mailto:hello@mythrun.com')
   })
 })

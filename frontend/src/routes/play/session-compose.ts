@@ -32,7 +32,7 @@ export function composeSummon(value: string): string {
 /** The connection statuses that surface a quiet system line pinned under the
  *  transcript (`reconnecting` / `failed`). Every settled status (`connecting` /
  *  `connected` / `closed`) renders no line. The shell maps the token to a resolved
- *  `[ph:]` string; a null means MessageStream's `connectionLine` prop is null. */
+ *  i18n string; a null means MessageStream's `connectionLine` prop is null. */
 export function connectionLineStatus(status: ConnectionStatus): 'reconnecting' | 'failed' | null {
   if (status === 'reconnecting') return 'reconnecting'
   if (status === 'failed') return 'failed'

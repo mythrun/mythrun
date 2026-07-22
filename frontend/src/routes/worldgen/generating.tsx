@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FullBleedStage, Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
-import { ENTITY_STAGES } from '@mythrun/contract/events'
+import { ENTITY_STAGES, WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/contract/events'
 import {
   remainingPrepWaitMs,
   remainingWaitMs,
@@ -33,9 +33,10 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 //   ACT TWO (graph): the fog-forward, GATED generation experience (§3.3/§3.4):
 //   - the graph is INERT (`interactive={false}`): no entity list, no selection —
 //     the fog + graph own the whole space (§3.4);
-//   - the WorldGenStatusCard (C4) is fed the stream's `stages[]` + a `[ph:]`
-//     stage-label map (WATCHED entity stages only — the prep stretch belongs to
-//     act one, and the silent tail runs behind the wiki reveal) + the ticking
+//   - the WorldGenStatusCard (C4) is fed the stream's `stages[]` + a full
+//     stage-label map (every canonical stage carries a friendly label, though the
+//     card only bars the WATCHED entity stages — the prep stretch belongs to act
+//     one, and the silent tail runs behind the wiki reveal) + the ticking
 //     per-second countdown (from the route's stage-timings fetch — MYT-89
 //     waiting-feedback; the player holds an expectation of the wait AT ALL
 //     TIMES, on both acts). Cost is NOT passed (audit ⑥ — the player never sees
@@ -117,6 +118,26 @@ const noSelect = (): void => {
  *  wiki-reveal boundary the route owns (`connectionsDone`). */
 const ENTITY_STAGE_SET: ReadonlySet<string> = new Set(ENTITY_STAGES)
 
+/** Every canonical world-gen stage → its friendly i18n label key. Keyed by
+ *  `WorldGenStage`, so a stage added to the taxonomy fails the compile HERE (a
+ *  missing Record entry) rather than silently falling back to a placeholder — the
+ *  status card + the SR announcer then always have a real label for any stage the
+ *  stream reports. The values are literal typed keys so `t()` accepts them. */
+const STAGE_LABEL_KEY = {
+  concept_intake: 'worldGen.stage.concept_intake',
+  world_color: 'worldGen.stage.world_color',
+  vocabulary_intake: 'worldGen.stage.vocabulary_intake',
+  world_and_factions: 'worldGen.stage.world_and_factions',
+  locations_and_npcs: 'worldGen.stage.locations_and_npcs',
+  entity_relationships: 'worldGen.stage.entity_relationships',
+  world_introduction: 'worldGen.stage.world_introduction',
+  entity_consolidation: 'worldGen.stage.entity_consolidation',
+  starting_situation: 'worldGen.stage.starting_situation',
+  random_tables: 'worldGen.stage.random_tables',
+  coherence_pass: 'worldGen.stage.coherence_pass',
+  embed_world: 'worldGen.stage.embed_world',
+} as const satisfies Record<WorldGenStage, string>
+
 /** Whether entities have started appearing — the act-one → watch-beat trigger.
  *  TRUE when the stream reports an ENTITY_STAGES stage underway
  *  (running/completed/failed — anything past pending), OR when the first node has
@@ -154,25 +175,21 @@ export function GeneratingView({
   // preference here (web layer — DOM `matchMedia`) and hand the graph the boolean.
   const prefersReducedMotion = usePrefersReducedMotion()
 
-  // Friendly per-stage labels for the status card (§3.3) — WATCHED entity stages
-  // only: since the two-act cut the card renders no prep bar, and since the
-  // reveal-timing cut (MYT-89) no tail bar either — the route swaps to the wiki
-  // reveal at the entity_relationships boundary, so prep/tail labels would be
-  // dead data. The DS owns no copy, so the route resolves each backend stage id →
-  // an i18n'd label; an unmapped stage falls back to a `[ph:]` placeholder inside
-  // the card.
+  // Friendly per-stage labels for the status card (§3.3) + the SR announcer,
+  // covering ALL canonical stages. Built by iterating WORLD_GEN_STAGES (not a
+  // hand-listed subset), so the map can never silently omit a stage: any stage
+  // the stream surfaces resolves to a real label, and a taxonomy addition fails
+  // loud at the STAGE_LABEL_KEY compile check above. The DS owns no copy, so the
+  // route resolves each backend stage id → its i18n'd label here; the card's
+  // own fallback is now defensive only.
   const stageLabels = useMemo<Record<string, string>>(
-    () => ({
-      world_and_factions: t('worldGen.stage.world_and_factions'),
-      locations_and_npcs: t('worldGen.stage.locations_and_npcs'),
-      entity_relationships: t('worldGen.stage.entity_relationships'),
-    }),
+    () => Object.fromEntries(WORLD_GEN_STAGES.map((stage) => [stage, t(STAGE_LABEL_KEY[stage])])),
     [t],
   )
 
-  // The act-one flavor lines — `[ph:]` placeholders cycled by WorldGenLoading
-  // every ~3s in RANDOM order (the copy is Miklos's; twenty slots so the loop
-  // never feels short, shuffled so it never feels canned).
+  // The act-one flavor lines — cycled by WorldGenLoading every ~3s in RANDOM
+  // order (twenty slots so the loop never feels short, shuffled so it never feels
+  // canned).
   const flavorLabels = useMemo<readonly string[]>(
     () => [
       t('worldGen.flavor1'),

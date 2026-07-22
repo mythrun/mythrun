@@ -22,8 +22,8 @@ import { CharacterLoadingSurface } from './character-loading.tsx'
 // underway; Done = every stage complete + the completion event (the
 // swap-to-reveal moment). The live folding itself is covered by
 // use-character-creation-stream.test.ts; these exist for the E1 responsive/a11y
-// sweep. (The countdown/stall copy keys are the controller's i18n pass — until
-// then the countdown line renders its raw key, the deliberate [ph:]-era look.)
+// sweep. (The countdown/stall lines render their real i18n copy — the screen maps
+// each beat id to its label and feeds the beat its heading.)
 
 const VIEWER = 'viewer'
 const STORY_CID = 'story-campaign'

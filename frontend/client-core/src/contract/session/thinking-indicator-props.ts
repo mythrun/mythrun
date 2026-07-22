@@ -4,7 +4,7 @@
 // CLEAR conditions (the first text_delta / turn_end / turn_error for the open turn), so
 // a stuck indicator can't survive a reconnect; this component just renders the current
 // booleans/names and announces them via a polite live region. Platform-neutral (§9):
-// pure data + resolved [ph:] labels, no DOM types.
+// pure data + resolved labels, no DOM types.
 
 /** Props for the thinking / typing indicator. */
 export interface ThinkingIndicatorProps {
@@ -12,8 +12,8 @@ export interface ThinkingIndicatorProps {
   thinking: boolean
   /** The display names of players currently typing (typing_start minus typing_stop). */
   typingNames: readonly string[]
-  /** Resolved [ph:] "DM is thinking…" label. */
+  /** Resolved "DM is thinking…" label. */
   thinkingLabel: string
-  /** Resolved [ph:] "… is typing" label template. */
+  /** Resolved "… is typing" label template. */
   typingLabel: string
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Stack, InvitePanel } from '@mythrun/ui'
 import {
   ensurePrimaryInvite,
@@ -59,6 +60,7 @@ export function CampaignInvitePanel({
   campaignId: string
   deps?: InvitePanelDeps
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const ctx = useApiContext()
   const {
     ensurePrimary = ensurePrimaryInvite,
@@ -161,6 +163,20 @@ export function CampaignInvitePanel({
         onShare={onShare}
         onRevoke={onRevoke}
         onCreate={onCreate}
+        labels={{
+          panelHeading: t('campaign.invite.panelHeading'),
+          linkLabel: t('campaign.invite.linkLabel'),
+          hint: t('campaign.invite.hint'),
+          loading: t('campaign.invite.loading'),
+          noLink: t('campaign.invite.noLink'),
+          create: t('campaign.invite.create'),
+          copy: t('campaign.invite.copy'),
+          copied: t('campaign.invite.copied'),
+          share: t('campaign.invite.share'),
+          replace: t('campaign.invite.replace'),
+          limit: t('campaign.invite.limit'),
+          error: t('campaign.invite.error'),
+        }}
       />
     </Stack>
   )

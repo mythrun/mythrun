@@ -9,7 +9,8 @@ import type { BaseProps } from './index.ts'
  *
  * `required` renders a visible required marker that ALSO carries meaning to
  * assistive tech (not color alone) — the control's own `required` is what sets
- * `aria-required`; this marker is the matching visual + SR-text affordance.
+ * `aria-required`; this marker is the matching visual + SR-text affordance, and
+ * its SR word arrives via the resolved `requiredLabel` (the DS owns no copy).
  *
  * `children` is the label text (an i18n key the consumer resolves).
  */
@@ -21,4 +22,8 @@ export interface LabelProps extends BaseProps {
   htmlFor?: string
   /** Marks the labelled control required — renders a meaning-carrying marker. */
   required?: boolean
+  /** The resolved screen-reader word for the required marker (e.g. "(required)")
+   *  — the shell resolves i18n and passes it (MYT-100; the DS owns no copy).
+   *  Rendered only when `required`. */
+  requiredLabel: string
 }

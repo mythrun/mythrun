@@ -18,7 +18,7 @@ import type { ConceptRejection } from '@mythrun/client-core'
 // Pure presentation firing NEUTRAL intents (`onEditAsFreeform` /
 // `onStartOver`) — it never navigates itself; the controller maps them to
 // screens. Composes @mythrun/ui only (no ad-hoc UI); every string is an i18n
-// `[ph:]` key (R5).
+// key (R5).
 
 /**
  * A rejection the create flow can carry to the shared rejection screen: the

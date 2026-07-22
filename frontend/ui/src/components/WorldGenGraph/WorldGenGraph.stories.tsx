@@ -105,7 +105,7 @@ function snapshotAt(
 }
 
 // A synthetic status card that advances with the generation — the top-left overlay that
-// keeps the pre-entity stretch legible. `[ph:]` labels (the DS owns no copy). The ids
+// keeps the pre-entity stretch legible. resolved i18n labels (the DS owns no copy). The ids
 // are the CANONICAL entity stages (the card renders one fixed bar per `WATCHED_ENTITY_STAGES`
 // entry and ignores unknown ids — fictional ids left the bar stuck at 0%).
 const STAGE_IDS = [
@@ -119,14 +119,14 @@ const STAGE_IDS = [
   'embed_world',
 ] as const
 const STAGE_LABELS: Record<string, string> = {
-  world_and_factions: '[ph: raising the powers]',
-  locations_and_npcs: '[ph: peopling the world]',
-  entity_relationships: '[ph: drawing connections]',
-  entity_consolidation: '[ph: settling names]',
-  starting_situation: '[ph: setting the scene]',
-  random_tables: '[ph: stocking surprises]',
-  coherence_pass: '[ph: tidying up]',
-  embed_world: '[ph: committing to memory]',
+  world_and_factions: 'Creating regions and factions',
+  locations_and_npcs: 'Settling people and places',
+  entity_relationships: 'Drawing the connections',
+  entity_consolidation: "Settling who's who",
+  starting_situation: 'Choosing where it begins',
+  random_tables: 'Preparing the unexpected',
+  coherence_pass: 'Reading it all back',
+  embed_world: 'Committing it to memory',
 }
 
 function statusFor(count: number, totalArrivals: number): WorldGenStatusCardProps {
@@ -143,9 +143,9 @@ function statusFor(count: number, totalArrivals: number): WorldGenStatusCardProp
   return {
     stages,
     stageLabels: STAGE_LABELS,
-    titleLabel: '[ph: weaving your world]',
-    doneLabel: '[ph: your world is ready]',
-    progressLabel: '[ph: world generation progress]',
+    titleLabel: 'weaving your world',
+    doneLabel: 'Your world is ready',
+    progressLabel: 'world generation progress',
   }
 }
 
@@ -191,9 +191,9 @@ function StreamingDemo({
           // hidden entities-so-far list (VisuallyHidden; nothing paints). Wired in the
           // story so the real-browser ARIA pass can inspect it.
           generationA11y={{
-            entityListLabel: '[ph: what has taken shape so far]',
-            phaseLabel: '[ph: raising the powers]',
-            entitiesLabel: `[ph: ${String(nodes.length)} have taken shape]`,
+            entityListLabel: 'what has taken shape so far',
+            phaseLabel: 'Creating regions and factions',
+            entitiesLabel: `${String(nodes.length)} have taken shape`,
           }}
           {...(reducedMotion !== undefined ? { reducedMotion } : {})}
         />
@@ -245,7 +245,7 @@ function ArrivalReplayDemo({ dense }: { dense?: boolean }): React.JSX.Element {
           setRun((r) => r + 1)
         }}
       >
-        [ph: replay]
+        replay
       </button>
     </div>
   )
@@ -417,8 +417,8 @@ function MobileFrameDemo({ freezeAt }: { freezeAt?: number }): React.JSX.Element
   return (
     <div className="min-h-dvh bg-bg">
       <div className="flex items-baseline justify-between border-b border-border-strong bg-surface p-[var(--space-4)] font-ui text-sm text-ink">
-        <span>[ph: wordmark]</span>
-        <span>[ph: chrome]</span>
+        <span>wordmark</span>
+        <span>chrome</span>
       </div>
       <div className="bg-surface p-[var(--space-6)]">
         <FullBleedStage inset={6}>
@@ -428,7 +428,7 @@ function MobileFrameDemo({ freezeAt }: { freezeAt?: number }): React.JSX.Element
             onSelect={() => undefined}
             status={{
               ...statusFor(count, MAX_DENSITY_ARRIVALS.length),
-              countdownLabel: '[ph: ~4:12 left]',
+              countdownLabel: '~4:12 left',
             }}
             totalEntities={MAX_DENSITY_TOTAL}
           />
@@ -477,7 +477,7 @@ function RevealDemo(): React.JSX.Element {
         // roving hidden listbox (VisuallyHidden; nothing paints) whose selection drives
         // the same onSelect a canvas tap does. Wired so the browser ARIA pass can
         // inspect it.
-        nodeListLabel="[ph: pick a place or figure from your world]"
+        nodeListLabel="pick a place or figure from your world"
         {...(selectedKey !== undefined ? { selectedKey } : {})}
         onSelect={setSelectedKey}
       />
@@ -553,21 +553,21 @@ const FORCE_KEYS: readonly (keyof ForceParams)[] = [
   'margin',
 ]
 const FORCE_LABELS: Record<keyof ForceParams, string> = {
-  chargeStrength: '[ph: charge]',
-  chargeDistanceMax: '[ph: charge range]',
-  linkStrength: '[ph: link pull]',
-  linkDistance: '[ph: link length]',
-  centerStrength: '[ph: center]',
-  boundaryStrength: '[ph: boundary]',
-  collisionPadding: '[ph: box gap]',
-  seedJitter: '[ph: seed jitter]',
-  margin: '[ph: margin]',
-  releaseAlpha: '[ph: release kick]',
-  alphaDecay: '[ph: cool-down]',
-  velocityDecay: '[ph: friction]',
+  chargeStrength: 'charge',
+  chargeDistanceMax: 'charge range',
+  linkStrength: 'link pull',
+  linkDistance: 'link length',
+  centerStrength: 'center',
+  boundaryStrength: 'boundary',
+  collisionPadding: 'box gap',
+  seedJitter: 'seed jitter',
+  margin: 'margin',
+  releaseAlpha: 'release kick',
+  alphaDecay: 'cool-down',
+  velocityDecay: 'friction',
 }
 // Plain-English help text under each knob so the tuning is legible WHILE sliding (this
-// harness is dev-only — not user-facing product copy, so real prose, not `[ph:]` labels).
+// harness is dev-only — not user-facing product copy, so real prose, not placeholder labels).
 const FORCE_DESCRIPTIONS: Record<keyof ForceParams, string> = {
   chargeStrength: 'How hard nodes shove each other apart. More negative = wider spread.',
   chargeDistanceMax: 'How far that shove reaches. Higher = even spread; lower = local clumps.',
@@ -668,7 +668,7 @@ function GraphSpreadTuner(): React.JSX.Element {
               void navigator.clipboard.writeText(`{\n${snippet}\n}`)
             }}
           >
-            [ph: copy]
+            copy
           </button>
           <button
             type="button"
@@ -677,7 +677,7 @@ function GraphSpreadTuner(): React.JSX.Element {
               setParams({ ...FORCE_PARAMS })
             }}
           >
-            [ph: reset]
+            reset
           </button>
         </div>
         <div className="w-full">
@@ -768,7 +768,7 @@ function RevealSettleTuner(): React.JSX.Element {
               void navigator.clipboard.writeText(`{\n${snippet}\n}`)
             }}
           >
-            [ph: copy]
+            copy
           </button>
           <button
             type="button"
@@ -777,7 +777,7 @@ function RevealSettleTuner(): React.JSX.Element {
               setParams({ ...FORCE_PARAMS, ...REVEAL_FORCE_PARAMS })
             }}
           >
-            [ph: reset]
+            reset
           </button>
         </div>
         <div className="w-full">
@@ -830,10 +830,10 @@ const DENSITY_KEYS: readonly (keyof DensityParams)[] = [
   'growthPerNode',
 ]
 const DENSITY_LABELS: Record<keyof DensityParams, string> = {
-  areaPerLabel: '[ph: label area]',
-  minLabels: '[ph: label floor]',
-  growthStartCount: '[ph: growth start]',
-  growthPerNode: '[ph: growth rate]',
+  areaPerLabel: 'label area',
+  minLabels: 'label floor',
+  growthStartCount: 'growth start',
+  growthPerNode: 'growth rate',
 }
 const DENSITY_DESCRIPTIONS: Record<keyof DensityParams, string> = {
   areaPerLabel:
@@ -880,7 +880,7 @@ function GraphDensityTuner(): React.JSX.Element {
               void navigator.clipboard.writeText(`{\n${snippet}\n}`)
             }}
           >
-            [ph: copy]
+            copy
           </button>
           <button
             type="button"
@@ -889,7 +889,7 @@ function GraphDensityTuner(): React.JSX.Element {
               setParams({ ...DENSITY_PARAMS })
             }}
           >
-            [ph: reset]
+            reset
           </button>
         </div>
         <div className="w-full">

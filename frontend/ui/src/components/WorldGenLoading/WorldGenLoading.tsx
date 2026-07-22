@@ -112,7 +112,7 @@ export const WorldGenLoading = forwardRef<HTMLDivElement, WorldGenLoadingProps>(
       countdownLabel,
       spinnerLabel,
       watchReady = false,
-      watchLabel = '[ph: watch your world be born]',
+      watchLabel,
       onWatch,
       'data-testid': dataTestId,
     },

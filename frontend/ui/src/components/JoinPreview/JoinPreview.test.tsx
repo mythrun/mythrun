@@ -8,10 +8,26 @@ import { JoinPreview } from './JoinPreview.tsx'
 
 const noop = (): void => undefined
 
+// The resolved chrome copy the shell supplies (real MYT-100 join.preview.* copy).
+const LABELS: JoinPreviewProps['labels'] = {
+  eyebrow: "You've been invited",
+  invitedBy: 'Invited by',
+  accept: 'accept the invitation →',
+  signin: 'sign in to join →',
+  invalid: 'This invite is no longer valid.',
+  full: 'This campaign is already full.',
+  revoked: 'This invite link was turned off.',
+  gone: 'This campaign is no longer available.',
+  notFound: "That invite doesn't lead anywhere.",
+  timeout: 'That took too long. Try again.',
+  error: 'Something went wrong. Try again.',
+}
+
 // The common case: a valid, signed-in preview ready to accept. Each test overrides
 // the axis it exercises. Names are realistic samples (tests are lint-exempt).
 function baseProps(overrides: Partial<JoinPreviewProps> = {}): JoinPreviewProps {
   return {
+    labels: LABELS,
     campaignName: 'The Sunless Reach',
     ownerName: 'Miklos',
     valid: true,

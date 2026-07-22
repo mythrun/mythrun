@@ -6,13 +6,18 @@
  * eslint-plugin-i18next rail skips (should-validate-template:false), and covers
  * every component shape (no all-caps-const scope-skip blind spot).
  *
- * Reports (in a JSXElement/JSXFragment child position, with no <Trans> ancestor):
+ * Reports (in a JSXElement/JSXFragment child position, with no <Trans> and no
+ * aria-hidden ancestor):
  *   - a non-whitespace JSXText node
  *   - a string Literal inside a child JSXExpressionContainer
  *   - a TemplateLiteral inside a child JSXExpressionContainer that has static text
- * Allows: whitespace-only text, numeric/expression children (`{count}`,
- *   `{t('k')}`), interpolation-only templates (`{`${x}`}`), and any descendant
- *   of <Trans>. Attribute literals belong to the eslint-plugin-i18next rail.
+ * Allows: whitespace-only text (JSXText or a `{' '}` spacing literal),
+ *   numeric/expression children (`{count}`,
+ *   `{t('k')}`, `{props.label}`), interpolation-only templates (`{`${x}`}`), any
+ *   descendant of <Trans>, and any descendant of an `aria-hidden` element
+ *   (presentational glyphs — separators/chevrons/arrows — that assistive tech
+ *   never reads and copy never translates). Attribute literals belong to the
+ *   eslint-plugin-i18next rail.
  *
  * @type {import('eslint').Rule.RuleModule}
  */
@@ -32,9 +37,37 @@ export const noUntranslatedJsxText = {
     const isTransEl = (el) =>
       el.type === 'JSXElement' && el.openingElement.name.name === 'Trans'
 
-    const hasTransAncestor = (node) => {
+    // An element is aria-hidden when it carries `aria-hidden` set to a STATIC
+    // true: `aria-hidden="true"`, `aria-hidden={true}`, or the bare `aria-hidden`
+    // (React coerces a valueless boolean attribute to true). A string `"false"`,
+    // `{false}`, or a dynamic expression is NOT treated as hidden — fail closed
+    // and flag the text. Spread attributes carry no static name and are skipped.
+    const isAriaHiddenTrue = (openingElement) => {
+      const attr = openingElement.attributes.find(
+        (a) => a.type === 'JSXAttribute' && a.name.name === 'aria-hidden',
+      )
+      if (!attr) return false
+      const v = attr.value
+      if (v === null) return true
+      if (v.type === 'Literal' && v.value === 'true') return true
+      return (
+        v.type === 'JSXExpressionContainer' &&
+        v.expression.type === 'Literal' &&
+        v.expression.value === true
+      )
+    }
+
+    // Text is exempt when an ancestor either OWNS its translation (<Trans>) or is
+    // aria-hidden (presentational — assistive tech never reads it, so copy never
+    // translates it: decorative separators/chevrons/arrows). aria-hidden on the
+    // element DIRECTLY wrapping the text (the common `<span aria-hidden>‹</span>`)
+    // and on any ancestor both exempt, via the walk below.
+    const isExemptAncestor = (el) =>
+      el.type === 'JSXElement' && (isTransEl(el) || isAriaHiddenTrue(el.openingElement))
+
+    const hasExemptAncestor = (node) => {
       for (let p = node.parent; p; p = p.parent) {
-        if (isTransEl(p)) return true
+        if (isExemptAncestor(p)) return true
       }
       return false
     }
@@ -52,14 +85,18 @@ export const noUntranslatedJsxText = {
     return {
       JSXText(node) {
         if (node.value.trim() === '') return
-        if (hasTransAncestor(node)) return
+        if (hasExemptAncestor(node)) return
         context.report({ node, messageId: 'bareText' })
       },
       JSXExpressionContainer(node) {
         if (!isChildContainer(node)) return
-        if (hasTransAncestor(node)) return
+        if (hasExemptAncestor(node)) return
         const expr = node.expression
-        if (expr.type === 'Literal' && typeof expr.value === 'string') {
+        // A whitespace-only string literal is the `{' '}` JSX spacing idiom, not
+        // copy — skip it, mirroring the JSXText whitespace skip above (templates
+        // are already covered: hasStaticText trims). Keeps the two child-text
+        // branches consistent about what "whitespace-only" means.
+        if (expr.type === 'Literal' && typeof expr.value === 'string' && expr.value.trim() !== '') {
           context.report({ node, messageId: 'bareText' })
         } else if (expr.type === 'TemplateLiteral' && hasStaticText(expr)) {
           context.report({ node, messageId: 'bareText' })

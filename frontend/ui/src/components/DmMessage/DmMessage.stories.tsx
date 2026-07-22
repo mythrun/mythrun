@@ -17,7 +17,7 @@ import { STORY_INDEX, STORY_LABELS } from './highlight.fixture.ts'
 // Don't: fake arrival with per-character typewriter timers — feed REAL wire
 //   deltas; never add a spinner beside the caret.
 // Content/i18n: `text` is streamed DATA (never an i18n key); `writingLabel` is a
-//   resolved [ph:] key the consumer passes.
+//   resolved i18n key the consumer passes.
 
 const meta: Meta<typeof DmMessage> = {
   title: 'Session/DmMessage',

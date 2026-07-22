@@ -30,7 +30,7 @@ import type { RejectionState } from './rejection.tsx'
 // the screen never navigates itself; the controller maps `onCommitted` /
 // `onPreviewExpired` (a commit-time 410) / `onRejected` (a rework the gate
 // rejects, or the terminal content-filter) to routes/screens. Composes
-// @mythrun/ui only (no ad-hoc UI); every string is an i18n `[ph:]` key (R5).
+// @mythrun/ui only (no ad-hoc UI); every string is an i18n key (R5).
 
 // Mirrors `ReworkRequestSchema.change.max(800)` — a change note is a sentence or
 // two; Rework stays disabled (quietly) until the note is non-blank and in bound.

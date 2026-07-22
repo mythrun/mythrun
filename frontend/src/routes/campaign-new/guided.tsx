@@ -30,7 +30,7 @@ import {
 // brief and owns the post-open terminals (complete / rejected / failed).
 // Pure presentation + that ONE side effect: the screen fires NEUTRAL intents
 // and never navigates itself. Composes @mythrun/ui only (no ad-hoc UI); every
-// string is an i18n `[ph:]` key (R5).
+// string is an i18n key (R5).
 
 type Step = 1 | 2 | 3
 type Picks = [GuidedPickDraft, GuidedPickDraft, GuidedPickDraft]

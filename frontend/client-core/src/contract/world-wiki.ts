@@ -37,9 +37,9 @@ export type {
  *
  * The DS owns no copy (§ components-live-in-the-design-system): the search
  * label/placeholder, the per-kind group headings, the empty-states, and the
- * back/related labels all arrive as `[ph: …]`-defaulted props the consuming app
- * resolves from i18n. Entity names + facts are DATA (from the model), so they
- * render as-is.
+ * back/related labels all arrive as resolved i18n strings the consuming app passes
+ * in (MYT-100 made them required — no in-component defaults). Entity names + facts
+ * are DATA (from the model), so they render as-is.
  */
 export interface WorldWikiProps extends Omit<BaseProps, 'children'> {
   /** The browsable model — groups of entities (a nested location carries
@@ -58,28 +58,30 @@ export interface WorldWikiProps extends Omit<BaseProps, 'children'> {
   query?: string
   /** Fired on each search keystroke with the new query string (§9 — never a DOM event). */
   onQuery: (query: string) => void
-  /** Accessible label for the search field (SeamlessInput's required label) — an
-   *  i18n key the consumer resolves. Defaults to a `[ph: …]` placeholder. */
-  searchLabel?: string
-  /** Faint placeholder hint in the search field — an i18n key. Defaults to `[ph: …]`. */
-  searchPlaceholder?: string
-  /** Per-kind group-heading copy — an i18n key per world-lore kind. A kind absent
-   *  from the map falls back to a `[ph: <kind>]` placeholder. */
+  /** Accessible label for the search field (SeamlessInput's required label) — a
+   *  resolved i18n string the consumer passes. */
+  searchLabel: string
+  /** Faint placeholder hint in the search field — a resolved i18n string. */
+  searchPlaceholder: string
+  /** Per-kind group-heading copy — a resolved string per world-lore kind. A kind
+   *  absent from the map falls back to an empty label (the DS invents no copy). */
   groupLabels?: Partial<Record<EntityKind, string>>
-  /** Note shown when the (filtered) home groups are empty — an i18n key. Defaults
-   *  to `[ph: …]`. */
-  emptyLabel?: string
-  /** The page's back-affordance label — an i18n key. Defaults to `[ph: …]`. */
-  backLabel?: string
-  /** The RELATED section label on a page — an i18n key. Defaults to `[ph: …]`. */
-  relatedLabel?: string
-  /** Note shown on an entity page whose known-tier body is empty — an i18n key.
-   *  Defaults to `[ph: …]`. */
-  emptyBodyLabel?: string
-  /** Section label over the introduction's dig-deeper reference links — an
-   *  i18n key. Defaults to `[ph: …]`. Rendered only on the intro home. */
-  referencesLabel?: string
+  /** Note shown when the (filtered) home groups are empty — a resolved i18n string. */
+  emptyLabel: string
+  /** The page's back-affordance label — a resolved i18n string. */
+  backLabel: string
+  /** The RELATED section label on a page — a resolved i18n string. */
+  relatedLabel: string
+  /** Note shown on an entity page whose known-tier body is empty — a resolved i18n string. */
+  emptyBodyLabel: string
+  /** Section label over the introduction's dig-deeper reference links — a resolved
+   *  i18n string. Rendered only on the intro home. */
+  referencesLabel: string
   /** Quiet section label over the search + browse index below the introduction
-   *  — an i18n key. Defaults to `[ph: …]`. Rendered only on the intro home. */
-  indexLabel?: string
+   *  — a resolved i18n string. Rendered only on the intro home. */
+  indexLabel: string
+  /** Section label over the world-glossary rows closing the home index (MYT-102) —
+   *  a resolved i18n string the consumer passes (migrated into the contract by
+   *  MYT-100). */
+  glossaryLabel: string
 }

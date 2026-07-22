@@ -12,6 +12,17 @@ import { PartyRoster } from './PartyRoster.tsx'
 
 const noop = (): void => undefined
 
+// The resolved chrome labels the shell supplies (real MYT-100 copy).
+const LABELS = {
+  partyHeading: 'Your party',
+  inviteSub: 'share a link · they join here',
+  creating: 'choosing who they are…',
+  gathering: 'just joined, making their character…',
+  waiting: 'waiting for the party to gather…',
+  beginSolo: 'begin the adventure →',
+  beginParty: "everyone's ready, begin →",
+}
+
 // Solo — the viewer is the only real member; the `empty` slot is the invite row.
 const SOLO: RosterMember[] = [
   { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm — Human Fighter', status: 'ready', isViewer: true },
@@ -39,7 +50,7 @@ const meta: Meta<typeof PartyRoster> = {
   title: 'Character/PartyRoster',
   component: PartyRoster,
   tags: ['autodocs'],
-  args: { onBegin: noop, onInvite: noop },
+  args: { labels: LABELS, onBegin: noop, onInvite: noop },
   // A paper page ground + a reading measure (the consuming screen owns the width).
   decorators: [
     (Story) => (

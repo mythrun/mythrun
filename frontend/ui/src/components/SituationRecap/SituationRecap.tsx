@@ -72,7 +72,8 @@ export const SituationRecap = forwardRef<HTMLDivElement, SituationRecapProps>(fu
       <p className={EYEBROW_CLASS}>{eyebrow}</p>
       <p className={TITLE_LINE_CLASS}>
         <span className={TITLE_CLASS}>{title}</span>
-        <span className={LOCATION_CLASS}> — {locationName}</span>
+        {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- interpunct separator notation, not translatable copy */}
+        <span className={LOCATION_CLASS}> · {locationName}</span>
       </p>
       <p
         id={proseId}

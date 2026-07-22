@@ -25,7 +25,7 @@ import { PartyStagingSurface, type PartyStagingDeps } from './party-staging.tsx'
 // the real endpoints) and assert each path: owner sees the roster + an enabled
 // Begin; a non-owner sees the waiting line; Begin finalizes then re-routes; the
 // solo case carries the invite row. ApiClientProvider carries the ctx; i18n
-// serves the [ph:] catalog.
+// serves the real catalog.
 
 const testCtx: ApiContext = {
   baseUrl: 'http://api.test',
@@ -256,7 +256,7 @@ describe('PartyStagingSurface — load lifecycle', () => {
       .mockResolvedValueOnce(progress())
     renderSurface({ viewerUserId: OWNER, deps: { getProgress } })
     await screen.findByTestId('party-staging-error')
-    fireEvent.click(screen.getByText('[ph: try again]'))
+    fireEvent.click(screen.getByText(i18n.t('characterCreate.staging.retry')))
     await screen.findByTestId('party-staging')
     expect(getProgress).toHaveBeenCalledTimes(2)
   })

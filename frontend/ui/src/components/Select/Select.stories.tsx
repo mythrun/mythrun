@@ -49,7 +49,7 @@ type Story = StoryObj<typeof Select>
 // Default — nothing selected, the placeholder (an i18n key) shows muted.
 export const Default: Story = {
   render: (args) => (
-    <FormField label="field.choose_race">
+    <FormField requiredLabel="(required)" label="field.choose_race">
       <Select {...args} />
     </FormField>
   ),
@@ -59,7 +59,7 @@ export const Default: Story = {
 export const Selected: Story = {
   args: { defaultValue: 'elf' },
   render: (args) => (
-    <FormField label="field.choose_race">
+    <FormField requiredLabel="(required)" label="field.choose_race">
       <Select {...args} />
     </FormField>
   ),
@@ -70,13 +70,13 @@ export const Selected: Story = {
 export const Sizes: Story = {
   render: (args) => (
     <div className="flex flex-col gap-[var(--space-3)] w-80">
-      <FormField label="control.sm">
+      <FormField requiredLabel="(required)" label="control.sm">
         <Select {...args} size="sm" />
       </FormField>
-      <FormField label="control.md">
+      <FormField requiredLabel="(required)" label="control.md">
         <Select {...args} size="md" />
       </FormField>
-      <FormField label="control.lg">
+      <FormField requiredLabel="(required)" label="control.lg">
         <Select {...args} size="lg" />
       </FormField>
     </div>
@@ -88,7 +88,7 @@ export const Sizes: Story = {
 // rides on the FormField (authoritative), which forwards it to the trigger.
 export const Invalid: Story = {
   render: (args) => (
-    <FormField label="field.choose_race" invalid>
+    <FormField requiredLabel="(required)" label="field.choose_race" invalid>
       <Select {...args} />
     </FormField>
   ),
@@ -99,7 +99,7 @@ export const Invalid: Story = {
 export const Disabled: Story = {
   args: { disabled: true, defaultValue: 'human' },
   render: (args) => (
-    <FormField label="field.choose_race">
+    <FormField requiredLabel="(required)" label="field.choose_race">
       <Select {...args} />
     </FormField>
   ),
@@ -122,7 +122,7 @@ export const Open: Story = {
     a11y: { config: { rules: [{ id: 'aria-hidden-focus', enabled: false }] } },
   },
   render: (args) => (
-    <FormField label="field.choose_race">
+    <FormField requiredLabel="(required)" label="field.choose_race">
       <Select {...args} />
     </FormField>
   ),

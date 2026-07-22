@@ -9,7 +9,7 @@ import { SessionInput } from './SessionInput.tsx'
 // Shift+Enter inserts a newline. `disabled` gates both intents while the session
 // is ended / not-ready.
 //
-// Content/i18n: `placeholder` + `summonLabel` + `sendLabel` are resolved [ph:]
+// Content/i18n: `placeholder` + `summonLabel` + `sendLabel` are resolved i18n
 // strings the consumer supplies (the component hard-codes no copy); the stories
 // show resolved specimen prose so the composer reads correctly in the catalogue.
 // The visible `@dm` token composition + broadcast live at the route wire, not

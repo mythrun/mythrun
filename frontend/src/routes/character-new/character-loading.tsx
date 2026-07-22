@@ -86,6 +86,25 @@ function countdownLabelFrom(remainingMs: number | null, t: TFunction): string | 
   })
 }
 
+/** Resolve one beat's display copy from its stable id (the client-core stream
+ *  emits IDs only — the copy lives here, in the screen). A `switch` keeps each
+ *  `t()` key a literal the typed catalog can check, without a cast; an unknown id
+ *  falls back to empty (defensive — the fixed beat set is exhaustive). */
+function beatLabel(id: string, t: TFunction): string {
+  switch (id) {
+    case 'name':
+      return t('characterCreate.loading.beat.name')
+    case 'class':
+      return t('characterCreate.loading.beat.class')
+    case 'scores':
+      return t('characterCreate.loading.beat.scores')
+    case 'kit':
+      return t('characterCreate.loading.beat.kit')
+    default:
+      return ''
+  }
+}
+
 export interface CharacterLoadingSurfaceProps {
   /** The campaign whose status stream carries the per-player creation events. */
   campaignId: string
@@ -113,6 +132,9 @@ export function CharacterLoadingSurface({
   const { t } = useTranslation()
   const ctx = useApiContext()
   const { beats, done, stages } = useCharacterCreationStream(campaignId, userId, deps)
+  // The stream emits stable beat IDs; resolve each to its display copy here (the
+  // client-core layer owns no copy). The DS beat renders these labels + the eyebrow.
+  const labeledBeats = useMemo(() => beats.map((b) => ({ ...b, label: beatLabel(b.id, t) })), [beats, t])
   // myth-qkjdq: the RELIABLE, SSE-independent advance. The SSE-driven stream above
   // animates the beats, but its `done` depends on a live event / snapshot recheck
   // that a CloudFront-buffered SSE may never deliver. This durable poll flips on
@@ -192,7 +214,8 @@ export function CharacterLoadingSurface({
         {t('characterCreate.loading.title')}
       </Heading>
       <CharacterLoadingBeat
-        beats={beats}
+        beats={labeledBeats}
+        heading={t('characterCreate.loading.heading')}
         reducedMotion={reducedMotion}
         // Omit on undefined (exactOptionalPropertyTypes; the honesty contract —
         // no usable history means NO countdown, never an empty one).

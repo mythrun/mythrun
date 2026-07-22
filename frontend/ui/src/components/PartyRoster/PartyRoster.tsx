@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import type { PartyRosterProps, RosterMember } from '@mythrun/client-core/contract'
+import type { PartyRosterLabels, PartyRosterProps, RosterMember } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { Button } from '../Button/Button.tsx'
 
@@ -34,25 +34,15 @@ import { Button } from '../Button/Button.tsx'
 // `shrink-0` marker. It reads the same at a desktop measure and at ~375px; the
 // consuming screen owns the max-width.
 //
-// COPY — the display strings the component itself emits are fixed interim chrome
-// deferred to the end-of-milestone copy pass (the `[ph:]` convention, like
-// CharacterLoadingBeat's eyebrow); the contract carries none of them. Terse,
-// generic single words (the panel label, "you", "ready") read as real chrome; the
-// evocative lines are `[ph:]` placeholders.
-
-// Fixed chrome / interim copy.
-const PANEL_LABEL = 'Your party'
+// COPY — the evocative display strings (the invite sub-line, the creating/gathering
+// stand-ins, the waiting line, the two begin-control labels) arrive resolved via
+// `labels` (MYT-100 grew the contract these props, exactly as the interim placeholder convention anticipated). The remaining terse, generic chrome the component still
+// emits itself — "you", "Invite a friend"/"+ invite", and the terse status markers
+// ("ready"/"creating…"/"gathering…") — is NOT part of the MYT-100 label contract and
+// stays as fixed chrome.
 const YOU_MARK = 'you'
 const INVITE_NAME = 'Invite a friend'
-const INVITE_SUB = '[ph: share a link · they join here]'
 const INVITE_MARK = '+ invite'
-const CREATING_SUBLINE = '[ph: choosing who they are…]'
-// A gathering member has joined but not started a character — a real teammate, NOT
-// the invite affordance. Its stand-in sub-line reads distinctly from `creating`.
-const GATHERING_SUBLINE = '[ph: just joined — making their character…]'
-const WAITING_LINE = '[ph: waiting for the party to gather…]'
-const BEGIN_SOLO = '[ph: begin the adventure →]'
-const BEGIN_PARTY = "[ph: everyone's ready — begin →]"
 
 // The status a member row renders as — every real-member state (the `empty` invite
 // slot renders through InviteRow, never here).
@@ -113,20 +103,20 @@ const WAITING_CLASS = 'font-ui text-xs uppercase tracking-wide text-ink-tertiary
 // The sub-line under a member's name: a made character shows its name; a still-
 // creating member shows the "choosing…" stand-in; a just-joined (gathering) member
 // shows the joined-not-started stand-in; a ready member with no name yet shows none.
-function memberSubline(member: RosterMember): string | undefined {
+function memberSubline(member: RosterMember, labels: PartyRosterLabels): string | undefined {
   if (member.characterName !== undefined) return member.characterName
-  if (member.status === 'creating') return CREATING_SUBLINE
-  if (member.status === 'gathering') return GATHERING_SUBLINE
+  if (member.status === 'creating') return labels.creating
+  if (member.status === 'gathering') return labels.gathering
   return undefined
 }
 
 // One real-member (creating/ready/gathering) row. The `empty` invite slot renders
 // through InviteRow, never here.
-function MemberRow({ member }: { member: RosterMember }): React.JSX.Element {
+function MemberRow({ member, labels }: { member: RosterMember; labels: PartyRosterLabels }): React.JSX.Element {
   // The invite slot is excluded upstream, so any non-`empty` status maps to its own
   // marker; a stray `empty` (defensive) settles to the quiet `ready` marker.
   const status: MemberStatus = member.status === 'empty' ? 'ready' : member.status
-  const sub = memberSubline(member)
+  const sub = memberSubline(member, labels)
   return (
     <li data-testid="party-roster-member" data-status={member.status} className={MEMBER_CLASS}>
       <span aria-hidden="true" className={TILE_CLASS} style={{ backgroundImage: TILE_HATCH }} />
@@ -135,6 +125,7 @@ function MemberRow({ member }: { member: RosterMember }): React.JSX.Element {
           {member.displayName}
           {member.isViewer && (
             <>
+              {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- interpunct separator notation, not translatable copy */}
               {' · '}
               <span data-testid="party-roster-you" className={YOU_CLASS}>
                 {YOU_MARK}
@@ -152,14 +143,14 @@ function MemberRow({ member }: { member: RosterMember }): React.JSX.Element {
 }
 
 // The invite slot — a dashed, keyboard-accessible row (a real <button>).
-function InviteRow({ onInvite }: { onInvite: () => void }): React.JSX.Element {
+function InviteRow({ onInvite, inviteSub }: { onInvite: () => void; inviteSub: string }): React.JSX.Element {
   return (
     <li>
       <button type="button" data-testid="party-roster-invite" onClick={onInvite} className={INVITE_CLASS}>
         <span aria-hidden="true" className={TILE_EMPTY_CLASS} />
         <span className={WHO_CLASS}>
           <span className={NAME_CLASS}>{INVITE_NAME}</span>
-          <span className={SUB_CLASS}>{INVITE_SUB}</span>
+          <span className={SUB_CLASS}>{inviteSub}</span>
         </span>
         <span className={INVITE_MARK_CLASS}>{INVITE_MARK}</span>
       </button>
@@ -168,25 +159,26 @@ function InviteRow({ onInvite }: { onInvite: () => void }): React.JSX.Element {
 }
 
 export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function PartyRoster(
-  { members, viewerIsOwner, canBegin, onBegin, onInvite },
+  { labels, members, viewerIsOwner, canBegin, onBegin, onInvite },
   ref,
 ) {
   // The invite slot is chrome, not a player — exclude it from the count + label
   // solo/party choice so an injected invite row never reads as a second member.
   const realCount = members.filter((m) => m.status !== 'empty').length
-  const beginLabel = realCount <= 1 ? BEGIN_SOLO : BEGIN_PARTY
+  const beginLabel = realCount <= 1 ? labels.beginSolo : labels.beginParty
 
   return (
     <div ref={ref} data-testid="party-roster" className={ROOT_CLASS}>
       <p className={PANEL_LABEL_CLASS}>
-        {PANEL_LABEL} ({realCount})
+        {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- punctuation notation (count parens), not translatable copy */}
+        {labels.partyHeading} ({realCount})
       </p>
       <ul className={ROSTER_CLASS}>
         {members.map((member) =>
           member.status === 'empty' ? (
-            <InviteRow key={member.userId} onInvite={onInvite} />
+            <InviteRow key={member.userId} onInvite={onInvite} inviteSub={labels.inviteSub} />
           ) : (
-            <MemberRow key={member.userId} member={member} />
+            <MemberRow key={member.userId} member={member} labels={labels} />
           ),
         )}
       </ul>
@@ -197,7 +189,7 @@ export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function
           </Button>
         ) : (
           <p data-testid="party-roster-waiting" className={WAITING_CLASS}>
-            {WAITING_LINE}
+            {labels.waiting}
           </p>
         )}
       </div>

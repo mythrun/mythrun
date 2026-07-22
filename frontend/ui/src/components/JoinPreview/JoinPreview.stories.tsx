@@ -6,16 +6,32 @@ import { JoinPreview } from './JoinPreview.tsx'
 // whether they are signed in (accept inline vs sign in to join). Pure/presentational:
 // these specimens hand it fixed props; the real route wires the preview fetch, the
 // accept request, and navigation. Campaign/owner names are realistic samples (stories
-// are lint-exempt). The display copy is interim `[ph:]` chrome (the end-of-milestone
-// copy pass owns the final strings).
+// are lint-exempt). The chrome copy arrives resolved via `labels` (the DS owns no
+// copy); these specimens use the real MYT-100 join.preview.* copy.
 
 const noop = (): void => undefined
+
+// The resolved chrome copy the shell supplies (real MYT-100 join.preview.* copy).
+const LABELS = {
+  eyebrow: "You've been invited",
+  invitedBy: 'Invited by',
+  accept: 'accept the invitation →',
+  signin: 'sign in to join →',
+  invalid: 'This invite is no longer valid.',
+  full: 'This campaign is already full.',
+  revoked: 'This invite link was turned off.',
+  gone: 'This campaign is no longer available.',
+  notFound: "That invite doesn't lead anywhere.",
+  timeout: 'That took too long. Try again.',
+  error: 'Something went wrong. Try again.',
+}
 
 const meta: Meta<typeof JoinPreview> = {
   title: 'Invite/JoinPreview',
   component: JoinPreview,
   tags: ['autodocs'],
   args: {
+    labels: LABELS,
     campaignName: 'The Sunless Reach',
     ownerName: 'Miklos',
     valid: true,

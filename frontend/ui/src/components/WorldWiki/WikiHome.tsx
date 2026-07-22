@@ -40,8 +40,8 @@ import { resolveKindLabel } from './kind-label.ts'
 // before paint) — a dig-deeper tap at the bottom of the intro returns to the
 // references, not the title.
 //
-// The DS owns no copy: labels arrive resolved from the shell (which defaults
-// them to `[ph: …]`). The world name, prose, and entity/reference names are
+// The DS owns no copy: labels arrive resolved from the shell (required props, no
+// in-component defaults). The world name, prose, and entity/reference names are
 // DATA and render as-is. Raw <ul>/<li>/<button> carry the tree semantics +
 // native keyboard activation.
 

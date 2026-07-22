@@ -34,7 +34,7 @@ const defaultFetchCampaigns: FetchCampaigns = (ctx) =>
 
 /** The world identity block: the dither cover + world name + campaign name. A
  *  still-loading / not-found campaign renders the muted ghost swatch beside a calm
- *  `[ph: …]` line (never a fake identity). */
+ *  i18n line (never a fake identity). */
 function WorldIdentity({
   campaign,
   loading,

@@ -43,16 +43,27 @@ describe('cardPhaseLine', () => {
     expect(cardPhaseLine(makeCampaign({ cardPhase }), i18n.t, 'en', NOW_MS)).toBe(i18n.t(key))
   })
 
-  it('builds the played record line ("N sessions · <relative>")', () => {
+  it('builds the played record line, pluralizing on the session count', () => {
     const lastPlayedAt = new Date(NOW_MS - 2 * DAY_MS).toISOString()
-    const line = cardPhaseLine(
+    // count > 1 selects record_other → "N sessions · last played …".
+    const plural = cardPhaseLine(
       makeCampaign({ cardPhase: 'played', sessionCount: 4, lastPlayedAt }),
       i18n.t,
       'en',
       NOW_MS,
     )
-    expect(line).toContain('4 sessions')
-    expect(line).toContain('2 days ago')
+    expect(plural).toContain('4 sessions')
+    expect(plural).toContain('2 days ago')
+
+    // count === 1 selects record_one → the singular "1 session" (never "1 sessions").
+    const singular = cardPhaseLine(
+      makeCampaign({ cardPhase: 'played', sessionCount: 1, lastPlayedAt }),
+      i18n.t,
+      'en',
+      NOW_MS,
+    )
+    expect(singular).toContain('1 session')
+    expect(singular).not.toContain('1 sessions')
   })
 
   it('falls back to the terse "recently" when a played card has a null lastPlayedAt', () => {

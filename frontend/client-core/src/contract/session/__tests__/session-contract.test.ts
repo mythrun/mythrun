@@ -93,7 +93,7 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
     }>()
   })
 
-  it('RollCardLabels — the resolved [ph:] bundle the route threads to each card', () => {
+  it('RollCardLabels — the resolved bundle the route threads to each card', () => {
     expectTypeOf<RollCardLabels>().toEqualTypeOf<{
       readonly roll: string
       readonly continue: string
@@ -163,6 +163,8 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
     expectTypeOf<SessionStartBeatProps>().toEqualTypeOf<{
       phase: 'prep' | 'connecting'
       reducedMotion: boolean
+      // MYT-100: the resolved beat heading (shell-owned i18n).
+      heading: string
       prepLabel: string
       connectingLabel: string
     }>()

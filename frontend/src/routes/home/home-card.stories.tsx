@@ -15,8 +15,7 @@ import { CampaignCard } from './home-card.tsx'
 // each cover re-ink — the card surface flips light↔dark and the CoverDither swaps
 // its two colour values with no per-card JavaScript.
 //
-// The state/record COPY is still the `[ph_…]` placeholder set (short strings land
-// with the copy pass, bead myth-lxm7m) — the specimens exercise the card STRUCTURE,
+// The state/record COPY is i18n — the specimens exercise the card STRUCTURE,
 // not the final wording.
 
 const DAY_MS = 86_400_000

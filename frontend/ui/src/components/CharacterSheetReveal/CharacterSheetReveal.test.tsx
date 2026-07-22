@@ -80,8 +80,21 @@ const CASTER_FULL: FullSheet = {
 
 const noop = (): void => undefined
 
+// The resolved chrome labels the shell supplies (real MYT-100 copy — `startOver`
+// resolves `$t(shared.beginAgain)`).
+const LABELS = {
+  confirm: 'This is me',
+  seeFull: 'See full sheet',
+  hideFull: 'Hide full sheet',
+  startOver: 'Begin again',
+  panelFeatures: 'What they can do',
+  panelEquipment: 'What they carry',
+  panelSpells: 'What they can cast',
+}
+
 function baseProps(overrides: Partial<React.ComponentProps<typeof CharacterSheetReveal>> = {}) {
   return {
+    labels: LABELS,
     curated: MARTIAL_CURATED,
     full: MARTIAL_FULL,
     expanded: false,
@@ -254,11 +267,11 @@ describe('CharacterSheetReveal', () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
-  it('fires onStartOver from "Start over"', async () => {
+  it('fires onStartOver from the start-over control', async () => {
     const onStartOver = vi.fn()
     const user = userEvent.setup()
     const { getByRole } = render(<CharacterSheetReveal {...baseProps({ onStartOver })} />)
-    await user.click(getByRole('button', { name: /start over/i }))
+    await user.click(getByRole('button', { name: /begin again/i }))
     expect(onStartOver).toHaveBeenCalledOnce()
   })
 

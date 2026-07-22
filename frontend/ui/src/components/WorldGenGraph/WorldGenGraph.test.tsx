@@ -228,7 +228,12 @@ describe('WorldGenGraph — pannable (MYT-89 audit v3: the camera gate)', () => 
 
 // A minimal status payload (the layout tests only care WHERE the card renders,
 // not what it shows — the card's own tests own that).
-const STATUS = { stages: [] }
+const STATUS = {
+  stages: [],
+  titleLabel: 'weaving your world',
+  doneLabel: 'Your world is ready',
+  progressLabel: 'world generation progress',
+}
 
 describe('WorldGenGraph — narrow-viewport layout (MYT-89 audit v2: full-bleed + footer)', () => {
   // On a phone-class viewport (< 640px — the DS's one narrow regime, the same
@@ -626,7 +631,12 @@ describe('WorldGenGraph — E3 reduced-motion consolidation', () => {
         reducedMotion
         // One of four watched-entity stages completed → the % is the primary,
         // motion-free progress signal (the ember pulse is CSS, quelled by base.css).
-        status={{ stages: [stageAt('world_and_factions', 'completed')] }}
+        status={{
+          stages: [stageAt('world_and_factions', 'completed')],
+          titleLabel: 'weaving your world',
+          doneLabel: 'Your world is ready',
+          progressLabel: 'world generation progress',
+        }}
       />,
     )
     expect(raf).not.toHaveBeenCalled()

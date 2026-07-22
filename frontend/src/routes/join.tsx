@@ -37,7 +37,7 @@ import {
 //     arm the card surfaces (no navigation).
 //
 // Flat 1-bit paper register; all UI composes @mythrun/ui. Every user-facing string
-// is an i18n key with a `[ph:]` placeholder (MYT-100 owns the copy pass).
+// is an i18n key.
 
 /** The preview lifecycle. `invalid`/`error` are the two `mapPreviewError` forks —
  *  `invalid` is terminal (a code that never existed; retry is pointless), `error`
@@ -100,6 +100,7 @@ export function JoinRoute({
   accept = acceptInvite,
   navigateTo,
 }: JoinRouteProps = {}): React.JSX.Element {
+  const { t } = useTranslation()
   const ctx = useApiContext()
   const navigate = useNavigate()
   const go = navigateTo ?? ((path: string) => void navigate(path))
@@ -158,6 +159,19 @@ export function JoinRoute({
           arm={arm}
           onAccept={onAccept}
           onSignIn={onSignIn}
+          labels={{
+            eyebrow: t('join.preview.eyebrow'),
+            invitedBy: t('join.preview.invitedBy'),
+            accept: t('join.preview.accept'),
+            signin: t('join.preview.signin'),
+            invalid: t('join.preview.invalid'),
+            full: t('join.preview.full'),
+            revoked: t('join.preview.revoked'),
+            gone: t('join.preview.gone'),
+            notFound: t('join.preview.notFound'),
+            timeout: t('join.preview.timeout'),
+            error: t('join.preview.error'),
+          }}
         />
       ) : (
         <PreviewNotice

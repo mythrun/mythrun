@@ -4,7 +4,7 @@ import type { ClassName } from '../../srd/classes.ts'
 // are the DOM-free vocabulary the six @mythrun/ui character components render and the
 // B4 view-model produces objects of. Platform-neutral (§9): pure data — no DOM types,
 // no React/JSX, no runtime values. Display strings arrive already resolved (the DS
-// owns no copy); `[ph:]` display copy is a later web-layer task.
+// owns no copy); display copy is a later web-layer task.
 
 // Re-export the SRD class union so a consumer reads the guided-builder's class
 // identity off the same contract surface it reads the shapes from.
@@ -27,7 +27,7 @@ export interface GuidedChoice {
 }
 
 /** A selectable card in the current guided step. `description` is a resolved
- *  display string (the web layer fills the `[ph:]` copy). */
+ *  display string (the web layer fills the copy). */
 export interface GuidedOption {
   id: string
   name: string

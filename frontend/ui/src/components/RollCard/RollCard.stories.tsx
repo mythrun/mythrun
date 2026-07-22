@@ -16,7 +16,7 @@ import { RollCard } from './RollCard.tsx'
 //   affordance shows; honour reduced motion (the die lands with no spin).
 // Don't: render `constraint`; add status dots/chips; colour the tier.
 // Content/i18n: `skill` / `context` / roll numbers are DATA; the button + tier + DC
-//   words are resolved [ph:] labels (sample copy here — stories are i18n-exempt).
+//   words are resolved i18n labels (sample copy here — stories are i18n-exempt).
 
 const STORY_LABELS: RollCardLabels = {
   roll: 'Roll',

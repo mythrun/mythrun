@@ -6,29 +6,29 @@ import { Label } from './Label.tsx'
 
 describe('Label', () => {
   it('renders a native <label> with its text', () => {
-    const { getByText } = render(<Label>field.name</Label>)
+    const { getByText } = render(<Label requiredLabel="(required)">field.name</Label>)
     const el = getByText('field.name')
     expect(el.tagName).toBe('LABEL')
   })
 
   it('binds to a control via htmlFor', () => {
-    const { getByText } = render(<Label htmlFor="ctl-1">field.name</Label>)
+    const { getByText } = render(<Label requiredLabel="(required)" htmlFor="ctl-1">field.name</Label>)
     expect(getByText('field.name')).toHaveAttribute('for', 'ctl-1')
   })
 
   it('carries the ui-label type role classes (mono / uppercase / tracked)', () => {
-    const { getByText } = render(<Label htmlFor="x">field.name</Label>)
+    const { getByText } = render(<Label requiredLabel="(required)" htmlFor="x">field.name</Label>)
     expect(getByText('field.name')).toHaveClass('font-ui', 'uppercase', 'tracking-wide')
   })
 
   it('renders NO required marker by default', () => {
-    const { queryByText } = render(<Label htmlFor="x">field.name</Label>)
+    const { queryByText } = render(<Label requiredLabel="(required)" htmlFor="x">field.name</Label>)
     expect(queryByText('*')).toBeNull()
   })
 
   it('renders a required marker that carries meaning to AT (not color alone)', () => {
     const { getByText } = render(
-      <Label htmlFor="x" required>
+      <Label requiredLabel="(required)" htmlFor="x" required>
         field.name
       </Label>,
     )
@@ -44,14 +44,14 @@ describe('Label', () => {
 
   it('forwards its ref to the underlying <label>', () => {
     const ref = createRef<HTMLLabelElement>()
-    render(<Label ref={ref}>field.name</Label>)
+    render(<Label requiredLabel="(required)" ref={ref}>field.name</Label>)
     expect(ref.current).toBeInstanceOf(HTMLLabelElement)
   })
 
   it('has no axe violations (bound to a real control)', async () => {
     const { container } = render(
       <div>
-        <Label htmlFor="axe-input" required>
+        <Label requiredLabel="(required)" htmlFor="axe-input" required>
           field.name
         </Label>
         <input id="axe-input" />

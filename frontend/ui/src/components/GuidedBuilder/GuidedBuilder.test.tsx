@@ -35,8 +35,12 @@ const SINGLE_OPTION: GuidedOption[] = [
 // A no-op that satisfies the required callbacks without being an empty function.
 const noop = (): void => undefined
 
+// The resolved nav labels the shell supplies (real MYT-100 copy).
+const LABELS = { next: 'Next', back: 'Back', switchToFreeform: 'Describe them instead' }
+
 function baseProps(overrides: Partial<React.ComponentProps<typeof GuidedBuilder>> = {}) {
   return {
+    labels: LABELS,
     rail: FIRST_RAIL,
     question: 'What is your calling?',
     options: CLASS_OPTIONS,

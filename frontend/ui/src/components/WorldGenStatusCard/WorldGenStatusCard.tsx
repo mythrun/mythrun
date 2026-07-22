@@ -104,10 +104,16 @@ function cellState(status: StageProgress['status']): CellState {
   return 'pending'
 }
 
-/** Resolve a stage id to its consumer-supplied friendly label, else a `[ph:]`
- *  placeholder (the DS owns no copy). */
-function resolveStageLabel(stage: string, stageLabels?: Readonly<Record<string, string>>): string {
-  return stageLabels?.[stage] ?? `[ph: ${stage}]`
+/** Resolve a stage id to its consumer-supplied friendly label, else the card's
+ *  generic running caption (`fallback` = `titleLabel`). With the full stage map
+ *  supplied the fallback is defensive only — the DS owns no copy, so it never
+ *  invents a placeholder. */
+function resolveStageLabel(
+  stage: string,
+  fallback: string,
+  stageLabels?: Readonly<Record<string, string>>,
+): string {
+  return stageLabels?.[stage] ?? fallback
 }
 
 /** One of the FIXED watched-entity bars: its canonical stage id + the fill state
@@ -150,13 +156,14 @@ function computeProgress(stages: readonly StageProgress[]): Progress {
 function currentLabelFrom(
   progress: Progress,
   doneLabel: string,
+  titleLabel: string,
   stageLabels?: Readonly<Record<string, string>>,
 ): string {
   const { bars, running, isComplete } = progress
-  if (running !== undefined) return resolveStageLabel(running, stageLabels)
+  if (running !== undefined) return resolveStageLabel(running, titleLabel, stageLabels)
   if (isComplete) return doneLabel
   const nextIncomplete = bars.find((b) => b.state !== 'completed')?.stage
-  return nextIncomplete !== undefined ? resolveStageLabel(nextIncomplete, stageLabels) : doneLabel
+  return nextIncomplete !== undefined ? resolveStageLabel(nextIncomplete, titleLabel, stageLabels) : doneLabel
 }
 
 export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardProps>(
@@ -166,15 +173,15 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
       countdownLabel,
       stageLabels,
       variant = 'overlay',
-      titleLabel = '[ph: weaving your world]',
-      doneLabel = '[ph: your world is ready]',
-      progressLabel = '[ph: world generation progress]',
+      titleLabel,
+      doneLabel,
+      progressLabel,
       'data-testid': dataTestId,
     },
     ref,
   ) {
     const progress = computeProgress(stages)
-    const currentLabel = currentLabelFrom(progress, doneLabel, stageLabels)
+    const currentLabel = currentLabelFrom(progress, doneLabel, titleLabel, stageLabels)
     const percentText = `${String(progress.percent)}%`
 
     // The shared pieces both variants compose: the fixed segmented bar (the ONE

@@ -40,7 +40,7 @@ import type { SituationRecapData } from './freeform-path.tsx'
 //
 // Options map SRD → cards: each option's `id` is the value the reducer commits (the
 // class ID for `class`; the canonical English SRD name for the rest — the locale-
-// independent flatten input), while the shown `name` is a [ph:] catalog key, never
+// independent flatten input), while the shown `name` is an i18n catalog key, never
 // the canonical name. The rail labels + chosen values come straight from the reducer's
 // `guidedRail` selector.
 
@@ -65,9 +65,9 @@ const OPTION_QUESTION_KEY: Record<OptionStep, string> = {
 }
 
 /** The current step's option cards. `id` is the exact value the reducer commits;
- *  `name` is a [ph:] display key (never the canonical name); `description` is
- *  intentionally empty for the interim (name-only cards) — per-option flavour copy
- *  lands in the end-of-milestone copy pass. */
+ *  `name` is an i18n display key (never the canonical name); `description` is
+ *  intentionally empty (name-only cards) — per-option flavour copy is out of scope
+ *  for these cards. */
 function optionsFor(step: OptionStep, className: string | undefined, t: Translate): GuidedOption[] {
   switch (step) {
     case 'class':
@@ -167,6 +167,7 @@ function GroundingScreen({
         value={value}
         onChange={onChange}
         onSubmit={onSubmit}
+        submitLabel={t('characterCreate.freeform.continue')}
       />
       {notice !== null ? (
         <Text role="ui-caption" as="p" data-testid="guided-notice">
@@ -290,6 +291,7 @@ export function GuidedPath({
           value={notesText}
           onChange={setNotesText}
           onSubmit={continueNotes}
+          submitLabel={t('characterCreate.freeform.continue')}
         />
       </>
     )
@@ -307,6 +309,11 @@ export function GuidedPath({
           dispatch({ type: 'back' })
         }}
         onSkipToFreeform={onSkipToFreeform}
+        labels={{
+          next: t('characterCreate.guided.next'),
+          back: t('characterCreate.guided.back'),
+          switchToFreeform: t('characterCreate.guided.switchToFreeform'),
+        }}
       />
     )
   }

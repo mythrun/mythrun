@@ -11,7 +11,7 @@ import { SessionPreparing } from './SessionPreparing.tsx'
 //   slow breath is the only motion.
 // Don't: add a progress bar, a countdown, or a "retry now" button — the hook owns the
 //   cadence; this surface just holds the screen calmly.
-// Content/i18n: `label` / `detail` are resolved [ph:] chrome the consumer passes.
+// Content/i18n: `label` / `detail` are resolved chrome the consumer passes.
 
 const meta: Meta<typeof SessionPreparing> = {
   title: 'Session/SessionPreparing',
@@ -27,7 +27,7 @@ export default meta
 
 type Story = StoryObj<typeof SessionPreparing>
 
-// Test-double copy (stories are i18n-exempt; the real [ph:] bundle resolves route-side).
+// Test-double copy (stories are i18n-exempt; the real i18n bundle resolves route-side).
 const LABEL = 'The DM is preparing the next session…'
 const DETAIL = 'This can take a moment.'
 

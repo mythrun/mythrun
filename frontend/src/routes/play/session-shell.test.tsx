@@ -16,7 +16,7 @@ import type { PlayKnowledgeHooks } from './knowledge-panel.tsx'
 
 // The dice-moment wiring (MYT-93 T7). The shell subscribes `useRollReveal`, computes
 // `buildRevealView(items, state)` per render, and threads the reveal view + resolved
-// [ph:] label bundle into MessageStream. These tests assert the wiring BEHAVIOURALLY
+// i18n label bundle into MessageStream. These tests assert the wiring BEHAVIOURALLY
 // (not just that the type break is gone): a live skill_check renders a RollCard whose
 // turn's outcome prose is BUFFERED until Continue, and a replayed (persisted `seq`)
 // card renders already-released with its prose shown. The reveal reducer + card

@@ -138,7 +138,7 @@ function WsPanel({
           <StatusReadout state={state} testid={WS_ID} />
 
           <Stack direction="row" gap={2} align="end" wrap>
-            <FormField label={t('devTransport.ws.sessionIdLabel')}>
+            <FormField label={t('devTransport.ws.sessionIdLabel')} requiredLabel={t('form.required')}>
               <Input value={sessionId} onChange={setSessionId} data-testid="ws-session-input" />
             </FormField>
             <Button
@@ -171,7 +171,7 @@ function WsPanel({
           </Stack>
 
           <Stack direction="row" gap={2} align="end" wrap>
-            <FormField label={t('devTransport.ws.messageLabel')}>
+            <FormField label={t('devTransport.ws.messageLabel')} requiredLabel={t('form.required')}>
               <Input value={message} onChange={setMessage} data-testid="ws-message-input" />
             </FormField>
             <Button
@@ -223,7 +223,7 @@ function SsePanel({
           <StatusReadout state={state} testid={SSE_ID} />
 
           <Stack direction="row" gap={2} align="end" wrap>
-            <FormField label={t('devTransport.sse.pathLabel')}>
+            <FormField label={t('devTransport.sse.pathLabel')} requiredLabel={t('form.required')}>
               <Input value={ssePath} onChange={setSsePath} data-testid="sse-path-input" />
             </FormField>
             <Button

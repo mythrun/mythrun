@@ -124,6 +124,7 @@ export function FreeformPath({
           value={conceptText}
           onChange={setConceptText}
           onSubmit={handleConcept}
+          submitLabel={t('characterCreate.freeform.continue')}
         />
       ) : (
         <FreeformPrompt
@@ -133,6 +134,7 @@ export function FreeformPath({
           value={groundingText}
           onChange={setGroundingText}
           onSubmit={handleGrounding}
+          submitLabel={t('characterCreate.freeform.continue')}
         />
       )}
       {notice !== null ? (

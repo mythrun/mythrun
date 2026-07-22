@@ -129,7 +129,7 @@ const stubLoadingDeps = {
   fetchProgress: (): Promise<CharacterCreationProgress> => pending(),
 }
 
-// A finished martial sheet — enough for the reveal to render its "Start over" action.
+// A finished martial sheet — enough for the reveal to render its "Begin again" action.
 const SHEET: CharacterFull = {
   character: {
     id: 'char-1',
@@ -357,7 +357,7 @@ describe('CharacterSurface — mounted routing', () => {
     expect(await screen.findByTestId('route-play')).toBeDefined()
   })
 
-  it('reveal "Start over" resets the concept and hands off to create', async () => {
+  it('reveal "Begin again" resets the concept and hands off to create', async () => {
     const resetInReveal = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
     renderSurface(
       CAMPAIGN,
@@ -371,7 +371,7 @@ describe('CharacterSurface — mounted routing', () => {
         },
       }),
     )
-    fireEvent.click(await screen.findByRole('button', { name: 'Start over' }))
+    fireEvent.click(await screen.findByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
     expect(await screen.findByTestId('route-create')).toBeDefined()
     expect(resetInReveal).toHaveBeenCalledWith(testCtx, CID)
   })

@@ -19,10 +19,16 @@ const MID_BEATS: LoadingBeat[] = [
 
 const COMPLETE_BEATS: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'done' }))
 
+// The resolved beat heading the shell supplies (real MYT-100 copy).
+const HEADING = 'Bringing them to life…'
+
 const meta: Meta<typeof CharacterLoadingBeat> = {
   title: 'Character/CharacterLoadingBeat',
   component: CharacterLoadingBeat,
   tags: ['autodocs'],
+  // The heading is required chrome — supply it once at the meta level so every
+  // specimen (and the `{...args}` renders) inherits it.
+  args: { heading: HEADING },
   // A paper page ground so the loadwrap card reads as it does on the real screen.
   decorators: [
     (Story) => (
@@ -58,7 +64,7 @@ export const Complete: Story = {
 // specimen.
 export const WithCountdown: Story = {
   name: 'With countdown (~2:10 left)',
-  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: '[ph: ~2:10 left]' },
+  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: '~2:10 left' },
 }
 
 // Reduced motion — the same mid-progress snapshot with every transition dropped
@@ -67,7 +73,7 @@ export const WithCountdown: Story = {
 // here so the frozen fill + live countdown pairing has a specimen.
 export const ReducedMotion: Story = {
   name: 'Reduced motion (mid-progress, no transitions)',
-  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: '[ph: ~2:10 left]' },
+  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: '~2:10 left' },
 }
 
 // Narrow — the loadwrap at ~375px, confirming the figure + text column hold
@@ -107,7 +113,14 @@ function LoadingDriver(): React.JSX.Element {
       clearTimeout(t)
     }
   }, [done])
-  return <CharacterLoadingBeat beats={beatsAt(done)} reducedMotion={false} countdownLabel="[ph: ~1:40 left]" />
+  return (
+    <CharacterLoadingBeat
+      heading={HEADING}
+      beats={beatsAt(done)}
+      reducedMotion={false}
+      countdownLabel="~1:40 left"
+    />
+  )
 }
 
 export const Driving: Story = {

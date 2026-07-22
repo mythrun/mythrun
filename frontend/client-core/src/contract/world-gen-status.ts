@@ -64,14 +64,16 @@ export interface WorldGenStatusCardProps extends Omit<BaseProps, 'children'> {
    *  semantics to AT. */
   countdownLabel?: string
   /** Map from raw stage id (`vocabulary_intake`) → an i18n'd FRIENDLY label the
-   *  consumer resolves. An unmapped stage falls back to a `[ph: <stage>]` placeholder
-   *  (the DS owns no copy). */
+   *  consumer resolves. An unmapped stage falls back to the card's `titleLabel` (its
+   *  generic running caption) — with the full stage map supplied, that fallback is
+   *  defensive only (the DS owns no copy, so it never invents a placeholder). */
   stageLabels?: Readonly<Record<string, string>>
-  /** i18n key: the card's small framing caption (e.g. "Weaving your world"). */
-  titleLabel?: string
-  /** i18n key: the label shown on the main line once every stage has completed (the
+  /** The resolved framing caption (e.g. "Weaving your world"); also the defensive
+   *  fallback label for an unmapped stage id. */
+  titleLabel: string
+  /** The resolved label shown on the main line once every stage has completed (the
    *  100% "done" state). */
-  doneLabel?: string
-  /** i18n key: the accessible name for the determinate progressbar. */
-  progressLabel?: string
+  doneLabel: string
+  /** The resolved accessible name for the determinate progressbar. */
+  progressLabel: string
 }

@@ -15,6 +15,7 @@ const props = (overrides: Partial<FreeformPromptProps> = {}): FreeformPromptProp
   value: '',
   onChange: vi.fn(),
   onSubmit: vi.fn(),
+  submitLabel: 'Continue',
   placeholder: 'A retired toll-clerk who never stopped counting…',
   ...overrides,
 })

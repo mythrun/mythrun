@@ -15,9 +15,10 @@ import { WorldGenLoading } from './WorldGenLoading.tsx'
 // `remainingWaitMs` derivation so the number visibly walks). When entities start
 // streaming, the "watch your world be born" watch button appears: generation
 // keeps running regardless; pressing it swaps the route to the graph view. Every
-// string is a `[ph:]` i18n key (the DS owns no copy). Under
-// prefers-reduced-motion the Spinner goes static and the cycler freezes on its
-// opening line — the countdown still ticks (content, not decoration).
+// string arrives resolved from the shell (the DS owns no copy); these specimens use
+// the real MYT-100 copy. Under prefers-reduced-motion the Spinner goes static and
+// the cycler freezes on its opening line — the countdown still ticks (content, not
+// decoration).
 
 const meta: Meta<typeof WorldGenLoading> = {
   title: 'Patterns/WorldGenLoading',
@@ -31,9 +32,35 @@ export default meta
 
 type Story = StoryObj<typeof WorldGenLoading>
 
-// The full twenty-line catalog the generating route threads through (Miklos
-// writes the real copy later) — the shuffle needs the real breadth to show.
-const FLAVORS = Array.from({ length: 20 }, (_, i) => `[ph: worldgen flavor ${String(i + 1)}]`)
+// The full twenty-line catalog the generating route threads through (the real
+// MYT-100 copy, worldGen.flavor1–20) — the shuffle needs the real breadth to show.
+const FLAVORS = [
+  'The gods decide what to name themselves.',
+  'History fades into mythology.',
+  'The spark of magic enters the world.',
+  'Waters spring forth.',
+  'A landscape is carved into shape.',
+  'A creature notices its own thoughts.',
+  'Populations spill across the world.',
+  'Somewhere, a people decides that they are a people.',
+  'A calendar is scrawled across the seasons.',
+  'The first law is made and then broken.',
+  'Languages find their words.',
+  'Ink is put to page.',
+  'Invisible borders snake across the land.',
+  'A song is sung for the first time.',
+  'The stars are grouped into stories.',
+  'Music finds its first instrument.',
+  'A throne is carved that will outlast its king.',
+  'The first grave is marked.',
+  'A gift is given.',
+  "The world's name is spoken aloud.",
+]
+
+// The resolved watch-button label the shell supplies (real MYT-100 copy, worldGen.watch).
+const WATCH = 'Watch it take shape'
+// The resolved Spinner SR label (real MYT-100 copy, worldGen.loadingLabel).
+const SPINNER = 'making your world'
 
 // --- The live countdown harness -------------------------------------------
 // Drives the REAL derivation the app uses: historical per-stage averages ∩ a
@@ -59,14 +86,14 @@ function demoStages(startMs: number): StageProgress[] {
   ]
 }
 
-/** Format the remaining ms as the `[ph:]` countdown line (mirrors the app's
- *  `~M:SS` formatting — the words are i18n there; specimens hold placeholder). */
+/** Format the remaining ms as the countdown line (mirrors the app's `~M:SS`
+ *  formatting — the words are resolved i18n in the app; specimens use the same shape). */
 function formatCountdown(remainingMs: number | null): string | undefined {
   if (remainingMs === null) return undefined
   const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
-  return `[ph: ~${String(minutes)}:${String(seconds).padStart(2, '0')} left]`
+  return `~${String(minutes)}:${String(seconds).padStart(2, '0')} left`
 }
 
 function LiveCountdownDemo({ watchReady = false }: { watchReady?: boolean }): React.JSX.Element {
@@ -87,10 +114,10 @@ function LiveCountdownDemo({ watchReady = false }: { watchReady?: boolean }): Re
     <div className="min-h-dvh bg-bg">
       <WorldGenLoading
         flavorLabels={FLAVORS}
-        spinnerLabel="[ph: making your world]"
+        spinnerLabel={SPINNER}
         {...(countdownLabel !== undefined ? { countdownLabel } : {})}
         watchReady={watchReady}
-        watchLabel="[ph: watch your world be born]"
+        watchLabel={WATCH}
         onWatch={() => {
           /* the route swaps to the graph view */
         }}
@@ -119,7 +146,7 @@ export const WatchReady: Story = {
 export const ColdStart: Story = {
   render: () => (
     <div className="min-h-dvh bg-bg">
-      <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel="[ph: making your world]" />
+      <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel={SPINNER} watchLabel={WATCH} />
     </div>
   ),
 }
@@ -129,8 +156,9 @@ export const SingleLine: Story = {
   render: () => (
     <div className="min-h-dvh bg-bg">
       <WorldGenLoading
-        flavorLabels={['[ph: worldgen flavor 1]']}
-        spinnerLabel="[ph: making your world]"
+        flavorLabels={['The gods decide what to name themselves.']}
+        spinnerLabel={SPINNER}
+        watchLabel={WATCH}
       />
     </div>
   ),

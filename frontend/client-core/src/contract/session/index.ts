@@ -29,6 +29,6 @@ export type { SessionStartBeatProps } from './session-start-beat-props.ts'
 export type { SessionPreparingProps } from './session-preparing-props.ts'
 
 // MYT-93 dice-moment prop contracts (RollCard / DieSpin — Tasks 4/5). RollCardLabels is
-// the resolved [ph:] bundle the play route threads through MessageStream to each card.
+// the resolved bundle the play route threads through MessageStream to each card.
 export type { RollCardProps, RollCardLabels } from './roll-card.ts'
 export type { DieSpinProps } from './die-spin.ts'

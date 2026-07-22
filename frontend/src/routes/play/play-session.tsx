@@ -78,7 +78,11 @@ export function PlaySession({
     viewer,
     reducedMotion,
     retry,
-    connectingLabels: { prep: t('play.start.prep'), connecting: t('play.start.connecting') },
+    connectingLabels: {
+      heading: t('play.start.heading'),
+      prep: t('play.start.prep'),
+      connecting: t('play.start.connecting'),
+    },
     blocked: {
       body:
         flow.state.phase === 'blocked' && flow.state.memberNames !== undefined
@@ -98,7 +102,7 @@ interface RenderArgs {
   readonly viewer: PlayViewer
   readonly reducedMotion: boolean
   readonly retry: () => void
-  readonly connectingLabels: { prep: string; connecting: string }
+  readonly connectingLabels: { heading: string; prep: string; connecting: string }
   readonly blocked: { body: string; retry: string }
   readonly startError: { body: string; retry: string }
   readonly usePrep?: UsePrep
@@ -152,13 +156,14 @@ function ConnectingBeat({
   labels,
 }: {
   reducedMotion: boolean
-  labels: { prep: string; connecting: string }
+  labels: { heading: string; prep: string; connecting: string }
 }): React.JSX.Element {
   return (
     <CenteredHold data-testid="play-connecting">
       <SessionStartBeat
         phase="connecting"
         reducedMotion={reducedMotion}
+        heading={labels.heading}
         prepLabel={labels.prep}
         connectingLabel={labels.connecting}
       />

@@ -313,7 +313,12 @@ describe('play knowledge composition — the sidebar', () => {
     const shell = screen.getByTestId('session-shell')
     expect(within(shell).getByTestId('knowledge-wiki-unavailable')).toBeDefined()
     // A null cache index ⇒ the chat is NOT highlighted (plain prose, no mention).
-    expect(screen.queryByRole('button', { name: MENTION_LABEL })).toBeNull()
+    // Scoped to the transcript: the mention lives in the DM prose, and a known name
+    // may ALSO appear as a wiki browse-index row (whose kind rides the group heading,
+    // not the row's accessible name), so an unscoped name query would be ambiguous.
+    expect(
+      within(screen.getByTestId('message-stream')).queryByRole('button', { name: MENTION_LABEL }),
+    ).toBeNull()
   })
 })
 
@@ -321,7 +326,13 @@ describe('play knowledge composition — chat highlighting bridge', () => {
   it('threads the cache index into MessageStream so a known name highlights in settled prose', () => {
     renderShell()
     // The DM prose renders the recognized name as a focusable mention (a button).
-    const mention = screen.getByRole('button', { name: MENTION_LABEL })
+    // Scoped to the transcript container: the same known name also appears as a wiki
+    // browse-index row (the sidebar is open by default), and that row's accessible
+    // name is just the entity name — its kind rides the group heading, not the row —
+    // so an unscoped query would match both. The mention is the transcript one.
+    const mention = within(screen.getByTestId('message-stream')).getByRole('button', {
+      name: MENTION_LABEL,
+    })
     expect(mention).toBeDefined()
     expect(mention.textContent).toContain(KESSA)
   })
@@ -337,8 +348,10 @@ describe('play knowledge composition — chat highlighting bridge', () => {
     fireEvent.click(within(shell).getByTestId('session-sidebar-toggle'))
     expect(within(shell).queryByTestId('session-sheet')).toBeNull()
 
-    // Click the chat mention → its popover → "open in the world guide".
-    fireEvent.click(screen.getByRole('button', { name: MENTION_LABEL }))
+    // Click the chat mention → its popover → "open in the world guide". Scope to the
+    // transcript: the mention is the DM-prose button (a browse-index row could share
+    // the name), and here the sidebar is collapsed onto the sheet tab regardless.
+    fireEvent.click(within(screen.getByTestId('message-stream')).getByRole('button', { name: MENTION_LABEL }))
     fireEvent.click(screen.getByRole('button', { name: OPEN_IN_WIKI }))
 
     // The sidebar re-opened AND landed on the wiki tab (not the sheet tab).

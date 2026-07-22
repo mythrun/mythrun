@@ -164,7 +164,7 @@ const MIXED: TranscriptItem[] = [DM_SETTLED, PLAYER_CONFIRMED, SKILL_CHECK, DM_S
 // ── Reveal scaffolding (MYT-93). MessageStream is presentational: the play route
 // computes the reveal view + label bundle (client-core selectors) and threads them
 // in. Tests supply a stub label bundle + a reveal view (default: nothing revealed,
-// nothing gated). Stub labels are i18n-exempt — the real [ph:] bundle resolves
+// nothing gated). Stub labels are i18n-exempt — the real i18n bundle resolves
 // route-side (MYT-100 is the copy pass). ─────────────────────────────────────────
 const STUB_LABELS: RollCardLabels = {
   roll: 'Roll',
@@ -324,10 +324,10 @@ describe('MessageStream', () => {
 
   it('pins the connectionLine as a status line when non-null, and omits it when null', () => {
     const { rerender } = render(
-      <MessageStream {...streamProps({ items: [DM_SETTLED], connectionLine: '[ph: reconnecting…]' })} />,
+      <MessageStream {...streamProps({ items: [DM_SETTLED], connectionLine: 'finding your way back…' })} />,
     )
     const line = screen.getByTestId('message-stream-connection')
-    expect(line).toHaveTextContent('[ph: reconnecting…]')
+    expect(line).toHaveTextContent('finding your way back…')
     expect(line).toHaveAttribute('role', 'status')
     rerender(<MessageStream {...streamProps({ items: [DM_SETTLED] })} />)
     expect(screen.queryByTestId('message-stream-connection')).not.toBeInTheDocument()
@@ -416,7 +416,7 @@ describe('MessageStream', () => {
 
   it('is square register — no circles anywhere in the surface', () => {
     const { container } = render(
-      <MessageStream {...streamProps({ items: MIXED, connectionLine: '[ph: reconnecting…]' })} />,
+      <MessageStream {...streamProps({ items: MIXED, connectionLine: 'finding your way back…' })} />,
     )
     expect(container.querySelector('.rounded-full')).toBeNull()
   })
@@ -432,7 +432,7 @@ describe('MessageStream', () => {
     const plain = render(<MessageStream {...streamProps({ items: MIXED })} />)
     expect(await axe(plain.container)).toHaveNoViolations()
     const withLine = render(
-      <MessageStream {...streamProps({ items: MECHANICAL, connectionLine: '[ph: reconnecting…]' })} />,
+      <MessageStream {...streamProps({ items: MECHANICAL, connectionLine: 'finding your way back…' })} />,
     )
     expect(await axe(withLine.container)).toHaveNoViolations()
   })

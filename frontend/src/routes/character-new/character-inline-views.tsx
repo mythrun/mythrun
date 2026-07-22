@@ -1,7 +1,7 @@
 import { Stack, Heading, Text, Button } from '@mythrun/ui'
 
 // Inline presentational states (member hold / failure / play entry). All copy is
-// resolved to `[ph:]` i18n strings by the parent so the t() keys stay static.
+// resolved to i18n strings by the parent so the t() keys stay static.
 
 const HOLD_TESTID = 'character-hold'
 const FAILURE_TESTID = 'character-failure'

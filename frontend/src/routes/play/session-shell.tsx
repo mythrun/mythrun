@@ -34,7 +34,7 @@ import { MAX_PLAYER_MESSAGE_LEN, composeSummon, connectionLineStatus, resolveTyp
 // view-model deliberately leaves to the composer:
 //   • the SEND handlers — `onSend` sends + clears; `onSummonDm` composes the visible
 //     `@dm` token into the text (the explicit-text path) then sends + clears.
-//   • the CONNECTION line — `reconnecting`/`failed` → a quiet `[ph:]` system line
+//   • the CONNECTION line — `reconnecting`/`failed` → a quiet i18n system line
 //     pinned under the transcript; else null.
 //   • the TYPING names — SessionView presence carries userIds only; resolve them to
 //     display names via the campaign roster (unknown ids omitted).
@@ -247,10 +247,9 @@ export function SessionShell({
   )
 }
 
-/** Resolve the dice-moment [ph:] label bundle threaded to each RollCard (MYT-93).
+/** Resolve the dice-moment label bundle threaded to each RollCard (MYT-93).
  *  Extracted so the shell body stays a thin composition; the outcome-tier map uses the
- *  frame's snake_case tiers (`great_success`) keyed off the camelCase i18n leaf. The
- *  copy behind these keys is MYT-100's one pass — the values are `[ph:]` for now. */
+ *  frame's snake_case tiers (`great_success`) keyed off the camelCase i18n leaf. */
 function buildRollLabels(t: TFunction): RollCardLabels {
   return {
     roll: t('play.roll.roll'),
