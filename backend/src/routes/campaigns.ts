@@ -341,6 +341,23 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     },
   )
 
+  // Per-USER (not per-IP) cap on SSE stream opens — shared verbatim by the two
+  // campaign SSE routes below (status/stream + prep-status).
+  const SSE_STREAM_ROUTE_CONFIG = {
+    rateLimit: {
+      max: 10,
+      timeWindow: '1 minute',
+      keyGenerator: (req: FastifyRequest): string => {
+        try {
+          return requireDbUser(req).id
+        } catch {
+          return req.ip
+        }
+      },
+    },
+    pipelineRoute: true,
+  }
+
   // -------------------------------------------------------------------------
   // GET /api/campaigns/:campaignId/status/stream (MYT-50)
   // -------------------------------------------------------------------------
@@ -348,21 +365,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   app.get<{ Params: Params }>(
     '/api/campaigns/:campaignId/status/stream',
     {
-      config: {
-        // Per-USER (not per-IP) cap on stream opens.
-        rateLimit: {
-          max: 10,
-          timeWindow: '1 minute',
-          keyGenerator: (req: FastifyRequest): string => {
-            try {
-              return requireDbUser(req).id
-            } catch {
-              return req.ip
-            }
-          },
-        },
-        pipelineRoute: true,
-      },
+      config: SSE_STREAM_ROUTE_CONFIG,
       preHandler: requireCampaignMember(repo),
     },
     async (request, reply) => {
@@ -425,21 +428,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   app.get<{ Params: Params }>(
     '/api/campaigns/:campaignId/prep-status',
     {
-      config: {
-        // Per-USER cap on stream opens (mirrors status/stream).
-        rateLimit: {
-          max: 10,
-          timeWindow: '1 minute',
-          keyGenerator: (req: FastifyRequest): string => {
-            try {
-              return requireDbUser(req).id
-            } catch {
-              return req.ip
-            }
-          },
-        },
-        pipelineRoute: true,
-      },
+      config: SSE_STREAM_ROUTE_CONFIG,
       preHandler: requireCampaignMember(repo),
     },
     async (request, reply) => {

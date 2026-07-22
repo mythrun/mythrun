@@ -217,12 +217,16 @@ describe('server boot gate', () => {
       mockRtrPing.mockRejectedValue(new Error('redis down'))
       mockRtbPing.mockResolvedValue('PONG')
 
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const { bootLogger } = await import('../boot/boot-logger.js')
+      const errSpy = vi.spyOn(bootLogger, 'error').mockImplementation(() => undefined)
       await import('../server.js')
 
       expect(process.exitCode).toBe(1)
       expect(mockListen).not.toHaveBeenCalled()
-      const allErrCalls = errSpy.mock.calls.flat().join(' ')
+      const allErrCalls = errSpy.mock.calls
+        .flat()
+        .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+        .join(' ')
       expect(allErrCalls).toContain('Redis (realtime)')
       errSpy.mockRestore()
     },
@@ -242,9 +246,10 @@ describe('server boot gate', () => {
       )
 
       let errorOutput = ''
-      const errSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-        errorOutput += args.map(String).join(' ') + '\n'
-      })
+      const { bootLogger } = await import('../boot/boot-logger.js')
+      const errSpy = vi.spyOn(bootLogger, 'error').mockImplementation(((...args: unknown[]) => {
+        errorOutput += args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n'
+      }))
 
       await import('../server.js')
 
@@ -296,9 +301,10 @@ describe('server boot gate', () => {
       mockListen.mockRejectedValue(bindErr)
 
       let errorOutput = ''
-      const errSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-        errorOutput += args.map(String).join(' ') + '\n'
-      })
+      const { bootLogger } = await import('../boot/boot-logger.js')
+      const errSpy = vi.spyOn(bootLogger, 'error').mockImplementation(((...args: unknown[]) => {
+        errorOutput += args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n'
+      }))
 
       await import('../server.js')
 
@@ -335,7 +341,8 @@ describe('server boot gate', () => {
           code: 'EACCES',
         }),
       )
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const { bootLogger } = await import('../boot/boot-logger.js')
+      const errSpy = vi.spyOn(bootLogger, 'error').mockImplementation(() => undefined)
 
       await import('../server.js')
 

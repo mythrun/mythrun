@@ -16,7 +16,11 @@
 import { generateObject, type LanguageModelUsage } from './ai.js'
 import { loadPrompt } from './prompts.js'
 import { RetconResultSchema, type RetconResult } from './schemas/retcon-author.js'
-import { OPUS } from './models.js'
+import {
+  SCRIBE_RETCON_MAX_OUTPUT_TOKENS,
+  SCRIBE_RETCON_MODEL,
+  SCRIBE_RETCON_TIMEOUT_MS,
+} from '../session/scribe-config.js'
 
 export interface RetconAuthorInput {
   /** The player-visible prose that breaks the secret. */
@@ -38,7 +42,7 @@ export interface RetconAuthorOutput {
 
 export async function runRetconAuthor(input: RetconAuthorInput): Promise<RetconAuthorOutput> {
   const r = await generateObject({
-    model: OPUS,
+    model: SCRIBE_RETCON_MODEL,
     schema: RetconResultSchema,
     schemaName: 'RetconResultSchema',
     prompt: loadPrompt('session', 'retcon-author', {
@@ -49,10 +53,8 @@ export async function runRetconAuthor(input: RetconAuthorInput): Promise<RetconA
     }),
     callSite: 'retcon-author',
     repairStrategy: 'haiku-then-sonnet',
-    // T10 moves these to scribe-config.ts (alongside the other Scribe-tier
-    // tunables); hardcoded here so this LLM-boundary task ships self-contained.
-    timeoutMs: 45_000,
-    maxOutputTokens: 1_200,
+    timeoutMs: SCRIBE_RETCON_TIMEOUT_MS,
+    maxOutputTokens: SCRIBE_RETCON_MAX_OUTPUT_TOKENS,
     redactRawText: true,
     ...(input.abortSignal !== undefined ? { abortSignal: input.abortSignal } : {}),
   })

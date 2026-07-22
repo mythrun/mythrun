@@ -63,6 +63,7 @@ import {
   stubSessionReconcileQueue,
 } from './server-queues.js'
 import type { Logger as PinoLogger } from 'pino'
+import { bootLogger } from './boot/boot-logger.js'
 
 // Build a RegisterAuthOptions from a loaded Env without emitting `undefined`
 // fields explicitly — exactOptionalPropertyTypes forbids `userPoolId: undefined`
@@ -405,7 +406,7 @@ async function listenOrFail(
     await app.listen({ port, host: '0.0.0.0' })
   } catch (listenErr) {
     if ((listenErr as { code?: string }).code === 'EADDRINUSE') {
-      console.error(
+      bootLogger.error(
         `✗ Port ${String(port)} is already in use — another server is already ` +
           `running. Refusing to start: a second instance would register a ` +
           `competing BullMQ worker and corrupt in-flight jobs. Exiting.`,
@@ -470,26 +471,26 @@ export async function main(): Promise<void> {
       probe: () => pgRef.query('SELECT 1'),
       signal: abortController.signal,
     })
-    console.log('✓ Postgres ready')
+    bootLogger.info('✓ Postgres ready')
     await waitFor({
       label: 'Redis (realtime)',
       probe: () => rTRRef.ping(),
       signal: abortController.signal,
     })
-    console.log('✓ Redis (realtime) ready')
+    bootLogger.info('✓ Redis (realtime) ready')
     await waitFor({
       label: 'Redis (batch)',
       probe: () => rTBRef.ping(),
       signal: abortController.signal,
     })
-    console.log('✓ Redis (batch) ready')
+    bootLogger.info('✓ Redis (batch) ready')
 
     // Schema-readiness probe: refuse to start the API on a DB that has
     // not had every migration the image expects applied. The boot-gate
     // turns the throw into a non-zero process exit; ECS rolls back the
     // deploy. See docs/superpowers/specs/2026-05-11-migration-runner-design.md.
     await probeMigrationsCurrent(pgRef)
-    console.log('✓ migrations-current verified')
+    bootLogger.info('✓ migrations-current verified')
 
     // MYT-41: Stripe contract verification. The probe lists the lookup_keys
     // in LOOKUP_KEYS, asserts each resolves to an active price with the
@@ -497,16 +498,16 @@ export async function main(): Promise<void> {
     // exhausted transient retries. The outer try/catch turns the throw into
     // a non-zero process exit; ECS rolls back the deploy.
     const stripeClient = getStripeClient(env)
-    const probeLogger = console as unknown as import('pino').Logger
+    const probeLogger: PinoLogger = bootLogger
     await probeStripeContract(stripeClient, probeLogger)
-    console.log('✓ Stripe contract verified')
+    bootLogger.info('✓ Stripe contract verified')
 
     // Voyage (embeddings) contract probe. Same posture as the Stripe probe: a
     // config error (bad key / wrong dim) throws → non-zero exit → ECS rolls the
     // deploy back. A transient Voyage outage boots DEGRADED (loud log), not a
     // crashloop — world-gen content still works; embeddings backfill on recovery.
     await probeVoyageAtBoot(createVoyageEmbedder({ apiKey: env.voyageApiKey }), probeLogger)
-    console.log('✓ Voyage contract verified')
+    bootLogger.info('✓ Voyage contract verified')
 
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
@@ -618,7 +619,7 @@ export async function main(): Promise<void> {
       process.on(signal, () => void handleShutdown(signal))
     }
   } catch (err) {
-    console.error('✗ Boot gate failed:', err instanceof Error ? err.message : err)
+    bootLogger.error({ err: err instanceof Error ? err.message : err }, '✗ Boot gate failed')
     await closePartials(pg, rTR, rTB)
     // Watchdog: if any client kept the event loop alive past closePartials,
     // force-exit. unref() so this doesn't block exit when cleanup succeeds.

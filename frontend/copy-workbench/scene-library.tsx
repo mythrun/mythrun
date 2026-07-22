@@ -430,6 +430,7 @@ const worldRevealScenes: Scene[] = [
       return (
         <div style={{ maxWidth: 460, margin: '0 auto', height: 440 }}>
           <WorldWiki
+            glossaryLabel="Glossary"
             model={fx.worldWikiFixture.model}
             query=""
             onSelect={() => undefined}
@@ -496,6 +497,7 @@ const startingLevelScenes: Scene[] = [
               {[1, 2, 3, 4, 5].map((lvl) => (
                 <LevelCard
                   key={lvl}
+                  eyebrow="Level"
                   level={lvl as 1 | 2 | 3 | 4 | 5}
                   grantGloss={tk(`startingLevel.grant${String(lvl)}`)}
                   selected={lvl === 3}
@@ -811,7 +813,7 @@ const playScenes: Scene[] = [
         <Stack gap={4}>
           <SessionPreparing label={tk('play.preparing.label')} detail={tk('play.preparing.detail')} reducedMotion={false} />
           <Divider />
-          <SessionStartBeat phase="prep" reducedMotion={false} prepLabel={tk('play.start.prep')} connectingLabel={tk('play.start.connecting')} />
+          <SessionStartBeat phase="prep" heading="The table gathers…" reducedMotion={false} prepLabel={tk('play.start.prep')} connectingLabel={tk('play.start.connecting')} />
         </Stack>
       )
     },
@@ -885,6 +887,7 @@ const playScenes: Scene[] = [
             sheetTabLabel={tk('play.knowledge.sheetTab')}
             graphNodeListLabel={tk('play.knowledge.graphNodes')}
             wikiLabels={{
+              glossaryLabel: 'Glossary',
               searchLabel: tk('play.knowledge.wiki.search'),
               searchPlaceholder: tk('play.knowledge.wiki.searchPlaceholder'),
               groupLabels: {

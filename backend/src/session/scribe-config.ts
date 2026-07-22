@@ -6,11 +6,9 @@
 // (Haiku) over the FT's player-facing prose, and — on a core-secret breach —
 // authors (Opus) + delivers a secret-preserving retcon `Z`.
 //
-// NOTE: T3 (secret-tripwire.ts) and T4 (retcon-author.ts) currently hardcode
-// their timeouts/token caps with a "T10 moves to scribe-config" comment. They
-// are left untouched on purpose — re-importing these constants there is a no-op
-// behavioural change and would churn their committed tests. These exports are
-// the worker's source of truth; the two LLM wrappers' values match by hand.
+// The two LLM wrappers (llm/secret-tripwire.ts, llm/retcon-author.ts) import
+// their model/timeout/token tunables from here — this file is the single
+// source of truth for the Scribe tier (same pattern as st-config.ts).
 
 import { HAIKU, OPUS } from '../llm/models.js'
 
@@ -32,9 +30,6 @@ export const SCRIBE_RETCON_MAX_OUTPUT_TOKENS = 1_200
  *  append — oldest public (`ft_delta`) items drop first; non-public never. */
 export const WORKING_SET_CAP = 200
 
-/** After this many turns without an ST evaluation the policy forces one. Carried
- *  here for the Scribe tier's future use (parity with ST_EVAL_FLOOR_TURNS). */
-export const RETCON_FORCE_AFTER_TURNS = 3
 
 /** A `breached:true` verdict UNDER this confidence (or any ambiguous verdict)
  *  still escalates to the retcon-author. The tripwire is recall-biased — a

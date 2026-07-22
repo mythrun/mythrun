@@ -21,12 +21,7 @@ import {
   SecretTripwireResultSchema,
   type SecretTripwireResult,
 } from './schemas/secret-tripwire.js'
-import { HAIKU } from './models.js'
-
-// Wall-clock budget for the Haiku tripwire call. Hardcoded here for this task;
-// T10 moves it to a shared scribe-config.ts alongside the other Scribe-tier
-// timeouts/model constants.
-const SCRIBE_TRIPWIRE_TIMEOUT_MS = 30_000
+import { SCRIBE_TRIPWIRE_MODEL, SCRIBE_TRIPWIRE_TIMEOUT_MS } from '../session/scribe-config.js'
 
 export interface SecretTripwireInput {
   /** The Fast Thinker's player-facing prose for this turn. */
@@ -44,7 +39,7 @@ export interface SecretTripwireOutput {
 
 export async function runSecretTripwire(input: SecretTripwireInput): Promise<SecretTripwireOutput> {
   const r = await generateObject({
-    model: HAIKU,
+    model: SCRIBE_TRIPWIRE_MODEL,
     schema: SecretTripwireResultSchema,
     schemaName: 'SecretTripwireResultSchema',
     prompt: loadPrompt('session', 'secret-tripwire', {

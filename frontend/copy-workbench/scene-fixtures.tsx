@@ -416,6 +416,7 @@ export const sessionPreparingTextProps: TextProp[] = [
 ]
 
 export const sessionStartBeatFixture = {
+  heading: 'The table gathers…',
   phase: 'prep',
   reducedMotion: false,
   prepLabel: 'TEXT',
@@ -547,6 +548,7 @@ const LOADING_BEATS: LoadingBeat[] = [
 export const characterLoadingBeatFixture = {
   beats: LOADING_BEATS,
   reducedMotion: false,
+  heading: 'Bringing them to life…',
   countdownLabel: 'TEXT',
 } satisfies CharacterLoadingBeatProps
 
@@ -559,6 +561,15 @@ export const characterSheetRevealFixture = {
   curated: CURATED_SHEET,
   full: FULL_SHEET,
   expanded: false,
+  labels: {
+    confirm: 'This is me',
+    seeFull: 'See full sheet',
+    hideFull: 'Hide full sheet',
+    startOver: 'Begin again',
+    panelFeatures: 'What they can do',
+    panelEquipment: 'What they carry',
+    panelSpells: 'What they can cast',
+  },
   onToggleExpand: noop,
   onConfirm: noop,
   onStartOver: noop,
@@ -582,6 +593,7 @@ const LEVELS: readonly CharacterLevel[] = [1, 2, 3, 4, 5]
 
 export const levelCardFixture: LevelCardProps[] = LEVELS.map((level) => ({
   level,
+  eyebrow: 'Level',
   grantGloss: 'TEXT',
   selected: level === 3,
   onSelect: noop,
@@ -664,6 +676,11 @@ export const guidedBuilderFixture = {
   onSelect: noop,
   onNext: noop,
   onBack: noop,
+  labels: {
+    next: 'Next',
+    back: 'Back',
+    switchToFreeform: 'Describe them instead',
+  },
   onSkipToFreeform: noop,
 } satisfies GuidedBuilderProps
 
@@ -694,6 +711,7 @@ export const freeformPromptFixture = {
   whisper: 'TEXT',
   value: '',
   onChange: noop,
+  submitLabel: 'Continue',
   onSubmit: noop,
   placeholder: 'TEXT',
 } satisfies FreeformPromptProps
@@ -816,6 +834,15 @@ export const partyRosterFixture = {
   members: ROSTER_MEMBERS,
   viewerIsOwner: true,
   canBegin: false,
+  labels: {
+    partyHeading: 'Your party',
+    inviteSub: 'share a link · they join here',
+    creating: 'choosing who they are…',
+    gathering: 'just joined, making their character…',
+    waiting: 'waiting for the party to gather…',
+    beginSolo: 'begin the adventure →',
+    beginParty: "everyone's ready, begin →",
+  },
   onBegin: noop,
   onInvite: noop,
 } satisfies PartyRosterProps
@@ -837,6 +864,19 @@ export const joinPreviewFixture = {
   signedIn: true,
   accepting: false,
   arm: null,
+  labels: {
+    eyebrow: "You've been invited",
+    invitedBy: 'Invited by',
+    accept: 'accept the invitation →',
+    signin: 'sign in to join →',
+    invalid: 'This invite is no longer valid.',
+    full: 'This campaign is already full.',
+    revoked: 'This invite link was turned off.',
+    gone: 'This campaign is no longer available.',
+    notFound: "That invite doesn't lead anywhere.",
+    timeout: 'That took too long. Try again.',
+    error: 'Something went wrong. Try again.',
+  },
   onAccept: noop,
   onSignIn: noop,
 } satisfies JoinPreviewProps
@@ -856,6 +896,20 @@ export const invitePanelFixture = {
   onCopy: noop,
   onShare: noop,
   onRevoke: noop,
+  labels: {
+    panelHeading: 'Invite',
+    hint: 'share this link · friends join your party here',
+    loading: 'preparing your invite link…',
+    noLink: 'no active link, create one to invite',
+    linkLabel: 'Invite link',
+    create: 'Create a link',
+    copy: 'Copy link',
+    copied: 'Copied',
+    share: 'Share',
+    replace: 'Replace link',
+    limit: "You've reached the invite limit. Replace the existing link instead.",
+    error: 'Something went wrong. Try again.',
+  },
   onCreate: noop,
 } satisfies InvitePanelProps
 
@@ -882,6 +936,7 @@ const WIKI_LABELS = {
   emptyBodyLabel: 'TEXT',
   referencesLabel: 'TEXT',
   indexLabel: 'TEXT',
+  glossaryLabel: 'Glossary',
 }
 
 export const worldWikiFixture = {
