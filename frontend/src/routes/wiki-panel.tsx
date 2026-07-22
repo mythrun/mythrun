@@ -80,7 +80,7 @@ function panelLine(state: WikiModelState, t: TFunction): string {
   return state.failed ? t('worldReveal.unavailable') : t('worldReveal.empty')
 }
 
-export interface WikiPanelProps {
+interface WikiPanelProps {
   state: WikiModelState
   /** The one-shot external push signal (a graph tap) — NOT the persistent
    *  selection; see the one-shot effect in `WorldReveal`. */

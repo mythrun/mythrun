@@ -29,7 +29,7 @@
  *  calls for. Consequence: a canon NPC whose only name form is a single token
  *  is not auto-injected (acceptable — the live bug case, "Marsen Roud", is two
  *  tokens; multi-token is the overwhelmingly common shape for named NPCs). */
-export const MATCH_MIN_TOKENS = 2
+const MATCH_MIN_TOKENS = 2
 
 /** Max entity cards injected per turn. A single scene rarely surfaces more than
  *  a handful of canon names at once; this caps the token cost of the injected

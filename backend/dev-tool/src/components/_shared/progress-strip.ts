@@ -7,7 +7,7 @@
 export interface ProgressStripOpts {
   readonly total: number
 }
-export interface ProgressUpdate {
+interface ProgressUpdate {
   readonly current: number
   readonly label: string
 }

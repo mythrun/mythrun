@@ -76,7 +76,7 @@ export const STAGES_IN_ORDER: readonly CharacterCreationStage[] = [
 // hang again. Retrying a hang and resubmitting after a fast fail both re-run the
 // same pipeline; failing fast is the better player experience, and it matches
 // the cross-workstream contract that an unrecoverable job error is terminal.
-export const CHARACTER_CREATION_STAGE_TIMEOUT_MS = 5 * 60_000
+const CHARACTER_CREATION_STAGE_TIMEOUT_MS = 5 * 60_000
 
 // myth-3u4a0: whole-JOB wall-clock backstop, applied at the processor factory.
 // The per-stage watchdog above bounds each `runStage` (the LLM-bearing part),
@@ -89,7 +89,7 @@ export const CHARACTER_CREATION_STAGE_TIMEOUT_MS = 5 * 60_000
 // the concept in-loop); this backstop only fires when the SUM of otherwise
 // under-cap awaits wedges the job, in which case the stale-'processing' reset
 // (character-concepts.ts resetConcept) is the player's recovery.
-export const CHARACTER_CREATION_JOB_TIMEOUT_MS = 16 * 60_000
+const CHARACTER_CREATION_JOB_TIMEOUT_MS = 16 * 60_000
 
 export interface CharacterCreationDeps {
   readonly pool: Pool

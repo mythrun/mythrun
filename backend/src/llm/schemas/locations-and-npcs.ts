@@ -17,7 +17,7 @@
 
 import { z } from 'zod'
 
-export const ACCESS_LEVEL = z.enum(['known', 'discoverable', 'secret'])
+const ACCESS_LEVEL = z.enum(['known', 'discoverable', 'secret'])
 
 export const factSchema = z.object({
   topic: z.string().min(2).max(80),
@@ -50,8 +50,8 @@ export const LocationsAndNpcsSchema = z.object({
 })
 
 export type LocationsAndNpcsTree = z.infer<typeof LocationsAndNpcsSchema>
-export type LocationItem = z.infer<typeof locationItemSchema>
-export type NpcItem = z.infer<typeof npcItemSchema>
+type LocationItem = z.infer<typeof locationItemSchema>
+type NpcItem = z.infer<typeof npcItemSchema>
 // Back-compat aliases for stages/locations-and-npcs.ts consumers.
 export type LocationEntry = LocationItem
 export type NpcEntry = NpcItem

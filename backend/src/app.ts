@@ -563,7 +563,7 @@ export const buildApp = async (
   return app
 }
 
-export type ShutdownSignal = 'SIGTERM' | 'SIGINT'
+type ShutdownSignal = 'SIGTERM' | 'SIGINT'
 export type ShutdownHandler = (signal: ShutdownSignal) => Promise<void>
 
 /** MYT-51 T12 / myth-epo4 T22: structural contract for a BullMQ Worker as

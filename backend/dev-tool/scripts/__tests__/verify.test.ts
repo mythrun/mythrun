@@ -71,7 +71,7 @@ describe('pollForSelector', () => {
 
 describe('routeAudit', () => {
   it('returns a string[] shape (uncovered route list)', () => {
-    // routeAudit reads PANEL_REGISTRY + BACKEND_ROUTES directly; this
+    // routeAudit reads PAGE_REGISTRY + BACKEND_ROUTES directly; this
     // test asserts only the return shape. The actual coverage invariant
     // is verify-registry.test.ts invariant 3's job.
     const uncovered = routeAudit()

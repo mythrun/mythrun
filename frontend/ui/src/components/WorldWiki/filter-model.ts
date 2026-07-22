@@ -15,7 +15,7 @@ import type { WikiEntity, WikiViewModel } from '@mythrun/client-core/contract'
  * Filter one entity subtree against `needle`. Returns the (possibly pruned)
  * entity when it or a descendant matches, else `undefined`.
  */
-export function filterEntity(entity: WikiEntity, needle: string): WikiEntity | undefined {
+function filterEntity(entity: WikiEntity, needle: string): WikiEntity | undefined {
   if (entity.name.toLowerCase().includes(needle)) return entity
   const kept = (entity.children ?? [])
     .map((child) => filterEntity(child, needle))

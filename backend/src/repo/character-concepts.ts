@@ -22,7 +22,7 @@ import type { ClientLike } from './_types.js'
 // watchdog), so a still-progressing job has always bumped `updated_at` within
 // the window. Kept just below the 16m whole-job cap so the player can self-serve
 // a recovery slightly before the backstop fails the job.
-export const STALE_PROCESSING_RESET_MS = 10 * 60_000
+const STALE_PROCESSING_RESET_MS = 10 * 60_000
 
 export interface CharacterConcept {
   readonly id: string

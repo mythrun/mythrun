@@ -58,7 +58,7 @@ import { containProcessor, createProcessEscapeGuard } from './queue/job-containm
 const HEALTH_PORT = 3001
 
 /** Local-dev escape hatch for the health-server bind (see HEALTH_PORT). */
-export function resolveHealthPort(): number {
+function resolveHealthPort(): number {
   const raw = process.env.WORKER_HEALTH_PORT
   return raw !== undefined && raw !== '' ? Number(raw) : HEALTH_PORT
 }

@@ -56,7 +56,7 @@ interface MinimalLogger {
 
 /** The ST worker's OWN narrow repo surface (secret-bearing reads live here, NOT
  *  on TurnWorkerRepo). */
-export interface StEvalRepo {
+interface StEvalRepo {
   readonly sessions: {
     getActiveByCampaign(
       campaignId: string,
@@ -79,7 +79,7 @@ export interface StEvalRepo {
 }
 
 /** The ST-side session-state reads/writes (summary + summed usage). */
-export interface StEvalSessionState {
+interface StEvalSessionState {
   loadTurnState(campaignId: string): Promise<{ summary: string }>
   setRunningSummary(campaignId: string, summary: string): Promise<void>
   totalUsageTokens(campaignId: string): Promise<number>
@@ -87,7 +87,7 @@ export interface StEvalSessionState {
 }
 
 /** The ST-side trigger-state surface (slots + counter + watermark). */
-export interface StEvalTriggerState {
+interface StEvalTriggerState {
   setOneShotDirection(campaignId: string, text: string): Promise<void>
   setStandingDirection(campaignId: string, text: string): Promise<void>
   clearStandingDirection(campaignId: string): Promise<void>

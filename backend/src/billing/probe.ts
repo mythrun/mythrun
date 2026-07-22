@@ -38,7 +38,7 @@ if (Object.keys(LOOKUP_KEYS).length > 100) {
 }
 /* c8 ignore stop */
 
-export class BillingProbeError extends Error {
+class BillingProbeError extends Error {
   readonly code = 'BILLING_PROBE_FAILED'
   constructor(
     readonly mismatches: readonly string[],
@@ -74,7 +74,7 @@ export class BillingProbeStripeAPIChangeError extends Error {
   }
 }
 
-export class BillingProbeTransientError extends Error {
+class BillingProbeTransientError extends Error {
   readonly code = 'BILLING_PROBE_TRANSIENT'
   constructor(
     readonly cause: unknown,

@@ -48,7 +48,7 @@ export const skillEntrySchema = z.object({
   expertise: z.boolean(),
 })
 
-export const featureEntrySchema = z.object({
+const featureEntrySchema = z.object({
   name: z.string().min(2).max(80),
   // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
   // myth-vimk. The haiku→sonnet repair only fixes malformed JSON, so a max()
@@ -60,7 +60,7 @@ export const featureEntrySchema = z.object({
   recharge: z.enum(['short_rest', 'long_rest', 'none']),
 })
 
-export const equipmentEntrySchema = z.object({
+const equipmentEntrySchema = z.object({
   name: z.string().min(2).max(80),
   quantity: z.number().int().min(1).max(99),
   // MYT-70 §3.2: consume-on-use metadata (potions, scrolls, rations). §7 snapshot
@@ -68,7 +68,7 @@ export const equipmentEntrySchema = z.object({
   consumable: z.boolean(),
 })
 
-export const spellEntrySchema = z.object({
+const spellEntrySchema = z.object({
   name: z.string().min(2).max(80),
   level: z.number().int().min(0).max(9),
   prepared: z.boolean(),
@@ -103,7 +103,6 @@ export const CharacterSheetOutputSchema = z.object({
 })
 
 export type CharacterSheetOutput = z.infer<typeof CharacterSheetOutputSchema>
-export type SkillEntry = z.infer<typeof skillEntrySchema>
 export type FeatureEntry = z.infer<typeof featureEntrySchema>
 export type EquipmentEntry = z.infer<typeof equipmentEntrySchema>
 export type SpellEntry = z.infer<typeof spellEntrySchema>

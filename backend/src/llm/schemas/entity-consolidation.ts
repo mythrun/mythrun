@@ -28,7 +28,7 @@ const factSchema = z.object({
   access_level: ACCESS_LEVEL,
 })
 
-export const ghostEntitySchema = z.object({
+const ghostEntitySchema = z.object({
   placeholder_id: placeholderIdSchema,
   name: z.string().min(1).max(200),
   entity_type: z.enum(['faction', 'location', 'npc']),

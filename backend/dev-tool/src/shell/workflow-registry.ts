@@ -21,13 +21,6 @@ export type WorkflowId =
   | 'billing'
   | 'system'
 
-export interface WorkflowEntry {
-  readonly id: WorkflowId
-  readonly title: string
-  readonly requiresCampaign: boolean
-  readonly mount: (parent: HTMLElement) => PanelHandle
-}
-
 // The shell injects the mount fns at boot time via registerWorkflowMount
 // so this module stays free of import-time dependencies on every page
 // composer (otherwise tests that only need the static shape pay for the

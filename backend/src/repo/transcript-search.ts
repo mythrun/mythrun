@@ -10,6 +10,9 @@ import type { ClientLike } from './_types.js'
  * SQL below inlines the same literal so the planner uses the partial index
  * (a parameterised `= ANY($n)` would NOT match the literal predicate). The
  * EXPLAIN repo test pins this coupling.
+ *
+ * @public — exported as the documented contract anchor for that lockstep,
+ * not for import; the tag keeps dead-code scans (knip) from flagging it.
  */
 export const SEARCHABLE_MESSAGE_TYPES = ['dm_text', 'player_message'] as const
 

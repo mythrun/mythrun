@@ -20,7 +20,6 @@ import {
   type SpellSlotRow,
 } from './rules-lawyer.js'
 import { makeReplayBuilders } from './rules-lawyer-replay.js'
-import { MAX_GOLD_TRANSACTION } from './ft-config.js'
 
 // ---------------------------------------------------------------------------
 // cast_spell
@@ -461,7 +460,3 @@ export async function resolveAcquireResource(
     (tx) => makeReplayBuilders(deps.sessionId).itemPayload(tx, characterId, characterName, input.name),
   )
 }
-
-// Re-export the shape bound so the registration task (T10) can reference the
-// fat-finger gold cap from the same surface as the resolvers.
-export { MAX_GOLD_TRANSACTION }

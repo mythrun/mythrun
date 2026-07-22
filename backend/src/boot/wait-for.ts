@@ -7,7 +7,7 @@ export const RETRY_DELAYS_MS = [200, 500, 1000, 2000] as const
 // timeout bounds each attempt so a genuine misconfig still FAILS LOUD. It is
 // generous enough (3s) that a healthy-but-slow cloud connect (ElastiCache TLS
 // handshake, typically < 1s) still succeeds within a single attempt.
-export const PROBE_ATTEMPT_TIMEOUT_MS = 3000
+const PROBE_ATTEMPT_TIMEOUT_MS = 3000
 
 export interface WaitForOptions {
   readonly label: string

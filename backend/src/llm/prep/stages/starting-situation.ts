@@ -40,11 +40,10 @@ const locationHookSchema = z.object({
   invitation: z.string().min(12),
 })
 
-export const StartingSituationsSchema = z.object({
+const StartingSituationsSchema = z.object({
   location_hooks: z.array(locationHookSchema).length(3),
 })
-export type StartingSituations = z.infer<typeof StartingSituationsSchema>
-export type LocationHook = z.infer<typeof locationHookSchema>
+type LocationHook = z.infer<typeof locationHookSchema>
 
 // Inputs the worker assembles from prior-stage outputs. In non-streaming
 // launch the stages-2-and-3 summary fields will arrive as

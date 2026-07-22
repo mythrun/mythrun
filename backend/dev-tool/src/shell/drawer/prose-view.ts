@@ -20,7 +20,7 @@
 
 import type { DrawerEvent } from './subscriptions.js'
 
-export type ProseField = 'ft_context' | 'sd_playbook'
+type ProseField = 'ft_context' | 'sd_playbook'
 
 const PROSE_FIELDS: readonly ProseField[] = ['ft_context', 'sd_playbook'] as const
 

@@ -35,7 +35,7 @@ export const TURN_AUDIT_MODEL = HAIKU
 /** One extra Haiku pass per rendered turn is the gate's cost. The timeout is
  *  generous relative to a short classification but well under the FT's per-turn
  *  budget so the audit can never dominate turn latency. */
-export const TURN_AUDIT_TIMEOUT_MS = 20_000
+const TURN_AUDIT_TIMEOUT_MS = 20_000
 
 /** Default gate on/off flag. The worker threads this into the decorator; a
  *  deploy can flip it to disable the audit without touching wiring. Default ON:

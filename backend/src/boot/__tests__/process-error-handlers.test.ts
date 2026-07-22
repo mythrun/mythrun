@@ -179,7 +179,6 @@ describe('installProcessErrorHandlers', () => {
     await runWithJobContext(
       { jobId: 'jstr', worldId: 'wstr', campaignId: 'cstr' },
       async () => {
-        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         process.emit('unhandledRejection', 'plain-string-rejection', Promise.resolve())
         await flushMicrotasks()
       },

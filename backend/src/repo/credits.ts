@@ -772,5 +772,3 @@ export const createCreditsRepo = (pool: Pool, opts: CreditsRepoOpts = {}) => ({
   ...selfManagingCredits(pool, opts),
   grantInTx,
 })
-
-export type CreditsRepo = ReturnType<typeof createCreditsRepo>

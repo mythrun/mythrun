@@ -69,7 +69,7 @@ export type PaintJobJudgement = z.infer<typeof PaintJobJudgementSchema>
 const FLAG_THRESHOLD = 0.85
 const MAX_ATTEMPTS = 3
 
-export class PaintJobLoopExhaustedError extends Error {
+class PaintJobLoopExhaustedError extends Error {
   readonly code = 'concept_intake_paint_job_loop_exhausted'
   // myth-uppw: terminal — the concept fundamentally mirrors a copyrighted
   // work and the judge has rejected 3 attempts at pivoting. Re-running

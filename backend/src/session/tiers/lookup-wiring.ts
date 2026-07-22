@@ -33,7 +33,7 @@ interface WiringLogger {
  *  narrow surface (mirrors `StEvalRepo`) — NOT the FT-side `{ftContext}`-only
  *  `TurnWorkerRepo.sessionPreps.getBy`. The full `repo.sessionPreps.getBy` row
  *  (incl. `sdPlaybook`) is assignable to this `{ sdPlaybook } | null` shape. */
-export interface LookupVetRepo {
+interface LookupVetRepo {
   readonly sessionPreps: {
     getBy(campaignId: string, sessionNumber: number): Promise<{ sdPlaybook: string } | null>
   }

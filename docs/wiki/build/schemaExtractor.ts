@@ -1,7 +1,6 @@
 import { Pool } from 'pg'
 import { applyMigrations } from './applyMigrations.ts'
 import {
-  CLUSTER_ORDER,
   HIDDEN_TABLES,
   TABLE_CLUSTERS,
   type CheckMeta,
@@ -326,6 +325,3 @@ function buildSchemaMetadata(
   }
   return tables
 }
-
-/** Used by buildPipeline.ts to ensure clusters are emitted in display order. */
-export const ORDERED_CLUSTERS = CLUSTER_ORDER

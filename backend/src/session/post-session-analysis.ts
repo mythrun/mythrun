@@ -76,7 +76,7 @@ export function enqueuePostSessionAnalysis(
 /** The worker's OWN narrow repo surface. Structural subset of what
  *  `createRepo(pool)` returns — the concrete repo's namespaces satisfy these
  *  shapes with no adapter (the real methods return supersets). */
-export interface AnalysisRepo {
+interface AnalysisRepo {
   readonly sessions: {
     getById(id: string): Promise<{ sessionNumber: number; summary: string | null } | null>
     writeAnalysis(

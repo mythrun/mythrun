@@ -45,7 +45,7 @@ export interface InitiateCombatEvent {
 
 /** `resolve_combat`'s recorded decision: the FT's deltas reconciled against the
  *  initiate event's outcome envelope, plus the close-out narration. */
-export interface ResolveCombatEvent {
+interface ResolveCombatEvent {
   readonly kind: 'resolve'
   readonly reconciled: ReconciledCombat
   readonly narration: string

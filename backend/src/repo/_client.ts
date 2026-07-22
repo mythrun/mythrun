@@ -55,7 +55,7 @@ const SETTLED_MESSAGE =
  * pool and may already be serving another request, so a captured `tx` handle
  * touching it would corrupt an unrelated connection.
  */
-export function makeSettlingClient(client: PoolClient): {
+function makeSettlingClient(client: PoolClient): {
   client: ClientLike
   settle: () => void
 } {

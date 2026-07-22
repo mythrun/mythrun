@@ -58,7 +58,7 @@ interface MinimalLogger {
 
 /** The Scribe worker's OWN narrow repo surface (the secret-bearing playbook read
  *  lives HERE, not on TurnWorkerRepo). Mirrors StEvalRepo. */
-export interface ScribeRepo {
+interface ScribeRepo {
   readonly sessionPreps: {
     getBy(campaignId: string, sessionNumber: number): Promise<{ sdPlaybook: string } | null>
   }
@@ -70,12 +70,12 @@ export interface ScribeRepo {
 /** The watermark surface: the current responded-seq (the correction turn's
  *  maxConsumedSeq, so it does NOT advance past unresponded player seqs). The
  *  real method is `respondedSeq` (trigger-state.ts). */
-export interface ScribeTriggerState {
+interface ScribeTriggerState {
   getRespondedSeq(campaignId: string): Promise<number>
 }
 
 /** The working-set sink the Scribe job appends to + evicts. */
-export interface ScribeWorkingSet {
+interface ScribeWorkingSet {
   load(campaignId: string): Promise<WorkingSetItem[]>
   append(campaignId: string, items: readonly WorkingSetItem[]): Promise<void>
   evictIfOver(campaignId: string, cap: number): Promise<void>

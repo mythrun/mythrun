@@ -40,7 +40,7 @@ export interface PipelineRunRow {
   readonly cost_usd: number
 }
 
-export interface StageEntry {
+interface StageEntry {
   readonly stage: string
   readonly status: 'pending' | 'running' | 'completed' | 'failed'
   readonly userId: string | null

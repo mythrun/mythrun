@@ -36,7 +36,7 @@ export async function withTransaction<T>(
 /** pgvector `hnsw.iterative_scan` mode — the filtered-ANN recall knob. A
  *  compile-time union (not a runtime string), so it interpolates injection-safe
  *  into the SET LOCAL in beginPrelude (same as `isolation`). */
-export type HnswIterativeScan = 'off' | 'strict_order' | 'relaxed_order'
+type HnswIterativeScan = 'off' | 'strict_order' | 'relaxed_order'
 
 /**
  * Per-call SET LOCAL knobs for `repo.transaction`'s BEGIN prelude. The audit

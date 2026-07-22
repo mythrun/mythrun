@@ -72,7 +72,7 @@ export type StartOutcome =
   | { kind: 'blocked'; code: string; memberNames?: readonly string[] }
   | { kind: 'error' }
 
-export type StartFlowState =
+type StartFlowState =
   | { phase: 'idle' }
   | { phase: 'starting' }
   // The calm between-sessions hold — prep_not_ready / reconcile_pending /

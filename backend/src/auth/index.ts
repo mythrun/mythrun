@@ -1,7 +1,7 @@
 // backend/src/auth/index.ts
 //
 // Auth plugin dispatcher. Registers exactly one of jwtPlugin / bypassPlugin
-// based on opts.mode. Re-exports requireUser and types for convenience.
+// based on opts.mode. Re-exports auth types for convenience.
 //
 // Spec: docs/superpowers/specs/2026-04-30-myt-37-jwt-middleware-design.md §3.
 
@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify'
 import { bypassPlugin, type BypassPluginOptions } from './bypass-plugin.js'
 import { jwtPlugin, type JwtPluginOptions } from './jwt-plugin.js'
 
-export type AuthMode = 'real' | 'bypass'
+type AuthMode = 'real' | 'bypass'
 
 export interface RegisterAuthOptions {
   mode: AuthMode
@@ -44,6 +44,3 @@ export const registerAuth = async (
   }
   await app.register(jwtPlugin, jwtOpts)
 }
-
-export { requireUser } from './require-user.js'
-export type { AuthUser, JwtVerifier } from './types.js'

@@ -108,12 +108,12 @@ export type LiveEvent =
  *  remaining after a cap-eviction. Not a wire-format event; the type prefix
  *  is namespaced with `__` to make it impossible to collide with a real
  *  PipelineSseEvent arm. */
-export interface PlaceholderEntry {
+interface PlaceholderEntry {
   readonly kind: 'placeholder'
   readonly droppedCount: number
 }
 
-export interface EventEntry {
+interface EventEntry {
   readonly kind: 'event'
   readonly event: LiveEvent
 }
@@ -124,7 +124,7 @@ export type LogEntry = EventEntry | PlaceholderEntry
 
 export const MAX_EVENTS = 2000
 export const EVICT_BATCH = 100
-export const STRING_TRUNCATE_LEN = 80
+const STRING_TRUNCATE_LEN = 80
 
 // All event-type arms. Used to seed the filter-chip set so unknown future
 // arms still render (they just don't get a chip until the contract adds them).
@@ -186,7 +186,7 @@ export function summarizeArray(field: string, arr: readonly unknown[]): string {
 
 // ---- Inventory reducer (pure) ----
 
-export interface InventoryRow {
+interface InventoryRow {
   readonly synthKey: string
   readonly kind: string
   readonly name: string | null
@@ -195,7 +195,7 @@ export interface InventoryRow {
   readonly lastEventIndex: number
 }
 
-export interface Inventory {
+interface Inventory {
   readonly rows: readonly InventoryRow[]
   readonly edgeCount: number
 }
@@ -301,11 +301,11 @@ export function deriveInventory(entries: readonly LogEntry[]): Inventory {
  *  relationship references a phantom entity. Stage 4b
  *  (entity_consolidation) later emits entity-added carrying the same
  *  string in `placeholderId`. */
-export function isPlaceholderId(id: string): boolean {
+function isPlaceholderId(id: string): boolean {
   return id.startsWith('new-')
 }
 
-export interface RenderedEdge {
+interface RenderedEdge {
   /** Stable identity for the edge — its synthKey. Used so edge-removed
    *  can drop the entry by id regardless of which endpoint was buffered. */
   readonly synthKey: string
@@ -317,7 +317,7 @@ export interface RenderedEdge {
   readonly relationship: string
 }
 
-export interface PlaceholderBuffer {
+interface PlaceholderBuffer {
   /** Edges whose endpoints are fully resolved — what the renderer shows. */
   readonly rendered: readonly RenderedEdge[]
   /** Edges still waiting on one or more placeholder endpoints to materialise. */
@@ -440,7 +440,7 @@ export function applyCap(entries: readonly LogEntry[]): readonly LogEntry[] {
 
 // ---- Compact-line classification ----
 
-export interface CompactLine {
+interface CompactLine {
   readonly primary: string
   readonly detail: string
 }

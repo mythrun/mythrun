@@ -23,7 +23,7 @@ import { useBeatCanvas, type BeatMode } from './use-beat-canvas.ts'
 // tests; `data-beat-mode` / `data-beat-level` expose the target for inspection without pixels.
 
 /** Which token pair the figure paints with. */
-export type BeatTone = 'paper' | 'token'
+type BeatTone = 'paper' | 'token'
 
 const TONE_CLASS: Record<BeatTone, string> = {
   paper: 'border-paper-900 bg-paper-50',

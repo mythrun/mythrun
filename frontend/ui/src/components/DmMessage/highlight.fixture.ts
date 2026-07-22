@@ -22,7 +22,7 @@ function escapeRegExp(literal: string): string {
 /** A small, story-only EntityIndex: longest-first, word-boundary name matching over a fixed
  *  cast. (The production matcher — client-core's `buildEntityIndex` — is Unicode-boundary
  *  aware; a specimen over ASCII cast names needs only `\b`.) */
-export function makeStoryIndex(entities: readonly StoryEntity[]): EntityIndex {
+function makeStoryIndex(entities: readonly StoryEntity[]): EntityIndex {
   const byLower = new Map(entities.map((e) => [e.name.toLowerCase(), e]))
   const alternation = entities
     .map((e) => e.name)
@@ -56,7 +56,7 @@ export function makeStoryIndex(entities: readonly StoryEntity[]): EntityIndex {
 
 /** A small world-lore cast: an NPC + a location (both with a lead line) and a faction with
  *  NO lead line (exercises the omitted-lead popover branch). */
-export const STORY_CAST: readonly StoryEntity[] = [
+const STORY_CAST: readonly StoryEntity[] = [
   {
     id: 'npc-elenya',
     name: 'Elenya',

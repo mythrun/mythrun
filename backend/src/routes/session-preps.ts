@@ -58,7 +58,7 @@ const SessionPrepBodySchema = z.object({
 // reply.send serializes every own-enumerable property. toSafeSessionPrep MUST
 // build an explicit field-by-field literal, NEVER `{ ...row }` (a spread
 // type-checks under structural typing AND carries sd_playbook to the wire).
-export interface SafeSessionPrep {
+interface SafeSessionPrep {
   id: string
   sessionNumber: number
   ftContext: string
@@ -66,7 +66,7 @@ export interface SafeSessionPrep {
   createdAt: string
 }
 
-export function toSafeSessionPrep(row: SessionPrepRow): SafeSessionPrep {
+function toSafeSessionPrep(row: SessionPrepRow): SafeSessionPrep {
   return {
     id: row.id,
     sessionNumber: row.sessionNumber,

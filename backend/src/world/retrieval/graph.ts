@@ -37,16 +37,9 @@
 
 import type { Repo } from '../../repo/index.js'
 import type { AccessLevel } from '../../repo/facts.js'
-import type {
-  GraphEntityType,
-  KnownCharacterDbRow,
-  FactionNodeDbRow,
-} from '../../repo/world-retrieval.js'
+import type { KnownCharacterDbRow, FactionNodeDbRow } from '../../repo/world-retrieval.js'
 import { GRAPH_DEFAULT_DEPTH, GRAPH_MAX_DEPTH } from './config.js'
 import type { KnownCharacter, FactionNode } from './types.js'
-
-/** Re-export so consumers can name the widened graph entity type. */
-export type { GraphEntityType }
 
 /** Dependency subset — only the world-retrieval binder is needed. Pinned as a
  *  Pick over Repo so a full `repo` or a hand-built `{ worldRetrieval }` both fit. */

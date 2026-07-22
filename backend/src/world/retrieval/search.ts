@@ -36,7 +36,7 @@ import {
 } from './config.js'
 
 /** Minimal logger surface this module needs (structured warn). */
-export interface SearchLogger {
+interface SearchLogger {
   warn: (obj: unknown, msg?: string) => void
 }
 
@@ -53,7 +53,7 @@ export interface SearchDeps {
 
 /** searchLore / findSimilarEntities options. `limit` defaults +
  *  caps via config; `entityType` narrows findSimilarEntities to one kind. */
-export interface SearchLoreOpts {
+interface SearchLoreOpts {
   readonly limit?: number
 }
 export interface FindSimilarOpts {
@@ -65,7 +65,7 @@ export interface FindSimilarOpts {
  *  MYT-73 working-set merge cosine-ranks invented facts against this SAME
  *  vector, avoiding a second Voyage call. On the swallowed-failure arm both
  *  fields are empty (`{ hits: [], queryVec: [] }`). */
-export interface SearchLoreResult {
+interface SearchLoreResult {
   readonly hits: LoreHit[]
   readonly queryVec: readonly number[]
 }

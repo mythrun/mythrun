@@ -79,7 +79,7 @@ const PLACEHOLDER_HATCH =
 /** 1–2 initials from a name: first letter of the first two whitespace-split
  *  words, uppercased. A single-word name yields one initial; an empty/blank name
  *  yields '' (the Root's aria-label still names it). */
-export function initialsOf(name: string): string {
+function initialsOf(name: string): string {
   return name
     .trim()
     .split(/\s+/)

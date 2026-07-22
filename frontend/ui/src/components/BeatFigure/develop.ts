@@ -45,11 +45,11 @@ export const FRONT_BAND = 5
  *  dither-as-units medium the whole beat family is built on, so the filled region is a LOCKED
  *  DENSE dither (fixed seed → bit-identical frame to frame, the grammar's real requirement),
  *  dense enough to read as "inked in" while staying visibly 1-bit. */
-export const FILLED_LEVEL = 0.78
+const FILLED_LEVEL = 0.78
 
 /** The track's BASE density ahead of the front. 0 = a clean paper track (the ink grows on bare
  *  paper); a small positive value would stipple the whole track. Kept clean. */
-export const BASE_LEVEL = 0
+const BASE_LEVEL = 0
 
 /** 90% ordered Bayer + 10% pseudorandom chaos — the Spinner's locked blend. */
 export const CHAOS = 0.1
@@ -76,7 +76,7 @@ export const BREATHE_HIGH = 0.5
 /** How much breathing phase lags across the diagonal (in whole cycles), so the breath TRAVELS
  *  as a diagonal wave rather than pulsing in unison. >1 keeps a dense band and a sparse band
  *  coexisting at all times (a moving swell, never an all-at-once checkerboard). */
-export const BREATHE_PHASE_SPAN = 1.3
+const BREATHE_PHASE_SPAN = 1.3
 
 /** Clamp to [0, 1]. */
 export function clamp01(v: number): number {

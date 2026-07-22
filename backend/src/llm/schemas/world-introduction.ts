@@ -24,5 +24,3 @@ export const WorldIntroductionSchema = z.object({
   // are dropped, so the persisted count may be lower).
   references: z.array(z.string().min(1).max(200)).min(2).max(12),
 })
-
-export type WorldIntroductionOutput = z.infer<typeof WorldIntroductionSchema>

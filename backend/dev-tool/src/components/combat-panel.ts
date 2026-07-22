@@ -42,7 +42,7 @@ import { appendJsonDisclosure } from './_shared/json-disclosure.js'
 // convention live-events-panel follows for the pipeline-event types. Any
 // drift is caught by the backend-side contract tests.
 
-export interface ModeChangeFrame {
+interface ModeChangeFrame {
   readonly type: 'mode_change'
   readonly turnId?: string
   readonly seq?: number
@@ -51,18 +51,18 @@ export interface ModeChangeFrame {
   readonly reason: string
 }
 
-export interface CombatEnemyFrame {
+interface CombatEnemyFrame {
   readonly name: string
   readonly description: string
   readonly count: number
 }
 
-export interface CombatInitiativeFrame {
+interface CombatInitiativeFrame {
   readonly combatant: string
   readonly roll: number
 }
 
-export interface CombatStartedFrame {
+interface CombatStartedFrame {
   readonly type: 'combat_started'
   readonly turnId: string
   readonly seq?: number
@@ -70,20 +70,20 @@ export interface CombatStartedFrame {
   readonly initiative: readonly CombatInitiativeFrame[]
 }
 
-export interface CombatCasualtyFrame {
+interface CombatCasualtyFrame {
   readonly name: string
   readonly type: 'pc' | 'npc'
   readonly fate: string
 }
 
-export interface CombatHpChangeFrame {
+interface CombatHpChangeFrame {
   readonly combatant: string
   readonly hpBefore: number
   readonly hpAfter: number
   readonly maxHp: number
 }
 
-export interface CombatResolvedFrame {
+interface CombatResolvedFrame {
   readonly type: 'combat_resolved'
   readonly turnId: string
   readonly seq?: number

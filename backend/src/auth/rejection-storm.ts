@@ -34,7 +34,7 @@ export const REJECTION_STORM_THRESHOLD = 3
  *  a fresh key; subsequent increments do not slide it. */
 export const REJECTION_STORM_WINDOW_SECONDS = 3600
 
-export interface RejectionStormResult {
+interface RejectionStormResult {
   /** Count AFTER this increment. */
   readonly count: number
   /** True if `count > REJECTION_STORM_THRESHOLD`. */

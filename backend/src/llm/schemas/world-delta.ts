@@ -9,7 +9,7 @@ import { z } from 'zod'
  *
  * Flat root, no `.refine`, `.min(1)` floors on free-prose fields, no `.max()`.
  */
-export const WorldDeltaItemSchema = z.object({
+const WorldDeltaItemSchema = z.object({
   subject: z.string().min(1),
   content: z.string().min(1),
   kind: z.enum(['fact', 'entity', 'relationship']),
@@ -17,5 +17,4 @@ export const WorldDeltaItemSchema = z.object({
 
 export const WorldDeltaSchema = z.object({ facts: z.array(WorldDeltaItemSchema) })
 
-export type WorldDeltaItem = z.infer<typeof WorldDeltaItemSchema>
 export type WorldDelta = z.infer<typeof WorldDeltaSchema>

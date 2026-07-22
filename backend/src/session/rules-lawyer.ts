@@ -48,7 +48,7 @@ export type LedgerResolution =
 // Scoped deps
 // ---------------------------------------------------------------------------
 
-export interface RulesLawyerLogger {
+interface RulesLawyerLogger {
   warn: (o: Record<string, unknown>, m: string) => void
 }
 
@@ -86,7 +86,7 @@ export const norm = (s: string): string => s.trim().toLowerCase()
 /** Fail-soft constraint for any infra-class failure (PG down, a tx throw, a
  *  multi-row-match invariant violation): the FT must NOT narrate a definite
  *  outcome. Mirrors skill-check.ts's UNRESOLVED. */
-export const UNRESOLVED =
+const UNRESOLVED =
   'This could not be resolved. Do not narrate a definite outcome for this attempt.'
 
 /** Build the generic fail-soft rejection (always non-binding, always a miss —

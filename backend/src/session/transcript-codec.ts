@@ -43,7 +43,7 @@ export const DM_MESSAGE_TYPES = [
   // turn.
   'dm_correction',
 ] as const
-export type DmMessageType = (typeof DM_MESSAGE_TYPES)[number]
+type DmMessageType = (typeof DM_MESSAGE_TYPES)[number]
 
 export interface DmTurnRow {
   readonly kind: DmMessageType

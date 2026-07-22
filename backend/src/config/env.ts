@@ -1,4 +1,4 @@
-export type AuthMode = 'real' | 'bypass'
+type AuthMode = 'real' | 'bypass'
 
 export interface Env {
   readonly databaseUrl: string

@@ -55,7 +55,7 @@ const ENDING_TTL = 60 * 60
 
 /** Session mode. MYT-65 only exercises `exploration`; `combat` arrives with
  *  the combat engine. Kept as a string union so the state blob is typed. */
-export type SessionMode = 'exploration' | 'combat'
+type SessionMode = 'exploration' | 'combat'
 
 export interface SessionStateBlob {
   readonly participants: readonly string[]
@@ -129,7 +129,7 @@ export interface CombatSummaryL1 {
 /** The resolved-combat payload: the structured L1 summary. Wrapped in an
  *  object so the contract can grow (e.g. a prose field) without churning every
  *  call site. `null` on the blob until the fight resolves. */
-export interface CombatResult {
+interface CombatResult {
   readonly summary: CombatSummaryL1
 }
 
@@ -160,7 +160,7 @@ export interface TurnState {
   readonly usage: TokenUsage
 }
 
-export interface CheckpointResult {
+interface CheckpointResult {
   /** `MAX(session_messages.seq)` from Postgres — the last DURABLY-PERSISTED
    *  seq, never the raw `:seq` counter (which sits one ahead between INCR
    *  and the row INSERT). */

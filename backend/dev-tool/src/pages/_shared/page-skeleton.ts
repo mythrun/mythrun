@@ -13,11 +13,6 @@
 
 import type { PanelHandle } from '../../components/_shared/panel-skeleton.js'
 
-export interface PageSection {
-  readonly id: string
-  readonly mount: (parent: HTMLElement) => PanelHandle
-}
-
 export interface PageBody {
   readonly root: HTMLElement
   /** Mount a section into the page body. Returns the section host element. */

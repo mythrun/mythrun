@@ -6,7 +6,7 @@
 // Plus the PanelHandle interface every panel returns from its mount fn
 // per spec §10 (mount lifecycle contract).
 
-export type PanelState = 'idle' | 'loading' | 'ready' | 'error'
+type PanelState = 'idle' | 'loading' | 'ready' | 'error'
 
 export interface SplitViewOpts {
   readonly parent: HTMLElement

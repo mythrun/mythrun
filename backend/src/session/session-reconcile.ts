@@ -87,7 +87,7 @@ export function enqueueReconcile(
 /** The worker's OWN narrow repo surface. `transaction` is consumed by the
  *  injected commit (passed the whole `repo`); the reads are the candidate
  *  live-fact pull, the session gate read, and the FT-safe world-tone projection. */
-export interface ReconcileRepo {
+interface ReconcileRepo {
   readonly sessions: {
     getById(id: string): Promise<{ reconciledAt: Date | null; campaignId: string } | null>
   }

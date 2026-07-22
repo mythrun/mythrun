@@ -52,7 +52,7 @@ export interface GraphNode {
 /** Which pipeline pass first emitted the edge — drives C6's Act-2 edge draw-in.
  *  `weave` edges (relationship + consolidation passes) draw in slowly as a
  *  penstroke; `snap` edges (the late coherence_pass batch) appear fast. */
-export type EdgeSourceStage = 'weave' | 'snap'
+type EdgeSourceStage = 'weave' | 'snap'
 
 export interface GraphEdge {
   readonly synthKey: string

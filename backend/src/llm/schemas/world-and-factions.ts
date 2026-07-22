@@ -54,5 +54,3 @@ export const WorldAndFactionsSchema = z.object({
 })
 
 export type WorldAndFactionsTree = z.infer<typeof WorldAndFactionsSchema>
-export type RegionItem = z.infer<typeof regionItemSchema>
-export type FactionItem = z.infer<typeof factionItemSchema>

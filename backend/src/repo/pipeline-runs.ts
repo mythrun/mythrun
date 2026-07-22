@@ -13,7 +13,7 @@ import type { ClientLike } from './_types.js'
 import type { PipelineRunRow } from '../sse/derive-phase.js'
 import { uuidv7 } from './uuidv7.js'
 
-export interface FailedRunRow {
+interface FailedRunRow {
   readonly stage: string
   readonly error: string | null
 }
@@ -23,7 +23,7 @@ export interface FailedRunRow {
 // `::int` cast over avg(...) of positive durations). Structurally mirrors
 // `StageTiming` in @mythrun/contract/rest (the wire shape) — the route sends
 // this repo result verbatim; the data layer stays decoupled from the contract.
-export interface StageTiming {
+interface StageTiming {
   readonly stage: string
   readonly avgMs: number
 }
@@ -62,7 +62,7 @@ export type ClaimRequest =
 //     token-count completion the world-gen / character-creation stages write).
 //   - 'campaign' structurally OMITS them — the character-integration completion
 //     writes only cost_usd + completed_at, never the token columns or error=NULL.
-export type StageCompletedRequest =
+type StageCompletedRequest =
   | {
       kind: 'world'
       worldId: string
@@ -85,7 +85,7 @@ export type StageCompletedRequest =
 // Discriminated union for the stage-failure writers (markStageFailed). All
 // three variants write the same `status='failed', completed_at=now(), error`
 // shape; only the WHERE keying differs.
-export type StageFailedRequest =
+type StageFailedRequest =
   | { kind: 'world'; worldId: string; stage: string; error: string }
   | { kind: 'campaign-user'; campaignId: string; userId: string; stage: string; error: string }
   | { kind: 'campaign'; campaignId: string; stage: string; error: string }

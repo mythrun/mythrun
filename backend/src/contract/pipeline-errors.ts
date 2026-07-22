@@ -8,7 +8,7 @@
 // Standard 400 (Zod body-parse failure) is NOT enumerated here — those
 // are Fastify-level errors with a different envelope.
 
-export type PipelineRouteError =
+type PipelineRouteError =
   // POST /api/campaigns:
   | {
       code: 'concept_rejected'

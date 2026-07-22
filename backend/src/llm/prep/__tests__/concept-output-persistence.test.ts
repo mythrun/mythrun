@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- design §4.1 mandates streamObject; test must mock the deprecated SDK function. */
 // backend/src/llm/prep/__tests__/concept-output-persistence.test.ts
 //
 // MYT-54 / myth-y7xt T2: the character-creation processor must persist

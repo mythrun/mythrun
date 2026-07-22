@@ -98,14 +98,14 @@ export function buildResolutionContext(inv: WorldInventory): NameResolutionConte
   return { entityIdByName, ambiguousEntityNames, factIdByPair, relIdByTriple }
 }
 
-export interface ResolvedRelationship {
+interface ResolvedRelationship {
   readonly kind: 'resolved'
   readonly sourceEntityId: string
   readonly targetEntityId: string
   readonly relationshipType: string
   readonly description: string
 }
-export interface PhantomTarget {
+interface PhantomTarget {
   readonly kind: 'phantom_target'
   readonly sourceEntityId: string
   readonly phantomName: string
@@ -113,7 +113,7 @@ export interface PhantomTarget {
   readonly relationshipType: string
   readonly description: string
 }
-export interface PhantomSource {
+interface PhantomSource {
   readonly kind: 'phantom_source'
   readonly phantomName: string
   readonly synthId: string
@@ -121,7 +121,7 @@ export interface PhantomSource {
   readonly relationshipType: string
   readonly description: string
 }
-export interface PhantomBoth {
+interface PhantomBoth {
   readonly kind: 'phantom_both'
   readonly sourceName: string
   readonly sourceSynthId: string
@@ -130,7 +130,7 @@ export interface PhantomBoth {
   readonly relationshipType: string
   readonly description: string
 }
-export interface DroppedRelationship {
+interface DroppedRelationship {
   readonly kind: 'dropped'
   readonly reason:
     | 'unknown_source'

@@ -81,10 +81,10 @@ const SEED_TABLES_PLACEHOLDER =
   '  - Carries a token from someone they failed.'
 
 // Re-export the canonical taxonomy so existing importers (the stage loop and
-// world-gen-processor.test.ts) keep their `WORLD_GEN_STAGES` / `WorldGenStage`
-// import path. The list itself lives in @mythrun/contract/events; the loop's
-// iteration order below is what that list mirrors.
-export { WORLD_GEN_STAGES, type WorldGenStage }
+// world-gen-processor.test.ts) keep their `WORLD_GEN_STAGES` import path. The
+// list itself lives in @mythrun/contract/events; the loop's iteration order
+// below is what that list mirrors.
+export { WORLD_GEN_STAGES }
 
 export interface WorldGenJobPayload {
   readonly campaignId: string

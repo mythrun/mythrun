@@ -8,9 +8,9 @@
 // from world-snapshot-render.ts.
 //
 // Live SSE delta application (phase/finalized/entity-updated/edge-*)
-// migrated to the wire-log drawer per spec §6. The pure rendering +
-// delta-application helpers in world-snapshot-render.ts are preserved
-// for the drawer's future re-use; only the controller wiring changed.
+// migrated to the wire-log drawer per spec §6; this panel is
+// refresh-driven and only renders the fetched snapshot via the pure
+// rendering helpers in world-snapshot-render.ts.
 
 import { apiCall } from '../api-client.js'
 import { getActiveCampaignId } from '../shell/active-campaign.js'

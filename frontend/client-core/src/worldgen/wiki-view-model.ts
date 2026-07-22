@@ -24,7 +24,7 @@ export interface WikiFact {
 /** One relationship edge as the snapshot carries it — mirrors the graph's
  *  `WorldGenRelationshipSchema` (the known-tier edges Phase A put on the
  *  world-snapshot wire). The wiki reads these to build RELATED links. */
-export interface WikiRelationship {
+interface WikiRelationship {
   readonly sourceEntityId: string
   readonly targetEntityId: string
   readonly relationshipType: string
@@ -85,7 +85,7 @@ export interface WikiIntroduction {
 /** One world-glossary row (MYT-102): the world's invented vocabulary as the
  *  wiki shows it — the contract already narrowed entries to the display pair
  *  (no tier/authoring metadata, never `adjacent_franchises`). */
-export interface WikiGlossaryEntry {
+interface WikiGlossaryEntry {
   readonly term: string
   readonly definition: string
 }

@@ -44,7 +44,7 @@ export type SubjectResolution =
 /** One healed match: the plan claimed `name` under a non-binding id; the
  *  validator rebound it to the unique live candidate `to`. Surfaced so the
  *  processor can log the heal (counts + names are not secret content). */
-export interface MatchRebind {
+interface MatchRebind {
   readonly subjectName: string
   readonly name: string
   readonly to: string
@@ -55,7 +55,7 @@ export interface MatchRebind {
  *  With the processor's canon-by-name pre-pass in front, a demotion means the
  *  name genuinely is not in canon — i.e. the model said 'match' about a new
  *  thing, and mint is what it meant. */
-export interface MatchDemotion {
+interface MatchDemotion {
   readonly subjectName: string
   readonly name: string
 }
@@ -69,7 +69,7 @@ export type ValidateResult =
     }
   | { readonly ok: false; readonly reason: ValidateRejectReason }
 
-export type ValidateRejectReason =
+type ValidateRejectReason =
   | 'dangling_fact_subject' // a fact.subjectName not resolvable to an entity op
   | 'dangling_relationship_endpoint' // a relationship endpoint not resolvable to an entity op
   | 'supersede_target_not_live' // a supersedesFactId not in liveFactIds

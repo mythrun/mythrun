@@ -52,13 +52,13 @@ export type { WorldSummary } from './worlds.js'
 // against the served known-tier entity set (a reference to a non-served entity
 // is dropped — the same structural enforced-ignorance guarantee the rest of the
 // snapshot follows).
-export interface WorldSnapshotIntroduction {
+interface WorldSnapshotIntroduction {
   readonly title: string
   readonly prose: string
   readonly references: readonly { readonly entityId: string; readonly name: string }[]
 }
 
-export interface WorldSnapshot {
+interface WorldSnapshot {
   // WikiWorldSummary, not WorldSummary: the snapshot route is member-readable
   // (myth-0xwos), and `concept` — the owner's raw plot-bearing world seed —
   // must never be on a player-facing wire. The plot-safe projection is the

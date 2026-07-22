@@ -16,14 +16,14 @@ import type {
   VocabularyRegistry,
 } from './world-snapshot-types.js'
 
-export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
+const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
   faction: 'Factions',
   location: 'Locations',
   npc: 'NPCs',
   item: 'Items',
 }
 
-export const ENTITY_TYPE_ORDER: readonly EntityType[] = [
+const ENTITY_TYPE_ORDER: readonly EntityType[] = [
   'faction',
   'location',
   'npc',
@@ -290,73 +290,6 @@ export function renderWorldHeading(headingEl: HTMLElement, snap: LocalSnapshot |
     parts.push(`era: ${snap.world.era}`)
   }
   headingEl.textContent = parts.join(' • ')
-}
-
-// ---- Delta application ----
-
-export function applyEntityUpdated(
-  snap: LocalSnapshot,
-  entityId: string,
-  patch: Record<string, unknown>,
-): void {
-  // Patch keys we recognize: name (entity row), prose / content (prose kernel).
-  // Anything else is ignored — the live-events panel surfaces the raw
-  // patch for inspection; this panel only patches the wiki-relevant fields.
-  if (typeof patch.name === 'string') {
-    const idx = snap.entities.findIndex((e) => e.id === entityId)
-    if (idx >= 0) {
-      const existing = snap.entities[idx]
-      if (existing) snap.entities[idx] = { ...existing, name: patch.name }
-    }
-  }
-  const proseCandidate =
-    typeof patch.prose === 'string'
-      ? patch.prose
-      : typeof patch.content === 'string'
-        ? patch.content
-        : null
-  if (proseCandidate !== null) {
-    const idx = snap.proseKernels.findIndex((k) => k.entityId === entityId)
-    if (idx >= 0) {
-      const existing = snap.proseKernels[idx]
-      if (existing) snap.proseKernels[idx] = { ...existing, content: proseCandidate }
-    }
-  }
-}
-
-export function applyEdgeAdded(
-  snap: LocalSnapshot,
-  payload: {
-    synthKey: string
-    from: string
-    to: string
-    relationship: string
-    description?: string
-  },
-  resolveEntityId: (synthKey: string) => string | null,
-): void {
-  // The wire payload's `from`/`to` are synthKeys; resolve via the
-  // synthKey→DB-id map populated by finalized events. If either side
-  // hasn't been finalized yet, fall back to the raw synthKey so the row
-  // shows up; a later finalized + re-resolve pass would replace it, but
-  // for now we accept the soft-link.
-  const sourceId = resolveEntityId(payload.from) ?? payload.from
-  const targetId = resolveEntityId(payload.to) ?? payload.to
-  snap.relationships.push({
-    // Use synthKey as the stub id until a finalized event for the
-    // relationship synthKey produces the real DB id.
-    id: payload.synthKey,
-    sourceEntityId: sourceId,
-    targetEntityId: targetId,
-    relationshipType: payload.relationship,
-    description: payload.description ?? '',
-    createdAt: new Date().toISOString(),
-  })
-}
-
-export function applyEdgeRemoved(snap: LocalSnapshot, relationshipId: string): void {
-  const idx = snap.relationships.findIndex((r) => r.id === relationshipId)
-  if (idx >= 0) snap.relationships.splice(idx, 1)
 }
 
 // ---- Glossary (myth-pfke) ----

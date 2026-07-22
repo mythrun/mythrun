@@ -37,13 +37,6 @@ import { useApiContext } from '../api/client-context.tsx'
 import type { ApiContext } from '../api/endpoint.ts'
 import { buildEntityIndex, type EntityIndex } from './entity-index.ts'
 
-/** The finalized graph seed the in-session Relationship Graph tab renders — the
- *  known-tier entities → nodes + relationships → edges from ONE snapshot. Now the
- *  canonical `GraphSeed` from Task 4's `snapshotToGraph` module (was a local
- *  shape-identical decl until Task 4 landed), re-exported so this module's public
- *  surface is unchanged. */
-export type { GraphSeed }
-
 /** Projects a member-readable snapshot into the finalized graph seed — Task 4's
  *  canonical `snapshotToGraph`, injected here (see the module header). */
 export type SnapshotToGraph = (snapshot: WorldGenSnapshot) => GraphSeed

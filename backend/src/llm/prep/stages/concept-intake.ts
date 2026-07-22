@@ -25,7 +25,7 @@ const PROMPT_TEMPLATE = readFileSync(
   'utf8',
 )
 
-export const WorldConceptSchema = z.object({
+const WorldConceptSchema = z.object({
   name: z.string().min(2).max(120),
   tone: z.string().min(10).max(400),
   themes: z.string().min(10).max(400),
@@ -35,7 +35,6 @@ export const WorldConceptSchema = z.object({
   key_tensions: z.string().min(20).max(1200),
   follow_up_questions: z.string().min(10).max(800),
 })
-export type WorldConcept = z.infer<typeof WorldConceptSchema>
 
 export interface ConceptIntakeArgs {
   readonly worldId: string

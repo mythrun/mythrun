@@ -13,12 +13,12 @@ import { worldsNs, type WikiWorldSummary } from './worlds.js'
 import type { FactRow } from './facts.js'
 import type { RelationshipRow } from './relationships.js'
 
-export interface WikiEntity {
+interface WikiEntity {
   readonly id: string
   readonly name: string
   readonly entityType: string
 }
-export interface CampaignWiki {
+interface CampaignWiki {
   readonly world: WikiWorldSummary
   readonly entities: readonly WikiEntity[]
   readonly facts: readonly FactRow[]

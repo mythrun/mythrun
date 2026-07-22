@@ -54,8 +54,6 @@ import { handlePendingUpdateExpired } from './webhook-pending-update-expired.js'
 import { handleRefundEvent, prefetchRefund } from './webhook-refund.js'
 import type { HandlerResult } from './webhook-types.js'
 
-export type { HandlerResult } from './webhook-types.js'
-
 export type KnownStripeEventType =
   | 'checkout.session.completed'
   | 'invoice.paid'
@@ -265,7 +263,7 @@ async function dispatchInTx(
  * subscription was created); the subscription-branch handler asserts
  * non-null before reading from it.
  */
-export interface CheckoutCompletedPrefetch {
+interface CheckoutCompletedPrefetch {
   readonly session: Stripe.Checkout.Session
   readonly subscription: Stripe.Subscription | null
 }

@@ -39,9 +39,7 @@ import type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
 /** MYT-73 §4.2 — the per-turn world delta the Fast Thinker appends after its
  *  player-facing prose on a newline-anchored `\n[[WORLD_DELTA]]\n{json}` section.
  *  Public-by-construction (the FT has no secrets); the parser stamps
- *  `tier:'known'` downstream (the schema has no tier field). Re-exported here so
- *  the tier layer has ONE import point. */
-export type { WorldDelta } from '../../llm/schemas/world-delta.js'
+ *  `tier:'known'` downstream (the schema has no tier field). */
 import type { WorldDelta } from '../../llm/schemas/world-delta.js'
 
 /** The post-mutation values the FT needs to narrate concretely (constraint-
@@ -151,17 +149,6 @@ export interface FtTurnContext {
    *  render. */
   readonly correctiveInstruction?: string
 }
-
-/**
- * Alias for `FtTurnContext`. MYT-66 reserved this as the SlowThinker's widened
- * view (`TurnContext = FtTurnContext & StSecrets`), but the MYT-69 POST-HOC
- * model SUPERSEDES that: the ST runs OFF the turn path in its own worker and
- * never consumes the FT's context object at all (it loads its own view from
- * PG + Redis). The `& StSecrets` widening is therefore NOT needed and was never
- * introduced — this stays a plain alias, retained only as a stable name for
- * the FT-facing turn context.
- */
-export type TurnContext = FtTurnContext
 
 /** Payload of a skill_check frame + transcript row (§3.5 step 6 — carries
  *  characterName: multiplayer clients must see WHOSE check fired). */

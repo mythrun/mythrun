@@ -26,7 +26,6 @@
 
 import type { Queue } from 'bullmq'
 import {
-  QUEUE_DM_TRIGGER,
   DM_TRIGGER_JOB_NAME,
   QUIET_WINDOW_MS,
   MAX_QUIET_EXTENSION_MS,
@@ -90,5 +89,3 @@ export function clampQuietDelay(nowMs: number, firstUnrespondedMs: number | null
   const ceilingRemaining = Math.max(0, firstUnrespondedMs + MAX_QUIET_EXTENSION_MS - nowMs)
   return Math.min(QUIET_WINDOW_MS, ceilingRemaining)
 }
-
-export { QUEUE_DM_TRIGGER }

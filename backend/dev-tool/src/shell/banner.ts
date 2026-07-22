@@ -3,7 +3,7 @@
 // myth-mbdc: active-campaign banner. Pinned below the header.
 // Updates via setCampaign on phase / stage events.
 
-export interface BannerCampaignInfo {
+interface BannerCampaignInfo {
   readonly id: string
   readonly name: string
   readonly stage: string // current stage label

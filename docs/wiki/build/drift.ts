@@ -36,7 +36,7 @@ export function parsePageMeta(content: string): PageMeta {
   }
 }
 
-export type DriftStatus = 'match' | 'mismatch' | 'new' | 'sourceless'
+type DriftStatus = 'match' | 'mismatch' | 'new' | 'sourceless'
 
 export interface DriftResult {
   drifted: boolean

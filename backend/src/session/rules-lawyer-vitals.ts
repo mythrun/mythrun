@@ -155,7 +155,7 @@ export interface UpdateConditionInput {
 
 /** The condition result carries `changed` so the consume loop maps an
  *  idempotent no-op (clear-when-absent / apply-identical) to NO frame (§8). */
-export interface ConditionPayload extends LedgerUpdatePayload {
+interface ConditionPayload extends LedgerUpdatePayload {
   readonly changed: boolean
 }
 

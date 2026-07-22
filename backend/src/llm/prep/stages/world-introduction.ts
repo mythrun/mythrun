@@ -56,7 +56,7 @@ interface PersistedReference {
 /** The generated introduction, pre-persist: the OPUS prose plus the reference
  *  names already resolved to real {entityId, name}. This is the exact blob that
  *  lands in worlds.introduction. */
-export interface GeneratedWorldIntroduction {
+interface GeneratedWorldIntroduction {
   readonly prose: string
   readonly references: PersistedReference[]
 }

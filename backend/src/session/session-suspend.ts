@@ -40,10 +40,10 @@ import type { CheckpointStore, SessionState } from '../redis/session-state.js'
 export const QUEUE_SESSION_SUSPEND = 'session-suspend' as const
 
 /** 5-minute grace window before an all-disconnected session suspends, in ms. */
-export const SUSPEND_GRACE_MS = 5 * 60_000
+const SUSPEND_GRACE_MS = 5 * 60_000
 
 /** The BullMQ job name for suspend jobs (one job kind per queue here). */
-export const SUSPEND_JOB_NAME = 'suspend' as const
+const SUSPEND_JOB_NAME = 'suspend' as const
 
 /** Payload threaded through the delayed job. The processor needs both ids:
  *  `campaignId` keys the live Redis transport state (presence / :seq / :state);

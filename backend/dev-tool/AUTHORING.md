@@ -141,7 +141,7 @@ Routes that intentionally have no UI panel live in `EXEMPT_ROUTES` in
 `verify-registry.ts`. Adding to that list requires justification — the
 default for any new backend route is to author a panel. The route
 audit (build-time test + runtime `dev-tool:verify` pass) treats
-`EXEMPT_ROUTES` union with `union(PANEL_REGISTRY.*.exercises)` as the
+`EXEMPT_ROUTES` union with `union(PAGE_REGISTRY.*.exercises)` as the
 covered surface.
 
 ---
@@ -215,7 +215,7 @@ You may NOT run:
    - Route-audit failures: routes in `BACKEND_ROUTES` not exercised by any panel.
    - For each uncovered route: add a panel (or extend an existing panel) that exercises it. Register it in `verify-registry.ts` with the correct pattern. Mount it in `backend/dev-tool/src/main.ts`. Update the coverage inventory in `AUTHORING.md`.
    - If a route fundamentally doesn't fit any UI surface (e.g., internal webhooks, async event-only paths), flag it in the Escalated section instead.
-   - Orphan registry entries (key in `PANEL_REGISTRY` but no panel file or no `main.ts` import): remove the entry, delete dead panel files.
+   - Orphan registry entries (key in `PAGE_REGISTRY` but no panel file or no `main.ts` import): remove the entry, delete dead panel files.
 
 3. **Per-panel verification.** Run `pnpm dev-tool:verify` again. For each panel ≠ `ok`:
    - Read the panel source, the route it calls, the route handler, the data path.

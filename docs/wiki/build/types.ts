@@ -1,4 +1,4 @@
-export interface Page {
+interface Page {
   slug: string
   title: string
 }

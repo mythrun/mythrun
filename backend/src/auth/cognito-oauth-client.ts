@@ -5,7 +5,7 @@
 // inline fetch in the route handlers) — mirrors the "all Anthropic calls through
 // one layer" convention. PUBLIC client (PKCE): there is no client_secret.
 
-export interface CognitoTokenSet {
+interface CognitoTokenSet {
   readonly accessToken: string
   readonly expiresIn: number
   readonly idToken?: string

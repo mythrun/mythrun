@@ -40,7 +40,7 @@ export type WorldGenStage =
   | 'embed_world'
   | 'session_prep'
 
-export interface ArrayConfig {
+interface ArrayConfig {
   readonly path: string
   readonly kind: string
   readonly role: 'entity' | 'edge'

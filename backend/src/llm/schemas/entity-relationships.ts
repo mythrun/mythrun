@@ -40,7 +40,7 @@ export const relationshipItemSchema = z.object({
   access_level: z.enum(['known', 'discoverable', 'secret']),
 })
 
-export const hierarchyStragglerItemSchema = z.object({
+const hierarchyStragglerItemSchema = z.object({
   parent_name: z.string().min(1).max(200),
   child_name: z.string().min(1).max(200),
 })
@@ -55,6 +55,3 @@ export const EntityRelationshipsSchema = z.object({
 })
 
 export type EntityRelationshipsOutput = z.infer<typeof EntityRelationshipsSchema>
-export type RelationshipItem = z.infer<typeof relationshipItemSchema>
-export type HierarchyStragglerItem = z.infer<typeof hierarchyStragglerItemSchema>
-export type DeclarationItem = z.infer<typeof declarationItemSchema>

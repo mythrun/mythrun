@@ -109,13 +109,13 @@ import type { WorkingSetItem, WorkingSetProposal } from './working-set/types.js'
 // The per-turn context resolvers moved to turn-context.ts (keeping this module
 // under its length budget). Re-exported so existing consumers + tests keep their
 // `from './turn-worker.js'` import surface.
-export { reloadFtContext, resolveWorldId, type ResolveWorldIdDeps } from './turn-context.js'
+export { reloadFtContext, resolveWorldId } from './turn-context.js'
 
 /** The lock for a turn was lost mid-flight (a heartbeat `extend()` failed,
  *  meaning a successor re-acquired it). Distinguished from a real failure so the
  *  catch arm can abort QUIETLY — the winning container owns the continuation, so
  *  we neither flush nor publish a terminal `turn_error`. */
-export class LockLostError extends Error {
+class LockLostError extends Error {
   constructor() {
     super('session lock lost mid-turn')
     this.name = 'LockLostError'
@@ -204,7 +204,7 @@ export interface TurnWorkerRepo {
 
 /** Per-turn arguments the tiers factory needs. The emitter is passed IN (the
  *  worker owns the latch wiring); the FT streams every frame through it. */
-export interface TierTurnArgs {
+interface TierTurnArgs {
   readonly sessionId: string
   /** MYT-70 §10: the per-turn id — the journal idempotency key the FT's ledger
    *  tools thread into `RulesLawyerDeps.turnId`. */
@@ -371,10 +371,9 @@ export function makeLatchedEmitter(inner: TurnEmitter, markEmitted: () => Promis
  * MYT-75 T7 — project the per-turn party-ledger snapshot onto the `ReconcilePc[]`
  * the envelope reconciler resolves PC damage against (id + name + current/max HP).
  * Pure projection — the snapshot was already read for the fresh-run arm, so the
- * post-turn combat application needs no second ledger read. Exported so the
- * projection is directly unit-testable.
+ * post-turn combat application needs no second ledger read.
  */
-export function projectPartyLedgerToReconcilePc(
+function projectPartyLedgerToReconcilePc(
   partyLedger: PartyLedgerSnapshot,
 ): readonly ReconcilePc[] {
   return partyLedger.map((c) => ({

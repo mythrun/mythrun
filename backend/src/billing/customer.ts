@@ -11,4 +11,4 @@
  * (e.g., wrap with telemetry, add a mock for tests) without touching
  * every consumer.
  */
-export { findOrCreateStripeCustomer, type StripeCustomersClient } from '../repo/users.js'
+export { findOrCreateStripeCustomer } from '../repo/users.js'

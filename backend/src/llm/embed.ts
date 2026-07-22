@@ -69,7 +69,7 @@ interface VoyageResponseBody {
 }
 
 /** Rough token estimate: Voyage tokenization averages ~4 chars/token for English prose. */
-export function estimateTokens(s: string): number {
+function estimateTokens(s: string): number {
   return Math.ceil(s.length / 4)
 }
 
@@ -80,7 +80,7 @@ export function estimateTokens(s: string): number {
  * than the token cap occupies a chunk of its own (it cannot be split further
  * here — the API will reject it, which is the intended fail-fast).
  */
-export function chunkByCounts(texts: readonly string[]): string[][] {
+function chunkByCounts(texts: readonly string[]): string[][] {
   const chunks: string[][] = []
   let current: string[] = []
   let currentTokens = 0

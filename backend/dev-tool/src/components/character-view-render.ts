@@ -5,7 +5,7 @@
 // of character-view-panel.ts to keep that module under the 400-line
 // project ceiling.
 
-export interface CharacterCore {
+interface CharacterCore {
   readonly name: string
   readonly level: number
   readonly class: string
@@ -23,25 +23,25 @@ export interface CharacterCore {
   readonly proficiency_bonus: number
 }
 
-export interface CharacterFeature {
+interface CharacterFeature {
   readonly feature_name: string
   readonly feature_source: string
   readonly description: string
 }
 
-export interface CharacterEquipment {
+interface CharacterEquipment {
   readonly item_name: string
   readonly quantity: number
   readonly equipped: boolean
 }
 
-export interface CharacterSpell {
+interface CharacterSpell {
   readonly spell_name: string
   readonly spell_level: number
   readonly prepared: boolean
 }
 
-export interface CharacterBody {
+interface CharacterBody {
   readonly character: CharacterCore | null
   readonly features: readonly CharacterFeature[]
   readonly equipment: readonly CharacterEquipment[]

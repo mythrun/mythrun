@@ -25,7 +25,6 @@ export const VocabularyEntrySchema = z.object({
   source: z.enum(['stage_1_5', 'consolidation', 'scribe_runtime']),
   access_level: z.enum(['known', 'discoverable', 'secret']).default('known'),
 })
-export type VocabularyEntry = z.infer<typeof VocabularyEntrySchema>
 
 export const VocabularyRegistrySchema = z.object({
   entries: z.array(VocabularyEntrySchema).max(60),
@@ -63,4 +62,3 @@ export const VocabularyIntakeOutputSchema = z.object({
     .min(0)
     .max(30),
 })
-export type VocabularyIntakeOutput = z.infer<typeof VocabularyIntakeOutputSchema>

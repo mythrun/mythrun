@@ -10,13 +10,13 @@
 
 export type EntityType = 'npc' | 'location' | 'faction' | 'item'
 
-export type AccessLevel = 'known' | 'discoverable' | 'secret'
+type AccessLevel = 'known' | 'discoverable' | 'secret'
 
 // Mirror of the backend's WikiWorldSummary (the plot-safe projection): the
 // snapshot route dropped `concept` — the owner's raw plot-bearing seed — when
 // it became member-readable (myth-0xwos follow-up). Type name kept as
 // WorldSummary locally to minimize mirror churn.
-export interface WorldSummary {
+interface WorldSummary {
   readonly id: string
   readonly name: string
   readonly tone: string | null
@@ -54,7 +54,7 @@ export interface EntityRow {
   readonly accessLevel: AccessLevel
 }
 
-export interface FactRow {
+interface FactRow {
   readonly id: string
   readonly entityId: string
   readonly topic: string
@@ -66,7 +66,7 @@ export interface FactRow {
   readonly updatedAt: string | Date
 }
 
-export interface ProseKernelRow {
+interface ProseKernelRow {
   readonly id: string
   readonly entityId: string
   readonly content: string
@@ -74,7 +74,7 @@ export interface ProseKernelRow {
   readonly updatedAt: string | Date
 }
 
-export interface RelationshipRow {
+interface RelationshipRow {
   readonly id: string
   readonly sourceEntityId: string
   readonly targetEntityId: string
@@ -89,7 +89,7 @@ export interface EntityHierarchyRow {
   readonly childEntityId: string
 }
 
-export interface StatBlockRow {
+interface StatBlockRow {
   readonly id: string
   readonly name: string
   readonly cr: string | null
@@ -141,62 +141,4 @@ export function toMutableSnapshot(snap: WorldSnapshotResponse): LocalSnapshot {
     entityHierarchy: [...snap.entityHierarchy],
     statBlocks: [...snap.statBlocks],
   }
-}
-
-// Discriminated union of the SSE arms the snapshot panel acts on. Other
-// arms (stage-*, cost-update, entity-added, entity-removed, job-failed,
-// stage-reset) arrive on the same stream but are ignored here — the
-// live-events / status panels render those.
-export type SseLiveEvent =
-  | { type: 'phase'; phase: string }
-  | { type: 'finalized'; synthKey: string; entityId: string }
-  | { type: 'entity-updated'; synthKey: string; patch: Record<string, unknown> }
-  | {
-      type: 'edge-added'
-      synthKey: string
-      from: string
-      to: string
-      relationship: string
-      description?: string
-    }
-  | { type: 'edge-removed'; synthKey: string; reason: string }
-  | {
-      type: 'fact-added'
-      entitySynthKey: string
-      factId: string
-      topic: string
-      content: string
-      accessLevel: 'known' | 'discoverable' | 'secret'
-    }
-  | { type: 'fact-removed'; entitySynthKey: string; factId: string }
-  | {
-      type: 'fact-updated'
-      entitySynthKey: string
-      factId: string
-      topic: string
-      content: string
-      accessLevel: 'known' | 'discoverable' | 'secret'
-    }
-
-export interface SseClosePayload {
-  readonly reason?: string
-}
-
-export interface SseSnapshotPayload {
-  readonly phase: string
-}
-
-// Phases at which a coherent snapshot is fetchable. The backend's
-// snapshot route 409s with snapshot_not_ready outside this set; we
-// gate the fetch client-side to avoid the round-trip.
-const POST_SNAPSHOT_PHASES = new Set<string>([
-  'world_snapshot_ready',
-  'world_ready',
-  'character_creation',
-  'post_creation',
-  'complete',
-])
-
-export function isPostSnapshotPhase(phase: string | null): boolean {
-  return phase !== null && POST_SNAPSHOT_PHASES.has(phase)
 }

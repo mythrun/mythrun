@@ -28,7 +28,7 @@
 
 import { z } from 'zod'
 
-export const NpcHandoffSchema = z.object({
+const NpcHandoffSchema = z.object({
   name: z.string().min(1),
   // Paraphrasable prep-prompt input — where the NPC stands relative to the party.
   state: z.string().min(1),
@@ -36,12 +36,12 @@ export const NpcHandoffSchema = z.object({
   // ft_context and NEVER paraphrased. Array bounded; NO string .max().
   voice: z.array(z.string().min(1)).max(4),
 })
-export const PartyMemberHandoffSchema = z.object({
+const PartyMemberHandoffSchema = z.object({
   characterName: z.string().min(1),
   location: z.string().min(1),
   condition: z.string().min(1),
 })
-export const KeyLocationHandoffSchema = z.object({
+const KeyLocationHandoffSchema = z.object({
   name: z.string().min(1),
   atmosphere: z.string().min(1),
 })
@@ -60,6 +60,5 @@ export const PostSessionAnalysisSchema = z.object({
   // MAY be secret-aware (prep-only; feeds the next session's prep pipeline).
   handoff: SessionHandoffSchema,
 })
-export type NpcHandoff = z.infer<typeof NpcHandoffSchema>
 export type SessionHandoff = z.infer<typeof SessionHandoffSchema>
 export type PostSessionAnalysis = z.infer<typeof PostSessionAnalysisSchema>

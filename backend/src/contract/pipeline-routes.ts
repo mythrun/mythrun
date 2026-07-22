@@ -54,5 +54,3 @@ export const PIPELINE_ROUTES: readonly string[] = [
   'POST /api/campaigns/:campaignId/characters/reset',
   'POST /api/campaigns/:campaignId/characters/confirm',
 ] as const
-
-export type PipelineRoute = (typeof PIPELINE_ROUTES)[number]

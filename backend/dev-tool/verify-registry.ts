@@ -38,7 +38,7 @@ import { mountUsersPage } from './src/pages/users-page.js'
 import { mountBillingPage } from './src/pages/billing-page.js'
 import { mountSystemPage } from './src/pages/system-page.js'
 
-export type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
+type PanelPattern = 'fetch-on-mount' | 'event-driven' | 'action-only'
 
 // Per-panel route exercises. The page composition table (PAGE_REGISTRY
 // below) lists panel ids; this map records which BACKEND_ROUTES each
@@ -384,11 +384,6 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
     ],
   },
 }
-
-// Back-compat alias for any external reader still expecting the old
-// shape. The runtime verify harness in scripts/verify.ts has been
-// updated to enumerate PAGE_REGISTRY directly.
-export const PANEL_REGISTRY = PAGE_REGISTRY
 
 // Sanity: every WorkflowId in WORKFLOWS has an entry above. Verified
 // by the invariant test; this comment documents the contract.

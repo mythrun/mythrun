@@ -44,11 +44,9 @@ const randomTableSchema = z.object({
   entries: z.array(tableEntrySchema).length(20),
 })
 
-export const RandomTablesSchema = z.object({
+const RandomTablesSchema = z.object({
   tables: z.array(randomTableSchema).length(2),
 })
-export type RandomTablesOutput = z.infer<typeof RandomTablesSchema>
-export type RandomTable = z.infer<typeof randomTableSchema>
 
 export interface RandomTablesArgs {
   readonly worldId: string

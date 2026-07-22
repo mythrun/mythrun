@@ -42,18 +42,15 @@ import {
   Output,
   tool,
   stepCountIs,
-  wrapLanguageModel,
   type DeepPartial,
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
-  type PrepareStepFunction,
   type StopCondition,
   type StreamObjectResult,
   type TextStreamPart,
   type ToolSet,
 } from 'ai'
-import type { LanguageModelV3Middleware } from '@ai-sdk/provider'
 import { z } from 'zod'
 import { LlmStructuredOutputError, mapToMythrunError } from './errors.js'
 import { logger } from './logger.js'
@@ -63,14 +60,14 @@ import type { WorldGenStage } from './prep/streaming-extractor.js'
 
 // Re-exports — new code does NOT need to reach into `'ai'` directly. This
 // list grows only when a concrete consumer needs a symbol that the wrapper
-// can't usefully proxy (raw type aliases, `wrapLanguageModel` for models.ts
-// boot wiring, etc.). Inline `from 'ai'` imports in product code are a
+// can't usefully proxy (the FT tool-loop primitives `tool` / `stepCountIs`,
+// raw type aliases, etc.). Inline `from 'ai'` imports in product code are a
 // Phase-3 lint violation.
-export { Output, wrapLanguageModel, tool, stepCountIs }
-export type { LanguageModel, LanguageModelUsage, LanguageModelV3Middleware }
+export { tool, stepCountIs }
+export type { LanguageModel, LanguageModelUsage }
 // MYT-68 — FT tool-loop surface. Re-exported so product code (the FT runner)
 // never reaches into `'ai'` directly; the Phase-3 lint rule forbids that.
-export type { ModelMessage, StopCondition, PrepareStepFunction, TextStreamPart, ToolSet }
+export type { ModelMessage, ToolSet }
 
 // Default fallback for the repair call's required `stage` arg when the
 // caller didn't supply a recognizable WorldGenStage in providerOptions.
@@ -94,7 +91,7 @@ const VALID_STAGES = new Set<WorldGenStage>([
   'session_prep',
 ])
 
-export type RepairStrategy = 'sonnet' | 'haiku-then-sonnet'
+type RepairStrategy = 'sonnet' | 'haiku-then-sonnet'
 
 /**
  * myth-t1qz Phase 4: the diagnostic payload the wrapper attaches to a

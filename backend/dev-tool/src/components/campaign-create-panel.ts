@@ -56,11 +56,7 @@ import {
 // so they stay re-exported from here even though the definitions moved.
 export { SCROLL_TO_GRANT_EVENT } from './campaign-create-controller.js'
 export { buildHeadline } from './campaign-create-failure.js'
-export {
-  readStageFailed,
-  type StageDiagnostic,
-  type StageFailedEvent,
-} from './campaign-create-wire.js'
+export { readStageFailed, type StageFailedEvent } from './campaign-create-wire.js'
 
 export function mountCampaignCreatePanel(parent: HTMLElement): PanelHandle {
   const dom = buildCreatePanelDom()

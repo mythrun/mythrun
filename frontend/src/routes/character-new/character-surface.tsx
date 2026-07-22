@@ -15,10 +15,7 @@ import { useViewerSignals, defaultFetchMe } from './viewer-signals.ts'
 import { CharacterBeat, type CharacterSurfaceDeps } from './character-beat.tsx'
 
 // Re-exported so consumers keep a single import surface: CampaignPage mounts
-// <CharacterSurface> + types its injected `deps` as CharacterSurfaceDeps, and the
-// routing tests drive deriveCharacterRoute directly.
-export { deriveCharacterRoute }
-export type { CharacterRouteKind, CharacterRouteSignals } from './character-route.ts'
+// <CharacterSurface> + types its injected `deps` as CharacterSurfaceDeps.
 export type { CharacterSurfaceDeps }
 
 // The CHARACTER SURFACE (MYT-90 D8) — the integrator. Mounted by CampaignPage in

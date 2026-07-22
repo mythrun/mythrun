@@ -18,5 +18,3 @@ export const PIPELINE_JOBS: readonly string[] = [
   // dev-tool/coverage.json, no longer exempt.
   'session-prep',
 ] as const
-
-export type PipelineJob = (typeof PIPELINE_JOBS)[number]

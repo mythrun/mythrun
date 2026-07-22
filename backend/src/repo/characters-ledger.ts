@@ -51,22 +51,22 @@ export type FindLedgerCharacterResult =
   | { readonly outcome: 'not_found' }
   | { readonly outcome: 'ambiguous' }
 
-export type DebitGoldResult =
+type DebitGoldResult =
   | { readonly outcome: 'debited'; readonly gold: number }
   | { readonly outcome: 'insufficient'; readonly gold: number }
 
-export type DebitItemResult =
+type DebitItemResult =
   | { readonly outcome: 'debited'; readonly quantity: number }
   | { readonly outcome: 'insufficient'; readonly quantity: number }
   | { readonly outcome: 'absent' }
 
-export type DebitFeatureUseResult =
+type DebitFeatureUseResult =
   | { readonly outcome: 'debited'; readonly usesRemaining: number; readonly recharge: string }
   | { readonly outcome: 'exhausted'; readonly recharge: string }
   | { readonly outcome: 'untracked' }
   | { readonly outcome: 'absent' }
 
-export type DebitSpellSlotResult =
+type DebitSpellSlotResult =
   | { readonly outcome: 'debited'; readonly slotsRemaining: number }
   | { readonly outcome: 'insufficient' }
 
@@ -93,7 +93,7 @@ export type ConditionName =
 
 /** apply/clear report whether anything actually changed — an idempotent no-op
  *  (clear-when-absent, apply-identical) emits NO frame (§8). */
-export type ConditionWriteResult =
+type ConditionWriteResult =
   | { readonly outcome: 'changed' }
   | { readonly outcome: 'noop' }
 
@@ -108,7 +108,7 @@ export interface LedgerEventInput {
 
 /** The already-rolled per-character short-rest spend the resolver passes in
  *  (Principle #4: the resolver rolls; the repo does pure writes). */
-export interface ShortRestRequest {
+interface ShortRestRequest {
   readonly characterId: string
   /** Dice actually spent (resolver-clamped to hit_dice_remaining). */
   readonly diceSpent: number
@@ -132,32 +132,32 @@ export interface RestParticipant {
 // §7 party ledger snapshot shape
 // ---------------------------------------------------------------------------
 
-export interface SnapshotSpell {
+interface SnapshotSpell {
   readonly name: string
   readonly level: number
   readonly prepared: boolean
   readonly ritual: boolean
 }
 
-export interface SnapshotEquipment {
+interface SnapshotEquipment {
   readonly name: string
   readonly quantity: number
   readonly consumable: boolean
 }
 
-export interface SnapshotFeature {
+interface SnapshotFeature {
   readonly name: string
   readonly maxUses: number
   readonly usesRemaining: number
   readonly recharge: string
 }
 
-export interface SnapshotCondition {
+interface SnapshotCondition {
   readonly condition: string
   readonly level: number | null
 }
 
-export interface PartyLedgerCharacter {
+interface PartyLedgerCharacter {
   readonly characterId: string
   readonly name: string
   readonly hitPoints: number

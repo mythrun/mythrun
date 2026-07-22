@@ -37,7 +37,7 @@ const InputGateSchema = z.object({
   rejectionMessage: z.string().max(400).nullable(),
 })
 
-export type GateReason = 'srd_incompat' | 'clone_intent' | 'inappropriate'
+type GateReason = 'srd_incompat' | 'clone_intent' | 'inappropriate'
 
 export interface InputGateVerdict {
   readonly verdict: 'allow' | 'reject'

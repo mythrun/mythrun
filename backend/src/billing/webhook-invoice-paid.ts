@@ -41,7 +41,7 @@ import type { FastifyBaseLogger } from 'fastify'
 import type { TxRepo } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { getSkuCache } from './sku-cache.js'
-import { LOOKUP_KEYS, type LookupKey } from './lookup-keys.js'
+import { LOOKUP_KEYS } from './lookup-keys.js'
 import type { HandlerResult } from './webhook-types.js'
 
 /**
@@ -64,7 +64,7 @@ export interface InvoicePaidPrefetch {
  * a string in practice — but the typed surface includes the embedded form
  * and we narrow without `as`).
  */
-export function resolveParentSubscriptionId(invoice: Stripe.Invoice): string | null {
+function resolveParentSubscriptionId(invoice: Stripe.Invoice): string | null {
   if (invoice.parent === null) return null
   /* c8 ignore start — defensive narrowing of the basil Invoice.parent
    * union. Fixtures all use type='subscription_details' with a string
@@ -793,6 +793,3 @@ export async function handleInvoicePaid(
   )
 }
 
-// LookupKey is exported for test fixtures that need to type-narrow against
-// the closed set (avoids `as` in test code).
-export type { LookupKey }

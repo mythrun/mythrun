@@ -18,7 +18,7 @@
 
 import { getCurrentDevSub } from './identity.js'
 
-export interface SseEvent {
+interface SseEvent {
   /** Event type from the `event:` field. Defaults to 'message' if absent. */
   readonly event: string
   /** Concatenated `data:` field value. JSON for our routes. */

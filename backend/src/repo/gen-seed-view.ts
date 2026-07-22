@@ -31,7 +31,7 @@ import { relationships } from './relationships.js'
 /** A seed node's minimal shape — the graph reducer's `snapshotToSeed` reads
  *  exactly these three fields (id → the finalized displayId, entityType → kind,
  *  name). Mirrors the world-snapshot entities' subset the FE already consumes. */
-export interface GenSeedEntity {
+interface GenSeedEntity {
   readonly id: string
   readonly entityType: string
   readonly name: string
@@ -39,7 +39,7 @@ export interface GenSeedEntity {
 
 /** A seed edge's minimal shape — the same `relationships` triple the
  *  world-snapshot's graph edges carry, so one FE seed path handles both. */
-export interface GenSeedRelationship {
+interface GenSeedRelationship {
   readonly sourceEntityId: string
   readonly targetEntityId: string
   readonly relationshipType: string
