@@ -294,6 +294,23 @@
   event, because a second consumer will implement the same contract later.
 </p>
 
+<h2 id="copy-is-a-contract-prop">Copy is a contract prop</h2>
+
+<p>
+  A component owns no user-facing copy. Every text surface — a level card's title, a roster's empty
+  line, a form field's label and error, a status card's stage name — enters as a required label prop
+  the composing feature supplies from the <a href="./index.html#the-i18n-layer">i18n catalog</a>. The
+  contract carries the copy <em>slots</em>, never the strings; the same portability logic as the rest
+  of it (a native impl renders the same props from its own catalog). MYT-100 made this systematic. The
+  copy pass found real copy still parked inside library components — a "fixed brand chrome" string
+  sitting in a constant, below the app-layer string rail — and closed the gap by turning every such
+  surface into a required prop on <code>GuidedBuilder</code>, <code>FreeformPrompt</code>,
+  <code>CharacterSheetReveal</code>, <code>CharacterLoadingBeat</code>, <code>PartyRoster</code>,
+  <code>LevelCard</code>, <code>Label</code>/<code>FormField</code>, <code>WorldGenStatusCard</code>,
+  and <code>WorldWiki</code>. A <a href="#no-hardcoded-copy-the-text-rail">text rail</a> now holds the
+  line so the surface can't silently regrow copy of its own.
+</p>
+
 <h2 id="the-token-foundation-relocated">The token foundation, relocated</h2>
 
 <p>
@@ -900,6 +917,23 @@
   false-positive.
 </p>
 
+<h3 id="no-hardcoded-copy-the-text-rail">No hardcoded copy — the text rail</h3>
+
+<p>
+  The <a href="./index.html#rule-1-no-hardcoded-strings">no-untranslated-jsx-text</a> rail — the
+  frontend's JSX-child string rule — was app-only until MYT-100, which registered it in
+  <code>@mythrun/ui</code> too. It flags a bare text child
+  (<code>&lt;span&gt;Level&lt;/span&gt;</code>) but passes any expression child
+  (<code>{props.label}</code>), so a component that takes its copy through props lints clean and a
+  hardcoded string breaks the build — the enforcement behind
+  <a href="#copy-is-a-contract-prop">copy as a contract prop</a> above. It carries one exemption: text
+  under an <code>aria-hidden</code> ancestor (decorative separators, chevrons, arrows) is
+  presentational — never read, never translated — so it is allowed. Riding alongside it, a
+  <strong>placeholder ban</strong> (<code>no-restricted-syntax</code>) makes a surviving
+  <code>[ph:</code>/<code>[ph_</code> marker a hard build break across all three packages, tests and
+  stories included: after the copy pass, a placeholder in the source is a bug, not an interim.
+</p>
+
 <h2 id="operating-this-piece">Operating this piece</h2>
 
 <h3 id="add-a-primitive-to-the-library">Add a primitive to the library</h3>
@@ -1060,6 +1094,11 @@
       <td><code>@mythrun/ui</code> tests + the <code>@mythrun/web</code> test-runner</td>
       <td>a11y regressions; sub-3:1 focus ring/border</td>
     </tr>
+    <tr>
+      <td>no-untranslated-jsx-text + <code>[ph</code> ban (MYT-100)</td>
+      <td><code>@mythrun/ui</code> text rail; <code>[ph</code> ban in all three package configs</td>
+      <td>hardcoded copy in a component; a surviving placeholder marker</td>
+    </tr>
   </tbody>
 </table>
 
@@ -1082,7 +1121,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#three-packages-one-direction">Three packages, one direction</a></li><li style="padding-left:0"><a href="#the-contract-a-typed-seam-enforced-as-a-pair">The contract — a typed seam enforced as a pair</a></li><li style="padding-left:0"><a href="#the-token-foundation-relocated">The token foundation, relocated</a></li><li style="padding-left:0"><a href="#the-design-language-flat-1-bit">The design language — flat 1-bit</a></li><li style="padding-left:0"><a href="#theme-mode">Theme mode</a></li><li style="padding-left:0"><a href="#the-build-stack">The build stack</a></li><li style="padding-left:0"><a href="#the-primitive-set">The primitive set</a></li><li style="padding-left:0"><a href="#responsive-by-construction">Responsive by construction</a></li><li style="padding-left:0"><a href="#storybook">Storybook</a></li><li style="padding-left:0"><a href="#enforcement-rules-as-ci-gates">Enforcement — rules as CI gates</a></li><li style="padding-left:12px"><a href="#api-purity-r2">API-purity (R2)</a></li><li style="padding-left:12px"><a href="#no-ad-hoc-color-r3">no-ad-hoc-color (R3)</a></li><li style="padding-left:12px"><a href="#story-coverage">Story-coverage</a></li><li style="padding-left:12px"><a href="#mobile-viewport-overflow-gate">Mobile-viewport overflow gate</a></li><li style="padding-left:12px"><a href="#import-boundary-r5">Import boundary (R5)</a></li><li style="padding-left:12px"><a href="#accessibility-amp-token-contrast">Accessibility &amp; token-contrast</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-primitive-to-the-library">Add a primitive to the library</a></li><li style="padding-left:12px"><a href="#add-or-change-a-token">Add or change a token</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-gates">Appendix: packages &amp; gates</a></li><li style="padding-left:12px"><a href="#packages">Packages</a></li><li style="padding-left:12px"><a href="#enforcement-gates">Enforcement gates</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#three-packages-one-direction">Three packages, one direction</a></li><li style="padding-left:0"><a href="#the-contract-a-typed-seam-enforced-as-a-pair">The contract — a typed seam enforced as a pair</a></li><li style="padding-left:0"><a href="#copy-is-a-contract-prop">Copy is a contract prop</a></li><li style="padding-left:0"><a href="#the-token-foundation-relocated">The token foundation, relocated</a></li><li style="padding-left:0"><a href="#the-design-language-flat-1-bit">The design language — flat 1-bit</a></li><li style="padding-left:0"><a href="#theme-mode">Theme mode</a></li><li style="padding-left:0"><a href="#the-build-stack">The build stack</a></li><li style="padding-left:0"><a href="#the-primitive-set">The primitive set</a></li><li style="padding-left:0"><a href="#responsive-by-construction">Responsive by construction</a></li><li style="padding-left:0"><a href="#storybook">Storybook</a></li><li style="padding-left:0"><a href="#enforcement-rules-as-ci-gates">Enforcement — rules as CI gates</a></li><li style="padding-left:12px"><a href="#api-purity-r2">API-purity (R2)</a></li><li style="padding-left:12px"><a href="#no-ad-hoc-color-r3">no-ad-hoc-color (R3)</a></li><li style="padding-left:12px"><a href="#story-coverage">Story-coverage</a></li><li style="padding-left:12px"><a href="#mobile-viewport-overflow-gate">Mobile-viewport overflow gate</a></li><li style="padding-left:12px"><a href="#import-boundary-r5">Import boundary (R5)</a></li><li style="padding-left:12px"><a href="#accessibility-amp-token-contrast">Accessibility &amp; token-contrast</a></li><li style="padding-left:12px"><a href="#no-hardcoded-copy-the-text-rail">No hardcoded copy — the text rail</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-primitive-to-the-library">Add a primitive to the library</a></li><li style="padding-left:12px"><a href="#add-or-change-a-token">Add or change a token</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-gates">Appendix: packages &amp; gates</a></li><li style="padding-left:12px"><a href="#packages">Packages</a></li><li style="padding-left:12px"><a href="#enforcement-gates">Enforcement gates</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -341,7 +341,7 @@
   — the third rule is that anything the team cares about <em>becomes</em> a CI lint.
 </p>
 
-<h3 id="rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</h3>
+<h3 id="rule-1-no-hardcoded-strings">Rule 1 — no hardcoded user-facing strings</h3>
 
 <p>
   Every user-visible string is an i18n key, never inline text. The rail is split across two
@@ -382,6 +382,29 @@
   <code>jsx-attributes.exclude</code> array. Because that array <em>replaces</em> the plugin
   defaults rather than extending them, the defaults are re-listed alongside the additions.
 </aside>
+
+<p>
+  MYT-100 — the copy pass — widened the JSX-child rail's reach. It had run only on feature code
+  (<code>src/**</code>); <code>@mythrun/ui</code> had no text rail, so real copy could hide inside a
+  library component as a bare <code>&lt;span&gt;Level&lt;/span&gt;</code>, below the app-layer floor.
+  The pass registers <code>mythrun-ui/no-untranslated-jsx-text</code> in the library config too, where
+  it flags bare child text but passes any expression child (<code>{props.label}</code>,
+  <code>{labels.confirm}</code>) — so a component that takes its copy through props (the pattern every
+  mythrunUI component now follows; see
+  <a href="./design-system.html#copy-is-a-contract-prop">copy as a contract prop</a>) lints clean
+  while a hardcoded string breaks the build. The rail carries one exemption: text under an
+  <code>aria-hidden</code> ancestor — decorative separators, chevrons, arrows that assistive tech
+  never reads and copy never translates — is allowed.
+</p>
+
+<p>
+  The same pass adds a <strong>placeholder ban</strong>. With the copy written, a surviving interim
+  <code>[ph:</code>/<code>[ph_</code> marker is a bug, so a <code>no-restricted-syntax</code> rule
+  makes one a hard build break across all three frontend packages — <code>@mythrun/web</code>,
+  <code>@mythrun/ui</code>, and <code>@mythrun/client-core</code>, tests and stories included —
+  matching a string literal, a template quasi, or a bare JSX-text marker. It is what keeps the
+  <a href="#the-i18n-layer">catalog</a> placeholder-free now that the copy is real.
+</p>
 
 <h3 id="rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</h3>
 
@@ -525,30 +548,46 @@
 </aside>
 
 <p>
-  Prose copy is Miklos's to write, so most values ship as a placeholder rather than guessed text —
-  only generic chrome (<code>Back</code>, nav labels) gets a real value on day one. MYT-97 reshaped
-  the placeholders into short, <strong>length-matched</strong> <code>[ph_*]</code> tokens: a
-  credit-balance slot like <code>120</code> ships as <code>[ph_bal]</code>, a one-sentence body
-  keeps roughly a sentence. The full authoring context for each key moved into a separate
-  <code>descriptions.ts</code> — what the key stands for and the rough shape/length of the real
-  string — keyed by the catalog's dotted path and <em>not</em> bundled at runtime (i18next serves
-  only the catalog). A drift test pins <code>descriptions.ts</code> and the catalog to exactly the
-  same key set: every key documented, no orphans. A companion <code>pnpm i18n:todo</code> script
-  JSON-walks every locale file (now under <code>@mythrun/client-core</code>, where it was repointed)
-  and lists the values still holding a placeholder, so unwritten copy is findable; it walks values
-  structurally, so it survives nested keys and <code>_one</code>/<code>_other</code> plural shapes.
+  Prose copy is Miklos's to write, so through the build-out every value shipped as a placeholder
+  rather than guessed text — only generic chrome (<code>Back</code>, nav labels) carried a real
+  string. MYT-97 had reshaped those placeholders into short, <strong>length-matched</strong>
+  <code>[ph_*]</code> tokens so a frame rendered at honest width before its copy landed. MYT-100 —
+  the <strong>copy pass</strong> — closed that era: with every surface built, Miklos and Claude swept
+  the whole catalog against the live app and authored the real strings, so no
+  <code>[ph:</code>/<code>[ph_</code> marker renders anywhere. The catalog now holds
+  <strong>482 leaves</strong> under the single <code>common</code> namespace.
+</p>
+
+<p>
+  The pass also folded repeated copy into a <strong><code>shared.*</code> subtree</strong>. A line
+  that recurs verbatim across the app — the low-credits nudge, the retry cooldown, the weave-interrupt
+  notice, a plain <code>Try again</code> (thirteen sites), the entity-type labels — is written once
+  under <code>shared</code> and referenced elsewhere through i18next's
+  <strong><code>$t()</code> nesting</strong>: a value of <code>"$t(shared.tryAgain)"</code> resolves
+  to the shared string at lookup. Fifty-seven keys are such aliases, so one edit to a shared line
+  updates every site that reads it.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Length-matched placeholders, so the layout reads true before the copy lands</strong> — the
-  old <code>[placeholder for the player's credit balance]</code> string was many times longer than
-  the <code>120</code> it stands in for, which makes a frame render wider than it ever will in
-  production and can false-trigger the new
-  <a href="./design-system.html#mobile-viewport-overflow-gate">mobile-viewport gate</a>. A
-  length-matched <code>[ph_bal]</code> occupies roughly the real slot, so the responsiveness work
-  measures honest geometry. <code>descriptions.ts</code> is where the verbose intent went — out of
-  the runtime catalog, into a drift-tested authoring reference.
+  <strong><code>$t()</code> nesting, not copy-paste</strong> — the same sentence pasted into thirteen
+  keys drifts the moment one is reworded. Pointing each recurrence at a single <code>shared.*</code>
+  key makes the catalog itself hold one voice: the string lives in one place, and a plural or comma
+  fix lands everywhere at once. It stays a catalog concern — components read <code>t('key')</code>
+  exactly as before; the indirection resolves inside i18next.
 </aside>
+
+<p>
+  The authoring scaffolding survives the pass. The intent for each key — what it stands for and the
+  rough shape of the real string — still lives in a separate <code>descriptions.ts</code>, keyed by
+  dotted path and <em>not</em> bundled at runtime (i18next serves only the catalog), with a drift
+  test pinning it and the catalog to exactly the same key set: every key documented, no orphans
+  (MYT-100 deleted nine that had gone dead). <code>pnpm i18n:todo</code> — which JSON-walks the locale
+  files and lists any value still holding a placeholder — was the pass's find-the-remaining-copy tool;
+  it now reports clean, and the <a href="#rule-1-no-hardcoded-strings">placeholder ban</a> keeps it
+  that way. The script walks values structurally, so it survives nested keys and the
+  <code>_one</code>/<code>_other</code> plural shapes the pass introduced (<code>home.card.record</code>
+  pluralized, so a one-session campaign no longer reads "1 sessions").
+</p>
 
 <h2 id="design-tokens">Design tokens</h2>
 
@@ -743,7 +782,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#the-frontend-workspace">The frontend workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-user-facing-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#the-i18n-layer">The i18n layer</a></li><li style="padding-left:0"><a href="#design-tokens">Design tokens</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#the-frontend-workspace">The frontend workspace</a></li><li style="padding-left:0"><a href="#the-three-rules-of-the-road">The three rules of the road</a></li><li style="padding-left:12px"><a href="#rule-1-no-hardcoded-strings">Rule 1 — no hardcoded user-facing strings</a></li><li style="padding-left:12px"><a href="#rule-2-no-ad-hoc-ui">Rule 2 — no ad-hoc UI</a></li><li style="padding-left:12px"><a href="#rule-3-the-rules-are-ci-lints-with-a-lint-enforced-escape-hatch">Rule 3 — the rules are CI lints, with a lint-enforced escape hatch</a></li><li style="padding-left:0"><a href="#coverage-and-the-wiring-tests">Coverage and the wiring tests</a></li><li style="padding-left:0"><a href="#the-gates">The gates</a></li><li style="padding-left:0"><a href="#the-i18n-layer">The i18n layer</a></li><li style="padding-left:0"><a href="#design-tokens">Design tokens</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-packages-amp-rails">Appendix: packages &amp; rails</a></li><li style="padding-left:12px"><a href="#workspace-packages">Workspace packages</a></li><li style="padding-left:12px"><a href="#lint-rails-feature-code-frontend-src">Lint rails (feature code, frontend/src/**)</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>
