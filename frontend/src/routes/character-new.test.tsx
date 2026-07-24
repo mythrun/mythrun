@@ -243,9 +243,10 @@ function renderRoute(overrides: Overrides = {}): {
   return { submit }
 }
 
-/** Click the freeform choice in the path chooser. */
+/** Click the freeform choice in the path chooser. The chooser now cards each
+ *  option, so the `chooser-*` testId rides the option's own <button>. */
 function pickFreeform(): void {
-  fireEvent.click(within(screen.getByTestId('chooser-freeform')).getByRole('button'))
+  fireEvent.click(screen.getByTestId('chooser-freeform'))
 }
 
 /** Type into the freeform prompt's textarea + press its Continue control. Scoped
@@ -268,7 +269,7 @@ describe('CharacterNewRoute — the path chooser', () => {
 
   it('renders the guided builder when the guided path is picked', () => {
     renderRoute()
-    fireEvent.click(within(screen.getByTestId('chooser-guided')).getByRole('button'))
+    fireEvent.click(screen.getByTestId('chooser-guided'))
     // The guided path opens on the option-grid builder, not the freeform prompt.
     expect(screen.getByTestId('guided-builder')).toBeDefined()
     expect(screen.queryByTestId('freeform-prompt')).toBeNull()

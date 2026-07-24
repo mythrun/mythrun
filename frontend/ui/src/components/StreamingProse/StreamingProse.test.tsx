@@ -50,6 +50,26 @@ describe('StreamingProse', () => {
     expect(queryByText('still writing')).toBeNull()
   })
 
+  it('renders inline emphasis as <em>/<strong> once settled (myth-5syk3)', () => {
+    const { container } = render(
+      <StreamingProse data-testid="sp" text="the *order*, then **V. L. K.**" writing={false} />,
+    )
+    expect(container.querySelector('em')).toHaveTextContent('order')
+    expect(container.querySelector('strong')).toHaveTextContent('V. L. K.')
+    // No literal asterisk ever reaches the reader.
+    expect(container.textContent).not.toContain('*')
+  })
+
+  it('strips emphasis markers while writing — no literal asterisk flashes mid-stream', () => {
+    const { getByTestId, container } = render(
+      <StreamingProse data-testid="sp" text="the *ord" writing />,
+    )
+    // Mid-stream the opener has arrived but not the closer; the marker is hidden.
+    expect(getByTestId('sp')).toHaveTextContent('the ord')
+    expect(container.textContent).not.toContain('*')
+    expect(container.querySelector('em')).toBeNull()
+  })
+
   it('forwards its ref to the paragraph element', () => {
     const ref = createRef<HTMLParagraphElement>()
     render(<StreamingProse ref={ref} text="x" />)

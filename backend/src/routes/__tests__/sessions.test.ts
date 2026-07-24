@@ -18,6 +18,8 @@ const maxSessionNumberMock = vi.fn()
 const prepExistsForMock = vi.fn()
 const getActiveByCampaignMock = vi.fn()
 const getMostRecentByCampaignMock = vi.fn()
+// myth-lhp99 recap read — the secret-free latest-ended projection.
+const getLatestEndedRecapMock = vi.fn()
 // myth-mnik3 start guard: the confirmed-members-without-character read. Defaults
 // to [] so the happy-path fault arms below reach the debit; a guard-specific arm
 // would override it.
@@ -58,6 +60,7 @@ vi.mock('../../repo/index.js', () => ({
       maxSessionNumber: maxSessionNumberMock,
       getActiveByCampaign: getActiveByCampaignMock,
       getMostRecentByCampaign: getMostRecentByCampaignMock,
+      getLatestEndedRecap: getLatestEndedRecapMock,
       create: sessionCreateMock,
       deleteById: sessionDeleteByIdMock,
     },
@@ -490,5 +493,120 @@ describe('GET /api/sessions/:campaignId/active (response allowlist)', () => {
     const res = await getActive()
     expect(res.statusCode).toBe(403)
     expect(res.json()).toEqual({ code: 'not_campaign_member' })
+  })
+})
+
+// GET /:campaignId/recap (myth-lhp99) — the player-facing recap read. Member-gated,
+// SECRET-FREE: it returns only the analysis's player-witnessed summary +
+// emergingThreads; the secret-aware handoff / ST running summary must never appear.
+// The repo read (getLatestEndedRecap) deliberately does not even SELECT handoff, so
+// the boundary holds structurally — these pin it.
+describe('GET /api/sessions/:campaignId/recap (secret-free recap)', () => {
+  let app: FastifyInstance | undefined
+  let redis: Redis
+
+  beforeEach(() => {
+    redis = new IoRedisMock()
+    getMembershipMock.mockReset()
+    getLatestEndedRecapMock.mockReset()
+    getMembershipMock.mockResolvedValue(memberRow())
+  })
+
+  afterEach(async () => {
+    if (app) await app.close()
+    app = undefined
+    await redis.quit()
+  })
+
+  function getRecap(): Promise<LightMyRequestResponse> {
+    if (!app) throw new Error('app not built')
+    return app.inject({ method: 'GET', url: '/api/sessions/c-1/recap' })
+  }
+
+  it('a MALFORMED stored summary (wrong-shaped JSON) degrades to pending facts, never a 500', async () => {
+    getLatestEndedRecapMock.mockResolvedValueOnce({
+      sessionNumber: 2,
+      endedAt: new Date('2026-07-24T01:00:00.000Z'),
+      // Valid JSON, wrong shape: the wrapper schema safeParse fails → the route
+      // serves facts-only (pending presentation) instead of crashing or leaking.
+      summaryJson: JSON.stringify({ unexpected: 'shape' }),
+    })
+    app = await build({ user: fakeUser, redis })
+    const res = await getRecap()
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ recap: { status: string; summary?: string } }>()
+    expect(body.recap.status).toBe('pending')
+    expect(body.recap.summary).toBeUndefined()
+  })
+
+  it('a written analysis → status ready with summary + threads, and NO secret fields', async () => {
+    getLatestEndedRecapMock.mockResolvedValueOnce({
+      sessionNumber: 3,
+      endedAt: new Date('2026-07-24T02:00:00.000Z'),
+      // The stored wrapper is SECRET-FREE by construction (writeAnalysis stores
+      // {summary, emergingThreads} here; handoff lives in its own column the recap
+      // read never touches).
+      summaryJson: JSON.stringify({
+        summary: 'You walked the long road home and slept without fear.',
+        emergingThreads: ['The count still expects an answer.'],
+      }),
+    })
+    app = await build({ user: fakeUser, redis })
+    const res = await getRecap()
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ recap: Record<string, unknown> }>()
+    expect(Object.keys(body.recap).sort()).toEqual(
+      ['emergingThreads', 'endedAt', 'sessionNumber', 'status', 'summary'].sort(),
+    )
+    expect(body.recap.status).toBe('ready')
+    expect(body.recap.sessionNumber).toBe(3)
+    expect(body.recap.summary).toBe('You walked the long road home and slept without fear.')
+    expect(body.recap.emergingThreads).toEqual(['The count still expects an answer.'])
+    // The secret-aware fields are structurally absent.
+    expect(body.recap).not.toHaveProperty('handoff')
+    expect(body.recap).not.toHaveProperty('stRunningSummary')
+  })
+
+  it('an ended session with no analysis yet (summary NULL) → status pending, no prose', async () => {
+    getLatestEndedRecapMock.mockResolvedValueOnce({
+      sessionNumber: 3,
+      endedAt: new Date('2026-07-24T02:00:00.000Z'),
+      summaryJson: null,
+    })
+    app = await build({ user: fakeUser, redis })
+    const res = await getRecap()
+    expect(res.statusCode).toBe(200)
+    const body = res.json<{ recap: Record<string, unknown> }>()
+    expect(body.recap.status).toBe('pending')
+    expect(body.recap).not.toHaveProperty('summary')
+    expect(body.recap).not.toHaveProperty('emergingThreads')
+  })
+
+  it('malformed/legacy summary JSON degrades to pending (never throws, never leaks)', async () => {
+    getLatestEndedRecapMock.mockResolvedValueOnce({
+      sessionNumber: 3,
+      endedAt: null,
+      summaryJson: 'not json {{',
+    })
+    app = await build({ user: fakeUser, redis })
+    const res = await getRecap()
+    expect(res.statusCode).toBe(200)
+    expect(res.json<{ recap: { status: string } }>().recap.status).toBe('pending')
+  })
+
+  it('no ended session → { recap: null }', async () => {
+    getLatestEndedRecapMock.mockResolvedValueOnce(null)
+    app = await build({ user: fakeUser, redis })
+    const res = await getRecap()
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ recap: null })
+  })
+
+  it('a non-member is rejected before the recap is read', async () => {
+    getMembershipMock.mockResolvedValueOnce(null)
+    app = await build({ user: fakeUser, redis })
+    const res = await getRecap()
+    expect(res.statusCode).toBe(403)
+    expect(getLatestEndedRecapMock).not.toHaveBeenCalled()
   })
 })

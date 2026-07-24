@@ -36,6 +36,14 @@ export interface TextAreaProps extends BaseProps {
   describedBy?: string
   /** Token control size. Default `md` (sets the per-line min-height). */
   size?: InputSize
+  /**
+   * Type face. `ui` (default) = the mono `font-ui` DATA face (form fields, dev
+   * readouts). `prose` = the serif `font-body` USER-AUTHORED-PROSE face with the
+   * branded ember caret — the single canonical face a player's own writing wears
+   * across the funnel (world/character concept) and the play composer (ux-run1
+   * myth-xs9tc). Never mono for player prose; mono there reads as a code field.
+   */
+  face?: 'ui' | 'prose'
   /** Visible text rows (native `rows`). Drives the auto-height. */
   rows?: number
   /**

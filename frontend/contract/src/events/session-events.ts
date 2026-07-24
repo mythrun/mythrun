@@ -227,12 +227,20 @@ export type ServerFrame =
   // value fields are all optional so a single shape covers every kind without a
   // union explosion. The publisher (later task) maps the LedgerUpdatePayload
   // onto these fields one-for-one; typecheck catches drift at the publisher.
+  //
+  // `restType` (myth-lhp99) rides ONLY the `kind: 'rest'` LIVE frame — the
+  // structured short/long discriminator the play surface hangs its wind-down
+  // "call it a night?" offer off (parsing the human-readable `summary` prose for
+  // "long rest" would be a brittle copy-coupling). Absent on replay: a long rest
+  // from an hour ago must NOT re-pop the offer, so it is a live-only signal like
+  // the missing `seq`.
   | {
       type: 'ledger_update'
       turnId: string
       seq?: number // present only on reconnect replay (persisted row)
       characterName: string
       kind: 'hp' | 'gold' | 'item' | 'feature' | 'spell_slot' | 'condition' | 'rest'
+      restType?: 'short' | 'long' // present only on a LIVE kind:'rest' frame
       summary: string
       hp?: number
       maxHp?: number

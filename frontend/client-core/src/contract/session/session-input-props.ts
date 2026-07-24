@@ -16,8 +16,19 @@ export interface SessionInputProps {
   onSend: () => void
   /** Summon the DM — the explicit-text @dm path (the route wire adds the token). */
   onSummonDm: () => void
-  /** Gate both intents while the session is ended / not-ready. */
+  /** Gate both intents while the session is ended / not-ready. Terminal: the
+   *  field itself goes inert too. */
   disabled: boolean
+  /** myth-dd63v — the DM is mid-turn (thinking or streaming) OR a skill-check
+   *  card is awaiting Roll/Continue: SENDING is not the expected next action, so
+   *  Send + the @DM summon are gated (and the quiet `busyLabel` names why), but
+   *  the field STAYS typeable — drafting while the DM writes is honest, silently
+   *  swallowing the send is the bug. `disabled` (terminal) supersedes this. */
+  busy?: boolean
+  /** Resolved caption shown while `busy` (and not `disabled`) — the "why Send is
+   *  waiting" line, in the quiet between-turns register (e.g. "The DM is
+   *  writing…"). Absent → no caption even when busy. */
+  busyLabel?: string
   /** Resolved placeholder copy (the web layer fills it). */
   placeholder: string
   /** Resolved label for the @DM summon affordance. */

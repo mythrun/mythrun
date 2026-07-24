@@ -13,6 +13,7 @@ import {
 import { deriveCharacterRoute } from './character-route.ts'
 import { useViewerSignals, defaultFetchMe } from './viewer-signals.ts'
 import { CharacterBeat, type CharacterSurfaceDeps } from './character-beat.tsx'
+import { CampaignInvitePanel, type InvitePanelDeps } from '../campaign-invite-panel.tsx'
 
 // Re-exported so consumers keep a single import surface: CampaignPage mounts
 // <CharacterSurface> + types its injected `deps` as CharacterSurfaceDeps.
@@ -51,6 +52,11 @@ export interface CharacterSurfaceProps {
   campaignId: string
   /** Injected endpoint + child-surface seams (default to the real endpoints). */
   deps?: CharacterSurfaceDeps
+  /** Injected invite endpoints + web ports for the owner's invite affordance
+   *  (MYT-99g03). The invite renders WITH the beat — a quiet collapsed line below
+   *  the reveal / other setup beats, and the inline party-slot disclosure on
+   *  staging — never as a standalone block above the character. */
+  inviteDeps?: InvitePanelDeps
 }
 
 // The surface's own calm loading/error chrome (the child beats own theirs).
@@ -66,6 +72,7 @@ export function CharacterSurface({
   campaign,
   campaignId,
   deps,
+  inviteDeps,
 }: CharacterSurfaceProps): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
@@ -138,14 +145,24 @@ export function CharacterSurface({
   }
 
   const s = state.signals
+  const isOwner = campaign.creator === null
   const kind = deriveCharacterRoute({
     campaignStatus: campaign.status,
-    isOwner: campaign.creator === null,
+    isOwner,
     situationChosen: s.situationChosen,
     levelSet: s.levelSet,
     conceptStatus: s.conceptStatus,
     confirmed: s.confirmed,
   })
+
+  // The owner's invite deps travel to the staging beat (its inline party-slot
+  // disclosure is the single invite entry point there); every other non-redirect beat
+  // gets the collapsed quiet line below (MYT-99g03 — the invite is demoted below the
+  // character, never a block above it). Conditional spread keeps the optional prop
+  // absent (not an explicit `undefined`) under exactOptionalPropertyTypes. The beat
+  // takes `inviteDeps` (forwards to PartyStagingSurface); the panel takes `deps`.
+  const beatInviteProp = inviteDeps !== undefined ? { inviteDeps } : {}
+  const panelDepsProp = inviteDeps !== undefined ? { deps: inviteDeps } : {}
 
   // Redirect kinds navigate away — render the beat bare (no surface chrome).
   if (kind === 'situation' || kind === 'level' || kind === 'create') {
@@ -153,6 +170,9 @@ export function CharacterSurface({
   }
 
   const isFailure = kind === 'failure-concept' || kind === 'failure-integration'
+  // Staging owns its own inline invite (folded into the party slot); every other beat
+  // shows the demoted collapsed invite here, below the beat content, owner-only.
+  const showCollapsedInvite = isOwner && kind !== 'staging'
   return (
     <Stack gap={4} data-testid="character-surface">
       <CharacterBeat
@@ -163,7 +183,11 @@ export function CharacterSurface({
         onReload={reload}
         onConceptRetry={onConceptRetry}
         onIntegrationRetry={onIntegrationRetry}
+        {...beatInviteProp}
       />
+      {showCollapsedInvite && (
+        <CampaignInvitePanel campaignId={campaignId} collapsible prominence="quiet" {...panelDepsProp} />
+      )}
       {isFailure && retryFailed && (
         <Text role="ui-caption" as="p" data-testid="character-failure-retry-error">
           {t('campaign.character.failure.retryError')}

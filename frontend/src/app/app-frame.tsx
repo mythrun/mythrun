@@ -1,5 +1,5 @@
 import { Outlet, useMatches, useNavigate } from 'react-router-dom'
-import { Box, Stack, Divider, IconButton, HorizontalLockup, Show } from '@mythrun/ui'
+import { Box, Stack, Divider, Button, Icon, IconButton, HorizontalLockup, Link, Show } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { HeaderCredits } from './header-credits.tsx'
 import { HeaderIdentity } from './header-identity.tsx'
@@ -34,10 +34,14 @@ import { HeaderIdentity } from './header-identity.tsx'
 // `/settings` (where account / billing lives) until it ships. The "+" sits OUTSIDE
 // HeaderCredits' boundary so it stays actionable even if the balance fetch fails.
 
-// The interim navigation target for the header affordances (both the buy "+" and
-// the settings gear) until MYT-95 ships the dedicated buy flow. Hoisted to a
-// module const so the path isn't a JSX-attribute string literal (the i18n rule).
+// The interim navigation target for the header affordances (both the "Add credits"
+// action and the settings gear) until MYT-95 ships the dedicated buy flow. Hoisted
+// to a module const so the path isn't a JSX-attribute string literal (the i18n rule).
 const SETTINGS_PATH = '/settings'
+
+// The wordmark's home target — the campaign hub. Hoisted to a module const so the
+// path isn't a JSX-attribute string literal (the i18n rule).
+const HOME_PATH = '/home'
 
 // The content region has two layouts, chosen by the MATCHED route, not by AppFrame
 // (MYT-92 T15). A route opts its content OUT of the frame's padded Box and INTO a
@@ -69,15 +73,17 @@ export function AppFrame(): React.JSX.Element {
           bottom edge is a single quiet <Divider/> below (not a 4-sided border). */}
       <Box as="header" padding={4} surface="base" data-testid="app-frame-header">
         <Stack direction="row" justify="between" align="center" gap={4}>
-          {/* The brand mark — the frame's quiet anchor (left). The horizontal lockup,
-              sized to read as the brand at ≈half the bar height; inherently shrink-0,
-              so a long display name can't squeeze it. Its accessible name is the
-              wordmark i18n key (the landing.wordmark / signin.wordmark pattern). */}
-          <HorizontalLockup
-            aria-label={t('frame.wordmark')}
-            size={36}
-            data-testid="frame-logo"
-          />
+          {/* The brand mark — the frame's quiet anchor (left) AND the home link on
+              every surface (the universal "click the logo to get home" affordance,
+              MYT-5qpk2 — the play screen was a nav dead-end without it). `unstyled`
+              keeps the lockup in ink (a default Link would tint it accent); the
+              lockup's own aria-label names the link ("Mythrun, link"). A plain href
+              nav, matching the card links; leaving mid-session is non-destructive
+              (sessions persist server-side), so no confirm. The lockup stays
+              shrink-0 inside the link, so a long display name still can't squeeze it. */}
+          <Link href={HOME_PATH} unstyled data-testid="frame-logo-link">
+            <HorizontalLockup aria-label={t('frame.wordmark')} size={36} data-testid="frame-logo" />
+          </Link>
           {/* Identity · balance+buy · settings — three clusters, spaced apart (gap 5)
               with tight grouping within each. */}
           <Stack direction="row" align="center" gap={5}>
@@ -88,20 +94,30 @@ export function AppFrame(): React.JSX.Element {
               <HeaderIdentity />
             </Show>
             {/* The live credit balance + its buy affordance, grouped tight. The buy
-                "+" sits OUTSIDE HeaderCredits' error boundary so it stays actionable
-                even if the balance fetch fails. `noShrink` holds the group so the
-                display name (the row's only flexible item) absorbs all the shrink —
-                without it the group collapses and the "+" overlaps the balance. */}
+                control is a LABELED "Add credits" action, never a bare "+" — a lone
+                "+" reads as "new" and collided with create-campaign (MYT-3jb55). It
+                sits OUTSIDE HeaderCredits' error boundary so it stays actionable even
+                if the balance fetch fails. `noShrink` holds the group so the display
+                name (the row's only flexible item) absorbs all the shrink. */}
             <Stack direction="row" align="center" gap={3} noShrink>
               <HeaderCredits />
-              <IconButton
-                icon="plus"
-                label={t('frame.buyCredits')}
-                variant="ghost"
-                size="sm"
-                onPress={goToSettings}
-                data-testid="frame-buy-credits"
-              />
+              {/* Shown from `sm` up — on phones the labeled "Session credits N" +
+                  gear already fill the row, and the settings gear IS the billing
+                  entry there, so the buy button stands down rather than overflow the
+                  gear off-screen (the MYT-83 failure this frame guards against). No
+                  ambiguity is reintroduced: with the button hidden there is no header
+                  "+" on phones, and the page body's "New campaign" button owns create. */}
+              <Show above="sm">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Icon name="plus" decorative />}
+                  onPress={goToSettings}
+                  data-testid="frame-buy-credits"
+                >
+                  {t('frame.buyCredits')}
+                </Button>
+              </Show>
             </Stack>
             <IconButton
               icon="settings"

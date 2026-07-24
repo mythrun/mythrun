@@ -23,7 +23,15 @@ const LABELS = {
 
 // A controlled specimen — SessionInput is a controlled composer (value/onChange),
 // so the catalogue drives the value the way the route wire will in the app.
-function ComposerSpecimen({ initial = '', disabled = false }: { initial?: string; disabled?: boolean }) {
+function ComposerSpecimen({
+  initial = '',
+  disabled = false,
+  busy = false,
+}: {
+  initial?: string
+  disabled?: boolean
+  busy?: boolean
+}) {
   const [value, setValue] = useState(initial)
   return (
     <div className="mx-auto w-[40rem] max-w-full">
@@ -37,6 +45,8 @@ function ComposerSpecimen({ initial = '', disabled = false }: { initial?: string
           setValue((v) => (v ? `${v} @dm` : '@dm'))
         }}
         disabled={disabled}
+        busy={busy}
+        busyLabel="The DM is writing…"
         placeholder={LABELS.placeholder}
         summonLabel={LABELS.summonLabel}
         sendLabel={LABELS.sendLabel}
@@ -71,6 +81,13 @@ export const Typed: Story = {
 // affordances are inert and muted.
 export const Disabled: Story = {
   render: () => <ComposerSpecimen initial="The session has ended." disabled />,
+}
+
+// Busy — the DM is mid-turn (myth-dd63v). Send + @DM are gated and a quiet
+// caption names why, but the field stays typeable so you can draft ahead; no
+// send is ever silently swallowed.
+export const Busy: Story = {
+  render: () => <ComposerSpecimen initial="I press on into the dark." busy />,
 }
 
 // Mobile (~375px) — the composer at the mweb floor: the field is full-width and

@@ -412,6 +412,16 @@ function RevealDemo(): React.JSX.Element {
         // the same onSelect a canvas tap does. Wired so the browser ARIA pass can
         // inspect it.
         nodeListLabel="pick a place or figure from your world"
+        // The glyph KEY (myth-466cy) — placeholder labels per the DS i18n rule; the
+        // reveal passes the same kind copy the wiki's group headings use.
+        legend={{
+          faction: '[placeholder for Factions]',
+          location: '[placeholder for Locations]',
+          npc: '[placeholder for People]',
+          item: '[placeholder for Items]',
+          pc: '[placeholder for You]',
+          world: '[placeholder for World]',
+        }}
         {...(selectedKey !== undefined ? { selectedKey } : {})}
         onSelect={setSelectedKey}
       />

@@ -102,6 +102,15 @@ const PANEL_LIST_CLASS = 'flex list-none flex-col px-[var(--space-3)] py-[var(--
 const PANEL_ITEM_CLASS = 'border-b border-border py-[var(--space-2)] last:border-b-0'
 const PANEL_ITEM_NAME = 'block font-body text-sm font-semibold text-ink'
 const PANEL_ITEM_GLOSS = 'mt-[2px] block font-body text-xs text-ink-tertiary'
+// The "what they can do" gloss is canonical SRD rule text authored in the SECOND
+// person ("When you reach 3rd level, you gain…"), sitting under a THIRD-person panel
+// title ("What they can do") — frame and fill disagree (MYT-olo9c). The deep fix is a
+// Haiku third-person rewrite in char-gen (deferred). As a cheap, honest presentation
+// mitigation the feature gloss is typographically DISTANCED into a quoted rule
+// reference — a hanging left rule + italic + muted — so it reads AS a rulebook
+// quotation, not as the character's own portrait. It changes NO authored copy.
+const PANEL_ITEM_GLOSS_RULE =
+  'mt-[var(--space-1)] block border-l-2 border-border pl-[var(--space-2)] font-body text-xs italic text-ink-tertiary'
 
 // The expanded skills grid — two columns of rows on desktop, one at phone widths.
 const SKILLS_LIST_CLASS =
@@ -149,15 +158,19 @@ function AbilityTileView({ tile }: { tile: AbilityTile }): React.JSX.Element {
   )
 }
 
-/** A titled panel of name (+ optional gloss) rows. */
+/** A titled panel of name (+ optional gloss) rows. `glossAsRule` distances the gloss
+ *  into a quoted rule reference (the features panel's SRD 2nd-person bodies — see
+ *  PANEL_ITEM_GLOSS_RULE); equipment/spells keep the plain quiet gloss. */
 function EntryPanel({
   title,
   entries,
   testid,
+  glossAsRule = false,
 }: {
   title: string
   entries: SheetEntry[]
   testid: string
+  glossAsRule?: boolean
 }): React.JSX.Element {
   return (
     <div data-testid={testid} className={PANEL_CLASS}>
@@ -168,7 +181,9 @@ function EntryPanel({
         {entries.map((entry) => (
           <li key={entry.name} className={PANEL_ITEM_CLASS}>
             <span className={PANEL_ITEM_NAME}>{entry.name}</span>
-            {entry.gloss !== undefined && <span className={PANEL_ITEM_GLOSS}>{entry.gloss}</span>}
+            {entry.gloss !== undefined && (
+              <span className={glossAsRule ? PANEL_ITEM_GLOSS_RULE : PANEL_ITEM_GLOSS}>{entry.gloss}</span>
+            )}
           </li>
         ))}
       </ul>
@@ -285,6 +300,7 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
               title={labels.panelFeatures}
               entries={curated.features}
               testid="character-sheet-reveal-features"
+              glossAsRule
             />
             <EntryPanel
               title={labels.panelEquipment}

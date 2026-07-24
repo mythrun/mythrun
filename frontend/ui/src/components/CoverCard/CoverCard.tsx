@@ -41,9 +41,14 @@ export const CoverCard = forwardRef<HTMLDivElement, CoverCardProps>(function Cov
       <div className="shrink-0">{cover}</div>
       {/* Ink seam — a deliberate structural cut, dark in both themes. */}
       <Divider tone="ink" />
-      {/* Body — narrative content at the top, the foot imprint pinned to the
-          bottom, air between (justify-between). Token-padded. */}
-      <div className="flex grow flex-col justify-between p-[var(--space-3)]">
+      {/* Body — the narrative content and the foot imprint as ONE top-aligned unit
+          (title → subtitle → seals → record line), a fixed gap between, any slack
+          collecting BELOW as trailing margin. The earlier `justify-between` pinned
+          the foot to the card's bottom, which on a sparse card (no logline/party)
+          opened a ~90px void mid-card that read as "missing content, not breathing
+          room" (MYT-bapkt run-1 critique). Top-aligning keeps the imprint reading as
+          part of the card instead of floating at the opposite pole. Token-padded. */}
+      <div className="flex grow flex-col justify-start gap-[var(--space-4)] p-[var(--space-3)]">
         <div>{children}</div>
         {foot !== undefined ? <div>{foot}</div> : null}
       </div>

@@ -27,12 +27,17 @@ type DiceItem = Extract<CardItem, { kind: 'dice_roll' }>
 
 // outcomeTier → its font WEIGHT (spec §5: the tier signal is TYPOGRAPHIC WEIGHT, never
 // a colour chip). fail reads plain, success a touch heavier, great_success heaviest;
-// twMerge lets it override the base `font-ui` weight.
+// twMerge lets it override the base `font-ui` weight. myth-89hfu: the outcome is the
+// card's whole point, so it's PROMOTED to the typographic peak (TIER_SIZE) below the
+// die — the reader sees the win without hunting a footnote-sized word.
 const TIER_WEIGHT: Record<SkillItem['frame']['outcomeTier'], string> = {
-  fail: 'font-normal',
-  success: 'font-medium',
-  great_success: 'font-semibold',
+  fail: 'font-medium',
+  success: 'font-semibold',
+  great_success: 'font-bold',
 }
+// The promoted outcome sits at roughly the die's scale — the largest weighted token on
+// the card. `leading-tight` keeps a wrapped "Critical success" compact.
+const TIER_SIZE = 'text-2xl leading-tight'
 
 // The paper card frame: flat 1-bit, SQUARE (rounded-none), a hairline strong edge over
 // the surface fill — a mechanical interjection distinct from the DM's serif prose row.
@@ -54,8 +59,11 @@ function signed(n: number): string {
   return n >= 0 ? `+${String(n)}` : String(n)
 }
 
-// The skill-check header: skill (mono eyebrow) + character & posture + the context
-// sub-line. `context` is quiet DATA (the attempt, not a key). `constraint` is absent
+// The skill-check header: the skill + the player's OWN modifier (mono eyebrow) +
+// character & posture + the context sub-line. myth-89hfu: the modifier is revealed
+// PRE-roll ("investigation +6") — it's the player's competence, theirs to weigh
+// before the die drops ("I need a 7+, here goes"); only the DC stays hidden for
+// mystery. `context` is quiet DATA (the attempt, not a key); `constraint` is absent
 // by construction — it is never threaded here.
 function SkillHeader({ frame, labels }: { frame: SkillItem['frame']; labels: RollCardLabels }): ReactNode {
   const posture =
@@ -66,7 +74,14 @@ function SkillHeader({ frame, labels }: { frame: SkillItem['frame']; labels: Rol
         : null
   return (
     <Stack gap={1} align="center">
-      <Text role="ui-label">{frame.skill}</Text>
+      <Stack direction="row" gap={2} align="center" justify="center" wrap>
+        <Text role="ui-label">{frame.skill}</Text>
+        {/* The player's own modifier, revealed before the roll (mechanical
+            notation — a signed number, not translatable copy). */}
+        <span data-testid="roll-modifier" className="font-ui text-sm">
+          {signed(frame.modifier)}
+        </span>
+      </Stack>
       <Stack direction="row" gap={2} align="center" justify="center" wrap>
         <Text role="meta">{frame.characterName}</Text>
         {posture !== null && <Text role="meta">{posture}</Text>}
@@ -76,23 +91,43 @@ function SkillHeader({ frame, labels }: { frame: SkillItem['frame']; labels: Rol
   )
 }
 
-// The settled skill-check readout under the die: the modifier→total tail, the DC, and
-// the outcome tier as WEIGHT. On adv/dis a small mono note carries BOTH raw dice.
+// The full natural-roll + modifier equation ("10 + 6 = 16"), repeating the die's
+// numeral as the left operand so the arithmetic is whole on the card — a new player
+// never has to reach back up into the die to reconstruct it (myth-89hfu). The die
+// stamps the same natural roll (dieNumber), so the two agree.
+function equationText(frame: SkillItem['frame']): string {
+  const natRoll = frame.total - frame.modifier
+  const op = frame.modifier < 0 ? '-' : '+'
+  return `${String(natRoll)} ${op} ${String(Math.abs(frame.modifier))} = ${String(frame.total)}`
+}
+
+// The settled skill-check readout under the die (myth-89hfu): the WHOLE equation
+// (die-anchored "10 + 6 = 16"), then the explicit pass/fail comparison ("16 beats
+// DC 13" — the DC is revealed here, post-roll), then the PROMOTED outcome word at
+// the typographic peak (weight carries the tier, never a colour chip). The die →
+// math → comparison → outcome read as ONE causal beat. On adv/dis a small mono note
+// carries BOTH raw dice.
 function SkillReadout({ frame, labels }: { frame: SkillItem['frame']; labels: RollCardLabels }): ReactNode {
+  const passed = frame.outcomeTier !== 'fail'
+  const verb = passed ? labels.beats : labels.misses
   return (
-    <Stack gap={1} align="center">
-      <span className="font-ui text-sm">
-        {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- dice arithmetic notation, not translatable copy */}
-        {signed(frame.modifier)} = {frame.total}
+    <Stack gap={2} align="center">
+      <span data-testid="roll-equation" className="font-ui text-base">
+        {equationText(frame)}
       </span>
-      <Stack direction="row" gap={2} align="center" justify="center" wrap>
-        <span className="font-ui text-sm">
-          {labels.dc} {frame.dc}
-        </span>
-        <span data-tier={frame.outcomeTier} className={cn('font-ui text-sm', TIER_WEIGHT[frame.outcomeTier])}>
-          {labels.tier[frame.outcomeTier]}
-        </span>
-      </Stack>
+      {/* The explicit comparison, composed inline from DATA + connective words so
+          no arithmetic is required (same inline-compose pattern as the DC readout). */}
+      <span data-testid="roll-comparison" className="font-ui text-sm">
+        {frame.total} {verb} {labels.dc} {frame.dc}
+      </span>
+      {/* The outcome — the card's whole point — at the typographic peak. */}
+      <span
+        data-tier={frame.outcomeTier}
+        data-testid="roll-outcome"
+        className={cn('font-ui', TIER_SIZE, TIER_WEIGHT[frame.outcomeTier])}
+      >
+        {labels.tier[frame.outcomeTier]}
+      </span>
       {frame.roll2 !== null && (
         <Text role="meta">
           {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- dice-pair separator notation, not translatable copy */}
@@ -142,6 +177,9 @@ export const RollCard = forwardRef<HTMLDivElement, RollCardProps>(function RollC
           reducedMotion={reducedMotion}
           onSpinComplete={handleSpinComplete}
           resultLabel={labels.dieResult}
+          // myth-0qvay: a skill check is always a d20; a dice_roll shows its own
+          // die shape (NdM → the M-sided silhouette).
+          sides={item.kind === 'dice_roll' ? item.frame.sides : 20}
         />
         {phase === 'idle' && !spinning && (
           <Button

@@ -24,6 +24,8 @@ const LABELS: RollCardLabels = {
   continue: 'Continue',
   tier: { fail: 'Miss', success: 'Success', great_success: 'Critical' },
   dc: 'DC',
+  beats: 'beats',
+  misses: 'misses',
   advantage: 'advantage',
   disadvantage: 'disadvantage',
   dieResult: 'You rolled',
@@ -125,16 +127,19 @@ afterEach(() => {
 })
 
 describe('RollCard', () => {
-  it('idle skill_check renders skill + context + Roll, and never the constraint seed', () => {
+  it('idle skill_check renders skill + the player modifier + context + Roll, never the constraint', () => {
     renderCard({ phase: 'idle' })
     expect(screen.getByText('perception')).toBeInTheDocument()
+    // myth-89hfu: the player's OWN modifier is revealed PRE-roll (their competence).
+    expect(screen.getByTestId('roll-modifier')).toHaveTextContent('+2')
     expect(screen.getByText('scanning the smoky common room')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Roll' })).toBeInTheDocument()
     // The constraint is the DM's gated-prose seed — it must never reach the card.
     expect(screen.queryByText('She notices the figure watching her.')).toBeNull()
-    // No readout / Continue while idle.
+    // No readout / Continue / DC while idle (the DC stays hidden until the roll).
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
-    expect(screen.queryByText('DC 12')).toBeNull()
+    expect(screen.queryByTestId('roll-equation')).toBeNull()
+    expect(screen.queryByTestId('roll-comparison')).toBeNull()
   })
 
   it('pressing Roll spins then commits via onRoll exactly once (never onContinue)', () => {
@@ -156,19 +161,21 @@ describe('RollCard', () => {
     expect(onContinue).not.toHaveBeenCalled()
   })
 
-  it('revealed renders the readout (modifier/total/DC/tier as weight) + Continue', async () => {
+  it('revealed renders the full equation + explicit comparison + promoted outcome + Continue', async () => {
     const onContinue = vi.fn()
     const { container } = renderCard({ phase: 'revealed', onContinue })
-    // modifier → total tail + the DC, both in the mono register.
-    const tail = screen.getByText('+2 = 16')
-    expect(tail).toHaveClass('font-ui')
-    const dc = screen.getByText('DC 12')
-    expect(dc).toHaveClass('font-ui')
-    // The outcome tier is a WEIGHT (data-tier + a weight class), never a colour chip.
+    // myth-89hfu: the whole die-anchored equation (natural roll 14 + mod 2 = 16),
+    // not the orphaned "+2 = 16".
+    expect(screen.getByTestId('roll-equation')).toHaveTextContent('14 + 2 = 16')
+    expect(screen.getByTestId('roll-equation')).toHaveClass('font-ui')
+    // The explicit pass comparison so no arithmetic is required (the DC lives here).
+    expect(screen.getByTestId('roll-comparison')).toHaveTextContent('16 beats DC 12')
+    // The outcome is a WEIGHT at the typographic peak (data-tier + weight + size),
+    // never a colour chip.
     const tier = container.querySelector('[data-tier="success"]')
     expect(tier).not.toBeNull()
     expect(tier).toHaveTextContent('Success')
-    expect(tier).toHaveClass('font-ui', 'font-medium')
+    expect(tier).toHaveClass('font-ui', 'font-semibold', 'text-2xl')
     // Continue releases the buffered prose.
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -180,12 +187,17 @@ describe('RollCard', () => {
       phase: 'released',
       item: { ...SKILL_ITEM, key: 'g', frame: { ...SKILL_ITEM.frame, outcomeTier: 'great_success' } },
     })
-    expect(great.container.querySelector('[data-tier="great_success"]')).toHaveClass('font-semibold')
+    expect(great.container.querySelector('[data-tier="great_success"]')).toHaveClass('font-bold')
     const fail = renderCard({
       phase: 'released',
       item: { ...SKILL_ITEM, key: 'f', frame: { ...SKILL_ITEM.frame, outcomeTier: 'fail' } },
     })
-    expect(fail.container.querySelector('[data-tier="fail"]')).toHaveClass('font-normal')
+    // A failed check reads the miss comparison, not the pass one (scoped to this
+    // render — the great_success card above also mounted a comparison node).
+    expect(fail.container.querySelector('[data-testid="roll-comparison"]')).toHaveTextContent(
+      '16 misses DC 12',
+    )
+    expect(fail.container.querySelector('[data-tier="fail"]')).toHaveClass('font-medium')
   })
 
   it('released renders the settled readout with NO buttons', () => {
@@ -198,8 +210,8 @@ describe('RollCard', () => {
   it('a replayed card (phase=released) shows the result immediately — no Roll theater', () => {
     renderCard({ phase: 'released' })
     expect(screen.queryByRole('button', { name: 'Roll' })).toBeNull()
-    // Die stamps the used natural roll (14); readout the total (16).
-    expect(screen.getByText('+2 = 16')).toBeInTheDocument()
+    // Die stamps the used natural roll (14); the equation repeats it → 14 + 2 = 16.
+    expect(screen.getByTestId('roll-equation')).toHaveTextContent('14 + 2 = 16')
   })
 
   it('advantage carries both raw dice beside the readout', () => {
@@ -218,7 +230,8 @@ describe('RollCard', () => {
       },
     })
     expect(screen.getByText('disadvantage')).toBeInTheDocument()
-    expect(screen.getByText('-1 = 7')).toBeInTheDocument()
+    // Negative modifier: natural roll 8, then − 1 = 7 (the equation carries the sign).
+    expect(screen.getByTestId('roll-equation')).toHaveTextContent('8 - 1 = 7')
   })
 
   it('dice_roll variant renders NdM + total, with NO DC/tier/Continue', () => {
@@ -237,7 +250,7 @@ describe('RollCard', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Roll' }))
     // No fake timers advanced — the readout appears at once (instant land).
-    expect(await screen.findByText('DC 12')).toBeInTheDocument()
+    expect(await screen.findByTestId('roll-comparison')).toHaveTextContent('16 beats DC 12')
     expect(screen.queryByRole('button', { name: 'Roll' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
     expect(onRollSpy).toHaveBeenCalledTimes(1)

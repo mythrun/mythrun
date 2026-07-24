@@ -251,6 +251,31 @@ export function sessionsNs(c: ClientLike) {
       return result.rowCount ?? 0
     },
 
+    /** myth-lhp99 — the player-facing recap read. The campaign's MOST-RECENT
+     *  ENDED session, projected to exactly the SECRET-FREE fields the recap
+     *  surface renders: sessionNumber, endedAt, and the raw `summary` JSON
+     *  wrapper (`{summary, emergingThreads}`, or NULL while the async analysis
+     *  is still running). Deliberately does NOT read `handoff` /
+     *  `st_running_summary` (secret-aware). Null when the campaign has no ended
+     *  session. ORDER BY session_number DESC so a fresh end wins over any older
+     *  ended session. */
+    getLatestEndedRecap: async (
+      campaignId: string,
+    ): Promise<{ sessionNumber: number; endedAt: Date | null; summaryJson: string | null } | null> => {
+      const result = await c.query<{ session_number: number; ended_at: Date | null; summary: string | null }>(
+        `SELECT session_number, ended_at, summary
+           FROM sessions
+          WHERE campaign_id = $1 AND status = 'ended'
+          ORDER BY session_number DESC
+          LIMIT 1`,
+        [campaignId],
+      )
+      const row = result.rows[0]
+      return row
+        ? { sessionNumber: row.session_number, endedAt: row.ended_at, summaryJson: row.summary }
+        : null
+    },
+
     /** MYT-74b §4 — the prep's prior-context read. Returns prior ENDED sessions
      *  with a written analysis (summary IS NOT NULL), NEWEST first, capped to
      *  `limit`. The caller (the prep processor) safeParses each row's summary

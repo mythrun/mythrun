@@ -87,6 +87,14 @@ const PANEL_LIST_CLASS = 'flex list-none flex-col px-[var(--space-3)] py-[var(--
 const PANEL_ITEM_CLASS = 'border-b border-border py-[var(--space-2)] last:border-b-0'
 const PANEL_ITEM_NAME = 'block font-body text-sm font-semibold text-ink'
 const PANEL_ITEM_GLOSS = 'mt-[2px] block font-body text-xs text-ink-tertiary'
+// The "what they can do" gloss is canonical SRD rule text in the SECOND person under
+// a THIRD-person title — frame and fill disagree (MYT-olo9c). Mirrors the reveal's
+// mitigation: distance the feature gloss into a quoted rule reference (hanging left
+// rule + italic + muted) so it reads as a rulebook quotation, not the character's
+// portrait. Deep fix (a Haiku third-person rewrite in char-gen) is deferred; this
+// changes NO authored copy.
+const PANEL_ITEM_GLOSS_RULE =
+  'mt-[var(--space-1)] block border-l-2 border-border pl-[var(--space-2)] font-body text-xs italic text-ink-tertiary'
 
 // One condition-log line — quiet serif prose (a recent-change note, not a badge).
 const LOG_ITEM_CLASS = 'border-b border-border py-[var(--space-2)] font-body text-sm text-ink last:border-b-0'
@@ -116,15 +124,18 @@ function AbilityTileView({ tile }: { tile: AbilityTile }): React.JSX.Element {
   )
 }
 
-/** A titled panel of name (+ optional gloss) rows. */
+/** A titled panel of name (+ optional gloss) rows. `glossAsRule` distances the gloss
+ *  into a quoted rule reference (the features panel's SRD 2nd-person bodies). */
 function EntryPanel({
   title,
   entries,
   testid,
+  glossAsRule = false,
 }: {
   title: string
   entries: SheetEntry[]
   testid: string
+  glossAsRule?: boolean
 }): React.JSX.Element {
   return (
     <div data-testid={testid} className={PANEL_CLASS}>
@@ -135,7 +146,9 @@ function EntryPanel({
         {entries.map((entry) => (
           <li key={entry.name} className={PANEL_ITEM_CLASS}>
             <span className={PANEL_ITEM_NAME}>{entry.name}</span>
-            {entry.gloss !== undefined && <span className={PANEL_ITEM_GLOSS}>{entry.gloss}</span>}
+            {entry.gloss !== undefined && (
+              <span className={glossAsRule ? PANEL_ITEM_GLOSS_RULE : PANEL_ITEM_GLOSS}>{entry.gloss}</span>
+            )}
           </li>
         ))}
       </ul>
@@ -239,7 +252,7 @@ export const SessionSheet = forwardRef<HTMLDivElement, SessionSheetPanelProps>(f
         ))}
       </div>
 
-      <EntryPanel title={FEATURES_TITLE} entries={sheet.features} testid="session-sheet-features" />
+      <EntryPanel title={FEATURES_TITLE} entries={sheet.features} testid="session-sheet-features" glossAsRule />
       <EntryPanel title={EQUIPMENT_TITLE} entries={sheet.equipment} testid="session-sheet-equipment" />
       {spells.length > 0 && (
         <EntryPanel title={SPELLS_TITLE} entries={spells} testid="session-sheet-spells" />

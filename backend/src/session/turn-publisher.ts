@@ -116,6 +116,10 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
       characterName: p.characterName,
       kind: p.kind,
       summary: p.summary,
+      // restType rides ONLY the live kind:'rest' frame (myth-lhp99) — the play
+      // surface's wind-down signal. Not persisted, so the replay row never
+      // reconstructs it (a past rest must not re-pop the offer).
+      ...(p.restType !== undefined ? { restType: p.restType } : {}),
       ...(p.hp !== undefined ? { hp: p.hp } : {}),
       ...(p.maxHp !== undefined ? { maxHp: p.maxHp } : {}),
       ...(p.gold !== undefined ? { gold: p.gold } : {}),

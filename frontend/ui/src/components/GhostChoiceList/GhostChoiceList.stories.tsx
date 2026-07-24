@@ -1,16 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { GhostChoiceList } from './GhostChoiceList.tsx'
 
-// GhostChoiceList — a borderless "paper" choice list (the flat 1-bit register).
-// Each item is a REAL <button> (native keyboard activation + a11y) styled as a
-// ghost: transparent fill, a neutral surface token-swap on hover/press, a serif
-// title over a quiet tertiary-ink sub-line, and a trailing ember arrow. NO
-// border, NO box, NO glyph mark — the only chrome is the quiet Divider hairlines
-// that FRAME and SEPARATE the choices (a rule above the first, between each, and
-// below the last). Single column at every width; flat (0px radius).
+// GhostChoiceList — a carded "paper" choice list (the flat 1-bit register),
+// brought up to the LevelCard standard (ux-run1 myth-occld). Each item is a REAL
+// <button> (native keyboard activation + a11y) that is a whole SELECTABLE CARD: a
+// 1px interactive border on the surface fill, comfortable padding, a serif title
+// over a quiet tertiary-ink sub-line, a docked ember "enter" arrow vertically
+// centred against the card, and a decisive hover (edge → full ink + surface
+// token-swap). The ENTIRE card is the click target; cards are separated by a gap
+// (not hairline rules). Single column at every width; flat (0px radius).
 //
-// The canonical use is the campaign-create fork: two paths, no cards, no radios.
-// Content/i18n: `title`/`subtitle` are display strings the consumer resolves.
+// The canonical use is the creation forks: the campaign-create fork (two paths
+// into world creation) and the character-create path chooser. Content/i18n:
+// `title`/`subtitle` are display strings the consumer resolves.
 
 const meta: Meta<typeof GhostChoiceList> = {
   title: 'Patterns/GhostChoiceList',
@@ -53,7 +55,36 @@ export const CampaignCreateFork: Story = {
   ),
 }
 
-// Titles only — the subtitle is optional; the list still frames and separates.
+// The character-create path chooser — the two ways to make a character. The title
+// is the choice, the subtitle the one-line description; each card carries a testId
+// so the route can address one path.
+export const CharacterCreateChooser: Story = {
+  name: 'Character-create chooser',
+  render: () => (
+    <div className="max-w-[520px] bg-bg p-[var(--space-6)]">
+      <GhostChoiceList
+        items={[
+          {
+            id: 'freeform',
+            title: 'Simply describe your character',
+            subtitle: "Write what's important to you and Mythrun will fill in the rest.",
+            onSelect: noop,
+            testId: 'chooser-freeform',
+          },
+          {
+            id: 'guided',
+            title: 'Build step by step',
+            subtitle: 'Pick from options, question by question.',
+            onSelect: noop,
+            testId: 'chooser-guided',
+          },
+        ]}
+      />
+    </div>
+  ),
+}
+
+// Titles only — the subtitle is optional; the cards still stand on their own.
 export const TitlesOnly: Story = {
   render: () => (
     <div className="max-w-[520px] bg-bg p-[var(--space-6)]">

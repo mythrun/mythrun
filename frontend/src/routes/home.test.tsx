@@ -260,19 +260,19 @@ describe('home hub (wired)', () => {
     })
   })
 
-  it('the populated-hub New Campaign CTA navigates to the creation route', async () => {
+  it('the header New Campaign button navigates to the creation route (MYT-3jb55)', async () => {
     seedReady()
     server.use(campaignsOk([campaignA]), balanceOk())
 
     renderHome()
 
-    // A player who already owns campaigns gets a quiet trailing CTA in the hub
-    // body (MYT-87 shipped the CTA only on the empty shelf) — it routes to the
-    // same /campaigns/new creation surface the empty CTA does.
+    // The primary create affordance is a header button present on every hub state
+    // (loading/empty/full), where a returning player looks — the run-1 blocker was
+    // that create was a buried bottom text-link. It routes to /campaigns/new.
     await waitFor(() => {
-      expect(screen.getByTestId('new-campaign')).toBeDefined()
+      expect(screen.getByTestId('home-new-campaign')).toBeDefined()
     })
-    fireEvent.click(screen.getByTestId('new-campaign'))
+    fireEvent.click(screen.getByTestId('home-new-campaign'))
     await waitFor(() => {
       expect(screen.getByTestId('route-campaign-new')).toBeDefined()
     })

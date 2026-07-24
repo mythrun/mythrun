@@ -171,6 +171,8 @@ const STUB_LABELS: RollCardLabels = {
   continue: 'Continue',
   tier: { fail: 'Miss', success: 'Success', great_success: 'Critical' },
   dc: 'DC',
+  beats: 'beats',
+  misses: 'misses',
   advantage: 'advantage',
   disadvantage: 'disadvantage',
   dieResult: 'You rolled',
@@ -284,9 +286,9 @@ describe('MessageStream', () => {
 
   it('drives each card phase from rollReveal.phaseByKey (revealed shows the readout + Continue)', () => {
     render(<MessageStream {...streamProps({ items: [SKILL_CHECK], rollReveal: reveal({ 'sc-1': 'revealed' }) })} />)
-    // A revealed skill_check stamps its readout (DC prefix from labels) + Continue,
-    // and no longer the idle Roll button.
-    expect(screen.getByText('DC 12')).toBeInTheDocument()
+    // A revealed skill_check stamps its readout (the explicit comparison carries
+    // the DC — "14 beats DC 12") + Continue, and no longer the idle Roll button.
+    expect(screen.getByTestId('roll-comparison')).toHaveTextContent('14 beats DC 12')
     expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Roll' })).toBeNull()
   })

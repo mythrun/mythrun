@@ -130,7 +130,9 @@ const HUB_CAMPAIGNS: readonly CampaignSummary[] = [
       { userId: 'u-7', displayName: 'Git', hasCharacter: true },
     ],
     sessionCount: 12,
-    lastPlayedAt: '2026-06-18T21:00:00.000Z',
+    // The most-recent activity in the fixture, so the sort demonstrates
+    // "continue where you left off" — the played card leads the shelf.
+    lastPlayedAt: '2026-06-25T21:00:00.000Z',
     cardPhase: 'played',
   },
 ]

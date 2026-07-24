@@ -6,9 +6,11 @@ import { cn } from '../../lib/cn.ts'
 
 // Multi-line text input — a REAL native <textarea> (real form control + a11y).
 // The multi-line sibling of Input: same neutral `onChange(value)` (§9), same
-// flat 1-bit register (0px corners, `--border-strong`, `bg-surface`/`text-ink`,
-// `font-ui` mono), same theme-aware focus ring, same invalid/disabled/read-only
-// behaviour. See Input.tsx for the per-state rationale.
+// flat 1-bit register (0px corners, `--border-strong`, `bg-surface`/`text-ink`),
+// same theme-aware focus ring, same invalid/disabled/read-only behaviour. See
+// Input.tsx for the per-state rationale. The `face` variant picks the type face:
+// `ui` (default) mono `font-ui` for DATA, `prose` serif `font-body` + the ember
+// caret for USER-AUTHORED PROSE (the one face player writing wears; myth-xs9tc).
 //
 // Geometry differs: height comes from native `rows` (auto-height), not a fixed
 // `--control-*` height. The `--control-*` token sets a per-control MIN height so
@@ -33,7 +35,7 @@ const SIZE_PAD_Y_VAR: Record<InputSize, string> = {
 
 const textArea = cva(
   cn(
-    'block w-full font-ui bg-surface text-ink',
+    'block w-full bg-surface text-ink',
     'rounded-none border border-border-strong',
     'placeholder:text-ink-tertiary',
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
@@ -42,6 +44,15 @@ const textArea = cva(
   ),
   {
     variants: {
+      // Type face. `ui` (default) = the mono DATA face. `prose` = the serif
+      // user-authored-prose face + the branded ember caret (--accent-fg, legible on
+      // paper in BOTH themes) — the one face a player's own writing wears (the
+      // world/character concept fields and the play composer share it; ux-run1
+      // myth-xs9tc). Family + caret only; `size` still sets the px scale.
+      face: {
+        ui: 'font-ui',
+        prose: 'font-body caret-accent-fg',
+      },
       size: SIZE_CLASS,
       // Invalid: a 2px danger border (heavier than the 1px normal `--border-strong`
       // edge) + a danger focus ring, NO background wash. The danger red was
@@ -61,7 +72,7 @@ const textArea = cva(
         false: 'resize-vertical',
       },
     },
-    defaultVariants: { size: 'md', invalid: false, autoSize: false },
+    defaultVariants: { face: 'ui', size: 'md', invalid: false, autoSize: false },
   },
 )
 
@@ -96,6 +107,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     name,
     id,
     describedBy,
+    face = 'ui',
     size = 'md',
     rows,
     autoSize = false,
@@ -166,7 +178,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       readOnly={readOnly}
       required={required}
       aria-invalid={invalid || undefined}
-      className={cn(textArea({ size, invalid, autoSize }))}
+      className={cn(textArea({ face, size, invalid, autoSize }))}
       style={boundStyle}
       {...rest}
     />

@@ -13,6 +13,7 @@ import { mountSessionTicketPanel } from '../components/session-ticket-panel.js'
 import { mountSessionStartPanel } from '../components/session-start-panel.js'
 import { mountSessionActivePanel } from '../components/session-active-panel.js'
 import { mountSessionMessagesPanel } from '../components/session-messages-panel.js'
+import { mountSessionRecapPanel } from '../components/session-recap-panel.js'
 import { mountFireTurnPanel } from '../components/fire-turn-panel.js'
 import { mountCombatPanel } from '../components/combat-panel.js'
 
@@ -26,6 +27,7 @@ const SECTIONS: readonly {
   { id: 'session-start', mount: mountSessionStartPanel },
   { id: 'session-active', mount: mountSessionActivePanel },
   { id: 'session-messages', mount: mountSessionMessagesPanel },
+  { id: 'session-recap', mount: mountSessionRecapPanel },
   { id: 'fire-turn', mount: mountFireTurnPanel },
   { id: 'combat', mount: mountCombatPanel },
 ]

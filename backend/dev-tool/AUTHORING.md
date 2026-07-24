@@ -122,6 +122,7 @@ route(s) each panel id covers (the route-exhaustion invariant unions those). The
 | POST /api/sessions/:id/start | session-start | system |
 | GET /api/sessions/:id/active | session-active | system |
 | GET /api/sessions/:id/messages | session-messages | system |
+| GET /api/sessions/:id/recap | session-recap | system |
 | GET /ws/session/:sessionId | combat (MYT-75 T10 — L1 inspector; mounts `ready` synchronously, opens the live socket only on Connect click, so the JSDOM harness never reaches the socket) | system |
 | GET /api/billing/skus | skus | billing |
 | GET /api/billing/subscription | subscription | billing |

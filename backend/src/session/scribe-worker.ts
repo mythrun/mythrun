@@ -84,7 +84,7 @@ interface ScribeRepo {
     getBy(
       campaignId: string,
       sessionNumber: number,
-    ): Promise<{ sdPlaybook: string; ftContext: string } | null>
+    ): Promise<{ sdPlaybook: string; ftContext: string | null } | null>
   }
   readonly sessions: {
     getActiveByCampaign(campaignId: string): Promise<{ sessionNumber: number } | null>

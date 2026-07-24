@@ -51,6 +51,10 @@ import type { WorldDelta } from '../../llm/schemas/world-delta.js'
 export interface LedgerUpdatePayload {
   readonly characterName: string
   readonly kind: 'hp' | 'gold' | 'item' | 'feature' | 'spell_slot' | 'condition' | 'rest'
+  // The short/long discriminator on a `kind:'rest'` payload — the structured
+  // signal the play surface hangs its wind-down offer off (myth-lhp99), so the
+  // client never parses the human-readable `summary`. Only ever set on a rest.
+  readonly restType?: 'short' | 'long'
   readonly summary: string
   readonly hp?: number
   readonly maxHp?: number

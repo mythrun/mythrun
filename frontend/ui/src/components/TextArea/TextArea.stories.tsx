@@ -4,9 +4,11 @@ import { FormField } from '../FormField/FormField.tsx'
 
 // TextArea — the multi-line text control. A REAL native <textarea> (form
 // control + a11y), the multi-line sibling of Input: same flat 1-bit register
-// (0px radius, `--border-strong`, `bg-surface`/`text-ink`, mono `font-ui`), same
-// neutral `onChange(value)` (§9), same theme-aware focus ring. Height comes from
-// `rows`; only vertical resize is allowed.
+// (0px radius, `--border-strong`, `bg-surface`/`text-ink`), same neutral
+// `onChange(value)` (§9), same theme-aware focus ring. Height comes from `rows`;
+// only vertical resize is allowed. The `face` variant picks the type face: `ui`
+// (default) mono `font-ui` for DATA, `prose` serif `font-body` + the ember caret
+// for USER-AUTHORED PROSE (the one face player writing wears; myth-xs9tc).
 //
 // State matrix (§6): default · focus (tab to it) · invalid (danger border +
 // `aria-invalid` + danger focus ring) · disabled · read-only. Sizes sm/md/lg set
@@ -24,6 +26,7 @@ const meta: Meta<typeof TextArea> = {
   component: TextArea,
   tags: ['autodocs'],
   argTypes: {
+    face: { control: 'inline-radio', options: ['ui', 'prose'] },
     size: { control: 'inline-radio', options: ['sm', 'md', 'lg'] },
     rows: { control: 'number' },
     autoSize: { control: 'boolean' },
@@ -100,6 +103,31 @@ export const ReadOnly: Story = {
 export const WithPlaceholder: Story = {
   name: 'With placeholder',
   args: { rows: 4, placeholder: 'field.session_notes' },
+}
+
+// ProseFace — the serif user-authored-prose face (`face="prose"`). This is the one
+// voice a player's own writing wears: the world/character concept fields and the
+// play composer share it, so player prose never reads as a mono code stub
+// (myth-xs9tc). Serif `font-body` + the branded ember caret; the paper field,
+// border, and focus ring are the shared control chrome.
+export const ProseFace: Story = {
+  name: 'Prose face (user-authored writing)',
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-1)] w-96 max-w-full">
+      <label htmlFor="prose-field" className="font-body text-lg font-semibold text-ink">
+        Describe the world you want to play in.
+      </label>
+      <TextArea
+        id="prose-field"
+        face="prose"
+        size="lg"
+        autoSize
+        minRows={4}
+        maxRows={12}
+        defaultValue="A rain-soaked port city where the tide never fully goes out, and the harbourmaster owes a debt to something under the water."
+      />
+    </div>
+  ),
 }
 
 // AutoGrow — the chat-composer pattern. With `autoSize`, the textarea starts at

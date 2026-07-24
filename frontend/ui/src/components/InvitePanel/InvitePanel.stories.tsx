@@ -24,6 +24,9 @@ const LABELS = {
   copied: 'Copied',
   share: 'Share',
   replace: 'Replace link',
+  replacePrompt: 'Replace this link? The old link stops working.',
+  replaceConfirm: 'Replace',
+  replaceCancel: 'Keep',
   limit: "You've reached the invite limit. Replace the existing link instead.",
   error: 'Something went wrong. Try again.',
 }

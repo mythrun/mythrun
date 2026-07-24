@@ -13,6 +13,18 @@ import {
 import type { PipelineEvent } from '@mythrun/contract/events'
 import { i18n } from '../../i18n/config.ts'
 import { PartyStagingSurface, type PartyStagingDeps } from './party-staging.tsx'
+import type { InvitePanelDeps } from '../campaign-invite-panel.tsx'
+
+// A happy-path invite seam — resolves a fixed primary link so the inline disclosure
+// (opened from the dashed slot) renders the link without a live endpoint.
+const INVITE_DEPS: InvitePanelDeps = {
+  ensurePrimary: () => Promise.resolve({ inviteUrl: 'https://mythrun.com/join/PARTY', inviteCode: 'PARTY' }),
+  create: () => Promise.resolve({ inviteUrl: 'https://mythrun.com/join/PARTY', inviteCode: 'PARTY' }),
+  revoke: () => Promise.resolve(),
+  copyText: () => Promise.resolve(),
+  webShare: () => Promise.resolve(),
+  canShare: true,
+}
 
 // The PARTY-STAGING SURFACE (MYT-90 D7) — the "ready to begin?" screen D8 mounts
 // once the viewer's own character is confirmed. It composes the DS <PartyRoster>
@@ -71,6 +83,7 @@ function progress(over: Partial<CharacterCreationProgress> = {}): CharacterCreat
 interface Opts {
   readonly viewerUserId?: string
   readonly deps?: PartyStagingDeps
+  readonly inviteDeps?: InvitePanelDeps
   readonly onFinalized?: () => void
 }
 
@@ -117,7 +130,7 @@ function resolveDeps(deps: PartyStagingDeps = {}): Required<PartyStagingDeps> {
   }
 }
 
-function renderSurface({ viewerUserId = OWNER, deps, onFinalized = vi.fn() }: Opts = {}): {
+function renderSurface({ viewerUserId = OWNER, deps, inviteDeps, onFinalized = vi.fn() }: Opts = {}): {
   deps: Required<PartyStagingDeps>
   onFinalized: () => void
 } {
@@ -130,6 +143,7 @@ function renderSurface({ viewerUserId = OWNER, deps, onFinalized = vi.fn() }: Op
           viewerUserId={viewerUserId}
           onFinalized={onFinalized}
           deps={resolved}
+          {...(inviteDeps !== undefined && { inviteDeps })}
         />
       </I18nextProvider>
     </ApiClientProvider>,
@@ -178,6 +192,23 @@ describe('PartyStagingSurface — solo + party shape', () => {
     await screen.findByTestId('party-staging')
     expect(screen.getAllByTestId('party-roster-member')).toHaveLength(1)
     expect(screen.getByTestId('party-roster-invite')).toBeDefined()
+  })
+
+  it('opens the inline invite disclosure from the dashed slot (single entry point, no block above)', async () => {
+    renderSurface({ viewerUserId: OWNER, inviteDeps: INVITE_DEPS })
+    await screen.findByTestId('party-staging')
+    // Collapsed by default — the dashed slot is present, no invite panel yet.
+    expect(screen.queryByTestId('party-roster-invite-expansion')).toBeNull()
+    fireEvent.click(screen.getByTestId('party-roster-invite'))
+    // Opening reveals the wired invite INLINE (below the party, above Begin).
+    const expansion = await screen.findByTestId('party-roster-invite-expansion')
+    const link = await screen.findByTestId('invite-panel-link')
+    expect(expansion.contains(link)).toBe(true)
+    // Toggling the slot again collapses it.
+    fireEvent.click(screen.getByTestId('party-roster-invite'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('party-roster-invite-expansion')).toBeNull()
+    })
   })
 
   it('a full party (2 real members) shows no invite row', async () => {

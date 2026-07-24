@@ -22,6 +22,11 @@ export interface RollCardLabels {
   readonly tier: Readonly<Record<'fail' | 'success' | 'great_success', string>>
   /** The "DC" readout prefix. */
   readonly dc: string
+  /** Connective verbs composed inline into the resolved comparison line
+   *  ("{total} beats DC {dc}" / "{total} misses DC {dc}", myth-89hfu) — the
+   *  explicit pass/fail statement so the reader does no arithmetic. */
+  readonly beats: string
+  readonly misses: string
   /** advantage / disadvantage posture tags (a normal roll shows neither). */
   readonly advantage: string
   readonly disadvantage: string

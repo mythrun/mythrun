@@ -1,4 +1,5 @@
 import { describe, it, expect, expectTypeOf } from 'vitest'
+import type { ReactNode } from 'react'
 import type { ClassName } from '../../../srd/classes.ts'
 import * as characterBarrel from '../index.ts'
 import type {
@@ -285,6 +286,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       canBegin: boolean
       onBegin: () => void
       onInvite: () => void
+      // MYT-99g03: the inline invite disclosure (the staging single entry point).
+      inviteExpansion?: ReactNode
     }>()
   })
 

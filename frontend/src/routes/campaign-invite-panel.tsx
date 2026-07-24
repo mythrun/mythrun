@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Stack, InvitePanel } from '@mythrun/ui'
+import { Stack, InvitePanel, Button } from '@mythrun/ui'
 import {
   ensurePrimaryInvite,
   createInvite,
@@ -52,16 +52,30 @@ function noticeFor(err: unknown): Notice {
 }
 
 /** The wired invite panel. Owns the link/copy/notice state and the async plumbing;
- *  delegates every pixel to the presentational @mythrun/ui InvitePanel. */
+ *  delegates every pixel to the presentational @mythrun/ui InvitePanel.
+ *
+ *  `prominence` (MYT-99g03) demotes Copy to a bordered secondary so a below-the-hero
+ *  invite never spends the page's one filled accent. `collapsible` starts the panel as
+ *  a single quiet "Invite a friend →" line that expands on demand (the reveal / other
+ *  setup beats, where the invite is secondary to the character); the campaign hub
+ *  leaves it `false` + `primary` (there, the invite IS the primary action). */
 export function CampaignInvitePanel({
   campaignId,
   deps = {},
+  prominence = 'primary',
+  collapsible = false,
 }: {
   campaignId: string
   deps?: InvitePanelDeps
+  prominence?: 'primary' | 'quiet'
+  collapsible?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
+  // The collapsed→expanded disclosure for `collapsible`. Ephemeral UI state: no
+  // consumer observes it, and the link is still prefetched on mount so expanding is
+  // instant.
+  const [expanded, setExpanded] = useState(false)
   const {
     ensurePrimary = ensurePrimaryInvite,
     create = createInvite,
@@ -151,6 +165,32 @@ export function CampaignInvitePanel({
     resolveLink(() => create(ctx, campaignId))
   }, [ctx, campaignId, create, resolveLink])
 
+  // Collapsed: a single quiet line the owner opens on demand (the link is already
+  // prefetched, so expanding is instant). Only Copy/Share/Replace hide — never a
+  // pending notice, which would strand an error behind the affordance.
+  if (collapsible && !expanded && notice === null) {
+    // A quiet, edge-aligned disclosure so a DEMOTED invite (below a character reveal /
+    // other setup beats) reads as one calm line, never a block that outranks the hero.
+    // The row Stack keeps the ghost button content-width (a column Stack would stretch
+    // it full-bleed); the arrow rides the label (the `beginSolo` precedent).
+    return (
+      <Stack data-testid={INVITE_SEAM_TESTID}>
+        <Stack direction="row">
+          <Button
+            variant="ghost"
+            size="sm"
+            onPress={() => {
+              setExpanded(true)
+            }}
+            data-testid="invite-collapsed"
+          >
+            {t('campaign.invite.expand')}
+          </Button>
+        </Stack>
+      </Stack>
+    )
+  }
+
   return (
     <Stack data-testid={INVITE_SEAM_TESTID}>
       <InvitePanel
@@ -159,6 +199,7 @@ export function CampaignInvitePanel({
         canShare={canShare}
         copied={copied}
         notice={notice}
+        prominence={prominence}
         onCopy={onCopy}
         onShare={onShare}
         onRevoke={onRevoke}
@@ -174,6 +215,9 @@ export function CampaignInvitePanel({
           copied: t('campaign.invite.copied'),
           share: t('campaign.invite.share'),
           replace: t('campaign.invite.replace'),
+          replacePrompt: t('campaign.invite.replacePrompt'),
+          replaceConfirm: t('campaign.invite.replaceConfirm'),
+          replaceCancel: t('campaign.invite.replaceCancel'),
           limit: t('campaign.invite.limit'),
           error: t('campaign.invite.error'),
         }}

@@ -400,4 +400,55 @@ describe('AuditedFastThinker', () => {
 
     expect(ctxAt(1).correctiveInstruction).toMatch(/leave the scene open/i)
   })
+
+  // ux-run1 — the deterministic prose guard rides post-render, observability-only.
+  describe('deterministic prose guard (ux-run1)', () => {
+    it('fires onProseGuard + warns when the narration leaks an internal term — but never blocks or retries', async () => {
+      const leak = 'The passage narrows as the session context says it does.'
+      const { ft, renderMock } = makeInner([textAssistant(leak)])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
+      const onProseGuard = vi.fn()
+      const warn = vi.fn()
+      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, onProseGuard, logger: { warn } })
+
+      const result = await gate.render(CTX, NOOP_EMITTER)
+
+      // The turn is returned UNCHANGED (no block, no extra render) — guard is log-only.
+      expect(result.parts).toEqual([{ kind: 'text', text: leak }])
+      expect(renderMock).toHaveBeenCalledTimes(1)
+      expect(onProseGuard).toHaveBeenCalledTimes(1)
+      expect(onProseGuard.mock.calls[0]?.[0]).toEqual([
+        expect.objectContaining({ kind: 'internal_term' }),
+      ])
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'ft_prose_guard' }),
+        expect.any(String),
+      )
+    })
+
+    it('runs even when the Haiku audit gate is disabled (independent deterministic check)', async () => {
+      const { ft } = makeInner([textAssistant('opened *but never closed and it.You fused')])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
+      const onProseGuard = vi.fn()
+      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: false, onProseGuard })
+
+      await gate.render(CTX, NOOP_EMITTER)
+
+      expect(audit).not.toHaveBeenCalled() // gate off
+      const kinds = (onProseGuard.mock.calls[0]?.[0] as { kind: string }[]).map((v) => v.kind)
+      expect(kinds).toContain('unrendered_emphasis')
+      expect(kinds).toContain('fused_sentence')
+    })
+
+    it('stays silent on clean narration', async () => {
+      const { ft } = makeInner([textAssistant('The ferry rocks against the pilings.')])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
+      const onProseGuard = vi.fn()
+      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, onProseGuard })
+
+      await gate.render(CTX, NOOP_EMITTER)
+
+      expect(onProseGuard).not.toHaveBeenCalled()
+    })
+  })
 })

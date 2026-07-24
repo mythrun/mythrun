@@ -25,10 +25,21 @@ function ControlledSessionInput(props: {
   onSummonDm?: () => void
   onChange?: (v: string) => void
   disabled?: boolean
+  busy?: boolean
+  busyLabel?: string
   initial?: string
   maxLength?: number
 }) {
-  const { onSend = vi.fn(), onSummonDm = vi.fn(), onChange, disabled = false, initial = '', maxLength } = props
+  const {
+    onSend = vi.fn(),
+    onSummonDm = vi.fn(),
+    onChange,
+    disabled = false,
+    busy = false,
+    busyLabel,
+    initial = '',
+    maxLength,
+  } = props
   const [v, setV] = useState(initial)
   return (
     <SessionInput
@@ -40,6 +51,8 @@ function ControlledSessionInput(props: {
       onSend={onSend}
       onSummonDm={onSummonDm}
       disabled={disabled}
+      busy={busy}
+      {...(busyLabel !== undefined ? { busyLabel } : {})}
       placeholder={LABELS.placeholder}
       summonLabel={LABELS.summonLabel}
       sendLabel={LABELS.sendLabel}
@@ -157,6 +170,56 @@ describe('SessionInput', () => {
   })
 })
 
+
+describe('SessionInput — busy gating (myth-dd63v: no silent send-swallow)', () => {
+  const BUSY = 'The DM is writing…'
+
+  it('busy gates Send + @DM but the FIELD stays typeable (draft-ahead is honest)', async () => {
+    const onSend = vi.fn()
+    const onSummonDm = vi.fn()
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = render(
+      <ControlledSessionInput onSend={onSend} onSummonDm={onSummonDm} onChange={onChange} busy busyLabel={BUSY} />,
+    )
+    const field = getByRole('textbox')
+    const send = getByRole('button', { name: LABELS.sendLabel })
+    const summon = getByRole('button', { name: LABELS.summonLabel })
+    expect(field).not.toBeDisabled() // the field stays LIVE while the DM writes
+    expect(send).toBeDisabled()
+    expect(summon).toBeDisabled()
+    await user.type(field, 'draft')
+    expect(onChange).toHaveBeenCalled() // typing works
+    await user.click(send)
+    await user.click(summon)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(onSummonDm).not.toHaveBeenCalled()
+  })
+
+  it('busy blocks Enter-to-send (a keyboard send cannot slip past the gate)', () => {
+    const onSend = vi.fn()
+    const { getByRole } = render(<ControlledSessionInput onSend={onSend} busy busyLabel={BUSY} initial="ready" />)
+    const ta = getByRole('textbox')
+    ta.focus()
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('shows the busy caption while busy, and nothing when idle', () => {
+    const { getByTestId, rerender } = render(<ControlledSessionInput busy busyLabel={BUSY} />)
+    expect(getByTestId('session-input-busy')).toHaveTextContent(BUSY)
+    rerender(<ControlledSessionInput busy={false} busyLabel={BUSY} />)
+    expect(getByTestId('session-input-busy')).toHaveTextContent('')
+  })
+
+  it('terminal disabled supersedes busy: field inert, no busy caption', () => {
+    const { getByRole, getByTestId } = render(
+      <ControlledSessionInput disabled busy busyLabel={BUSY} initial="x" />,
+    )
+    expect(getByRole('textbox')).toBeDisabled()
+    expect(getByTestId('session-input-busy')).toHaveTextContent('')
+  })
+})
 
 describe('SessionInput — message length cap (MYT-102 QA F1)', () => {
   it('caps the native textarea at maxLength (blocks over-long typing/paste)', () => {

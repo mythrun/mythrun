@@ -25,6 +25,7 @@ import type {
 } from 'fastify'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import { z } from 'zod'
 import { createRepo, type Repo } from '../repo/index.js'
 import type { SessionPrepQueueLike } from './session-preps.js'
 import { requireDbUser } from '../auth/require-db-user.js'
@@ -191,6 +192,36 @@ export const sessionsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
                 startedAt: session.startedAt,
                 endedAt: session.endedAt,
               },
+      })
+    },
+  )
+
+  // GET /api/sessions/:campaignId/recap — the player-facing close-out of the
+  // campaign's most-recent ended session (myth-lhp99). Member-gated. Returns the
+  // SECRET-FREE recap only (`summary` + `emergingThreads`); `handoff` /
+  // stRunningSummary are never read. The post-session analysis is async
+  // (enqueued at finalize), so a just-ended session answers `status:'pending'`
+  // with facts only until the Opus write lands — the recap surface polls until
+  // `ready`. A campaign with no ended session returns `recap: null`.
+  app.get<{ Params: { campaignId: string } }>(
+    '/api/sessions/:campaignId/recap',
+    {
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      preHandler: requireCampaignMember(repo),
+    },
+    async (request, reply) => {
+      const row = await repo.sessions.getLatestEndedRecap(request.params.campaignId)
+      if (row === null) return reply.code(200).send({ recap: null })
+      const parsed = parseRecapSummary(row.summaryJson)
+      return reply.code(200).send({
+        recap: {
+          sessionNumber: row.sessionNumber,
+          endedAt: row.endedAt,
+          status: parsed === null ? 'pending' : 'ready',
+          ...(parsed !== null
+            ? { summary: parsed.summary, emergingThreads: parsed.emergingThreads }
+            : {}),
+        },
       })
     },
   )
@@ -478,6 +509,34 @@ async function handleSessionStart(
   await deliverOpening({ repo, sessionState, log, campaignId, sessionId, sessionNumber, opening: prep?.opening ?? null })
 
   return reply.code(200).send({ sessionId })
+}
+
+/** The stored `summary` column shape (written by repo.sessions.writeAnalysis as
+ *  `JSON.stringify({summary, emergingThreads})`). Both fields are SECRET-FREE —
+ *  the analysis's player-witnessed surface. The secret-aware `handoff` lives in
+ *  its own column and is never parsed here. */
+const RecapSummaryWrapperSchema = z.object({
+  summary: z.string(),
+  emergingThreads: z.array(z.string()),
+})
+
+/** Parse the stored `summary` JSON into the recap prose, or null when the column
+ *  is NULL (async analysis not yet written) or malformed/legacy — the recap
+ *  surface renders null as the `pending` state and polls. */
+function parseRecapSummary(
+  summaryJson: string | null,
+): { summary: string; emergingThreads: string[] } | null {
+  if (summaryJson === null) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(summaryJson)
+  } catch {
+    return null
+  }
+  const parsed = RecapSummaryWrapperSchema.safeParse(raw)
+  return parsed.success
+    ? { summary: parsed.data.summary, emergingThreads: parsed.data.emergingThreads }
+    : null
 }
 
 /** True when `err` is the Postgres 23505 unique-violation raised by the

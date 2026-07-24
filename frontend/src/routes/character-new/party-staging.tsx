@@ -16,6 +16,7 @@ import {
 import { partyRosterViewModel } from '@mythrun/client-core/character'
 import type { RosterMember } from '@mythrun/client-core/contract'
 import { useForegroundRefetch } from '../../platform/web/use-foreground-refetch.ts'
+import { CampaignInvitePanel, type InvitePanelDeps } from '../campaign-invite-panel.tsx'
 
 // The PARTY-STAGING SURFACE (MYT-90 D7) — the "ready to begin?" screen the D8
 // routing table mounts once the viewer's OWN character is confirmed. It is a
@@ -74,6 +75,10 @@ export interface PartyStagingSurfaceProps {
   onFinalized: () => void
   /** Injected endpoint + transport seams (default to the real ones); tests + stories substitute. */
   deps?: PartyStagingDeps
+  /** Injected invite endpoints + web ports for the owner's inline invite disclosure
+   *  (MYT-99g03) — the SINGLE invite entry point on staging, opened from the dashed
+   *  party slot. Defaults to the real client-core fns + web port. */
+  inviteDeps?: InvitePanelDeps
 }
 
 const defaultGetCampaigns: GetCampaigns = (ctx) =>
@@ -88,14 +93,14 @@ const INVITE_SLOT: RosterMember = {
   isViewer: false,
 }
 
-/** Append the invite affordance in the SOLO case only — one real member and no
- *  pending joiners (the owner is alone, so offer "invite a friend"). A party (2+
- *  real members) — or one that already carries an `empty` seat from `missing[]` —
- *  keeps its own rows; the mockup shows no extra invite slot there. */
-function withInviteSlot(members: readonly RosterMember[]): RosterMember[] {
+/** Append the invite affordance in the SOLO OWNER case only — one real member, no
+ *  pending joiners, and the viewer owns the campaign (invites are owner-only). A
+ *  party (2+ real members), a roster that already carries an `empty` seat from
+ *  `missing[]`, or a non-owner keeps its own rows with no extra invite slot. */
+function withInviteSlot(members: readonly RosterMember[], isOwner: boolean): RosterMember[] {
   const realCount = members.filter((m) => m.status !== 'empty').length
   const hasEmpty = members.some((m) => m.status === 'empty')
-  return realCount <= 1 && !hasEmpty ? [...members, INVITE_SLOT] : [...members]
+  return isOwner && realCount <= 1 && !hasEmpty ? [...members, INVITE_SLOT] : [...members]
 }
 
 /** The viewer's resolved role: `viewerIsOwner` gates the Begin control; `ownerUserId`
@@ -144,6 +149,7 @@ export function PartyStagingSurface({
   viewerUserId,
   onFinalized,
   deps,
+  inviteDeps,
 }: PartyStagingSurfaceProps): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
@@ -158,6 +164,9 @@ export function PartyStagingSurface({
   const { state: progress, reload } = useLiveRoster(campaignId, ctx, { getProgress, createClient })
   useForegroundRefetch(reload)
   const [beginFailed, setBeginFailed] = useState(false)
+  // The inline invite disclosure (MYT-99g03) — opened from the dashed party slot, the
+  // SINGLE invite entry point on staging (no standalone invite block above the party).
+  const [inviteOpen, setInviteOpen] = useState(false)
 
   const handleBegin = (): void => {
     setBeginFailed(false)
@@ -170,10 +179,10 @@ export function PartyStagingSurface({
       })
   }
 
-  // The roster's invite affordance is a no-op placeholder seam here — the live
-  // invite-link flow (InvitePanel) is a separate MYT-91 surface, not this screen.
+  // The dashed slot toggles the inline invite disclosure below it (progressive
+  // disclosure) — the live invite-link flow now lives INSIDE the roster on staging.
   const handleInvite = (): void => {
-    // Intentionally a no-op on party-staging.
+    setInviteOpen((open) => !open)
   }
 
   if (progress.status === 'loading' || role.status === 'loading') {
@@ -201,11 +210,24 @@ export function PartyStagingSurface({
 
   const members = withInviteSlot(
     partyRosterViewModel(progress.progress, viewerUserId, role.ownerUserId),
+    role.viewerIsOwner,
   )
   // The owner may begin once their OWN concept is ready (a laggard party member
   // does not gate it — the owner begins now or waits). The view-model leads with
   // the owner's row, so read readiness off the owner's id.
   const canBegin = members.some((m) => m.userId === role.ownerUserId && m.status === 'ready')
+
+  // The owner's inline invite disclosure — the wired quiet panel rendered inside the
+  // roster (below the party, above Begin) when the dashed slot is open. `undefined`
+  // (member, or slot closed) leaves the slot collapsed.
+  const inviteExpansion =
+    role.viewerIsOwner && inviteOpen ? (
+      <CampaignInvitePanel
+        campaignId={campaignId}
+        prominence="quiet"
+        {...(inviteDeps !== undefined && { deps: inviteDeps })}
+      />
+    ) : undefined
 
   return (
     <Stack gap={5} data-testid="party-staging">
@@ -223,6 +245,7 @@ export function PartyStagingSurface({
         canBegin={canBegin}
         onBegin={handleBegin}
         onInvite={handleInvite}
+        {...(inviteExpansion !== undefined && { inviteExpansion })}
         labels={{
           partyHeading: t('characterCreate.staging.partyHeading'),
           inviteSub: t('characterCreate.staging.inviteSub'),

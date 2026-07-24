@@ -5,6 +5,7 @@ import { cn } from '../../lib/cn.ts'
 import { Text } from '../Text/Text.tsx'
 import { Heading } from '../Heading/Heading.tsx'
 import { RelatedFooter } from './RelatedFooter.tsx'
+import { WikiScrollFrame } from './WikiScrollFrame.tsx'
 
 // WikiPage (MYT-89 D4; MYT-102 entity bodies) — one entity as a PLACE, a
 // field-guide plate: the mono kind tag over the serif name, then the entity's
@@ -94,10 +95,7 @@ export function WikiPage({
         <span aria-hidden="true">‹</span>
         {backLabel}
       </button>
-      <article
-        ref={articleRef}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto px-[var(--space-3)] pb-[var(--space-4)]"
-      >
+      <WikiScrollFrame as="article" scrollRef={articleRef} contentClassName="px-[var(--space-3)] pb-[var(--space-4)]">
         <header className="flex flex-col gap-[var(--space-1)] pb-[var(--space-4)] pt-[var(--space-2)]">
           <p className={KIND_CLASS}>{kindLabel}</p>
           <Heading level={2} role="heading">
@@ -135,7 +133,7 @@ export function WikiPage({
           </Text>
         )}
         <RelatedFooter related={entity.related} label={relatedLabel} onOpen={onOpenRelated} />
-      </article>
+      </WikiScrollFrame>
     </div>
   )
 }

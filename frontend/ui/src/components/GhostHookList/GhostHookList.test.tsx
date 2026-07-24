@@ -6,8 +6,8 @@ import { axe } from 'jest-axe'
 import { GhostHookList } from './GhostHookList.tsx'
 import type { GhostHookItem } from '@mythrun/client-core/contract'
 
-// The starting-situation pick: three borderless ghost hooks split by hairline
-// rules, each stacking a title over a place over a prose paragraph.
+// The starting-situation pick: three selectable hook cards, each stacking a title
+// over a place over a prose paragraph.
 const hooks = (
   onA = vi.fn(),
   onB = vi.fn(),
@@ -48,10 +48,9 @@ describe('GhostHookList', () => {
     expect(queryByText('Pick a direction.')).toBeInTheDocument()
   })
 
-  it('frames AND separates the list with hairline rules (above first, between, below last)', () => {
-    // Three items => four separator rules: above, between×2, below.
-    const { getAllByRole } = render(<GhostHookList items={hooks()} />)
-    expect(getAllByRole('separator')).toHaveLength(4)
+  it('cards the hooks (no hairline separators — the border carries the boundary)', () => {
+    const { queryAllByRole } = render(<GhostHookList items={hooks()} />)
+    expect(queryAllByRole('separator')).toHaveLength(0)
   })
 
   it("fires the chosen hook's onSelect on click (and only that one)", async () => {
@@ -73,10 +72,10 @@ describe('GhostHookList', () => {
     expect(onA).toHaveBeenCalledOnce()
   })
 
-  it('is a GHOST, not a box: no border utility on the hook buttons', () => {
+  it('cards each hook: a bounded interactive border on the hook buttons', () => {
     const { getAllByRole } = render(<GhostHookList items={hooks()} />)
     for (const btn of getAllByRole('button')) {
-      expect(btn.className).not.toMatch(/(^|\s)border(\s|-|$)/)
+      expect(btn.className).toContain('border-border-strong')
     }
   })
 

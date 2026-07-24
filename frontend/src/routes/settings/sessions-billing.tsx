@@ -49,8 +49,17 @@ interface Formatters {
 }
 
 function makeFormatters(t: TFunction, locale: string): Formatters {
-  const money = (cents: number, currency: string): string =>
-    new Intl.NumberFormat(locale, { style: 'currency', currency }).format(cents / 100)
+  const money = (cents: number, currency: string): string => {
+    // Consumer pricing drops the trailing `.00` on whole amounts ("$15", not
+    // "$15.00" — a developer-formatted-decimal tell); a fractional price keeps its
+    // cents. (MYT-9jrh9 decidability polish.)
+    const whole = cents % 100 === 0
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+    }).format(cents / 100)
+  }
   return {
     money,
     perMonth: (price) => t('billing.pricePerMonth', { price }),
@@ -95,6 +104,37 @@ function historyRowLabel(row: HistoryRowView, t: TFunction, money: Formatters['m
   // Refunds (incl. a reversed pack purchase, whose kind is still `purchase`) carry
   // a terse prose suffix; the DS also demotes the row typographically off `refunded`.
   return row.refunded ? `${base} ${t('billing.history.refundedSuffix')}` : base
+}
+
+/** The two credit buckets + a one-line plain-language explainer of what spends each
+ *  (MYT-9jrh9). Run-1's counters were bare label-number pairs with no way to form a
+ *  mental model; the mechanics are real — session credits gate starting a session,
+ *  world credits gate building a world. */
+function CreditSection({
+  view,
+  t,
+}: {
+  readonly view: ReturnType<typeof balanceView>
+  readonly t: TFunction
+}): React.JSX.Element {
+  return (
+    <Stack gap={2}>
+      <CreditBalance
+        session={view.session}
+        sessionLabel={t('billing.sessionLabel')}
+        worldGen={view.worldGen}
+        worldGenLabel={t('billing.worldGenLabel')}
+      />
+      <Stack gap={1}>
+        <Text role="ui-caption" data-testid="billing-session-help">
+          {t('billing.sessionHelp')}
+        </Text>
+        <Text role="ui-caption" data-testid="billing-world-help">
+          {t('billing.worldGenHelp')}
+        </Text>
+      </Stack>
+    </Stack>
+  )
 }
 
 export function SessionsBilling(): React.JSX.Element {
@@ -161,12 +201,7 @@ export function SessionsBilling(): React.JSX.Element {
 
   return (
     <Stack gap={6} data-testid="sessions-billing">
-      <CreditBalance
-        session={view.session}
-        sessionLabel={t('billing.sessionLabel')}
-        worldGen={view.worldGen}
-        worldGenLabel={t('billing.worldGenLabel')}
-      />
+      <CreditSection view={view} t={t} />
       <PackList
         tiers={tiers}
         alaCarte={packs}

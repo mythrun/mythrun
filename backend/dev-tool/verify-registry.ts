@@ -122,6 +122,7 @@ export const PANEL_EXERCISES: Readonly<Record<string, readonly BackendRoute[]>> 
   'session-start': [{ method: 'POST', path: '/api/sessions/:id/start' }],
   'session-active': [{ method: 'GET', path: '/api/sessions/:id/active' }],
   'session-messages': [{ method: 'GET', path: '/api/sessions/:id/messages' }],
+  'session-recap': [{ method: 'GET', path: '/api/sessions/:id/recap' }],
   'fire-turn': [
     { method: 'POST', path: '/api/dev/campaigns/:campaignId/fire-turn' },
   ],
@@ -379,6 +380,7 @@ export const PAGE_REGISTRY: Readonly<Record<WorkflowId, PageRegistration>> = {
       'session-start',
       'session-active',
       'session-messages',
+      'session-recap',
       'fire-turn',
       'combat',
     ],

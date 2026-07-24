@@ -369,6 +369,15 @@ export function WorldReveal({
       // roving hidden listbox whose selection drives the same onSelect (and thus
       // the same wiki push) a canvas tap does. Resolved label; DS owns no copy.
       nodeListLabel={t('worldReveal.graphNodeList')}
+      // The glyph KEY (myth-466cy): the same kind labels the wiki's group headings
+      // speak, so the graph's diamond/square/stack vocabulary reads as documented
+      // rather than decorative. Only kinds present in the world render.
+      legend={{
+        faction: t('worldReveal.group.faction'),
+        location: t('worldReveal.group.location'),
+        npc: t('worldReveal.group.npc'),
+        item: t('worldReveal.group.item'),
+      }}
       // The REGIME props (MYT-89 audit v3 + v4). Desktop: the pane is a true
       // half of the screen — it FILLS the RevealPanes row (fillHost) and must
       // never pan (pannable false zeroes the camera seat; labels tier down by

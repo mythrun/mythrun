@@ -24,6 +24,24 @@ import { HighlightedProse } from './HighlightedProse.tsx'
 // paragraph so the stream→settle handoff never reflows. While `streaming` (or absent a
 // highlight index / its labels) the row is byte-identical to MYT-92 (spec §6: no
 // mid-stream reflow; a missing label bundle degrades gracefully to plain prose).
+//
+// myth-yvk8p — the DM narration is the product's HERO reading surface, so its typography
+// is set HERE (not in the shared StreamingProse, which the world brief also uses): the
+// prose `<p>` is capped to a book measure (~66ch) and bumped to ~19px. `em`-relative
+// max-width ties the measure to the (larger) size, so the cap absorbs the size without
+// re-inflating characters-per-line (the run-1 hero ran ~100 CPL, over the WCAG-AAA 80
+// ceiling). Applied via a child-variant on the row so BOTH the streaming StreamingProse
+// `<p>` and the settled StreamingProse/HighlightedProse `<p>` get identical metrics —
+// the zero-reflow handoff is preserved; only the DM register (not player/mechanical
+// rows) is affected. The `<p>` keeps its `prose-body` role classes; the child-variant's
+// higher specificity overrides only the size + adds the measure.
+//
+// `whitespace-pre-wrap` honours the paragraph breaks the FT writes: the model emits
+// `\n\n` between beats (a quoted ledger line, the three initials on their own line),
+// but a default `<p>` collapses that run of whitespace to a single space — the run-1
+// narration read as one undifferentiated wall. pre-wrap keeps the breaks while still
+// soft-wrapping long lines, and rides the same single text node so the streaming
+// append + zero-reflow handoff are untouched.
 export const DmMessage = forwardRef<HTMLDivElement, DmMessageProps>(function DmMessage(
   { text, streaming, writingLabel, highlight, onEntityOpen, highlightLabels },
   ref,
@@ -32,7 +50,7 @@ export const DmMessage = forwardRef<HTMLDivElement, DmMessageProps>(function DmM
     <div
       ref={ref}
       data-dm-message=""
-      className="rounded-none bg-surface px-[var(--space-5)] py-[var(--space-4)]"
+      className="rounded-none bg-surface px-[var(--space-5)] py-[var(--space-4)] [&>p]:max-w-[34em] [&>p]:whitespace-pre-wrap [&>p]:text-[1.1875rem]"
     >
       {!streaming && highlight !== undefined && highlightLabels !== undefined ? (
         <HighlightedProse text={text} highlight={highlight} labels={highlightLabels} onEntityOpen={onEntityOpen} />

@@ -19,4 +19,8 @@ export interface DieSpinProps {
   onSpinComplete: () => void
   /** Resolved SR label announced with the landed result (polite live region). */
   resultLabel?: string
+  /** Which polyhedron to draw (d4/d6/d8/d10/d12/d20, myth-0qvay). Defaults to 20 —
+   *  skill checks pin 20; NdM dice_rolls thread frame.sides. 100 renders as a d10;
+   *  any non-standard size falls back to the d20. */
+  sides?: number
 }

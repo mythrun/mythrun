@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { RosterMember } from './types.ts'
 
 // PartyRoster (MYT-90) — the party-finalize roster: the members and their creation
@@ -36,6 +37,12 @@ export interface PartyRosterProps {
   canBegin: boolean
   /** Fire the character-integration finalize pass and enter the opening scene. */
   onBegin: () => void
-  /** Open the invite flow (share a join link). */
+  /** Toggle the invite flow (share a join link). On the staging surface this opens
+   *  the inline invite disclosure below the dashed slot (progressive disclosure). */
   onInvite: () => void
+  /** The invite disclosure content (MYT-99g03), rendered between the roster and the
+   *  Begin control when the owner opens the dashed slot — the SINGLE invite entry
+   *  point on staging (no standalone invite block above the party). Omitted/undefined
+   *  keeps the slot collapsed. The consuming surface supplies the wired quiet panel. */
+  inviteExpansion?: ReactNode
 }

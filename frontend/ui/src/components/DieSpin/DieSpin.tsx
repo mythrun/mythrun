@@ -43,6 +43,36 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 const D20_OUTLINE_PATH =
   'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z M3 7 L12 5.8 L21 7 M3 17 L12 18.2 L21 17 M12 2 L12 5.8 M12 18.2 L12 22'
 
+// myth-0qvay: per-die silhouettes in the SAME facet-band language as the d20 — a
+// hard polygon SILHOUETTE plus end-facet hints kept to the poles (above ~y8 / below
+// ~y16), so the OPEN equatorial band where the numeral stamps is never crossed. Each
+// is unmistakable by its outline: triangle (d4), square (d6), vertical rhombus (d8),
+// pentagonal kite (d10), pentagon (d12), facet hexagon (d20). The numeral always
+// stamps at the fixed box centre (12,12), so every shape is centred there.
+export const DIE_PATHS: Record<number, string> = {
+  // Tetrahedron — an upward triangle with a small top face.
+  4: 'M12 2.5 L21.5 20.5 L2.5 20.5 Z M9 7.6 L12 2.5 L15 7.6',
+  // Cube — a clean square (a centred square reads as a d6).
+  6: 'M4 4 H20 V20 H4 Z',
+  // Octahedron — a vertical rhombus with pole gables top and bottom.
+  8: 'M12 2 L21 12 L12 22 L3 12 Z M5 12 L12 6 L19 12 M5 12 L12 18 L19 12',
+  // Pentagonal trapezohedron — the classic d10 kite, with a top pole spoke.
+  10: 'M12 2 L20 9 L18 17 L12 22 L6 17 L4 9 Z M12 2 L12 6.6',
+  // Dodecahedron — an upward pentagon with a shallow top facet.
+  12: 'M12 2.5 L20.5 9 L17 19.5 L7 19.5 L3.5 9 Z M4 9 L12 6.4 L20 9',
+  // Icosahedron — the canonical facet-band d20.
+  20: D20_OUTLINE_PATH,
+}
+
+/** Resolve the outline path for a die size. Skill checks pin 20; NdM dice_rolls
+ *  thread frame.sides. d100/percentile renders as a d10; any non-standard size
+ *  falls back to the d20 so the glyph is never empty. */
+export function pathForSides(sides: number): string {
+  // d100/percentile borrows the d10 kite; any non-standard size falls back to d20.
+  const key = sides === 100 ? 10 : sides
+  return DIE_PATHS[key] ?? D20_OUTLINE_PATH
+}
+
 // STEPPED motion budget (eye-tuned 2026-07-21). Eight hard 45° jumps = one full
 // revolution back to upright; the die never interpolates. Deceleration lives in the
 // dwell, not the angle: DIE_SPIN_DWELLS are the hold times (ms) for the first seven
@@ -73,7 +103,7 @@ const NUMERAL_CLASS =
   'absolute inset-0 flex items-center justify-center font-ui text-lg font-semibold leading-none'
 
 export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin(
-  { spinning, result, reducedMotion, onSpinComplete, resultLabel },
+  { spinning, result, reducedMotion, onSpinComplete, resultLabel, sides = 20 },
   ref,
 ) {
   const [frame, setFrame] = useState(REST_FRAME)
@@ -136,7 +166,7 @@ export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin
         className="h-full w-full"
         style={{ transform }}
       >
-        <path d={D20_OUTLINE_PATH} />
+        <path d={pathForSides(sides)} />
       </svg>
 
       {showResult && (

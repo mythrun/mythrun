@@ -36,6 +36,8 @@
 // material can reach the audit call.
 
 import type { TurnAuditClass, TurnAuditFn, TurnAuditInput } from '../../llm/turn-audit.js'
+import { checkFtProse } from '../../llm/ft-prose-guard.js'
+import type { FtProseViolation } from '../../llm/ft-prose-guard.js'
 import type {
   AssistantMessage,
   ContentPart,
@@ -63,6 +65,12 @@ export interface AuditedFastThinkerDeps {
    *  gate could not correct). A metrics backend can bind a counter here; tests
    *  spy on it. Optional. */
   readonly onFailOpen?: (audit: { class: TurnAuditClass }) => void
+  /** Counter seam for the DETERMINISTIC prose guard (ux-run1): called once per
+   *  render whose narration tripped a structural check (leaked emphasis marker,
+   *  fused sentence seam, internal-term leak). Observability only — the guard
+   *  NEVER blocks or retries a turn; the render is returned unchanged. Tests spy
+   *  on it. Optional. */
+  readonly onProseGuard?: (violations: readonly FtProseViolation[]) => void
   /** Test seam — the emitter used for the RETRY render. Defaults to a no-op so
    *  the retry never re-streams (see the flow note). */
   readonly retryEmitter?: TurnEmitter
@@ -89,6 +97,7 @@ export class AuditedFastThinker implements FastThinker {
   private readonly enabled: boolean
   private readonly logger: AuditLogger | undefined
   private readonly onFailOpen: ((audit: { class: TurnAuditClass }) => void) | undefined
+  private readonly onProseGuard: ((violations: readonly FtProseViolation[]) => void) | undefined
   private readonly retryEmitter: TurnEmitter
 
   constructor(deps: AuditedFastThinkerDeps) {
@@ -97,11 +106,17 @@ export class AuditedFastThinker implements FastThinker {
     this.enabled = deps.enabled
     this.logger = deps.logger
     this.onFailOpen = deps.onFailOpen
+    this.onProseGuard = deps.onProseGuard
     this.retryEmitter = deps.retryEmitter ?? SILENT_EMITTER
   }
 
   async render(ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> {
     const first = await this.inner.render(ctx, emit)
+    // Deterministic prose guard (ux-run1): runs on EVERY render, independent of the
+    // Haiku audit gate — it is cheap and never touches the model. Observability only;
+    // it logs + counts a structural leak, never blocks or retries (a prose nit must
+    // not strand a live turn). The real fixes are the client renderer + the prompt.
+    this.runProseGuard(first)
     if (!this.enabled) return first
 
     const batch = extractBatch(ctx.ftHistory)
@@ -173,6 +188,19 @@ export class AuditedFastThinker implements FastThinker {
       'ft turn audit: violation passed through (fail-open)',
     )
     this.onFailOpen?.({ class: auditClass })
+  }
+
+  /** The deterministic structural guard: warn + count any leaked emphasis marker,
+   *  fused sentence seam, or internal-term leak in this render's joined narration.
+   *  Log-only; the render proceeds unchanged. A clean render is silent. */
+  private runProseGuard(assistant: AssistantMessage): void {
+    const violations = checkFtProse(joinNarration(assistant))
+    if (violations.length === 0) return
+    this.logger?.warn(
+      { event: 'ft_prose_guard', violations: violations.map((v) => ({ kind: v.kind, detail: v.detail })) },
+      'ft prose guard: deterministic narration defect(s) detected',
+    )
+    this.onProseGuard?.(violations)
   }
 }
 

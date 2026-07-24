@@ -21,12 +21,25 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { SessionCompleteNotice, NoCharacterNotice } from './notices.tsx'
 import {
+  EndSessionControl,
+  WindDownOffer,
+  type EndSessionLabels,
+  type WindDownLabels,
+} from './session-lifecycle.tsx'
+import {
   KnowledgePanel,
   buildHighlightLabels,
   usePlayKnowledge,
   type PlayKnowledgeHooks,
 } from './knowledge-panel.tsx'
-import { MAX_PLAYER_MESSAGE_LEN, composeSummon, connectionLineStatus, resolveTypingNames } from './session-compose.ts'
+import {
+  MAX_PLAYER_MESSAGE_LEN,
+  composeSummon,
+  connectionLineStatus,
+  resolveTypingNames,
+  isDmWriting,
+  latestLiveLongRestTurn,
+} from './session-compose.ts'
 
 // The live session shell (MYT-92 T16) — the `ready` phase: the streamed multiplayer
 // transcript over the WS transport view-model (`useSession`). It composes the six
@@ -121,11 +134,54 @@ export function SessionShell({
   // gates the post-check prose behind Continue. `buildRevealView` DERIVES the per-card
   // phase + the set of prose-gated turnIds from `items` + the reducer state; both are
   // threaded to MessageStream as plain data (R1 — @mythrun/ui holds no reveal runtime).
-  // A pending (un-continued) card does NOT disable SessionInput — the player may keep
-  // typing (the spec is silent; keep the calm default).
   const reveal = useRollReveal()
   const rollReveal = useMemo(() => buildRevealView(items, reveal.state), [items, reveal.state])
   const rollLabels = useMemo(() => buildRollLabels(t), [t])
+
+  // myth-lhp99: the local ENDING latch. Set the instant the player confirms an end
+  // (the control's confirm OR the wind-down's "Rest here") so the composer + the end
+  // affordances gate immediately — before the farewell turn's dm_thinking arrives —
+  // and can't be double-fired. The transport's `session_end` still drives `ended`.
+  const [ending, setEnding] = useState(false)
+  const endSession = (): void => {
+    if (ending) return
+    setEnding(true)
+    session.endSession()
+  }
+
+  // myth-lhp99: the wind-down offer keys off the STRUCTURED long-rest signal (a
+  // live `ledger_update` with restType==='long'), never the summary prose. It shows
+  // once per detected rest until the player dismisses it ("Keep playing") or ends.
+  const longRestTurn = useMemo(() => latestLiveLongRestTurn(items), [items])
+  const [dismissedRestTurn, setDismissedRestTurn] = useState<string | null>(null)
+  const showWindDown = longRestTurn !== null && longRestTurn !== dismissedRestTurn && !ending
+
+  // myth-dd63v: the composer is subordinated whenever SENDING is not the expected
+  // next action — while the DM is mid-turn (thinking or streaming), while a
+  // skill-check awaits Roll/Continue, or once an end is in flight. The field stays
+  // typeable in every case; only the send intents gate, with a quiet reason line.
+  const dmBusy = isDmWriting(items, thinking)
+  const pendingCheck = rollReveal.gatedTurnIds.size > 0
+  const composerBusy = ending || dmBusy || pendingCheck
+  const composerBusyLabel = ending
+    ? t('play.input.ending')
+    : dmBusy
+      ? t('play.input.dmBusy')
+      : pendingCheck
+        ? t('play.input.pendingRoll')
+        : undefined
+
+  const endLabels: EndSessionLabels = {
+    control: t('play.end.control'),
+    prompt: t('play.end.prompt'),
+    confirm: t('play.end.confirm'),
+    cancel: t('play.end.cancel'),
+  }
+  const windDownLabels: WindDownLabels = {
+    prompt: t('play.windDown.prompt'),
+    rest: t('play.windDown.rest'),
+    keep: t('play.windDown.keep'),
+  }
 
   // The MYT-94 knowledge layer — the one-snapshot cache + the in-session sheet + the
   // shared sidebar state, threaded into BOTH the chat (settled-prose highlighting)
@@ -195,6 +251,10 @@ export function SessionShell({
       {/* The transcript column — flex-1, min-w-0 so long prose never spills the row. */}
       {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- transcript column min-h-0/min-w-0 flex-scroll root; not expressible via @mythrun/ui Stack props */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-2)] p-[var(--space-4)]">
+        {/* The persistent end-session control (myth-lhp99) — a quiet ghost affordance
+            in the between-turns chrome at the top of the column, where the eye rests
+            and it never competes with Send or the fiction. A table can end mid-scene. */}
+        <EndSessionControl labels={endLabels} onEnd={endSession} disabled={ending} />
         {/* The scroll slot — MessageStream is `h-full`, so it fills this flex-1
             min-h-0 region and scrolls internally (the page never scrolls). */}
         {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- transcript scroll slot; MessageStream (h-full) fills this flex-1 min-h-0 region */}
@@ -223,15 +283,33 @@ export function SessionShell({
           thinkingLabel={t('play.thinking.dm')}
           typingLabel={t('play.thinking.typing')}
         />
+        {/* The wind-down offer (myth-lhp99) — hung off a detected long rest, the most
+            natural session boundary. Dismissible; "Rest here" ends resumably. */}
+        {showWindDown && (
+          <WindDownOffer
+            labels={windDownLabels}
+            onRest={endSession}
+            onKeepPlaying={() => {
+              setDismissedRestTurn(longRestTurn)
+            }}
+            disabled={ending}
+          />
+        )}
         <SessionInput
           value={draft}
           onChange={setDraft}
           onSend={onSend}
           onSummonDm={onSummonDm}
-          // The composer is gated only when the transport has terminally failed —
-          // sends during a transient `reconnecting` stay pending + resend (the
-          // view-model owns that). `ended` short-circuits to the complete notice above.
+          // Terminal `disabled` when the transport has failed (sends during a
+          // transient `reconnecting` stay pending + resend — the view-model owns
+          // that; `ended` short-circuits to the complete notice above). `busy`
+          // (myth-dd63v) is the SEPARATE transient gate — the DM mid-turn, a check
+          // awaiting Roll/Continue, or an end in flight — where the field stays
+          // typeable but Send waits behind a quiet reason line (never silently
+          // swallowed, the run-1 bug).
           disabled={connection.status === 'failed'}
+          busy={composerBusy}
+          {...(composerBusyLabel !== undefined ? { busyLabel: composerBusyLabel } : {})}
           placeholder={t('play.input.placeholder')}
           summonLabel={t('play.input.summon')}
           sendLabel={t('play.input.send')}
@@ -260,6 +338,8 @@ function buildRollLabels(t: TFunction): RollCardLabels {
       great_success: t('play.roll.tier.greatSuccess'),
     },
     dc: t('play.roll.dc'),
+    beats: t('play.roll.beats'),
+    misses: t('play.roll.misses'),
     advantage: t('play.roll.advantage'),
     disadvantage: t('play.roll.disadvantage'),
     dieResult: t('play.roll.dieResult'),

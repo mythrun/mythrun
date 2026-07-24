@@ -23,6 +23,8 @@ const STORY_LABELS: RollCardLabels = {
   continue: 'Continue',
   tier: { fail: 'Failure', success: 'Success', great_success: 'Critical success' },
   dc: 'DC',
+  beats: 'beats',
+  misses: 'misses',
   advantage: 'Advantage',
   disadvantage: 'Disadvantage',
   dieResult: 'You rolled',

@@ -14,15 +14,22 @@ export interface GhostChoiceItem {
   subtitle?: string
   /** Neutral activation callback — fired on click AND keyboard (Enter/Space). */
   onSelect: () => void
+  /** Optional test hook rendered as `data-testid` on the choice's `<button>` —
+   *  lets a consuming route address one option (the character-create chooser
+   *  paths) without reaching for its accessible name. Never rendered to the user. */
+  testId?: string
 }
 
 /**
- * A borderless "paper" choice list — the flat 1-bit register. Renders each item
- * as a real `<button>` (native keyboard activation + a11y), styled as a ghost
- * (`bg-transparent`, hover token-swap, NO border/box/glyph-mark), with the whole
- * list framed AND separated by quiet `Divider` hairlines (a rule above the first
- * item, between each, and below the last). Single column at every width; flat
- * (`rounded-none`). Used for the campaign-create fork.
+ * A carded "paper" choice list — the flat 1-bit register, brought up to the
+ * LevelCard standard (ux-run1 myth-occld). Renders each item as a real `<button>`
+ * (native keyboard activation + a11y) that is a whole SELECTABLE CARD: a 1px
+ * interactive `--border-strong` edge on the `--surface` fill, comfortable padding,
+ * a docked ember "enter" arrow vertically centred against the card, and a decisive
+ * hover (edge darkens to full ink + the neutral surface token-swap). The ENTIRE
+ * card is the click target — one tab-stop, one focus ring. Cards are separated by
+ * a gap (not hairline rules). Single column at every width; flat (`rounded-none`).
+ * Used for the campaign-create fork and the character-create path chooser.
  *
  * Platform-neutral (§9): each item's `onSelect` is a neutral callback, never a DOM
  * event; no `className`/`style`/raw DOM events.

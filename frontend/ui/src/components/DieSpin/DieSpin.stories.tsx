@@ -84,6 +84,36 @@ export const Stress: Story = {
   ),
 }
 
+// The per-shape outlines (myth-0qvay): the standard die set, each landed with its
+// numeral. A skill check pins the d20; an NdM dice_roll threads its sides. Every
+// silhouette is unmistakable and its equatorial band stays open so the numeral reads.
+const SHAPE_SPECS: readonly { sides: number; result: number }[] = [
+  { sides: 4, result: 4 },
+  { sides: 6, result: 6 },
+  { sides: 8, result: 8 },
+  { sides: 10, result: 10 },
+  { sides: 12, result: 12 },
+  { sides: 20, result: 20 },
+]
+export const Shapes: Story = {
+  name: 'Shapes (per-die outlines)',
+  render: () => (
+    <div className="flex items-center gap-[var(--space-5)] text-ink">
+      {SHAPE_SPECS.map(({ sides, result }) => (
+        <DieSpin
+          key={sides}
+          spinning={false}
+          result={result}
+          reducedMotion={false}
+          onSpinComplete={() => undefined}
+          sides={sides}
+          resultLabel={`d${String(sides)}`}
+        />
+      ))}
+    </div>
+  ),
+}
+
 // A self-driving demo: press Roll to flip `spinning` true; the decelerating stepped
 // spin runs (~0.9s) and lands the numeral on `onSpinComplete` — the RollCard's exact
 // contract.

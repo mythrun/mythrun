@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useRouteError } from 'react-router-dom'
 import { Stack, Box, Heading, Text, Button } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { isHttpError, isContractValidationError, useSessionStore } from '@mythrun/client-core'
+import { readRetryAttempts, recordRetryAttempt } from '../platform/web/retry-tracker.ts'
 
 // The route-level error boundary (react-router `errorElement`). It catches a
 // render/loader failure and branches on the data layer's TYPED errors (§3) — no
@@ -43,30 +44,65 @@ function ContractDrift(): React.JSX.Element {
   )
 }
 
-/** The generic transient-failure screen, with a retry affordance. */
-function RetryableError(): React.JSX.Element {
+// Escalate once this many retries have already re-failed in the current burst.
+// The retry does a full `navigate(0)` reload (screens throw from suspense queries,
+// not loaders, so a soft revalidate can't clear the cached error), which resets
+// React state — so the count is persisted out-of-band (retry-tracker) and the
+// boundary reads it on each fresh mount. After the threshold the copy stops
+// pretending a moment's patience will help and names the likely cause.
+const ESCALATE_AFTER = 2
+
+/** A terse support reference from a typed error — the HTTP code/status when we
+ *  have one (the console carries the full object regardless). */
+function errorReference(error: unknown): string | null {
+  if (isHttpError(error)) return error.code ?? String(error.status)
+  return null
+}
+
+/**
+ * The generic transient-failure screen. On the first failures it offers a plain
+ * "try again"; once retries keep re-failing (a persistent cause — a dead network,
+ * a down backend) it escalates the copy and offers a harder reset, and it logs
+ * the underlying error to the console every time it shows so a stuck loop is
+ * diagnosable rather than silent (myth-t1ccl).
+ */
+function RetryableError({ error }: { error: unknown }): React.JSX.Element {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const attempts = readRetryAttempts()
+  const escalated = attempts >= ESCALATE_AFTER
+  const reference = errorReference(error)
+
+  // Diagnostics: the boundary swallows the failure visually, so mirror it to the
+  // console (with the retry count) — the only place a persistent, silently-looping
+  // failure can be inspected.
+  useEffect(() => {
+    console.error(`[mythrun] route error (retry attempt ${String(attempts)})`, error)
+  }, [error, attempts])
+
+  const onRetry = (): void => {
+    // Count this attempt, then hard-reload the route. If it re-fails, the next
+    // mount reads the higher count and escalates; a burst that stops resets itself.
+    recordRetryAttempt()
+    void navigate(0)
+  }
+
   return (
     <Box padding={6} data-testid="error-retryable">
       <Stack align="center" gap={4}>
         <Heading level={1} role="heading">
-          {t('error.title')}
+          {escalated ? t('error.persistentTitle') : t('error.title')}
         </Heading>
         <Text as="p" role="prose-body">
-          {t('error.body')}
+          {escalated ? t('error.persistentBody') : t('error.body')}
         </Text>
-        <Button
-          variant="primary"
-          onPress={() => {
-            // Re-run the current route (re-fires its loader / re-mounts the
-            // screen); the wired home hub (W3e) swaps this for React-Query's
-            // `reset()` once the data-layer error path exists.
-            void navigate(0)
-          }}
-          data-testid="error-retry"
-        >
-          {t('error.retry')}
+        {escalated && reference !== null ? (
+          <Text role="meta" data-testid="error-reference">
+            {t('error.reference', { code: reference })}
+          </Text>
+        ) : null}
+        <Button variant="primary" onPress={onRetry} data-testid="error-retry">
+          {escalated ? t('error.reload') : t('error.retry')}
         </Button>
       </Stack>
     </Box>
@@ -85,6 +121,6 @@ export function RouteErrorBoundary(): React.JSX.Element {
   // Non-401 HttpError, NetworkError, and any unrecognised throw all share the
   // generic retryable screen — the safe default lets the user re-attempt the
   // action. (NetworkError is a transient transport failure; the retry re-runs
-  // the route.)
-  return <RetryableError />
+  // the route.) The error rides along for diagnostics + the support reference.
+  return <RetryableError error={error} />
 }

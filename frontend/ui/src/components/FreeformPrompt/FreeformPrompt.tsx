@@ -68,12 +68,17 @@ export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(fu
         </p>
       </Stack>
       {/* One generous textarea: auto-grows from a roomy floor as the concept
-          grows (a sentence to a few paragraphs), then caps and scrolls. */}
+          grows (a sentence to a few paragraphs), then caps and scrolls. It wears
+          the `prose` face — the serif user-authored-prose voice + ember caret —
+          so the character-describe field reads the same as the world-concept
+          field, not the mono DATA face that read as a code stub (ux-run1
+          myth-xs9tc). */}
       <TextArea
         id={fieldId}
         value={value}
         onChange={onChange}
         describedBy={whisperId}
+        face="prose"
         size="lg"
         autoSize
         minRows={6}

@@ -8,6 +8,7 @@ import { Divider } from '../Divider/Divider.tsx'
 import { WikiSearch } from './WikiSearch.tsx'
 import { WikiViewSwitch, type WikiView } from './WikiViewSwitch.tsx'
 import { WikiGlossary } from './WikiGlossary.tsx'
+import { WikiScrollFrame } from './WikiScrollFrame.tsx'
 import { RelatedFooter } from './RelatedFooter.tsx'
 import { filterWikiModel } from './filter-model.ts'
 import { resolveKindLabel } from './kind-label.ts'
@@ -332,12 +333,7 @@ export function WikiHome({
           <WikiViewSwitch value={activeView} onChange={onViewChange} indexLabel={indexLabel} glossaryLabel={glossaryLabel} />
         </div>
       )}
-      <div
-        ref={(el) => {
-          containerRef.current = el
-        }}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-[var(--space-4)]"
-      >
+      <WikiScrollFrame scrollRef={containerRef} contentClassName="pb-[var(--space-4)]">
         {activeView === 'glossary' ? (
           <WikiGlossary glossary={model.glossary} />
         ) : (
@@ -356,7 +352,7 @@ export function WikiHome({
             {...(groupLabels !== undefined ? { groupLabels } : {})}
           />
         )}
-      </div>
+      </WikiScrollFrame>
     </div>
   )
 }

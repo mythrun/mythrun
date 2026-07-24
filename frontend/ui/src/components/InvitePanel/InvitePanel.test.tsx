@@ -20,6 +20,9 @@ const LABELS: InvitePanelProps['labels'] = {
   copied: 'Copied',
   share: 'Share',
   replace: 'Replace link',
+  replacePrompt: 'Replace this link? The old link stops working.',
+  replaceConfirm: 'Replace',
+  replaceCancel: 'Keep',
   limit: "You've reached the invite limit. Replace the existing link instead.",
   error: 'Something went wrong. Try again.',
 }
@@ -69,12 +72,41 @@ describe('InvitePanel', () => {
     expect(queryByTestId('invite-panel-share')).not.toBeInTheDocument()
   })
 
-  it('fires onRevoke from the replace-link control', async () => {
+  it('confirms before Replace fires onRevoke (it strands the old link)', async () => {
     const onRevoke = vi.fn()
     const user = userEvent.setup()
-    const { getByTestId } = renderPanel({ onRevoke })
+    const { getByTestId, queryByTestId } = renderPanel({ onRevoke })
+    // First press only ARMS the confirm — it must NOT revoke yet.
     await user.click(getByTestId('invite-panel-revoke'))
+    expect(onRevoke).not.toHaveBeenCalled()
+    expect(getByTestId('invite-panel-replace-confirm')).toBeInTheDocument()
+    // Confirming fires the real revoke and closes the confirm.
+    await user.click(getByTestId('invite-panel-replace-confirm'))
     expect(onRevoke).toHaveBeenCalledOnce()
+    expect(queryByTestId('invite-panel-replace-confirm')).not.toBeInTheDocument()
+    expect(getByTestId('invite-panel-revoke')).toBeInTheDocument()
+  })
+
+  it('cancels the Replace confirm without revoking', async () => {
+    const onRevoke = vi.fn()
+    const user = userEvent.setup()
+    const { getByTestId, queryByTestId } = renderPanel({ onRevoke })
+    await user.click(getByTestId('invite-panel-revoke'))
+    await user.click(getByTestId('invite-panel-replace-cancel'))
+    expect(onRevoke).not.toHaveBeenCalled()
+    // Back to the single Replace control, link intact.
+    expect(getByTestId('invite-panel-revoke')).toBeInTheDocument()
+    expect(queryByTestId('invite-panel-replace-confirm')).not.toBeInTheDocument()
+  })
+
+  it('quiet prominence renders Copy as a bordered secondary, not the filled accent', () => {
+    // Demoted invites must not spend the page's one filled accent on Copy.
+    const quiet = renderPanel({ prominence: 'quiet' })
+    expect(quiet.getByTestId('invite-panel-copy').className).not.toMatch(/bg-accent/)
+    quiet.unmount()
+    // Primary (the hub) keeps Copy filled.
+    const primary = renderPanel({ prominence: 'primary' })
+    expect(primary.getByTestId('invite-panel-copy').className).toMatch(/bg-accent/)
   })
 
   it('shows a calm loading line and NO link while loading', () => {

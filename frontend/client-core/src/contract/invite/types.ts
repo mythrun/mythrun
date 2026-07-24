@@ -42,6 +42,13 @@ export interface InvitePanelLabels {
   share: string
   /** The replace-link control's label. */
   replace: string
+  /** The one-beat confirm prompt shown after Replace is pressed (it strands the old
+   *  link, so the destructive step is confirmed before it fires). */
+  replacePrompt: string
+  /** The confirm control that actually replaces the link. */
+  replaceConfirm: string
+  /** The cancel control that keeps the current link. */
+  replaceCancel: string
   /** The `cap-reached` calm-notice body (the soft invite-limit line). */
   limit: string
   /** The `error` calm-notice body (the transient-failure line). */
@@ -61,8 +68,17 @@ export interface InvitePanelProps {
   /** A transient "copied" acknowledgement (the route owns the timer). */
   copied: boolean
   notice: 'cap-reached' | 'error' | null
+  /** Visual weight (MYT-99g03). `primary` fills Copy in the brand accent (the
+   *  campaign hub, where the invite IS the primary action). `quiet` renders Copy as
+   *  a bordered secondary so a DEMOTED invite (below a character reveal / party
+   *  roster) never out-shouts that screen's real primary action. Defaults to
+   *  `primary`. */
+  prominence?: 'primary' | 'quiet'
   onCopy: () => void
   onShare: () => void
+  /** Replace the current link (revoke + re-mint). Fired only AFTER the panel's
+   *  one-beat confirm — Replace strands any already-shared link, so it never fires
+   *  on the first press. */
   onRevoke: () => void
   /** Mint a fresh link when none exists (post-revoke). */
   onCreate: () => void

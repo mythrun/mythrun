@@ -23,13 +23,16 @@ export interface GhostHookItem {
 }
 
 /**
- * A borderless "paper" hook list — the flat 1-bit register, a richer sibling of
- * GhostChoiceList. Each item is a real `<button>` styled as a ghost
- * (`bg-transparent`, hover token-swap, NO border/box/glyph-mark), STACKING a serif
- * title over an optional quiet place line over a prose paragraph, with the whole
- * list framed AND separated by quiet `Divider` hairlines (a rule above the first
- * item, between each, and below the last). Single column at every width; flat
- * (`rounded-none`). Used for the starting-situation pick (three opening hooks).
+ * A carded "paper" hook list — the flat 1-bit register, a richer sibling of
+ * GhostChoiceList, brought up to the LevelCard standard (ux-run1 myth-occld). Each
+ * item is a real `<button>` that is a whole SELECTABLE CARD (1px interactive
+ * `--border-strong` edge on `--surface`, comfortable padding, docked ember arrow
+ * vertically centred against the card, decisive hover), STACKING a serif title
+ * over an optional quiet place line over a prose paragraph capped to a readable
+ * measure (~62ch). The ENTIRE card is the click target — one tab-stop, one focus
+ * ring. Cards are separated by a gap (not hairline rules). Single column at every
+ * width; flat (`rounded-none`). Used for the starting-situation pick (three
+ * opening hooks).
  *
  * Platform-neutral (§9): each item's `onSelect` is a neutral callback, never a DOM
  * event; no `className`/`style`/raw DOM events.

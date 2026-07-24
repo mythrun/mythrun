@@ -93,6 +93,16 @@ describe('FreeformPrompt', () => {
     expect(getByRole('textbox').className).toContain('rounded-none')
   })
 
+  it('wears the serif user-prose face, not the mono DATA face (myth-xs9tc)', () => {
+    const { getByRole } = render(<FreeformPrompt {...props()} />)
+    const field = getByRole('textbox')
+    // Same face as the world-concept field: serif font-body + the ember caret,
+    // never the mono font-ui that read as a code stub.
+    expect(field.className).toContain('font-body')
+    expect(field.className).toContain('caret-accent-fg')
+    expect(field.className).not.toContain('font-ui')
+  })
+
   it('carries a data-testid on the root', () => {
     const { getByTestId } = render(<FreeformPrompt {...props()} />)
     expect(getByTestId('freeform-prompt')).toBeInTheDocument()

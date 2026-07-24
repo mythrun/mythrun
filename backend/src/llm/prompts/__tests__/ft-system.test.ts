@@ -191,3 +191,22 @@ describe('ft-system player-agency in multiplayer (myth-ph544)', () => {
     expect(p).toMatch(/lore tool|lore lookup|knowledge check/i)
   })
 })
+
+describe('ft-system ux-run1 prose amendments', () => {
+  const render = (): string =>
+    loadPrompt('session', 'ft-system', { ft_context: 'FTCTX', party_roster: 'Arin, Bryn' })
+
+  it('forbids naming the scaffolding in prose, calling out "session context" (myth-eehro)', () => {
+    const p = render()
+    expect(p).toMatch(/never name the scaffolding/i)
+    expect(p).toContain('session context')
+    expect(p).toMatch(/stage direction/i)
+  })
+
+  it('permits inline emphasis but bars other markdown formatting (myth-5syk3)', () => {
+    const p = render()
+    expect(p).toMatch(/\*italics\*|\*bold\*|\*\*bold\*\*/i)
+    expect(p).toMatch(/close every marker/i)
+    expect(p).toMatch(/no other formatting|never headings/i)
+  })
+})

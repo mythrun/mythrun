@@ -8,7 +8,7 @@ import {
 } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
 import { CharacterSurface, type CharacterSurfaceDeps } from './character-new/character-surface.tsx'
-import { CampaignInvitePanel, type InvitePanelDeps } from './campaign-invite-panel.tsx'
+import type { InvitePanelDeps } from './campaign-invite-panel.tsx'
 
 // The CAMPAIGN PAGE (MYT-89 Phase D, D5 → MYT-90 D8 → MYT-91) — where a player
 // lands at `/campaigns/:id` once world-gen is settled AND a starting situation is
@@ -32,8 +32,33 @@ type FetchCampaigns = (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
 const defaultFetchCampaigns: FetchCampaigns = (ctx) =>
   getMyCampaigns(undefined, ctx).then((r) => r.campaigns)
 
+// The header cover chip — a COMPACT version of the home-hub card's dithered `band`
+// cover (myth-ij1gq). The tiny `swatch` size renders a real world-colour pair as a
+// coarse ~50%-density checkerboard that reads as a broken/missing image (only 12
+// gradient rows, so the mid-density band dominates the tile); the `band` grid (45×27)
+// sweeps a clean light→dark cover even at chip scale, so it reads as intentional
+// cover art. Fixed 64px width (`--space-9`, `shrink-0` so it holds beside the title);
+// the band stands its own 5:3 height. A colour-less world keeps the muted ghost.
+const COVER_CHIP_CLASS = 'w-[var(--space-9)] shrink-0'
+
+function CoverChip({ colors }: { colors: CampaignSummary['worldColors'] }): React.JSX.Element {
+  return (
+    // A fixed-width host for the full-bleed `band` CoverDither — the DS models a full
+    // CoverCard (portrait card + body) but not a bare compact cover chip, so this is a
+    // true one-off layout wrapper.
+    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- fixed-width host for a full-bleed band cover; DS has no bare cover-chip primitive
+    <div className={COVER_CHIP_CLASS}>
+      {colors !== null ? (
+        <CoverDither size="band" bordered from={colors.from} to={colors.to} data-testid="campaign-cover" />
+      ) : (
+        <CoverDither size="band" bordered data-testid="campaign-cover-ghost" />
+      )}
+    </div>
+  )
+}
+
 /** The world identity block: the dither cover + world name + campaign name. A
- *  still-loading / not-found campaign renders the muted ghost swatch beside a calm
+ *  still-loading / not-found campaign renders the muted ghost cover beside a calm
  *  i18n line (never a fake identity). */
 function WorldIdentity({
   campaign,
@@ -46,7 +71,7 @@ function WorldIdentity({
   if (campaign === null) {
     return (
       <Stack direction="row" align="center" gap={3}>
-        <CoverDither size="swatch" bordered data-testid="campaign-cover-ghost" />
+        <CoverChip colors={null} />
         <Text role="ui-caption" as="p">
           {loading ? t('campaign.settling') : t('campaign.notFound')}
         </Text>
@@ -56,17 +81,7 @@ function WorldIdentity({
   const { name, worldName, worldColors } = campaign
   return (
     <Stack direction="row" align="center" gap={3}>
-      {worldColors !== null ? (
-        <CoverDither
-          size="swatch"
-          bordered
-          from={worldColors.from}
-          to={worldColors.to}
-          data-testid="campaign-cover"
-        />
-      ) : (
-        <CoverDither size="swatch" bordered data-testid="campaign-cover-ghost" />
-      )}
+      <CoverChip colors={worldColors} />
       <Stack gap={1} grow>
         <Text role="ui-caption" as="p">
           {t('campaign.eyebrow')}
@@ -128,18 +143,15 @@ export function CampaignPage({
   return (
     <Stack gap={5} data-testid="route-campaign-detail">
       <WorldIdentity campaign={campaign} loading={loading} />
-      {/* The invite region is OWNER-ONLY (`creator === null`); a member — or a
-          still-resolving / not-found campaign — sees nothing here. */}
-      {campaign?.creator === null ? (
-        <CampaignInvitePanel
-          campaignId={campaignId}
-          {...(inviteDeps !== undefined && { deps: inviteDeps })}
-        />
-      ) : null}
+      {/* The owner's invite now travels WITH the character beat (MYT-99g03): a quiet
+          collapsed line below the reveal / setup beats, and the inline party-slot
+          disclosure on staging — never a standalone block above the character. The
+          surface gates it owner-only (`creator === null`) per beat. */}
       <CharacterSurface
         campaign={campaign}
         campaignId={campaignId}
         {...(characterDeps !== undefined && { deps: characterDeps })}
+        {...(inviteDeps !== undefined && { inviteDeps })}
       />
     </Stack>
   )

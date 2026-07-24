@@ -159,7 +159,7 @@ function InviteRow({ onInvite, inviteSub }: { onInvite: () => void; inviteSub: s
 }
 
 export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function PartyRoster(
-  { labels, members, viewerIsOwner, canBegin, onBegin, onInvite },
+  { labels, members, viewerIsOwner, canBegin, onBegin, onInvite, inviteExpansion },
   ref,
 ) {
   // The invite slot is chrome, not a player — exclude it from the count + label
@@ -182,6 +182,12 @@ export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function
           ),
         )}
       </ul>
+      {/* The invite disclosure — opened from the dashed slot, rendered here (between
+          the party and the Begin control) so it stays the SINGLE invite entry point
+          below the party identity, never a block above the roster. */}
+      {inviteExpansion !== undefined && (
+        <div data-testid="party-roster-invite-expansion">{inviteExpansion}</div>
+      )}
       <div className={ACTIONS_CLASS}>
         {viewerIsOwner ? (
           <Button variant="primary" size="lg" disabled={!canBegin} onPress={onBegin}>

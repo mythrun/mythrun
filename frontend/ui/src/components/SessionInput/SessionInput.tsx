@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef } from 'react'
 import type { SessionInputProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
+import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 import { TextArea } from '../TextArea/TextArea.tsx'
 import { Button } from '../Button/Button.tsx'
 import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
@@ -15,11 +16,23 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // the session is ended / not-ready. Platform-neutral (§9): neutral callbacks,
 // resolved i18n labels as props — no className/style, no DOM events leaked out.
 //
-// Register: the @DM summon is a REAL, bordered `secondary` affordance — prominent
-// (easy to find, never buried in a menu) but register-QUIET (the brand's paper-y
-// voice, not the ember-loud primary and not gamerspeak). Send is the primary
-// (ember) action. The terse button copy is consumer-resolved, so the component
-// itself hard-codes no strings.
+// Register: the composer FIELD wears the `prose` face (serif font-body + the branded
+// ember caret, myth-xs9tc) — the one face a player's own writing wears, so the
+// authorship moment shares the world's voice instead of reading as an unfinished form
+// control (031 critic). The two actions are GROUPED at the right of one row (not pinned
+// to opposite ends) so their relationship is legible, and the OOC-vs-in-world split is
+// carried by the variant hierarchy: SEND is the ember `primary` — your character's
+// in-world action — and "Ask the DM" is the bordered `secondary` beside it — the quiet
+// out-of-character question to the DM (prominent, never buried, but register-quiet).
+// The terse button copy is consumer-resolved, so the component hard-codes no strings.
+//
+// myth-dd63v — the composer honours a `busy` state distinct from `disabled`:
+// while the DM is mid-turn (or a check awaits Roll/Continue) SENDING is not the
+// expected next action, so both send intents are gated and a quiet `busyLabel`
+// names why — but the FIELD stays typeable so drafting-ahead is preserved. This
+// replaces the old behaviour where Send looked live during a stream and silently
+// no-op'd (the run-1 "single most damaging" bug). `disabled` (terminal — session
+// ended / not-ready) still hard-gates the field itself.
 
 export function SessionInput({
   value,
@@ -27,6 +40,8 @@ export function SessionInput({
   onSend,
   onSummonDm,
   disabled,
+  busy = false,
+  busyLabel,
   placeholder,
   summonLabel,
   sendLabel,
@@ -38,18 +53,26 @@ export function SessionInput({
   // longer than the server accepts can't be composed; overCap is the belt that
   // also blocks send for a programmatically-set over-cap value.
   const overCap = maxLength !== undefined && value.length > maxLength
+  // Sending is blocked while terminal-disabled, over the cap, OR busy (DM writing
+  // / check pending). The @DM summon shares the busy gate but not the cap (a bare
+  // `@dm` summon is always short).
+  const sendGated = disabled || overCap || busy
+  const summonGated = disabled || busy
+  // The caption only reads while genuinely busy (never on the terminal-disabled
+  // end state, which has its own complete-notice) and only when a label is given.
+  const showBusy = busy && !disabled && busyLabel !== undefined
 
   // Enter-to-send / Shift+Enter-newline. The keydown lives on the interactive
   // <textarea> itself (attached to the forwarded ref), NOT a wrapper element — a
   // key handler on a non-interactive container trips jsx-a11y, and the textarea
   // is the correct a11y target regardless. `isComposing` guards IME: an Enter
-  // that COMMITS a composition must not send. A disabled textarea emits no
-  // keydown, but we re-check `disabled` defensively so a stale event can't leak.
+  // that COMMITS a composition must not send. `busy` blocks the Enter path too, so
+  // a keyboard send can't slip past the gated Send button while the DM writes.
   useEffect(() => {
     const el = fieldRef.current
     if (!el) return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (disabled || overCap) return
+      if (sendGated) return
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault()
         onSend()
@@ -59,7 +82,7 @@ export function SessionInput({
     return () => {
       el.removeEventListener('keydown', onKeyDown)
     }
-  }, [disabled, onSend, overCap])
+  }, [sendGated, onSend])
 
   return (
     <div className={cn('flex flex-col gap-[var(--space-2)]')}>
@@ -77,18 +100,35 @@ export function SessionInput({
         onChange={onChange}
         placeholder={placeholder}
         disabled={disabled}
+        // The player's own writing wears the serif prose face + ember caret
+        // (myth-xs9tc). Reading-size, not display-size: size/autoSize/rows unchanged.
+        face="prose"
         autoSize
         minRows={1}
         maxRows={6}
         {...(maxLength !== undefined ? { maxLength } : {})}
       />
       <div className={cn('flex items-center justify-between gap-[var(--space-2)]')}>
-        <Button variant="secondary" onPress={onSummonDm} disabled={disabled}>
-          {summonLabel}
-        </Button>
-        <Button variant="primary" onPress={onSend} disabled={disabled || overCap}>
-          {sendLabel}
-        </Button>
+        {/* The busy caption sits at the left of the affordance row (a polite live
+            region so the reason is announced, not swallowed) — the quiet
+            between-turns register, matching the transcript's thinking line. Empty
+            when idle; reserves no height. */}
+        <p
+          data-testid="session-input-busy"
+          role="status"
+          aria-live="polite"
+          className={cn(TYPE_ROLE_CLASS.meta, 'min-w-0 truncate')}
+        >
+          {showBusy ? busyLabel : ''}
+        </p>
+        <div className={cn('flex flex-none items-center gap-[var(--space-2)]')}>
+          <Button variant="secondary" onPress={onSummonDm} disabled={summonGated}>
+            {summonLabel}
+          </Button>
+          <Button variant="primary" onPress={onSend} disabled={sendGated}>
+            {sendLabel}
+          </Button>
+        </div>
       </div>
     </div>
   )

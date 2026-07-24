@@ -243,6 +243,36 @@ describe('Button', () => {
     }
   })
 
+  it('a disabled PRIMARY keeps its ember identity (muted ember ghost, not a dead grey slug) — MYT-0xao0', () => {
+    const { getByRole } = render(<Button disabled>Begin</Button>)
+    const el = getByRole('button')
+    // The disabled primary drops the loud fill but keeps the accent as an edge +
+    // label (theme-aware --accent-fg) — "the primary, not yet available".
+    expect(el).toHaveClass('disabled:bg-transparent', 'disabled:border-accent-fg', 'disabled:text-accent-fg')
+    // NOT the old blanket lifeless grey (bg-surface + tertiary ink) that read as broken.
+    expect(el).not.toHaveClass('disabled:bg-surface')
+    expect(el).not.toHaveClass('disabled:text-ink-tertiary')
+    // A rest-state transparent border reserves the 1px edge, so toggling disabled
+    // fills/unfills without a reflow.
+    expect(el).toHaveClass('border', 'border-transparent')
+  })
+
+  it('a disabled SECONDARY / GHOST reads as a muted neutral (tertiary ink), per-variant not blanket', () => {
+    const secondary = render(
+      <Button variant="secondary" disabled>
+        x
+      </Button>,
+    )
+    expect(secondary.getByRole('button')).toHaveClass('disabled:border-border', 'disabled:text-ink-tertiary')
+    secondary.unmount()
+    const ghost = render(
+      <Button variant="ghost" disabled>
+        x
+      </Button>,
+    )
+    expect(ghost.getByRole('button')).toHaveClass('disabled:bg-transparent', 'disabled:text-ink-tertiary')
+  })
+
   it('renders a leading icon slot before the label, hidden from assistive tech', () => {
     const { getByRole, getByTestId } = render(
       <Button icon={<svg data-testid="lead-icon" />}>Continue</Button>,

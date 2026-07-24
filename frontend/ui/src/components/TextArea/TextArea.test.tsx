@@ -112,6 +112,21 @@ describe('TextArea', () => {
     expect(getByRole('textbox')).toHaveClass('rounded-none', 'border', 'border-border-strong')
   })
 
+  it('defaults to the mono DATA face (font-ui), no prose caret', () => {
+    const { getByRole } = render(<TextArea />)
+    const el = getByRole('textbox')
+    expect(el).toHaveClass('font-ui')
+    expect(el).not.toHaveClass('font-body')
+    expect(el).not.toHaveClass('caret-accent-fg')
+  })
+
+  it('face="prose" wears the serif user-prose face + the ember caret (the one player-writing face)', () => {
+    const { getByRole } = render(<TextArea face="prose" />)
+    const el = getByRole('textbox')
+    expect(el).toHaveClass('font-body', 'caret-accent-fg')
+    expect(el).not.toHaveClass('font-ui')
+  })
+
   it('forwards its ref to the underlying textarea', () => {
     const ref = createRef<HTMLTextAreaElement>()
     render(<TextArea ref={ref} />)

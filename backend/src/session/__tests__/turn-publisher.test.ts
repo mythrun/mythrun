@@ -205,6 +205,20 @@ describe('createTurnPublisher', () => {
     expect((received[0]?.frame as { seq?: number }).seq).toBeUndefined()
   })
 
+  it('ledgerUpdate carries restType on a rest frame (the live wind-down signal, myth-lhp99)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.ledgerUpdate(CAMPAIGN, TURN, {
+      characterName: 'Mara',
+      kind: 'rest',
+      summary: 'Mara finishes a long rest.',
+      restType: 'long',
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toMatchObject({ type: 'ledger_update', kind: 'rest', restType: 'long' })
+  })
+
   it('ledgerUpdate carries diceRolled when present (an hp adjust rolled dice)', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
     await pub.ledgerUpdate(CAMPAIGN, TURN, {

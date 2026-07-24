@@ -216,7 +216,7 @@ describe('processScribeJob — grounding floor: the tripwire receives the public
 
     await processScribeJob(deps, job())
 
-    const arg = tw.mock.calls[0]?.[0] as { publicContext: string }
+    const arg = tw.mock.calls[0]?.[0] as { secrets: string; publicContext: string }
     expect(arg.publicContext).toBe('')
     // Sanity: the secret playbook still rides the `secrets` field (handle-wrapped).
     expect(arg.secrets).toContain('[SECRET-1]')

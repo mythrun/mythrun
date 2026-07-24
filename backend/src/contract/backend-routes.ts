@@ -101,6 +101,7 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   { method: 'POST', path: '/api/sessions/:id/start' },
   { method: 'GET', path: '/api/sessions/:id/active' },
   { method: 'GET', path: '/api/sessions/:id/messages' },
+  { method: 'GET', path: '/api/sessions/:id/recap' },
 
   // WebSocket transport (MYT-65 Task 11) — `GET /ws/session/:sessionId`, the
   // websocket-upgrade route registered by wsSessionRoutes in app.ts. It prints

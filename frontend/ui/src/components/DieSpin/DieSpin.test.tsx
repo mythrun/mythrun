@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createRef } from 'react'
 import { act, render } from '@testing-library/react'
 import { axe } from 'jest-axe'
-import { DieSpin, DIE_SPIN_DWELLS, DIE_IMPACT_MS, DIE_IMPACT_SCALE } from './DieSpin.tsx'
+import { DieSpin, DIE_SPIN_DWELLS, DIE_IMPACT_MS, DIE_IMPACT_SCALE, DIE_PATHS, pathForSides } from './DieSpin.tsx'
 
 // DieSpin (MYT-93, spec §5) — the flat 2D OUTLINED facet-band d20 the RollCard spins.
 // Its motion is a STEPPED rotation (eight discrete 45° jumps ≈ one revolution back to
@@ -192,5 +192,48 @@ describe('DieSpin', () => {
       />,
     )
     expect(await axe(landed.container)).toHaveNoViolations()
+  })
+})
+
+describe('DieSpin — per-shape outlines (myth-0qvay)', () => {
+  function pathOf(sides?: number): string | null {
+    const { container } = render(
+      <DieSpin
+        spinning={false}
+        result={5}
+        reducedMotion={false}
+        onSpinComplete={vi.fn()}
+        {...(sides !== undefined ? { sides } : {})}
+      />,
+    )
+    return container.querySelector('path')?.getAttribute('d') ?? null
+  }
+
+  it('defaults to the d20 facet-band glyph when no sides is given (back-compat)', () => {
+    expect(pathOf()).toBe(DIE_PATHS[20])
+    expect(pathOf(20)).toBe(DIE_PATHS[20])
+  })
+
+  it('draws the authored silhouette for each standard die', () => {
+    for (const sides of [4, 6, 8, 10, 12, 20]) {
+      expect(pathOf(sides)).toBe(DIE_PATHS[sides])
+    }
+  })
+
+  it('renders a DISTINCT silhouette per die (no two shapes share a path)', () => {
+    const paths = [4, 6, 8, 10, 12, 20].map((s) => pathForSides(s))
+    expect(new Set(paths).size).toBe(paths.length)
+  })
+
+  it('renders d100/percentile as a d10, and falls back to d20 for a non-standard size', () => {
+    expect(pathOf(100)).toBe(DIE_PATHS[10])
+    expect(pathOf(7)).toBe(DIE_PATHS[20])
+  })
+
+  it('still stamps the numeral cleanly on any shape (numeral field is open)', () => {
+    const { getByTestId } = render(
+      <DieSpin spinning={false} result={8} reducedMotion={false} onSpinComplete={vi.fn()} sides={8} />,
+    )
+    expect(getByTestId('die-spin-result')).toHaveTextContent('8')
   })
 })

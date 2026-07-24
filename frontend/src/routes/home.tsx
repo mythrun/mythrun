@@ -85,9 +85,27 @@ function CampaignHub(): React.JSX.Element {
 
 export function HomeRoute(): React.JSX.Element {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   return (
     <Stack gap={5} data-testid="route-home">
-      <Heading level={1}>{t('home.title')}</Heading>
+      {/* The page header row: the title + the PRIMARY create affordance, top of the
+          page where a returning player looks (above the fold, the surface's strongest
+          CTA). The run-1 blocker (MYT-3jb55) was that create was a buried bottom
+          text-link with no header entry; the grid also leads with a dashed create
+          tile (home-hub). Always present — create is valid whether the hub is
+          loading, empty, or full. */}
+      <Stack direction="row" justify="between" align="center" gap={4}>
+        <Heading level={1}>{t('home.title')}</Heading>
+        <Button
+          icon={<Icon name="plus" decorative />}
+          onPress={() => {
+            void navigate(CAMPAIGN_NEW_PATH)
+          }}
+          data-testid="home-new-campaign"
+        >
+          {t('home.newCampaign')}
+        </Button>
+      </Stack>
       <Suspense
         fallback={<Spinner label={t('home.loading')} data-testid="home-loading" />}
       >

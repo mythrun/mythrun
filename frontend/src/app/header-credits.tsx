@@ -3,13 +3,15 @@ import { useTranslation } from 'react-i18next'
 import { useBalance } from '@mythrun/client-core'
 import { HeaderSlot } from './header-slot.tsx'
 
-// The header credit-balance slot (MYT-87 T16, relabeled MYT-99). Reads the live
-// SESSION balance via the `useBalance` suspense hook and renders it as a terse mono
-// readout in the app frame: a visible "Credits" label LEADING the number, so the
-// counter says what it is instead of being a bare number (MYT-99 complaint #3). The
-// label leads (not a trailing unit) so it satisfies sentence case — the first word
-// carries the capital — and it doubles as the accessible name (a screen reader reads
-// "Credits 1,250"), so no visually-hidden label is needed.
+// The header credit-balance slot (MYT-87 T16, relabeled MYT-99, reconciled MYT-9jrh9).
+// Reads the live SESSION balance via the `useBalance` suspense hook and renders it as
+// a terse mono readout in the app frame: a visible "Session credits" label LEADING the
+// number. The label is SPECIFIC — "Session credits", not a bare "Credits" — because the
+// product has TWO currencies (session + world credits); a lone "Credits N" in the
+// persistent header silently equalled the session bucket and taught the wrong model on
+// the highest-traffic surface (MYT-9jrh9). The label leads (not a trailing unit) so it
+// satisfies sentence case, and it doubles as the accessible name (a screen reader reads
+// "Session credits 1,250"), so no visually-hidden label is needed.
 //
 // It lives in the ALWAYS-present frame, so `HeaderSlot` isolates it: Suspense paints
 // a small spinner while the balance first loads (the frame never suspends as a

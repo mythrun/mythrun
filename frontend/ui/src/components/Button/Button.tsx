@@ -45,11 +45,34 @@ const ICON_GAP = 'gap-[var(--space-2)]'
 // token-swap. primary swaps the accent fill (accent-hover → accent-active);
 // secondary/ghost swap the neutral surface (surface-hover → surface-active),
 // one paper step per state.
+//
+// DISABLED is PER-VARIANT (MYT-0xao0), not one blanket grey. The old shared
+// `disabled:bg-surface + ink-tertiary` painted EVERY disabled button the same dead
+// grey — so an awaiting-input primary CTA (an empty-form "Begin") read as BROKEN
+// rather than "the primary, not yet available." Each variant now keeps its identity
+// while muted:
+//   • primary  → a muted EMBER GHOST: the loud fill drops but the accent survives as
+//     an edge + label (theme-aware --accent-fg), so it still reads as THE primary,
+//     just unfilled/awaiting; it fills solid the moment it becomes available. The
+//     primary carries a transparent border at rest so toggling disabled adds no 1px
+//     reflow.
+//   • secondary → the same bordered neutral, softened (decorative --border edge,
+//     tertiary-ink label).
+//   • ghost    → a quiet tertiary-ink label on the bare page.
+// Disabled is a11y-exempt for contrast (§4).
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-paper-50 hover:bg-accent-hover active:bg-accent-active',
-  secondary:
+  primary: cn(
+    'bg-accent text-paper-50 border border-transparent hover:bg-accent-hover active:bg-accent-active',
+    'disabled:bg-transparent disabled:border-accent-fg disabled:text-accent-fg',
+  ),
+  secondary: cn(
     'bg-surface text-ink border border-border-strong hover:bg-surface-hover active:bg-surface-active',
-  ghost: 'bg-transparent text-ink hover:bg-surface-hover active:bg-surface-active',
+    'disabled:bg-surface disabled:border-border disabled:text-ink-tertiary',
+  ),
+  ghost: cn(
+    'bg-transparent text-ink hover:bg-surface-hover active:bg-surface-active',
+    'disabled:bg-transparent disabled:text-ink-tertiary',
+  ),
 }
 
 // MINIMUM height from the `--control-*` token (32/40/48) — a FLOOR, not a fixed
@@ -87,10 +110,10 @@ const button = cva(
     'pointer-coarse:min-h-[44px]',
     // Theme-aware focus ring (== --focus-ring-color in both themes).
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
-    // Disabled (incl. loading): muted token swap, non-interactive cursor.
-    // a11y-exempt for contrast (§4). `disabled:border-border-strong` keeps the
-    // secondary border from looking active while muted.
-    'disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-tertiary disabled:border-border-strong',
+    // Disabled (incl. loading): non-interactive cursor. The muted VISUAL treatment is
+    // PER-VARIANT (see VARIANT_CLASS) so a disabled primary keeps its ember identity
+    // instead of collapsing to a dead grey.
+    'disabled:cursor-not-allowed',
   ),
   {
     variants: {

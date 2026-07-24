@@ -134,7 +134,20 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  generation. The list is rendered only when `interactive` AND this label is
    *  supplied. */
   nodeListLabel?: string
+  /** RESOLVED kind → label copy for the graph's GLYPH LEGEND (myth-466cy). The graph
+   *  encodes an entity's kind in its glyph SHAPE; when this map is supplied a quiet
+   *  key renders beneath the pane documenting the shapes for the kinds actually
+   *  present (the same i18n labels the wiki's group headings speak — one map, no
+   *  drift). Omit it (the generation graph) and no legend renders. The DS owns no
+   *  copy: a kind absent from the map is left out of the key. */
+  legend?: GraphLegendLabels
 }
+
+/** A resolved kind → display-label map for the graph legend (myth-466cy). Keyed by
+ *  entity kind (`faction`/`location`/`npc`/`item`, plus `pc`/`world` when a world
+ *  carries them); values are i18n'd strings the consumer supplies (the DS owns no
+ *  copy). A kind with no entry is omitted from the key. */
+export type GraphLegendLabels = Partial<Record<string, string>>
 
 /**
  * The GENERATION graph's screen-reader model (MYT-89 Phase E, E1). Every field is

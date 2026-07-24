@@ -26,7 +26,11 @@ export interface Point {
 const GLYPH_HALF = 6
 const HOVER_SCALE = 1.5
 const SELECT_FRAME_PAD = 5
-const LABEL_ALPHA = 0.62
+/** Node-name label alpha over its paper halo. Was 0.62, which blended `--ink` down to
+ *  ~4.46:1 in the light theme — under the 4.5:1 AA text floor and read as muted taupe
+ *  (the myth-466cy contrast finding). 0.82 clears AA with margin in BOTH themes (light
+ *  ~8.4:1, warm-dark ~9.8:1) while staying a quiet warm ink, never jet-black. */
+const LABEL_ALPHA = 0.82
 /** The npc/pc stack glyph's head square, as a ratio of the glyph half-extent — the small
  *  "head" square over the larger "body" square (see drawStack). */
 const STACK_HEAD_RATIO = 0.7
@@ -34,9 +38,16 @@ const STACK_HEAD_RATIO = 0.7
 const PC_RING_PAD = 2
 /** Edge stroke alpha over the (already lighter) edge ink — the connection strings sit
  *  UNDER the text: the host strokes them in the `--ink-tertiary` step (see
- *  `resolveEdgeInk`) and this alpha keeps them a quiet web at real density (~70 edges),
- *  so a label always reads over a crossing line. */
-const EDGE_ALPHA = 0.55
+ *  `resolveEdgeInk`), the label's paper halo knocks them out from under names, and this
+ *  alpha keeps them a quiet web at real density (~70 edges). Was 0.55, which left edges
+ *  at ~2.2:1 in the light theme — under the 3:1 WCAG non-text floor and near-invisible
+ *  (the myth-466cy finding: "hard to trace who connects to whom"). 0.85 clears the 3:1
+ *  floor in BOTH themes (light ~3.8:1, warm-dark ~5.0:1), still a step lighter than the
+ *  ~8.4:1 labels so the web reads under the names. */
+const EDGE_ALPHA = 0.85
+/** Edge stroke width (virtual px, scaled up on wide panes). A hair over 1 so a crossing
+ *  line stays traceable at density without thickening into a ruled-paper grid. */
+const EDGE_WIDTH = 1.15
 
 // ── Act-2 penstroke edge draw-in (MYT-89 C6) ──────────────────────────────────────────
 // Edges are DRAWN, not popped in: on first appearance each reveals as a partial line from
@@ -160,7 +171,7 @@ export function drawEdges(
 ): void {
   ctx.save()
   ctx.globalAlpha = EDGE_ALPHA
-  ctx.lineWidth = 1
+  ctx.lineWidth = EDGE_WIDTH
   for (const edge of edges) {
     const a = positions.get(edge.from)
     const b = positions.get(edge.to)

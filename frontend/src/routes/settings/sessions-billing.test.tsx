@@ -47,9 +47,15 @@ const testCtx: ApiContext = {
 }
 
 // Mirror the component's own Intl money formatter so the expected prose never
-// drifts with the host locale data.
+// drifts with the host locale data — including the MYT-9jrh9 rule that a whole
+// amount drops its trailing `.00` ("$5", not "$5.00").
 function money(cents: number, currency: string): string {
-  return new Intl.NumberFormat(i18n.language, { style: 'currency', currency }).format(cents / 100)
+  const whole = cents % 100 === 0
+  return new Intl.NumberFormat(i18n.language, {
+    style: 'currency',
+    currency,
+    ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
+  }).format(cents / 100)
 }
 
 function tier(overrides: Partial<SkuListing> & Pick<SkuListing, 'lookup_key' | 'displayName'>): SkuListing {

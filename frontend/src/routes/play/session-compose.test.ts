@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { composeSummon, connectionLineStatus, resolveTypingNames, DM_TOKEN } from './session-compose.ts'
+import type { TranscriptItem } from '@mythrun/client-core/contract'
+import {
+  composeSummon,
+  connectionLineStatus,
+  resolveTypingNames,
+  isDmWriting,
+  latestLiveLongRestTurn,
+  DM_TOKEN,
+} from './session-compose.ts'
 
 // The pure route-wire helpers behind the live-play shell (MYT-92 T16). No React —
 // these fold transport-delivered data into the exact strings/names the shell hands
@@ -49,5 +57,65 @@ describe('resolveTypingNames', () => {
 
   it('is empty when nobody is typing', () => {
     expect(resolveTypingNames([], party)).toEqual([])
+  })
+})
+
+// ── myth-dd63v / myth-lhp99 transcript-derived play signals ──────────────────
+
+function dm(key: string, streaming: boolean): TranscriptItem {
+  return { kind: 'dm', key, turnId: `t-${key}`, text: 'The corridor bends.', streaming }
+}
+function rest(key: string, restType: 'short' | 'long', opts: { seq?: number } = {}): TranscriptItem {
+  return {
+    kind: 'ledger_update',
+    key,
+    turnId: `t-${key}`,
+    frame: {
+      type: 'ledger_update',
+      turnId: `t-${key}`,
+      characterName: 'Wren Osser',
+      kind: 'rest',
+      restType,
+      summary: `Wren Osser finishes a ${restType} rest.`,
+      ...(opts.seq !== undefined ? { seq: opts.seq } : {}),
+    },
+  }
+}
+
+describe('isDmWriting (myth-dd63v)', () => {
+  it('is true while the DM is thinking (pre-first-delta)', () => {
+    expect(isDmWriting([], true)).toBe(true)
+  })
+
+  it('is true while a dm row is still streaming (post-first-delta)', () => {
+    expect(isDmWriting([dm('a', true)], false)).toBe(true)
+  })
+
+  it('is false once the turn has settled (no thinking, no streaming row)', () => {
+    expect(isDmWriting([dm('a', false)], false)).toBe(false)
+  })
+})
+
+describe('latestLiveLongRestTurn (myth-lhp99)', () => {
+  it('returns the turnId of a LIVE long rest', () => {
+    expect(latestLiveLongRestTurn([rest('r1', 'long')])).toBe('t-r1')
+  })
+
+  it('ignores a short rest', () => {
+    expect(latestLiveLongRestTurn([rest('r1', 'short')])).toBeNull()
+  })
+
+  it('ignores a REPLAYED long rest (carries a seq — a past rest must not re-offer)', () => {
+    expect(latestLiveLongRestTurn([rest('r1', 'long', { seq: 42 })])).toBeNull()
+  })
+
+  it('collapses a per-participant burst to the single shared turnId', () => {
+    // Two party members finish the same long rest — same turnId, one offer.
+    const burst = [rest('rA', 'long'), { ...rest('rB', 'long'), turnId: 't-rA' } as TranscriptItem]
+    expect(latestLiveLongRestTurn(burst)).toBe('t-rA')
+  })
+
+  it('is null when there is no rest at all', () => {
+    expect(latestLiveLongRestTurn([dm('a', false)])).toBeNull()
   })
 })

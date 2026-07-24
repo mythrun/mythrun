@@ -90,21 +90,35 @@ export const HoverAndActive: Story = {
   ),
 }
 
-// Disabled — the native disabled attribute + muted token swap (a11y-exempt for
-// contrast). Non-interactive across all variants.
+// Disabled — a PER-VARIANT muted treatment (a11y-exempt for contrast), NOT one
+// blanket grey (MYT-0xao0). A disabled PRIMARY stays THE primary as a muted ember
+// GHOST (edge + label, unfilled), so an awaiting-input CTA reads as "not yet
+// available", never broken — it fills solid the moment it's enabled (compare the
+// top pair). secondary/ghost mute to a tertiary-ink neutral. Non-interactive across
+// all variants.
 export const Disabled: Story = {
   render: () => (
-    <div className="flex items-center gap-[var(--space-4)]">
-      <Button variant="primary" disabled>
-        Primary
-      </Button>
-      <Button variant="secondary" disabled>
-        Secondary
-      </Button>
-      <Button variant="ghost" disabled>
-        Ghost
-      </Button>
-    </div>
+    <Stack gap={4}>
+      {/* The primary progression the fix is about: awaiting (ghost ember) →
+          available (solid ember fill). The disabled one still reads as the primary. */}
+      <div className="flex items-center gap-[var(--space-4)]">
+        <Button variant="primary" disabled>
+          Begin
+        </Button>
+        <Button variant="primary">Begin</Button>
+      </div>
+      <div className="flex items-center gap-[var(--space-4)]">
+        <Button variant="primary" disabled>
+          Primary
+        </Button>
+        <Button variant="secondary" disabled>
+          Secondary
+        </Button>
+        <Button variant="ghost" disabled>
+          Ghost
+        </Button>
+      </div>
+    </Stack>
   ),
 }
 

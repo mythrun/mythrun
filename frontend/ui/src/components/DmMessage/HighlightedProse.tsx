@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import type { DmMessageProps, EntityCard, EntityGlyph } from '@mythrun/client-core/contract'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
+import { renderInlineEmphasis } from '../../lib/inline-emphasis.tsx'
 import { EntityMention } from '../EntityMention/EntityMention.tsx'
 import { EntityPopover } from '../EntityPopover/EntityPopover.tsx'
 
@@ -22,6 +23,12 @@ import { EntityPopover } from '../EntityPopover/EntityPopover.tsx'
 // Each entity segment renders an `EntityPopover` wrapping an `EntityMention`; open state is
 // per-segment-index (only one popover open at a time). An entity segment whose card can't be
 // resolved degrades to plain text — never a broken popover.
+//
+// Inline emphasis (myth-5syk3): a NON-entity text segment renders through
+// `renderInlineEmphasis` so a settled ledger quote / initials render as <em>/<strong>
+// here too — identical to the un-highlighted settled path. Emphasis composes at the
+// segment level: entity NAMES are proper nouns that carry no markers, so the entity /
+// emphasis markups do not overlap in the register in practice.
 
 interface HighlightedProseProps {
   /** The settled DM prose (DATA). */
@@ -63,7 +70,7 @@ export function HighlightedProse({ text, highlight, labels, onEntityOpen }: High
     <p className={TYPE_ROLE_CLASS['prose-body']}>
       {parts.map((part, i) =>
         part.kind === 'text' ? (
-          <Fragment key={i}>{part.text}</Fragment>
+          <Fragment key={i}>{renderInlineEmphasis(part.text)}</Fragment>
         ) : (
           <EntityPopover
             key={i}

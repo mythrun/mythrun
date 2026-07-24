@@ -28,9 +28,11 @@
       "viewHistory": "View purchase history"
     },
     "sectionTitle": "Sessions & billing",
+    "sessionHelp": "Session credits are spent when you start a session.",
     "sessionLabel": "Session credits",
     "subscribe": "Subscribe",
     "upgrade": "Upgrade",
+    "worldGenHelp": "World credits are spent when you build a new world.",
     "worldGenLabel": "World credits"
   },
   "callback": {
@@ -73,6 +75,7 @@
       "copy": "Copy link",
       "create": "Create a link",
       "error": "$t(shared.somethingWrong)",
+      "expand": "Invite a friend →",
       "hint": "Share this link · friends join your party here",
       "limit": "You've reached the invite limit. Replace the existing link instead.",
       "linkLabel": "Invite link",
@@ -80,6 +83,9 @@
       "noLink": "No active link, create one to invite",
       "panelHeading": "Invite",
       "replace": "Replace link",
+      "replaceCancel": "Keep",
+      "replaceConfirm": "Replace",
+      "replacePrompt": "Replace this link? The old link stops working.",
       "share": "Share"
     },
     "noAccess": {
@@ -427,6 +433,10 @@
     "body": "Something gave way. Try again in a moment.",
     "contractBody": "The backend returned a shape the client doesn't expect. Regenerate the contract.",
     "contractTitle": "Shape mismatch",
+    "persistentBody": "That's failed a few times. Check your connection, or try again in a few minutes.",
+    "persistentTitle": "Still not catching.",
+    "reference": "Reference · {{code}}",
+    "reload": "Reload Mythrun",
     "retry": "$t(shared.tryAgain)",
     "title": "Something broke."
   },
@@ -435,7 +445,7 @@
   },
   "frame": {
     "buyCredits": "Add credits",
-    "credits": "Credits",
+    "credits": "Session credits",
     "creditsLoading": "Loading balance",
     "settings": "Settings",
     "wordmark": "Mythrun"
@@ -446,7 +456,7 @@
       "failed": "The ink ran dry. Open to retry.",
       "generating": "Crafting your world...",
       "lowCredits": "$t(shared.lowCredits)",
-      "needsCharacter": "Time to author your character",
+      "needsCharacter": "Author your character →",
       "notPlayed": "The table waits for its first session",
       "recently": "recently",
       "record_one": "{{sessions}} session · last played {{when}}",
@@ -456,6 +466,7 @@
     "createCampaign": "Create a campaign",
     "empty": "An empty shelf. Write your first story.",
     "loading": "Binding your pages...",
+    "newCampaign": "New campaign",
     "title": "Your campaigns"
   },
   "join": {
@@ -518,11 +529,20 @@
     "correction": {
       "label": "Correction"
     },
+    "end": {
+      "cancel": "Keep playing",
+      "confirm": "End session",
+      "control": "End session",
+      "prompt": "End the session?"
+    },
     "error": {
       "body": "This session failed to open. Try again.",
       "retry": "$t(shared.tryAgain)"
     },
     "input": {
+      "dmBusy": "The DM is writing…",
+      "ending": "Ending the session…",
+      "pendingRoll": "Resolve the roll first",
       "placeholder": "What do you do next?",
       "send": "Send",
       "summon": "Ask the DM"
@@ -598,10 +618,12 @@
     },
     "roll": {
       "advantage": "Advantage",
+      "beats": "beats",
       "continue": "Continue",
       "dc": "DC",
       "dieResult": "Your roll",
       "disadvantage": "Disadvantage",
+      "misses": "misses",
       "roll": "Roll",
       "tier": {
         "fail": "Failure",
@@ -627,7 +649,22 @@
     "thinking": {
       "dm": "The DM is thinking…",
       "typing": "is typing…"
+    },
+    "windDown": {
+      "keep": "Keep playing",
+      "prompt": "A good place to stop.",
+      "rest": "Rest here for now"
     }
+  },
+  "recap": {
+    "back": "Back to campaign",
+    "cost": "One session credit spent.",
+    "empty": "No recap yet.",
+    "pending": "Writing up the recap…",
+    "sessionLabel": "Session {{number}}",
+    "summaryHeading": "What happened",
+    "threadsHeading": "Threads left open",
+    "title": "The session ends"
   },
   "shared": {
     "beginAgain": "Begin again",
@@ -680,11 +717,11 @@
     "grant1": "The absolute baseline.",
     "grant2": "A little extra power.",
     "grant3": "Gain expertise through specialization.",
-    "grant4": "Boost your scores and abilities.",
+    "grant4": "Seasoned, and sure of it.",
     "grant5": "Let's skip the training montage.",
     "hold": "Your host is setting the party's level.",
     "holdTitle": "Setting the table",
-    "lede": "Everyone starts here",
+    "lede": "We start most parties at three. Capable enough to feel heroic, green enough to grow.",
     "loading": "Setting the table",
     "prompt": "What level does your party begin at?"
   },
@@ -696,9 +733,6 @@
     "holdTitle": "Setting the table",
     "loading": "Selecting your starting locations",
     "prompt": "Where does the story open?"
-  },
-  "stub": {
-    "recap": "The recap will live here"
   },
   "theme": {
     "toDark": "Switch to dark theme",

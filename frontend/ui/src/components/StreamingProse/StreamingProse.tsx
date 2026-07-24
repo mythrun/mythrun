@@ -1,6 +1,7 @@
 import { forwardRef } from 'react'
 import type { StreamingProseProps } from '@mythrun/client-core/contract'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
+import { renderInlineEmphasis, stripInlineEmphasis } from '../../lib/inline-emphasis.tsx'
 import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 
 // Prose that ARRIVES (myth-umggn) — the render surface for LLM text streaming
@@ -21,6 +22,13 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // is decorative (`aria-hidden`). `writingLabel` (an i18n key the consumer
 // resolves) is appended visually-hidden while writing so AT users reading the
 // passage know it is still being written; it leaves with the caret.
+//
+// Inline emphasis (myth-5syk3) is SETTLE-ONLY, mirroring MYT-94's settle-only entity
+// highlighting: while `writing` the body is a single stripped text node (no literal
+// `*` flashes, the append-only streaming path preserved); on settle it re-renders
+// through `renderInlineEmphasis` so `*present*` → <em> and `**V. L. K.**` → <strong>.
+// For prose with no markers — the common case — both paths are byte-identical to the
+// raw text, so the zero-reflow handoff to <Text role="prose-body"> is unchanged.
 export const StreamingProse = forwardRef<HTMLParagraphElement, StreamingProseProps>(
   function StreamingProse({ text, writing = false, writingLabel, ...rest }, ref) {
     return (
@@ -30,7 +38,7 @@ export const StreamingProse = forwardRef<HTMLParagraphElement, StreamingProsePro
         {...(writing ? { 'aria-busy': true } : {})}
         {...rest}
       >
-        {text}
+        {writing ? stripInlineEmphasis(text) : renderInlineEmphasis(text)}
         {writing ? (
           <span
             aria-hidden="true"

@@ -140,6 +140,33 @@ describe('PartyRoster', () => {
     expect(onInvite).toHaveBeenCalledOnce()
   })
 
+  it('renders the invite disclosure between the roster and Begin when provided (single entry point)', () => {
+    const { getByTestId, getByRole } = render(
+      <PartyRoster
+        labels={LABELS}
+        members={SOLO}
+        viewerIsOwner
+        canBegin
+        onBegin={noop}
+        onInvite={noop}
+        inviteExpansion={<div data-testid="wired-invite" />}
+      />,
+    )
+    // The disclosure mounts (the single invite entry point, below the party)…
+    const expansion = getByTestId('party-roster-invite-expansion')
+    expect(expansion).toContainElement(getByTestId('wired-invite'))
+    // …and it sits BEFORE the Begin control in DOM order (below identity, above CTA).
+    const begin = getByRole('button', { name: /adventure/i })
+    expect(expansion.compareDocumentPosition(begin) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('omits the invite disclosure when no expansion is supplied', () => {
+    const { queryByTestId } = render(
+      <PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    expect(queryByTestId('party-roster-invite-expansion')).not.toBeInTheDocument()
+  })
+
   it('counts only real members in the party label (the invite row is excluded)', () => {
     const { getByText } = render(
       <PartyRoster labels={LABELS} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,

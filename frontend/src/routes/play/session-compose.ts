@@ -1,4 +1,5 @@
 import type { ConnectionStatus } from '@mythrun/client-core'
+import type { TranscriptItem } from '@mythrun/client-core/contract'
 
 // Pure route-wire helpers for the live-play shell (MYT-92 T16). The three
 // load-bearing transforms the shell performs — composing the explicit-text @DM
@@ -49,4 +50,30 @@ export function resolveTypingNames(
   return userIds
     .map((id) => party.get(id))
     .filter((name): name is string => name !== undefined)
+}
+
+/** True while a DM turn is in flight (myth-dd63v). `thinking` covers the
+ *  dm_thinking → first-delta window; a streaming `dm` item covers first-delta →
+ *  turn_end. Together they span the whole turn — the window during which SENDING
+ *  is not the expected next action, so the composer gates Send (never silently
+ *  swallows it). ZFC: a boolean over transport-delivered state, no cognition. */
+export function isDmWriting(items: readonly TranscriptItem[], thinking: boolean): boolean {
+  if (thinking) return true
+  return items.some((it) => it.kind === 'dm' && it.streaming)
+}
+
+/** The turnId of the most-recent LIVE long rest in the transcript, or null. The
+ *  play surface hangs its wind-down offer off it (myth-lhp99). Keys off the
+ *  STRUCTURED `restType` field on the `ledger_update` frame — never the
+ *  human-readable summary prose. LIVE only (`seq === undefined`): a replayed rest
+ *  from an earlier reconnect must not re-pop the offer. The per-participant rest
+ *  burst shares one turnId, so this collapses to a single offer for the night. */
+export function latestLiveLongRestTurn(items: readonly TranscriptItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const it = items[i]
+    if (it?.kind === 'ledger_update' && it.frame.restType === 'long' && it.frame.seq === undefined) {
+      return it.turnId
+    }
+  }
+  return null
 }

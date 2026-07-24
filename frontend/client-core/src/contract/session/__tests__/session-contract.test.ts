@@ -99,6 +99,8 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       readonly continue: string
       readonly tier: Readonly<Record<'fail' | 'success' | 'great_success', string>>
       readonly dc: string
+      readonly beats: string
+      readonly misses: string
       readonly advantage: string
       readonly disadvantage: string
       readonly dieResult: string
@@ -112,6 +114,7 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       reducedMotion: boolean
       onSpinComplete: () => void
       resultLabel?: string
+      sides?: number
     }>()
   })
 
@@ -143,6 +146,8 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       onSend: () => void
       onSummonDm: () => void
       disabled: boolean
+      busy?: boolean
+      busyLabel?: string
       placeholder: string
       summonLabel: string
       sendLabel: string

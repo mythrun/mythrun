@@ -23,6 +23,8 @@ const ROLL_LABELS: RollCardLabels = {
   continue: 'Continue',
   tier: { fail: 'Failure', success: 'Success', great_success: 'Great success' },
   dc: 'DC',
+  beats: 'beats',
+  misses: 'misses',
   advantage: 'advantage',
   disadvantage: 'disadvantage',
   dieResult: 'You rolled',
@@ -382,4 +384,99 @@ export const Highlighted: Story = {
     highlight: STORY_INDEX,
     highlightLabels: STORY_LABELS,
   },
+}
+
+// Lane A (ux-run1) verification fixture — the ACTUAL persisted turn-1 + turn-4 prose
+// from the "Titan's Ribcage" run, reproduced verbatim (markers + `\n\n` breaks intact)
+// so the four reading defects show under one lens:
+//   • myth-uhr0f — the teaser ("...more than once.") and the outcome ("Hast writes...")
+//     are SEPARATE dm items with the roll between them, not one fused "once.Hast" block.
+//   • myth-5syk3 — the ledger quote / *order* / *T* / *present* render as <em>, and
+//     **V. L. K.** as <strong>; no literal asterisk reaches the page.
+//   • myth-yvk8p — the prose is capped to a book measure at ~19px (a wide stage to
+//     mirror the run's ~800px column, where the hero ran ~100 CPL).
+//   • paragraph breaks — the `\n\n` beats render as paragraphs, not a collapsed wall.
+const RIBCAGE_RUN1: TranscriptItem[] = [
+  {
+    kind: 'dm',
+    key: 'rb-dm-0',
+    turnId: 'RB1',
+    text: 'The page from four nights ago is worn at the lower corner — you have turned to it more than once.',
+    streaming: false,
+  },
+  {
+    kind: 'skill_check',
+    key: 'rb-sc-1',
+    turnId: 'RB1',
+    frame: {
+      type: 'skill_check',
+      turnId: 'RB1',
+      characterName: 'Wren Osser',
+      skill: 'investigation',
+      context:
+        'Wren reads the attendance ledger entry for the Torv children from four nights ago, examining exactly how Hast wrote them present — his hand, his ink, any detail that distinguishes his entries from her own.',
+      roll: 10,
+      roll2: null,
+      rollType: 'normal',
+      modifier: 6,
+      total: 16,
+      dc: 13,
+      outcomeTier: 'success',
+      constraint: 'She reads the hand behind the entries.',
+    },
+  },
+  {
+    kind: 'dm',
+    key: 'rb-dm-1',
+    turnId: 'RB1',
+    streaming: false,
+    text:
+      'Hast writes with a soft hand — has for years, ink running a little heavy at the start of each letter where he presses to steady the nib. You know his entries the way you know your own breathing.\n\n' +
+      'Four nights ago: *Torv, P. — present. Torv, A. — present.* But the letters are wrong. Not wrong enough to catch at a glance, and not wrong the way a forger goes wrong — Hast wrote these himself, no doubt of that. What is wrong is the *order*. The P comes after the A, the way it would if a hand had started writing Ada before catching itself and reversing. And the ink on the *T* of both surnames is heavier than the rest — the slight, characteristic blot of a pen held waiting, while someone decided something.\n\n' +
+      'He hesitated before he wrote each name. Both times. The same way.\n\n' +
+      'You turn to three nights ago. Same hand. Same blot on the *T*. Piotr listed before Ada this time — correctly — but the ink on *present* is a shade lighter than everything else on the line, the word added fractionally later, the nib re-dipped.\n\n' +
+      'Behind you, Sister Corr sets down the wool pad and smooths it twice with her palm.',
+  },
+  {
+    kind: 'dm',
+    key: 'rb-dm-2',
+    turnId: 'RB2',
+    streaming: false,
+    text:
+      'The paper is small enough to sit in your palm.\n\n' +
+      'Three initials. Inked in a hand you do not know — not Corr’s careful attendant’s script, not the vestry hand, not anyone you can place from thirty years of reading other people’s writing. The letters are:\n\n' +
+      '**V. L. K.**\n\n' +
+      'No message. No signature. No explanation of what the letters mean or whether they belong to one name or three or something else entirely.',
+  },
+]
+
+// A wide paper stage (~820px) matching the run's real transcript column, tall enough
+// that the whole narration renders for the screenshot without scrolling. The inner
+// frame is `w-full` so MessageStream fills the column — the measure cap then engages
+// exactly as it does on the real play screen (rather than being under-stretched away).
+function WideStage({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <div className="bg-bg min-h-[820px] w-full max-w-[820px]">
+      <div className="flex h-[820px] w-full flex-col border border-border-strong">{children}</div>
+    </div>
+  )
+}
+
+export const Run1RibcageReading: Story = {
+  args: {
+    items: RIBCAGE_RUN1,
+    connectionLine: null,
+    reducedMotion: false,
+    rollReveal: { phaseByKey: { 'rb-sc-1': 'released' }, gatedTurnIds: new Set<string>() },
+    rollLabels: ROLL_LABELS,
+  },
+  decorators: [
+    (Story) => (
+      <div className="bg-bg p-[var(--space-6)]">
+        <WideStage>
+          <Story />
+        </WideStage>
+      </div>
+    ),
+  ],
 }

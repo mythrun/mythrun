@@ -413,6 +413,7 @@ async function buildRestPayloads(
   return snapshot.map((c) => ({
     characterName: c.name,
     kind: 'rest' as const,
+    restType: type,
     summary:
       `${c.name} finishes a ${type} rest (now ${String(c.hitPoints)}/${String(c.maxHitPoints)} HP, ` +
       `${String(c.hitDiceRemaining)} hit dice remaining).`,

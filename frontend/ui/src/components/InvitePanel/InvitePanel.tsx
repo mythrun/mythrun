@@ -1,4 +1,4 @@
-import { forwardRef, useId } from 'react'
+import { forwardRef, useId, useState } from 'react'
 import type { InvitePanelProps } from '@mythrun/client-core/contract'
 import { Button } from '../Button/Button.tsx'
 import { Input } from '../Input/Input.tsx'
@@ -48,15 +48,27 @@ const NO_LINK_CLASS = 'font-ui text-xs tracking-wide text-ink-tertiary'
 // The link + actions block.
 const LINK_BLOCK_CLASS = 'flex min-w-0 flex-col gap-[var(--space-3)]'
 // The action row — WRAPS so three actions reflow at ~375px rather than overflow.
-const ACTIONS_CLASS = 'flex flex-wrap gap-[var(--space-2)]'
+const ACTIONS_CLASS = 'flex flex-wrap items-center gap-[var(--space-2)]'
+// The replace one-beat confirm — the prompt sits inline before the two controls,
+// wrapping at narrow widths. Prose, never a modal (calm paper register).
+const CONFIRM_PROMPT_CLASS = 'font-ui text-xs tracking-wide text-ink-secondary'
 
 export const InvitePanel = forwardRef<HTMLDivElement, InvitePanelProps>(function InvitePanel(
-  { labels, inviteUrl, loading, canShare, copied, notice, onCopy, onShare, onRevoke, onCreate },
+  { labels, inviteUrl, loading, canShare, copied, notice, prominence = 'primary', onCopy, onShare, onRevoke, onCreate },
   ref,
 ) {
   // A unique id per instance ties the read-only link field to its (SR-only) label
   // without colliding when several panels mount (stories, tests) — no static id.
   const linkId = useId()
+  // Ephemeral UI micro-state (not business state): the one-beat Replace confirm.
+  // Replace strands any already-shared link, so the first press only ARMS the
+  // confirm; `onRevoke` fires from the confirm control. Local because no consumer
+  // needs to observe the confirm's open/closed — it mirrors a disclosure toggle.
+  const [confirmingReplace, setConfirmingReplace] = useState(false)
+  // Demoted (`quiet`) invites drop Copy to a bordered secondary so the character
+  // reveal / party roster keeps the page's one filled accent; the hub keeps Copy
+  // primary.
+  const copyVariant = prominence === 'quiet' ? 'secondary' : 'primary'
   const activeNotice =
     notice !== null
       ? { severity: NOTICE_SEVERITY[notice], line: notice === 'cap-reached' ? labels.limit : labels.error }
@@ -77,7 +89,7 @@ export const InvitePanel = forwardRef<HTMLDivElement, InvitePanelProps>(function
         <div className={LINK_BLOCK_CLASS}>
           <p className={NO_LINK_CLASS}>{labels.noLink}</p>
           <div className={ACTIONS_CLASS}>
-            <Button variant="primary" onPress={onCreate} data-testid="invite-panel-create">
+            <Button variant={copyVariant} onPress={onCreate} data-testid="invite-panel-create">
               {labels.create}
             </Button>
           </div>
@@ -95,7 +107,7 @@ export const InvitePanel = forwardRef<HTMLDivElement, InvitePanelProps>(function
           </VisuallyHidden>
           <Input id={linkId} value={inviteUrl} readOnly data-testid="invite-panel-link" />
           <div className={ACTIONS_CLASS}>
-            <Button variant="primary" onPress={onCopy} data-testid="invite-panel-copy">
+            <Button variant={copyVariant} onPress={onCopy} data-testid="invite-panel-copy">
               {copied ? labels.copied : labels.copy}
             </Button>
             {canShare && (
@@ -103,9 +115,40 @@ export const InvitePanel = forwardRef<HTMLDivElement, InvitePanelProps>(function
                 {labels.share}
               </Button>
             )}
-            <Button variant="ghost" onPress={onRevoke} data-testid="invite-panel-revoke">
-              {labels.replace}
-            </Button>
+            {confirmingReplace ? (
+              <>
+                <span className={CONFIRM_PROMPT_CLASS}>{labels.replacePrompt}</span>
+                <Button
+                  variant="secondary"
+                  onPress={() => {
+                    setConfirmingReplace(false)
+                    onRevoke()
+                  }}
+                  data-testid="invite-panel-replace-confirm"
+                >
+                  {labels.replaceConfirm}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onPress={() => {
+                    setConfirmingReplace(false)
+                  }}
+                  data-testid="invite-panel-replace-cancel"
+                >
+                  {labels.replaceCancel}
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                onPress={() => {
+                  setConfirmingReplace(true)
+                }}
+                data-testid="invite-panel-revoke"
+              >
+                {labels.replace}
+              </Button>
+            )}
           </div>
         </div>
       )}

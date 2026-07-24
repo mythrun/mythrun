@@ -129,6 +129,41 @@ describe('sessions analysis repo (integration)', () => {
     })
   })
 
+  describe('getLatestEndedRecap (myth-lhp99)', () => {
+    it('returns the NEWEST ended session (facts + raw summary), or null when none ended', async () => {
+      const sessions = createSessionsRepo(pool)
+      const { campaignId } = await makeCampaign(pool, scope)
+
+      // No sessions at all → null.
+      expect(await sessions.getLatestEndedRecap(campaignId)).toBeNull()
+
+      // An ACTIVE session alone does not count.
+      const s1 = await sessions.create({ campaignId, sessionNumber: 1 })
+      expect(await sessions.getLatestEndedRecap(campaignId)).toBeNull()
+
+      // Ended, analysis not yet written → facts with summaryJson null.
+      await sessions.markEnded(s1.id)
+      const pending = await sessions.getLatestEndedRecap(campaignId)
+      expect(pending).toEqual({
+        sessionNumber: 1,
+        endedAt: expect.any(Date) as Date,
+        summaryJson: null,
+      })
+
+      // A newer ended session with a written analysis wins (ORDER BY session_number DESC).
+      const s2 = await sessions.create({ campaignId, sessionNumber: 2 })
+      await sessions.markEnded(s2.id)
+      await sessions.writeAnalysis(s2.id, {
+        summary: 'S2',
+        emergingThreads: ['t'],
+        handoff: { npcs: [] },
+      })
+      const latest = await sessions.getLatestEndedRecap(campaignId)
+      expect(latest?.sessionNumber).toBe(2)
+      expect(latest?.summaryJson).not.toBeNull()
+    })
+  })
+
   describe('getPriorContextForPrep', () => {
     it('returns ended-with-summary sessions newest-first, excluding active and summary-NULL, capped to limit', async () => {
       const sessions = createSessionsRepo(pool)

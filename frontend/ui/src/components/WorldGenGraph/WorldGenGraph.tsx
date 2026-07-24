@@ -7,6 +7,7 @@ import { useViewportNarrow } from '../../lib/use-viewport-narrow.ts'
 import { WorldGenFogField } from '../WorldGenFog/WorldGenFogField.tsx'
 import { WorldGenStatusCard } from '../WorldGenStatusCard/WorldGenStatusCard.tsx'
 import { GenerationAnnouncer } from './GenerationAnnouncer.tsx'
+import { GraphLegend } from './GraphLegend.tsx'
 import { GraphNodeList } from './GraphNodeList.tsx'
 import { useGraphCanvas } from './use-graph-canvas.ts'
 
@@ -101,6 +102,7 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     densityParams,
     generationA11y,
     nodeListLabel,
+    legend,
     'data-testid': dataTestId,
   },
   ref,
@@ -208,6 +210,12 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
           )}
         </div>
       </div>
+      {/* The glyph KEY (myth-466cy): a quiet row under the pane documenting what each
+          glyph SHAPE means, for the kinds actually present. Gated on the `legend` map
+          (the reveal + play graph pass it; the generation graph omits it). In fill
+          mode it sits below the flex-1 pane (the pane shrinks to seat it); the gap
+          comes from the root column. */}
+      {legend !== undefined && <GraphLegend nodes={nodes} labels={legend} data-testid="graph-legend" />}
       {/* FOOTER mode: the status as a compact bottom bar — page chrome below the
           full-bleed pane, never occluding the world (and never a sim keep-out). */}
       {narrow && status !== undefined && <WorldGenStatusCard variant="footer" {...status} />}

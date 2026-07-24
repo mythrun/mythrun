@@ -106,6 +106,7 @@ const REPLAYED_SKILL_CHECK: SessionView['items'][number] = {
 function makeSession(
   items: SessionView['items'],
   connection: ConnectionState = { status: 'connected', attempt: 0 },
+  overrides: Partial<SessionView> = {},
 ): SessionView {
   return {
     items,
@@ -116,7 +117,55 @@ function makeSession(
     sendMessage: vi.fn(),
     summonDm: vi.fn(),
     endSession: vi.fn(),
+    ...overrides,
   }
+}
+
+/** A LIVE long-rest ledger frame (no seq) — the wind-down trigger (myth-lhp99). */
+const LONG_REST: SessionView['items'][number] = {
+  kind: 'ledger_update',
+  key: 'lr-1',
+  turnId: 'TR1',
+  frame: {
+    type: 'ledger_update',
+    turnId: 'TR1',
+    characterName: 'Kessa Vurm',
+    kind: 'rest',
+    restType: 'long',
+    summary: 'Kessa Vurm finishes a long rest.',
+  },
+}
+/** A short rest — must NOT trigger the wind-down. */
+const SHORT_REST: SessionView['items'][number] = {
+  ...LONG_REST,
+  key: 'sr-1',
+  turnId: 'TR2',
+  frame: { ...LONG_REST.frame, turnId: 'TR2', restType: 'short', summary: 'Kessa Vurm finishes a short rest.' },
+}
+
+/** Render the shell against an explicit SessionView (lets a test inject `thinking`,
+ *  a spy `endSession`, etc.). Mirrors renderShell's provider stack. */
+function renderShellSession(session: SessionView): void {
+  render(
+    <ThemeProvider>
+      <I18nextProvider i18n={i18n}>
+        <MemoryRouter>
+          <SessionShell
+            ctx={testCtx}
+            campaignId={CAMPAIGN_ID}
+            sessionId={SESSION_ID}
+            viewerUserId={VIEWER_ID}
+            displayName={DISPLAY_NAME}
+            characterName=""
+            party={new Map()}
+            reducedMotion={false}
+            useLiveSession={() => session}
+            knowledgeHooks={KNOWLEDGE_HOOKS}
+          />
+        </MemoryRouter>
+      </I18nextProvider>
+    </ThemeProvider>,
+  )
 }
 
 // The MYT-94 knowledge sidebar is now part of the shell; inject calm empty data
@@ -195,7 +244,7 @@ describe('SessionShell — the dice-moment reveal wiring (MYT-93)', () => {
     // Revealed: the die stamps the used natural roll (total − modifier = 14) and the
     // mod→total readout settles — but the outcome prose is STILL gated (Continue-only).
     expect(screen.getByTestId('die-spin-result').textContent).toBe('14')
-    expect(screen.getByText('+2 = 16')).toBeDefined()
+    expect(screen.getByText('14 + 2 = 16')).toBeDefined()
     expect(screen.queryByText(DM_TEXT)).toBeNull()
 
     // Continue → the turn drops out of gatedTurnIds → the buffered prose renders.
@@ -206,7 +255,7 @@ describe('SessionShell — the dice-moment reveal wiring (MYT-93)', () => {
   it('renders a replayed skill_check already released — prose shown, no Roll (history)', () => {
     renderShell([REPLAYED_SKILL_CHECK, DM_PROSE])
     // History: the readout is present, the prose is shown, and there is no Roll theatre.
-    expect(screen.getByText('+2 = 16')).toBeDefined()
+    expect(screen.getByText('14 + 2 = 16')).toBeDefined()
     expect(screen.getByText(DM_TEXT)).toBeDefined()
     expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
   })
@@ -269,6 +318,49 @@ describe('SessionShell — the no-character surface (myth-mnik3)', () => {
     renderShellRouted({ status: 'failed', attempt: 0, failedReason: 'denied' })
     expect(screen.queryByTestId('play-no-character')).toBeNull()
     expect(screen.getByTestId('session-shell')).toBeDefined()
+  })
+})
+
+describe('SessionShell — session lifecycle + composer gating (myth-lhp99 / myth-dd63v)', () => {
+  it('the persistent end-session control confirms (one beat) then calls endSession', () => {
+    const endSession = vi.fn()
+    renderShellSession(makeSession([DM_PROSE], undefined, { endSession }))
+    // A quiet control is always present; it opens an inline confirm, not a modal.
+    fireEvent.click(screen.getByTestId('end-session-open'))
+    expect(endSession).not.toHaveBeenCalled() // no fire until confirmed
+    fireEvent.click(screen.getByTestId('end-session-do'))
+    expect(endSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('gates Send while the DM is thinking, with the busy caption (never a silent swallow)', () => {
+    renderShellSession(makeSession([DM_PROSE], undefined, { thinking: true }))
+    const send = screen.getByRole('button', { name: i18n.t('play.input.send') })
+    expect(send.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('session-input-busy').textContent).toBe(i18n.t('play.input.dmBusy'))
+  })
+
+  it('gates Send while a live DM turn is still streaming', () => {
+    const streamingDm: SessionView['items'][number] = { ...DM_PROSE, key: 'dm-s', streaming: true }
+    renderShellSession(makeSession([streamingDm]))
+    const send = screen.getByRole('button', { name: i18n.t('play.input.send') })
+    expect(send.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('offers the wind-down on a live long rest; Rest here ends the session', () => {
+    const endSession = vi.fn()
+    renderShellSession(makeSession([DM_PROSE, LONG_REST], undefined, { endSession }))
+    expect(screen.getByTestId('wind-down-offer')).toBeDefined()
+    fireEvent.click(screen.getByTestId('wind-down-rest'))
+    expect(endSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('a live short rest does NOT offer the wind-down; Keep playing dismisses a long one', () => {
+    renderShellSession(makeSession([DM_PROSE, SHORT_REST]))
+    expect(screen.queryByTestId('wind-down-offer')).toBeNull()
+    cleanup()
+    renderShellSession(makeSession([DM_PROSE, LONG_REST]))
+    fireEvent.click(screen.getByTestId('wind-down-keep'))
+    expect(screen.queryByTestId('wind-down-offer')).toBeNull()
   })
 })
 

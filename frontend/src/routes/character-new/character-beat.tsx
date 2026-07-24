@@ -4,6 +4,7 @@ import type { CharacterCreationStreamDeps } from '@mythrun/client-core/character
 import { CharacterLoadingSurface } from './character-loading.tsx'
 import { CharacterRevealSurface } from './character-reveal.tsx'
 import { PartyStagingSurface, type PartyStagingDeps } from './party-staging.tsx'
+import type { InvitePanelDeps } from '../campaign-invite-panel.tsx'
 import type { CharacterRouteKind } from './character-route.ts'
 import type {
   ViewerSignals,
@@ -51,6 +52,9 @@ interface CharacterBeatProps {
   readonly campaignId: string
   readonly signals: ViewerSignals
   readonly deps: CharacterSurfaceDeps | undefined
+  /** The owner's invite endpoints/ports — forwarded to the staging beat, whose inline
+   *  party-slot disclosure is the single invite entry point there (MYT-99g03). */
+  readonly inviteDeps?: InvitePanelDeps
   readonly onReload: () => void
   readonly onConceptRetry: () => void
   readonly onIntegrationRetry: () => void
@@ -79,6 +83,7 @@ export function CharacterBeat({
   campaignId,
   signals: s,
   deps,
+  inviteDeps,
   onReload,
   onConceptRetry,
   onIntegrationRetry,
@@ -142,6 +147,7 @@ export function CharacterBeat({
             void navigate(playPath)
           }}
           {...stagingProps}
+          {...(inviteDeps !== undefined && { inviteDeps })}
         />
       )
     case 'failure-concept':

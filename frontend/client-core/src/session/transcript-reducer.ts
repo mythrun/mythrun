@@ -48,15 +48,25 @@ function appendItem(state: TranscriptState, make: (key: string) => TranscriptIte
   return { ...state, items: [...state.items, make(key)], nextId: state.nextId + 1 }
 }
 
-/** DM prose: append text to the streaming `dm` item for this turn, or open one. */
+/** DM prose: append text to the OPEN streaming `dm` run at the tail, or open a new
+ *  segment. A text_delta always continues the currently-open narration — the tail.
+ *  When the tail is this turn's streaming dm item we append in place; otherwise
+ *  (the first delta, or — the myth-uhr0f case — a mid-turn tool frame like a
+ *  skill_check roll or a take_rest CLOSED the prior run) we OPEN A NEW segment.
+ *  This mirrors the persisted transcript, where the FT emits each text part between
+ *  tool calls as its own dm_text row (§3.7 codec) that replays as its own settled
+ *  dm item — so a roll/rest that interrupts narration never fuses the teaser's
+ *  "...more than once." onto the continuation's "Hast writes..." ("once.Hast"). The
+ *  gate + settle operate per-turn, so the two segments still reveal and settle
+ *  together; only the joining seam changes. */
 function applyDelta(state: TranscriptState, frame: FrameOf<'text_delta'>): TranscriptState {
-  const existing = state.items.find(
-    (it): it is Extract<TranscriptItem, { kind: 'dm' }> => it.kind === 'dm' && it.turnId === frame.turnId,
-  )
-  if (existing === undefined) {
+  const tail = state.items[state.items.length - 1]
+  const openRun =
+    tail?.kind === 'dm' && tail.turnId === frame.turnId && tail.streaming ? tail : undefined
+  if (openRun === undefined) {
     return appendItem(state, (key) => ({ kind: 'dm', key, turnId: frame.turnId, text: frame.text, streaming: true }))
   }
-  const items = state.items.map((it) => (it === existing ? { ...existing, text: existing.text + frame.text } : it))
+  const items = state.items.map((it) => (it === openRun ? { ...openRun, text: openRun.text + frame.text } : it))
   return { ...state, items }
 }
 

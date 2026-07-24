@@ -181,7 +181,7 @@ describe('reduceFrame — delta targeting + settle among multiple items', () => 
   it('routes a delta to the right dm item and settles only the matching turn', () => {
     // items order: dm(A) streaming, player, dm(B) streaming
     let s = fold([textDelta('A', 'alpha'), player(1, 'hi'), textDelta('B', 'beta ')])
-    s = reduceFrame(s, textDelta('B', 'more')) // appends to dm(B), scanning past dm(A) + player
+    s = reduceFrame(s, textDelta('B', 'more')) // appends to dm(B) — it is the open streaming tail
 
     expect(dmItems(s)).toMatchObject([
       { turnId: 'A', text: 'alpha', streaming: true },
@@ -199,5 +199,60 @@ describe('reduceFrame — delta targeting + settle among multiple items', () => 
       { turnId: 'A', streaming: false },
       { turnId: 'B', streaming: false },
     ])
+  })
+})
+
+// myth-uhr0f — a text run that resumes AFTER a mid-turn tool frame (a skill_check
+// roll, a take_rest) must NOT fuse onto the pre-tool teaser: the FT emits each text
+// part as its own dm_text row (§3.7 codec), and the persisted/replay path renders
+// each as its own settled dm item. The live path must MIRROR that — else the teaser's
+// "...more than once." concatenates onto the continuation's "Hast writes..." with no
+// separator ("once.Hast"). Fix at the assembly seam (reduceFrame.applyDelta), not with
+// a display-side space bandaid.
+describe('reduceFrame — post-tool text resumes as a NEW dm segment (myth-uhr0f)', () => {
+  it('a skill_check between two text runs opens a second dm item (no "once.Hast" fusion)', () => {
+    // The exact Titan's Ribcage turn-1 shape: teaser text → roll → outcome text.
+    const s = fold([
+      textDelta('T', 'The page from four nights ago is worn — you have turned to it more than once.'),
+      skillLive('T'),
+      textDelta('T', 'Hast writes with a soft hand — has for years.'),
+    ])
+    // Two DISTINCT dm items, the roll between them — never one fused block.
+    expect(dmItems(s)).toMatchObject([
+      { turnId: 'T', text: 'The page from four nights ago is worn — you have turned to it more than once.' },
+      { turnId: 'T', text: 'Hast writes with a soft hand — has for years.' },
+    ])
+    expect(s.items.map((i) => i.kind)).toEqual(['dm', 'skill_check', 'dm'])
+    // The load-bearing assertion: no segment fuses sentence-end onto sentence-start.
+    for (const d of dmItems(s)) expect(d.text).not.toMatch(/[.!?][A-Z]/)
+  })
+
+  it('a take_rest (ledger_update) between two text runs also segments (the wind-down "it.You" case)', () => {
+    const s = fold([
+      textDelta('T', 'The Eleventh Intercostal in daylight, if the count demands it.'),
+      ledgerLive('T'),
+      textDelta('T', 'You sleep without difficulty, which surprises you.'),
+    ])
+    expect(dmItems(s)).toMatchObject([
+      { turnId: 'T', text: 'The Eleventh Intercostal in daylight, if the count demands it.' },
+      { turnId: 'T', text: 'You sleep without difficulty, which surprises you.' },
+    ])
+    expect(s.items.map((i) => i.kind)).toEqual(['dm', 'ledger_update', 'dm'])
+  })
+
+  it('turn_end settles BOTH segments of the turn', () => {
+    const s = fold([textDelta('T', 'teaser.'), skillLive('T'), textDelta('T', 'Outcome.'), turnEnd('T')])
+    expect(dmItems(s)).toMatchObject([
+      { turnId: 'T', text: 'teaser.', streaming: false },
+      { turnId: 'T', text: 'Outcome.', streaming: false },
+    ])
+  })
+
+  it('consecutive same-turn deltas (no tool between) still coalesce into ONE item', () => {
+    // Regression guard: the fix keys on the streaming TAIL, so an uninterrupted run
+    // still accumulates in place (the normal single-part narration path).
+    const s = fold([textDelta('T', 'once upon '), textDelta('T', 'a time')])
+    expect(dmItems(s)).toMatchObject([{ turnId: 'T', text: 'once upon a time' }])
+    expect(s.items).toHaveLength(1)
   })
 })

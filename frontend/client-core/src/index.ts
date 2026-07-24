@@ -89,6 +89,10 @@ export { useLowSessionCredits } from './api/billing.ts'
 // the start-flow classifier) + the /active lookup the 409-join path needs.
 export { startSession, getActiveSession } from './api/play-session.ts'
 export type { ActiveSession, ActiveSessionResponse, InsufficientCreditsBody } from './api/play-session.ts'
+// myth-lhp99 post-play recap read: the campaign's latest ended session's
+// secret-free close-out; the hook polls while the async analysis is pending.
+export { getSessionRecap, useSessionRecap } from './api/session-recap.ts'
+export type { SessionRecap, SessionRecapResponse } from '@mythrun/contract/rest'
 // MYT-92 prep-status hook: the "DM is preparing" beat's brain (snapshot +
 // live prep-started/ready/failed events over the shipped SSE status client).
 export { useSessionPrep } from './session/use-session-prep.ts'

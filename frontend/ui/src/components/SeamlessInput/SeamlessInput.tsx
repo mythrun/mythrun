@@ -73,8 +73,12 @@ const FIELD_CLASS = cn(
 // Multiline auto-grow: `field-sizing-content` (Tailwind v4 / native) sizes the
 // textarea to its content so long world-creation prose grows the field instead
 // of scrolling; `resize-none overflow-hidden` keeps it a clean ghost surface
-// (no resize handle, no inner scrollbar) since the height tracks the text.
-const MULTILINE_CLASS = 'field-sizing-content resize-none overflow-hidden'
+// (no resize handle, no inner scrollbar) since the height tracks the text. A
+// prose-inviting FLOOR (`min-h` of ~4 lines + the field's own vertical padding,
+// tracked in `1lh`/token units so it follows the type scale) keeps an empty
+// concept field from collapsing to a single-line box — the box should look like
+// it wants a paragraph, not a search bar (ux-run1 0xao0 / screen 009).
+const MULTILINE_CLASS = 'field-sizing-content resize-none overflow-hidden min-h-[calc(4*1lh+2*var(--space-3))]'
 
 // `field-sizing: content` is the CSS path (Chrome/Safari). Firefox doesn't support
 // it yet, so without a fallback the textarea stays its default height and the

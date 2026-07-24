@@ -43,8 +43,7 @@ const DevTransportRoute = import.meta.env.DEV
 // branches under one root error boundary:
 //
 //   PUBLIC   resolve pre-auth: the landing page, the auth screens (sign-in,
-//            OAuth callback, onboarding), the invite-join link, the shareable
-//            recap.
+//            OAuth callback, onboarding), the invite-join link.
 //   AUTHED   gated by <RequireAuth> (the three-state session check) → rendered
 //            inside <AppFrame> (the quiet brand frame, an <Outlet/> layout
 //            route): the home hub + the campaign/character/play/settings flows.
@@ -90,7 +89,6 @@ export function buildRoutes(dev: boolean): RouteObject[] {
         { path: 'auth/callback', element: <CallbackRoute /> },
         { path: 'auth/onboard', element: <OnboardRoute /> },
         { path: 'join/:code', element: <JoinRoute /> },
-        { path: 'campaigns/:id/recap', element: <RecapRoute /> },
 
         // ---- Authed branch: RequireAuth gate → AppFrame layout ----
         {
@@ -118,6 +116,12 @@ export function buildRoutes(dev: boolean): RouteObject[] {
                 // the header (MYT-92 T15) — the one route that escapes the frame's
                 // default content inset.
                 { path: 'campaigns/:id/play', element: <PlayRoute />, handle: { fullBleed: true } },
+                // The post-play landing (myth-lhp99): the recap of the campaign's
+                // most-recent ended session. Member-gated (the read endpoint checks
+                // membership), so it lives in the authed frame — a player reaches it
+                // from the play surface's session_end. A future public share link is
+                // a separate tokenized surface, not this campaign-id read.
+                { path: 'campaigns/:id/recap', element: <RecapRoute /> },
                 { path: 'settings', element: <SettingsRoute /> },
                 // Stripe checkout-return landings (MYT-95). A completed or
                 // abandoned Checkout Session redirects the signed-in player back

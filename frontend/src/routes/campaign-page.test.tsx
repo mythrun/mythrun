@@ -167,10 +167,11 @@ describe('CampaignPage — world identity + MYT-90/91 seams', () => {
   it('mounts the owner InvitePanel (MYT-91) with the primary link and the character surface (MYT-90)', async () => {
     renderPage(() => Promise.resolve([CAMPAIGN]))
     await screen.findByTestId('campaign-world-name')
-    // The invite region is now the real owner panel (not a stub), still under the
-    // `seam-invite` testid so the campaign-detail selectors don't dangle.
+    // MYT-99g03: the owner invite is DEMOTED below the character beat as a quiet
+    // collapsed line (still under `seam-invite` so the selectors don't dangle);
+    // opening it reveals the resolved primary link verbatim.
     expect(screen.getByTestId('seam-invite')).toBeDefined()
-    // The read-only link field shows the resolved primary invite verbatim.
+    fireEvent.click(await screen.findByTestId('invite-collapsed'))
     expect(await screen.findByDisplayValue('https://mythrun.com/join/ABC123')).toBeDefined()
     // The character region routes the injected processing concept to the live
     // loading beat.
@@ -185,6 +186,8 @@ describe('CampaignPage — world identity + MYT-90/91 seams', () => {
       copyText,
       canShare: true,
     })
+    // Open the demoted invite first (collapsed by default on the character beats).
+    fireEvent.click(await screen.findByTestId('invite-collapsed'))
     await screen.findByTestId('invite-panel-link')
     fireEvent.click(screen.getByTestId('invite-panel-copy'))
     await waitFor(() => {

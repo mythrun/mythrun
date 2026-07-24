@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { expect, userEvent, within } from 'storybook/test'
 import { WikiHome } from './WikiHome.tsx'
 import type { WikiView } from './WikiViewSwitch.tsx'
 import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
@@ -85,6 +86,59 @@ export const Introduction: Story = {
 // a collapsible, scannable list (definitions disclosed on demand).
 export const Glossary: Story = {
   render: () => <HomeDemo initialView="glossary" />,
+}
+
+// A world whose flagship glossary entry runs LONGER than the panel (the myth-lcvv2
+// case: run-1's "Heartfire" definition fell off the bottom mid-sentence, with no
+// scrollbar or fade to say it continued). Mounted at the reveal's own row height and
+// with the long entry expanded by the play(), so the overflow is real: the fix — a
+// persistent scrollbar + a bottom fade — must announce that there is more to read.
+const LONG_GLOSSARY_MODEL: typeof WIKI_FIXTURE_MODEL = {
+  ...WIKI_FIXTURE_MODEL,
+  glossary: [
+    {
+      term: 'Heartfire',
+      definition:
+        'The bottled warmth sold by the Priesthood of the Heart, alchemically compressed thermal energy, amber-colored, stored in brass-capped glass vials roughly the size of a fist. A single vial burns for one hour in a standard hearthbox. The name implies sacred origin; the Priesthood maintains that Heartfire is drawn from the residual spiritual warmth of the titan\'s petrified cardiac organ, a claim no rival guild has ever been permitted to test. What is certain is that the Reach cannot winter without it, and the Priesthood alone holds the license to make or sell it.',
+    },
+    ...WIKI_FIXTURE_MODEL.glossary,
+  ],
+}
+
+function LongGlossaryDemo(): React.JSX.Element {
+  const [selectedId, setSelectedId] = useState<string>()
+  const [query, setQuery] = useState('')
+  const [view, setView] = useState<WikiView>('glossary')
+  return (
+    <div className="min-h-dvh bg-bg p-[var(--space-6)]">
+      {/* The reveal's own row height (RevealPanes' clamp lands ~27rem at 800px tall),
+          so the long definition genuinely overflows the panel — the exact condition. */}
+      <div className="mx-auto h-[27rem] max-w-sm">
+        <WikiHome
+          model={LONG_GLOSSARY_MODEL}
+          selectedId={selectedId}
+          onOpen={setSelectedId}
+          query={query}
+          onQuery={setQuery}
+          view={view}
+          onViewChange={setView}
+          {...LABELS}
+        />
+      </div>
+    </div>
+  )
+}
+
+// The overflow-announce regression case: a long definition expanded in a
+// panel-height glossary. The play() opens Heartfire so the definition overruns the
+// panel; the persistent scrollbar + bottom fade must make the truncation legible.
+export const GlossaryLongDefinition: Story = {
+  render: () => <LongGlossaryDemo />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByText('Heartfire'))
+    await expect(canvas.getByText(/residual spiritual warmth/)).toBeVisible()
+  },
 }
 
 // A pre-migration world (no introduction OR glossary): the browse landing alone

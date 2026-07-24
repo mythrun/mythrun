@@ -6,7 +6,7 @@ import { axe } from 'jest-axe'
 import { GhostChoiceList } from './GhostChoiceList.tsx'
 import type { GhostChoiceItem } from '@mythrun/client-core/contract'
 
-// The campaign-create fork: two borderless ghost choices split by hairline rules.
+// The campaign-create fork: two selectable option cards.
 const fork = (
   onA = vi.fn(),
   onB = vi.fn(),
@@ -29,10 +29,9 @@ describe('GhostChoiceList', () => {
     expect(getAllByRole('button')).toHaveLength(2)
   })
 
-  it('frames AND separates the list with hairline rules (above first, between, below last)', () => {
-    // Two items => three separator rules: one above, one between, one below.
-    const { getAllByRole } = render(<GhostChoiceList items={fork()} />)
-    expect(getAllByRole('separator')).toHaveLength(3)
+  it('cards the options (no hairline separators — the border carries the boundary)', () => {
+    const { queryAllByRole } = render(<GhostChoiceList items={fork()} />)
+    expect(queryAllByRole('separator')).toHaveLength(0)
   })
 
   it('renders the quiet subtitle text', () => {
@@ -68,11 +67,22 @@ describe('GhostChoiceList', () => {
     expect(onA).toHaveBeenCalledOnce()
   })
 
-  it('is a GHOST, not a box: no border utility on the choice buttons', () => {
+  it('cards each option: a bounded interactive border on the choice buttons', () => {
     const { getAllByRole } = render(<GhostChoiceList items={fork()} />)
     for (const btn of getAllByRole('button')) {
-      expect(btn.className).not.toMatch(/(^|\s)border(\s|-|$)/)
+      expect(btn.className).toContain('border-border-strong')
     }
+  })
+
+  it('renders the per-item testId on its button when supplied', () => {
+    const items: GhostChoiceItem[] = [
+      { id: 'a', title: 'First', onSelect: vi.fn(), testId: 'choice-a' },
+      { id: 'b', title: 'Second', onSelect: vi.fn() },
+    ]
+    const { getByTestId, getByRole } = render(<GhostChoiceList items={items} />)
+    expect(getByTestId('choice-a').tagName).toBe('BUTTON')
+    // The item without a testId is unaffected — still a real, named button.
+    expect(getByRole('button', { name: /Second/ })).toBeInTheDocument()
   })
 
   it('is flat (0px radius): rounded-none on the choice buttons', () => {

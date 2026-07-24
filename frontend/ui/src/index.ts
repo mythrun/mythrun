@@ -106,6 +106,9 @@ export { Card, CardHeader, CardBody, CardFooter } from './components/Card/Card.t
 // cover header over an ink seam, narrative content at the top, a foot-pinned
 // imprint. The campaign-hub card is a thin composition of it.
 export { CoverCard } from './components/CoverCard/CoverCard.tsx'
+// CoverCardAdd (MYT-3jb55) — the dashed "＋ New campaign" create tile that leads the
+// hub grid, sharing CoverCard's 3:2 footprint so it reads as a peer first cell.
+export { CoverCardAdd, type CoverCardAddProps } from './components/CoverCard/CoverCardAdd.tsx'
 
 // GhostChoiceList (MYT-89) — a borderless "paper" choice list (flat 1-bit): each
 // item is a real <button> styled as a ghost (transparent, surface-hover token-swap,

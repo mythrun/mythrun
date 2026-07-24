@@ -1,13 +1,15 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { GhostHookList } from './GhostHookList.tsx'
 
-// GhostHookList — a richer sibling of GhostChoiceList (the flat 1-bit register).
-// Each item is a REAL <button> styled as a ghost: transparent fill, a neutral
-// surface token-swap on hover/press, and a STACKED serif title over an optional
-// quiet place line over a prose paragraph, with a trailing ember arrow pinned to
-// the top. NO border, NO box, NO glyph mark — the only chrome is the quiet Divider
-// hairlines that FRAME and SEPARATE the hooks (a rule above the first, between
-// each, and below the last). Single column at every width; flat (0px radius).
+// GhostHookList — a richer sibling of GhostChoiceList (the flat 1-bit register),
+// carded to the LevelCard standard (ux-run1 myth-occld). Each item is a REAL
+// <button> that is a whole SELECTABLE CARD: a 1px interactive border on the
+// surface fill, comfortable padding, a decisive hover (edge → full ink + surface
+// token-swap), and a STACKED serif title over an optional quiet place line over a
+// prose paragraph capped to a readable measure, with a docked ember arrow
+// vertically centred against the card. The ENTIRE card is the click target; cards
+// are separated by a gap (not hairline rules). Single column at every width; flat
+// (0px radius).
 //
 // The canonical use is the starting-situation pick: three opening hooks, each a
 // title + a place + a prose paragraph. Content is DATA the consumer supplies
@@ -65,7 +67,7 @@ export const StartingSituations: Story = {
   ),
 }
 
-// Place omitted — the sub-line is optional; the list still frames and separates.
+// Place omitted — the sub-line is optional; the cards still stand on their own.
 export const PlaceOmitted: Story = {
   render: () => (
     <div className="max-w-[560px] bg-bg p-[var(--space-6)]">
