@@ -13,8 +13,9 @@ export {
   guidedReducer,
   guidedRail,
   guidedChoice,
+  hydrateGuidedState,
 } from './guided-reducer.ts'
-export type { GuidedState, GuidedAction, GuidedChoiceDraft } from './guided-reducer.ts'
+export type { GuidedState, GuidedAction, GuidedChoiceDraft, GuidedDraftSeed } from './guided-reducer.ts'
 
 export { createMachine, createTransition } from './create-machine.ts'
 export type { CreateState, CreateEvent } from './create-machine.ts'
@@ -50,3 +51,20 @@ export type {
 } from './use-creation-progress-poll.ts'
 export { CHARACTER_CREATION_STAGES, remainingCreationWaitMs } from './creation-eta.ts'
 export type { CharacterCreationStage } from './creation-eta.ts'
+
+// The character-creation DRAFT seam (player-input durability): persist the player's
+// OWN written concept/grounding (+ guided picks) so a failure, a "Start over", or
+// any return to the flow never loses their words. Pure logic + the route-facing hook.
+export {
+  characterDraftKey,
+  readCharacterDraft,
+  writeCharacterDraft,
+  clearCharacterDraft,
+  useCharacterDraft,
+} from './character-draft.ts'
+export type {
+  CharacterDraft,
+  CharacterGuidedDraft,
+  CharacterDraftHandle,
+  SessionDraftStore,
+} from './character-draft.ts'

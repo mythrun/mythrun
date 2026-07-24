@@ -15,11 +15,19 @@ export interface CharacterLoadingBeatProps {
   /** Honour the user's reduced-motion preference — no fill animation / churn.
    *  (The countdown is exempt — it is content, not decoration.) */
   reducedMotion: boolean
-  /** The ticking `~M:SS` remaining-wait estimate (MYT-102), already resolved —
-   *  the consumer owns the tick, the math (`remainingCreationWaitMs`), and the
-   *  i18n formatting; the beat just renders it as a quiet aria-hidden line
-   *  under the rows (the world-gen countdown register). OMITTED — not empty —
-   *  when there is no usable history: the beat then shows no countdown rather
-   *  than a fake one. */
+  /** The COARSE remaining-wait estimate (MYT-102), already resolved — the
+   *  consumer owns the tick, the math (`remainingCreationWaitMs` → `waitDisplay`),
+   *  and the i18n formatting; the beat just renders it as a quiet aria-hidden
+   *  line under the ladder (e.g. "2 min remaining"). OMITTED — not empty — when
+   *  there is no usable estimate to show (cold-start, or the estimate exhausted,
+   *  in which case `stalledLabel` takes over). Mutually exclusive with
+   *  `stalledLabel`; the consumer passes at most one. */
   countdownLabel?: string
+  /** The indeterminate "still working" line (MYT-102) the beat shows IN PLACE OF
+   *  the countdown once the estimate exhausts (the running stage overran) or the
+   *  wait wedged — so the wait never sits at a dead 0:00. Already-resolved i18n;
+   *  unlike the countdown it is meaningful content (a one-time state change, not
+   *  per-second churn), so it is NOT aria-hidden. OMITTED while the estimate is
+   *  still usable. Mutually exclusive with `countdownLabel`. */
+  stalledLabel?: string
 }

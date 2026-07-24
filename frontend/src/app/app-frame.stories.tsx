@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { MeResponse } from '@mythrun/client-core'
 import { ScreenHarness, expectScreen } from '../storybook/screen-harness.tsx'
 
 const meta: Meta<typeof ScreenHarness> = {
@@ -10,17 +11,25 @@ const meta: Meta<typeof ScreenHarness> = {
 export default meta
 type Story = StoryObj<typeof ScreenHarness>
 
-// The MYT-83 bug class: a long display name shoved the settings affordance off
-// the right edge at 375px. The header must truncate to a single quiet row.
-// The adversarial display name is hoisted to a module const (the home.stories
-// `LONG_CAMPAIGNS` precedent) so the i18next/no-literal-string rail — which runs
-// in jsx-only mode and checks JSX attribute values — doesn't flag it inline.
-const LONG_DISPLAY_NAME: Readonly<Record<string, string>> = {
-  'frame.displayName': 'Aldebaran Featherstonehaugh-Wintermoor, Keeper of the Long Unbroken Title',
+// The MYT-83 bug class: a long display name shoved the settings affordance off the
+// right edge at 375px. The header must truncate to a single quiet row. The display
+// name is now DATA (from `useMe()`, not an i18n key — MYT-99), so the adversarial
+// name is seeded into the `['me']` cache via `seedMe`, not swapped as i18n copy.
+const LONG_NAME_ME: MeResponse = {
+  user: {
+    id: 'dev-user-1',
+    username: 'aldebaran',
+    displayName: 'Aldebaran Featherstonehaugh-Wintermoor, Keeper of the Long Unbroken Title',
+    freeTrialUsed: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
 }
 
+// Hosted on the (empty) home hub — a stable authed route that always renders the
+// frame — so the story isolates the HEADER's long-name behaviour: on desktop the
+// name ellipsizes to a single quiet row; at 375px it collapses entirely (Show).
 export const LongDisplayName: Story = {
   name: 'App frame · long display name truncates',
-  render: () => <ScreenHarness entry="/settings" session="ready" i18nOverrides={LONG_DISPLAY_NAME} />,
+  render: () => <ScreenHarness entry="/home" session="ready" seedCampaigns={[]} seedMe={LONG_NAME_ME} />,
   play: expectScreen('app-frame'),
 }

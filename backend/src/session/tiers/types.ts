@@ -148,6 +148,15 @@ export interface FtTurnContext {
    *  persisted, never pushed into ftHistory. Absent on a normal (first-attempt)
    *  render. */
   readonly correctiveInstruction?: string
+  /** myth-retprop §correction-preamble — true on a `correction`-triggered turn
+   *  (the player-less retcon delivery). On these turns the FT must emit ONLY the
+   *  `issue_correction` tool call (+ any trailing narration); machinery-preamble
+   *  prose it streams BEFORE the tool call ("The correction token arrived — let
+   *  me process that first.") is a player-visible meta-leak. `render` withholds
+   *  pre-correction text from BOTH the live stream and the persisted transcript
+   *  when this is set — a deterministic guard, not a prompt hope. Absent (falsy)
+   *  on every normal turn. */
+  readonly correctionTurn?: boolean
 }
 
 /** Payload of a skill_check frame + transcript row (§3.5 step 6 — carries

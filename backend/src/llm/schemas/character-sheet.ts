@@ -48,11 +48,21 @@ export const skillEntrySchema = z.object({
   expertise: z.boolean(),
 })
 
+// myth-vimk / feedback_no_max_on_llm_prose_fields: the four sub-table `name`
+// fields (feature/equipment/spell) and the feature `description` are LLM-authored
+// and stored in UNCAPPED `TEXT` columns (character_features.feature_name,
+// character_equipment.item_name, character_spells.spell_name — no varchar/CHECK to
+// mirror). So they take a `.min()` floor only, NO `.max()`. The structured-output
+// repair pass (haiku→sonnet) fixes malformed JSON, not valid-but-long strings, so
+// any `.max()` here is UNREPAIRABLE: it terminal-fails the whole character_sheet
+// stage. A real staging sheet (a rogue, "Matthias") produced an equipment name
+// over 80 chars → the former `.max(80)` hard-rejected it → the stage terminal-
+// failed → the player lost their character. Display length is a UI/CSS concern
+// (line-clamp), never a generation-time hard reject. The `.min(2)` floor stays: a
+// one-char label is a real stub defect worth rejecting. Skill `name` is a separate
+// case — a native enum (the canonical 18), not free text; keep it as-is.
 const featureEntrySchema = z.object({
-  name: z.string().min(2).max(80),
-  // min-only: no max on free LLM prose — see feedback_no_max_on_llm_prose_fields /
-  // myth-vimk. The haiku→sonnet repair only fixes malformed JSON, so a max()
-  // terminal-fails the stage on valid-but-long feature text.
+  name: z.string().min(2),
   description: z.string().min(5),
   // MYT-70 §3.2: limited features carry both uses and recharge; null = unlimited
   // (untracked — no counter, no resolver debit). Short structured field, max OK.
@@ -61,7 +71,9 @@ const featureEntrySchema = z.object({
 })
 
 const equipmentEntrySchema = z.object({
-  name: z.string().min(2).max(80),
+  // See the featureEntrySchema note above: min-only, no max (uncapped TEXT column,
+  // unrepairable terminal-fail otherwise). This is the field that broke on staging.
+  name: z.string().min(2),
   quantity: z.number().int().min(1).max(99),
   // MYT-70 §3.2: consume-on-use metadata (potions, scrolls, rations). §7 snapshot
   // display flag; not name-matched in code.
@@ -69,7 +81,8 @@ const equipmentEntrySchema = z.object({
 })
 
 const spellEntrySchema = z.object({
-  name: z.string().min(2).max(80),
+  // See the featureEntrySchema note above: min-only, no max (uncapped TEXT column).
+  name: z.string().min(2),
   level: z.number().int().min(0).max(9),
   prepared: z.boolean(),
   // MYT-70 §3.2 / §5 cast_spell: castable as a ritual (no slot debit). Prep-structured,

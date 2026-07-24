@@ -1,14 +1,16 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { Stack, Text, GuidedBuilder, GuidedRail, FreeformPrompt, SituationRecap } from '@mythrun/ui'
+import { Button, Stack, Text, GuidedBuilder, GuidedRail, FreeformPrompt, SituationRecap } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
-  initialGuidedState,
   guidedReducer,
   guidedRail,
   guidedChoice,
   flattenToConceptText,
+  hydrateGuidedState,
+  useCharacterDraft,
   type GuidedChoiceDraft,
+  type SessionDraftStore,
 } from '@mythrun/client-core/character'
 import { CLASS_OPTIONS, SPECIES, BACKGROUNDS } from '@mythrun/client-core/srd'
 import type { GuidedOption, GuidedStep, RailStep } from '@mythrun/client-core/contract'
@@ -197,6 +199,18 @@ export interface GuidedPathProps {
   /** Abandon the guided path for the freeform fork (the route switches the
    *  create-machine back with `skipToFreeform`). */
   onSkipToFreeform: () => void
+  /** Leave the guided path for the CHOOSER (the route dispatches create-machine
+   *  `back`). Wired to the Class step's Back — the first step, where there is no
+   *  prior step — so the entry decision is reversible. The later steps' Back steps
+   *  in-path (the reducer), walking down to Class, then here. */
+  onBack: () => void
+  /** Player-input durability: the draft store + its campaign key. The path seeds the
+   *  reducer (via `hydrateGuidedState`) and the notes/grounding fields from the
+   *  persisted draft on EVERY mount, and persists picks/notes/grounding as they
+   *  change — so a back-to-chooser round-trip (or a reload) restores the picks and
+   *  the words. Absent store → persistence is a no-op (tests / native shell). */
+  store?: SessionDraftStore | null
+  campaignId: string
 }
 
 export function GuidedPath({
@@ -206,6 +220,9 @@ export function GuidedPath({
   submit,
   onSubmitted,
   onSkipToFreeform,
+  onBack,
+  store,
+  campaignId,
 }: GuidedPathProps): React.JSX.Element {
   const { t } = useTranslation()
   // The i18n key augmentation types `t` to the catalog's literal keys, which rejects
@@ -214,14 +231,29 @@ export function GuidedPath({
   // the dynamic keys (the key is echoed as its own fallback; the lockstep test
   // guarantees every key exists, so the fallback never actually surfaces).
   const resolve: Translate = (key) => t(key, { defaultValue: key })
-  const [state, dispatch] = useReducer(guidedReducer, startingLevel, initialGuidedState)
+  // Player-input durability: seed the reducer + the free-text fields from the
+  // persisted draft on mount (a remount — re-entering guided after a back-to-chooser
+  // or a reload — re-reads it), and persist as the picks / notes / grounding change.
+  const draft = useCharacterDraft(store ?? null, campaignId)
+  const [state, dispatch] = useReducer(
+    guidedReducer,
+    draft.initial.guided,
+    (seed) => hydrateGuidedState(startingLevel, seed),
+  )
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [notesText, setNotesText] = useState('')
-  const [groundingText, setGroundingText] = useState('')
+  const [notesText, setNotesText] = useState(draft.initial.guided?.notes ?? '')
+  const [groundingText, setGroundingText] = useState(draft.initial.groundingText ?? '')
   const [notice, setNotice] = useState<Notice>(null)
   // A synchronous in-flight guard (a ref, not state — a double-press fires before a
   // state flush) so a second Continue can't fire a second submit.
   const submitting = useRef(false)
+
+  // Persist the committed picks whenever the reducer's choice advances. `state.choice`
+  // only ever carries the keys already picked (never an `undefined` value), so the
+  // draft's field-by-field merge cannot clobber a stored pick.
+  useEffect(() => {
+    draft.update({ guided: state.choice })
+  }, [draft, state.choice])
 
   // Re-derive the pre-commit selection from the committed draft whenever the step
   // changes — so stepping Back lands on the prior pick already selected.
@@ -232,6 +264,16 @@ export function GuidedPath({
   const commit = (): void => {
     if (selectedId === null) return
     dispatch({ type: 'choose', value: selectedId })
+  }
+
+  const handleNotesChange = (value: string): void => {
+    setNotesText(value)
+    draft.update({ guided: { notes: value } })
+  }
+
+  const handleGroundingChange = (value: string): void => {
+    setGroundingText(value)
+    draft.update({ groundingText: value })
   }
 
   const continueNotes = (): void => {
@@ -273,7 +315,7 @@ export function GuidedPath({
         {...(situation !== undefined ? { situation } : {})}
         groundingWhisper={groundingWhisper}
         value={groundingText}
-        onChange={setGroundingText}
+        onChange={handleGroundingChange}
         onSubmit={handleGrounding}
         notice={notice}
         t={t}
@@ -289,7 +331,7 @@ export function GuidedPath({
           prompt={t('characterCreate.guided.notes.prompt')}
           whisper={t('characterCreate.guided.notes.whisper')}
           value={notesText}
-          onChange={setNotesText}
+          onChange={handleNotesChange}
           onSubmit={continueNotes}
           submitLabel={t('characterCreate.freeform.continue')}
         />
@@ -318,5 +360,35 @@ export function GuidedPath({
     )
   }
 
-  return <Stack gap={5}>{screen}</Stack>
+  // A quiet Back on the screens the GuidedBuilder does NOT render one for: the Class
+  // step (its own Back is hidden on the first step — this leaves to the chooser, the
+  // reversible entry decision) and the free-text Notes + Grounding screens (this steps
+  // back in-path via the reducer). The middle option steps (subclass / species /
+  // background) keep the GuidedBuilder's own Back — so exactly one Back per screen, no
+  // collision.
+  const ownsBack = state.complete || state.step === 'class' || state.step === 'notes'
+  const backToChooser = !state.complete && state.step === 'class'
+  return (
+    <Stack gap={5}>
+      {ownsBack ? (
+        <Stack direction="row">
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="guided-back"
+            onPress={
+              backToChooser
+                ? onBack
+                : () => {
+                    dispatch({ type: 'back' })
+                  }
+            }
+          >
+            {t('characterCreate.guided.back')}
+          </Button>
+        </Stack>
+      ) : null}
+      {screen}
+    </Stack>
+  )
 }

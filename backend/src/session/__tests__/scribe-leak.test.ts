@@ -122,19 +122,19 @@ describe('MYT-73 T12 leak matrix — (a) tripwire terminal failure is redacted',
     // JSON but fails Zod (confidence out of range) and embeds the SECRET.
     const originalErr = new LlmStructuredOutputError('llm returned unparseable structured output', {
       cause: {
-        text: JSON.stringify({ breached: true, confidence: 9, secretRef: SECRET }),
+        text: JSON.stringify({ severity: 'hard_reveal', confidence: 9, secretRef: SECRET }),
         name: 'AI_NoObjectGeneratedError',
       },
     })
     mockGenerateText.mockRejectedValueOnce(originalErr)
-    // Haiku repair: still Zod-invalid (still secret-bearing).
+    // Haiku repair: still Zod-invalid (confidence out of range, still secret-bearing).
     mockGenerateText.mockResolvedValueOnce({
-      output: { breached: true, confidence: 9, secretRef: SECRET },
+      output: { severity: 'hard_reveal', confidence: 9, secretRef: SECRET },
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
     // Sonnet repair: still Zod-invalid → terminal failure.
     mockGenerateText.mockResolvedValueOnce({
-      output: { breached: true, confidence: 9, secretRef: SECRET },
+      output: { severity: 'hard_reveal', confidence: 9, secretRef: SECRET },
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
 
@@ -143,6 +143,7 @@ describe('MYT-73 T12 leak matrix — (a) tripwire terminal failure is redacted',
       await runSecretTripwire({
         prose: `The innkeeper bows: "I am ${SECRET}, the hidden heir."`,
         secrets: `[SECRET-1] ${SD_PLAYBOOK}`,
+        publicContext: 'The inn is busy tonight; the innkeeper keeps to himself.',
       })
     } catch (err) {
       caught = err
@@ -178,7 +179,7 @@ const TURN = 't-leak-1'
 
 function tripwireBreach(secretRef = '[SECRET-1]'): SecretTripwireOutput {
   return {
-    result: { breached: true, confidence: 0.4, secretRef },
+    result: { severity: 'hard_reveal', confidence: 0.4, secretRef },
     usage: { totalTokens: 5 } as unknown as SecretTripwireOutput['usage'],
     repairAttempted: false,
   }
@@ -215,7 +216,9 @@ function makeScribeHarness(
   const deps: ScribeProcessorDeps = {
     repo: {
       sessions: { getActiveByCampaign: () => Promise.resolve({ sessionNumber: 3 }) },
-      sessionPreps: { getBy: () => Promise.resolve({ sdPlaybook: SD_PLAYBOOK }) },
+      sessionPreps: {
+        getBy: () => Promise.resolve({ sdPlaybook: SD_PLAYBOOK, ftContext: 'Public tavern scene.' }),
+      },
     },
     triggerState: { getRespondedSeq: () => Promise.resolve(7) },
     workingSet: {
@@ -234,6 +237,11 @@ function makeScribeHarness(
         enqueuedTurns.push(payload)
         return Promise.resolve({})
       }) as ScribeProcessorDeps['sessionTurnQueue']['add'],
+    },
+    // The soft-consistency path is not exercised in the leak matrix (these cases
+    // drive hard_reveal breaches); a no-op ST-eval producer satisfies the dep.
+    stEvalQueue: {
+      add: vi.fn(),
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   }

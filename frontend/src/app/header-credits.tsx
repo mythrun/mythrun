@@ -1,58 +1,40 @@
-import { Component, Suspense } from 'react'
-import type { ReactNode } from 'react'
-import { Text, Spinner, VisuallyHidden } from '@mythrun/ui'
+import { Text, Spinner, Stack } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { useBalance } from '@mythrun/client-core'
+import { HeaderSlot } from './header-slot.tsx'
 
-// The header credit-balance slot (MYT-87 T16). Reads the live SESSION balance via
-// the `useBalance` suspense hook and renders it as a terse mono number in the app
-// frame. Because it is a suspense query living in the ALWAYS-present frame, it is
-// wrapped so a slow/failed balance fetch degrades ONLY this slot, never the whole
-// authed shell:
-//   • Suspense — a small spinner while the balance first loads. The frame paints
-//     immediately; only the number slot waits (the brief's "doesn't suspend the
-//     whole frame").
-//   • a LOCAL error boundary — on a balance fetch failure the slot renders nothing.
-//     The "+" buy affordance beside it (owned by AppFrame, outside this boundary)
-//     still lets the player act. Non-critical header chrome must not tear down the
-//     whole route via the router error boundary.
+// The header credit-balance slot (MYT-87 T16, relabeled MYT-99). Reads the live
+// SESSION balance via the `useBalance` suspense hook and renders it as a terse mono
+// readout in the app frame: a visible "Credits" label LEADING the number, so the
+// counter says what it is instead of being a bare number (MYT-99 complaint #3). The
+// label leads (not a trailing unit) so it satisfies sentence case — the first word
+// carries the capital — and it doubles as the accessible name (a screen reader reads
+// "Credits 1,250"), so no visually-hidden label is needed.
 //
-// In production AppProviders always supplies the QueryClient + ApiContext, so the
-// boundary only ever catches a genuine balance fetch failure (a 5xx / network
-// blip); it is not papering over a missing provider at runtime.
+// It lives in the ALWAYS-present frame, so `HeaderSlot` isolates it: Suspense paints
+// a small spinner while the balance first loads (the frame never suspends as a
+// whole), and a local error boundary drops the slot to nothing on a failed fetch.
+// The "+" buy affordance beside it (owned by AppFrame, OUTSIDE this slot) still lets
+// the player act even if the balance fetch fails.
 
-interface CreditsBoundaryState {
-  readonly failed: boolean
-}
-
-// React error boundaries have no hook form — a class is the only way to catch a
-// child render/query error. Module-private; renders nothing on failure.
-class CreditsErrorBoundary extends Component<{ children: ReactNode }, CreditsBoundaryState> {
-  override state: CreditsBoundaryState = { failed: false }
-
-  static getDerivedStateFromError(): CreditsBoundaryState {
-    return { failed: true }
-  }
-
-  override render(): ReactNode {
-    return this.state.failed ? null : this.props.children
-  }
-}
-
-/** The resolved balance number. Only rendered once `useBalance` has data (the
- *  Suspense boundary owns the loading state, the error boundary the failure). */
+/** The resolved balance number + its unit. Only rendered once `useBalance` has data
+ *  (HeaderSlot's Suspense owns the loading state, its error boundary the failure). */
 function HeaderCreditsValue(): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { data } = useBalance()
   // Locale-aware grouping — mechanical formatting (ZFC-exempt), like the hub's
-  // relative-time formatter. The bare number carries a visually-hidden label so a
-  // screen reader announces what it is.
+  // relative-time formatter. Both the number and its unit hold their width
+  // (`noShrink`) so the display-name sibling absorbs the row's shrink, not this.
   const balance = new Intl.NumberFormat(i18n.language).format(data.session)
   return (
-    <Text role="data" noShrink data-testid="frame-credits">
-      <VisuallyHidden>{t('frame.credits')}</VisuallyHidden>
-      {balance}
-    </Text>
+    <Stack direction="row" align="center" gap={2} noShrink data-testid="frame-credits">
+      <Text role="meta" noShrink>
+        {t('frame.credits')}
+      </Text>
+      <Text role="data" noShrink>
+        {balance}
+      </Text>
+    </Stack>
   )
 }
 
@@ -61,18 +43,10 @@ function HeaderCreditsValue(): React.JSX.Element {
 export function HeaderCredits(): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <CreditsErrorBoundary>
-      <Suspense
-        fallback={
-          <Spinner
-            size="xs"
-            label={t('frame.creditsLoading')}
-            data-testid="frame-credits-loading"
-          />
-        }
-      >
-        <HeaderCreditsValue />
-      </Suspense>
-    </CreditsErrorBoundary>
+    <HeaderSlot
+      pending={<Spinner size="xs" label={t('frame.creditsLoading')} data-testid="frame-credits-loading" />}
+    >
+      <HeaderCreditsValue />
+    </HeaderSlot>
   )
 }

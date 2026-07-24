@@ -1,29 +1,38 @@
 import { Outlet, useMatches, useNavigate } from 'react-router-dom'
-import { Box, Stack, Text, IconButton, HorizontalLockup } from '@mythrun/ui'
+import { Box, Stack, Divider, IconButton, HorizontalLockup, Show } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { HeaderCredits } from './header-credits.tsx'
+import { HeaderIdentity } from './header-identity.tsx'
 
 // The quiet brand frame (brand decisions.md — "the brand is the frame, not the
-// content"). Every authed route renders inside this persistent, minimal header:
-// a muted Parchment-&-Ink bar carrying the wordmark · display name · live credit
-// balance · buy · settings, wrapping the content <Outlet/>. The frame recedes so
-// the narrative/combat content inside it is the focus — it never colonises the
-// screen. Composed from @mythrun/ui primitives only (R5, no-ad-hoc-ui); the
-// static labels are i18n placeholders the flow tickets fill (MYT-84 wires the real
-// display name).
+// content"). Every authed route renders inside this persistent header: a muted
+// Parchment-&-Ink bar carrying the wordmark · display name · live credit balance ·
+// buy · settings, above the content <Outlet/>. The frame recedes so the narrative/
+// combat content inside it is the focus — it never colonises the screen. Composed
+// from @mythrun/ui primitives only (R5, no-ad-hoc-ui).
 //
-// The credit balance is the live session balance (`useBalance`, MYT-87 T16),
-// rendered by `<HeaderCredits/>` — which owns its OWN Suspense + error boundary so a
-// slow/failed balance fetch degrades only that slot, never the whole frame. The
-// "+" (buy) and gear (settings) affordances route to interim targets (no dead
-// clicks): the buy flow is MYT-95's, so both point at `/settings` (where account /
-// billing lives) until it ships.
+// MYT-99 redesign. Six fixes over the prior header:
+//   • The wordmark reads as the brand anchor — the HorizontalLockup is 32px tall
+//     (≈half the 64px bar), not the earlier 24px afterthought.
+//   • The display name is the player's REAL name from `useMe()` via <HeaderIdentity/>,
+//     not the passthrough i18n key that printed the literal "{{DISPLAYNAME}}".
+//   • The credit counter is a labeled "1,250 credits" readout (<HeaderCredits/>), not
+//     a bare mystery number.
+//   • The bottom edge is a single quiet <Divider/> hairline (the decorative --border
+//     token, theme-aware), NOT a 4-sided --border-strong box that read as a stark
+//     white line in dark mode.
+//   • Considered spacing: groups are spaced apart (gap 5), items within a group tight
+//     (gap 2 / 3), so identity · balance · actions read as distinct clusters.
+//   • Responsive: at 375px the display name (the ONLY flexible item) truncates and
+//     absorbs the row's shrink while the wordmark, credits, and icon buttons hold
+//     their width — a single quiet row, not a squeeze.
 //
-// Responsiveness (MYT-97): the header is a single quiet row at 375px. The
-// display-name Text is the ONLY flexible item — it ellipsizes (truncate) and
-// absorbs the row's shrink; the wordmark + credits hold their width (noShrink),
-// and the buy + settings affordances are icon-only IconButtons (shrink-0). So a
-// long display name truncates instead of squeezing the fixed labels into a spill.
+// <HeaderIdentity/> and <HeaderCredits/> each own their OWN Suspense + error boundary
+// (see header-slot.tsx), so a slow/failed `/me` or balance fetch degrades only that
+// slot, never the whole frame. The "+" (buy) and gear (settings) affordances route to
+// interim targets (no dead clicks): the buy flow is MYT-95's, so both point at
+// `/settings` (where account / billing lives) until it ships. The "+" sits OUTSIDE
+// HeaderCredits' boundary so it stays actionable even if the balance fetch fails.
 
 // The interim navigation target for the header affordances (both the buy "+" and
 // the settings gear) until MYT-95 ships the dedicated buy flow. Hoisted to a
@@ -56,27 +65,34 @@ export function AppFrame(): React.JSX.Element {
     // 626px-tall-app seam found in the MYT-102 audit). fullBleed still governs
     // only the content-region layout below.
     <Stack minHeight="screen" data-testid="app-frame">
-      <Box padding={4} surface="base" border data-testid="app-frame-header">
-        <Stack direction="row" justify="between" align="center" gap={5}>
-          {/* The brand mark — the frame's quiet anchor (left). The compact
-              horizontal lockup the landing nav uses; it is inherently shrink-0, so
-              a long display name can't squeeze it into a spill. Its accessible name
-              is the wordmark i18n key (the landing.wordmark / signin.wordmark
-              pattern). */}
+      {/* The banner landmark. `surface="base"` sits it one step off the page; the
+          bottom edge is a single quiet <Divider/> below (not a 4-sided border). */}
+      <Box as="header" padding={4} surface="base" data-testid="app-frame-header">
+        <Stack direction="row" justify="between" align="center" gap={4}>
+          {/* The brand mark — the frame's quiet anchor (left). The horizontal lockup,
+              sized to read as the brand at ≈half the bar height; inherently shrink-0,
+              so a long display name can't squeeze it. Its accessible name is the
+              wordmark i18n key (the landing.wordmark / signin.wordmark pattern). */}
           <HorizontalLockup
             aria-label={t('frame.wordmark')}
-            size={24}
+            size={36}
             data-testid="frame-logo"
           />
-          {/* Identity + balance + buy + settings affordances (right). */}
+          {/* Identity · balance+buy · settings — three clusters, spaced apart (gap 5)
+              with tight grouping within each. */}
           <Stack direction="row" align="center" gap={5}>
-            <Text role="ui-label" truncate data-testid="frame-display-name">
-              {t('frame.displayName')}
-            </Text>
+            {/* Identity shows from `sm` up; on phones it collapses so the wordmark +
+                balance + actions get the row's width (the considered mobile arrangement,
+                not a squeeze). */}
+            <Show above="sm">
+              <HeaderIdentity />
+            </Show>
             {/* The live credit balance + its buy affordance, grouped tight. The buy
                 "+" sits OUTSIDE HeaderCredits' error boundary so it stays actionable
-                even if the balance fetch fails. */}
-            <Stack direction="row" align="center" gap={2}>
+                even if the balance fetch fails. `noShrink` holds the group so the
+                display name (the row's only flexible item) absorbs all the shrink —
+                without it the group collapses and the "+" overlaps the balance. */}
+            <Stack direction="row" align="center" gap={3} noShrink>
               <HeaderCredits />
               <IconButton
                 icon="plus"
@@ -98,6 +114,10 @@ export function AppFrame(): React.JSX.Element {
           </Stack>
         </Stack>
       </Box>
+      {/* The quiet hairline under the banner — the decorative --border token (bg-border),
+          theme-aware in BOTH themes, flat-1-bit. Replaces the old --border-strong box
+          edge that read as a stark white line on the dark page. */}
+      <Divider data-testid="app-frame-divider" />
       {/* The content surface — the matched authed route renders here. A route that
           declares handle.fullBleed (MYT-92 T15) escapes the padded Box and fills the
           viewport below the header (the live-play stage); every other route keeps the

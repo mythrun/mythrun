@@ -5,45 +5,45 @@ import { cn } from '../../lib/cn.ts'
 import { Text } from '../Text/Text.tsx'
 import { Heading } from '../Heading/Heading.tsx'
 import { Divider } from '../Divider/Divider.tsx'
-import { SeamlessInput } from '../SeamlessInput/SeamlessInput.tsx'
+import { WikiSearch } from './WikiSearch.tsx'
+import { WikiViewSwitch, type WikiView } from './WikiViewSwitch.tsx'
+import { WikiGlossary } from './WikiGlossary.tsx'
 import { RelatedFooter } from './RelatedFooter.tsx'
 import { filterWikiModel } from './filter-model.ts'
 import { resolveKindLabel } from './kind-label.ts'
 
-// WikiHome (MYT-89 D4; intro-as-home myth-b9bap) — the wiki's landing. When
-// the model carries an `introduction` it IS the world's front door, one
-// scrolling field-guide surface: the world's name as the serif title moment,
-// the grounding prose as real paragraphs, the dig-deeper references in the
-// RelatedFooter idiom, then a quiet mono INDEX label introducing the search
-// field and the browse-by-kind groups — a book's introduction followed by its
-// index, so browse/search stay one scroll away with no mode switch. Without an
-// introduction (a pre-migration world) it is the browse landing alone: the
-// borderless search field pinned over the scrolling groups.
+// WikiHome (MYT-89 D4; intro-as-home myth-b9bap; MYT-100 tabbed IA) — the wiki's
+// landing, restructured into two PEER VIEWS instead of one long scroll. When the
+// world carries a glossary, a segmented WikiViewSwitch splits the panel into:
+//   • INDEX — the world's front door (the introduction when present) followed by
+//     the search field + browse-by-kind groups, and
+//   • GLOSSARY — the invented vocabulary as a collapsible, scannable list.
+// The switch sits PERSISTENT above the scroll region so it never scrolls away;
+// the active view scrolls beneath it. A per-entity page is a DRILL-IN over
+// whichever view (the shell swaps WikiHome for WikiPage and back) — not a third
+// segment — so the switch's active view is owned by the SHELL and survives the
+// round-trip.
 //
-// Groups browse-by-kind (factions/locations/npcs/items; nested locations
-// indent under their parent via nested <ul>s). Every entity row is a
-// NAVIGATION affordance — it opens the entity's page. Flat 1-bit paper
-// register: no boxes/cards/circles — quiet Divider hairlines separate
-// sections; the graph-selected entity's row is marked with a quiet surface
-// token-swap.
+// A world WITHOUT a glossary keeps the single-view landing (no switch): the
+// introduction over its INDEX eyebrow + search + groups, or — a pre-migration
+// world with neither intro nor glossary — the browse groups under the search
+// alone. The graceful absence, not a placeholder.
 //
-// THE GLOSSARY (MYT-102): the world's invented vocabulary closes the index —
-// a <dl> of mono terms over serif definitions under the same quiet mono
-// section label, searchable through the SAME query (term match, the parity of
-// the entities' name match). A world without one gets no section at all (the
-// graceful absence); the empty note shows only when NEITHER entities nor
-// glossary rows survive the filter.
+// Groups browse-by-kind (factions/locations/npcs/items; nested locations indent
+// under their parent via nested <ul>s). Every entity row is a NAVIGATION
+// affordance — it opens the entity's page. Flat 1-bit paper register: no
+// boxes/cards/circles — quiet Divider hairlines separate sections; the
+// graph-selected entity's row is marked with a quiet surface token-swap.
 //
-// SCROLL MEMORY (the shell's home side): whichever variant renders, the scroll
-// container carries the shared `scrollRef` so the shell can read `scrollTop`
-// at push-away time, and `scroll` re-seats the reader on mount (layout-effect,
-// before paint) — a dig-deeper tap at the bottom of the intro returns to the
-// references, not the title.
+// SCROLL MEMORY (the shell's home side): the scroll container carries the shared
+// `scrollRef` so the shell can read `scrollTop` at push-away time, and `scroll`
+// re-seats the reader on mount (layout-effect, before paint) — a dig-deeper tap
+// at the bottom of the intro returns to the references, not the title.
 //
 // The DS owns no copy: labels arrive resolved from the shell (required props, no
-// in-component defaults). The world name, prose, and entity/reference names are
-// DATA and render as-is. Raw <ul>/<li>/<button> carry the tree semantics +
-// native keyboard activation.
+// in-component defaults). The world name, prose, and entity/reference/glossary
+// values are DATA and render as-is. Raw <ul>/<li>/<button> carry the tree
+// semantics + native keyboard activation.
 
 const ITEM_CLASS = cn(
   'flex w-full min-w-0 items-baseline text-left',
@@ -97,52 +97,28 @@ function EntityNode({ entity, selectedId, onOpen }: EntityNodeProps): React.JSX.
   )
 }
 
-interface HomeGroupsProps {
+interface BrowseGroupsProps {
   model: WikiViewModel
   query: string
   selectedId: string | undefined
   onOpen: (entityId: string) => void
   groupLabels?: WorldWikiProps['groupLabels']
   emptyLabel: string
-  glossaryLabel: string
 }
 
-/** The world glossary as a definition list: the mono term over the serif
- *  definition, one quiet row per entry (term-sorted by the view model). */
-function GlossaryList({ glossary }: { glossary: WikiViewModel['glossary'] }): React.JSX.Element {
-  return (
-    <dl className="flex min-w-0 flex-col gap-[var(--space-3)] px-[var(--space-3)] pt-[var(--space-2)]">
-      {glossary.map((entry, index) => (
-        // Index keys are safe here (the list is static per render) and, unlike
-        // term keys, two same-termed rows can't collide and drop one.
-        <div key={index} className="min-w-0">
-          <dt>
-            <Text role="data">{entry.term}</Text>
-          </dt>
-          <dd>
-            <Text role="prose-body" as="p">
-              {entry.definition}
-            </Text>
-          </dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-/** The browse-by-kind groups + the closing glossary, query-filtered — the
- *  shared index body of both home variants. */
-function HomeGroups({
+/** The browse-by-kind groups, query-filtered — the body of the index view. The
+ *  glossary is NOT here anymore (it's its own view); the empty note shows when no
+ *  entity survives the filter. */
+function BrowseGroups({
   model,
   query,
   selectedId,
   onOpen,
   groupLabels,
   emptyLabel,
-  glossaryLabel,
-}: HomeGroupsProps): React.JSX.Element {
+}: BrowseGroupsProps): React.JSX.Element {
   const filtered = filterWikiModel(model, query)
-  if (filtered.groups.length === 0 && filtered.glossary.length === 0) {
+  if (filtered.groups.length === 0) {
     return (
       <Text role="prose-body" as="p">
         {emptyLabel}
@@ -164,13 +140,6 @@ function HomeGroups({
           </ul>
         </section>
       ))}
-      {filtered.glossary.length > 0 && (
-        <section className="flex min-w-0 flex-col gap-[var(--space-2)]">
-          {filtered.groups.length > 0 && <Divider tone="border" />}
-          <p className={cn(INDEX_LABEL_CLASS, 'px-[var(--space-3)]')}>{glossaryLabel}</p>
-          <GlossaryList glossary={filtered.glossary} />
-        </section>
-      )}
     </>
   )
 }
@@ -217,6 +186,80 @@ function IntroductionArticle({
   )
 }
 
+interface IndexViewProps {
+  model: WikiViewModel
+  selectedId: string | undefined
+  onOpen: (entityId: string) => void
+  query: string
+  onQuery: (query: string) => void
+  searchLabel: string
+  searchPlaceholder: string
+  groupLabels?: WorldWikiProps['groupLabels']
+  emptyLabel: string
+  referencesLabel: string
+  indexLabel: string
+  /** Whether the persistent switch already names this view — when it does, the
+   *  in-body INDEX eyebrow is redundant and suppressed. */
+  hasSwitch: boolean
+}
+
+/** The INDEX view: the world's introduction (its front door, when present) over
+ *  the search field + browse-by-kind groups. The INDEX eyebrow separates the
+ *  intro from the browse section only when the switch isn't there to name the
+ *  view. */
+function IndexView({
+  model,
+  selectedId,
+  onOpen,
+  query,
+  onQuery,
+  searchLabel,
+  searchPlaceholder,
+  groupLabels,
+  emptyLabel,
+  referencesLabel,
+  indexLabel,
+  hasSwitch,
+}: IndexViewProps): React.JSX.Element {
+  const introduction = model.introduction
+  const browse = (
+    <>
+      <WikiSearch label={searchLabel} value={query} onChange={onQuery} placeholder={searchPlaceholder} />
+      <BrowseGroups
+        model={model}
+        query={query}
+        selectedId={selectedId}
+        onOpen={onOpen}
+        emptyLabel={emptyLabel}
+        {...(groupLabels !== undefined ? { groupLabels } : {})}
+      />
+    </>
+  )
+
+  if (introduction === undefined) {
+    // No front door (a pre-migration world, or a snapshot without one): the
+    // search over the browse groups alone.
+    return <div className="flex min-w-0 flex-col gap-[var(--space-2)]">{browse}</div>
+  }
+
+  return (
+    <>
+      <IntroductionArticle
+        introduction={introduction}
+        onOpen={onOpen}
+        referencesLabel={referencesLabel}
+        {...(groupLabels !== undefined ? { groupLabels } : {})}
+      />
+      <section className="flex min-w-0 flex-col gap-[var(--space-2)] pt-[var(--space-4)]">
+        <Divider tone="border" />
+        {/* The switch, when present, is the view's name — the eyebrow would double it. */}
+        {!hasSwitch && <p className={cn(INDEX_LABEL_CLASS, 'px-[var(--space-3)]')}>{indexLabel}</p>}
+        {browse}
+      </section>
+    </>
+  )
+}
+
 export interface WikiHomeProps {
   model: WikiViewModel
   /** The graph-selected entity, if any — its row is marked (prop-driven). */
@@ -226,6 +269,10 @@ export interface WikiHomeProps {
   /** The current search query (controlled by the shell). */
   query: string
   onQuery: (query: string) => void
+  /** The active view (Index / Glossary), owned by the shell so a drill-in returns
+   *  to the view it came from. Ignored (Index) when the world has no glossary. */
+  view: WikiView
+  onViewChange: (view: WikiView) => void
   /** i18n'd chrome copy, resolved by the shell (the DS owns none). */
   searchLabel: string
   searchPlaceholder: string
@@ -233,7 +280,7 @@ export interface WikiHomeProps {
   emptyLabel: string
   referencesLabel: string
   indexLabel: string
-  /** Section label over the world-glossary rows closing the index (MYT-102). */
+  /** Segment label for the glossary view + eyebrow (MYT-102). */
   glossaryLabel: string
   /** The retained scroll offset (px) to seat the reader at on mount — the
    *  shell's home scroll memory. */
@@ -249,6 +296,8 @@ export function WikiHome({
   onOpen,
   query,
   onQuery,
+  view,
+  onViewChange,
   searchLabel,
   searchPlaceholder,
   groupLabels,
@@ -271,50 +320,42 @@ export function WikiHome({
     if (el !== null) el.scrollTop = scroll
   }, [scroll, containerRef])
 
-  const introduction = model.introduction
-  const groupsProps = { model, query, selectedId, onOpen, emptyLabel, glossaryLabel } as const
-  const searchField = (
-    <SeamlessInput label={searchLabel} value={query} onChange={onQuery} placeholder={searchPlaceholder} />
-  )
-
-  if (introduction === undefined) {
-    // The pre-migration browse landing: the search field pinned over the
-    // scrolling groups — the graceful absence, not a placeholder-of-shame.
-    return (
-      <div className="flex max-h-full min-h-0 min-w-0 flex-col gap-[var(--space-4)]">
-        {searchField}
-        <div
-          ref={(el) => {
-            containerRef.current = el
-          }}
-          className="min-h-0 min-w-0 flex-1 overflow-y-auto"
-        >
-          <HomeGroups {...groupsProps} {...(groupLabels !== undefined ? { groupLabels } : {})} />
-        </div>
-      </div>
-    )
-  }
+  const hasGlossary = model.glossary.length > 0
+  // A glossary-less world has only the index; force it even if the shell's view
+  // state says glossary (the switch that would set it isn't rendered).
+  const activeView: WikiView = hasGlossary ? view : 'index'
 
   return (
     <div className="flex max-h-full min-h-0 min-w-0 flex-col">
+      {hasGlossary && (
+        <div className="px-[var(--space-3)] pb-[var(--space-3)]">
+          <WikiViewSwitch value={activeView} onChange={onViewChange} indexLabel={indexLabel} glossaryLabel={glossaryLabel} />
+        </div>
+      )}
       <div
         ref={(el) => {
           containerRef.current = el
         }}
         className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-[var(--space-4)]"
       >
-        <IntroductionArticle
-          introduction={introduction}
-          onOpen={onOpen}
-          referencesLabel={referencesLabel}
-          {...(groupLabels !== undefined ? { groupLabels } : {})}
-        />
-        <section className="flex min-w-0 flex-col gap-[var(--space-2)] pt-[var(--space-4)]">
-          <Divider tone="border" />
-          <p className={cn(INDEX_LABEL_CLASS, 'px-[var(--space-3)]')}>{indexLabel}</p>
-          {searchField}
-          <HomeGroups {...groupsProps} {...(groupLabels !== undefined ? { groupLabels } : {})} />
-        </section>
+        {activeView === 'glossary' ? (
+          <WikiGlossary glossary={model.glossary} />
+        ) : (
+          <IndexView
+            model={model}
+            selectedId={selectedId}
+            onOpen={onOpen}
+            query={query}
+            onQuery={onQuery}
+            searchLabel={searchLabel}
+            searchPlaceholder={searchPlaceholder}
+            emptyLabel={emptyLabel}
+            referencesLabel={referencesLabel}
+            indexLabel={indexLabel}
+            hasSwitch={hasGlossary}
+            {...(groupLabels !== undefined ? { groupLabels } : {})}
+          />
+        )}
       </div>
     </div>
   )

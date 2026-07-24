@@ -782,7 +782,21 @@ export class SonnetFastThinker implements FastThinker {
     // dm_text + re-injected FT history) AND the live emit; the `\n[[WORLD_DELTA]]`
     // section + its JSON body are suppressed from BOTH and captured for parse.
     const deltaGuard = new WorldDeltaGuard()
+    // myth-retprop §correction-preamble — on a correction turn, WITHHOLD any text
+    // the FT streams BEFORE its issue_correction tool call from BOTH sinks (live
+    // stream + persisted transcript). It is machinery preamble ("let me process
+    // that first"), never player narration. Once the correction fires the buffer
+    // is discarded; trailing narration streams normally. If the turn ends with NO
+    // correction (a malformed correction turn), the buffer is flushed at stream
+    // end so legitimate prose is never silently lost (fail-open).
+    const correctionTurn = ctx.correctionTurn === true
+    let correctionFired = false
+    let preamble = ''
     const sink = async (out: string): Promise<void> => {
+      if (correctionTurn && !correctionFired) {
+        preamble += out
+        return
+      }
       assembler.pushTextDelta(out)
       await emit.emitText(out)
     }
@@ -812,6 +826,12 @@ export class SonnetFastThinker implements FastThinker {
         // A delimiter can't straddle a tool call — flush any held partial as
         // prose before the tool boundary closes the text run.
         await deltaGuard.flushPending(sink)
+        // The correction fired — drop the withheld machinery preamble; trailing
+        // text now streams normally.
+        if (correctionTurn && part.toolName === 'issue_correction') {
+          correctionFired = true
+          preamble = ''
+        }
         const input = asRecord(part.input)
         pendingInputs.set(part.toolCallId, input)
         assembler.pushToolCall(part.toolCallId, part.toolName, part.input)
@@ -830,6 +850,14 @@ export class SonnetFastThinker implements FastThinker {
 
     // Stream end: a partial literal that never completed is committed prose.
     await deltaGuard.finishStream(sink)
+    // Fail-open: a correction turn that produced NO issue_correction call is
+    // malformed, but the withheld text was ordinary prose — flush it rather than
+    // silently drop a whole turn. (The happy path discarded `preamble` when the
+    // correction fired, so this is empty there.)
+    if (correctionTurn && !correctionFired && preamble.length > 0) {
+      assembler.pushTextDelta(preamble)
+      await emit.emitText(preamble)
+    }
 
     const totalUsage = await stream.totalUsage
     const usage = mapUsage(totalUsage)

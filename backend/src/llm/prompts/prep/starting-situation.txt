@@ -44,6 +44,10 @@ Choose the 3 most interesting and richest locations from the list above as poten
 - Reference nearby NPCs, tensions, or activity without spoiling secrets
 - Keep it to 1-2 sentences — this is a teaser, not a scenario
 
+The `title`, `why_interesting`, and `invitation` you write follow the register below.
+
+{{include:shared/prose-register}}
+
 For each of your 3 chosen locations:
 
 1. **title** — A short evocative title for the scene, 5 to 60 characters. This is the headline a player sees in the picker before reading the prose — it should capture the hook, the mood, or the moment. Examples: "The Smoke-Stained Tavern", "Dawn at the Ferryman's Gate", "Below the Singing Stone". Not the location's name. Not a generic phrase ("A New Beginning"). One concrete image.

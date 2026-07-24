@@ -240,10 +240,14 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       heading: string
       beats: LoadingBeat[]
       reducedMotion: boolean
-      // MYT-102: the ticking `~M:SS` wait estimate — OPTIONAL (omitted, not
-      // empty, when there is no usable history; the beat then shows no
-      // countdown rather than a fake one).
+      // MYT-102 timer revamp: the COARSE wait estimate — OPTIONAL (omitted when
+      // there is no usable estimate; the beat shows no countdown, never a fake or
+      // a dead one).
       countdownLabel?: string
+      // MYT-102 timer revamp: the indeterminate "still working" line shown in
+      // place of the countdown once the estimate exhausts — OPTIONAL, mutually
+      // exclusive with countdownLabel.
+      stalledLabel?: string
     }>()
   })
 

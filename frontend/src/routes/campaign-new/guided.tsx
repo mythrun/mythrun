@@ -251,7 +251,7 @@ export function GuidedScreen({ onStreaming, onFreeform }: GuidedScreenProps): Re
   }
 
   return (
-    <Stack gap={5} data-testid="screen-guided">
+    <Stack gap={6} data-testid="screen-guided">
       <StepHeader step={step} />
       <PickFields step={step} pick={current} onPatch={patchCurrent} />
       {notice ? (

@@ -14,10 +14,20 @@
 // through a DEDICATED narrow `ScribeRepo.sessionPreps.getBy` surface (mirrors
 // StEvalRepo / LookupVetRepo) — NEVER a widening of the FT-side
 // TurnWorkerRepo.sessionPreps ({ftContext}-only). The tripwire's output is an
-// OPAQUE control signal ({breached, confidence, secretRef}); the retcon `Z` is
+// OPAQUE control signal ({severity, confidence, secretRef}); the retcon `Z` is
 // authored to be secret-free and is the only thing that crosses back to a turn.
 // An unresolvable/empty playbook FAILS LOUD (a disarmed tripwire is worse than
 // an error).
+//
+// myth-retprop — PROPORTIONATE REMEDY: the tripwire's `severity` routes the
+// response. A "hard_reveal" (the prose stated / necessarily implied a secret)
+// gets the open, player-facing retcon below. A "soft_consistency" (an NPC merely
+// ACTING in line with a hidden agenda — a gaze drifting to a door) gets a SILENT
+// remedy: no player-facing correction at all; instead we signal the ST to steer
+// FUTURE turns via its standing directive. This kills the "Streisand retcon" —
+// a public correction over an improvised in-character detail that only confuses
+// the player and advertises the secret. NOTHING secret-derived crosses back on
+// the soft path (strictly stronger isolation than the retcon path).
 
 import { Worker as BullmqWorker, Queue, type Job } from 'bullmq'
 import type { Redis } from 'ioredis'
@@ -39,7 +49,13 @@ import {
   QUEUE_SCRIBE,
   type ScribeJobPayload,
 } from './scribe-queue.js'
-import { TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR, WORKING_SET_CAP } from './scribe-config.js'
+import {
+  enqueueStEval,
+  QUEUE_ST_EVAL,
+  type StEvalPayload,
+  type StEvalQueueLike,
+} from './st-eval-queue.js'
+import { WORKING_SET_CAP } from './scribe-config.js'
 import type { WorkingSetItem, WorkingSetProposal } from './working-set/types.js'
 
 /** BullMQ lock/stalled config. The retcon-author (Opus) runs up to ~45s, so the
@@ -60,7 +76,15 @@ interface MinimalLogger {
  *  lives HERE, not on TurnWorkerRepo). Mirrors StEvalRepo. */
 interface ScribeRepo {
   readonly sessionPreps: {
-    getBy(campaignId: string, sessionNumber: number): Promise<{ sdPlaybook: string } | null>
+    // `sdPlaybook` is the SECRET surface (tripwire/retcon reason over it).
+    // `ftContext` is PUBLIC (the same enforced-ignorance-safe briefing the FT
+    // reads via TurnWorkerRepo) — read here to give the tripwire its grounding
+    // floor (a detail already in the briefing is not a breach). Reading a public
+    // column is NOT a widening of the secret surface.
+    getBy(
+      campaignId: string,
+      sessionNumber: number,
+    ): Promise<{ sdPlaybook: string; ftContext: string } | null>
   }
   readonly sessions: {
     getActiveByCampaign(campaignId: string): Promise<{ sessionNumber: number } | null>
@@ -89,6 +113,10 @@ export interface ScribeProcessorDeps {
   runTripwire: typeof runSecretTripwire
   runRetcon: typeof runRetconAuthor
   readonly sessionTurnQueue: TurnQueueLike
+  /** The st-evaluation producer — the SILENT soft-consistency remedy enqueues an
+   *  ST evaluation (dedup-collapsed per campaign) so the secret-aware Opus
+   *  director can steer future turns. No player-facing correction on this path. */
+  readonly stEvalQueue: StEvalQueueLike
   readonly logger: MinimalLogger
 }
 
@@ -131,18 +159,22 @@ async function embedProposals(
   }))
 }
 
-/** Resolve the SECRET sd_playbook for the campaign's active session. Returns
- *  null when the session/prep is unresolvable or the playbook is empty — the
- *  caller FAILS LOUD on null (a disarmed tripwire is worse than an error). */
-async function resolvePlaybook(
+/** Resolve the SECRET sd_playbook + the PUBLIC ft_context for the campaign's
+ *  active session. Returns null when the session/prep is unresolvable or the
+ *  playbook is empty — the caller FAILS LOUD on null (a disarmed tripwire is
+ *  worse than an error). `ftContext` is the tripwire's grounding floor; it may
+ *  be '' (a degraded but non-fatal state — grounding just can't rescue any
+ *  detail that turn). */
+async function resolvePrep(
   deps: ScribeProcessorDeps,
   campaignId: string,
-): Promise<string | null> {
+): Promise<{ sdPlaybook: string; ftContext: string } | null> {
   const session = await deps.repo.sessions.getActiveByCampaign(campaignId)
   if (session === null) return null
   const prep = await deps.repo.sessionPreps.getBy(campaignId, session.sessionNumber)
   const sdPlaybook = prep?.sdPlaybook ?? ''
-  return sdPlaybook.trim().length > 0 ? sdPlaybook : null
+  if (sdPlaybook.trim().length === 0) return null
+  return { sdPlaybook, ftContext: prep?.ftContext ?? '' }
 }
 
 /** Format the playbook as the tripwire's handle-annotated `secrets` block. v1:
@@ -231,11 +263,40 @@ async function handleBreach(
   ])
 }
 
+/** Step 4 (soft) — a "soft_consistency" verdict: an NPC merely ACTING in line
+ *  with a hidden agenda. The remedy is SILENT — NO player-facing correction (an
+ *  open retcon over an in-character gaze is the Streisand failure). Instead
+ *  enqueue an ST evaluation so the secret-aware Opus director can, if it judges
+ *  it necessary, steer FUTURE turns via its standing directive. The enqueue is
+ *  dedup-collapsed per campaign (st-eval-queue's no-ttl dedup), so a scene full
+ *  of in-character NPC beats does not spam Opus. TOTAL — an enqueue failure logs
+ *  and returns (steering is an enhancement; the turn already shipped clean, and
+ *  the ST's own 5-turn oversight floor is the backstop). Nothing secret-derived
+ *  crosses back here. */
+async function handleSoftConsistency(
+  deps: ScribeProcessorDeps,
+  payload: ScribeJobPayload,
+  secretRef: string,
+  confidence: number,
+): Promise<void> {
+  const { campaignId, sessionId } = payload
+  deps.logger.info(
+    { campaignId, secretRef, confidence },
+    'scribe: soft_consistency (NPC behavior consistent with a secret) — NO player correction; signaling ST to steer',
+  )
+  try {
+    await enqueueStEval(deps.stEvalQueue, { campaignId, sessionId })
+  } catch (err) {
+    deps.logger.warn({ err, campaignId }, 'scribe: soft_consistency ST-signal enqueue failed (fail-soft)')
+  }
+}
+
 /**
  * The post-turn Scribe job. TOTAL — never throws out (the producer is the turn
  * worker's finally phase; a throw here would not fail the player-visible turn,
  * but a thrown error would surface as an unhandled BullMQ failure — keep it
- * contained). Steps: embed-on-append → tripwire → (breach) retcon.
+ * contained). Steps: embed-on-append → tripwire → route by severity
+ * (soft_consistency → silent ST steer; hard_reveal → open retcon).
  */
 export async function processScribeJob(
   deps: ScribeProcessorDeps,
@@ -254,43 +315,60 @@ export async function processScribeJob(
     // secret check is the load-bearing half of this job).
   }
 
-  // 3. Resolve the SECRET playbook — FAIL LOUD on absent/empty (a disarmed
-  // tripwire is worse than an error; do NOT silently skip).
-  let sdPlaybook: string | null
+  // 3. Resolve the SECRET playbook (+ PUBLIC ft_context) — FAIL LOUD on
+  // absent/empty playbook (a disarmed tripwire is worse than an error; do NOT
+  // silently skip).
+  let prep: { sdPlaybook: string; ftContext: string } | null
   try {
-    sdPlaybook = await resolvePlaybook(deps, campaignId)
+    prep = await resolvePrep(deps, campaignId)
   } catch (err) {
     deps.logger.error({ err, campaignId }, 'scribe_tripwire_misconfigured: playbook read failed')
     return
   }
-  if (sdPlaybook === null) {
+  if (prep === null) {
     deps.logger.error({ campaignId }, 'scribe_tripwire_misconfigured: empty/unresolvable sd_playbook')
     return
   }
+  const { sdPlaybook, ftContext } = prep
 
-  // 4. Run the tripwire over the FT's player-facing prose.
+  // 4. Run the tripwire over the FT's player-facing prose. Pass the PUBLIC
+  // ft_context so a detail the FT was licensed to write is grounded → not a
+  // breach (the grounding floor).
   let tripwire: Awaited<ReturnType<typeof runSecretTripwire>>
   try {
-    tripwire = await deps.runTripwire({ prose, secrets: formatSecrets(sdPlaybook) })
+    tripwire = await deps.runTripwire({
+      prose,
+      secrets: formatSecrets(sdPlaybook),
+      publicContext: ftContext,
+    })
   } catch (err) {
     deps.logger.warn({ err, campaignId }, 'scribe: tripwire failed; no breach check this turn')
     return
   }
 
-  const { breached, confidence, secretRef } = tripwire.result
-  // Recall-biased escalation: ANY breached:true escalates to the retcon-author —
-  // including a LOW-confidence one (a breach under the floor is still a breach,
-  // never waved through; the Opus author is the second opinion). A breached:false
-  // verdict never escalates regardless of confidence.
-  if (!breached) {
+  const { severity, confidence, secretRef } = tripwire.result
+  // myth-retprop — route by SEVERITY, not a numeric confidence floor. `none`
+  // is clean; `soft_consistency` (in-character NPC behavior) gets the SILENT ST
+  // steer; only `hard_reveal` (the secret stated / necessarily implied) fires
+  // the disruptive open, player-facing retcon. Recall bias lives in the severity
+  // call itself — ANY hard_reveal fires the retcon regardless of confidence.
+  if (severity === 'none') {
     deps.logger.info({ campaignId, confidence }, 'scribe: tripwire clean; no retcon')
     return
   }
-  if (confidence < TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR) {
-    deps.logger.info({ campaignId, confidence }, 'scribe: low-confidence breach; escalating to retcon')
+  if (severity === 'soft_consistency') {
+    await handleSoftConsistency(deps, job.data, secretRef ?? '[SECRET-1]', confidence)
+    return
   }
 
-  // 5. Breach → author + deliver the retcon (double-retcon guarded).
+  // 5. hard_reveal → author + deliver the open retcon (double-retcon guarded).
+  // Observability: the FIRING breach logs its handle + confidence here (the
+  // happy retcon path was previously silent in logs — a forensic gap). Handle +
+  // number only; NO secret content (that stays behind redactRawText).
+  deps.logger.info(
+    { campaignId, secretRef, confidence },
+    'scribe: hard_reveal breach → authoring open retcon',
+  )
   const liveWorkingSet = await deps.workingSet.load(campaignId)
   await handleBreach(deps, job.data, sdPlaybook, secretRef ?? '[SECRET-1]', liveWorkingSet)
 }
@@ -309,6 +387,13 @@ export function buildScribeWorker(
   const sessionTurnQueue = new Queue<TurnJobPayload>(QUEUE_SESSION_TURN, {
     connection: redisBatch,
   })
+  // The soft-consistency ST-signal producer (dedup-collapsed per campaign — see
+  // st-eval-queue's no-ttl deduplication invariant). Constructed here, mirroring
+  // the turn-worker's post-turn arm, so the scribe can nudge the ST to steer
+  // future turns without authoring anything player-facing.
+  const stEvalQueue = new Queue<StEvalPayload>(QUEUE_ST_EVAL, {
+    connection: redisBatch,
+  })
 
   const deps: ScribeProcessorDeps = {
     repo,
@@ -322,6 +407,7 @@ export function buildScribeWorker(
     runTripwire: runSecretTripwire,
     runRetcon: runRetconAuthor,
     sessionTurnQueue,
+    stEvalQueue,
     logger,
   }
 

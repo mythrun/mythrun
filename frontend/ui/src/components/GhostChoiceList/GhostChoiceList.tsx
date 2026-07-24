@@ -7,12 +7,14 @@ import { Divider } from '../Divider/Divider.tsx'
 // template-built class never generates). The ghost treatment mirrors Button's
 // `variant="ghost"` (transparent fill, neutral surface hover/active token-swap)
 // plus the shared theme-aware focus ring; NO border — the hairline Dividers do
-// the dividing, not a box. Generous padding + a full-width row so the rules span
-// the whole content column and the whole row is the hit target.
+// the dividing, not a box. The row title sits FLUSH to the content column's left
+// edge (no horizontal inset) so it shares the one spine with the screen's header
+// and hint; only vertical padding gives the row its height + hit target, and the
+// hover/divider span the whole column edge-to-edge.
 const ITEM_CLASS = cn(
   'group flex w-full items-center justify-between gap-[var(--space-4)] text-left',
   'bg-transparent text-ink rounded-none cursor-pointer select-none',
-  'px-[var(--space-4)] py-[var(--space-5)]',
+  'py-[var(--space-5)]',
   'hover:bg-surface-hover active:bg-surface-active',
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
 )

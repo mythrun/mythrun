@@ -29,7 +29,7 @@ export interface Recorder {
   rects: { x: number; y: number; w: number; h: number }[]
   /** Every `strokeRect` call — the selection FRAME and the stroked glyph rings
    *  (world/campaign frames, the pc ring), so a test can assert a frame's real
-   *  presence/absence (the arrival trace must suppress it mid-trace). */
+   *  presence/absence. */
   strokeRects: { x: number; y: number; w: number; h: number }[]
   /** Every `strokeText` call — the paper HALO under each label (density redesign). */
   strokeTexts: { text: string; x: number; y: number }[]

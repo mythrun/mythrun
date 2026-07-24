@@ -14,15 +14,16 @@ import { CharacterLoadingSurface } from './character-loading.tsx'
 // client-core useCharacterCreationStream, and calls `onDone` the instant the
 // viewer's own completion arrives so D8 re-routes to the reveal. MYT-102 adds
 // the waiting register: a one-time stage-timings fetch + a 1-second tick turn
-// the hook's folded `stages` into the beat's ticking countdown (OMITTED on
-// cold-start — no fake numbers), and a calm stall notice appears when the wait
-// has exhausted 3× the initial estimate (or 5 minutes with no history). The
-// stream hook is MOCKED off its barrel (its folding is covered by
+// the hook's folded `stages` into the beat's COARSE countdown (OMITTED on
+// cold-start — no fake numbers), and the "still working" line replaces the
+// countdown the instant the estimate exhausts — or, with no history, after a
+// flat 2-minute window — so the wait never sits at a dead 0:00. The stream hook
+// is MOCKED off its barrel (its folding is covered by
 // use-character-creation-stream.test.ts); the countdown math is the REAL
-// remainingCreationWaitMs — the tests drive it through injected timings +
-// mocked stages + fake timers. i18n: the countdown/stall copy keys are
-// controller-owned — these tests assert element presence via testids, never
-// resolved strings.
+// remainingCreationWaitMs → waitDisplay — the tests drive it through injected
+// timings + mocked stages + fake timers. i18n: the countdown/stall copy keys are
+// controller-owned — these tests assert presence via testids (and the coarse
+// format), never resolved strings.
 
 vi.mock('@mythrun/client-core/character', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mythrun/client-core/character')>()
@@ -239,7 +240,7 @@ describe('CharacterLoadingSurface', () => {
 })
 
 describe('CharacterLoadingSurface — the countdown (MYT-102)', () => {
-  it('shows the countdown once the timings history arrives and a wait remains', async () => {
+  it('shows a COARSE countdown once the timings history arrives and a wait remains', async () => {
     renderSurface({
       stages: [
         stageRow('location_selection', 'completed'),
@@ -249,8 +250,9 @@ describe('CharacterLoadingSurface — the countdown (MYT-102)', () => {
       fetchTimings: () => Promise.resolve(creationTimings(60_000)),
     })
     await flush()
-    // Presence only — the label's copy is an i18n key the controller owns.
-    expect(screen.getByTestId('character-loading-beat-countdown')).toBeDefined()
+    const countdown = screen.getByTestId('character-loading-beat-countdown')
+    // Coarse, minute-granular — NEVER a ticking `M:SS` (the false-precision bug).
+    expect(countdown.textContent).not.toMatch(/\d:\d\d/)
   })
 
   it('omits the countdown on cold-start (no usable history) — no fake numbers', async () => {
@@ -267,42 +269,70 @@ describe('CharacterLoadingSurface — the countdown (MYT-102)', () => {
   })
 })
 
-describe('CharacterLoadingSurface — the stall notice (MYT-102)', () => {
-  it('appears after 5 minutes with no history and no terminal event', async () => {
+describe('CharacterLoadingSurface — the stalled line (MYT-102 timer revamp)', () => {
+  it('replaces the countdown with the stalled line the instant the estimate exhausts (never a dead 0:00)', async () => {
+    vi.useFakeTimers()
+    // The final stage is running and OVERRUNS its 10s average: once elapsed passes
+    // 10s the estimate clamps to 0 — the exact dead-zero the old countdown sat on.
+    renderSurface({
+      stages: [
+        stageRow('location_selection', 'completed'),
+        stageRow('character_concept', 'completed'),
+        stageRow('character_sheet', 'running', new Date().toISOString()),
+      ],
+      fetchTimings: () => Promise.resolve(creationTimings(10_000)),
+    })
+    await flush()
+    // Still a positive estimate → a coarse countdown, no stalled line yet.
+    expect(screen.getByTestId('character-loading-beat-countdown')).toBeDefined()
+    expect(screen.queryByTestId('character-loading-beat-stalled')).toBeNull()
+
+    // Push past the 10s average — the estimate exhausts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000)
+    })
+    // The stalled line takes over; NO dead countdown lingers beside it.
+    expect(screen.getByTestId('character-loading-beat-stalled')).toBeDefined()
+    expect(screen.queryByTestId('character-loading-beat-countdown')).toBeNull()
+  })
+
+  it('appears after the flat 2-minute window with no history and no terminal event', async () => {
     vi.useFakeTimers()
     renderSurface({ fetchTimings: () => Promise.resolve([]) })
     await flush()
-    expect(screen.queryByTestId('character-loading-stalled')).toBeNull()
+    expect(screen.queryByTestId('character-loading-beat-stalled')).toBeNull()
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      await vi.advanceTimersByTimeAsync(90_000)
     })
-    expect(screen.queryByTestId('character-loading-stalled')).toBeNull()
+    expect(screen.queryByTestId('character-loading-beat-stalled')).toBeNull()
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.advanceTimersByTimeAsync(31_000)
     })
-    expect(screen.getByTestId('character-loading-stalled')).toBeDefined()
+    expect(screen.getByTestId('character-loading-beat-stalled')).toBeDefined()
+    // No fake countdown ever showed on the no-history path.
+    expect(screen.queryByTestId('character-loading-beat-countdown')).toBeNull()
   })
 
-  it('appears once the wait exhausts 3× the initial estimate', async () => {
+  it('appears via the wall-clock backstop when a wedged stage keeps the estimate positive (3× the initial estimate)', async () => {
     vi.useFakeTimers()
-    // Nothing started yet → the initial estimate is the full 3 × 10s = 30s;
-    // the stall threshold is 3 × that = 90s.
+    // Nothing ever starts (stages stay empty) → the estimate holds at the full
+    // 3 × 10s = 30s forever (no running stage subtracts elapsed), so exhaustion
+    // never fires. The wall-clock backstop (3 × 30s = 90s) catches the wedge.
     renderSurface({ fetchTimings: () => Promise.resolve(creationTimings(10_000)) })
     await flush()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(89_000)
     })
-    expect(screen.queryByTestId('character-loading-stalled')).toBeNull()
+    expect(screen.queryByTestId('character-loading-beat-stalled')).toBeNull()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_000)
     })
-    expect(screen.getByTestId('character-loading-stalled')).toBeDefined()
-    // The countdown holds at its honest floor alongside the notice.
-    expect(screen.getByTestId('character-loading-beat-countdown')).toBeDefined()
+    expect(screen.getByTestId('character-loading-beat-stalled')).toBeDefined()
+    expect(screen.queryByTestId('character-loading-beat-countdown')).toBeNull()
   })
 
   it('never appears once the stream reports done', async () => {
@@ -312,6 +342,6 @@ describe('CharacterLoadingSurface — the stall notice (MYT-102)', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10 * 60_000)
     })
-    expect(screen.queryByTestId('character-loading-stalled')).toBeNull()
+    expect(screen.queryByTestId('character-loading-beat-stalled')).toBeNull()
   })
 })

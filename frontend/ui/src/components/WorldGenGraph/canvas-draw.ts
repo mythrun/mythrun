@@ -1,12 +1,5 @@
 import { BUOY_BOB, LABEL_TEXT_OFFSET_X, type VirtualDims } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
-import {
-  arrivalOutline,
-  hashFrac,
-  PC_RING_PAD,
-  STACK_HEAD_RATIO,
-  strokePartialOutline,
-} from './arrival-draw.ts'
 
 // Pure Canvas-2D draw helpers for the world-gen streaming graph (MYT-89 C5). The
 // brand register is FLAT 1-BIT PAPER: every entity is a SQUARE ink glyph (never a
@@ -34,6 +27,11 @@ const GLYPH_HALF = 6
 const HOVER_SCALE = 1.5
 const SELECT_FRAME_PAD = 5
 const LABEL_ALPHA = 0.62
+/** The npc/pc stack glyph's head square, as a ratio of the glyph half-extent — the small
+ *  "head" square over the larger "body" square (see drawStack). */
+const STACK_HEAD_RATIO = 0.7
+/** The pc outline ring's padding (px) beyond the glyph half-extent (drawGlyph's pc case). */
+const PC_RING_PAD = 2
 /** Edge stroke alpha over the (already lighter) edge ink — the connection strings sit
  *  UNDER the text: the host strokes them in the `--ink-tertiary` step (see
  *  `resolveEdgeInk`) and this alpha keeps them a quiet web at real density (~70 edges),
@@ -221,19 +219,14 @@ export interface NodeDecoration {
  * Draw every node as its per-kind square glyph, with a RENDER-only buoy bob applied
  * to the draw position (the physics position is untouched). Optionally a quiet name
  * label (reveal only). The hovered node is drawn raised (larger); the selected node
- * gets a square frame.
- *
- * `progressOf` (MYT-89 audit v2) returns each node's [0,1] arrival progress: mid-
- * arrival the node is ONLY its partial silhouette penstroke ("trace, then stamp" —
- * see arrival-draw.ts); at 1 the solid glyph, the label, and any selection frame
- * land together. Omitted → every node is FULL (1), the pre-treatment behaviour.
+ * gets a square frame. An arriving node renders as its full solid glyph immediately —
+ * there is no intro treatment; the frame it first appears on is its complete ink.
  */
 export function drawNodes(
   ctx: CanvasRenderingContext2D,
   nodes: readonly GraphNode[],
   positions: ReadonlyMap<string, Point>,
   deco: NodeDecoration,
-  progressOf?: (node: GraphNode) => number,
 ): void {
   for (const node of nodes) {
     const p = positions.get(node.displayId)
@@ -243,8 +236,7 @@ export function drawNodes(
     const showLabel =
       deco.showLabels && (deco.labeled === undefined || deco.labeled.has(node.displayId))
     const bob = bobFor(p, deco.t, deco.virtual)
-    const progress = progressOf === undefined ? 1 : progressOf(node)
-    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, raised, selected, showLabel, deco, progress)
+    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, raised, selected, showLabel, deco)
   }
 }
 
@@ -264,19 +256,10 @@ function drawNode(
   selected: boolean,
   showLabel: boolean,
   deco: NodeDecoration,
-  progress: number,
 ): void {
   const half = GLYPH_HALF * (hovered ? HOVER_SCALE : 1)
   ctx.save()
   ctx.translate(p.x, p.y)
-  if (progress < 1) {
-    // Mid-arrival ("trace, then stamp"): the pen is still outlining the glyph's
-    // silhouette from its hashed start point — the solid ink, the label, and the
-    // selection frame all land together at completion, one stamp beat.
-    strokePartialOutline(ctx, arrivalOutline(node.kind, half), hashFrac(node.synthKey), progress)
-    ctx.restore()
-    return
-  }
   if (selected) {
     ctx.strokeRect(-(half + SELECT_FRAME_PAD), -(half + SELECT_FRAME_PAD), (half + SELECT_FRAME_PAD) * 2, (half + SELECT_FRAME_PAD) * 2)
   }
@@ -357,9 +340,8 @@ function drawDiamond(ctx: CanvasRenderingContext2D, half: number): void {
   ctx.fill()
 }
 
-/** Two stacked squares — a small "head" square over a larger "body" square. The head
- *  ratio is shared with the arrival silhouette (arrival-draw's stackOutline), so the
- *  trace always lands exactly on this ink. */
+/** Two stacked squares — a small "head" square over a larger "body" square (the head
+ *  sized by STACK_HEAD_RATIO). */
 function drawStack(ctx: CanvasRenderingContext2D, half: number): void {
   const head = half * STACK_HEAD_RATIO
   ctx.fillRect(-head, -half - head, head * 2, head * 2)

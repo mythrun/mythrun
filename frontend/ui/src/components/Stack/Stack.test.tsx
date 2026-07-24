@@ -78,6 +78,20 @@ describe('Stack', () => {
     expect(getByTestId('stack').classList.contains('flex-wrap')).toBe(false)
   })
 
+  it('holds its size in a flex parent when noShrink is set (shrink-0)', () => {
+    const { getByTestId } = render(
+      <Stack data-testid="stack" direction="row" noShrink>
+        x
+      </Stack>,
+    )
+    expect(getByTestId('stack').classList.contains('shrink-0')).toBe(true)
+  })
+
+  it('does not pin shrink by default (a group can shrink unless it opts out)', () => {
+    const { getByTestId } = render(<Stack data-testid="stack">x</Stack>)
+    expect(getByTestId('stack').classList.contains('shrink-0')).toBe(false)
+  })
+
   it('forwards its ref to the underlying div', () => {
     const ref = createRef<HTMLDivElement>()
     render(
@@ -91,6 +105,20 @@ describe('Stack', () => {
   it('applies the dvh floor when minHeight="screen"', () => {
     render(<Stack minHeight="screen" data-testid="s" />)
     expect(screen.getByTestId('s').className).toContain('min-h-dvh')
+  })
+
+  it('caps + centres the column when maxWidth is set (reading measure)', () => {
+    render(<Stack maxWidth="form" data-testid="s" />)
+    const el = screen.getByTestId('s')
+    // The measure column: capped width, full up to the cap, centred via mx-auto.
+    expect(el.className).toContain('max-w-[36rem]')
+    expect(el.className).toContain('mx-auto')
+    expect(el.className).toContain('w-full')
+  })
+
+  it('applies no max-width class when maxWidth is absent', () => {
+    render(<Stack data-testid="s" />)
+    expect(screen.getByTestId('s').className).not.toContain('mx-auto')
   })
 
   it('applies flex-grow when grow', () => {

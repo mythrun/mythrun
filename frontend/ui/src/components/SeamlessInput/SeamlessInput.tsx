@@ -3,36 +3,40 @@ import type { ComponentPropsWithoutRef, ForwardedRef, Ref } from 'react'
 import { cn } from '../../lib/cn.ts'
 import type { SeamlessInputProps } from '@mythrun/client-core/contract'
 
-// SeamlessInput — the borderless "ghost" creation-flow field (working name; see
-// the contract for the rename note). A REAL native control with the box stripped
-// so the screen reads as "the question, then just the answer + a blinking
-// caret" — the calm, one-question-at-a-time (Typeform-style) world-creation
-// flow. `<input>` by default; `<textarea>` (auto-growing) when `multiline`.
+// SeamlessInput — the creation-flow's PROSE field (working name; see the contract
+// for the rename note). A REAL native control that reads as "the question, then a
+// calm sheet of paper to write on" — the one-question-at-a-time (Typeform-style)
+// world-creation flow. `<input>` by default; `<textarea>` (auto-growing) when
+// `multiline`.
 //
-// The DESIGN LANGUAGE of a ghost input (built correctly, not improvised):
+// AFFORDANCE FIRST (MYT-100 create-flow polish). The earlier build stripped the
+// field to a bare baseline rule in the low-emphasis `--border` token (1.5:1 —
+// decorative grade): a transparent region with a hairline under it, sitting
+// between the serif question above and the caption below. In real use it did not
+// read as an input at all — no defined area, no obvious cursor, the hairline read
+// as a text separator, not a field. The fix is the DS's own accepted input idiom
+// (Input / TextArea): a quiet paper field the eye can't mistake for prose —
 //
-//  1. No box — `border-0 bg-transparent`: the field is just text + caret. (The
-//     ONE border it keeps is the bottom baseline rule, see #5.)
+//  1. A defined field — `bg-surface` ground + a square (`rounded-none`, flat
+//     1-bit) `border border-border-strong` (the 3:1 interactive-grade edge, NOT
+//     the decorative `--border`) + comfortable padding. The box IS the "write
+//     here" signal; a bare underline is not enough (users miss it, especially
+//     amid similar-looking text). This matches TextArea exactly.
 //  2. Display-size PROSE type — `font-body` (Source Serif 4, the brand's
-//     narrative-serif face) at `text-2xl` (1.75rem / 28px) with relaxed
-//     `leading-[1.4]`. The serif body face is the "magical" register (vs the
-//     mono `font-ui` data face the boxed Input uses — inputs are data; a
-//     world's NAME is prose). Headline scale matches how conversational forms
-//     render the answer.
-//  3. Branded caret — `caret-accent-fg` (the foreground-accent ember caret) so the
-//     cursor is legible + intentional against parchment in BOTH themes.
+//     narrative-serif face) at `text-2xl` (1.75rem / 28px), relaxed
+//     `leading-[1.4]`. The serif body face is what still distinguishes this from
+//     the mono `font-ui` DATA field (Input/TextArea): inputs are data; a world's
+//     name / concept is prose. This is the ONE thing that stays "seamless".
+//  3. Branded caret — `caret-accent-fg` (the foreground-accent ember caret) so
+//     the cursor is legible + intentional against parchment in BOTH themes.
+//     (Verified rendering ember, not a background-matching token; the earlier
+//     "no cursor" was the missing field, not the caret color.)
 //  4. The question IS the label — a prominent, programmatically-ASSOCIATED
 //     `<label htmlFor>` rendered ABOVE the field (the persistent visible label,
 //     WCAG 3.3.2). The field's accessible name is the question.
-//  5. A NON-BOX focus affordance (WCAG 2.4.13, CRITICAL) — a borderless field
-//     with the outline removed would have NO focus indicator. So: a thin bottom
-//     baseline rule in the low-emphasis `--border` token when unfocused, which
-//     THICKENS to 2px and colors to `--accent-fg` (the foreground accent, so the
-//     indicator clears ≥3:1 vs the page in dark mode too) on `:focus-visible`. The default
-//     box outline is removed (`focus-visible:outline-none`) BECAUSE the accent
-//     baseline IS the indicator — the 1px-subtle → 2px-accent change clears the
-//     ≥2px-area + ≥3:1-change-contrast bar. (The caret alone is NOT a WCAG focus
-//     indicator, so it can't carry this.)
+//  5. Focus (WCAG 2.4.13) — the shared DS focus ring: a 2px hard square
+//     `outline-accent-fg` at a 2px offset (theme-aware; == `--focus-ring-color`).
+//     Same indicator as every other control, so focus reads consistently.
 //  6. Placeholder — a FAINT hint only (`placeholder:text-ink-tertiary`), never
 //     the label.
 //
@@ -43,27 +47,27 @@ import type { SeamlessInputProps } from '@mythrun/client-core/contract'
 // in the impl's local prop widening; the exported `SeamlessInputProps` contract
 // stays DOM-free (R2 / api-purity).
 
-// The full, STATIC token class string for the ghost field. Authored as a single
+// The full, STATIC token class string for the field. Authored as a single
 // literal (Tailwind v4 scans source text — a template-built class would never be
 // generated). Shared verbatim by the <input> and <textarea> arms so they read
 // and focus identically; the multiline arm appends its auto-grow classes.
 const FIELD_CLASS = cn(
   'block w-full font-body text-2xl leading-[1.4] text-ink',
-  // No box: 0px corners (flat 1-bit), no border, transparent fill.
-  'rounded-none border-0 bg-transparent',
-  // Branded ember caret — the FOREGROUND accent (--accent-fg, like the focus
-  // baseline below) so the caret + baseline stay a matched pair and both read
-  // against the dark page (the fill --accent is too dark in dark mode).
+  // A defined paper field: surface ground + a square (flat 1-bit) interactive-
+  // grade border + breathing padding — the unmistakable "write here" area. Mirrors
+  // the DS Input/TextArea affordance so this reads as a real field, not prose.
+  'rounded-none border border-border-strong bg-surface',
+  'px-[var(--space-4)] py-[var(--space-3)]',
+  // Branded ember caret — the FOREGROUND accent (--accent-fg) so the cursor reads
+  // against the paper ground in BOTH themes (the fill --accent is too dark in dark).
   'caret-accent-fg',
   // Faint placeholder hint (never the label).
   'placeholder:text-ink-tertiary',
-  // The NON-BOX focus affordance (WCAG 2.4.13): a thin low-emphasis baseline
-  // rule that thickens + colors to accent on focus; the box outline is removed
-  // because the baseline IS the indicator.
-  'border-b border-border',
-  'focus-visible:outline-none focus-visible:border-b-2 focus-visible:border-accent-fg',
-  // Disabled: muted ink + non-interactive cursor (a11y-exempt inactive control).
-  'disabled:cursor-not-allowed disabled:text-ink-tertiary',
+  // The shared a11y focus ring (WCAG 2.4.13) — 2px square accent outline, 2px
+  // offset, theme-aware; identical to every other DS control.
+  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
+  // Disabled: muted ink + non-interactive cursor, ground/edge held (a11y-exempt).
+  'disabled:cursor-not-allowed disabled:text-ink-tertiary disabled:bg-surface disabled:border-border-strong',
 )
 
 // Multiline auto-grow: `field-sizing-content` (Tailwind v4 / native) sizes the

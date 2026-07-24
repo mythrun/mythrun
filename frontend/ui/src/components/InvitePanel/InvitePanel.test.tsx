@@ -11,9 +11,9 @@ import { InvitePanel } from './InvitePanel.tsx'
 // The resolved chrome copy the shell supplies (real MYT-100 campaign.invite.* copy).
 const LABELS: InvitePanelProps['labels'] = {
   panelHeading: 'Invite',
-  hint: 'share this link · friends join your party here',
-  loading: 'preparing your invite link…',
-  noLink: 'no active link, create one to invite',
+  hint: 'Share this link · friends join your party here',
+  loading: 'Preparing your invite link…',
+  noLink: 'No active link, create one to invite',
   linkLabel: 'Invite link',
   create: 'Create a link',
   copy: 'Copy link',

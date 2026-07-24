@@ -39,6 +39,8 @@ Flowery prose is fine. But it must CARRY INFORMATION: name the actors, the mecha
 
 The first gestures at atmosphere and says nothing. The second tells you who holds power (the thieves guild) and how the world runs (secrets are currency). Write the second kind. No mood-setting that could be pasted onto any world; no "something stirs" / "ancient forces" filler. Ground every claim in the actors, places, and mechanics above.
 
+{{include:shared/prose-register}}
+
 ## Your task
 
 Write the introduction. It should:

@@ -26,8 +26,10 @@ import { WorldReveal } from './reveal.tsx'
 // finalized node's `displayId` IS its entity id, so no synthKey↔id bridge; the
 // FINALIZED-node fixture keeps synthKey ≠ displayId to prove the route keys
 // selection on displayId, not synthKey), a re-tap of the SAME node re-opens
-// its page after a wiki back() (the one-shot push signal), Continue fires its
-// intent + is GATED until the pipeline completes, and the SILENT UPDATES: a
+// its page after a wiki back() (the one-shot push signal), Continue is PRESENT
+// from first paint but DISABLED with a settling indicator until the pipeline
+// completes — then it enables IN PLACE and fires its intent — and the SILENT
+// UPDATES: a
 // completed tail stage in the `stages` prop quietly refetches the wiki
 // snapshot (old model stays rendered — no loading takeover — until the fresh
 // one resolves). The viewport regime is driven by a query-aware `matchMedia`
@@ -510,28 +512,47 @@ describe('WorldReveal — RELATED cross-links (relationship-bearing snapshot)', 
 })
 
 describe('WorldReveal — continue', () => {
-  it('fires the continue intent when Continue is pressed', () => {
+  it('fires the continue intent when an ENABLED Continue is pressed', () => {
     const onContinue = vi.fn()
     renderReveal({ onContinue })
     fireEvent.click(screen.getByTestId('reveal-continue'))
     expect(onContinue).toHaveBeenCalledOnce()
   })
 
-  it('offers Continue by default (a settled world)', () => {
+  it('offers Continue ENABLED, no settling indicator, by default (a settled world)', () => {
     renderReveal()
-    expect(screen.getByTestId('reveal-continue')).toBeDefined()
+    expect(screen.getByTestId('reveal-continue').hasAttribute('disabled')).toBe(false)
+    expect(screen.queryByTestId('reveal-continue-pending')).toBeNull()
   })
 
-  it('hides Continue while the tail is still running (continueReady={false})', () => {
-    renderReveal({ continueReady: false })
-    expect(screen.queryByTestId('reveal-continue')).toBeNull()
+  it('keeps Continue PRESENT but DISABLED with a settling indicator while the tail runs', () => {
+    // The affordance EXISTS from first paint (no dead-end): the button is here,
+    // just not pressable yet, with the quiet settling line beside it explaining
+    // why — the honest replacement for the old `null` gate that hid it entirely.
+    const onContinue = vi.fn()
+    renderReveal({ onContinue, continueReady: false })
+    const button = screen.getByTestId('reveal-continue')
+    expect(button.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('reveal-continue-pending')).toBeDefined()
+    expect(screen.getByText(i18n.t('worldReveal.settling'))).toBeDefined()
+    // A disabled press is inert — the gated intent never fires.
+    fireEvent.click(button)
+    expect(onContinue).not.toHaveBeenCalled()
   })
 
-  it('grows Continue quietly when the pipeline completes (continueReady flips true)', async () => {
-    const handle = renderReveal({ continueReady: false })
-    expect(screen.queryByTestId('reveal-continue')).toBeNull()
+  it('ENABLES Continue IN PLACE when the pipeline completes — the settling indicator goes', async () => {
+    const onContinue = vi.fn()
+    const handle = renderReveal({ onContinue, continueReady: false })
+    expect(screen.getByTestId('reveal-continue').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('reveal-continue-pending')).toBeDefined()
     handle.update({ continueReady: true })
-    expect(screen.getByTestId('reveal-continue')).toBeDefined()
+    // The SAME button (present all along) flips to enabled; the settling line is gone.
+    const after = screen.getByTestId('reveal-continue')
+    expect(after.hasAttribute('disabled')).toBe(false)
+    expect(screen.queryByTestId('reveal-continue-pending')).toBeNull()
+    // Now pressable — the intent fires.
+    fireEvent.click(after)
+    expect(onContinue).toHaveBeenCalledOnce()
     // The rest of the reveal is untouched by the flip — the wiki stays put.
     expect(await screen.findByTestId('reveal-wiki')).toBeDefined()
   })

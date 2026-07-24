@@ -168,7 +168,7 @@ export async function processSessionPrepJob(
     // §6 — deterministically append the verbatim voice / atmosphere excerpts to
     // ft_context AFTER generation. NEVER paraphrased through the prep LLM.
     const ftContext = result.ft_context + buildReturningVoicesSection(priorSessionContext.latestHandoff)
-    const tripwire = await vetOpening(result.opening, result.sd_playbook)
+    const tripwire = await vetOpening(result.opening, result.sd_playbook, ftContext)
     await repo.sessionPreps.insert({
       campaignId,
       sessionNumber,
@@ -241,20 +241,32 @@ export function createSessionPrepProcessor(
 }
 
 // MYT-101: vet the player-facing opening against this generation's OWN
-// playbook (the session's complete secret surface). Recall-biased like the
-// scribe's per-turn tripwire: ANY breached verdict — regardless of confidence —
-// fails the stage (retryable; a regeneration may pass). A tripped opening is
-// NEVER persisted, and neither is the rest of the prep (the row is
+// playbook (the session's complete secret surface). The opening is generated
+// ONCE, so this gate stays STRICT: ANY non-clean severity (soft_consistency OR
+// hard_reveal) fails the stage (retryable; a regeneration may pass). Rationale
+// (myth-retprop): the proportionality problem the severity split fixes is the
+// per-turn PUBLIC retcon — a live open correction over an in-character detail.
+// The opening has no such cost: a soft-brushy opening is simply regenerated
+// before any player sees it, so there is no reason to ship one. A tripped
+// opening is NEVER persisted, and neither is the rest of the prep (the row is
 // all-or-nothing). Returns the tripwire output so its Haiku usage rides the
 // stage cost.
 async function vetOpening(
   opening: string,
   sdPlaybook: string,
+  ftContext: string,
 ): Promise<Awaited<ReturnType<typeof runSecretTripwire>>> {
-  const tripwire = await runSecretTripwire({ prose: opening, secrets: sdPlaybook })
-  if (tripwire.result.breached) {
+  // The opening is the FIRST player-facing prose, so its grounding floor is the
+  // very briefing (ft_context) it was generated alongside — a detail the opening
+  // shares with the briefing is public, not a leak (myth-retprop).
+  const tripwire = await runSecretTripwire({
+    prose: opening,
+    secrets: sdPlaybook,
+    publicContext: ftContext,
+  })
+  if (tripwire.result.severity !== 'none') {
     throw new Error(
-      `session-prep: opening breached the secret tripwire (confidence ${String(tripwire.result.confidence)}, ref ${tripwire.result.secretRef ?? 'none'})`,
+      `session-prep: opening tripped the secret tripwire (severity ${tripwire.result.severity}, confidence ${String(tripwire.result.confidence)}, ref ${tripwire.result.secretRef ?? 'none'})`,
     )
   }
   return tripwire

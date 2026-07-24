@@ -15,8 +15,8 @@ const noop = (): void => undefined
 const LABELS = {
   eyebrow: "You've been invited",
   invitedBy: 'Invited by',
-  accept: 'accept the invitation →',
-  signin: 'sign in to join →',
+  accept: 'Accept the invitation →',
+  signin: 'Sign in to join →',
   invalid: 'This invite is no longer valid.',
   full: 'This campaign is already full.',
   revoked: 'This invite link was turned off.',

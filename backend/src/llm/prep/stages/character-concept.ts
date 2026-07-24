@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { generateObject } from '../../ai.js'
+import { resolveIncludes } from '../../prompts.js'
 import { SONNET } from '../../models.js'
 import {
   CharacterConceptOutputSchema,
@@ -19,12 +20,14 @@ import {
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
-const PROMPT_TEMPLATE = readFileSync(
-  resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    '../../prompts/prep/character-concept.txt',
+const PROMPT_TEMPLATE = resolveIncludes(
+  readFileSync(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../prompts/prep/character-concept.txt',
+    ),
+    'utf8',
   ),
-  'utf8',
 )
 
 // Anthropic Sonnet pricing per https://www.anthropic.com/pricing. Held

@@ -93,6 +93,11 @@ export type { ActiveSession, ActiveSessionResponse, InsufficientCreditsBody } fr
 // live prep-started/ready/failed events over the shipped SSE status client).
 export { useSessionPrep } from './session/use-session-prep.ts'
 export type { SessionPrepStream, SessionPrepDeps } from './session/use-session-prep.ts'
+// The session-prep countdown baseline (MYT-102 loading revamp): the coarse
+// wall-clock estimate the between-sessions "preparing" hold feeds into
+// `waitDisplay`. Session prep is a single stage with no per-stage client signals,
+// so this derives from the historical prep-duration baseline. Pure data.
+export { remainingSessionPrepWaitMs, SESSION_PREP_STAGE_PREFIX } from './session/session-prep-eta.ts'
 // MYT-92 start flow: the ZFC-exempt structural classifier over the start
 // arms + the async start/join state machine. PurchaseMoment is the
 // cross-issue seam MYT-95's PurchasePrompt consumes.
@@ -175,6 +180,7 @@ export type { DevApiCostResponse } from './api/dev-cost.ts'
 // they call the hook through — never reaching into @mythrun/contract directly
 // (R5: route/feature code imports @mythrun/client-core, @mythrun/ui, i18n only).
 export type { CampaignSummary, MyCampaignsResponse } from '@mythrun/contract/rest'
+export type { MeResponse } from '@mythrun/contract/rest'
 // Campaign-create wire types the create UI (Phase B) types + branches against —
 // read off THIS barrel so route/feature code never imports @mythrun/contract (R5).
 // GATE_REASONS is a runtime value (the closed reject-reason set for the concept gate).
@@ -278,6 +284,14 @@ export type {
 export { getStageTimings } from './api/worldgen.ts'
 export { remainingPrepWaitMs, remainingWaitMs } from './worldgen/stage-eta.ts'
 export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
+
+// The shared waiting-display brain (MYT-102 loading revamp): the coarse
+// minute-granular bucket + the estimate/stalled/hidden decision that BOTH
+// waiting surfaces (character-loading + world-gen) render, sitting on top of the
+// adaptive remaining-ms estimate above. Pure data — the web layer owns the tick,
+// the copy, and which kinds it shows.
+export { coarseWaitBucket, waitDisplay } from './loading/wait-estimate.ts'
+export type { WaitBucket, WaitDisplay, WaitDisplayInput } from './loading/wait-estimate.ts'
 
 // Wiki-reveal timing (MYT-89 reveal timing): the pure predicates the
 // campaign-detail route reads off the stream's folded `stages[]` —

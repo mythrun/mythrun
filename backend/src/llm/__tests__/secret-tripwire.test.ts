@@ -25,14 +25,20 @@ vi.mock('ai', async (importOriginal) => ({
 
 const mockGenerateText = vi.mocked(ai.generateText)
 
+type Severity = 'none' | 'soft_consistency' | 'hard_reveal'
+
 const cleanOutput = {
-  breached: false as boolean,
+  severity: 'none' as Severity,
   confidence: 0.96,
   secretRef: null as string | null,
 }
 
-const breachOutput = {
-  breached: true as boolean,
+// The prose below is the canonical SOFT-consistency case: an NPC "eyes the door"
+// — behavior consistent with a hidden identity, but nothing a player could deduce
+// the secret from. Under myth-retprop this is `soft_consistency`, NOT a hard
+// reveal (and so must NOT trigger a public correction downstream).
+const softOutput = {
+  severity: 'soft_consistency' as Severity,
   confidence: 0.35,
   secretRef: '[SECRET-1]' as string | null,
 }
@@ -40,6 +46,7 @@ const breachOutput = {
 const baseInput = {
   prose: 'The innkeeper slides a tankard across the bar and eyes the door.',
   secrets: '[SECRET-1]: the innkeeper is the exiled prince in hiding.',
+  publicContext: 'The Rusty Anchor is a dockside inn. The innkeeper is watchful and taciturn.',
 }
 
 function structuredError(rawText: string): LlmStructuredOutputError {
@@ -53,7 +60,7 @@ beforeEach(() => {
 })
 
 describe('runSecretTripwire', () => {
-  it('clean path → breached:false; threads {{prose}} + {{secrets}}', async () => {
+  it('clean path → severity:none; threads {{prose}} + {{secrets}}', async () => {
     mockGenerateText.mockResolvedValue({
       output: cleanOutput,
       usage: { inputTokens: 90, outputTokens: 12, totalTokens: 102 },
@@ -62,7 +69,7 @@ describe('runSecretTripwire', () => {
     const r = await runSecretTripwire(baseInput)
 
     expect(r.result).toEqual(cleanOutput)
-    expect(r.result.breached).toBe(false)
+    expect(r.result.severity).toBe('none')
     expect(r.repairAttempted).toBe(false)
     expect(r.usage.inputTokens).toBe(90)
     const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
@@ -70,28 +77,30 @@ describe('runSecretTripwire', () => {
       'The innkeeper slides a tankard across the bar and eyes the door.',
     )
     expect(call.prompt).toContain('[SECRET-1]: the innkeeper is the exiled prince in hiding.')
+    // The PUBLIC briefing (grounding floor) is threaded into the prompt too.
+    expect(call.prompt).toContain('The Rusty Anchor is a dockside inn.')
   })
 
-  it('breach path → breached:true with an opaque secretRef handle', async () => {
+  it('hit path → a non-clean severity carries an opaque secretRef handle', async () => {
     mockGenerateText.mockResolvedValue({
-      output: breachOutput,
+      output: softOutput,
       usage: { inputTokens: 90, outputTokens: 12, totalTokens: 102 },
     } as never)
 
     const r = await runSecretTripwire(baseInput)
 
-    expect(r.result.breached).toBe(true)
+    expect(r.result.severity).toBe('soft_consistency')
     expect(r.result.secretRef).toBe('[SECRET-1]')
   })
 
-  it('round-trips each field (clean and breach)', async () => {
-    for (const output of [cleanOutput, breachOutput]) {
+  it('round-trips each field (clean and soft-hit)', async () => {
+    for (const output of [cleanOutput, softOutput]) {
       mockGenerateText.mockResolvedValueOnce({
         output,
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as never)
       const r = await runSecretTripwire(baseInput)
-      expect(r.result.breached).toBe(output.breached)
+      expect(r.result.severity).toBe(output.severity)
       expect(r.result.confidence).toBe(output.confidence)
       expect(r.result.secretRef).toBe(output.secretRef)
     }
@@ -140,17 +149,17 @@ describe('runSecretTripwire', () => {
     // rawText parses but fails Zod (confidence out of range), and the value
     // embeds a secret token that must never surface.
     const originalErr = structuredError(
-      JSON.stringify({ breached: true, confidence: 9, secretRef: 'SECRET-the-prince' }),
+      JSON.stringify({ severity: 'hard_reveal', confidence: 9, secretRef: 'SECRET-the-prince' }),
     )
     mockGenerateText.mockRejectedValueOnce(originalErr)
-    // Haiku repair: still Zod-invalid.
+    // Haiku repair: still Zod-invalid (confidence out of range).
     mockGenerateText.mockResolvedValueOnce({
-      output: { breached: true, confidence: 9, secretRef: 'SECRET-the-prince' },
+      output: { severity: 'hard_reveal', confidence: 9, secretRef: 'SECRET-the-prince' },
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
     // Sonnet repair: still Zod-invalid → terminal sonnet_failed.
     mockGenerateText.mockResolvedValueOnce({
-      output: { breached: true, confidence: 9, secretRef: 'SECRET-the-prince' },
+      output: { severity: 'hard_reveal', confidence: 9, secretRef: 'SECRET-the-prince' },
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
 

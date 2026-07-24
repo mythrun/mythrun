@@ -90,6 +90,12 @@ When patching entity prose or facts, do NOT cross tier boundaries. A `known`-tie
 
 If a patch needs information that lives in another entity, only use information from entities whose access_level is at or below the patched entity's tier. (Patches to `known` entities can only draw on `known` content. Patches to `discoverable` entities can draw on `known` or `discoverable`. Patches to `secret` entities can draw on anything.)
 
+## Prose register for replacement text
+
+When a patch DOES supply replacement prose or fact `content` (e.g. an oblique name-fix rewrite), write that replacement in the register below. This governs ONLY the text you emit inside a patch — it does NOT expand your mandate. You still emit a patch only to fix a concrete inconsistency; you never restyle prose that is already consistent, and "the wording feels overwrought" is NOT a reason to patch.
+
+{{include:shared/prose-register}}
+
 ## Your task
 
 Respond with ONLY a JSON object of the shape `{ "patches": [...] }` containing at most 40 patches. If you cannot find any inconsistencies worth correcting, emit `{ "patches": [] }`. No markdown fences, no commentary.

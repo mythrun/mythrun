@@ -33,7 +33,7 @@ export function ForkScreen({ onFreeform, onGuided }: ForkScreenProps): React.JSX
     },
   ]
   return (
-    <Stack gap={5} data-testid="screen-fork">
+    <Stack gap={6} data-testid="screen-fork">
       <Stack gap={2}>
         <Text role="ui-label" data-testid="fork-eyebrow">
           {t('campaignNew.fork.eyebrow')}

@@ -2,19 +2,19 @@ import { useEffect, useRef } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { SeamlessInput } from './SeamlessInput.tsx'
 
-// SeamlessInput — the borderless "ghost" creation-flow field (working name). The
-// calm, one-question-at-a-time (Typeform-style) world-creation surface: a
-// prominent serif QUESTION (the associated label) with the user's answer below
-// it as just text + a blinking ember caret — no visible box.
+// SeamlessInput — the creation-flow's PROSE field (working name). The calm,
+// one-question-at-a-time (Typeform-style) world-creation surface: a prominent
+// serif QUESTION (the associated label) over a quiet paper field the user writes
+// into.
 //
-// Built to the ghost-input design language: no border/background (the field
-// reads as text), display-size serif PROSE type (the "magical" register, vs the
-// boxed Input's mono data face), a branded `caret-accent-fg`, the question as the
-// programmatically-associated visible label (WCAG 3.3.2), and a NON-BOX focus
-// affordance — a thin baseline rule that thickens + colors to accent on focus
-// (WCAG 2.4.13; the box outline is removed because the baseline IS the
-// indicator). Placeholder is a faint hint only. `multiline` swaps to an
-// auto-growing `<textarea>` for long world-creation prose.
+// A DEFINED field, not a bare underline (MYT-100 affordance fix): surface ground
+// + square interactive-grade border + padding — the DS Input/TextArea affordance,
+// so it unmistakably reads as "write here". What stays "seamless" is the register
+// INSIDE it: display-size serif PROSE type (vs the boxed Input's mono data face)
+// and a branded `caret-accent-fg`. The question is the programmatically-associated
+// visible label (WCAG 3.3.2); focus is the shared 2px accent ring (WCAG 2.4.13).
+// Placeholder is a faint hint only. `multiline` swaps to an auto-growing
+// `<textarea>` for long world-creation prose.
 //
 // Content/i18n: `label` + `placeholder` are i18n keys the consumer resolves; the
 // stories show resolved prose so the magical view reads correctly.
@@ -63,11 +63,10 @@ export const Multiline: Story = {
   ),
 }
 
-// Focused — shows the non-box focus affordance: the accent baseline rule (2px,
-// ember) under a pre-filled answer, with the box outline removed. The field is
-// focused programmatically on mount (a `ref.focus()`, not the JSX `autoFocus`
-// attribute) so the accent baseline is visible in the catalogue. (Tab to the
-// field in the other stories to see the resting→focus transition live.)
+// Focused — shows the shared DS focus ring: the 2px square accent outline around
+// the field. The field is focused programmatically on mount (a `ref.focus()`, not
+// the JSX `autoFocus` attribute) so the ring is visible in the catalogue. (Tab to
+// the field in the other stories to see the resting→focus transition live.)
 function FocusedSpecimen() {
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -81,7 +80,7 @@ function FocusedSpecimen() {
 }
 
 export const Focused: Story = {
-  name: 'Focus affordance (accent baseline rule)',
+  name: 'Focus affordance (accent focus ring)',
   render: () => <FocusedSpecimen />,
 }
 

@@ -57,23 +57,36 @@ export const Complete: Story = {
   args: { beats: COMPLETE_BEATS, reducedMotion: false },
 }
 
-// With the countdown — the quiet tabular `~M:SS` remaining-wait line under the
-// rows (MYT-102; the world-gen waiting register). The label arrives resolved
-// from the consumer (the surface owns the tick + i18n); it is OMITTED entirely
-// on cold-start, so the mid-progress story above doubles as the no-estimate
-// specimen.
+// With the countdown — the quiet COARSE remaining-wait line under the ladder
+// (MYT-102 timer revamp): minute-granular ("2 min remaining"), never a ticking
+// `0:24`. The label arrives resolved from the consumer (the surface owns the
+// tick + i18n); it is OMITTED entirely on cold-start, so the mid-progress story
+// above doubles as the no-estimate specimen.
 export const WithCountdown: Story = {
-  name: 'With countdown (~2:10 left)',
-  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: '~2:10 left' },
+  name: 'With countdown (coarse)',
+  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: '2 min remaining' },
+}
+
+// Stalled — the estimate exhausted (the running stage overran) so the countdown
+// is swapped for the indeterminate "still working" line (MYT-102): the wait
+// NEVER sits at a dead 0:00. Meaningful content (not aria-hidden), a calm
+// secondary-ink line.
+export const Stalled: Story = {
+  name: 'Stalled (estimate exhausted)',
+  args: {
+    beats: MID_BEATS,
+    reducedMotion: false,
+    stalledLabel: "Still working. This one's taking a while.",
+  },
 }
 
 // Reduced motion — the same mid-progress snapshot with every transition dropped
-// (the fill snaps to its proportion; rows swap state with no fade). The
-// countdown still ticks under reduced motion (content, not decoration) — shown
-// here so the frozen fill + live countdown pairing has a specimen.
+// (the fill snaps to its proportion; rungs swap state with no fade). The
+// countdown still shows under reduced motion (content, not decoration) — shown
+// here so the frozen fill + coarse estimate pairing has a specimen.
 export const ReducedMotion: Story = {
   name: 'Reduced motion (mid-progress, no transitions)',
-  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: '~2:10 left' },
+  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: '2 min remaining' },
 }
 
 // Narrow — the loadwrap at ~375px, confirming the figure + text column hold
@@ -118,7 +131,7 @@ function LoadingDriver(): React.JSX.Element {
       heading={HEADING}
       beats={beatsAt(done)}
       reducedMotion={false}
-      countdownLabel="~1:40 left"
+      countdownLabel="2 min remaining"
     />
   )
 }

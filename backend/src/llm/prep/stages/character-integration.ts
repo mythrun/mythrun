@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { type Repo, type TxRepo, expectCommitted } from '../../../repo/index.js'
 import { generateObject } from '../../ai.js'
+import { resolveIncludes } from '../../prompts.js'
 import { OPUS } from '../../models.js'
 import { LlmStructuredOutputError } from '../../errors.js'
 import {
@@ -52,12 +53,14 @@ import { renderWorldDump, type WorldInventory } from '../world-dump.js'
 import { parseCostCapValue, CostCapExceededError } from '../cost-cap.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 
-const PROMPT_TEMPLATE = readFileSync(
-  resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    '../../prompts/prep/character-integration.txt',
+const PROMPT_TEMPLATE = resolveIncludes(
+  readFileSync(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../prompts/prep/character-integration.txt',
+    ),
+    'utf8',
   ),
-  'utf8',
 )
 
 // Anthropic Opus pricing — same constants as character-concept.ts /

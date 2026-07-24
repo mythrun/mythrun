@@ -271,18 +271,22 @@ export function PreviewScreen({
   const trimmed = vm.change.trim()
   const changeReady = trimmed.length >= 1 && trimmed.length <= CHANGE_MAX
   return (
-    <Stack gap={5} data-testid="screen-preview">
-      <Text role="ui-label" data-testid="preview-eyebrow">
-        {t('campaignNew.preview.eyebrow')}
-      </Text>
-      <Text role="prose-body" as="p" data-testid="preview-concept">
-        {vm.concept}
-      </Text>
-      {vm.notice ? (
-        <Text role="ui-caption" data-testid="preview-notice">
-          {t(`campaignNew.preview.${vm.notice.kind}`)}
+    <Stack gap={6} data-testid="screen-preview">
+      {/* The kicker hugs the concept prose it introduces (one tight cluster),
+          then a clear gap to the actions — the shared funnel hierarchy. */}
+      <Stack gap={3}>
+        <Text role="ui-label" data-testid="preview-eyebrow">
+          {t('campaignNew.preview.eyebrow')}
         </Text>
-      ) : null}
+        <Text role="prose-body" as="p" data-testid="preview-concept">
+          {vm.concept}
+        </Text>
+        {vm.notice ? (
+          <Text role="ui-caption" data-testid="preview-notice">
+            {t(`campaignNew.preview.${vm.notice.kind}`)}
+          </Text>
+        ) : null}
+      </Stack>
       {vm.spent ? (
         <SpentActions busy={vm.busy} onBegin={() => { void vm.begin() }} />
       ) : vm.phase === 'change' ? (

@@ -15,7 +15,7 @@ import { ThinkingIndicator } from './ThinkingIndicator.tsx'
 // component's live region — the line's text is the SOLE announcement), and idle
 // renders no visible line.
 
-const THINKING = 'the DM is thinking…'
+const THINKING = 'The DM is thinking…'
 const TYPING = 'is typing…'
 
 describe('ThinkingIndicator', () => {

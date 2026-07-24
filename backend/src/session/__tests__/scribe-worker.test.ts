@@ -15,13 +15,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SecretTripwireOutput } from '../../llm/secret-tripwire.js'
 import type { RetconAuthorOutput } from '../../llm/retcon-author.js'
 import { processScribeJob, type ScribeProcessorDeps } from '../scribe-worker.js'
-import { TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR, WORKING_SET_CAP } from '../scribe-config.js'
+import { WORKING_SET_CAP } from '../scribe-config.js'
 import {
   enqueueScribe,
   SCRIBE_JOB_NAME,
   type ScribeJobPayload,
   type ScribeQueueLike,
 } from '../scribe-queue.js'
+import { ST_EVAL_JOB_NAME, type StEvalPayload } from '../st-eval-queue.js'
 import type { TurnJobPayload } from '../turn-queue.js'
 import type { WorkingSetItem, WorkingSetProposal } from '../working-set/types.js'
 
@@ -35,7 +36,7 @@ const TURN = 't-scribe-1'
 
 function tripwireOut(over: Partial<SecretTripwireOutput['result']> = {}): SecretTripwireOutput {
   return {
-    result: { breached: false, confidence: 0.9, secretRef: null, ...over },
+    result: { severity: 'none', confidence: 0.9, secretRef: null, ...over },
     usage: { totalTokens: 5 } as unknown as SecretTripwireOutput['usage'],
     repairAttempted: false,
   }
@@ -60,6 +61,7 @@ interface Recorders {
   loadReturns: WorkingSetItem[]
   embedInputs: string[][]
   enqueuedTurns: TurnJobPayload[]
+  enqueuedStEvals: { name: string; payload: StEvalPayload }[]
   respondedSeq: number
 }
 
@@ -68,6 +70,9 @@ interface Knobs {
   session: { sessionNumber: number } | null
   /** The prep's sd_playbook (default a non-empty secret block). */
   sdPlaybook: string | null
+  /** The prep's PUBLIC ft_context — the tripwire's grounding floor.
+   *  `null` exercises the worker's `?? ''` missing-column fallback. */
+  ftContext: string | null
   /** working-set load() result (default the recorders' loadReturns). */
   embedThrows: boolean
 }
@@ -79,6 +84,7 @@ function makeDeps(over: Partial<Knobs> = {}): {
   const knobs: Knobs = {
     session: { sessionNumber: 3 },
     sdPlaybook: 'The duke is the poisoner; the ring is cursed.',
+    ftContext: 'The duke hosts a feast. Public guests mingle in the great hall.',
     embedThrows: false,
     ...over,
   }
@@ -88,6 +94,7 @@ function makeDeps(over: Partial<Knobs> = {}): {
     loadReturns: [],
     embedInputs: [],
     enqueuedTurns: [],
+    enqueuedStEvals: [],
     respondedSeq: 12,
   }
 
@@ -96,7 +103,11 @@ function makeDeps(over: Partial<Knobs> = {}): {
       sessions: { getActiveByCampaign: () => Promise.resolve(knobs.session) },
       sessionPreps: {
         getBy: () =>
-          Promise.resolve(knobs.sdPlaybook === null ? null : { sdPlaybook: knobs.sdPlaybook }),
+          Promise.resolve(
+            knobs.sdPlaybook === null
+              ? null
+              : { sdPlaybook: knobs.sdPlaybook, ftContext: knobs.ftContext },
+          ),
       },
     },
     triggerState: { getRespondedSeq: () => Promise.resolve(rec.respondedSeq) },
@@ -126,6 +137,12 @@ function makeDeps(over: Partial<Knobs> = {}): {
         rec.enqueuedTurns.push(payload)
         return Promise.resolve({})
       }) as ScribeProcessorDeps['sessionTurnQueue']['add'],
+    },
+    stEvalQueue: {
+      add: ((name: string, payload: StEvalPayload) => {
+        rec.enqueuedStEvals.push({ name, payload })
+        return Promise.resolve({})
+      }) as ScribeProcessorDeps['stEvalQueue']['add'],
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   }
@@ -161,9 +178,9 @@ beforeEach(() => {
 })
 
 describe('processScribeJob — clean turn (no breach)', () => {
-  it('case 1: tripwire breached:false → proposals embedded + appended + evicted, NO retcon/correction', async () => {
+  it('case 1: tripwire severity:none → proposals embedded + appended + evicted, NO retcon/correction/ST-signal', async () => {
     const { deps, rec } = makeDeps()
-    deps.runTripwire = vi.fn().mockResolvedValue(tripwireOut({ breached: false, confidence: 0.95 }))
+    deps.runTripwire = vi.fn().mockResolvedValue(tripwireOut({ severity: 'none', confidence: 0.95 }))
     deps.runRetcon = vi.fn()
 
     await processScribeJob(deps, job({ injections: [stInjection] }))
@@ -175,6 +192,34 @@ describe('processScribeJob — clean turn (no breach)', () => {
     expect(rec.evicted).toEqual([{ cap: WORKING_SET_CAP }])
     expect(deps.runRetcon).not.toHaveBeenCalled()
     expect(rec.enqueuedTurns).toHaveLength(0)
+    expect(rec.enqueuedStEvals).toHaveLength(0)
+  })
+})
+
+describe('processScribeJob — grounding floor: the tripwire receives the public ft_context', () => {
+  it('case 1b: the PUBLIC ft_context is threaded to the tripwire as publicContext (grounding floor input)', async () => {
+    const { deps } = makeDeps({ ftContext: 'PUBLIC BRIEFING: the drover watches the little door.' })
+    const tw = vi.fn().mockResolvedValue(tripwireOut({ severity: 'none' }))
+    deps.runTripwire = tw
+
+    await processScribeJob(deps, job())
+
+    expect(tw).toHaveBeenCalledTimes(1)
+    const arg = tw.mock.calls[0]?.[0] as { prose: string; secrets: string; publicContext: string }
+    expect(arg.publicContext).toBe('PUBLIC BRIEFING: the drover watches the little door.')
+  })
+
+  it('case 1c: a prep row with NO ft_context column threads an EMPTY publicContext (missing-column fallback, never undefined)', async () => {
+    const { deps } = makeDeps({ ftContext: null })
+    const tw = deps.runTripwire as ReturnType<typeof vi.fn>
+    tw.mockResolvedValue(tripwireOut())
+
+    await processScribeJob(deps, job())
+
+    const arg = tw.mock.calls[0]?.[0] as { publicContext: string }
+    expect(arg.publicContext).toBe('')
+    // Sanity: the secret playbook still rides the `secrets` field (handle-wrapped).
+    expect(arg.secrets).toContain('[SECRET-1]')
   })
 })
 
@@ -204,17 +249,19 @@ describe('processScribeJob — FT delta mapping', () => {
   })
 })
 
-describe('processScribeJob — breach → retcon + correction turn', () => {
-  it('case 3: breach → retcon authored + a correction-kind turn enqueued + a retcon supersede appended', async () => {
+describe('processScribeJob — hard_reveal → retcon + correction turn', () => {
+  it('case 3: hard_reveal → retcon authored + a correction-kind turn enqueued + a retcon supersede appended', async () => {
     const { deps, rec } = makeDeps()
     deps.runTripwire = vi
       .fn()
-      .mockResolvedValue(tripwireOut({ breached: true, confidence: 0.85, secretRef: '[SECRET-1]' }))
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.85, secretRef: '[SECRET-1]' }))
     deps.runRetcon = vi.fn().mockResolvedValue(retconOut())
 
     await processScribeJob(deps, job())
 
     expect(deps.runRetcon).toHaveBeenCalledTimes(1)
+    // The disruptive open retcon does NOT also fire the silent ST-signal path.
+    expect(rec.enqueuedStEvals).toHaveLength(0)
     // The correction turn carries the retconText + current responded watermark.
     expect(rec.enqueuedTurns).toHaveLength(1)
     const turn = rec.enqueuedTurns[0]
@@ -307,7 +354,7 @@ describe('processScribeJob — repairAttempted retcon fail-softs', () => {
     const { deps, rec } = makeDeps()
     deps.runTripwire = vi
       .fn()
-      .mockResolvedValue(tripwireOut({ breached: true, confidence: 0.9, secretRef: '[SECRET-1]' }))
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.9, secretRef: '[SECRET-1]' }))
     deps.runRetcon = vi.fn().mockResolvedValue(retconOut({ repairAttempted: true }))
 
     await processScribeJob(deps, job())
@@ -339,7 +386,7 @@ describe('processScribeJob — double-retcon guard', () => {
     ]
     deps.runTripwire = vi
       .fn()
-      .mockResolvedValue(tripwireOut({ breached: true, confidence: 0.9, secretRef: '[SECRET-1]' }))
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.9, secretRef: '[SECRET-1]' }))
     deps.runRetcon = vi.fn()
 
     await processScribeJob(deps, job())
@@ -397,19 +444,20 @@ describe('enqueueScribe', () => {
   })
 })
 
-describe('processScribeJob — low-confidence breach escalates', () => {
-  it('case 8: breached:true below the confidence floor still escalates to the retcon-author', async () => {
+describe('processScribeJob — hard_reveal is recall-biased on confidence', () => {
+  it('case 8: a LOW-confidence hard_reveal still fires the open retcon (severity gates, not confidence)', async () => {
     const { deps, rec } = makeDeps()
-    const lowConf = TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR - 0.1
     deps.runTripwire = vi
       .fn()
-      .mockResolvedValue(tripwireOut({ breached: true, confidence: lowConf, secretRef: '[SECRET-2]' }))
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.15, secretRef: '[SECRET-2]' }))
     deps.runRetcon = vi.fn().mockResolvedValue(retconOut())
 
     await processScribeJob(deps, job())
 
     expect(deps.runRetcon).toHaveBeenCalledTimes(1)
     expect(rec.enqueuedTurns).toHaveLength(1)
+    // No silent ST-signal on the hard path.
+    expect(rec.enqueuedStEvals).toHaveLength(0)
     // The breach handle threads to the retcon item's subjectName.
     const retcon = rec.appended
       .flat()
@@ -417,11 +465,11 @@ describe('processScribeJob — low-confidence breach escalates', () => {
     expect(retcon?.subjectName).toBe('[SECRET-2]')
   })
 
-  it('case 12: breached:true with a null secretRef → defensive [SECRET-1] fallback handle', async () => {
+  it('case 12: hard_reveal with a null secretRef → defensive [SECRET-1] fallback handle', async () => {
     const { deps, rec } = makeDeps()
     deps.runTripwire = vi
       .fn()
-      .mockResolvedValue(tripwireOut({ breached: true, confidence: 0.9, secretRef: null }))
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.9, secretRef: null }))
     deps.runRetcon = vi.fn().mockResolvedValue(retconOut())
 
     await processScribeJob(deps, job())
@@ -432,5 +480,55 @@ describe('processScribeJob — low-confidence breach escalates', () => {
     expect(breachArg).toBe('[SECRET-1]')
     const retcon = rec.appended.flat().find((i) => i.source === 'retcon')
     expect(retcon?.subjectName).toBe('[SECRET-1]')
+  })
+})
+
+describe('processScribeJob — soft_consistency → SILENT ST-signal, NO player correction', () => {
+  it('case 13: soft_consistency (in-character NPC behavior) → NO retcon, NO correction turn, NO retcon item; one dedup-collapsed ST eval enqueued', async () => {
+    const { deps, rec } = makeDeps()
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'soft_consistency', confidence: 0.6, secretRef: '[SECRET-1]' }))
+    deps.runRetcon = vi.fn()
+
+    await processScribeJob(deps, job())
+
+    // The Streisand retcon is suppressed: no Opus author, no player-facing turn,
+    // no working-set supersede item.
+    expect(deps.runRetcon).not.toHaveBeenCalled()
+    expect(rec.enqueuedTurns).toHaveLength(0)
+    expect(rec.appended.some((batch) => batch.some((i) => i.source === 'retcon'))).toBe(false)
+    // Instead: exactly one ST-evaluation is enqueued to steer future turns.
+    expect(rec.enqueuedStEvals).toHaveLength(1)
+    expect(rec.enqueuedStEvals[0]?.name).toBe(ST_EVAL_JOB_NAME)
+    expect(rec.enqueuedStEvals[0]?.payload).toEqual({ campaignId: CAMPAIGN, sessionId: SESSION })
+  })
+
+  it('case 13b: a soft_consistency verdict with a NULL secretRef falls back to the coarse [SECRET-1] handle (same silent ST-signal path)', async () => {
+    const { deps, rec } = makeDeps()
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'soft_consistency', confidence: 0.55, secretRef: null }))
+    deps.runRetcon = vi.fn()
+
+    await processScribeJob(deps, job())
+
+    expect(deps.runRetcon).not.toHaveBeenCalled()
+    expect(rec.enqueuedTurns).toHaveLength(0)
+    expect(rec.enqueuedStEvals).toHaveLength(1)
+  })
+
+  it('case 14: a soft_consistency ST-signal enqueue failure fail-softs (no throw, warn logged, turn already shipped clean)', async () => {
+    const { deps, rec } = makeDeps()
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'soft_consistency', confidence: 0.6, secretRef: '[SECRET-1]' }))
+    deps.stEvalQueue.add = (() => Promise.reject(new Error('redis boom'))) as ScribeProcessorDeps['stEvalQueue']['add']
+
+    await expect(processScribeJob(deps, job())).resolves.toBeUndefined()
+
+    expect(rec.enqueuedTurns).toHaveLength(0)
+    const warns = vi.mocked(deps.logger.warn).mock.calls.map((c) => String(c[1]))
+    expect(warns.some((m) => m.includes('ST-signal'))).toBe(true)
   })
 })

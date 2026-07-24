@@ -42,13 +42,15 @@ export interface RejectionScreenProps {
 function FilteredRejection({ onStartOver }: { onStartOver: () => void }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <Stack gap={5} data-testid="screen-rejection">
-      <Text role="ui-label" data-testid="rejection-eyebrow">
-        {t('campaignNew.rejection.eyebrow')}
-      </Text>
-      <Text role="prose-body" as="p" data-testid="rejection-message">
-        {t('campaignNew.rejection.filteredMessage')}
-      </Text>
+    <Stack gap={6} data-testid="screen-rejection">
+      <Stack gap={3}>
+        <Text role="ui-label" data-testid="rejection-eyebrow">
+          {t('campaignNew.rejection.eyebrow')}
+        </Text>
+        <Text role="prose-body" as="p" data-testid="rejection-message">
+          {t('campaignNew.rejection.filteredMessage')}
+        </Text>
+      </Stack>
       <Stack align="start">
         <Button variant="ghost" size="sm" onPress={onStartOver} data-testid="rejection-start-over">
           {t('campaignNew.rejection.startOver')}
@@ -72,13 +74,17 @@ export function RejectionScreen({
   const message = rejection.rejectionMessage ?? t('campaignNew.rejection.fallback')
   const judged = rejection.synthesizedConcept
   return (
-    <Stack gap={5} data-testid="screen-rejection">
-      <Text role="ui-label" data-testid="rejection-eyebrow">
-        {t('campaignNew.rejection.eyebrow')}
-      </Text>
-      <Text role="prose-body" as="p" data-testid="rejection-message">
-        {message}
-      </Text>
+    <Stack gap={6} data-testid="screen-rejection">
+      {/* Kicker hugs the rejection message; the judged concept (guided only) is a
+          distinct labelled block below, then the actions. */}
+      <Stack gap={3}>
+        <Text role="ui-label" data-testid="rejection-eyebrow">
+          {t('campaignNew.rejection.eyebrow')}
+        </Text>
+        <Text role="prose-body" as="p" data-testid="rejection-message">
+          {message}
+        </Text>
+      </Stack>
       {judged !== undefined ? (
         <Stack gap={2}>
           <Text role="ui-label" data-testid="rejection-concept-label">

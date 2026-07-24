@@ -47,7 +47,9 @@ import { Button } from '../Button/Button.tsx'
 // real DS Button. The vertical footprint matches the graph pane's
 // (`clamp(18rem,62dvh,46rem)`) so the act-one → act-two swap doesn't jump.
 
-const DEFAULT_INTERVAL_MS = 3000
+// ~10s dwell per line (Miklos, 2026-07-23 staging audit): the catalog is 20
+// lines over a ~10-minute wait, so a slower cycle reads as writing, not blinking.
+const DEFAULT_INTERVAL_MS = 10_000
 
 const SCREEN_CLASS = cn(
   'flex min-h-[clamp(18rem,62dvh,46rem)] w-full min-w-0 flex-col items-center justify-center',

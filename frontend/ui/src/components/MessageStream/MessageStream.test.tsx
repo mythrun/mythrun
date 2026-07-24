@@ -324,10 +324,10 @@ describe('MessageStream', () => {
 
   it('pins the connectionLine as a status line when non-null, and omits it when null', () => {
     const { rerender } = render(
-      <MessageStream {...streamProps({ items: [DM_SETTLED], connectionLine: 'finding your way back…' })} />,
+      <MessageStream {...streamProps({ items: [DM_SETTLED], connectionLine: 'Finding your way back…' })} />,
     )
     const line = screen.getByTestId('message-stream-connection')
-    expect(line).toHaveTextContent('finding your way back…')
+    expect(line).toHaveTextContent('Finding your way back…')
     expect(line).toHaveAttribute('role', 'status')
     rerender(<MessageStream {...streamProps({ items: [DM_SETTLED] })} />)
     expect(screen.queryByTestId('message-stream-connection')).not.toBeInTheDocument()
@@ -416,7 +416,7 @@ describe('MessageStream', () => {
 
   it('is square register — no circles anywhere in the surface', () => {
     const { container } = render(
-      <MessageStream {...streamProps({ items: MIXED, connectionLine: 'finding your way back…' })} />,
+      <MessageStream {...streamProps({ items: MIXED, connectionLine: 'Finding your way back…' })} />,
     )
     expect(container.querySelector('.rounded-full')).toBeNull()
   })
@@ -432,7 +432,7 @@ describe('MessageStream', () => {
     const plain = render(<MessageStream {...streamProps({ items: MIXED })} />)
     expect(await axe(plain.container)).toHaveNoViolations()
     const withLine = render(
-      <MessageStream {...streamProps({ items: MECHANICAL, connectionLine: 'finding your way back…' })} />,
+      <MessageStream {...streamProps({ items: MECHANICAL, connectionLine: 'Finding your way back…' })} />,
     )
     expect(await axe(withLine.container)).toHaveNoViolations()
   })

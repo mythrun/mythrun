@@ -43,6 +43,7 @@ import { resolve, dirname } from 'node:path'
 import { type Repo, type TxRepo, expectCommitted } from '../../../repo/index.js'
 import type pino from 'pino'
 import { generateObject } from '../../ai.js'
+import { resolveIncludes } from '../../prompts.js'
 import { SONNET } from '../../models.js'
 import {
   CoherenceOutputSchema,
@@ -69,9 +70,11 @@ import {
   type NameResolutionContext,
 } from '../name-resolution.js'
 
-const PROMPT_TEMPLATE = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/coherence-pass.txt'),
-  'utf8',
+const PROMPT_TEMPLATE = resolveIncludes(
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/coherence-pass.txt'),
+    'utf8',
+  ),
 )
 
 // Anthropic Sonnet 4.6 pricing — $3/MTok input, $15/MTok output. Held

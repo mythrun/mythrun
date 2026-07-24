@@ -17,7 +17,7 @@ import { Button } from '../Button/Button.tsx'
 //
 // BRAND — status is PROSE, never a dot/chip/badge (the non-negotiable rule): the
 // mockup's bordered `.status` pill is deliberately NOT ported. A member's state
-// reads as plain mono text — the character name (or a "choosing who they are…" /
+// reads as plain mono text — the character name (or a "Choosing who they are…" /
 // "just joined…" stand-in) on the sub-line, plus a terse "ready"/"creating…"/
 // "gathering…" marker whose only emphasis is ink weight/ember COLOR, not a
 // container. No circles/dots: the

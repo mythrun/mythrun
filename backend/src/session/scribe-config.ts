@@ -30,8 +30,16 @@ export const SCRIBE_RETCON_MAX_OUTPUT_TOKENS = 1_200
  *  append — oldest public (`ft_delta`) items drop first; non-public never. */
 export const WORKING_SET_CAP = 200
 
-
-/** A `breached:true` verdict UNDER this confidence (or any ambiguous verdict)
- *  still escalates to the retcon-author. The tripwire is recall-biased — a
- *  low-confidence breach is treated as a breach, not waved through. */
-export const TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR = 0.5
+// myth-retprop — the tripwire routes on the SEVERITY verdict, not a numeric
+// confidence floor. There is deliberately NO escalate-confidence knob:
+//   - "hard_reveal"      → the open, player-facing retcon (recall-biased: ANY
+//                          hard_reveal fires it, regardless of confidence — a
+//                          suspected live leak is corrected, not waved through).
+//   - "soft_consistency" → a SILENT ST steer (enqueue an st-evaluation so the
+//                          secret-aware Opus director can adjust FUTURE turns via
+//                          its standing directive). NO player-facing correction.
+//   - "none"             → clean.
+// `confidence` survives as observability only; severity is the gate. This
+// replaces the old TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR: a low-confidence breach
+// no longer routes to the disruptive open correction by virtue of the boolean —
+// the severity split is what makes the remedy proportionate.

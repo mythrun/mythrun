@@ -1,17 +1,20 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { SessionPreparing } from './SessionPreparing.tsx'
 
-// SessionPreparing — the calm between-sessions hold (myth-ep74g). When a session has
-// just ended and the next one isn't startable yet, the play route sits here while the
-// start-flow hook backoff-polls in the background. One unhurried atmospheric line over
-// a breathing 1-bit figure — no itinerary, no spinner, no retry storm. Same paper /
-// ordered-Bayer register as SessionStartBeat so the two beats read as one family.
+// SessionPreparing — the calm between-sessions hold (myth-ep74g; MYT-102 timer
+// revamp). When a session has just ended and the next one isn't startable yet, the
+// play route sits here while the start-flow hook backoff-polls in the background.
+// An unhurried atmospheric line over an AMBIENT breathing square, plus a coarse
+// wait line so the player knows roughly how long and that nothing has broken.
 //
-// Do: keep it quiet and unhurried — the wait can run a minute or two; the figure's
-//   slow breath is the only motion.
-// Don't: add a progress bar, a countdown, or a "retry now" button — the hook owns the
-//   cadence; this surface just holds the screen calmly.
-// Content/i18n: `label` / `detail` are resolved chrome the consumer passes.
+// Do: keep it quiet and unhurried; the breathing SQUARE reads as ambient texture,
+//   not a progress bar; show a COARSE estimate ("2 min remaining") when a baseline
+//   holds, and the "still working…" line once it exhausts.
+// Don't: reshape the figure back into a full-width band (it reads as an unfilled
+//   progress bar — the confusion this revamp fixed); add a ticking M:SS or a
+//   "retry now" button — the hook owns the cadence.
+// Content/i18n: `label` / `detail` / `countdownLabel` / `stalledLabel` are resolved
+//   chrome the consumer passes (the route owns the timing).
 
 const meta: Meta<typeof SessionPreparing> = {
   title: 'Session/SessionPreparing',
@@ -32,8 +35,28 @@ const LABEL = 'The DM is preparing the next session…'
 const DETAIL = 'This can take a moment.'
 
 export const Default: Story = {
-  name: 'Preparing (breathing)',
+  name: 'Preparing (cold-start — detail fallback)',
   args: { label: LABEL, detail: DETAIL, reducedMotion: false },
+}
+
+// With a coarse estimate — a prep-duration baseline exists, so the beat shows how
+// much longer (minute-granular, never a ticking M:SS). The estimate replaces the
+// calm detail fallback.
+export const WithCountdown: Story = {
+  name: 'With estimate (coarse)',
+  args: { label: LABEL, detail: DETAIL, countdownLabel: '2 min remaining', reducedMotion: false },
+}
+
+// Stalled — the estimate exhausted (or the wait ran long with no baseline): the
+// "still working" line answers "has it broken?" without a stuck bar.
+export const Stalled: Story = {
+  name: 'Stalled (taking longer than usual)',
+  args: {
+    label: LABEL,
+    detail: DETAIL,
+    stalledLabel: 'Still working. This is taking longer than usual.',
+    reducedMotion: false,
+  },
 }
 
 export const LabelOnly: Story = {

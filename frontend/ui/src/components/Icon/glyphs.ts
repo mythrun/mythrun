@@ -81,15 +81,18 @@ export const GLYPHS: Record<IconName, Glyph> = {
       'M21 3h-8v2h8V3Z',
     ],
   },
-  // The app-frame settings gear (MYT-97). Path data copied VERBATIM from
-  // pixelarticons/svg/settings-cog-2.svg (the gear cog; keyed `settings`).
+  // The app-frame settings gear (MYT-99, keyed `settings`). Single path copied
+  // VERBATIM from the licensed Pixelarticons PRO set (Pro is a superset of the MIT
+  // base; same 24-grid, viewBox="0 0 24 24"):
+  //   ../../Design/mythrun-design/brand/icons/pixelarticons-pro-2/svg/settings-cog-2.svg
+  // The inset single-cog reads clearest at header IconButton sizes (16–24px). The
+  // prior value (MYT-97) claimed this same provenance but the path data was
+  // HAND-ROLLED — a four-path shape that never matched the set and read as scattered
+  // teeth. Replaced with the authentic glyph.
   settings: {
     viewBox: VIEWBOX_24,
     paths: [
-      'M18 2h2v2h-2zM4 2h2v2H4zm16 20h-2v-2h2zM4 22h2v-2H4zM20 4h2v2h-2zM6 4h4v2H6zm12 16h-4v-2h4zM6 20h4v-2H6zM18 6h2v4h-2zM4 6h2v4H4zm16 12h-2v-4h2zM4 18h2v-4H4zM14 4h4v2h-4zM2 4h2v2H2zm20 16h-2v-2h2zM2 20h2v-2H2z',
-      'M8 2h2v4H8zm0 20h2v-4H8z',
-      'M8 2h8v2H8zm0 20h8v-2H8zM2 8h2v8H2zm20 8h-2V8h2z',
-      'M20 8h2v4h-2zM10 8h4v2h-4zm-2 2h2v4H8zm2 4h4v2h-4zm4-4h2v4h-2z',
+      'M6 22H4v-2h2v2Zm4-2h4v-2h4v2h-2v2H8v-2H6v-2h4v2Zm10 2h-2v-2h2v2ZM4 20H2v-2h2v2Zm18 0h-2v-2h2v2ZM6 10H4v4h2v4H4v-2H2V8h2V6h2v4Zm14-2h2v8h-2v2h-2v-4h2v-4h-2V6h2v2Zm-6 8h-4v-2h4v2Zm-4-2H8v-4h2v4Zm6 0h-2v-4h2v4Zm-2-4h-4V8h4v2ZM4 6H2V4h2v2Zm12-2h2v2h-4V4h-4v2H6V4h2V2h8v2Zm6 2h-2V4h2v2ZM6 4H4V2h2v2Zm14 0h-2V2h2v2Z',
     ],
   },
   // Status-intent severity glyphs (MYT-82 W3c). `info` = info-box, `warning-diamond`

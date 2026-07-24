@@ -4,6 +4,7 @@ import { ENTITY_STAGES, WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/co
 import {
   remainingPrepWaitMs,
   remainingWaitMs,
+  waitDisplay,
   type StageTiming,
   type WorldGenStream,
 } from '@mythrun/client-core'
@@ -11,6 +12,7 @@ import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
+import { coarseWaitTime } from '../wait-format.ts'
 
 // The GENERATING VIEW (MYT-89 Phase C, C7 + audit ③/⑥ + the TWO-ACT flow) — the
 // live world-gen experience the `/campaigns/:id` route lands on after Begin, and
@@ -89,19 +91,26 @@ function useNowMs(active: boolean): number {
   return nowMs
 }
 
-/** Format the remaining wait into the ticking `~M:SS` countdown label, or
- *  `undefined` when there is no usable estimate (no history) — the surfaces show
- *  nothing rather than a fake number. 0 renders as `0:00` (the final-stage
- *  overrun holds there — "any moment now" — until the reveal fires). The digits
- *  are mechanical; the words around them are i18n. */
+/** Resolve the remaining wait into the COARSE `{{time}} remaining` label (MYT-102
+ *  timer revamp), or `undefined` when there is no usable estimate to show —
+ *  cold-start (no history) OR the estimate EXHAUSTED (the final stage overran).
+ *  Omitting on exhaustion is the never-dead-zero fix: the surface drops the line
+ *  rather than sitting at "0:00 remaining"; the Spinner + flavor cycle (act one)
+ *  or the stage bars (act two) already carry the wait, so nothing looks hung.
+ *  The label is minute-granular ("2 min remaining"), never a ticking `0:24` —
+ *  false precision + the per-second churn were the anti-patterns. World-gen
+ *  passes an infinite no-history window (it never needs a stall LINE — its
+ *  indeterminate presentation is the flavor cycle / the bars), so `waitDisplay`
+ *  only ever yields `estimate` (show) or a non-estimate (omit). */
 function countdownLabelFrom(remainingMs: number | null, t: TFunction): string | undefined {
-  if (remainingMs === null) return undefined
-  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return t('worldGen.countdown', {
-    time: `${String(minutes)}:${String(seconds).padStart(2, '0')}`,
+  const display = waitDisplay({
+    remainingMs,
+    elapsedMs: 0,
+    noHistoryStallMs: Number.POSITIVE_INFINITY,
   })
+  return display.kind === 'estimate'
+    ? t('worldGen.countdown', { time: coarseWaitTime(display.bucket, t) })
+    : undefined
 }
 
 /** The graph contract requires `onSelect`, but generation is GATED (§3.4) so it
@@ -216,13 +225,15 @@ export function GeneratingView({
     [t],
   )
 
-  // The per-second countdown (MYT-89 waiting-feedback, replacing the coarse
-  // minute-granular ETA): the remaining visible wait — historical stage averages
-  // ∩ live statuses, minus elapsed-in-the-running-stage — re-derived every tick
-  // and formatted `~M:SS`. Ticks only when there IS a usable history;
-  // `null`/cold-start → undefined → both surfaces show no estimate. It may HOLD
-  // when a stage overruns (the clamp) and JUMP at the next stage event —
-  // deliberate: an honest walk beats a smooth lie.
+  // The COARSE remaining-wait line (MYT-102 timer revamp): the remaining visible
+  // wait — historical stage averages ∩ live statuses, minus elapsed-in-the-
+  // running-stage — re-derived every tick and shown minute-granular ("2 min
+  // remaining"), never a ticking `0:24`. The 1s tick only runs when there IS a
+  // usable history; `null`/cold-start → undefined → no line. It JUMPS coarsely at
+  // stage events (an honest walk beats a smooth lie) and, the instant the
+  // estimate EXHAUSTS (a stage overran to 0), the line is dropped entirely rather
+  // than sitting at a dead 0:00 — the Spinner + flavor cycle (act one) / the
+  // stage bars (act two) carry the wait.
   const hasTimings = stageTimings !== null && stageTimings.length > 0
   const nowMs = useNowMs(hasTimings)
   // TWO targets (myth-tudy1): act one counts down to ARRIVING ON THE GRAPH (the

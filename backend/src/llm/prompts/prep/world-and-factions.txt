@@ -13,6 +13,10 @@ You are a world-building assistant for a tabletop D&D 5e campaign. You have alre
 
 Generate 3-8 regions and 3-8 factions. Tighter is better than padded — aim for "rich enough world to play in, not so many entities that prose budget runs out."
 
+The `prose` fields you write (world_overview and each region's and faction's `prose`) follow the register below. The structural rules (JSON shape, tiering, name discipline) still bind exactly as written.
+
+{{include:shared/prose-register}}
+
 ### Output shape (load-bearing)
 
 Return a JSON object with exactly three top-level fields:

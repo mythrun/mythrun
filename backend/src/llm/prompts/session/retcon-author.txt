@@ -4,6 +4,10 @@ HARD RULE — enforced ignorance: the correction must remove the contradiction W
 
 Prefer the MINIMAL honest correction — fold the fix into ongoing narration where you can, rather than a heavy "I was wrong" beat. Only use the explicit "earlier I said X — correction, it's actually Z" framing when X was actually spoken to the players in the prose below (not an internal note).
 
+The correction is player-facing prose. Write it in the register below.
+
+{{include:shared/prose-register}}
+
 The breaching prose (player-visible):
 {{prose}}
 

@@ -55,8 +55,13 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve }
 }
 
-const renderStart = (deps: SessionStartDeps, viewerIsOwner = true) =>
-  renderHook(() => useSessionStart(ctx, { campaignId: CID, viewerIsOwner }, deps))
+// The viewer's own id — distinct from the member ids the guard-body tests name, so a
+// `members_without_characters` bodies default to the "others are missing" (blocked)
+// arm unless a test deliberately names the viewer.
+const VIEWER_ID = 'viewer-self'
+
+const renderStart = (deps: SessionStartDeps, viewerIsOwner = true, viewerUserId = VIEWER_ID) =>
+  renderHook(() => useSessionStart(ctx, { campaignId: CID, viewerIsOwner, viewerUserId }, deps))
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -79,22 +84,54 @@ describe('classifyStartError', () => {
     },
   )
 
-  it('409 members_without_characters with a well-formed body → blocked carrying the display names', () => {
+  it('409 members_without_characters naming OTHERS → blocked carrying only the others\' names', () => {
     const body = {
       members: [
         { userId: 'u1', displayName: 'Kessa' },
         { userId: 'u2', displayName: 'Bram' },
       ],
     }
-    expect(classifyStartError(httpError(409, 'members_without_characters', body))).toEqual({
+    // Viewer is someone else → both are "others" the owner waits on.
+    expect(classifyStartError(httpError(409, 'members_without_characters', body), 'u9')).toEqual({
       kind: 'blocked',
       code: 'members_without_characters',
       memberNames: ['Kessa', 'Bram'],
     })
   })
 
+  it('409 members_without_characters naming ONLY the viewer → wait (their own integration is in flight — NOT "waiting on your own name")', () => {
+    const body = { members: [{ userId: 'self', displayName: 'Wren' }] }
+    expect(classifyStartError(httpError(409, 'members_without_characters', body), 'self')).toEqual({
+      kind: 'wait',
+      code: 'members_without_characters',
+    })
+  })
+
+  it('409 members_without_characters naming the viewer AND others → blocked, viewer EXCLUDED from the names', () => {
+    const body = {
+      members: [
+        { userId: 'self', displayName: 'Wren' },
+        { userId: 'u2', displayName: 'Bram' },
+      ],
+    }
+    expect(classifyStartError(httpError(409, 'members_without_characters', body), 'self')).toEqual({
+      kind: 'blocked',
+      code: 'members_without_characters',
+      memberNames: ['Bram'],
+    })
+  })
+
+  it('409 members_without_characters with no viewer id → every member is an "other" (safe default: blocked, all named)', () => {
+    const body = { members: [{ userId: 'self', displayName: 'Wren' }] }
+    expect(classifyStartError(httpError(409, 'members_without_characters', body))).toEqual({
+      kind: 'blocked',
+      code: 'members_without_characters',
+      memberNames: ['Wren'],
+    })
+  })
+
   it('409 members_without_characters with a malformed body → bare blocked (degrades, never crashes)', () => {
-    expect(classifyStartError(httpError(409, 'members_without_characters', { nope: 1 }))).toEqual({
+    expect(classifyStartError(httpError(409, 'members_without_characters', { nope: 1 }), 'self')).toEqual({
       kind: 'blocked',
       code: 'members_without_characters',
     })
@@ -114,10 +151,17 @@ describe('classifyStartError', () => {
     })
   })
 
-  it('409 campaign_not_active → blocked (NOT transient — a manual retry, not a poll)', () => {
+  it('409 campaign_not_active → wait (the character-integration window setup→active — auto-poll, not a dead end)', () => {
     expect(classifyStartError(httpError(409, 'campaign_not_active'))).toEqual({
-      kind: 'blocked',
+      kind: 'wait',
       code: 'campaign_not_active',
+    })
+  })
+
+  it('409 campaign_failed → blocked (terminal: integration failed — a return to setup, never an auto-poll)', () => {
+    expect(classifyStartError(httpError(409, 'campaign_failed'))).toEqual({
+      kind: 'blocked',
+      code: 'campaign_failed',
     })
   })
 
@@ -261,7 +305,7 @@ describe('useSessionStart', () => {
     })
   })
 
-  it('members_without_characters 409 → blocked phase CARRIES the names to the surface', async () => {
+  it('members_without_characters naming ANOTHER member → blocked phase CARRIES that name to the surface', async () => {
     const deps = makeDeps({
       startSession: vi.fn().mockRejectedValue(
         httpError(409, 'members_without_characters', {
@@ -269,6 +313,7 @@ describe('useSessionStart', () => {
         }),
       ),
     })
+    // Viewer is 'viewer-self' (renderStart default) — Perrin is someone else.
     const { result } = renderStart(deps)
 
     act(() => {
@@ -280,6 +325,24 @@ describe('useSessionStart', () => {
         code: 'members_without_characters',
         memberNames: ['Perrin'],
       })
+    })
+  })
+
+  it('members_without_characters naming ONLY the viewer → waiting (their own integration polls in — no "waiting on your own name", no retry-mash)', async () => {
+    const deps = makeDeps({
+      startSession: vi.fn().mockRejectedValue(
+        httpError(409, 'members_without_characters', {
+          members: [{ userId: 'self', displayName: 'Wren' }],
+        }),
+      ),
+    })
+    const { result } = renderStart(deps, true, 'self')
+
+    act(() => {
+      result.current.start()
+    })
+    await waitFor(() => {
+      expect(result.current.state).toEqual({ phase: 'waiting', code: 'members_without_characters' })
     })
   })
 
@@ -319,7 +382,7 @@ describe('useSessionStart', () => {
     })
   })
 
-  it('409 campaign_not_active → blocked with the code (a manual retry, not an auto-poll)', async () => {
+  it('409 campaign_not_active → waiting (auto-polls through the integration window; no retry-mashing)', async () => {
     const deps = makeDeps({
       startSession: vi.fn().mockRejectedValue(httpError(409, 'campaign_not_active')),
     })
@@ -329,7 +392,21 @@ describe('useSessionStart', () => {
       result.current.start()
     })
     await waitFor(() => {
-      expect(result.current.state).toEqual({ phase: 'blocked', code: 'campaign_not_active' })
+      expect(result.current.state).toEqual({ phase: 'waiting', code: 'campaign_not_active' })
+    })
+  })
+
+  it('409 campaign_failed → blocked (terminal integration failure — a manual action, not a poll)', async () => {
+    const deps = makeDeps({
+      startSession: vi.fn().mockRejectedValue(httpError(409, 'campaign_failed')),
+    })
+    const { result } = renderStart(deps)
+
+    act(() => {
+      result.current.start()
+    })
+    await waitFor(() => {
+      expect(result.current.state).toEqual({ phase: 'blocked', code: 'campaign_failed' })
     })
   })
 
@@ -409,7 +486,7 @@ describe('useSessionStart', () => {
     )
 
     const { result } = renderHook(() =>
-      useSessionStart(ctx, { campaignId: CID, viewerIsOwner: true }),
+      useSessionStart(ctx, { campaignId: CID, viewerIsOwner: true, viewerUserId: VIEWER_ID }),
     )
 
     act(() => {

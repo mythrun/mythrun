@@ -8,6 +8,7 @@ import {
   HttpError,
   type ApiContext,
   type CharacterCreationProgress,
+  type SessionDraftStore,
   type StartingSituationsResponse,
   type SubmitCharacterResponse,
   type WorldGenSnapshot,
@@ -180,6 +181,24 @@ interface Overrides {
   fetchSnapshot?: () => Promise<WorldGenSnapshot>
   fetchMe?: () => Promise<{ user: { id: string } }>
   fetchProgress?: () => Promise<CharacterCreationProgress>
+  draftStore?: SessionDraftStore
+}
+
+/** An in-memory draft store — the SessionDraftStore port the localStorage web impl
+ *  satisfies. Shared across two renders in the durability tests to model a player
+ *  RETURNING to the flow (after a failure / "Start over") in the same browser. */
+function makeDraftStore(): SessionDraftStore & { map: Map<string, string> } {
+  const map = new Map<string, string>()
+  return {
+    map,
+    get: (k) => map.get(k) ?? null,
+    set: (k, v) => {
+      map.set(k, v)
+    },
+    remove: (k) => {
+      map.delete(k)
+    },
+  }
 }
 
 function renderRoute(overrides: Overrides = {}): {
@@ -203,6 +222,7 @@ function renderRoute(overrides: Overrides = {}): {
             fetchSnapshot={fetchSnapshot}
             fetchMe={fetchMe}
             fetchProgress={fetchProgress}
+            {...(overrides.draftStore ? { draftStore: overrides.draftStore } : {})}
           />
         ),
       },
@@ -501,5 +521,125 @@ describe('CharacterNewRoute — the roster handoff (myth-qkjdq)', () => {
     renderRoute({ fetchProgress: vi.fn().mockRejectedValue(new Error('network')) })
     expect(await screen.findByTestId('chooser-freeform')).toBeDefined()
     expect(screen.queryByTestId('campaign-surface-probe')).toBeNull()
+  })
+})
+
+describe('CharacterNewRoute — player-input durability (the P0 fix)', () => {
+  /** Read the freeform prompt's textarea value (scoped WITHIN the prompt so the
+   *  wiki rail's search box never matches). */
+  function conceptFieldValue(): string {
+    const prompt = screen.getByTestId('freeform-prompt')
+    return within(prompt).getByRole<HTMLTextAreaElement>('textbox').value
+  }
+  function typeConcept(value: string): void {
+    const prompt = screen.getByTestId('freeform-prompt')
+    fireEvent.change(within(prompt).getByRole('textbox'), { target: { value } })
+  }
+
+  it("restores the concept the player typed when they RETURN to the flow (fail → 'Start over')", () => {
+    const store = makeDraftStore()
+    // First visit: the player writes their concept, then the generation FAILS (the
+    // failure surface lives on the campaign surface; here we just unmount).
+    renderRoute({ draftStore: store })
+    pickFreeform()
+    typeConcept(CONCEPT)
+    cleanup()
+
+    // They click "Start over" (concept flips to 'submitted') and land back on the
+    // create flow. The SAME-browser store restores their words instead of an empty box.
+    renderRoute({ draftStore: store, fetchProgress: vi.fn().mockResolvedValue(progressWith('submitted')) })
+    pickFreeform()
+    expect(conceptFieldValue()).toBe(CONCEPT)
+  })
+
+  it('restores BOTH concept and grounding across a return, without clobbering either', async () => {
+    const store = makeDraftStore()
+    renderRoute({ draftStore: store })
+    pickFreeform()
+    typeConcept(CONCEPT)
+    // Advance to grounding and type it (the draft must merge, not overwrite concept).
+    fireEvent.click(within(screen.getByTestId('freeform-prompt')).getByRole('button'))
+    await screen.findByText(CHOSEN_INVITATION)
+    fireEvent.change(within(screen.getByTestId('freeform-prompt')).getByRole('textbox'), {
+      target: { value: GROUNDING },
+    })
+    cleanup()
+
+    // Return: the concept is restored on the concept step; advancing shows the
+    // restored grounding — neither field lost the other's words.
+    renderRoute({ draftStore: store, fetchProgress: vi.fn().mockResolvedValue(progressWith('submitted')) })
+    pickFreeform()
+    expect(conceptFieldValue()).toBe(CONCEPT)
+    fireEvent.click(within(screen.getByTestId('freeform-prompt')).getByRole('button'))
+    await screen.findByText(CHOSEN_INVITATION)
+    expect(conceptFieldValue()).toBe(GROUNDING)
+  })
+
+  it('clears the draft once the character is CONFIRMED created (concept integrated)', async () => {
+    const store = makeDraftStore()
+    const key = `mythrun_character_draft:${CAMPAIGN_ID}`
+    store.set(key, JSON.stringify({ conceptText: 'done with this one' }))
+    // Landing on /character/new with an integrated concept hands off AND clears the draft.
+    renderRoute({
+      draftStore: store,
+      fetchProgress: vi.fn().mockResolvedValue(progressWith('integrated')),
+    })
+    await waitFor(() => {
+      expect(store.get(key)).toBeNull()
+    })
+  })
+
+  it('does NOT clear the draft on a failure (words must survive to be restored)', async () => {
+    const store = makeDraftStore()
+    const key = `mythrun_character_draft:${CAMPAIGN_ID}`
+    store.set(key, JSON.stringify({ conceptText: CONCEPT }))
+    renderRoute({
+      draftStore: store,
+      fetchProgress: vi.fn().mockResolvedValue(progressWith('failed')),
+    })
+    // Give the handoff effect a tick; the draft must remain intact.
+    await screen.findByTestId('campaign-surface-probe')
+    expect(store.get(key)).not.toBeNull()
+  })
+})
+
+describe('CharacterNewRoute — the back affordance (the reversible decision)', () => {
+  function conceptField(): HTMLTextAreaElement {
+    return within(screen.getByTestId('freeform-prompt')).getByRole<HTMLTextAreaElement>('textbox')
+  }
+
+  it('freeform concept-step Back returns to the chooser', () => {
+    renderRoute()
+    pickFreeform()
+    expect(screen.getByTestId('freeform-prompt')).toBeDefined()
+    fireEvent.click(screen.getByTestId('freeform-back'))
+    // Back on the chooser — the decision is reversible.
+    expect(screen.getByTestId('chooser-freeform')).toBeDefined()
+    expect(screen.queryByTestId('freeform-prompt')).toBeNull()
+  })
+
+  it('freeform grounding-step Back steps to the concept (not straight to the chooser)', async () => {
+    renderRoute()
+    pickFreeform()
+    answerAndContinue(CONCEPT)
+    await screen.findByText(CHOSEN_INVITATION) // now on the grounding step
+    fireEvent.click(screen.getByTestId('freeform-back'))
+    // Back on the concept prompt — its words intact, the chooser not shown.
+    expect(screen.getByText(i18n.t('characterCreate.freeform.conceptPrompt'))).toBeDefined()
+    expect(conceptField().value).toBe(CONCEPT)
+    expect(screen.queryByText(CHOSEN_INVITATION)).toBeNull()
+    expect(screen.queryByTestId('chooser-freeform')).toBeNull()
+  })
+
+  it('keeps the typed concept across a back-to-chooser round-trip (nothing lost)', () => {
+    const store = makeDraftStore()
+    renderRoute({ draftStore: store })
+    pickFreeform()
+    fireEvent.change(conceptField(), { target: { value: CONCEPT } })
+    // Reverse the decision, then re-enter freeform: the words come back.
+    fireEvent.click(screen.getByTestId('freeform-back'))
+    expect(screen.getByTestId('chooser-freeform')).toBeDefined()
+    pickFreeform()
+    expect(conceptField().value).toBe(CONCEPT)
   })
 })

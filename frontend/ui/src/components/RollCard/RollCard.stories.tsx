@@ -21,10 +21,10 @@ import { RollCard } from './RollCard.tsx'
 const STORY_LABELS: RollCardLabels = {
   roll: 'Roll',
   continue: 'Continue',
-  tier: { fail: 'Failure', success: 'Success', great_success: 'Great success' },
+  tier: { fail: 'Failure', success: 'Success', great_success: 'Critical success' },
   dc: 'DC',
-  advantage: 'advantage',
-  disadvantage: 'disadvantage',
+  advantage: 'Advantage',
+  disadvantage: 'Disadvantage',
   dieResult: 'You rolled',
 }
 

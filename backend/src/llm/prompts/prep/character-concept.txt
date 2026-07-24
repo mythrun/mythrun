@@ -31,4 +31,9 @@ Key tensions: {{keyTensions}}
 - backstory: 1-3 paragraphs (300-2000 chars). Reference world entities by
   the canonical names listed in vocabulary above.
 
+The prose fields you write (physical_description, personality_traits, ideals,
+bonds, flaws, backstory) follow the register below.
+
+{{include:shared/prose-register}}
+
 Return ONLY the JSON conforming to CharacterConceptOutputSchema.

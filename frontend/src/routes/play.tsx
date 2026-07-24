@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useApiContext } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
 import { usePrefersReducedMotion } from '../platform/web/use-prefers-reduced-motion.ts'
@@ -48,9 +48,16 @@ export function PlayRoute({
 }: PlayRouteProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
+  const navigate = useNavigate()
   // The route only matches with an `:id`; `?? ''` keeps the hook calls unconditional.
   const { id = '' } = useParams<{ id: string }>()
   const reducedMotion = usePrefersReducedMotion()
+  // The campaign_failed terminal arm returns here (the setup page), where the
+  // integration-failure surface owns the retry. Template-literal path (not a
+  // translatable string); `navigate` returns a promise under react-router 7 → void it.
+  const exitToCampaign = useCallback((): void => {
+    void navigate(`/campaigns/${id}`)
+  }, [navigate, id])
 
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => {
@@ -78,6 +85,7 @@ export function PlayRoute({
         campaignId={id}
         viewer={viewerState.viewer}
         reducedMotion={reducedMotion}
+        onExitToCampaign={exitToCampaign}
         {...(useStart !== undefined && { useStart })}
         {...(usePrep !== undefined && { usePrep })}
         {...(useLiveSession !== undefined && { useLiveSession })}

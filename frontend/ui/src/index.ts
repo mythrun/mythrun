@@ -194,6 +194,10 @@ export { Popover } from './components/Popover/Popover.tsx'
 export { Tooltip, TooltipProvider } from './components/Tooltip/Tooltip.tsx'
 export { Tabs } from './components/Tabs/Tabs.tsx'
 export { Menu } from './components/Menu/Menu.tsx'
+// ResizeHandle (MYT-100) — the draggable window-splitter divider for a docked,
+// horizontally-resizable panel (the wiki sidebar).
+export { ResizeHandle } from './components/ResizeHandle/ResizeHandle.tsx'
+export type { ResizeHandleProps } from './components/ResizeHandle/ResizeHandle.tsx'
 
 // Status-intent feedback (MYT-82 Wave 3c) — Banner (inline, persistent) + the
 // Toast subsystem (transient, app-global). Toast is IMPERATIVE: mount a single

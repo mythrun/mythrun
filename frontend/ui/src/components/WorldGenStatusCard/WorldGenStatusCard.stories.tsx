@@ -65,9 +65,9 @@ const STAGE_LABELS: Record<string, string> = {
 
 // The card's resolved chrome labels the shell supplies (real MYT-100 copy).
 const CARD_LABELS = {
-  titleLabel: 'weaving your world',
+  titleLabel: 'Weaving your world',
   doneLabel: 'Your world is ready',
-  progressLabel: 'world generation progress',
+  progressLabel: 'World generation progress',
 }
 
 // A mock graph pane (the `relative` host the overlay pins inside).

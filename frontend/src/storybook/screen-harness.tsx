@@ -9,6 +9,7 @@ import {
   type ApiContext,
   type BalanceResponse,
   type CampaignSummary,
+  type MeResponse,
 } from '@mythrun/client-core'
 import { ThemeProvider } from '@mythrun/ui'
 import { defaultNS } from '@mythrun/client-core/i18n'
@@ -21,12 +22,14 @@ import { i18n } from '../i18n/config.ts'
 // screens read is pre-seeded:
 //   • session store → `ready` (the RequireAuth gate), so authed screens render.
 //   • QueryClient cache → setQueryData(['campaigns','mine'], …) and, for the
-//     header credit display, setQueryData(['billing','balance'], …) — both with
-//     staleTime:Infinity. `useMyCampaigns` / `useBalance` are SUSPENSE queries —
-//     a key/shape mismatch hangs forever, so the story's `play` (expectScreen)
-//     asserts the root testid and fails loud instead of timing out as a flake.
-//   • i18nOverrides → swap an i18n placeholder for adversarial-length copy
-//     (the app-frame display name is an i18n key, not a prop).
+//     header credit display + display name, setQueryData(['billing','balance'], …)
+//     and setQueryData(['me'], …) — all with staleTime:Infinity. `useMyCampaigns` /
+//     `useBalance` / `useMe` are SUSPENSE queries — a key/shape mismatch hangs
+//     forever, so the story's `play` (expectScreen) asserts the root testid and
+//     fails loud instead of timing out as a flake.
+//   • seedMe → the display name is DATA (from `useMe`); an adversarial-length name
+//     is seeded here (a story prop), not swapped as i18n copy.
+//   • i18nOverrides → swap a catalog key for adversarial-length copy.
 // A dummy ApiContext + the pre-seeded, never-stale cache mean no network call
 // fires. Runs in real Chromium under the test-runner, so RR7's data router
 // works without the jsdom-native-fetch shim the vitest env needs.
@@ -48,6 +51,21 @@ const DEFAULT_BALANCE: BalanceResponse = {
   active_subscription: null,
 }
 
+// The app-frame header now reads the signed-in display name on EVERY authed route
+// (MYT-99 `useMe`), so any authed screen would otherwise suspend-hang on the
+// (unseeded) `['me']` cache. Seed a representative default for every story so the
+// header identity renders deterministically; a story passes `seedMe` to override
+// (e.g. an adversarial-length name that must truncate).
+const DEFAULT_ME: MeResponse = {
+  user: {
+    id: 'dev-user-1',
+    username: 'wren',
+    displayName: 'Wren',
+    freeTrialUsed: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+}
+
 type Session = 'unauthenticated' | 'onboarding-required' | 'ready'
 
 export interface ScreenHarnessProps {
@@ -59,7 +77,9 @@ export interface ScreenHarnessProps {
   readonly seedCampaigns?: readonly CampaignSummary[]
   /** Pre-seed the `['billing','balance']` suspense cache (header credits). */
   readonly seedBalance?: BalanceResponse
-  /** Override i18n keys (e.g. an adversarial-length `frame.displayName`). */
+  /** Pre-seed the `['me']` suspense cache (header identity / display name). */
+  readonly seedMe?: MeResponse
+  /** Override i18n keys (e.g. adversarial-length catalog copy). */
   readonly i18nOverrides?: Readonly<Record<string, string>>
 }
 
@@ -75,6 +95,7 @@ export function ScreenHarness({
   session = 'ready',
   seedCampaigns,
   seedBalance,
+  seedMe,
   i18nOverrides,
 }: ScreenHarnessProps): React.JSX.Element {
   // Lazy init: one-time per story mount, before children render, so the auth
@@ -94,9 +115,10 @@ export function ScreenHarness({
     if (seedCampaigns) {
       queryClient.setQueryData(['campaigns', 'mine'], { campaigns: seedCampaigns })
     }
-    // Always seed a balance (the frame reads it on every authed route) — the prop
-    // overrides the default for a story that asserts a specific balance.
+    // Always seed a balance + a `me` (the frame reads both on every authed route) —
+    // the props override the defaults for a story that asserts a specific value.
     queryClient.setQueryData(['billing', 'balance'], seedBalance ?? DEFAULT_BALANCE)
+    queryClient.setQueryData(['me'], seedMe ?? DEFAULT_ME)
     return { client: queryClient, router: createMemoryRouter(routes, { initialEntries: [entry] }) }
   })
 

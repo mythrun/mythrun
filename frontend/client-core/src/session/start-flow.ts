@@ -20,11 +20,23 @@ import {
 //   409 session_already_active   → join → GET /active        → ready{sessionId}
 //   409 prep_not_ready /
 //       reconcile_pending /
-//       session_ending           → waiting{code}             (the calm interstitial)
+//       session_ending /
+//       campaign_not_active /
+//       members_without_characters (viewer only) → waiting{code}  (the calm interstitial)
 //   402 insufficient_credits     → purchase{moment}          (the MYT-95 seam)
-//   409 campaign_not_active /
+//   409 members_without_characters (others) → blocked{code, names}  (member-action hold)
+//   409 campaign_failed /
 //       (any off-contract 409)   → blocked{code}             (a calm retry notice)
 //   anything else                → error                     (a calm retry notice)
+//
+// Two codes are context-split (see classify409):
+//  • `campaign_not_active` is the CHARACTER-INTEGRATION window on the play route —
+//    transient, so it polls; a genuinely failed campaign answers `campaign_failed`,
+//    which the play route routes to setup.
+//  • `members_without_characters` splits on WHO is missing a character: only the
+//    viewer (their own integration in flight) → a transient auto-poll hold; other
+//    members (they must finish creating) → the blocked member-action hold naming
+//    them. The viewer's own id (SessionStartInput.viewerUserId) draws the line.
 //
 // TWO CHANGES vs. the original A7 wiring, both from the myth-ep74g weekend playtest:
 //
@@ -95,6 +107,12 @@ export interface StartFlow {
 export interface SessionStartInput {
   readonly campaignId: string
   readonly viewerIsOwner: boolean
+  /** The viewer's own DB user id. Lets the classifier tell the viewer's OWN in-flight
+   *  character integration (a `members_without_characters` naming only them — transient,
+   *  auto-poll) apart from OTHER members genuinely still without a character (a
+   *  member-action block). Without it, every `members_without_characters` degrades to
+   *  the blocked hold naming everyone. */
+  readonly viewerUserId: string
 }
 
 type StartFn = (input: { campaignId: string }, ctx: ApiContext) => Promise<StartSessionResponse>
@@ -149,44 +167,67 @@ const membersWithoutCharactersSchema = z.object({
 })
 
 /** Pure: map a caught start error to a `StartOutcome`. Keys ONLY on the
- *  contract-blessed `status`/`code`/`body` — nothing semantic. */
-export function classifyStartError(err: unknown): StartOutcome {
+ *  contract-blessed `status`/`code`/`body` (+ the viewer's own id, to split a
+ *  self-integration hold from a member-action block) — nothing semantic. */
+export function classifyStartError(err: unknown, viewerUserId?: string): StartOutcome {
   if (!isHttpError(err)) return { kind: 'error' }
   if (err.status === 402) {
     const parsed = insufficientCreditsSchema.safeParse(err.body)
     return parsed.success ? { kind: 'purchase', body: parsed.data } : { kind: 'error' }
   }
-  if (err.status === 409 && err.code !== undefined) return classify409(err.code, err.body)
+  if (err.status === 409 && err.code !== undefined) return classify409(err.code, err.body, viewerUserId)
   return { kind: 'error' }
 }
 
-function classify409(code: string, body: unknown): StartOutcome {
+function classify409(code: string, body: unknown, viewerUserId?: string): StartOutcome {
   switch (code) {
     case 'session_already_active':
       return { kind: 'join' }
     // The transient between-sessions codes: the next session is being prepared /
     // the last one is reconciling / ending. All resolve on their own — the calm
     // interstitial backoff-polls through them (myth-ep74g).
+    //
+    // `campaign_not_active` joins them: on the play route it is the CHARACTER-
+    // INTEGRATION window — `campaigns.status` flips setup→active as the LAST write
+    // of integration (weaving every PC into the world), and `/start` answers
+    // `campaign_not_active` until it lands. That is transient and self-resolving,
+    // so it belongs in the auto-poll set, NOT the manual-retry blocked arm that
+    // made the owner mash "try again" through his own party's integration. The
+    // backend gives a genuinely-FAILED campaign its own `campaign_failed` code
+    // (terminal → the blocked arm below), so treating `campaign_not_active` as
+    // transient is safe: `failed` no longer surfaces here, and `archived` never
+    // reaches the play route.
     case 'prep_not_ready':
     case 'reconcile_pending':
     case 'session_ending':
+    case 'campaign_not_active':
       return { kind: 'wait', code }
     // The myth-mnik3 start guard: the session can't run until every confirmed
-    // member has an integrated character. Not transient (someone must finish
-    // creation), so it renders as the blocked hold — but WITH the missing
-    // members' names, so the owner knows exactly who the table waits on.
+    // member has an integrated character. This splits on WHO is still missing one:
+    //
+    //   • ONLY the viewer → their OWN character integration is still in flight (the
+    //     ~1min LLM weave that finalize kicked off; `character_id` is NULL until it
+    //     lands). Transient and self-resolving, so it JOINS the auto-poll set — a
+    //     calm "your character is settling in" hold, never "waiting on <your own
+    //     name>" (the forensic bug: a solo owner clicked ~0.5s after finalizing and
+    //     got his own name back as the blocker). A genuinely FAILED integration
+    //     flips the campaign to `failed` → `campaign_failed` fires first, so a
+    //     `members_without_characters` naming only the viewer is always the
+    //     in-flight case here.
+    //   • OTHERS still missing → the owner waits on THEM (they must finish creating).
+    //     Not the viewer's to resolve, so it stays the blocked member-action hold —
+    //     named with the OTHERS only (never the viewer, even when both are missing).
     case 'members_without_characters': {
       const parsed = membersWithoutCharactersSchema.safeParse(body)
-      return {
-        kind: 'blocked',
-        code,
-        ...(parsed.success
-          ? { memberNames: parsed.data.members.map((m) => m.displayName) }
-          : {}),
-      }
+      if (!parsed.success) return { kind: 'blocked', code }
+      const others = parsed.data.members.filter((m) => m.userId !== viewerUserId)
+      if (others.length === 0) return { kind: 'wait', code }
+      return { kind: 'blocked', code, memberNames: others.map((m) => m.displayName) }
     }
-    // `campaign_not_active` (and any off-contract 409) is NOT transient — a manual
-    // retry notice, not an auto-poll.
+    // `campaign_failed` (terminal integration failure) and any off-contract 409 are
+    // NOT transient — the blocked arm (a manual action / a calm retry notice), not
+    // an auto-poll. The play route reads `campaign_failed` specifically to route the
+    // owner back to setup, where the integration retry lives.
     default:
       return { kind: 'blocked', code }
   }
@@ -196,6 +237,7 @@ interface StartArgs {
   readonly ctx: ApiContext
   readonly campaignId: string
   readonly viewerIsOwner: boolean
+  readonly viewerUserId: string
   readonly startFn: StartFn
   readonly activeFn: ActiveFn
 }
@@ -226,7 +268,7 @@ async function runStartFlow(args: StartArgs, probe: boolean): Promise<StartFlowS
     const { sessionId } = await args.startFn({ campaignId: args.campaignId }, args.ctx)
     return { phase: 'ready', sessionId }
   } catch (err) {
-    return resolveOutcome(classifyStartError(err), args)
+    return resolveOutcome(classifyStartError(err, args.viewerUserId), args)
   }
 }
 
@@ -289,7 +331,7 @@ export function useSessionStart(
   input: SessionStartInput,
   deps: SessionStartDeps = {},
 ): StartFlow {
-  const { campaignId, viewerIsOwner } = input
+  const { campaignId, viewerIsOwner, viewerUserId } = input
   const startFn = deps.startSession ?? startSession
   const activeFn = deps.getActiveSession ?? getActiveSession
   const backoff = deps.backoff ?? DEFAULT_BACKOFF
@@ -315,7 +357,7 @@ export function useSessionStart(
 
   const attempt = useCallback(
     async (gen: number, probe: boolean): Promise<void> => {
-      const next = await runStartFlow({ ctx, campaignId, viewerIsOwner, startFn, activeFn }, probe)
+      const next = await runStartFlow({ ctx, campaignId, viewerIsOwner, viewerUserId, startFn, activeFn }, probe)
       // Ignore a resolution from a superseded generation or after unmount.
       if (gen !== genRef.current || !mountedRef.current) return
       setState(next)
@@ -331,7 +373,7 @@ export function useSessionStart(
         if (gen === genRef.current && mountedRef.current) void attemptRef2.current(gen, false)
       }, delay)
     },
-    [ctx, campaignId, viewerIsOwner, startFn, activeFn, backoff, rng, mountedRef, clearTimer],
+    [ctx, campaignId, viewerIsOwner, viewerUserId, startFn, activeFn, backoff, rng, mountedRef, clearTimer],
   )
   attemptRef2.current = attempt
 

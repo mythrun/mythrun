@@ -3,19 +3,36 @@ import { render, screen } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { SessionPreparing } from './SessionPreparing.tsx'
 
-// SessionPreparing (myth-ep74g) — the calm between-sessions hold. Load-bearing invariants pinned
-// here: it is `aria-busy` with the atmospheric label as the single AT source of truth (a polite
-// live region; the figure is decoration); the figure BREATHES (an indeterminate density field)
-// unless motion is reduced; it is square 1-bit register (no circles); and a long line wraps
-// inside a narrow column (~375px). The breathing motion itself is canvas-driven and covered by
-// the BeatFigure pure-math tests — here we assert the mode + reduced-motion wiring.
+// SessionPreparing (myth-ep74g; MYT-102 timer revamp) — the calm between-sessions hold.
+// Load-bearing invariants pinned here: it is `aria-busy` with the atmospheric label as the single
+// AT source of truth (a polite live region; the figure is decoration); the figure BREATHES (an
+// indeterminate density field) unless motion is reduced; MYT-102 — the figure is an AMBIENT SQUARE
+// (a fixed-width box, NOT the old full-width band that read as a progress bar), and the sub-line
+// answers "how long / has it broken?" by precedence: coarse countdown → stalled → detail fallback.
+// The breathing motion itself is canvas-driven and covered by the BeatFigure pure-math tests.
 
 const LABEL = 'The DM is preparing the next session…'
 const DETAIL = 'This can take a moment.'
 
-function renderPreparing(overrides: { label?: string; detail?: string; reducedMotion?: boolean } = {}) {
-  const { label = LABEL, detail, reducedMotion = false } = overrides
-  return render(<SessionPreparing label={label} {...(detail !== undefined ? { detail } : {})} reducedMotion={reducedMotion} />)
+function renderPreparing(
+  overrides: {
+    label?: string
+    detail?: string
+    countdownLabel?: string
+    stalledLabel?: string
+    reducedMotion?: boolean
+  } = {},
+) {
+  const { label = LABEL, detail, countdownLabel, stalledLabel, reducedMotion = false } = overrides
+  return render(
+    <SessionPreparing
+      label={label}
+      {...(detail !== undefined ? { detail } : {})}
+      {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+      {...(stalledLabel !== undefined ? { stalledLabel } : {})}
+      reducedMotion={reducedMotion}
+    />,
+  )
 }
 
 describe('SessionPreparing', () => {
@@ -28,11 +45,52 @@ describe('SessionPreparing', () => {
     expect(live).toHaveTextContent(LABEL)
   })
 
-  it('renders the atmospheric label and, when given, a quiet detail sub-line', () => {
+  it('renders the atmospheric label and, as the FALLBACK sub-line, the quiet detail', () => {
     renderPreparing({ detail: DETAIL })
     // The label appears in the visible column too (aria-hidden) alongside the SR copy.
     expect(screen.getAllByText(LABEL).length).toBeGreaterThan(0)
-    expect(screen.getByText(DETAIL)).toBeInTheDocument()
+    // Detail shows only when neither a countdown nor a stalled line is present.
+    expect(screen.getByTestId('session-preparing-detail')).toHaveTextContent(DETAIL)
+  })
+
+  it('renders the figure as an AMBIENT SQUARE box (not the old full-width bar band)', () => {
+    // The MYT-102 fix for "bar-shaped but spinner-behavior": the breathing figure
+    // is constrained to a fixed square box so it reads as ambient texture, not an
+    // unfilled progress bar. The box is a fixed width (not w-full).
+    renderPreparing()
+    const box = screen.getByTestId('session-preparing-figure').parentElement
+    expect(box?.className).toMatch(/w-\[144px\]/)
+  })
+
+  it('shows the COARSE countdown (aria-hidden) in place of the detail when an estimate holds', () => {
+    renderPreparing({ detail: DETAIL, countdownLabel: '2 min remaining' })
+    const countdown = screen.getByTestId('session-preparing-countdown')
+    expect(countdown).toHaveTextContent('2 min remaining')
+    expect(countdown).toHaveAttribute('aria-hidden', 'true')
+    // Coarse — never a ticking `M:SS`.
+    expect(countdown.textContent).not.toMatch(/\d:\d\d/)
+    // The estimate REPLACES the calm detail fallback (no double line).
+    expect(screen.queryByTestId('session-preparing-detail')).toBeNull()
+  })
+
+  it('shows the stalled line (meaningful, NOT aria-hidden) once the estimate exhausts — never a stuck bar', () => {
+    renderPreparing({ detail: DETAIL, stalledLabel: 'Still working. This is taking longer than usual.' })
+    const stalled = screen.getByTestId('session-preparing-stalled')
+    expect(stalled).toHaveTextContent('Still working. This is taking longer than usual.')
+    expect(stalled).not.toHaveAttribute('aria-hidden')
+    expect(screen.queryByTestId('session-preparing-detail')).toBeNull()
+    expect(screen.queryByTestId('session-preparing-countdown')).toBeNull()
+  })
+
+  it('prefers the countdown over the stalled + detail lines (only one sub-line ever)', () => {
+    renderPreparing({
+      detail: DETAIL,
+      countdownLabel: '2 min remaining',
+      stalledLabel: 'Still working.',
+    })
+    expect(screen.getByTestId('session-preparing-countdown')).toBeInTheDocument()
+    expect(screen.queryByTestId('session-preparing-stalled')).toBeNull()
+    expect(screen.queryByTestId('session-preparing-detail')).toBeNull()
   })
 
   it('renders an INDETERMINATE breathing figure (no progress) when motion is allowed', () => {
@@ -59,8 +117,12 @@ describe('SessionPreparing', () => {
     expect(screen.getByTestId('session-preparing').className).toMatch(/min-w-0/)
   })
 
-  it('has no axe violations', async () => {
-    const { container } = renderPreparing({ detail: DETAIL })
-    expect(await axe(container)).toHaveNoViolations()
+  it('has no axe violations (detail, countdown, and stalled sub-lines)', async () => {
+    const withDetail = renderPreparing({ detail: DETAIL })
+    expect(await axe(withDetail.container)).toHaveNoViolations()
+    const counting = renderPreparing({ countdownLabel: '2 min remaining' })
+    expect(await axe(counting.container)).toHaveNoViolations()
+    const stalled = renderPreparing({ stalledLabel: 'Still working. This is taking longer than usual.' })
+    expect(await axe(stalled.container)).toHaveNoViolations()
   })
 })

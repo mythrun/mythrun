@@ -43,6 +43,7 @@ import { makeWorkingSetRepo } from '../../src/redis/working-set.js'
 import { processScribeJob, type ScribeProcessorDeps } from '../../src/session/scribe-worker.js'
 import { WORKING_SET_CAP } from '../../src/session/scribe-config.js'
 import type { ScribeJobPayload } from '../../src/session/scribe-queue.js'
+import type { StEvalPayload } from '../../src/session/st-eval-queue.js'
 import type { TurnJobPayload } from '../../src/session/turn-queue.js'
 import type { WorkingSetItem } from '../../src/session/working-set/types.js'
 
@@ -216,6 +217,12 @@ async function phaseBreachRetcon(
         return Promise.resolve({})
       }) as ScribeProcessorDeps['sessionTurnQueue']['add'],
     },
+    // The hard_reveal path under test never enqueues an ST-signal (that is the
+    // soft_consistency remedy); a no-op ST-eval producer satisfies the dep.
+    stEvalQueue: {
+      add: ((_name: string, _payload: StEvalPayload) =>
+        Promise.resolve({})) as ScribeProcessorDeps['stEvalQueue']['add'],
+    },
     logger,
   }
 
@@ -233,15 +240,27 @@ async function phaseBreachRetcon(
 
   // The real tripwire confidence is interesting (LOG, don't assert). Run the
   // tripwire directly once so we can log its verdict, THEN drive the full job.
-  const tw = await runSecretTripwire({ prose: BREACHING_PROSE, secrets: `[SECRET-1] ${SD_PLAYBOOK}` })
+  const tw = await runSecretTripwire({
+    prose: BREACHING_PROSE,
+    secrets: `[SECRET-1] ${SD_PLAYBOOK}`,
+    // A benign public briefing that does NOT license the reveal — so the grounding
+    // floor cannot rescue BREACHING_PROSE and the hard_reveal still fires.
+    publicContext: 'The Broken Yoke is a crossroads tavern. Old Bram keeps the bar.',
+  })
   log('phase1: real Haiku tripwire verdict', {
-    breached: tw.result.breached,
+    severity: tw.result.severity,
     confidence: tw.result.confidence,
     secretRef: tw.result.secretRef,
     repairAttempted: tw.repairAttempted,
   })
-  if (!tw.result.breached) {
-    throw new Error('phase1: real tripwire did NOT flag the breaching prose — the secret check is not firing')
+  // BREACHING_PROSE states the secret OUTRIGHT ("I am the rightful heir"), so the
+  // real Haiku must classify it hard_reveal — the only severity that drives the
+  // open retcon (myth-retprop). A soft_consistency here would mean the tripwire
+  // is under-reading a blatant reveal.
+  if (tw.result.severity !== 'hard_reveal') {
+    throw new Error(
+      `phase1: real tripwire classified a blatant reveal as '${tw.result.severity}', expected hard_reveal — the secret check is mis-reading`,
+    )
   }
 
   await processScribeJob(deps, job)

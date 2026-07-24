@@ -60,7 +60,11 @@ vi.mock('../../llm/secret-tripwire.js', () => ({
     }
     const breached = llmControl.tripwire === 'breach'
     return Promise.resolve({
-      result: { breached, confidence: 0.9, secretRef: breached ? '[SECRET-1]' : null },
+      result: {
+        severity: breached ? 'hard_reveal' : 'none',
+        confidence: 0.9,
+        secretRef: breached ? '[SECRET-1]' : null,
+      },
       usage: { totalTokens: 5 },
       repairAttempted: false,
     })

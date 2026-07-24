@@ -542,13 +542,26 @@ describe('session lifecycle routes (MYT-65 Task 9)', () => {
       expect(res.json<{ code: string }>().code).toBe('not_campaign_member')
     })
 
-    it('campaign not active → 409', async () => {
+    it('campaign still in setup (integration running) → 409 campaign_not_active (transient)', async () => {
       const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
       await setCampaignStatus(pool, campaignId, 'setup')
       const res = await postStart(app, campaignId, owner.devSub)
       expect(res.statusCode).toBe(409)
       expect(res.json<{ code: string }>().code).toBe('campaign_not_active')
       // No debit on a precondition failure.
+      expect(await sessionBalance(pool, owner.userId)).toBe(3)
+    })
+
+    it('campaign failed (integration exhausted) → 409 campaign_failed (terminal, distinct from setup)', async () => {
+      // The play route treats these two non-active states oppositely: setup
+      // auto-polls (integration is still running), failed routes back to setup.
+      // A single `campaign_not_active` for both made the client poll a dead
+      // campaign forever, so the failed case gets its own terminal code.
+      const { owner, campaignId } = await seededActiveWithPrep(pool, scope, 0, 3)
+      await setCampaignStatus(pool, campaignId, 'failed')
+      const res = await postStart(app, campaignId, owner.devSub)
+      expect(res.statusCode).toBe(409)
+      expect(res.json<{ code: string }>().code).toBe('campaign_failed')
       expect(await sessionBalance(pool, owner.userId)).toBe(3)
     })
 

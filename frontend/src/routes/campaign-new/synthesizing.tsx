@@ -78,16 +78,20 @@ export function SynthesizingScreen({
         : (state.rejection.synthesizedConcept ?? '')
 
   return (
-    <Stack gap={5} data-testid="screen-synthesizing">
-      <Text role="ui-label" data-testid="synthesizing-eyebrow">
-        {t('campaignNew.synthesizing.eyebrow')}
-      </Text>
-      <StreamingProse
-        data-testid="synthesizing-prose"
-        text={text}
-        writing={state.status === 'streaming'}
-        writingLabel={t('campaignNew.synthesizing.stillWriting')}
-      />
+    <Stack gap={6} data-testid="screen-synthesizing">
+      {/* The kicker hugs the brief writing itself (one cluster); a transient
+          failure notice + retry sit beneath, matching the funnel hierarchy. */}
+      <Stack gap={3}>
+        <Text role="ui-label" data-testid="synthesizing-eyebrow">
+          {t('campaignNew.synthesizing.eyebrow')}
+        </Text>
+        <StreamingProse
+          data-testid="synthesizing-prose"
+          text={text}
+          writing={state.status === 'streaming'}
+          writingLabel={t('campaignNew.synthesizing.stillWriting')}
+        />
+      </Stack>
       {failed ? (
         <Stack gap={3} align="start">
           <Text role="ui-caption" data-testid="synthesizing-failed">

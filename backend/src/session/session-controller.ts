@@ -359,6 +359,10 @@ export class SessionController {
       // FT's buildModelMessages owns empty-string suppression — don't "tighten"
       // this guard and assume symmetry.
       ...(this.deps.standingDirective !== undefined ? { standingDirective: this.deps.standingDirective } : {}),
+      // myth-retprop §correction-preamble: signal the FT that this is the
+      // player-less correction delivery, so `render` discards any machinery
+      // preamble it streams before the issue_correction tool call.
+      ...(this.deps.triggerKind === 'correction' ? { correctionTurn: true } : {}),
       // §7 party ledger snapshot: public-by-construction, rides the FT-facing
       // context. exactOptionalPropertyTypes — conditionally spread so the key is
       // ABSENT when no snapshot was resolved (no joined characters), never

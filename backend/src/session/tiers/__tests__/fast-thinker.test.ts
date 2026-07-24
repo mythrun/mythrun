@@ -318,6 +318,55 @@ describe('SonnetFastThinker.render', () => {
     ])
   })
 
+  it('3c. correction turn (myth-retprop): machinery preamble BEFORE issue_correction is withheld from stream AND persisted parts; trailing narration survives', async () => {
+    mockResult([
+      // The FT "thinks out loud" before the tool — the meta-leak Miklos saw.
+      { type: 'text-delta', id: '1', text: 'The correction token arrived — let me process that first.' },
+      {
+        type: 'tool-call',
+        toolCallId: 'k1',
+        toolName: 'issue_correction',
+        input: { text: 'Scratch that — his eyes just drift the way a tired man\'s do.' },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'k1',
+        toolName: 'issue_correction',
+        input: { text: 'Scratch that — his eyes just drift the way a tired man\'s do.' },
+        output: { text: 'Scratch that — his eyes just drift the way a tired man\'s do.' },
+      },
+      // Legitimate continuation AFTER the correction — must survive.
+      { type: 'text-delta', id: '2', text: 'The drover is still, in a room that isn\'t.' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx({ correctionTurn: true }), emit)
+
+    // The preamble was NEVER streamed to the player (no matching text emission).
+    expect(seen.some((e) => e.kind === 'text' && String(e.payload).includes('correction token arrived'))).toBe(false)
+    // The correction fired, then only the trailing narration streamed.
+    expect(seen).toEqual([
+      { kind: 'dm_correction', payload: { text: 'Scratch that — his eyes just drift the way a tired man\'s do.' } },
+      { kind: 'text', payload: 'The drover is still, in a room that isn\'t.' },
+    ])
+    // The preamble is NOT in the persisted assistant parts either; the trailing
+    // narration is the only dm_text.
+    const textParts = msg.parts.filter((p) => p.kind === 'text')
+    expect(textParts).toEqual([{ kind: 'text', text: 'The drover is still, in a room that isn\'t.' }])
+  })
+
+  it('3d. correction turn fail-open: a correction turn that emits prose but NO issue_correction flushes the text (never silently drops a turn)', async () => {
+    mockResult([{ type: 'text-delta', id: '1', text: 'Ordinary narration, no correction here.' }])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx({ correctionTurn: true }), emit)
+
+    expect(seen).toEqual([{ kind: 'text', payload: 'Ordinary narration, no correction here.' }])
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'Ordinary narration, no correction here.' }])
+  })
+
   it('4. dice_roll frame: built from the result output (count/sides fall back to the call input when absent)', async () => {
     mockResult([
       {

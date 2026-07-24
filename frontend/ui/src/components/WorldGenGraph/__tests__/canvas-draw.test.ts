@@ -217,6 +217,55 @@ describe('drawNodes — displayId lookup', () => {
   })
 })
 
+// ── Arriving nodes render full-ink immediately (no intro trace) ────────────────────────
+// An arriving entity has NO draw-in treatment: the very frame it first appears on is its
+// complete solid glyph. There is no partial-silhouette state — `drawNodes` takes no per-
+// node progress, so the glyph can only ever draw whole. (The C6 EDGE penstroke draw-in is
+// separate and unaffected; only the node "trace, then stamp" arrival treatment was removed.)
+
+describe('drawNodes — arriving nodes are full-ink on first frame', () => {
+  const decoNoLabel: Parameters<typeof drawNodes>[3] = {
+    selectedKey: undefined,
+    hoverKey: null,
+    focusKey: null,
+    t: null,
+    showLabels: false,
+    labeled: undefined,
+    labelFont: LABEL_FONT_STUB,
+    paper: '',
+    virtual: REF_DIMS,
+  }
+  const at = (displayId: string, kind: string): GraphNode => ({
+    synthKey: displayId,
+    kind,
+    name: kind,
+    displayId,
+    state: 'live',
+    lastEventIndex: 0,
+  })
+  const pos = new Map<string, Point>([['n', { x: 0, y: 0 }]])
+
+  it('a location node draws its COMPLETE filled square, with no penstroke', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [at('n', 'location')], pos, decoNoLabel)
+    // The full glyph: one fillRect spanning the whole ±half square (GLYPH_HALF 6 → 12px).
+    expect(r.rects).toEqual([{ x: -6, y: -6, w: 12, h: 12 }])
+    // No partial-outline penstroke — the removed arrival trace stroked a path here.
+    expect(r.strokes).toBe(0)
+  })
+
+  it('a world node draws its FULL nested frame (both rings), not a partial outline', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [at('n', 'world')], pos, decoNoLabel)
+    // The complete frame glyph: the outer + inner strokeRects both land on this one draw.
+    expect(r.strokeRects).toEqual([
+      { x: -6, y: -6, w: 12, h: 12 },
+      { x: -3, y: -3, w: 6, h: 6 },
+    ])
+    expect(r.strokes).toBe(0)
+  })
+})
+
 // ── MYT-89 audit #3: name labels (decoupled from `interactive`) ────────────────────────
 // The regression: labels were gated on `interactive` (false during generation) so the
 // glyphs streamed in nameless while the fog parted around a text-sized keep-out —

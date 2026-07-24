@@ -18,12 +18,14 @@ import { CharacterLoadingSurface } from './character-loading.tsx'
 // client that replays a fixed event set on open, so the fold settles to a fixed
 // progress WITHOUT a live backend — plus a stubbed progress probe (calm
 // `processing`) and, for the countdown specimen, an injected stage-timings
-// history so the MYT-102 `~M:SS` line ticks live. Mid = concept done + sheet
-// underway; Done = every stage complete + the completion event (the
-// swap-to-reveal moment). The live folding itself is covered by
-// use-character-creation-stream.test.ts; these exist for the E1 responsive/a11y
-// sweep. (The countdown/stall lines render their real i18n copy — the screen maps
-// each beat id to its label and feeds the beat its heading.)
+// history so the MYT-102 COARSE remaining-wait line shows. Mid = concept done +
+// sheet underway; Stalled = the sheet overran its average (the estimate exhausts
+// → the "still working" line replaces the countdown, never a dead 0:00); Done =
+// every stage complete + the completion event (the swap-to-reveal moment). The
+// live folding itself is covered by use-character-creation-stream.test.ts; these
+// exist for the E1 responsive/a11y sweep. (The countdown/stall lines render their
+// real i18n copy — the screen maps each beat id to its label and feeds the beat
+// its heading.)
 
 const VIEWER = 'viewer'
 const STORY_CID = 'story-campaign'
@@ -100,12 +102,26 @@ const DONE_EVENTS: readonly PipelineEvent[] = [
 ]
 
 // The countdown specimen's stream: setup + concept done, the sheet freshly
-// underway (a startedAt of "just now", so the live 1-second tick visibly walks
-// the estimate down from ~2:30 in the running story).
+// underway (a startedAt of "just now", so the coarse estimate reads the full
+// remaining sheet time, e.g. "2 min remaining").
 const TICKING_EVENTS = (): readonly PipelineEvent[] => [
   completed('location_selection'),
   completed('character_concept'),
   { type: 'stage-started', stage: 'character_sheet', userId: VIEWER, startedAt: new Date().toISOString() },
+]
+
+// The stalled specimen's stream: concept done, the sheet started LONG ago (well
+// past its historical average), so the estimate exhausts — the beat shows the
+// "still working" line in place of the countdown (never a dead 0:00).
+const STALLED_EVENTS = (): readonly PipelineEvent[] => [
+  completed('location_selection'),
+  completed('character_concept'),
+  {
+    type: 'stage-started',
+    stage: 'character_sheet',
+    userId: VIEWER,
+    startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+  },
 ]
 
 // An injected stage-timings history (the un-filtered aggregate the real
@@ -152,12 +168,20 @@ export const MidProgress: Story = {
 }
 
 // With the countdown (MYT-102) — an injected timings history + a sheet stage
-// started "just now", so the `~M:SS` line under the rows ticks down live. The
-// default stories above stay countdown-less (the honest cold-start: no history,
-// no number).
+// started "just now", so the COARSE remaining-wait line shows under the ladder
+// (e.g. "2 min remaining"). The default stories above stay countdown-less (the
+// honest cold-start: no history, no number).
 export const WithCountdown: Story = {
-  name: 'With countdown (ticking, sheet underway)',
+  name: 'With countdown (coarse, sheet underway)',
   render: () => renderWith(TICKING_EVENTS(), () => Promise.resolve(STORY_TIMINGS)),
+}
+
+// Stalled (MYT-102) — the sheet overran its historical average, so the estimate
+// exhausted and the "still working" line replaces the countdown. The wait never
+// sits at a dead 0:00.
+export const Stalled: Story = {
+  name: 'Stalled (estimate exhausted)',
+  render: () => renderWith(STALLED_EVENTS(), () => Promise.resolve(STORY_TIMINGS)),
 }
 
 // Complete — every stage done and the completion event delivered (the swap

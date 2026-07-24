@@ -283,7 +283,7 @@ export const Default: Story = {
 export const Reconnecting: Story = {
   args: {
     items: TRANSCRIPT,
-    connectionLine: 'finding your way back…',
+    connectionLine: 'Finding your way back…',
     reducedMotion: false,
     rollReveal: SHOWCASE_REVEAL,
     rollLabels: ROLL_LABELS,

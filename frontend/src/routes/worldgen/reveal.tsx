@@ -4,6 +4,7 @@ import {
   Heading,
   Text,
   Button,
+  Spinner,
   Drawer,
   FullBleedStage,
   VisuallyHidden,
@@ -60,9 +61,10 @@ import { DrawerBackClose } from './drawer-back-close.tsx'
 // coherence-pass reconciliations just appear in the data; no spinner takeover,
 // no layout jolt (the old model stays rendered until the fresh one resolves).
 // The graph absorbs the same patches through the stream's nodes/edges props.
-// The Continue affordance is gated (`continueReady`) until the pipeline
-// finishes — the starting-situation POST requires a complete world — and
-// appears quietly when it does.
+// The Continue affordance is PRESENT from first paint but gated (`continueReady`)
+// until the pipeline finishes — the starting-situation POST requires a complete
+// world — rendering DISABLED with a quiet settling indicator while the tail runs
+// and enabling in place when it does.
 //
 // SHARED SELECTION is single-id-space (BUG 2.1): the graph selects by
 // `displayId` and, post-gen, every node is finalized so its `displayId` IS its
@@ -93,14 +95,15 @@ export function revealFogShown(nodeCount: number): number {
 }
 
 /** The pieces both layout regimes compose: the interactive graph, the wiki
- *  surface (a pane on desktop; the drawer's child on mobile), the gated
- *  Continue affordance (`null` while the tail still runs), and the reveal
- *  MOMENT the layout stages itself against (D6). */
+ *  surface (a pane on desktop; the drawer's child on mobile), the Continue
+ *  affordance (always present — DISABLED with a settling indicator while the
+ *  tail runs, enabled when ready), and the reveal MOMENT the layout stages
+ *  itself against (D6). */
 interface RevealChromeProps {
   /** `null` until the first fold delivers nodes — see the graph const. */
   graph: React.JSX.Element | null
   wikiPanel: React.JSX.Element
-  continueAction: React.JSX.Element | null
+  continueAction: React.JSX.Element
   moment: RevealMoment
 }
 
@@ -125,9 +128,10 @@ function DesktopReveal({ graph, wikiPanel, continueAction, moment }: RevealChrom
         <Text role="prose-body" as="p">
           {t('worldReveal.explorePrompt')}
         </Text>
-        {/* The Continue appears QUIETLY once the pipeline finishes (the pick's POST
-            requires a complete world). While the tail runs, the explore prompt is the
-            whole call to action — exploring IS the intent of this screen. */}
+        {/* Continue is present from first paint — disabled with a quiet settling
+            indicator while the tail runs (the pick's POST requires a complete
+            world), enabling in place when it finishes. Exploring is the intent
+            meanwhile; the prompt above stays truthful because the control exists. */}
         {continueAction}
       </RevealFade>
     </Stack>
@@ -197,6 +201,45 @@ function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenCh
   )
 }
 
+/** The Continue affordance — PRESENT FROM FIRST PAINT and honest about its state
+ *  (the reveal-gate audit): the button always renders — DISABLED, with a quiet
+ *  settling indicator to its right, while the silent tail (entity_consolidation →
+ *  embed_world) is still finishing (the starting-situation POST it leads to
+ *  requires a complete world) — and ENABLES in place when `ready` flips true (the
+ *  pipeline reaches world_ready, driven by the live SSE phase). The pending
+ *  cluster rides the SAME fixed-height row to the button's right, so the flip
+ *  removes it WITHOUT moving the button or anything laid out below it (no jump).
+ *  This makes the explore prompt above ("wander your world, continue when you're
+ *  ready") truthful — the affordance exists, it just isn't ready yet — instead of
+ *  promising a control the old `null` gate hid entirely. */
+function ContinueAffordance({ ready, onPress }: { ready: boolean; onPress: () => void }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <Stack direction="row" align="center" gap={3}>
+      <Button onPress={onPress} disabled={!ready} data-testid="reveal-continue">
+        {t('worldReveal.continue')}
+      </Button>
+      {!ready && (
+        <Stack direction="row" align="center" gap={2} data-testid="reveal-continue-pending">
+          {/* The Spinner is its own role="status" live region with its own name;
+              the aria-hidden wrapper strips that whole subtree from the a11y tree
+              so it reads as a purely DECORATIVE activity mark and the meta line is
+              the sole readable signal — no double live region (the
+              ThinkingIndicator idiom). The disabled Button already carries the
+              not-yet-ready meaning to AT. */}
+          {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- a11y-only wrapper: strips the Spinner's role=status subtree from the a11y tree; a decorative mark, not visual UI, and not expressible via @mythrun/ui props (BaseProps bans aria-hidden) */}
+          <span aria-hidden="true" className="inline-flex flex-none">
+            <Spinner size="xs" tone="accent" />
+          </span>
+          <Text role="meta" as="span">
+            {t('worldReveal.settling')}
+          </Text>
+        </Stack>
+      )}
+    </Stack>
+  )
+}
+
 export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'> {
   /** The campaign whose world is being revealed. */
   campaignId: string
@@ -204,10 +247,11 @@ export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'
    *  completed TAIL stage bumps the wiki's quiet refetch token. Omit (or pass a
    *  static array) for a settled world — the wiki then fetches once. */
   stages?: WorldGenStream['stages']
-  /** Whether the Continue affordance is offered. The route passes false while
-   *  the tail is still running (the starting-situation POST requires a complete
-   *  world); the button appears quietly on completion. Default true (a settled
-   *  world). */
+  /** Whether Continue is ENABLED. The button is present in every state; the
+   *  route passes false while the tail is still running (the starting-situation
+   *  POST requires a complete world), rendering it disabled with a settling
+   *  indicator, and true on completion to enable it in place. Default true (a
+   *  settled world). */
   continueReady?: boolean
   /** Continue intent — leads to the starting-situation pick (D4). Defaults to
    *  navigating to the situation route; injectable so callers/tests override. */
@@ -356,13 +400,7 @@ export function WorldReveal({
       onQuery={setQuery}
     />
   )
-  const continueAction = continueReady ? (
-    <Stack direction="row">
-      <Button onPress={handleContinue} data-testid="reveal-continue">
-        {t('worldReveal.continue')}
-      </Button>
-    </Stack>
-  ) : null
+  const continueAction = <ContinueAffordance ready={continueReady} onPress={handleContinue} />
 
   if (narrow) {
     return (

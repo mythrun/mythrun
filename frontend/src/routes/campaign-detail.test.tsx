@@ -342,9 +342,11 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     renderDetail()
     expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
     expect(screen.queryByTestId('worldgen-generating')).toBeNull()
-    // Continue is GATED until the pipeline completes (the situation POST needs a
-    // complete world) — the explore prompt is the whole call to action for now.
-    expect(screen.queryByTestId('reveal-continue')).toBeNull()
+    // Continue exists from FIRST PAINT but stays disabled until the pipeline
+    // completes (the situation POST needs a complete world) — present with the
+    // settling indicator rather than hidden (the gated-affordance fix).
+    const gated = screen.getByTestId('reveal-continue')
+    expect(gated.hasAttribute('disabled')).toBe(true)
   })
 
   it('keeps the reveal mounted through the world_ready flip — no settling flash, Continue appears', async () => {
@@ -418,7 +420,9 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     // fade is the only motion, and base.css collapses even that for real OS
     // preferences). Continue stays gated by the tail exactly as before.
     expect(screen.getByTestId('reveal-moment').getAttribute('data-reveal-phase')).toBe('done')
-    expect(screen.queryByTestId('reveal-continue')).toBeNull()
+    // Continue is present-but-disabled while the tail runs (same gated
+    // affordance as the animated path — reduced motion changes motion only).
+    expect(screen.getByTestId('reveal-continue').hasAttribute('disabled')).toBe(true)
   })
 
   it('renders a Retry that calls retry() on a retryable failure', () => {

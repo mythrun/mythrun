@@ -14,15 +14,18 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
 import { generateObject } from '../../ai.js'
+import { resolveIncludes } from '../../prompts.js'
 import { LlmStructuredOutputError } from '../../errors.js'
 import { z } from 'zod'
 import { SONNET } from '../../models.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
-const PROMPT_TEMPLATE = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/starting-situation.txt'),
-  'utf8',
+const PROMPT_TEMPLATE = resolveIncludes(
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/starting-situation.txt'),
+    'utf8',
+  ),
 )
 
 const locationHookSchema = z.object({

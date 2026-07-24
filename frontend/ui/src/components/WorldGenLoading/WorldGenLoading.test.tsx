@@ -83,10 +83,10 @@ describe('WorldGenLoading', () => {
 
   it('renders the DS Spinner (the brand dither wave) with the supplied SR label', () => {
     const { getByRole } = render(
-      <WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} spinnerLabel="making your world" />,
+      <WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} spinnerLabel="Making your world" />,
     )
     const status = getByRole('status')
-    expect(status).toHaveAccessibleName('making your world')
+    expect(status).toHaveAccessibleName('Making your world')
     // The paper-register indicator IS the Spinner's dither grid — no ad-hoc art.
     expect(status.querySelector('[data-spinner-grid]')).not.toBeNull()
   })
@@ -148,11 +148,11 @@ describe('WorldGenLoading', () => {
     expect(FLAVORS).toContain(getByTestId('worldgen-loading-flavor').textContent)
   })
 
-  it('defaults the rotation to ~3s when intervalMs is omitted', () => {
+  it('defaults the rotation to ~10s when intervalMs is omitted', () => {
     vi.useFakeTimers()
     const { getByText } = render(<WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} random={IDENTITY_RNG} />)
     act(() => {
-      vi.advanceTimersByTime(2999)
+      vi.advanceTimersByTime(9999)
     })
     expect(getByText('The gods decide what to name themselves.')).toBeInTheDocument()
     act(() => {
@@ -276,7 +276,7 @@ describe('WorldGenLoading', () => {
     const prep = render(
       <WorldGenLoading watchLabel={WATCH}
         flavorLabels={FLAVORS}
-        spinnerLabel="making your world"
+        spinnerLabel="Making your world"
         countdownLabel="~4:37 left"
       />,
     )
@@ -285,7 +285,7 @@ describe('WorldGenLoading', () => {
     const ready = render(
       <WorldGenLoading watchLabel={WATCH}
         flavorLabels={FLAVORS}
-        spinnerLabel="making your world"
+        spinnerLabel="Making your world"
         countdownLabel="~0:41 left"
         watchReady
         onWatch={vi.fn()}

@@ -8,11 +8,12 @@ import { WorldGenLoading } from './WorldGenLoading.tsx'
 // (concept_intake → world_color → vocabulary_intake, the first ~2 minutes) run,
 // there is nothing to draw — so the player gets the DS Spinner (the brand dither
 // wave) over a flavor line cycling twenty short playful loading messages every
-// ~3s in RANDOM order (MYT-89 waiting-feedback: a shuffled permutation, every
+// ~10s in RANDOM order (MYT-89 waiting-feedback: a shuffled permutation, every
 // line once before any repeats, no back-to-back repeat across the reshuffle; a
-// hard swap — no animated transition), plus the per-second `~M:SS` COUNTDOWN to
-// the wiki reveal (consumer-ticked — the LiveCountdown specimen drives the real
-// `remainingWaitMs` derivation so the number visibly walks). When entities start
+// hard swap — no animated transition), plus the COARSE COUNTDOWN to the wiki
+// reveal (MYT-102: minute-granular "N min remaining", dropped when the estimate
+// exhausts — the LiveCountdown specimen drives the real `remainingWaitMs`
+// derivation so the coarse label steps down). When entities start
 // streaming, the "watch your world be born" watch button appears: generation
 // keeps running regardless; pressing it swaps the route to the graph view. Every
 // string arrives resolved from the shell (the DS owns no copy); these specimens use
@@ -60,7 +61,7 @@ const FLAVORS = [
 // The resolved watch-button label the shell supplies (real MYT-100 copy, worldGen.watch).
 const WATCH = 'Watch it take shape'
 // The resolved Spinner SR label (real MYT-100 copy, worldGen.loadingLabel).
-const SPINNER = 'making your world'
+const SPINNER = 'Making your world'
 
 // --- The live countdown harness -------------------------------------------
 // Drives the REAL derivation the app uses: historical per-stage averages ∩ a
@@ -86,14 +87,17 @@ function demoStages(startMs: number): StageProgress[] {
   ]
 }
 
-/** Format the remaining ms as the countdown line (mirrors the app's `~M:SS`
- *  formatting — the words are resolved i18n in the app; specimens use the same shape). */
+/** Format the remaining ms as the COARSE countdown line (mirrors the app's
+ *  MYT-102 register — minute-granular "N min remaining" / "under a minute
+ *  remaining", never a ticking `M:SS`; the words are resolved i18n in the app,
+ *  specimens use the same shape). Returns undefined when the estimate exhausts
+ *  (remaining ≤ 0) — the never-dead-zero behavior: the line is dropped rather
+ *  than sitting at 0:00, and the Spinner + flavor cycle carry the wait. */
 function formatCountdown(remainingMs: number | null): string | undefined {
-  if (remainingMs === null) return undefined
-  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `~${String(minutes)}:${String(seconds).padStart(2, '0')} left`
+  if (remainingMs === null || remainingMs <= 0) return undefined
+  const time =
+    remainingMs < 60_000 ? 'Under a minute' : `${String(Math.max(1, Math.round(remainingMs / 60_000)))} min`
+  return `${time} remaining`
 }
 
 function LiveCountdownDemo({ watchReady = false }: { watchReady?: boolean }): React.JSX.Element {

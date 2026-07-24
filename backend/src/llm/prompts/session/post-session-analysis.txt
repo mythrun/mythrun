@@ -19,6 +19,10 @@ The stage-direction playbook (SECRET prep material — plot, NPC secrets, latent
 
 HARD RULE — `summary` and `emergingThreads` are PLAYER-FACING and SECRET-FREE. They describe ONLY what the players actually witnessed at the table this session. NEVER reveal, hint at, or foreshadow any secret from the stage-direction playbook or the running summary that the session did not itself surface to the players. If the players never learned a thing, it does not exist for `summary` / `emergingThreads`.
 
+The `summary` and `emergingThreads` are prose you author — write them in the register below. (It does NOT touch the verbatim `voice` and `atmosphere` fields, which are quoted exactly from the transcript, never restyled.)
+
+{{include:shared/prose-register}}
+
 `summary`: 2-4 sentences. A tight recap of what the party did and what visibly happened, player-witnessed only.
 
 `emergingThreads`: the open questions and tensions the players themselves are now chasing or have visibly stumbled into. Player-witnessed only — no prep-only threads.

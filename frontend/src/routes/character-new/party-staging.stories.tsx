@@ -85,7 +85,7 @@ const SOLO_PROGRESS: CharacterCreationProgress = {
 }
 
 // A full party with a laggard — two ready, one still creating (a `processing`
-// concept → the "choosing who they are…" stand-in). The owner can begin or wait.
+// concept → the "Choosing who they are…" stand-in). The owner can begin or wait.
 const PARTY_PROGRESS: CharacterCreationProgress = {
   campaignId: STORY_CID,
   totalMembers: 3,

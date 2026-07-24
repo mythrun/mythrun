@@ -96,11 +96,14 @@ export function FreeformScreen({
   }
 
   return (
-    <Stack gap={5} data-testid="screen-freeform">
-      <Text role="ui-label" data-testid="freeform-eyebrow">
-        {t('campaignNew.freeform.eyebrow')}
-      </Text>
-      <Stack gap={2}>
+    <Stack gap={6} data-testid="screen-freeform">
+      {/* Prompt cluster — the mono kicker hugs the serif question (the field's
+          own label), and the hint sits just under the field. One tight group so
+          the eye reads "kicker → question → write here → hint" as a unit. */}
+      <Stack gap={3}>
+        <Text role="ui-label" data-testid="freeform-eyebrow">
+          {t('campaignNew.freeform.eyebrow')}
+        </Text>
         <SeamlessInput
           multiline
           label={t('campaignNew.freeform.question')}
@@ -111,13 +114,14 @@ export function FreeformScreen({
         <Text role="ui-caption" data-testid="freeform-hint">
           {t('campaignNew.freeform.hint')}
         </Text>
+        {notice ? (
+          <Text role="ui-caption" data-testid="freeform-notice">
+            {notice.kind === 'rejected' ? notice.message : t('campaignNew.freeform.retry')}
+          </Text>
+        ) : null}
       </Stack>
-      {notice ? (
-        <Text role="ui-caption" data-testid="freeform-notice">
-          {notice.kind === 'rejected' ? notice.message : t('campaignNew.freeform.retry')}
-        </Text>
-      ) : null}
-      <Stack align="start" gap={3}>
+      {/* Actions — one primary act, the mode-switch quieted beneath it. */}
+      <Stack align="start" gap={4}>
         <Button
           variant="primary"
           loading={busy}

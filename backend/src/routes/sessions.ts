@@ -262,6 +262,20 @@ async function handleSessionStart(
     return reply.code(409).send({ code: 'campaign_not_active' })
   }
   /* c8 ignore stop */
+  // A non-active campaign splits by WHY it isn't active, because the play flow
+  // treats the two cases oppositely (start-flow.ts classify409):
+  //   - `setup`   → integration is still running (status flips setup→active as the
+  //                 LAST write of character integration). TRANSIENT — the client
+  //                 backoff-polls through it. Emitted as `campaign_not_active`.
+  //   - `failed`  → integration exhausted its repair chain. TERMINAL — the client
+  //                 routes back to setup (the failure surface owns the retry).
+  //                 Emitted as `campaign_failed` so the client never auto-polls a
+  //                 dead campaign forever.
+  //   - `archived`→ `campaign_not_active` (unreachable at the play route; the
+  //                 routing table never sends an archived campaign here).
+  if (campaign.status === 'failed') {
+    return reply.code(409).send({ code: 'campaign_failed' })
+  }
   if (campaign.status !== 'active') {
     return reply.code(409).send({ code: 'campaign_not_active' })
   }

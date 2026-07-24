@@ -43,4 +43,8 @@ The party MUST be coherent. Where the owner's notes specify a relationship betwe
 
 You may add facts to existing world entities ONLY when integrating a PC requires it (e.g., this PC knew NPC X from their backstory, so NPC X gets a corresponding fact). Use the `newFacts` array for these. Do NOT invent new NPCs, locations, or factions — those exist already in the world dump. Reference existing entities by their UUID.
 
+The `proseKernel` you write for each PC follows the register below.
+
+{{include:shared/prose-register}}
+
 Return ONLY the structured JSON; no preamble.

@@ -4,6 +4,7 @@ import {
   guidedReducer,
   guidedRail,
   guidedChoice,
+  hydrateGuidedState,
   type GuidedState,
 } from '../index.ts'
 
@@ -195,5 +196,57 @@ describe('guidedChoice', () => {
       species: 'Dwarf',
       background: 'Acolyte',
     })
+  })
+})
+
+describe('hydrateGuidedState — restore the reducer from a persisted draft', () => {
+  it('returns the initial state for an undefined seed', () => {
+    expect(hydrateGuidedState(1, undefined)).toEqual(initialGuidedState(1))
+  })
+
+  it('resumes on the first un-drafted step (only class drafted → species, subclass skipped at L1)', () => {
+    const s = hydrateGuidedState(1, { className: 'fighter' })
+    expect(s.step).toBe('species')
+    expect(s.choice).toEqual({ className: 'fighter' })
+    expect(s.complete).toBe(false)
+  })
+
+  it('restores a drafted SUBCLASS through the subclass step (class gains it at L3)', () => {
+    const s = hydrateGuidedState(3, { className: 'cleric', subclass: 'Life Domain' })
+    expect(s.choice).toEqual({ className: 'cleric', subclass: 'Life Domain' })
+    expect(s.step).toBe('species')
+    expect(s.complete).toBe(false)
+  })
+
+  it('reconstructs to the notes step when class + species + background are drafted', () => {
+    const s = hydrateGuidedState(1, { className: 'fighter', species: 'Human', background: 'Sage' })
+    expect(s.step).toBe('notes')
+    expect(s.complete).toBe(false)
+    expect(s.choice).toMatchObject({ className: 'fighter', species: 'Human', background: 'Sage' })
+  })
+
+  it('reconstructs to complete once notes are also drafted', () => {
+    const s = hydrateGuidedState(1, {
+      className: 'fighter',
+      species: 'Human',
+      background: 'Sage',
+      notes: 'quiet and watchful',
+    })
+    expect(s.complete).toBe(true)
+  })
+
+  it('stops at the class step on a foreign/invalid class (no advance, no spin)', () => {
+    const s = hydrateGuidedState(1, { className: 'not-a-real-class', species: 'Human' })
+    expect(s.step).toBe('class')
+    expect(s.choice).toEqual({})
+  })
+
+  it('round-trips a live mid-sequence state (drive the reducer, then hydrate its choice)', () => {
+    let live = initialGuidedState(1)
+    live = guidedReducer(live, { type: 'choose', value: 'fighter' })
+    live = guidedReducer(live, { type: 'choose', value: 'Human' })
+    const restored = hydrateGuidedState(1, live.choice)
+    expect(restored.step).toBe(live.step)
+    expect(restored.choice).toEqual(live.choice)
   })
 })

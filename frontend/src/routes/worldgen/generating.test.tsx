@@ -204,9 +204,11 @@ describe('GeneratingView — act one: the prep loading screen', () => {
     readFlavor()
     // 19 more ticks walk the REST of the permutation: every line shows exactly
     // once before any repeats — 20 distinct lines seen, whatever the shuffle drew.
+    // One interval per tick (WorldGenLoading's DEFAULT_INTERVAL_MS is ~10s — the
+    // staging-audit slow-cycle dwell).
     for (let tick = 0; tick < 19; tick++) {
       act(() => {
-        vi.advanceTimersByTime(3000)
+        vi.advanceTimersByTime(10_000)
       })
       readFlavor()
     }
@@ -356,42 +358,43 @@ describe('GeneratingView — status card wiring (§3.3)', () => {
   })
 })
 
-describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)', () => {
+describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revamp)', () => {
   // A fixed clock: fake timers pin Date.now(), so startedAt offsets are exact.
   const T0 = new Date('2026-07-07T12:00:00.000Z')
   const ago = (ms: number): string => new Date(T0.getTime() - ms).toISOString()
+  // Coarse label helpers: "N min remaining" / "under a minute remaining".
+  const mins = (n: number): string =>
+    i18n.t('worldGen.countdown', { time: i18n.t('shared.wait.minutes', { count: n }) })
+  const underMinute = i18n.t('worldGen.countdown', { time: i18n.t('shared.wait.underMinute') })
 
-  it('shows a ticking ~M:SS countdown ON THE LOADING SCREEN (act one has the expectation too)', () => {
+  it('shows a COARSE remaining-wait line on the loading screen (minute-granular, never a ticking M:SS)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
-    // concept_intake is 30s into its 60s average (30s left) + world_color's
-    // whole 35s ahead → 65s remain → "~1:05 left".
-    const stages = [stage('concept_intake', 'running', ago(30_000))]
+    // concept_intake fresh into its 60s average + world_color's whole 60s ahead →
+    // 120s remain → "2 min remaining".
+    const stages = [stage('concept_intake', 'running', T0.toISOString())]
     const stageTimings: StageTiming[] = [
       { stage: 'concept_intake', avgMs: 60_000 },
-      { stage: 'world_color', avgMs: 35_000 },
+      { stage: 'world_color', avgMs: 60_000 },
     ]
     renderGenerating({ stages, stageTimings })
     const countdown = screen.getByTestId('worldgen-loading-countdown')
-    expect(countdown.textContent).toBe(i18n.t('worldGen.countdown', { time: '1:05' }))
-    // One real second later the number has walked down one second.
+    expect(countdown.textContent).toBe(mins(2))
+    // Coarse: NEVER a ticking `M:SS`, and it does not churn every second — a few
+    // seconds later it still reads the same coarse bucket.
+    expect(countdown.textContent).not.toMatch(/\d:\d\d/)
     act(() => {
-      vi.advanceTimersByTime(1000)
+      vi.advanceTimersByTime(3000)
     })
-    expect(countdown.textContent).toBe(i18n.t('worldGen.countdown', { time: '1:04' }))
-    // …and keeps walking (the "feels like progress" beat).
-    act(() => {
-      vi.advanceTimersByTime(4000)
-    })
-    expect(countdown.textContent).toBe(i18n.t('worldGen.countdown', { time: '1:00' }))
+    expect(countdown.textContent).toBe(mins(2))
   })
 
-  it('feeds the TICKING countdown to the status card (replacing the coarse minute ETA)', () => {
+  it('feeds the coarse line to the status card (act two)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
-    // locations_and_npcs is 20s into its 120s average → 100s left → "~1:40 left".
+    // locations_and_npcs 20s into its 120s average → 100s left → "2 min remaining".
     const stages = [
       ...ENTITY_UNDERWAY.slice(0, 3),
       stage('world_and_factions', 'completed'),
@@ -399,82 +402,51 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
     ]
     const stageTimings: StageTiming[] = [{ stage: 'locations_and_npcs', avgMs: 120_000 }]
     renderWatching({ stages, stageTimings })
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '1:40' }),
-    )
-    act(() => {
-      vi.advanceTimersByTime(1000)
-    })
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '1:39' }),
-    )
+    expect(lastGraphProps().status?.countdownLabel).toBe(mins(2))
+    expect(lastGraphProps().status?.countdownLabel).not.toMatch(/\d:\d\d/)
   })
 
-  it('HOLDS at the remaining-future floor while a stage overruns, then RESUMES on completion', () => {
+  it('DROPS the line the instant the estimate exhausts — never a dead 0:00 (act two)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
-    // locations_and_npcs has overrun its 60s average (90s elapsed): its own
-    // contribution clamps to 0, so the count HOLDS at the boundary stage's 30s.
-    const overrunning = [
-      ...ENTITY_UNDERWAY.slice(0, 3),
-      stage('world_and_factions', 'completed'),
-      stage('locations_and_npcs', 'running', ago(90_000)),
-    ]
-    const stageTimings: StageTiming[] = [
-      { stage: 'locations_and_npcs', avgMs: 60_000 },
-      { stage: 'entity_relationships', avgMs: 30_000 },
-    ]
-    const view = render(
-      <I18nextProvider i18n={i18n}>
-        <GeneratingView
-          nodes={[]}
-          edges={[]}
-          stages={overrunning}
-          stageTimings={stageTimings}
-          resumedMidGen={false}
-        />
-      </I18nextProvider>,
-    )
-    watch()
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '0:30' }),
-    )
-    // Seconds pass; the overrun deepens; the count holds — never negative.
-    act(() => {
-      vi.advanceTimersByTime(5000)
-    })
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '0:30' }),
-    )
-    // The stage completes (the next stream event): the boundary stage starts and
-    // the count RESUMES walking from its average.
-    const resumed = [
+    // Every watched stage done except the final one, which is RUNNING and has
+    // overrun its average (90s elapsed vs 30s) → the estimate clamps to 0. The old
+    // countdown sat at "0:00 remaining"; now the line is dropped entirely (the
+    // stage bars carry the wait), so the card shows NO countdown.
+    const exhausted = [
       ...ENTITY_UNDERWAY.slice(0, 3),
       stage('world_and_factions', 'completed'),
       stage('locations_and_npcs', 'completed'),
-      stage('entity_relationships', 'running', new Date(T0.getTime() + 5000).toISOString()),
+      stage('entity_relationships', 'running', ago(90_000)),
     ]
-    view.rerender(
-      <I18nextProvider i18n={i18n}>
-        <GeneratingView
-          nodes={[]}
-          edges={[]}
-          stages={resumed}
-          stageTimings={stageTimings}
-          resumedMidGen={false}
-        />
-      </I18nextProvider>,
-    )
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '0:30' }),
-    )
-    act(() => {
-      vi.advanceTimersByTime(2000)
-    })
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '0:28' }),
-    )
+    const stageTimings: StageTiming[] = [{ stage: 'entity_relationships', avgMs: 30_000 }]
+    renderWatching({ stages: exhausted, stageTimings })
+    // The card still renders (status is present) — the countdown alone is dropped.
+    expect(lastGraphProps().status).toBeDefined()
+    expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
+  })
+
+  it('DROPS the loading-screen line when the prep estimate exhausts (the flavor cycle carries the wait)', () => {
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    // The prep slice is all done except vocabulary_intake, running and overrun
+    // (60s elapsed vs 20s) → estimate 0 → no countdown, but the loading screen
+    // (Spinner + flavor cycle) still renders. No dead 0:00.
+    const exhausted = [
+      stage('concept_intake', 'completed'),
+      stage('world_color', 'completed'),
+      stage('vocabulary_intake', 'running', ago(60_000)),
+    ]
+    const stageTimings: StageTiming[] = [
+      { stage: 'concept_intake', avgMs: 30_000 },
+      { stage: 'world_color', avgMs: 30_000 },
+      { stage: 'vocabulary_intake', avgMs: 20_000 },
+    ]
+    renderGenerating({ stages: exhausted, stageTimings })
+    expect(screen.queryByTestId('worldgen-loading-countdown')).toBeNull()
+    expect(screen.getByTestId('worldgen-loading')).toBeDefined()
   })
 
   it('feeds NO countdown on cold-start (empty timings) — both surfaces show no estimate', () => {
@@ -495,7 +467,7 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
   it('act ONE counts down to ARRIVING ON THE GRAPH — the prep slice, NOT the reveal (myth-tudy1)', () => {
     // The loading countdown must sum ONLY the prep stages (arrive-on-the-graph),
     // never the entity stages (arrive-at-the-reveal). concept_intake 0s into its
-    // 60s avg + world_color 40s + vocabulary_intake 20s = 120s = "2:00". The huge
+    // 60s avg + world_color 40s + vocabulary_intake 20s = 120s → "2 min". The huge
     // world_and_factions timing is an ENTITY stage — it must be ignored here (the
     // old reveal-target math would have swept it in and read ~10 min).
     mockMatchMedia(false)
@@ -509,14 +481,13 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
       { stage: 'world_and_factions', avgMs: 600_000 }, // entity stage — excluded on act one
     ]
     renderGenerating({ stages, stageTimings })
-    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(
-      i18n.t('worldGen.countdown', { time: '2:00' }),
-    )
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(mins(2))
   })
 
   it('act TWO still counts down to the REVEAL — the watched slice is unchanged', () => {
     // The status card keeps its reveal-target countdown: entity_relationships is a
-    // WATCHED stage, so its 30s ahead counts. (Distinct from act one's prep slice.)
+    // WATCHED stage, so its 30s ahead counts (coarse: "under a minute"). Distinct
+    // from act one's prep slice.
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
@@ -528,9 +499,7 @@ describe('GeneratingView — the per-second countdown (MYT-89 waiting-feedback)'
     ]
     const stageTimings: StageTiming[] = [{ stage: 'entity_relationships', avgMs: 30_000 }]
     renderWatching({ stages, stageTimings })
-    expect(lastGraphProps().status?.countdownLabel).toBe(
-      i18n.t('worldGen.countdown', { time: '0:30' }),
-    )
+    expect(lastGraphProps().status?.countdownLabel).toBe(underMinute)
   })
 })
 

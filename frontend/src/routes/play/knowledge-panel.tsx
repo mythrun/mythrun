@@ -16,7 +16,8 @@ import type {
   MessageStreamProps,
   TranscriptItem,
 } from '@mythrun/client-core/contract'
-import { Box, Drawer, Heading, IconButton, KnowledgeSidebar, Stack, useViewportBelowLg } from '@mythrun/ui'
+import { Box, Drawer, Heading, IconButton, KnowledgeSidebar, ResizeHandle, useViewportBelowLg } from '@mythrun/ui'
+import { usePanelWidth } from '../../platform/web/use-panel-width.ts'
 
 // The play-screen knowledge layer (MYT-94, spec §6 / UX §9) — the brain + the
 // composition shell that fills MYT-92's `SidebarPlaceholder` seam.
@@ -42,10 +43,19 @@ import { Box, Drawer, Heading, IconButton, KnowledgeSidebar, Stack, useViewportB
 // snapshot / character projection the injected hooks already fetch; this layer adds
 // no read surface and no client-side tier logic.
 
-/** The desktop side-panel width — the sanctioned layout escape hatch (a fixed
- *  side-panel basis is not expressible via @mythrun/ui Box props). ~30% at common
- *  desktop widths; MYT-92's seam used `w-[18rem]`, widened here for the three tabs. */
-const RAIL_WIDTH_CLASS = 'w-[22rem]'
+/** The desktop side-panel's resizable width (px) — clamp floor/ceiling, default
+ *  (≈ the prior 22rem basis), and persistence key. The reader drags the rail's
+ *  ResizeHandle to taste; the chosen width persists across navigation (localStorage). */
+const RAIL_MIN_WIDTH = 288
+const RAIL_MAX_WIDTH = 560
+const RAIL_DEFAULT_WIDTH = 352
+const RAIL_WIDTH_KEY = 'mythrun:play:sidebar-width'
+
+/** The rail's height ceiling — the viewport minus a header allowance — so a TALL
+ *  tab (a long wiki) scrolls INSIDE the rail instead of growing the page and
+ *  pushing the chat input off-screen (the app-frame full-bleed root is a viewport
+ *  FLOOR, `min-h-screen`, so a rail with no ceiling escapes it). */
+const RAIL_HEIGHT = 'h-[calc(100dvh-5rem)]'
 
 // The stable seam/toggle testids MYT-92's shell tests key on — preserved so the
 // placeholder's meaning migrates into the real panel.
@@ -267,6 +277,14 @@ export interface KnowledgePanelProps {
 export function KnowledgePanel({ knowledge, reducedMotion }: KnowledgePanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const belowLg = useViewportBelowLg()
+  // The desktop rail's reader-chosen width — persisted + clamped + resizable (the
+  // ResizeHandle drives it), so it survives navigation.
+  const { width: railWidth, onResize: onRailResize } = usePanelWidth(
+    RAIL_WIDTH_KEY,
+    RAIL_MIN_WIDTH,
+    RAIL_MAX_WIDTH,
+    RAIL_DEFAULT_WIDTH,
+  )
   const sidebar = (
     <KnowledgeSidebar
       cache={knowledge.cache}
@@ -293,24 +311,37 @@ export function KnowledgePanel({ knowledge, reducedMotion }: KnowledgePanelProps
       {sidebar}
     </Drawer>
   ) : (
-    <DesktopRail open={knowledge.railOpen} onToggle={knowledge.onToggleRail} t={t}>
+    <DesktopRail
+      open={knowledge.railOpen}
+      onToggle={knowledge.onToggleRail}
+      t={t}
+      width={railWidth}
+      onResize={onRailResize}
+    >
       {sidebar}
     </DesktopRail>
   )
 }
 
-/** The desktop rail: the ~30% panel (default OPEN) with a collapse toggle, or the
- *  slim collapsed handle. The scroll region owns the overflow so the tall sheet tab
- *  scrolls inside the rail, not the page. */
+/** The desktop rail — a DOCKED, viewport-bounded, horizontally-resizable panel
+ *  (default OPEN) or the slim collapsed handle. OPEN: a ResizeHandle on the inner
+ *  edge + one bordered panel whose "At the table" header is ATTACHED to the
+ *  scrolling body. The panel is capped at the viewport height (RAIL_HEIGHT) with
+ *  its own overflow scroll, so a tall tab (a long wiki) scrolls INSIDE the rail
+ *  instead of growing the page and pushing the chat input off-screen. */
 function DesktopRail({
   open,
   onToggle,
   t,
+  width,
+  onResize,
   children,
 }: {
   open: boolean
   onToggle: () => void
   t: TFunction
+  width: number
+  onResize: (width: number) => void
   children: ReactNode
 }): React.JSX.Element {
   if (!open) {
@@ -328,11 +359,21 @@ function DesktopRail({
     )
   }
   return (
-    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- fixed side-panel width + the min-h-0 flex-scroll column; not expressible via @mythrun/ui Box props (BaseProps bans className)
-    <div className={`flex min-h-0 flex-col gap-[var(--space-2)] ${RAIL_WIDTH_CLASS}`} data-testid={SEAM_TESTID}>
-      <Box border surface="base" padding={3}>
-        <Stack direction="row" justify="between" align="center" gap={2}>
-          <Heading level={2}>{t('play.sidebar.title')}</Heading>
+    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked rail row (resize handle + fixed-width viewport-bounded panel); the flex layout is not expressible via Box props
+    <aside className={`flex ${RAIL_HEIGHT} min-h-0 self-start`} data-testid={SEAM_TESTID}>
+      <ResizeHandle
+        value={width}
+        min={RAIL_MIN_WIDTH}
+        max={RAIL_MAX_WIDTH}
+        onChange={onResize}
+        edge="leading"
+        label={t('play.sidebar.resize')}
+      />
+      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked panel at the reader-chosen width (dynamic style): header ATTACHED to the scrolling body as one bordered object */}
+      <div style={{ width: `${String(width)}px` }} className="flex min-h-0 shrink-0 flex-col rounded-none border border-border-strong bg-surface">
+        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the panel header row (title + collapse), joined to the body by the shared bottom border */}
+        <div className="flex items-center justify-between gap-[var(--space-2)] border-b border-border-strong px-[var(--space-3)] py-[var(--space-2)]">
+          <Heading level={2} role="title">{t('play.sidebar.title')}</Heading>
           <IconButton
             icon="chevron-right"
             label={t('play.sidebar.collapse')}
@@ -341,12 +382,10 @@ function DesktopRail({
             onPress={onToggle}
             data-testid={TOGGLE_TESTID}
           />
-        </Stack>
-      </Box>
-      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the rail scroll region; MessageStream-style min-h-0 overflow so the sheet tab scrolls inside the rail, not the page */}
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-none border border-border-strong bg-surface p-[var(--space-3)]">
-        {children}
+        </div>
+        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the rail scroll region; min-h-0 overflow so a tall tab (long wiki) scrolls inside the panel, not the page */}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-[var(--space-3)]">{children}</div>
       </div>
-    </div>
+    </aside>
   )
 }

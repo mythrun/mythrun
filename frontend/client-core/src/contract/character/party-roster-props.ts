@@ -10,17 +10,17 @@ import type { RosterMember } from './types.ts'
 export interface PartyRosterLabels {
   /** The panel heading (e.g. "Your party"; the member count is appended DS-side). */
   partyHeading: string
-  /** The invite slot's sub-line (e.g. "share a link · they join here"). */
+  /** The invite slot's sub-line (e.g. "Share a link · they join here"). */
   inviteSub: string
-  /** A still-creating member's stand-in sub-line (e.g. "choosing who they are…"). */
+  /** A still-creating member's stand-in sub-line (e.g. "Choosing who they are…"). */
   creating: string
-  /** A just-joined member's stand-in sub-line (e.g. "just joined, making their character…"). */
+  /** A just-joined member's stand-in sub-line (e.g. "Just joined, making their character…"). */
   gathering: string
-  /** The non-owner's waiting line (e.g. "waiting for the party to gather…"). */
+  /** The non-owner's waiting line (e.g. "Waiting for the party to gather…"). */
   waiting: string
-  /** The owner's begin control when soloing (e.g. "begin the adventure →"). */
+  /** The owner's begin control when soloing (e.g. "Begin the adventure →"). */
   beginSolo: string
-  /** The owner's begin control with a full party (e.g. "everyone's ready, begin →"). */
+  /** The owner's begin control with a full party (e.g. "Everyone's ready, begin →"). */
   beginParty: string
 }
 

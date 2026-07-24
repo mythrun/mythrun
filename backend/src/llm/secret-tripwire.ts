@@ -2,8 +2,9 @@
 //
 // MYT-73 — the per-turn secret tripwire: a cheap Haiku generateObject call that
 // checks the Fast Thinker's player-facing prose against the session's CORE
-// SECRETS and emits an OPAQUE control signal { breached, confidence, secretRef }
-// where `secretRef` is a HANDLE (e.g. [SECRET-1]), never secret-derived prose.
+// SECRETS and emits an OPAQUE control signal { severity, confidence, secretRef }
+// where `severity` is none | soft_consistency | hard_reveal (myth-retprop) and
+// `secretRef` is a HANDLE (e.g. [SECRET-1]), never secret-derived prose.
 //
 // This wrapper is playbook-AGNOSTIC: it takes pre-formatted `prose` + `secrets`
 // strings. The CALLER (a later task) resolves the prep's sd_playbook into the
@@ -28,6 +29,14 @@ export interface SecretTripwireInput {
   readonly prose: string
   /** Pre-formatted, handle-annotated core-secrets block (caller-resolved). */
   readonly secrets: string
+  /** myth-retprop — the FT's PUBLIC briefing (the enforced-ignorance-safe
+   *  ft_context). A detail GROUNDED here was licensed to the narrator and is
+   *  definitionally NOT a breach (severity none), even when it is thematically
+   *  consistent with a secret. This is the grounding floor: it stops the
+   *  tripwire firing over prose the FT was explicitly told to write (the
+   *  "Unsheathed Folly" incident — an NPC watching a door the briefing already
+   *  said he watches). Public by construction; carries no secret. */
+  readonly publicContext: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -45,6 +54,7 @@ export async function runSecretTripwire(input: SecretTripwireInput): Promise<Sec
     prompt: loadPrompt('session', 'secret-tripwire', {
       prose: input.prose,
       secrets: input.secrets,
+      publicContext: input.publicContext,
     }),
     callSite: 'secret-tripwire',
     repairStrategy: 'haiku-then-sonnet',

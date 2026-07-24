@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Box, Drawer, Heading, IconButton, Stack, useViewportBelowLg } from '@mythrun/ui'
+import { Drawer, Heading, IconButton, ResizeHandle, Stack, useViewportBelowLg } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Navigate, useParams } from 'react-router-dom'
@@ -18,7 +18,15 @@ import {
   type SubmitCharacterResponse,
 } from '@mythrun/client-core'
 import { defaultFetchMe, type FetchMe } from './character-new/viewer-signals.ts'
-import { createMachine, type CreateState, type CreateEvent } from '@mythrun/client-core/character'
+import {
+  createMachine,
+  clearCharacterDraft,
+  type CreateState,
+  type CreateEvent,
+  type SessionDraftStore,
+} from '@mythrun/client-core/character'
+import { createWebLocalDraftStore } from '../platform/web/character-draft-store.ts'
+import { usePanelWidth } from '../platform/web/use-panel-width.ts'
 import { PathChooser } from './character-new/path-chooser.tsx'
 import { FreeformPath } from './character-new/freeform-path.tsx'
 import { GuidedPath } from './character-new/guided-path.tsx'
@@ -60,10 +68,14 @@ import { WikiPanel, useWikiModel, type FetchSnapshot } from './wiki-panel.tsx'
  *  subclass. */
 const DEFAULT_STARTING_LEVEL = 1
 
-/** The desktop wiki rail's width — the sanctioned layout escape hatch (a fixed
- *  side-panel basis is not expressible via @mythrun/ui Box props). ~30% at common
- *  desktop widths — the same basis as the play screen's knowledge rail. */
-const RAIL_WIDTH_CLASS = 'w-[22rem]'
+/** The docked wiki rail's resizable width (px) — clamp floor/ceiling, the default
+ *  (≈ the prior 22rem basis), and the persistence key. The reader drags the rail's
+ *  ResizeHandle to taste and the chosen width survives navigation (persisted through
+ *  the platform width store — R1 keeps web globals out of route code). */
+const WIKI_MIN_WIDTH = 288
+const WIKI_MAX_WIDTH = 560
+const WIKI_DEFAULT_WIDTH = 352
+const WIKI_WIDTH_KEY = 'mythrun:character-new:wiki-width'
 
 /** The situations source — defaults to the real endpoint; tests substitute it. */
 type FetchSituations = (ctx: ApiContext, campaignId: string) => Promise<StartingSituationsResponse>
@@ -172,41 +184,64 @@ function noopSelect(): void {
   // Intentionally empty (see above).
 }
 
-/** The desktop wiki rail: the ~30% panel (default OPEN) with a collapse toggle,
- *  or the slim collapsed handle — the play screen's knowledge-rail idiom. Sticky
- *  + viewport-capped so the wiki stays consultable (and scrolls INSIDE the rail)
- *  while the player scrolls a long creation column. */
+/** The desktop wiki rail — a DOCKED, horizontally-resizable sidebar (not the old
+ *  floating pair of boxes). OPEN: one bordered panel with its "Your world" header
+ *  ATTACHED to the scrolling body (a single object), a ResizeHandle on its inner
+ *  edge for drag-to-resize, sticky + viewport-capped so the wiki scrolls inside the
+ *  panel while the player scrolls a long creation column. COLLAPSED: a thin bordered
+ *  edge-strip where the panel's edge was — the panel's collapsed self (its trigger
+ *  reads as part of the same object), not a disconnected button. */
 function WikiRail({
   open,
   onToggle,
   t,
+  width,
+  onResize,
   children,
 }: {
   open: boolean
   onToggle: () => void
   t: TFunction
+  width: number
+  onResize: (width: number) => void
   children: ReactNode
 }): React.JSX.Element {
   if (!open) {
+    /* eslint-disable mythrun-ui/no-ad-hoc-ui -- the collapsed rail edge-strip is layout scaffold: a raw full-height button with an up-reading (writing-mode) vertical label, not expressible via Box/IconButton props */
     return (
-      <Box border surface="base" padding={2} data-testid="character-new-wiki-rail">
-        <IconButton
-          icon="chevron-left"
-          label={t('worldReveal.wikiOpen')}
-          variant="ghost"
-          size="sm"
-          onPress={onToggle}
+      <aside className="sticky top-[var(--space-4)] self-start" data-testid="character-new-wiki-rail">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={t('worldReveal.wikiOpen')}
           data-testid="character-new-wiki-toggle"
-        />
-      </Box>
+          className="flex h-[80dvh] cursor-pointer select-none flex-col items-center gap-[var(--space-3)] rounded-none border border-border-strong bg-surface px-[var(--space-1)] py-[var(--space-3)] text-ink-tertiary hover:bg-surface-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg"
+        >
+          <span aria-hidden="true" className="font-ui text-sm">‹</span>
+          <span aria-hidden="true" className="font-ui text-[0.65rem] uppercase tracking-wide [writing-mode:vertical-rl]">
+            {t('worldReveal.title')}
+          </span>
+        </button>
+      </aside>
     )
+    /* eslint-enable mythrun-ui/no-ad-hoc-ui -- end of the collapsed rail edge-strip scaffold */
   }
   return (
-    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- fixed side-rail width + the sticky viewport-capped flex-scroll column; not expressible via @mythrun/ui Box props (BaseProps bans className)
-    <div className={`sticky top-[var(--space-4)] flex max-h-[80dvh] flex-col gap-[var(--space-2)] self-start ${RAIL_WIDTH_CLASS}`} data-testid="character-new-wiki-rail">
-      <Box border surface="base" padding={3}>
-        <Stack direction="row" justify="between" align="center" gap={2}>
-          <Heading level={2}>{t('worldReveal.title')}</Heading>
+    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked rail row (resize handle + fixed-width panel); the sticky definite-height flex layout is not expressible via Box props
+    <aside className="sticky top-[var(--space-4)] flex h-[80dvh] self-start" data-testid="character-new-wiki-rail">
+      <ResizeHandle
+        value={width}
+        min={WIKI_MIN_WIDTH}
+        max={WIKI_MAX_WIDTH}
+        onChange={onResize}
+        edge="leading"
+        label={t('worldReveal.wikiResize')}
+      />
+      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked panel at the reader-chosen width (dynamic style): header ATTACHED to the scrolling body as one bordered object */}
+      <div style={{ width: `${String(width)}px` }} className="flex min-h-0 shrink-0 flex-col rounded-none border border-border-strong bg-surface">
+        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the panel header row (title + collapse), joined to the body by the shared bottom border */}
+        <div className="flex items-center justify-between gap-[var(--space-2)] border-b border-border-strong px-[var(--space-3)] py-[var(--space-2)]">
+          <Heading level={2} role="title">{t('worldReveal.title')}</Heading>
           <IconButton
             icon="chevron-right"
             label={t('worldReveal.wikiClose')}
@@ -215,13 +250,11 @@ function WikiRail({
             onPress={onToggle}
             data-testid="character-new-wiki-toggle"
           />
-        </Stack>
-      </Box>
-      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the rail scroll region; min-h-0 overflow so a long wiki scrolls inside the rail, not the page */}
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-none border border-border-strong bg-surface p-[var(--space-3)]">
-        {children}
+        </div>
+        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the rail scroll region; min-h-0 overflow so a long wiki scrolls inside the panel, not the page */}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-[var(--space-3)]">{children}</div>
       </div>
-    </div>
+    </aside>
   )
 }
 
@@ -236,6 +269,8 @@ function CreationWiki({
   drawerOpen,
   onDrawerOpenChange,
   t,
+  wikiWidth,
+  onWikiResize,
   children,
 }: {
   belowLg: boolean
@@ -244,9 +279,12 @@ function CreationWiki({
   drawerOpen: boolean
   onDrawerOpenChange: (open: boolean) => void
   t: TFunction
+  wikiWidth: number
+  onWikiResize: (width: number) => void
   children: ReactNode
 }): React.JSX.Element {
   if (belowLg) {
+    // Narrow: the edge-handle Drawer (full-width sheet) — resize doesn't apply.
     return (
       <Drawer
         data-testid="character-new-wiki-drawer"
@@ -262,7 +300,7 @@ function CreationWiki({
   }
 
   return (
-    <WikiRail open={railOpen} onToggle={onToggleRail} t={t}>
+    <WikiRail open={railOpen} onToggle={onToggleRail} t={t} width={wikiWidth} onResize={onWikiResize}>
       {children}
     </WikiRail>
   )
@@ -282,6 +320,9 @@ export interface CharacterNewRouteProps {
   /** The progress source (myth-qkjdq roster handoff) — defaults to the real
    *  endpoint; tests substitute it. */
   fetchProgress?: FetchProgress
+  /** The player-input draft store — defaults to the real localStorage-backed web
+   *  store; tests substitute an in-memory fake to assert persistence/restore. */
+  draftStore?: SessionDraftStore
 }
 
 export function CharacterNewRoute({
@@ -290,6 +331,7 @@ export function CharacterNewRoute({
   fetchSnapshot = getWorldSnapshot,
   fetchMe = defaultFetchMe,
   fetchProgress = getCharacterCreationProgress,
+  draftStore,
 }: CharacterNewRouteProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
@@ -306,6 +348,24 @@ export function CharacterNewRoute({
   // campaign surface's routing table instead of showing the start of creation.
   const viewerConceptStatus = useViewerConceptStatus(id, ctx, fetchMe, fetchProgress)
 
+  // Player-input durability: persist the player's OWN written concept/grounding as
+  // they type, keyed by campaign, so a failed generation ("the character didn't
+  // take shape") followed by "Start over" — or any other return to the flow —
+  // RESTORES their words instead of an empty box. The server also retains the last
+  // SUBMITTED concept on the failed row, but the localStorage draft is stronger: it
+  // captures words typed before any submit and survives a reload / tab close.
+  // Created once per mount (useMemo) so the store identity is stable.
+  const draftStoreImpl = useMemo(() => draftStore ?? createWebLocalDraftStore(), [draftStore])
+  // Clear the draft ONLY once the character is confirmed created (concept
+  // 'integrated'). A failure or a "Start over" deliberately leaves it — those are
+  // exactly the returns where the words must survive. This is best-effort hygiene:
+  // an uncleared draft is invisible post-success (the create flow never re-mounts
+  // for a non-'submitted' concept), so leaving it costs nothing. The path components
+  // (FreeformPath / GuidedPath) own the read + persist; the route owns only the store
+  // lifetime + this confirmed-creation clear.
+  useEffect(() => {
+    if (viewerConceptStatus === 'integrated') clearCharacterDraft(draftStoreImpl, id)
+  }, [viewerConceptStatus, draftStoreImpl, id])
 
   const groundingWhisper = situation?.invitation ?? t('characterCreate.freeform.groundingWhisperFallback')
 
@@ -317,6 +377,8 @@ export function CharacterNewRoute({
   const [wikiQuery, setWikiQuery] = useState('')
   const [railOpen, setRailOpen] = useState(true) // desktop default OPEN (UX §9)
   const [drawerOpen, setDrawerOpen] = useState(false) // narrow default closed (the prompts own the glass)
+  // The docked rail's persisted + clamped + resizable width (the ResizeHandle drives it).
+  const { width: wikiWidth, onResize: handleWikiResize } = usePanelWidth(WIKI_WIDTH_KEY, WIKI_MIN_WIDTH, WIKI_MAX_WIDTH, WIKI_DEFAULT_WIDTH)
   const belowLg = useViewportBelowLg()
 
   // Deep-link guard (MYT-102): /character/new reached before the owner picked a
@@ -374,6 +436,11 @@ export function CharacterNewRoute({
         onSkipToFreeform={() => {
           dispatch('skipToFreeform')
         }}
+        onBack={() => {
+          dispatch('back')
+        }}
+        store={draftStoreImpl}
+        campaignId={id}
       />
     )
   } else if (flow === 'processing') {
@@ -393,6 +460,11 @@ export function CharacterNewRoute({
         onSubmitted={() => {
           dispatch('submit')
         }}
+        onBack={() => {
+          dispatch('back')
+        }}
+        store={draftStoreImpl}
+        campaignId={id}
       />
     )
   }
@@ -410,10 +482,10 @@ export function CharacterNewRoute({
   )
 
   return (
-    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- create-screen layout row (creation column beside the wiki rail); not expressible via @mythrun/ui Stack props (BaseProps bans className)
-    <div className="flex min-w-0 flex-row gap-[var(--space-4)]" data-testid="route-character-new">
-      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the creation column; min-w-0 flex-1 so long prose never spills the row */}
-      <div className="min-w-0 flex-1">
+    // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- create-screen layout row (creation column DOCKED against the wiki rail; the rail's ResizeHandle is the divider, so no row gap); not expressible via @mythrun/ui Stack props (BaseProps bans className)
+    <div className="flex min-w-0 flex-row" data-testid="route-character-new">
+      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the creation column; min-w-0 flex-1 so long prose never spills the row, with trailing space so the docked rail's handle doesn't crowd the prose */}
+      <div className="min-w-0 flex-1 pr-[var(--space-4)]">
         <Stack gap={5}>{screen}</Stack>
       </div>
       <CreationWiki
@@ -425,6 +497,8 @@ export function CharacterNewRoute({
         drawerOpen={drawerOpen}
         onDrawerOpenChange={setDrawerOpen}
         t={t}
+        wikiWidth={wikiWidth}
+        onWikiResize={handleWikiResize}
       >
         {wikiPanel}
       </CreationWiki>

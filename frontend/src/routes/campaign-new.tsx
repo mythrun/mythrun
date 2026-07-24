@@ -97,7 +97,9 @@ export function CampaignNewRoute(): React.JSX.Element {
   }
 
   return (
-    <Stack gap={5} data-testid="route-campaign-new">
+    // One centred reading-measure column (`maxWidth="form"`) so every funnel screen
+    // shares a single spine (incl. the back affordance) instead of sprawling edge-to-edge.
+    <Stack gap={6} maxWidth="form" data-testid="route-campaign-new">
       {current !== 'fork' ? (
         <Stack align="start">
           <Button

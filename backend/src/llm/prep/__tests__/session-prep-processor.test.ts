@@ -193,7 +193,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     vi.restoreAllMocks()
     // MYT-101: default-clean opening tripwire; the breach test overrides once.
     vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValue({
-      result: { breached: false, confidence: 0.95, secretRef: null },
+      result: { severity: 'none', confidence: 0.95, secretRef: null },
       usage: { ...TRIPWIRE_USAGE },
       repairAttempted: false,
     })
@@ -379,7 +379,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(preps.rowCount).toBe(0)
   })
 
-  it('MYT-101: a breached opening fails the stage (retryable) and persists NOTHING', async () => {
+  it('MYT-101: a hard_reveal opening fails the stage (retryable) and persists NOTHING', async () => {
     const { campaignId } = await seed()
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValueOnce({
       ft_context: 'FT',
@@ -388,7 +388,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
       usage: { ...STAGE_USAGE },
     })
     vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValueOnce({
-      result: { breached: true, confidence: 0.4, secretRef: 'npc:prioress' },
+      result: { severity: 'hard_reveal', confidence: 0.4, secretRef: 'npc:prioress' },
       usage: { ...TRIPWIRE_USAGE },
       repairAttempted: false,
     })
@@ -406,7 +406,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
       ),
     ).rejects.toThrow(/tripwire/)
 
-    // Recall-biased: ANY breached verdict (even low-confidence) fails the stage.
+    // The opening gate stays STRICT (myth-retprop): any non-clean severity fails.
     const runs = await pool.query<{ status: string }>(
       `SELECT status FROM pipeline_runs
         WHERE campaign_id = $1 AND stage = 'session-prep:1' AND user_id IS NULL`,
@@ -423,7 +423,7 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
     expect(preps.rowCount).toBe(0)
   })
 
-  it('MYT-101: a breached opening with a NULL secretRef formats the failure as ref none', async () => {
+  it('MYT-101: a hard_reveal opening with a NULL secretRef formats the failure as ref none', async () => {
     const { campaignId } = await seed()
     vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValueOnce({
       ft_context: 'FT',
@@ -432,13 +432,39 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
       usage: { ...STAGE_USAGE },
     })
     vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValueOnce({
-      result: { breached: true, confidence: 0.9, secretRef: null },
+      result: { severity: 'hard_reveal', confidence: 0.9, secretRef: null },
       usage: { ...TRIPWIRE_USAGE },
       repairAttempted: false,
     })
     await expect(
       processSessionPrepJob(makeDeps(pool), makeJob({ campaignId, sessionNumber: 1 })),
     ).rejects.toThrow(/ref none/)
+  })
+
+  it('MYT-101 / myth-retprop: a soft_consistency opening ALSO fails the strict prep gate', async () => {
+    const { campaignId } = await seed()
+    vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValueOnce({
+      ft_context: 'FT',
+      sd_playbook: 'SD with a core secret',
+      opening: 'o'.repeat(120),
+      usage: { ...STAGE_USAGE },
+    })
+    vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValueOnce({
+      result: { severity: 'soft_consistency', confidence: 0.6, secretRef: '[SECRET-1]' },
+      usage: { ...TRIPWIRE_USAGE },
+      repairAttempted: false,
+    })
+    // Unlike the per-turn path (where soft_consistency is tolerated and steered
+    // silently), the once-generated opening is simply REGENERATED rather than
+    // shipped with a secret-adjacent brush — so any non-clean severity throws.
+    await expect(
+      processSessionPrepJob(makeDeps(pool), makeJob({ campaignId, sessionNumber: 1 })),
+    ).rejects.toThrow(/tripwire/)
+    const preps = await pool.query(
+      `SELECT 1 FROM session_preps WHERE campaign_id = $1 AND session_number = 1`,
+      [campaignId],
+    )
+    expect(preps.rowCount).toBe(0)
   })
 
   it('non-terminal failure: marks pipeline_runs failed, publishes prep-failed{terminal:false}, RETHROWS, leaves campaign status unchanged', async () => {

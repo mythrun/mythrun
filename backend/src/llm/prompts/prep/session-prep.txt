@@ -201,6 +201,12 @@ For each set piece with hidden elements — the details the Fast Thinker doesn't
 
 7. **The playbook is a switchboard.** It reads as condition → action, not prose. Brief framing is fine; if you're writing paragraphs, you're writing too much.
 
+## Prose register for player-experienced prose
+
+The prose you write in `ft_context` (its sensory sections, the party summary, and every NPC and location description) and in the `opening` is the party's entire experience, filtered through the table AI. Write it in the register below. This governs the player-experienced prose only — the `sd_playbook` stays the terse trigger switchboard specified above.
+
+{{include:shared/prose-register}}
+
 ## Document 3 — The Session Opening (`opening`)
 
 A single flowing introduction, written to be read aloud, in second person, 150–350 words. It follows this structure — every element in order, woven as natural prose, not headings:

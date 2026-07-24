@@ -38,6 +38,13 @@ const stack = cva('flex [&>*]:min-w-0', {
       true: 'flex-wrap',
       false: '',
     },
+    // Hold the stack's size in a flex parent — a nested group otherwise inherits
+    // the parent's [&>*]:min-w-0 and can shrink below its content, overlapping the
+    // next item. `shrink-0` pins it so a shrinkable sibling absorbs the row shrink.
+    noShrink: {
+      true: 'shrink-0',
+      false: '',
+    },
     // Full dynamic-viewport floor (mirrors Box's minHeight="screen" — `dvh`, not
     // `vh`, so mobile chrome doesn't leave a gap). Full literal so the v4 scanner emits it.
     minHeight: {
@@ -51,6 +58,16 @@ const stack = cva('flex [&>*]:min-w-0', {
       true: 'grow',
       false: '',
     },
+    // Reading-measure column: cap the width and centre it (`mx-auto`) so a single-
+    // column reading/flow surface doesn't stretch to full width. `w-full` lets it
+    // fill UP TO the cap, then the max-width holds. Full literals so the v4 scanner
+    // emits them (a `max-w-[var(--measure)]` would be a color-safe arbitrary value,
+    // but the fixed rem measures read clearer at the call site).
+    maxWidth: {
+      prose: 'mx-auto w-full max-w-[34rem]',
+      form: 'mx-auto w-full max-w-[36rem]',
+      wide: 'mx-auto w-full max-w-[56rem]',
+    },
   },
   defaultVariants: {
     direction: 'column',
@@ -58,7 +75,7 @@ const stack = cva('flex [&>*]:min-w-0', {
 })
 
 export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
-  { direction = 'column', gap, align, justify, wrap, minHeight, grow = false, children, ...rest },
+  { direction = 'column', gap, align, justify, wrap, noShrink, minHeight, maxWidth, grow = false, children, ...rest },
   ref,
 ) {
   // A numeric grow is an explicit flex-grow WEIGHT (proportional spacers); the
@@ -69,7 +86,16 @@ export const Stack = forwardRef<HTMLDivElement, StackProps>(function Stack(
     <div
       ref={ref}
       className={cn(
-        stack({ direction, align, justify, wrap, grow: grow === true, ...(minHeight !== undefined && { minHeight }) }),
+        stack({
+          direction,
+          align,
+          justify,
+          wrap,
+          noShrink,
+          grow: grow === true,
+          ...(minHeight !== undefined && { minHeight }),
+          ...(maxWidth !== undefined && { maxWidth }),
+        }),
         gap !== undefined && GAP_CLASS[gap],
       )}
       {...(growStyle !== undefined && { style: growStyle })}

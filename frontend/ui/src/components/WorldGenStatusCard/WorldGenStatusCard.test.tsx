@@ -66,9 +66,9 @@ const LABELS = {
   stageLabels: {
     entity_relationships: 'Drawing the connections',
   },
-  titleLabel: 'weaving your world',
+  titleLabel: 'Weaving your world',
   doneLabel: 'Your world is ready',
-  progressLabel: 'world generation progress',
+  progressLabel: 'World generation progress',
 }
 
 describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxonomy', () => {
@@ -136,12 +136,12 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
     const { getAllByText } = render(
       <WorldGenStatusCard
         stages={MID}
-        titleLabel="weaving your world"
+        titleLabel="Weaving your world"
         doneLabel="Your world is ready"
-        progressLabel="world generation progress"
+        progressLabel="World generation progress"
       />,
     )
-    expect(getAllByText('weaving your world')).toHaveLength(2)
+    expect(getAllByText('Weaving your world')).toHaveLength(2)
   })
 
   it('exposes the percent through a determinate progressbar', () => {
@@ -257,9 +257,9 @@ describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile sta
     const { queryByText } = render(
       <WorldGenStatusCard variant="footer" stages={MID} {...LABELS} />,
     )
-    // LABELS.titleLabel ("weaving your world") is the overlay caption; the footer
+    // LABELS.titleLabel ("Weaving your world") is the overlay caption; the footer
     // drops it, and the running stage is mapped, so the title appears nowhere.
-    expect(queryByText('weaving your world')).toBeNull()
+    expect(queryByText('Weaving your world')).toBeNull()
   })
 
   it('is a full-width in-flow bar, NOT an absolute overlay', () => {

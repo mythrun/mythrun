@@ -15,12 +15,12 @@ const noop = (): void => undefined
 // The resolved chrome labels the shell supplies (real MYT-100 copy).
 const LABELS = {
   partyHeading: 'Your party',
-  inviteSub: 'share a link · they join here',
-  creating: 'choosing who they are…',
-  gathering: 'just joined, making their character…',
-  waiting: 'waiting for the party to gather…',
-  beginSolo: 'begin the adventure →',
-  beginParty: "everyone's ready, begin →",
+  inviteSub: 'Share a link · they join here',
+  creating: 'Choosing who they are…',
+  gathering: 'Just joined, making their character…',
+  waiting: 'Waiting for the party to gather…',
+  beginSolo: 'Begin the adventure →',
+  beginParty: "Everyone's ready, begin →",
 }
 
 // Solo — the viewer is the only real member; the `empty` slot is the invite row.
@@ -30,7 +30,7 @@ const SOLO: RosterMember[] = [
 ]
 
 // A full party with a laggard — two ready, one still creating (no character name
-// yet → the "choosing who they are…" stand-in). The owner can begin now or wait.
+// yet → the "Choosing who they are…" stand-in). The owner can begin now or wait.
 const PARTY: RosterMember[] = [
   { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm — Human Fighter', status: 'ready', isViewer: true },
   { userId: 'u2', displayName: 'Ordric', characterName: 'Ordric Vane — Elf Wizard', status: 'ready', isViewer: false },

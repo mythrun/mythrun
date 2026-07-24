@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { WikiHome } from './WikiHome.tsx'
+import type { WikiView } from './WikiViewSwitch.tsx'
 import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
 
 // WikiHome — the wiki's landing. With an introduction on the model it is the
@@ -41,12 +42,18 @@ const LABELS = {
 
 interface HomeDemoProps {
   initialQuery?: string
+  initialView?: WikiView
   model?: typeof WIKI_FIXTURE_MODEL
 }
 
-function HomeDemo({ initialQuery = '', model = WIKI_FIXTURE_MODEL }: HomeDemoProps): React.JSX.Element {
+function HomeDemo({
+  initialQuery = '',
+  initialView = 'index',
+  model = WIKI_FIXTURE_MODEL,
+}: HomeDemoProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>()
   const [query, setQuery] = useState(initialQuery)
+  const [view, setView] = useState<WikiView>(initialView)
   return (
     <div className="min-h-dvh bg-bg p-[var(--space-6)]">
       <div className="mx-auto h-[70vh] max-w-sm">
@@ -56,6 +63,8 @@ function HomeDemo({ initialQuery = '', model = WIKI_FIXTURE_MODEL }: HomeDemoPro
           onOpen={setSelectedId}
           query={query}
           onQuery={setQuery}
+          view={view}
+          onViewChange={setView}
           {...LABELS}
         />
       </div>
@@ -63,30 +72,30 @@ function HomeDemo({ initialQuery = '', model = WIKI_FIXTURE_MODEL }: HomeDemoPro
   )
 }
 
-// The front door: the world-name title moment over the intro prose, the
-// dig-deeper references, and the search + browse index one scroll below.
-// Opening a row marks it here (the composed WorldWiki navigates to the page
-// instead — see Patterns/WorldWiki/WorldWiki).
+// The INDEX view (the default): the segmented Index / Glossary switch pinned
+// above the world-name title, the intro prose, the dig-deeper references, and
+// the search + browse groups scrolling beneath. Opening a row marks it here
+// (the composed WorldWiki navigates to the page instead — see
+// Patterns/WorldWiki/WorldWiki).
 export const Introduction: Story = {
   render: () => <HomeDemo />,
 }
 
-// A pre-migration world (no introduction): the browse landing alone — the
-// search field pinned over the scrolling groups. The graceful absence.
+// The GLOSSARY view: the switch flipped to Glossary — the world's vocabulary as
+// a collapsible, scannable list (definitions disclosed on demand).
+export const Glossary: Story = {
+  render: () => <HomeDemo initialView="glossary" />,
+}
+
+// A pre-migration world (no introduction OR glossary): the browse landing alone
+// — no switch, the search over the scrolling groups. The graceful absence.
 export const BrowseOnly: Story = {
   render: () => <HomeDemo model={WIKI_FIXTURE_MODEL_BARE} />,
 }
 
-// The search-narrowed state: a preset query filters the groups (keeping a
+// The search-narrowed state: a preset query filters the browse groups (keeping a
 // nested match's ancestor path); the field is live, so clearing it restores
 // the full browse view.
 export const Filtered: Story = {
   render: () => <HomeDemo initialQuery="ward" />,
-}
-
-// The search narrowed to the GLOSSARY alone (MYT-102): 'lampblack' names no
-// entity, only a vocabulary term — the groups vanish, the matching row stays,
-// and no false empty note appears.
-export const FilteredToGlossary: Story = {
-  render: () => <HomeDemo initialQuery="lampblack" />,
 }

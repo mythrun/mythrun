@@ -153,6 +153,59 @@ export function guidedRail(state: GuidedState): RailStep[] {
   return rungs
 }
 
+/** The persisted guided draft's loose shape (all free strings, every field optional)
+ *  — the character-draft seam persists this; it is structurally the web
+ *  `CharacterGuidedDraft`. Kept loose (plain strings, not `ClassName`) because it
+ *  comes back from storage un-narrowed; `hydrateGuidedState` re-validates through the
+ *  reducer. */
+export interface GuidedDraftSeed {
+  // `| undefined` on each (not just `?`) so the persisted `CharacterGuidedDraft` (a
+  // Zod-inferred shape whose optionals are `string | undefined`) assigns cleanly
+  // under exactOptionalPropertyTypes; a caller passing a plain `{className}` also fits.
+  className?: string | undefined
+  subclass?: string | undefined
+  species?: string | undefined
+  background?: string | undefined
+  notes?: string | undefined
+}
+
+/** The persisted value for a step during hydration (undefined = not drafted yet). */
+function seedValueForStep(step: GuidedStep, seed: GuidedDraftSeed): string | undefined {
+  switch (step) {
+    case 'class':
+      return seed.className
+    case 'subclass':
+      return seed.subclass
+    case 'species':
+      return seed.species
+    case 'background':
+      return seed.background
+    case 'notes':
+      return seed.notes
+  }
+}
+
+/** Reconstruct the reducer state from a persisted draft (player-input durability):
+ *  replay `choose` for each step the draft carries a value for, stopping at the first
+ *  it does not (the player was mid-that-step). Runs the SAME reducer logic, so the
+ *  subclass skip and the complete flag reconstruct exactly. A foreign/invalid value
+ *  (e.g. a class name that no longer exists) no-ops the reducer, which stops the
+ *  replay — the cursor never advances past a corrupt draft, and never spins. */
+export function hydrateGuidedState(level: number, seed: GuidedDraftSeed | undefined): GuidedState {
+  let state = initialGuidedState(level)
+  if (seed === undefined) return state
+  // Bounded by the longest possible path (FULL_ORDER); each iteration advances the
+  // cursor or breaks, so it terminates well within the bound.
+  for (let i = 0; i < FULL_ORDER.length && !state.complete; i++) {
+    const value = seedValueForStep(state.step, seed)
+    if (value === undefined || value === '') break
+    const next = guidedReducer(state, { type: 'choose', value })
+    if (next === state) break
+    state = next
+  }
+  return state
+}
+
 /** The accumulated picks folded into a complete {@link GuidedChoice}, or null until
  *  class, species, and background are all chosen. A subclass is included only when
  *  the class/level grants one (a stale draft subclass is dropped); notes only when

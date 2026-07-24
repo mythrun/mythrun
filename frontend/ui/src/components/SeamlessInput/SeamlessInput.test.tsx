@@ -5,12 +5,13 @@ import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import { SeamlessInput } from './SeamlessInput.tsx'
 
-// SeamlessInput — the borderless "ghost" creation-flow field. The `label` (the
-// question) is the visible, persistent, ASSOCIATED label and the field's
-// accessible name (the key a11y check). The field is a REAL native control
-// (input by default, textarea when multiline), strips the box (no
-// border/background on the resting field), and carries a NON-BOX focus
-// affordance — the accent baseline rule, not an outline box (WCAG 2.4.13).
+// SeamlessInput — the creation-flow's PROSE field. The `label` (the question) is
+// the visible, persistent, ASSOCIATED label and the field's accessible name (the
+// key a11y check). The field is a REAL native control (input by default, textarea
+// when multiline) styled as a DEFINED paper field — surface ground + square
+// interactive-grade border (the DS Input/TextArea affordance, so it can't be
+// mistaken for prose) — with serif display type and the shared accent focus ring
+// (WCAG 2.4.13).
 describe('SeamlessInput', () => {
   it('renders a real native <input> by default (role textbox)', () => {
     const { getByRole } = render(<SeamlessInput label="What is your world called?" />)
@@ -105,15 +106,16 @@ describe('SeamlessInput', () => {
     expect(onChange.mock.calls.every(([arg]) => typeof arg === 'string')).toBe(true)
   })
 
-  it('carries the non-box focus affordance: accent baseline rule, NOT a box outline', () => {
+  it('carries the shared DS focus ring (2px square accent outline, offset)', () => {
     const { getByRole } = render(<SeamlessInput label="Q" />)
     const el = getByRole('textbox')
-    // Resting baseline rule (thin, low-emphasis) ...
-    expect(el).toHaveClass('border-b', 'border-border')
-    // ... thickens to 2px + colors to accent on focus (the WCAG 2.4.13 indicator).
-    expect(el).toHaveClass('focus-visible:border-b-2', 'focus-visible:border-accent-fg')
-    // The default box outline is removed — the baseline IS the indicator.
-    expect(el).toHaveClass('focus-visible:outline-none')
+    // The same a11y focus indicator every DS control uses (WCAG 2.4.13) — a 2px
+    // accent outline at a 2px offset, theme-aware via the --accent-fg token.
+    expect(el).toHaveClass(
+      'focus-visible:outline-2',
+      'focus-visible:outline-offset-2',
+      'focus-visible:outline-accent-fg',
+    )
   })
 
   it('uses the branded ember caret', () => {
@@ -121,13 +123,13 @@ describe('SeamlessInput', () => {
     expect(getByRole('textbox')).toHaveClass('caret-accent-fg')
   })
 
-  it('strips the box: no border-box / background utility on the resting field', () => {
+  it('renders a defined paper field: surface ground + a square interactive-grade border', () => {
     const { getByRole } = render(<SeamlessInput label="Q" />)
     const el = getByRole('textbox')
-    // A full border or a surface fill would draw a box — the ghost field has neither.
-    expect(el).not.toHaveClass('border')
-    expect(el).not.toHaveClass('bg-surface')
-    expect(el).toHaveClass('bg-transparent')
+    // The DS input affordance — the field must READ as a place to write, not
+    // prose: a square (flat 1-bit) box in the 3:1 interactive-grade border token
+    // over the surface ground. (A bare underline was missed by real users.)
+    expect(el).toHaveClass('border', 'border-border-strong', 'bg-surface', 'rounded-none')
   })
 
   it('renders display-size prose type (large serif body face)', () => {

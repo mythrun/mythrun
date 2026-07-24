@@ -42,6 +42,22 @@ describe('CharacterLoadingBeat', () => {
     expect(classByState.get('active')).toMatch(/accent/)
   })
 
+  it('wears the GuidedRail rung idiom so state is legible at a squint (edge + text, not text-color alone)', () => {
+    // The legibility fix (MYT-102): each phase is a bordered rung whose EDGE
+    // carries state through the DS done/now/todo token trio — done = solid ink
+    // edge, active = ember edge, pending = faint muted edge. Two channels (edge +
+    // text) mean done never collapses into pending as "two greys".
+    const { getAllByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
+    const classByState = new Map(
+      getAllByTestId('character-loading-beat-row').map((r) => [r.dataset.state, r.className]),
+    )
+    expect(classByState.get('done')).toMatch(/border-ink/)
+    expect(classByState.get('active')).toMatch(/border-accent/)
+    expect(classByState.get('pending')).toMatch(/border-border/)
+    // Every rung is a flat square (no rounded corners), per the paper register.
+    for (const cls of classByState.values()) expect(cls).toContain('rounded-none')
+  })
+
   it('sets the meter level from the done/total ratio', () => {
     // 2 of 4 done → 0.5.
     const { getByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
@@ -102,6 +118,41 @@ describe('CharacterLoadingBeat', () => {
     expect(queryByTestId('character-loading-beat-countdown')).toBeNull()
   })
 
+  it('renders the stalled line as meaningful (NOT aria-hidden) content when the estimate exhausts', () => {
+    // The never-dead-zero fix: once the estimate exhausts the surface swaps the
+    // countdown for this indeterminate reassurance. Unlike the per-second-ish
+    // countdown it is a one-time state change, so it is real (non-aria-hidden)
+    // content, styled as a calm secondary-ink line.
+    const { getByTestId } = render(
+      <CharacterLoadingBeat
+        heading={HEADING}
+        beats={MID_BEATS}
+        reducedMotion={false}
+        stalledLabel="Still working. This one's taking a while."
+      />,
+    )
+    const stalled = getByTestId('character-loading-beat-stalled')
+    expect(stalled.textContent).toBe("Still working. This one's taking a while.")
+    expect(stalled).not.toHaveAttribute('aria-hidden')
+    expect(stalled.className).toMatch(/text-ink-secondary/)
+  })
+
+  it('shows the stalled line IN PLACE OF the countdown (never both — no dead 0:00 alongside it)', () => {
+    // The consumer passes at most one, but assert the precedence so a stalled
+    // wait can never render a dead countdown next to the reassurance.
+    const { getByTestId, queryByTestId } = render(
+      <CharacterLoadingBeat
+        heading={HEADING}
+        beats={MID_BEATS}
+        reducedMotion={false}
+        countdownLabel="under a minute remaining"
+        stalledLabel="Still working. This one's taking a while."
+      />,
+    )
+    expect(getByTestId('character-loading-beat-stalled')).toBeInTheDocument()
+    expect(queryByTestId('character-loading-beat-countdown')).toBeNull()
+  })
+
   it('forwards the ref to the root element', () => {
     const ref = createRef<HTMLDivElement>()
     render(<CharacterLoadingBeat ref={ref} heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
@@ -114,8 +165,17 @@ describe('CharacterLoadingBeat', () => {
     const done = render(<CharacterLoadingBeat heading={HEADING} beats={ALL_DONE} reducedMotion />)
     expect(await axe(done.container)).toHaveNoViolations()
     const counting = render(
-      <CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} countdownLabel="~2:10 left" />,
+      <CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} countdownLabel="2 min remaining" />,
     )
     expect(await axe(counting.container)).toHaveNoViolations()
+    const stalled = render(
+      <CharacterLoadingBeat
+        heading={HEADING}
+        beats={MID_BEATS}
+        reducedMotion={false}
+        stalledLabel="Still working. This one's taking a while."
+      />,
+    )
+    expect(await axe(stalled.container)).toHaveNoViolations()
   })
 })

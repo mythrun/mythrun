@@ -1,9 +1,10 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EntityKind } from '@mythrun/contract/rest'
 import type { WikiEntity, WorldWikiProps } from '@mythrun/client-core/contract'
 import { useWikiNavigation } from '@mythrun/client-core/worldgen'
 import { WikiHome } from './WikiHome.tsx'
 import { WikiPage } from './WikiPage.tsx'
+import { type WikiView } from './WikiViewSwitch.tsx'
 import { resolveKindLabel } from './kind-label.ts'
 
 // WorldWiki (MYT-89 Phase D, D4; intro-as-home myth-b9bap) — the browsable
@@ -59,6 +60,10 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
   const scrollRef = useRef<HTMLElement | null>(null)
   // The HOME scroll offset — shell-owned (see the scroll-memory note above).
   const homeScroll = useRef(0)
+  // The active home view (Index / Glossary) — shell-owned so an entity drill-in
+  // (which swaps home for the page) returns to the view the reader came from,
+  // not a reset. Ignored by WikiHome when the world carries no glossary.
+  const [view, setView] = useState<WikiView>('index')
 
   // id → entity + kind, nested children included — the page lookup. A nested
   // location shares its group's kind.
@@ -139,6 +144,8 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
           onOpen={openEntity}
           query={query ?? ''}
           onQuery={onQuery}
+          view={view}
+          onViewChange={setView}
           searchLabel={searchLabel}
           searchPlaceholder={searchPlaceholder}
           {...(groupLabels !== undefined ? { groupLabels } : {})}

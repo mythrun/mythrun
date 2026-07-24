@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
-import { Stack, Text, FreeformPrompt, SituationRecap } from '@mythrun/ui'
+import { Button, Stack, Text, FreeformPrompt, SituationRecap } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { StartingSituation } from '@mythrun/client-core'
+import { useCharacterDraft, type SessionDraftStore } from '@mythrun/client-core/character'
 
 // The FREEFORM PATH (MYT-90, D3) — the "tell us who you are" fork. It collects
 // the TWO required submit fields ONE AT A TIME (the calm pacing): first the
@@ -52,6 +53,18 @@ export interface FreeformPathProps {
   submit: (conceptText: string, situationGroundingText: string) => Promise<void>
   /** A successful submit — the route advances the create-machine to `processing`. */
   onSubmitted: () => void
+  /** Leave the freeform path for the CHOOSER (the route dispatches the create-machine
+   *  `back`). Invoked from the concept step's Back; the grounding step's Back steps
+   *  in-path to the concept first. The draft is already persisted, so returning to
+   *  the chooser — or switching paths — never loses the player's words. */
+  onBack: () => void
+  /** Player-input durability: the localStorage-backed draft store + the campaign it
+   *  is keyed by. The path seeds its fields from the persisted draft on EVERY mount
+   *  (so re-entering the flow — after a failure, "Start over", or a back-to-chooser
+   *  round-trip — restores the words) and persists each keystroke. Absent store →
+   *  persistence is a no-op (tests / native shell before it wires one). */
+  store?: SessionDraftStore | null
+  campaignId: string
 }
 
 export function FreeformPath({
@@ -59,12 +72,43 @@ export function FreeformPath({
   situation,
   submit,
   onSubmitted,
+  onBack,
+  store,
+  campaignId,
 }: FreeformPathProps): React.JSX.Element {
   const { t } = useTranslation()
+  // Seed from the persisted draft, read once per MOUNT (the hook's `initial`). A
+  // remount — the player re-entering freeform after a back-to-chooser, a failure, or
+  // a reload — re-reads the current draft, so their words come back. Persisting on
+  // every keystroke keeps that draft current.
+  const draft = useCharacterDraft(store ?? null, campaignId)
+  // Restore-on-mount lands on the concept step so the player reviews the restored
+  // concept before re-confirming; the WORDS are what must survive, not the cursor.
   const [step, setStep] = useState<Step>('concept')
-  const [conceptText, setConceptText] = useState('')
-  const [groundingText, setGroundingText] = useState('')
+  const [conceptText, setConceptText] = useState(draft.initial.conceptText ?? '')
+  const [groundingText, setGroundingText] = useState(draft.initial.groundingText ?? '')
   const [notice, setNotice] = useState<Notice>(null)
+
+  const handleConceptChange = (value: string): void => {
+    setConceptText(value)
+    draft.update({ conceptText: value })
+  }
+  const handleGroundingChange = (value: string): void => {
+    setGroundingText(value)
+    draft.update({ groundingText: value })
+  }
+
+  /** Back: from grounding, step in-path to the concept (keeping both fields); from
+   *  the concept step, leave to the chooser. Either way nothing typed is lost — the
+   *  draft is already persisted. */
+  const handleBack = (): void => {
+    if (step === 'grounding') {
+      setNotice(null)
+      setStep('concept')
+      return
+    }
+    onBack()
+  }
   // A synchronous in-flight guard (a ref, not state — a double-press fires before
   // a state update would flush) so a second Continue can't fire a second submit.
   const submitting = useRef(false)
@@ -106,6 +150,14 @@ export function FreeformPath({
 
   return (
     <Stack gap={5}>
+      {/* The quiet back affordance (the reversible decision the player asked for):
+          on the concept step it leaves to the chooser; on the grounding step it
+          steps back to the concept. */}
+      <Stack direction="row">
+        <Button variant="ghost" size="sm" onPress={handleBack} data-testid="freeform-back">
+          {t('back')}
+        </Button>
+      </Stack>
       {/* The opening scene, kept in view on both steps (MYT-102). Title/location/
           prose are LLM DATA; only the eyebrow is catalog chrome. */}
       {situation !== undefined && (
@@ -122,7 +174,7 @@ export function FreeformPath({
           prompt={t('characterCreate.freeform.conceptPrompt')}
           whisper={t('characterCreate.freeform.conceptWhisper')}
           value={conceptText}
-          onChange={setConceptText}
+          onChange={handleConceptChange}
           onSubmit={handleConcept}
           submitLabel={t('characterCreate.freeform.continue')}
         />
@@ -132,7 +184,7 @@ export function FreeformPath({
           prompt={t('characterCreate.freeform.groundingPrompt')}
           whisper={groundingWhisper}
           value={groundingText}
-          onChange={setGroundingText}
+          onChange={handleGroundingChange}
           onSubmit={handleGrounding}
           submitLabel={t('characterCreate.freeform.continue')}
         />

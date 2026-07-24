@@ -197,11 +197,30 @@ describe('WorldWiki — the introduction as home (myth-b9bap)', () => {
   })
 })
 
-describe('WorldWiki — the glossary pass-through (MYT-102)', () => {
-  it('renders the home glossary under the shell-resolved section label', () => {
-    const { getByText } = renderWiki()
-    expect(getByText('Glossary')).toBeInTheDocument()
+describe('WorldWiki — the glossary view (MYT-100)', () => {
+  it('reveals the world glossary when the shell-owned switch selects it', async () => {
+    const user = userEvent.setup()
+    const { getByRole, getByText, queryByText } = renderWiki()
+    // The glossary sits behind the switch — not in view until selected.
+    expect(queryByText('lampblack')).toBeNull()
+    await user.click(getByRole('button', { name: 'Glossary' }))
     expect(getByText('lampblack')).toBeInTheDocument()
+  })
+
+  it('returns to the glossary view after an entity drill-in and back (shell-owned view)', async () => {
+    // The switch's active view lives in the shell, so a page drill-in and Back
+    // land the reader on the view they left — not a reset to Index.
+    const user = userEvent.setup()
+    const { getByRole, getByText } = renderWiki()
+    await user.click(getByRole('button', { name: 'Glossary' }))
+    expect(getByText('lampblack')).toBeInTheDocument()
+    // Nothing to drill into from the glossary view directly, so flip to Index,
+    // open an entity, and Back — the view must still be whatever it was.
+    await user.click(getByRole('button', { name: 'Index' }))
+    await user.click(getByRole('button', { name: 'The Tallow Guild' }))
+    await user.click(getByRole('button', { name: 'Back' }))
+    // Back to home on the Index view (the last-selected), glossary hidden again.
+    expect(getByRole('button', { name: 'Index' })).toHaveAttribute('aria-pressed', 'true')
   })
 })
 

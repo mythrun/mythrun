@@ -73,11 +73,11 @@
       "copy": "Copy link",
       "create": "Create a link",
       "error": "$t(shared.somethingWrong)",
-      "hint": "share this link · friends join your party here",
+      "hint": "Share this link · friends join your party here",
       "limit": "You've reached the invite limit. Replace the existing link instead.",
       "linkLabel": "Invite link",
-      "loading": "preparing your invite link…",
-      "noLink": "no active link, create one to invite",
+      "loading": "Preparing your invite link…",
+      "noLink": "No active link, create one to invite",
       "panelHeading": "Invite",
       "replace": "Replace link",
       "share": "Share"
@@ -359,7 +359,7 @@
         "name": "A name surfaces",
         "scores": "Ability scores settle"
       },
-      "countdown": "About {{time}} left",
+      "countdown": "{{time}} remaining",
       "heading": "Bringing them to life…",
       "stalled": "Still working. This one's taking a while.",
       "title": "Your character is coming together"
@@ -384,18 +384,18 @@
     },
     "staging": {
       "beginError": "$t(shared.somethingWrong)",
-      "beginParty": "everyone's ready, begin →",
-      "beginSolo": "begin the adventure →",
-      "creating": "choosing who they are…",
-      "gathering": "just joined, making their character…",
-      "inviteSub": "share a link · they join here",
+      "beginParty": "Everyone's ready, begin →",
+      "beginSolo": "Begin the adventure →",
+      "creating": "Choosing who they are…",
+      "gathering": "Just joined, making their character…",
+      "inviteSub": "Share a link · they join here",
       "lede": "Your character is made. Play solo now, or invite others and start once the table's together.",
       "loadError": "Couldn't load your party. Try again.",
       "loading": "Gathering your party…",
       "partyHeading": "Your party",
       "retry": "$t(shared.tryAgain)",
       "title": "Shall we begin?",
-      "waiting": "waiting for the party to gather…"
+      "waiting": "Waiting for the party to gather…"
     }
   },
   "devTransport": {
@@ -435,9 +435,8 @@
   },
   "frame": {
     "buyCredits": "Add credits",
-    "credits": "Session credits",
+    "credits": "Credits",
     "creditsLoading": "Loading balance",
-    "displayName": "{{displayName}}",
     "settings": "Settings",
     "wordmark": "Mythrun"
   },
@@ -464,7 +463,7 @@
     "loadError": "This invitation didn't load. Try again.",
     "loading": "Reading your invite…",
     "preview": {
-      "accept": "accept the invitation →",
+      "accept": "Accept the invitation →",
       "eyebrow": "You've been invited",
       "error": "$t(shared.somethingWrong)",
       "full": "This campaign is already full.",
@@ -473,7 +472,7 @@
       "invitedBy": "Invited by",
       "notFound": "That invite doesn't lead anywhere.",
       "revoked": "This invite link was turned off.",
-      "signin": "sign in to join →",
+      "signin": "Sign in to join →",
       "timeout": "That took too long. Try again."
     },
     "retry": "$t(shared.tryAgain)"
@@ -504,6 +503,7 @@
   "play": {
     "blocked": {
       "body": "The table isn't ready just yet. Give it a moment.",
+      "integrationFailedAction": "Back to setup",
       "membersBody": "{{names}} are still finishing their characters.",
       "retry": "$t(shared.tryAgain)"
     },
@@ -512,8 +512,8 @@
       "title": "The session ends"
     },
     "connection": {
-      "failed": "lost you for a moment, reconnecting",
-      "reconnecting": "finding your way back…"
+      "failed": "Lost you for a moment, reconnecting",
+      "reconnecting": "Finding your way back…"
     },
     "correction": {
       "label": "Correction"
@@ -579,8 +579,11 @@
       "failedTitle": "The prep didn't come together"
     },
     "preparing": {
+      "countdown": "{{time}} remaining",
       "detail": "This can take a moment.",
-      "label": "The DM is preparing the next session…"
+      "integratingLabel": "Bringing your party into the world…",
+      "label": "The DM is preparing the next session…",
+      "settlingLabel": "Your character is settling into the world…"
     },
     "purchase": {
       "notOwner": {
@@ -594,21 +597,22 @@
       }
     },
     "roll": {
-      "advantage": "advantage",
+      "advantage": "Advantage",
       "continue": "Continue",
       "dc": "DC",
       "dieResult": "Your roll",
-      "disadvantage": "disadvantage",
+      "disadvantage": "Disadvantage",
       "roll": "Roll",
       "tier": {
-        "fail": "failure",
-        "greatSuccess": "critical success",
-        "success": "success"
+        "fail": "Failure",
+        "greatSuccess": "Critical success",
+        "success": "Success"
       }
     },
     "sidebar": {
       "collapse": "Hide the table panel",
       "expand": "Open the table panel",
+      "resize": "Resize the table panel",
       "title": "At the table"
     },
     "start": {
@@ -621,7 +625,7 @@
       "retry": "$t(shared.tryAgain)"
     },
     "thinking": {
-      "dm": "the DM is thinking…",
+      "dm": "The DM is thinking…",
       "typing": "is typing…"
     }
   },
@@ -644,6 +648,11 @@
     "rejected": "This one can't take root. Try a different idea.",
     "somethingWrong": "Something went wrong. Try again.",
     "tryAgain": "Try again",
+    "wait": {
+      "minutes": "{{count}} min",
+      "stalled": "Still working. This is taking longer than usual.",
+      "underMinute": "Under a minute"
+    },
     "wiki": {
       "digDeeper": "Dig deeper",
       "empty": "No matches",
@@ -699,9 +708,9 @@
   "worldGen": {
     "a11y": {
       "entities": "{{count}} entities have been written",
-      "entityList": "what's appeared so far"
+      "entityList": "What's appeared so far"
     },
-    "countdown": "about {{time}} left",
+    "countdown": "{{time}} remaining",
     "failedBody": "The making was interrupted.",
     "failedTitle": "The world stalled",
     "flavor1": "The gods decide what to name themselves.",
@@ -724,7 +733,7 @@
     "flavor7": "Populations spill across the world.",
     "flavor8": "Somewhere, a people decides that they are a people.",
     "flavor9": "A calendar is scrawled across the seasons.",
-    "loadingLabel": "making your world",
+    "loadingLabel": "Making your world",
     "retry": "$t(shared.tryAgain)",
     "stage": {
       "coherence_pass": "Reading it all back",
@@ -741,15 +750,15 @@
       "world_introduction": "Writing the opening pages"
     },
     "statusDone": "Your world is ready",
-    "statusProgress": "world generation progress",
-    "statusTitle": "weaving your world",
+    "statusProgress": "World generation progress",
+    "statusTitle": "Weaving your world",
     "terminalBody": "This world's a dead end. Start a new one.",
-    "terminalTitle": "this world can't be made",
+    "terminalTitle": "This world can't be made",
     "watch": "Watch it take shape"
   },
   "worldReveal": {
     "continue": "Continue",
-    "empty": "nothing here yet",
+    "empty": "Nothing here yet",
     "explorePrompt": "Wander your world. Continue when you're ready.",
     "graphNodeList": "Select a node to learn more",
     "group": {
@@ -758,18 +767,20 @@
       "location": "$t(shared.entityGroup.location)",
       "npc": "$t(shared.entityGroup.npc)"
     },
-    "loading": "settling your world",
+    "loading": "Settling your world",
+    "settling": "The table is still being set…",
     "title": "Your world",
-    "unavailable": "the world wiki isn't available right now",
+    "unavailable": "The world wiki isn't available right now",
     "wikiBack": "$t(back)",
-    "wikiClose": "close the wiki",
+    "wikiClose": "Close the wiki",
     "wikiDigDeeper": "$t(shared.wiki.digDeeper)",
     "wikiEmpty": "$t(shared.wiki.empty)",
     "wikiEmptyBody": "Nothing's recorded here yet.",
     "wikiGlossary": "$t(shared.wiki.glossary)",
     "wikiIndex": "Index",
-    "wikiOpen": "open the wiki",
+    "wikiOpen": "Open the wiki",
     "wikiRelated": "$t(shared.wiki.related)",
+    "wikiResize": "Resize the world panel",
     "wikiSearchLabel": "Explore your world",
     "wikiSearchPlaceholder": "$t(shared.wiki.searchPlaceholder)"
   }

@@ -230,9 +230,9 @@ describe('WorldGenGraph — pannable (MYT-89 audit v3: the camera gate)', () => 
 // not what it shows — the card's own tests own that).
 const STATUS = {
   stages: [],
-  titleLabel: 'weaving your world',
+  titleLabel: 'Weaving your world',
   doneLabel: 'Your world is ready',
-  progressLabel: 'world generation progress',
+  progressLabel: 'World generation progress',
 }
 
 describe('WorldGenGraph — narrow-viewport layout (MYT-89 audit v2: full-bleed + footer)', () => {
@@ -604,9 +604,10 @@ describe('WorldGenGraph — E2 reveal roving node list', () => {
 // E3 (MYT-89 Phase E) — the reduced-motion consolidation, at the WorldGenGraph seam.
 // Every motion source has its own unit-level reduced-motion branch (fog: no rAF +
 // drain-preserved static re-settle — WorldGenFogField.test; buoy bob: null clock →
-// zero offset — canvas-draw.test; Act-2 edges + arrival traces: progress forced to 1
-// — canvas-draw.test / arrival-draw.test; RevealTransition: ~300ms cross-fade to the
-// same end state — RevealTransition.test). This block pins the GRAPH-level contract
+// zero offset — canvas-draw.test; Act-2 edges: progress forced to 1 — canvas-draw.test;
+// RevealTransition: ~300ms cross-fade to the same end state — RevealTransition.test).
+// (Node arrival has no motion branch now — an arriving glyph renders full-ink on its
+// first frame, identically under reduced and normal motion.) This block pins the GRAPH-level contract
 // they compose to: under reduced motion NO rAF churns (graph or fog), while the
 // determinate PROGRESS signal — the status card's `%` progressbar — still reports.
 const stageAt = (stage: string, status: StageProgress['status']): StageProgress => ({
@@ -633,9 +634,9 @@ describe('WorldGenGraph — E3 reduced-motion consolidation', () => {
         // motion-free progress signal (the ember pulse is CSS, quelled by base.css).
         status={{
           stages: [stageAt('world_and_factions', 'completed')],
-          titleLabel: 'weaving your world',
+          titleLabel: 'Weaving your world',
           doneLabel: 'Your world is ready',
-          progressLabel: 'world generation progress',
+          progressLabel: 'World generation progress',
         }}
       />,
     )

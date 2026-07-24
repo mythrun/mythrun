@@ -50,6 +50,17 @@ const SNAPSHOT: Parameters<typeof toWikiViewModel>[0] = {
     { sourceEntityId: 'n-vale', targetEntityId: 'f-guild', relationshipType: 'sworn_to' },
     { sourceEntityId: 'n-corr', targetEntityId: 'n-vale', relationshipType: 'serves' },
   ],
+  // The world's invented vocabulary — the wiki's Glossary view (MYT-100). Play
+  // worlds carry one, so the sidebar exercises the Index/Glossary switch (the
+  // segmented control sitting under the outer World/Ties/Sheet tab bar).
+  world: {
+    vocabularyRegistry: {
+      entries: [
+        { term: 'tallow-run', definition: '[placeholder for what a tallow-run is in the reach]' },
+        { term: 'ashfen', definition: '[placeholder for what the ashfen itself is]' },
+      ],
+    },
+  },
 }
 
 const CACHE: KnowledgeCache = {

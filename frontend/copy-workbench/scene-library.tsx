@@ -117,9 +117,9 @@ const frameScenes: Scene[] = [
     {
       id: 'frame-header',
       title: 'App frame header (chrome & brand)',
-      note: 'The persistent top bar. frame.logo is an aria-label on the WORDMARK, not visible text — Miklos may want a wordmark/logomark decision here, not copy. Composed from real DS pieces.',
+      note: 'The persistent top bar. frame.wordmark is an aria-label on the WORDMARK, not visible text. The display name is DATA (rendered from /me, MYT-99), not copy, so it is not authored here. Composed from real DS pieces.',
       kind: 'composed',
-      keys: ['frame.logo', 'frame.displayName', 'frame.credits', 'frame.creditsLoading', 'frame.buyCredits', 'frame.settings'],
+      keys: ['frame.wordmark', 'frame.credits', 'frame.creditsLoading', 'frame.buyCredits', 'frame.settings'],
       minHeight: 120,
     },
     () => {
@@ -135,16 +135,13 @@ const frameScenes: Scene[] = [
               border: '1px solid var(--border-strong)',
             }}
           >
-            <Wordmark aria-label={tk('frame.logo')} size={26} />
-            <span data-key="frame.logo" style={{ fontSize: 11, opacity: 0.55 }}>
+            <Wordmark aria-label={tk('frame.wordmark')} size={26} />
+            <span data-key="frame.wordmark" style={{ fontSize: 11, opacity: 0.55 }}>
               (aria-label)
             </span>
             <div style={{ flex: 1 }} />
-            <Text role="ui-label">
-              <T k="frame.displayName" />
-            </Text>
             <Text role="data">
-              <T k="frame.credits" />
+              <T k="frame.credits" /> 1,250
             </Text>
             <Button variant="secondary" onPress={() => undefined}>
               <T k="frame.buyCredits" />

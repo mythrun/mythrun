@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
-import { flattenToConceptText } from '@mythrun/client-core/character'
+import { flattenToConceptText, type SessionDraftStore } from '@mythrun/client-core/character'
 import { i18n } from '../../i18n/config.ts'
 import { GuidedPath } from './guided-path.tsx'
 
@@ -70,21 +70,42 @@ const SITUATION = {
   prose: 'The counting-house wants paying.',
 }
 
+const CAMPAIGN_ID = 'campaign-guided-1'
+
+/** An in-memory draft store — the SessionDraftStore port the localStorage web impl
+ *  satisfies. Shared across renders to model a back-to-chooser round-trip. */
+function makeDraftStore(): SessionDraftStore & { map: Map<string, string> } {
+  const map = new Map<string, string>()
+  return {
+    map,
+    get: (k) => map.get(k) ?? null,
+    set: (k, v) => {
+      map.set(k, v)
+    },
+    remove: (k) => {
+      map.delete(k)
+    },
+  }
+}
+
 interface Overrides {
   startingLevel?: number
   submit?: (conceptText: string, situationGroundingText: string) => Promise<void>
   situation?: typeof SITUATION
+  store?: SessionDraftStore
 }
 
 function renderGuided(overrides: Overrides = {}): {
   submit: (conceptText: string, situationGroundingText: string) => Promise<void>
   onSubmitted: () => void
   onSkipToFreeform: () => void
+  onBack: () => void
   container: HTMLElement
 } {
   const submit = overrides.submit ?? vi.fn().mockResolvedValue(undefined)
   const onSubmitted = vi.fn()
   const onSkipToFreeform = vi.fn()
+  const onBack = vi.fn()
   const { container } = render(
     <ThemeProvider>
       <I18nextProvider i18n={i18n}>
@@ -94,12 +115,15 @@ function renderGuided(overrides: Overrides = {}): {
           submit={submit}
           onSubmitted={onSubmitted}
           onSkipToFreeform={onSkipToFreeform}
+          onBack={onBack}
+          campaignId={CAMPAIGN_ID}
+          {...(overrides.store !== undefined ? { store: overrides.store } : {})}
           {...(overrides.situation !== undefined ? { situation: overrides.situation } : {})}
         />
       </I18nextProvider>
     </ThemeProvider>,
   )
-  return { submit, onSubmitted, onSkipToFreeform, container }
+  return { submit, onSubmitted, onSkipToFreeform, onBack, container }
 }
 
 /** The current step's question — the GuidedBuilder's level-2 hero heading. */
@@ -344,5 +368,46 @@ describe('GuidedPath — escape hatch', () => {
     const { onSkipToFreeform } = renderGuided()
     fireEvent.click(screen.getByRole('button', { name: 'Describe them instead' }))
     expect(onSkipToFreeform).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('GuidedPath — back to chooser + draft persistence', () => {
+  it('shows a Back on the Class step that leaves to the chooser', () => {
+    const { onBack } = renderGuided()
+    // On the first (Class) step the GuidedBuilder hides its own Back; ours goes to the chooser.
+    expect(screen.getByTestId('guided-back')).toBeDefined()
+    fireEvent.click(screen.getByTestId('guided-back'))
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('rehydrates the committed picks after a back-to-chooser round-trip (shared store)', () => {
+    const store = makeDraftStore()
+    const first = renderGuided({ store, startingLevel: 1 })
+    expect(question()).toBe(q('characterCreate.guided.class.question'))
+    pickOption(first.container, 'fighter')
+    next() // commit class → species (subclass skipped at L1); persisted to the draft
+    cleanup()
+
+    // Re-enter guided with the SAME store: the reducer rehydrates to the species step,
+    // the class pick intact — nothing selected was lost across the chooser round-trip.
+    renderGuided({ store, startingLevel: 1 })
+    expect(question()).toBe(q('characterCreate.guided.species.question'))
+  })
+
+  it('persists the notes prose as it is typed', () => {
+    const store = makeDraftStore()
+    const { container } = renderGuided({ store, startingLevel: 1 })
+    pickOption(container, 'fighter')
+    next() // → species
+    pickOption(container, 'Human')
+    next() // → background
+    pickOption(container, 'Soldier')
+    next() // → notes (free text)
+    const notes = within(screen.getByTestId('freeform-prompt')).getByRole<HTMLTextAreaElement>('textbox')
+    fireEvent.change(notes, { target: { value: 'left-handed, keeps a raven' } })
+    const raw = store.get(`mythrun_character_draft:${CAMPAIGN_ID}`)
+    expect(raw).not.toBeNull()
+    const parsed = JSON.parse(raw ?? '{}') as { guided?: { notes?: string } }
+    expect(parsed.guided?.notes).toBe('left-handed, keeps a raven')
   })
 })

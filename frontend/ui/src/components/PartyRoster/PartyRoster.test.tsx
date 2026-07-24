@@ -33,12 +33,12 @@ const noop = (): void => undefined
 // The resolved chrome labels the shell supplies (real MYT-100 copy).
 const LABELS = {
   partyHeading: 'Your party',
-  inviteSub: 'share a link · they join here',
-  creating: 'choosing who they are…',
-  gathering: 'just joined, making their character…',
-  waiting: 'waiting for the party to gather…',
-  beginSolo: 'begin the adventure →',
-  beginParty: "everyone's ready, begin →",
+  inviteSub: 'Share a link · they join here',
+  creating: 'Choosing who they are…',
+  gathering: 'Just joined, making their character…',
+  waiting: 'Waiting for the party to gather…',
+  beginSolo: 'Begin the adventure →',
+  beginParty: "Everyone's ready, begin →",
 }
 
 describe('PartyRoster', () => {

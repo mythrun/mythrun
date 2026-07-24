@@ -38,6 +38,7 @@ import { resolve, dirname } from 'node:path'
 // `object` with a repair-aware promise that runs the Haiku→Sonnet repair
 // chain on LlmStructuredOutputError from the underlying SDK call.
 import { streamObject } from '../../ai.js'
+import { resolveIncludes } from '../../prompts.js'
 import { OPUS } from '../../models.js'
 import { computeCostUsd } from '../../../billing/model-pricing.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
@@ -53,9 +54,11 @@ import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 
-const PROMPT_TEMPLATE = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/world-and-factions.txt'),
-  'utf8',
+const PROMPT_TEMPLATE = resolveIncludes(
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../prompts/prep/world-and-factions.txt'),
+    'utf8',
+  ),
 )
 
 export interface RunWorldAndFactionsArgs {

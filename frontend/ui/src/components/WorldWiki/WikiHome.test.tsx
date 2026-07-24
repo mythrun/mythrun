@@ -32,6 +32,8 @@ function renderHome(overrides: Partial<React.ComponentProps<typeof WikiHome>> = 
       onOpen={vi.fn()}
       query=""
       onQuery={vi.fn()}
+      view="index"
+      onViewChange={vi.fn()}
       {...LABELS}
       {...overrides}
     />,
@@ -112,10 +114,21 @@ describe('WikiHome — search + browse-by-kind', () => {
   })
 })
 
-describe('WikiHome — the glossary (MYT-102)', () => {
-  it('renders the glossary rows — term + definition — under their section label', () => {
-    const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL })
-    expect(getByText('Glossary')).toBeInTheDocument()
+describe('WikiHome — the Index/Glossary views (MYT-100)', () => {
+  it('shows the segmented switch only when the world has a glossary', () => {
+    const { getByRole } = renderHome({ model: WIKI_FIXTURE_MODEL })
+    expect(getByRole('button', { name: 'Index' })).toBeInTheDocument()
+    expect(getByRole('button', { name: 'Glossary' })).toBeInTheDocument()
+  })
+
+  it('omits the switch entirely for a world without a glossary', () => {
+    const { queryByRole } = renderHome()
+    expect(queryByRole('button', { name: 'Glossary' })).toBeNull()
+    expect(queryByRole('button', { name: 'Index' })).toBeNull()
+  })
+
+  it('renders the glossary terms + definitions in the glossary view', () => {
+    const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, view: 'glossary' })
     // Term-sorted by the view model: ashfen < lampblack < tallow-run.
     for (const term of ['ashfen', 'lampblack', 'tallow-run']) {
       expect(getByText(term)).toBeInTheDocument()
@@ -123,33 +136,24 @@ describe('WikiHome — the glossary (MYT-102)', () => {
     expect(getByText(/what lampblack means here/)).toBeInTheDocument()
   })
 
-  it('omits the glossary section entirely for a world without one', () => {
-    const { queryByText } = renderHome()
-    expect(queryByText('Glossary')).toBeNull()
+  it('hides the browse groups while the glossary view is active', () => {
+    const { queryByRole } = renderHome({ model: WIKI_FIXTURE_MODEL, view: 'glossary' })
+    // The Factions heading (and the search field) belong to the index view.
+    expect(queryByRole('heading', { name: 'Factions' })).toBeNull()
+    expect(queryByRole('textbox', { name: 'Search the world' })).toBeNull()
   })
 
-  it('narrows to glossary rows through the same search — no false empty note', () => {
-    // 'lampblack' matches no entity name, only a glossary term: the groups
-    // vanish, the matching row stays, and the empty note must NOT show. An
-    // intro-less model — the introduction article renders its references
-    // regardless of the query, so a browse-only model isolates the filter.
-    const glossaryOnlyHome = { groups: WIKI_FIXTURE_MODEL.groups, glossary: WIKI_FIXTURE_MODEL.glossary }
-    const { getByText, queryByText } = renderHome({ model: glossaryOnlyHome, query: 'lampblack' })
-    expect(getByText('lampblack')).toBeInTheDocument()
-    expect(queryByText('ashfen')).toBeNull()
-    expect(queryByText('The Tallow Guild')).toBeNull()
-    expect(queryByText('Factions')).toBeNull()
-    expect(queryByText('Nothing here')).toBeNull()
+  it('reports a switch pick through onViewChange', async () => {
+    const onViewChange = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = renderHome({ model: WIKI_FIXTURE_MODEL, onViewChange })
+    await user.click(getByRole('button', { name: 'Glossary' }))
+    expect(onViewChange).toHaveBeenCalledExactlyOnceWith('glossary')
   })
 
-  it('shows the empty note only when neither entities nor glossary match', () => {
+  it('shows the empty note when a query matches no entity (index view)', () => {
     const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, query: 'zzzznomatch' })
     expect(getByText('Nothing here')).toBeInTheDocument()
-  })
-
-  it('filters glossary terms case-insensitively', () => {
-    const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, query: 'LAMP' })
-    expect(getByText('lampblack')).toBeInTheDocument()
   })
 })
 

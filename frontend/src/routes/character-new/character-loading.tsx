@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CharacterLoadingBeat, Heading, Stack, Text } from '@mythrun/ui'
+import { CharacterLoadingBeat, Heading, Stack } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
   getStageTimings,
   useApiContext,
+  waitDisplay,
   type ApiContext,
   type StageTiming,
 } from '@mythrun/client-core'
@@ -15,6 +16,7 @@ import {
   type CharacterCreationStreamDeps,
 } from '@mythrun/client-core/character'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
+import { coarseWaitTime } from '../wait-format.ts'
 
 // The CHARACTER-LOADING SURFACE (MYT-90 D5 + the MYT-102 waiting upgrade) — the
 // "coming into being" screen the D8 routing table mounts while the viewer's
@@ -29,23 +31,25 @@ import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-
 // ONCE — D8 re-evaluates routing and lands the player on the reveal. A latch
 // ref keeps it one-shot even if the surface re-renders while `done` holds.
 //
-// The WAIT (MYT-102, the world-gen waiting register): one `getStageTimings`
-// fetch (the un-filtered historical aggregate — it already carries the
-// character stages) + a real 1-second tick turn the hook's folded viewer
-// `stages` into the beat's ticking `~M:SS` countdown via
-// `remainingCreationWaitMs`. HONESTY is load-bearing: cold-start / no usable
-// history → the prop is OMITTED (no fake numbers); an overrun HOLDS at the
-// remaining-future floor and jumps at the next stage event; the tick is NOT
-// gated on reduced motion (the number is content, not decoration). When the
-// wait has exhausted 3× the initial estimate — or 5 minutes when there is no
-// history to estimate from — with no terminal event, a calm "taking longer
-// than usual" line appears under the beat. No retry affordance here (resume
-// is Track A's surface; this line composes above whatever lands there).
+// The WAIT (MYT-102 timer revamp): one `getStageTimings` fetch (the un-filtered
+// historical aggregate — it already carries the character stages) + a real
+// 1-second tick turn the hook's folded viewer `stages` into the adaptive
+// remaining-ms estimate (`remainingCreationWaitMs`, re-derived each tick from
+// live stage completions). The shared `waitDisplay` brain then decides what the
+// beat shows: a COARSE estimate ("2 min remaining", minute-granular — never a
+// ticking `0:24`) while usable; the AUTHORED "still working" line the INSTANT
+// the estimate exhausts (the running stage overran) or the wait wedges — so the
+// beat NEVER sits at a dead 0:00 — and nothing at all on cold-start (no fake
+// numbers). No retry affordance here (resume is Track A's surface; the stalled
+// line composes above whatever lands there).
 
-/** Stall thresholds: with a usable estimate the wait reads as stalled once the
- *  elapsed time reaches 3× the initial ETA; with none, after 5 minutes. */
+/** The wall-clock stall backstop: a wedged pending stage keeps the estimate
+ *  positive forever, so stall once elapsed reaches 3× the FIRST usable estimate.
+ *  With NO history to estimate from, stall after this flat window instead —
+ *  clearly beyond a healthy ~1-minute creation, so the reassurance never fires
+ *  on a normal run. */
 const STALL_ETA_MULTIPLIER = 3
-const NO_HISTORY_STALL_MS = 5 * 60_000
+const NO_HISTORY_STALL_MS = 2 * 60_000
 
 /** The 1-second tick behind the countdown + stall clock (the generating.tsx
  *  idiom): the current epoch ms, refreshed by a REAL 1s interval while
@@ -67,23 +71,6 @@ function useNowMs(active: boolean): number {
     }
   }, [active])
   return nowMs
-}
-
-/** Format the remaining wait into the ticking `~M:SS` countdown label, or
- *  `undefined` when there is no usable estimate (no history) — the beat shows
- *  nothing rather than a fake number. 0 renders as `0:00` (the overrun holds
- *  there — "any moment now" — until the completion fires). The digits are
- *  mechanical; the words around them are i18n. (Replicated from the world-gen
- *  generating view — the two screens share the register, not a module, until a
- *  third consumer earns the lift.) */
-function countdownLabelFrom(remainingMs: number | null, t: TFunction): string | undefined {
-  if (remainingMs === null) return undefined
-  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return t('characterCreate.loading.countdown', {
-    time: `${String(minutes)}:${String(seconds).padStart(2, '0')}`,
-  })
 }
 
 /** Resolve one beat's display copy from its stable id (the client-core stream
@@ -190,23 +177,38 @@ export function CharacterLoadingSurface({
     () => remainingCreationWaitMs(timings, stages, nowMs),
     [timings, stages, nowMs],
   )
-  const countdownLabel = useMemo(() => countdownLabelFrom(remainingMs, t), [remainingMs, t])
 
-  // The stall clock: elapsed-since-mount vs 3× the FIRST usable estimate (the
-  // expected whole wait as this screen first saw it — later recalibrations
-  // must not let the threshold creep), or the flat no-history window. A 0
-  // initial estimate ("already done, any moment now") carries no usable scale
-  // → the no-history window applies.
+  // Capture the FIRST usable estimate (the expected whole wait as this screen
+  // first saw it — later recalibrations must not let the wall-clock backstop
+  // creep) + the mount time; both feed the shared stall decision.
   const mountedAtRef = useRef(Date.now())
   const initialEtaRef = useRef<number | null>(null)
   useEffect(() => {
     if (initialEtaRef.current === null && remainingMs !== null) initialEtaRef.current = remainingMs
   }, [remainingMs])
-  const stallThresholdMs =
-    initialEtaRef.current !== null && initialEtaRef.current > 0
-      ? initialEtaRef.current * STALL_ETA_MULTIPLIER
-      : NO_HISTORY_STALL_MS
-  const stalled = !resolved && nowMs - mountedAtRef.current >= stallThresholdMs
+
+  // The shared waiting-display decision (MYT-102): a coarse estimate while
+  // usable, the "still working" line the instant it exhausts (never a dead
+  // 0:00), nothing on cold-start. `resolved` short-circuits to 'hidden' — the
+  // surface swaps away the same tick, so neither line should flash.
+  const display = useMemo(
+    () =>
+      resolved
+        ? ({ kind: 'hidden' } as const)
+        : waitDisplay({
+            remainingMs,
+            elapsedMs: nowMs - mountedAtRef.current,
+            noHistoryStallMs: NO_HISTORY_STALL_MS,
+            initialEstimateMs: initialEtaRef.current,
+            stallMultiplier: STALL_ETA_MULTIPLIER,
+          }),
+    [resolved, remainingMs, nowMs],
+  )
+  const countdownLabel =
+    display.kind === 'estimate'
+      ? t('characterCreate.loading.countdown', { time: coarseWaitTime(display.bucket, t) })
+      : undefined
+  const stalledLabel = display.kind === 'stalled' ? t('characterCreate.loading.stalled') : undefined
 
   return (
     <Stack gap={5} data-testid="character-loading">
@@ -217,15 +219,13 @@ export function CharacterLoadingSurface({
         beats={labeledBeats}
         heading={t('characterCreate.loading.heading')}
         reducedMotion={reducedMotion}
-        // Omit on undefined (exactOptionalPropertyTypes; the honesty contract —
-        // no usable history means NO countdown, never an empty one).
+        // At most one of the two wait lines (exactOptionalPropertyTypes; the
+        // honesty contract — no usable estimate means neither line, never an
+        // empty or a dead one). The beat renders the stalled line in place of
+        // the countdown.
         {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+        {...(stalledLabel !== undefined ? { stalledLabel } : {})}
       />
-      {stalled && (
-        <Text role="ui-caption" as="p" data-testid="character-loading-stalled">
-          {t('characterCreate.loading.stalled')}
-        </Text>
-      )}
     </Stack>
   )
 }

@@ -188,6 +188,65 @@ describe('CharacterSheetOutputSchema', () => {
       }).success,
     ).toBe(false)
   })
+
+  // --- over-length LLM-authored name/label fields must NOT terminal-fail ---
+  // Regression: a real staging character-sheet call (a rogue, "Matthias") produced
+  // an equipment[].name over 80 chars; the .max(80) hard-rejected it, the
+  // structured-output repair pass (which only fixes malformed JSON, not
+  // valid-but-long strings) could not recover it, and the character_sheet stage
+  // TERMINAL-failed — the player's whole character (and, via a separate FE bug,
+  // their written concept) was lost. The name/description/spell-name columns are
+  // uncapped TEXT with no CHECK-length mirror, so per feedback_no_max_on_llm_prose
+  // these labels take a .min() floor only, exactly like the feature `description`.
+  const longEquipmentName =
+    "a masterwork set of thieves' tools in an oiled leather roll, engraved with the Cooper's Guild crest"
+  const longFeatureName =
+    'Roguish Archetype: Thief — Fast Hands, Second-Story Work, and the Cooper-yard Quiet Craft'
+  const longSpellName =
+    "Matthias's Whispered Ward Against the Wandering Instructor's Lingering Shadow of Doubt"
+
+  it('accepts an LLM-authored equipment name far longer than the old 80-char cap', () => {
+    expect(longEquipmentName.length).toBeGreaterThan(80)
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        equipment: [{ name: longEquipmentName, quantity: 1, consumable: false }],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('accepts an LLM-authored feature name far longer than the old 80-char cap', () => {
+    expect(longFeatureName.length).toBeGreaterThan(80)
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        features: [
+          { name: longFeatureName, description: 'quick, quiet hands', max_uses: null, recharge: 'none' },
+        ],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('accepts an LLM-authored spell name far longer than the old 80-char cap', () => {
+    expect(longSpellName.length).toBeGreaterThan(80)
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        spells: [{ name: longSpellName, level: 1, prepared: true, ritual: false }],
+      }).success,
+    ).toBe(true)
+  })
+
+  // The .min(2) floor stays — an empty/one-char label is still a real defect
+  // (a stub the model failed to fill), and that IS repairable / worth rejecting.
+  it('still rejects a one-character equipment name (min floor kept)', () => {
+    expect(
+      CharacterSheetOutputSchema.safeParse({
+        ...validSheet,
+        equipment: [{ name: 'x', quantity: 1, consumable: false }],
+      }).success,
+    ).toBe(false)
+  })
 })
 
 // myth-wj43: the write side pins skill names to the canonical 18-skill set so a

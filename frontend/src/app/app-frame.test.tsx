@@ -63,6 +63,26 @@ describe('AppFrame — the content inset ↔ FullBleedStage coupling (MYT-89 aud
   })
 })
 
+describe('AppFrame — the banner chrome (MYT-99 redesign)', () => {
+  // The header is a <header> banner landmark, and its bottom edge is a single quiet
+  // <Divider/> (the decorative --border token) — NOT the old 4-sided --border-strong
+  // box that read as a stark white line on the dark page. These pin the structure
+  // so a regression back to the boxed border fails loud.
+  it('renders the header as a <header> banner landmark', () => {
+    renderFrame()
+    expect(screen.getByTestId('app-frame-header').tagName).toBe('HEADER')
+  })
+
+  it('separates the header from the content with a single quiet divider (not a box border)', () => {
+    renderFrame()
+    const divider = screen.getByTestId('app-frame-divider')
+    // The Divider primitive carries role=separator; the header Box no longer draws a
+    // border-* box edge of its own.
+    expect(divider.getAttribute('role')).toBe('separator')
+    expect(screen.getByTestId('app-frame-header').className).not.toContain('border')
+  })
+})
+
 describe('AppFrame — the full-bleed content variant (MYT-92 T15)', () => {
   it('drops the padded box for a route that declares handle.fullBleed', () => {
     renderFrame({ fullBleed: true })

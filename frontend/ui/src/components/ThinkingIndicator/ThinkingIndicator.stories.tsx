@@ -10,7 +10,7 @@ import { ThinkingIndicator } from './ThinkingIndicator.tsx'
 // indicator the app uses everywhere else; it self-freezes to a static dither under
 // prefers-reduced-motion (toggle your OS setting to see it hold steady).
 
-const THINKING_LABEL = 'the DM is thinking…'
+const THINKING_LABEL = 'The DM is thinking…'
 const TYPING_LABEL = 'is typing…'
 
 const meta: Meta<typeof ThinkingIndicator> = {
